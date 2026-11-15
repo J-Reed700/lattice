@@ -94,7 +94,7 @@ pub(in crate::features::llm::cloud) fn in_words(mut body: Value) -> Value {
 /// callers check what comes back either way. A keyword is only ever a number or
 /// a boolean, so a property that happens to be named `maximum` is kept. Every
 /// object must also say `additionalProperties: false` outright.
-pub(super) fn anthropic_schema(schema: &Value) -> Value {
+pub(in crate::features::llm) fn anthropic_schema(schema: &Value) -> Value {
     const MOVED: [&str; 7] = [
         "maxItems",
         "uniqueItems",
@@ -142,7 +142,7 @@ pub(super) fn anthropic_schema(schema: &Value) -> Value {
 /// Whether Claude will compile `schema` into a grammar. It refuses one with
 /// more than 24 optional parameters or 16 union-typed ones, counted across
 /// every object in it.
-pub(super) fn anthropic_schema_compiles(schema: &Value) -> bool {
+pub(in crate::features::llm) fn anthropic_schema_compiles(schema: &Value) -> bool {
     fn count(schema: &Value, optional: &mut usize, unions: &mut usize) {
         match schema {
             Value::Object(map) => {

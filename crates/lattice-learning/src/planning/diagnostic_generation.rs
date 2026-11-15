@@ -478,4 +478,107 @@ mod tests {
         );
         assert!(findings[0].evidence_quote.is_some());
     }
+
+    #[tokio::test]
+    async fn prompt_snapshot_diagnostic_tasks() -> Result<()> {
+        use crate::lessons::course_generation_tests::Model;
+        use crate::planning::outline_reference_tests::Capture;
+        use lattice_core::application::services::model_contract::test_support::snapshot;
+        let mut program = crate::tests::fixture();
+        for (index, module) in program.modules.iter_mut().enumerate() {
+            module.id = format!("module-{index}");
+        }
+        let outcomes: Vec<LearningOutcomeDefinitionDto> = program
+            .modules
+            .iter()
+            .enumerate()
+            .map(|(index, module)| LearningOutcomeDefinitionDto {
+                id: format!("outcome-{index}"),
+                module_id: Some(module.id.clone()),
+                lesson_id: None,
+                title: format!("Apply skill {index}"),
+                description: String::new(),
+                ordinal: index as i64,
+                created_at: 0,
+            })
+            .collect();
+        let tasks: Vec<_> = outcomes
+            .iter()
+            .map(|outcome| {
+                json!({
+                    "outcomeId": outcome.id,
+                    "prompt": "Predict the result of this concrete case and explain why.",
+                    "expectedAnswer": "The result follows from the stated rule applied to the case.",
+                    "criteria": "Names the rule, applies it, and states the predicted result."
+                })
+            })
+            .collect();
+        let sources = vec![LearningSourceDto {
+            id: "guidance".into(),
+            title: "Skill guidance".into(),
+            url: None,
+            excerpt: "Skill guidance for every module.".into(),
+            acquired_at: 1,
+        }];
+        let llm = Model(json!({ "tasks": tasks }).to_string());
+        let capture = Capture::of::<DiagnosticTasks>(&llm);
+
+        author(&capture, &program, &outcomes, &sources).await?;
+
+        snapshot::assert_requests(
+            env!("CARGO_MANIFEST_DIR"),
+            "diagnostic-tasks",
+            &capture.requests(),
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn prompt_snapshot_diagnostic_evaluation() -> Result<()> {
+        use crate::lessons::course_generation_tests::Model;
+        use crate::planning::outline_reference_tests::Capture;
+        use lattice_core::application::services::model_contract::test_support::snapshot;
+        let prompt = |id: &str, outcome: &str| LearningDiagnosticPromptDto {
+            id: id.into(),
+            prompt: "Which join column would you index first?".into(),
+            outcome_id: outcome.into(),
+            outcome_title: format!("Index a join for {outcome}"),
+            source_version_ids: vec![],
+        };
+        let attempt = LearningDiagnosticAttemptDto {
+            prompts: vec![prompt("p1", "o1"), prompt("p2", "o2")],
+            ..attempt()
+        };
+        let task = |outcome: &str| DiagnosticTask {
+            outcome_id: outcome.into(),
+            prompt: "Which join column would you index first?".into(),
+            expected_answer: "The column the join compares, so the planner skips a scan.".into(),
+            criteria: "Names the join column and says why an index helps.".into(),
+        };
+        let responses = vec![
+            LearningDiagnosticResponseDto {
+                prompt_id: "p1".into(),
+                response: "I would index the join column first, because it lets the planner skip a scan.".into(),
+            },
+            LearningDiagnosticResponseDto {
+                prompt_id: "p2".into(),
+                response: "I am not sure which column matters here.".into(),
+            },
+        ];
+        let reply = json!({"findings": [
+            {"promptId": "p1", "outcomeId": "o1", "evidenceQuote": "index the join column", "feedback": "You chose the join column and said why. The join column is the right first index, since the planner can then skip a scan. Next, check the plan.", "signal": "ready_for_challenge"},
+            {"promptId": "p2", "outcomeId": "o2", "evidenceQuote": null, "feedback": "You were unsure. The join column is the right first index, since the planner can then skip a scan. Next, read a plan.", "signal": "uncertain"}
+        ]});
+        let llm = Model(reply.to_string());
+        let capture = Capture::of::<DiagnosticEvaluation>(&llm);
+
+        evaluate(&capture, &attempt, &[task("o1"), task("o2")], &responses).await?;
+
+        snapshot::assert_requests(
+            env!("CARGO_MANIFEST_DIR"),
+            "diagnostic-evaluation",
+            &capture.requests(),
+        );
+        Ok(())
+    }
 }

@@ -288,6 +288,52 @@ async fn a_change_replaces_only_the_selected_entries() {
 }
 
 #[tokio::test]
+async fn prompt_snapshot_course_plan_change() {
+    use lattice_core::application::services::model_contract::Contract;
+    let pool = crate::tests::pool().await.unwrap();
+    let db = Database::new(pool.clone());
+    let mut program = crate::tests::fixture();
+    crate::lessons::course_generation_tests::fixed_ids(&mut program);
+    crate::repository::LearningRepository::new(db.clone())
+        .create(&program)
+        .await
+        .unwrap();
+    let revision = outline_revision(&db, &program.summary.id).await.unwrap();
+    ensure(&db, &Topics::new(), &program, revision, &Default::default())
+        .await
+        .unwrap();
+    let order = ids(&program);
+    let model = Topics::new();
+
+    change_entries(
+        &db,
+        &model,
+        change_request(
+            &program,
+            revision,
+            &[at(&order[1], 1), at(&order[2], 1)],
+            "Move the terms to the next lesson",
+        ),
+    )
+    .await
+    .unwrap();
+
+    let sent: Vec<_> = (0..model.calls())
+        .map(|index| model.request(index))
+        .filter(|request| {
+            request
+                .contract()
+                .is_some_and(|call| call.id == edit::ChangeEntries::ID)
+        })
+        .collect();
+    lattice_core::application::services::model_contract::test_support::snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "course-plan-change",
+        &sent,
+    );
+}
+
+#[tokio::test]
 async fn a_change_is_asked_at_interactive_priority_under_a_schema_of_the_selected_ids() {
     let pool = crate::tests::pool().await.unwrap();
     let db = Database::new(pool.clone());
@@ -311,7 +357,7 @@ async fn a_change_is_asked_at_interactive_priority_under_a_schema_of_the_selecte
     assert_eq!(model.calls(), 1, "the model is asked once");
     let sent = model.request(0);
     assert_eq!(sent.priority, InferencePriority::Interactive);
-    let schema = sent.json_schema.unwrap();
+    let schema = sent.schema().map(|schema| schema.as_json()).unwrap();
     assert_eq!(
         schema["properties"]["lessons"]["items"]["properties"]["lessonId"]["enum"],
         json!([order[3], order[1]])
@@ -358,7 +404,7 @@ async fn a_gap_in_a_change_is_asked_for_again_with_the_lesson_it_left_out() {
     assert_eq!(model.calls(), 2);
     let asked = model.request(1);
     let said = asked
-        .input
+        .input()
         .iter()
         .filter_map(|item| match item {
             CompletionInput::Message { role, content } if role == "user" => Some(content.as_str()),

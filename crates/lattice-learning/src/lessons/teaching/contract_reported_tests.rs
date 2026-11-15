@@ -93,7 +93,7 @@ impl LLMPort for Asked {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         if crate::lessons::structured_call::is_draft_request(request) {
             let said: Vec<&str> = request
-                .input
+                .input()
                 .iter()
                 .filter_map(|item| match item {
                     CompletionInput::Message { role, content } if role == "system" => {
@@ -114,7 +114,7 @@ impl LLMPort for Asked {
         self.schemas
             .lock()
             .unwrap()
-            .push(request.json_schema.clone().unwrap());
+            .push(request.schema().map(|schema| schema.as_json()).cloned().unwrap());
         Ok(CompletionResponse::from_text(self.reply.as_str()))
     }
     fn model_name(&self) -> &str {

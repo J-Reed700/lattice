@@ -685,7 +685,7 @@ struct SecondUnitFails;
 impl LLMPort for SecondUnitFails {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let prompt: String = request
-            .input
+            .input()
             .iter()
             .filter_map(|input| match input {
                 lattice_core::application::ports::llm_port::CompletionInput::Message {
@@ -793,7 +793,7 @@ impl Judges {
 impl LLMPort for Judges {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let prompt: String = request
-            .input
+            .input()
             .iter()
             .filter_map(|input| match input {
                 lattice_core::application::ports::llm_port::CompletionInput::Message {

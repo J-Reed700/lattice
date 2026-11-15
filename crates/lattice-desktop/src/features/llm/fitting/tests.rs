@@ -1,12 +1,13 @@
 //! The reply ceiling a backend sends: what it wants, then what the window leaves.
 
 use super::*;
+use lattice_core::application::services::model_contract::legacy;
 
 fn request(cap: Option<u32>) -> CompletionRequest {
-    CompletionRequest {
+    legacy::completion(legacy::Completion {
         max_output_tokens: cap,
         ..Default::default()
-    }
+    })
 }
 
 fn wanted(cap: Option<u32>, model: Option<u32>, reasons: bool) -> Option<u32> {

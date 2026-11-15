@@ -245,7 +245,7 @@ pub(crate) async fn draft_outline<T>(
     let room = model_call::source_room(llm, &bare, usize::MAX);
     let call = ContractCall::of::<OutlineDescription>(&PromptInput {
         system: system.clone(),
-        prompt: bare.task,
+        prompt: bare.task().to_owned(),
     })?;
     progress.stage(crate::outline_progress::OutlineStage::Drafting);
     let outline = super::send_packed(

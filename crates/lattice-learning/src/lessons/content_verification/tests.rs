@@ -80,7 +80,7 @@ pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
     if crate::lessons::structured_call::is_draft_request(request) {
         return Vec::new();
     }
-    if let Some(schema) = &request.json_schema {
+    if let Some(schema) = request.schema().map(|schema| schema.as_json()) {
         assert_schema_request_holds_the_shape(request, schema);
     }
     let (system, user) = fixture_messages(request);
@@ -114,7 +114,7 @@ pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
 /// prompt: nothing for a first ask.
 fn fixture_correction(request: &CompletionRequest) -> String {
     request
-        .input
+        .input()
         .iter()
         .rev()
         .find_map(|item| match item {
@@ -219,8 +219,8 @@ fn fixture_repair_edits(request: &CompletionRequest, user: &str, text: String) -
         return text;
     }
     let entries = request
-        .json_schema
-        .as_ref()
+        .schema()
+        .map(|schema| schema.as_json())
         .and_then(|schema| schema.pointer("/properties/answers/items"));
     let sent: Vec<Value> = serde_json::from_str::<Value>(user)
         .ok()
@@ -396,7 +396,7 @@ fn assert_schema_request_holds_the_shape(request: &CompletionRequest, schema: &V
     // prompt (application/services/claim_verification/batch.rs), not
     // learning's; it still says "Return JSON with checks" and is left to its
     // owner.
-    let shared_claim_check = request.input.iter().any(|item| {
+    let shared_claim_check = request.input().iter().any(|item| {
         matches!(
             item,
             lattice_core::application::ports::llm_port::CompletionInput::Message { role, content }
@@ -406,7 +406,7 @@ fn assert_schema_request_holds_the_shape(request: &CompletionRequest, schema: &V
     if shared_claim_check {
         return;
     }
-    for item in &request.input {
+    for item in request.input() {
         if let lattice_core::application::ports::llm_port::CompletionInput::Message {
             content,
             ..
@@ -2045,6 +2045,23 @@ async fn unlabeled_data_and_code_are_labeled_without_changing_their_bytes() -> R
 }
 
 #[tokio::test]
+async fn prompt_snapshot_fence_labels() -> Result<()> {
+    use crate::lessons::course_generation_tests::{RequestLog, ScriptedModel};
+    let inner = ScriptedModel {
+        outputs: Mutex::new(
+            vec![json!({"fences":[{"id":"block-0-fence-0","language":"text"},{"id":"block-0-fence-1","language":"javascript"}]}).to_string()].into(),
+        ),
+        prompts: Mutex::new(Vec::new()),
+    };
+    let model = RequestLog::new(&inner);
+    let body = "Directory tree:\n```\nproject/\n└── main.rs\n```\nRunnable example:\n```\nconsole.log(' a  b ');\n```\n";
+    let lesson = json!({"blocks":[{"kind":"worked_example","title":"Tree and program","body":body}],"questions":[]});
+    normalize_example_fences(&model, lesson.to_string()).await?;
+    model.assert_snapshot::<execution::FenceLabels>();
+    Ok(())
+}
+
+#[tokio::test]
 async fn an_unclosed_fence_is_left_as_written_and_a_closed_one_elsewhere_is_still_labeled(
 ) -> Result<()> {
     use crate::lessons::course_generation_tests::ScriptedModel;
@@ -2105,7 +2122,7 @@ async fn durable_judge_recovers_truncated_output_without_using_it_as_approval() 
     impl LLMPort for TruncatedJudge {
         async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
             assert!(request.no_time_limit);
-            assert!(request.max_output_tokens.unwrap() > 512);
+            assert!(request.max_output_tokens().unwrap() > 512);
             assert_eq!(request.reasoning_effort.as_deref(), Some("low"));
             assert!(!request.want_logprobs);
             let call = self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -2116,7 +2133,7 @@ async fn durable_judge_recovers_truncated_output_without_using_it_as_approval() 
                     ..Default::default()
                 });
             }
-            let sent = serde_json::to_string(&request.input)?;
+            let sent = serde_json::to_string(request.input())?;
             assert!(sent.contains(CORRECTION_LEAD));
             assert!(sent.contains(CUT_OFF_REFUSAL));
             Ok(CompletionResponse {
@@ -2471,6 +2488,17 @@ async fn strict_checker_rejects_missing_invented_quotes_and_truncated_replies() 
 }
 
 pub(crate) async fn install_source(db: &Database, program_id: &str, text: &str) -> Result<()> {
+    let id = || uuid::Uuid::new_v4().to_string();
+    install_source_as(db, program_id, text, (&id(), &id())).await
+}
+
+/// [`install_source`] with the source and version ids given.
+pub(crate) async fn install_source_as(
+    db: &Database,
+    program_id: &str,
+    text: &str,
+    (source_id, version_id): (&str, &str),
+) -> Result<()> {
     use crate::{
         dto::{LearningSourceKind, LearningSourcePolicy},
         source_library::{CapturedLearningSource, LearningSourceLibraryRepository},
@@ -2480,8 +2508,8 @@ pub(crate) async fn install_source(db: &Database, program_id: &str, text: &str) 
         .add(
             crate::source_library::NewLearningSource {
                 operation_id: &id(),
-                source_id: &id(),
-                version_id: &id(),
+                source_id,
+                version_id,
                 program_id,
                 kind: LearningSourceKind::Pasted,
                 operation_kind: "add_text",

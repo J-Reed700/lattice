@@ -48,7 +48,7 @@ fn reply(content: &str, slot: &[u32]) -> String {
 
 fn schema_of(model: &ScriptedModel) -> String {
     let requests = model.requests();
-    let schema = requests[0].json_schema.clone().unwrap();
+    let schema = requests[0].schema().unwrap().as_json().clone();
     serde_json::to_string(&schema).unwrap()
 }
 
@@ -166,6 +166,20 @@ async fn a_good_reply_returns_the_kinds_parts_in_order() {
         })
     );
     assert_eq!(model.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn prompt_snapshot_practice_counterpart_reply() {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let kind = slotted().build();
+    let good = reply("Compare the last with the first.", &[2, 0]);
+    let (result, model) = ask(&kind, Setting::Coached, &Cue::Reply, &[&good]).await;
+    assert!(result.is_ok(), "{result:?}");
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "practice-counterpart-reply",
+        &model.requests(),
+    );
 }
 
 #[tokio::test]

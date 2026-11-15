@@ -19,7 +19,7 @@ use super::catalog::CloudModelDto;
 use super::streaming::Callback;
 use crate::features::llm::fitting::{Fitted, Thinking};
 
-pub(super) mod anthropic;
+pub(in crate::features::llm) mod anthropic;
 mod google;
 mod listing;
 mod openai;
@@ -93,6 +93,10 @@ pub(super) trait CompletionProtocol: ProviderApi {
     /// Whether `model` thinks through `request` before answering: the one
     /// answer the body, the reply ceiling and the port's reasoning flag read.
     fn thinking(&self, model: &str, request: &CompletionRequest) -> Thinking;
+    /// Whether this provider holds an answer to `schema` as written.
+    fn enforces(&self, _schema: &Value) -> bool {
+        false
+    }
     /// The request body for the fitted request on `model`.
     fn body(&self, model: &str, fitted: &Fitted<'_>, stream: bool) -> Result<Value>;
     /// A whole reply, streamed or not, read back into a completion.

@@ -222,7 +222,7 @@ impl LLMPort for Figures {
             .iter()
             .any(|prompt| prompt.starts_with("Source passages:"))
         {
-            let correcting = serde_json::to_string(&request.input)?.contains(CORRECTION_LEAD);
+            let correcting = serde_json::to_string(request.input())?.contains(CORRECTION_LEAD);
             let ask = if correcting {
                 self.asks.load(Ordering::Relaxed)
             } else {

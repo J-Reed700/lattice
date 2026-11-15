@@ -38,7 +38,7 @@ impl LLMPort for Script {
         self.schemas
             .lock()
             .unwrap()
-            .extend(request.json_schema.clone());
+            .extend(request.schema().map(|schema| schema.as_json().clone()));
         let context: Value = serde_json::from_str(user).unwrap_or(Value::Null);
         let reply = match kind {
             "solve" => {

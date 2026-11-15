@@ -15,9 +15,10 @@ use tracing::{debug, warn};
 use lattice_core::application::contracts::settings::LLMVerificationSettingsDto;
 use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::application::ports::llm_port::{
-    chars_within_tokens, CompletionInput, CompletionRequest, InferencePriority, SamplingOverride,
+    chars_within_tokens, CompletionInput, InferencePriority, SamplingOverride,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::legacy;
 #[cfg(test)]
 use lattice_core::application::services::claim_verification::{
     parse_judge_explanation, parse_verdict_word, verdict_from_logprobs,
@@ -148,7 +149,7 @@ impl ClaimJudge {
             .collect();
         let reply = self
             .llm
-            .complete(&CompletionRequest {
+            .complete(&legacy::completion(legacy::Completion {
                 input: vec![
                     CompletionInput::Message {
                         role: "system".into(),
@@ -164,7 +165,7 @@ impl ClaimJudge {
                 no_time_limit: true,
                 priority: InferencePriority::Verification,
                 ..Default::default()
-            })
+            }))
             .await
             .inspect_err(|error| warn!(%error, "Could not sort a reply's uncited sentences"))
             .ok()?;

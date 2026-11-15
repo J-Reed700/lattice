@@ -10,7 +10,7 @@ pub(crate) use crate::lessons::structured_call::complete_json;
 use crate::model_call;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
-use lattice_core::application::services::model_contract::ContractCall;
+use lattice_core::application::services::model_contract::{legacy, ContractCall};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::text::same_text;
 use serde::Deserialize;
@@ -209,8 +209,8 @@ pub(crate) fn parse_json<T: for<'de> Deserialize<'de>>(raw: &str) -> Result<T> {
 /// Whether `prompt` and the answer's reservation fit the model's window,
 /// counted exactly where the backend can count.
 async fn fits(llm: &dyn LLMPort, system: &str, prompt: &str, output_tokens: usize) -> bool {
-    let mut request = GroundedRequest::new(system, prompt);
-    request.output_tokens = output_tokens;
+    let mut request = legacy::grounded(system, prompt);
+    *legacy::grounded_says(&mut request).output_tokens = output_tokens;
     model_call::fits(llm, &request).await
 }
 

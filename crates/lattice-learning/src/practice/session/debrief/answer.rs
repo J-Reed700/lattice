@@ -359,8 +359,8 @@ pub(super) async fn ask(
     request: GroundedRequest,
 ) -> Result<(String, RawAnswer)> {
     let call = ContractCall::of::<DebriefAnswer>(&PromptInput {
-        system: request.instructions.clone(),
-        prompt: request.task.clone(),
+        system: request.instructions().to_owned(),
+        prompt: request.task().to_owned(),
     })?;
     complete_checked_request(llm, &call, request, None, None, |raw| {
         read(raw, plan).map(|answer| (raw.to_owned(), answer))

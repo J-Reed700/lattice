@@ -1,4 +1,5 @@
 use super::*;
+use lattice_core::application::services::model_contract::legacy;
 use crate::features::llm::fitting::SendUnscheduled;
 use lattice_core::application::ports::llm_port::{invalid_tool_call_problem, RequestSize};
 use wiremock::{
@@ -43,12 +44,12 @@ fn body_of(client: &LlamaCppLlm, request: &CompletionRequest) -> Result<Value> {
 /// Plain text through the typed path, as string-only callers make it.
 async fn text(client: &LlamaCppLlm, prompt: &str, context: &[String]) -> Result<String> {
     let response = client
-        .complete(&CompletionRequest {
+        .complete(&legacy::completion(legacy::Completion {
             input: lattice_core::application::services::completion_input::from_context(
                 "", context, prompt,
             ),
             ..Default::default()
-        })
+        }))
         .await?;
     if !response.tool_calls.is_empty() {
         return Err(AppError::InvalidState(
@@ -136,7 +137,7 @@ fn typed_system_messages_coalesce_without_altering_native_tools_or_images() {
     let assistant = json!({"role":"assistant","content":null,"reasoning_content":"reasoning", "tool_calls":[
         {"id":"call_1","type":"function","function":{"name":"search","arguments":"{}"}}
     ]});
-    let request = CompletionRequest {
+    let request = legacy::completion(legacy::Completion {
         input: vec![
             CompletionInput::Message {
                 role: "system".into(),
@@ -162,7 +163,7 @@ fn typed_system_messages_coalesce_without_altering_native_tools_or_images() {
             },
         ],
         ..Default::default()
-    };
+    });
     let body = body_of(&client, &request).unwrap();
     assert_eq!(
         body["messages"],
@@ -176,7 +177,7 @@ fn typed_system_messages_coalesce_without_altering_native_tools_or_images() {
         {"type":"text","text":"Describe"},
         {"type":"image_url","image_url":{"url":"data:image/png;base64,image-data"}}
     ]});
-    let image_request = CompletionRequest {
+    let image_request = legacy::completion(legacy::Completion {
         input: vec![
             CompletionInput::Message {
                 role: "system".into(),
@@ -187,7 +188,7 @@ fn typed_system_messages_coalesce_without_altering_native_tools_or_images() {
             },
         ],
         ..Default::default()
-    };
+    });
     let body = body_of(&client, &image_request).unwrap();
     assert_eq!(
         body["messages"],
@@ -316,7 +317,7 @@ async fn tools_and_native_assistant_messages_survive_followup() {
         .respond_with(ResponseTemplate::new(200).set_body_string(stream_reply(message.clone(), "tool_calls"))).expect(1).mount(&server).await;
     let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let response = client
-        .complete(&CompletionRequest {
+        .complete(&legacy::completion(legacy::Completion {
             input: vec![CompletionInput::Message {
                 role: "user".into(),
                 content: "Find rust".into(),
@@ -327,7 +328,7 @@ async fn tools_and_native_assistant_messages_survive_followup() {
                 parameters: json!({"type":"object"}),
             }],
             ..Default::default()
-        })
+        }))
         .await
         .unwrap();
     assert!(
@@ -338,10 +339,10 @@ async fn tools_and_native_assistant_messages_survive_followup() {
         id: "call_1".into(),
         output: "Found Rust docs".into(),
     });
-    let followup = CompletionRequest {
+    let followup = legacy::completion(legacy::Completion {
         input,
         ..Default::default()
-    };
+    });
     let mut replayed = message.clone();
     replayed
         .as_object_mut()
@@ -379,7 +380,7 @@ async fn streaming_uses_chat_completions_with_auth_and_emits_content() {
         Ok(())
     };
     let response = client
-        .complete_with_progress(&CompletionRequest::default(), &on_text)
+        .complete_with_progress(&legacy::completion(legacy::Completion::default()), &on_text)
         .await
         .unwrap();
     assert_eq!(response.text, "Hello");
@@ -685,7 +686,7 @@ async fn active_completion_can_outlast_the_read_timeout() {
     config.timeout_seconds = 1;
     let client = LlamaCppLlm::new(&config, credential()).unwrap();
     let response = client
-        .complete(&CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .unwrap();
     assert_eq!(response.text, "Hello");
@@ -721,7 +722,7 @@ async fn stream_that_goes_silent_after_starting_is_retried() {
     let client = LlamaCppLlm::new(&config, credential()).unwrap();
     let retries = std::sync::atomic::AtomicUsize::new(0);
     let response = client
-        .complete_with_retry_progress(&CompletionRequest::default(), &|_| Ok(()), &|_| {
+        .complete_with_retry_progress(&legacy::completion(legacy::Completion::default()), &|_| Ok(()), &|_| {
             retries.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(())
         })
@@ -751,7 +752,7 @@ async fn prompt_progress_alone_does_not_arm_the_stall_timer() {
     config.timeout_seconds = 1;
     let client = LlamaCppLlm::new(&config, credential()).unwrap();
     let response = client
-        .complete(&CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .unwrap();
     assert_eq!(response.text, "Processed");
@@ -779,10 +780,10 @@ async fn a_retry_shares_the_budget_instead_of_restarting_it() {
         .await;
     let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let error = client
-        .complete(&CompletionRequest {
+        .complete(&legacy::completion(legacy::Completion {
             time_budget: Some(Duration::from_millis(600)),
             ..Default::default()
-        })
+        }))
         .await
         .unwrap_err();
     assert!(error.to_string().contains("time budget"), "{error}");
@@ -798,7 +799,7 @@ async fn queued_request_may_wait_longer_than_the_stall_timeout() {
     config.timeout_seconds = 1;
     let client = LlamaCppLlm::new(&config, credential()).unwrap();
     let response = client
-        .complete(&CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .unwrap();
     assert_eq!(response.text, "Served");
@@ -815,10 +816,10 @@ async fn time_budget_bounds_the_whole_generation() {
         .await;
     let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let error = client
-        .complete(&CompletionRequest {
+        .complete(&legacy::completion(legacy::Completion {
             time_budget: Some(Duration::from_millis(300)),
             ..Default::default()
-        })
+        }))
         .await
         .unwrap_err();
     assert!(error.to_string().contains("time budget"), "{error}");
@@ -852,13 +853,13 @@ async fn typed_completion_delivers_answer_progress_and_preserves_tool_response()
     };
     let response = llm
         .complete_with_progress(
-            &CompletionRequest {
+            &legacy::completion(legacy::Completion {
                 input: vec![CompletionInput::Message {
                     role: "user".into(),
                     content: "A question".into(),
                 }],
                 ..Default::default()
-            },
+            }),
             &on_text,
         )
         .await
@@ -882,7 +883,7 @@ async fn typed_completion_delivers_reasoning_on_its_own_progress_channel() {
     let reasoning = std::sync::Mutex::new(String::new());
     let response = llm
         .complete_with_reasoning_progress(
-            &CompletionRequest::default(),
+            &legacy::completion(legacy::Completion::default()),
             &|_| Ok(()),
             &|delta| {
                 reasoning.lock().unwrap().push_str(&delta);
@@ -957,7 +958,7 @@ async fn reasoning_only_empty_and_transient_failures_retry_identical_request() {
     .await;
     let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let response = client
-        .complete(&CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .unwrap();
     assert_eq!(response.text, "Recovered answer");
@@ -977,7 +978,7 @@ async fn transient_sse_errors_retry_but_context_errors_do_not() {
     let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let attempts = std::sync::Mutex::new(Vec::new());
     let response = client
-        .complete_with_retry_progress(&CompletionRequest::default(), &|_| Ok(()), &|attempt| {
+        .complete_with_retry_progress(&legacy::completion(legacy::Completion::default()), &|_| Ok(()), &|attempt| {
             attempts.lock().unwrap().push(attempt);
             Ok(())
         })
@@ -1001,7 +1002,7 @@ async fn transient_sse_errors_retry_but_context_errors_do_not() {
     .await;
     let error = LlamaCppLlm::new(&settings(server.uri()), credential())
         .unwrap()
-        .complete(&CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .unwrap_err();
     assert!(
@@ -1062,10 +1063,10 @@ async fn http_server_failure_retries_with_a_fresh_prompt_cache_and_same_input() 
     .await;
     let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let response = client
-        .complete(&CompletionRequest {
+        .complete(&legacy::completion(legacy::Completion {
             no_time_limit: true,
             ..Default::default()
-        })
+        }))
         .await
         .unwrap();
     assert_eq!(response.text, "Recovered");
@@ -1090,7 +1091,7 @@ async fn failed_partial_draft_is_reset_before_recovery_and_tools_are_returned_on
     let events = std::sync::Mutex::new(Vec::new());
     let response = client
         .complete_with_retry_progress(
-            &CompletionRequest::default(),
+            &legacy::completion(legacy::Completion::default()),
             &|text| {
                 events.lock().unwrap().push(text);
                 Ok(())
@@ -1117,7 +1118,7 @@ async fn empty_response_exhaustion_returns_error_after_five_attempts() {
     let server = sequence_server(vec![sse_response(json!({"reasoning":"hidden"})); 5]).await;
     let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     assert!(client
-        .complete(&CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .is_err());
 }
@@ -1127,7 +1128,7 @@ async fn authentication_and_invalid_tools_are_not_retried() {
     let server = sequence_server(vec![ResponseTemplate::new(401)]).await;
     let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     assert!(client
-        .complete(&CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .is_err());
 
@@ -1139,7 +1140,7 @@ async fn authentication_and_invalid_tools_are_not_retried() {
     .await;
     let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let response = client
-        .complete(&CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .unwrap();
     assert!(matches!(&response.tool_calls[..],
@@ -1154,7 +1155,7 @@ async fn an_output_limit_stop_returns_the_text_once_without_retrying() {
     .await;
     let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let response = client
-        .complete(&CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .unwrap();
     assert_eq!(response.text, "unfinished");
@@ -1167,7 +1168,7 @@ async fn an_output_limit_stop_returns_the_text_once_without_retrying() {
     .await;
     let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     assert!(client
-        .complete(&CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .is_err());
     assert_eq!(server.received_requests().await.unwrap().len(), 1);
@@ -1181,7 +1182,7 @@ async fn dropping_generation_during_backoff_prevents_another_request() {
     .await;
     let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let reset = std::sync::atomic::AtomicBool::new(false);
-    let request = CompletionRequest::default();
+    let request = legacy::completion(legacy::Completion::default());
     let on_retry = |_| {
         reset.store(true, std::sync::atomic::Ordering::SeqCst);
         Ok(())
@@ -1202,7 +1203,7 @@ async fn callback_failure_does_not_retry() {
     let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     assert!(client
         .complete_with_retry_progress(
-            &CompletionRequest::default(),
+            &legacy::completion(legacy::Completion::default()),
             &|_| Err(AppError::InvalidState("cancelled".into())),
             &|_| Ok(())
         )
@@ -1236,7 +1237,7 @@ async fn text_only_progress_does_not_repeat_a_partial_answer() {
     let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let text = std::sync::Mutex::new(String::new());
     let result = client
-        .complete_with_progress(&CompletionRequest::default(), &|chunk| {
+        .complete_with_progress(&legacy::completion(legacy::Completion::default()), &|chunk| {
             text.lock().unwrap().push_str(&chunk);
             Ok(())
         })
@@ -1248,25 +1249,20 @@ async fn text_only_progress_does_not_repeat_a_partial_answer() {
 #[test]
 fn a_logprobs_request_reads_the_first_tokens_alternatives_back() {
     let client = LlamaCppLlm::new(&settings("http://127.0.0.1:1".into()), credential()).unwrap();
-    let request = CompletionRequest {
+    let request = legacy::completion(legacy::Completion {
         input: vec![CompletionInput::Message {
             role: "user".into(),
             content: "Answer in one word.".into(),
         }],
         want_logprobs: true,
         ..Default::default()
-    };
+    });
     let body = body_of(&client, &request).unwrap();
     assert_eq!(body["logprobs"], true);
     assert!(body["top_logprobs"].as_u64().unwrap() > 1);
-    let plain = body_of(
-        &client,
-        &CompletionRequest {
-            want_logprobs: false,
-            ..request.clone()
-        },
-    )
-    .unwrap();
+    let mut unranked = request.clone();
+    unranked.want_logprobs = false;
+    let plain = body_of(&client, &unranked).unwrap();
     assert!(plain.get("logprobs").is_none());
 
     // Streamed: the first chunk carries the first token's alternatives; later
@@ -1372,11 +1368,11 @@ async fn interactive_completion_is_not_cut_off_by_a_request_time_budget() {
         .await;
     let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let result = client
-        .complete(&CompletionRequest {
+        .complete(&legacy::completion(legacy::Completion {
             time_budget: Some(Duration::from_millis(10)),
             no_time_limit: true,
             ..Default::default()
-        })
+        }))
         .await
         .unwrap();
     assert_eq!(result.text, "Completed");
@@ -1411,13 +1407,13 @@ fn reasoning_probabilities_are_never_treated_as_verdict_confidence() {
 #[test]
 fn a_scheduled_request_carries_its_slot_and_reuses_the_cached_prefix() {
     let client = LlamaCppLlm::new(&settings("http://localhost:8080".into()), credential()).unwrap();
-    let request = CompletionRequest {
+    let request = legacy::completion(legacy::Completion {
         input: vec![CompletionInput::Message {
             role: "user".into(),
             content: "Hello".into(),
         }],
         ..Default::default()
-    };
+    });
     let body = client
         .body(&Fitted::uncut(&client, &request).in_slot(Some(1)))
         .unwrap();
@@ -1505,7 +1501,7 @@ async fn the_bundled_sidecar_and_a_remote_server_send_identical_requests() {
     let remote = LlamaCppLlm::new(&settings(remote_server.uri()), credential()).unwrap();
     let sidecar =
         LlamaCppLlm::connect(&sidecar_server.uri(), "sidecar-token", server_config(true)).unwrap();
-    let request = CompletionRequest {
+    let request = legacy::completion(legacy::Completion {
         input: vec![
             CompletionInput::Message {
                 role: "system".into(),
@@ -1538,7 +1534,7 @@ async fn the_bundled_sidecar_and_a_remote_server_send_identical_requests() {
         max_output_tokens: Some(512),
         want_logprobs: true,
         ..Default::default()
-    };
+    });
     let fitted = Fitted::uncut(&remote, &request).in_slot(Some(2));
     assert_eq!(
         remote.send(&fitted, Progress::None).await.unwrap().text,
@@ -1573,21 +1569,21 @@ fn a_model_without_a_tool_template_refuses_tool_traffic() {
         ..server_config(true)
     };
     let client = LlamaCppLlm::connect("http://127.0.0.1:9", "token", config).unwrap();
-    let plain = CompletionRequest {
+    let plain = legacy::completion(legacy::Completion {
         input: vec![CompletionInput::Message {
             role: "user".into(),
             content: "Hi".into(),
         }],
         ..Default::default()
-    };
+    });
     assert!(body_of(&client, &plain).is_ok());
-    let replayed_result = CompletionRequest {
+    let replayed_result = legacy::completion(legacy::Completion {
         input: vec![CompletionInput::ToolResult {
             id: "call_1".into(),
             output: "Result".into(),
         }],
         ..Default::default()
-    };
+    });
     assert!(matches!(
         body_of(&client, &replayed_result),
         Err(AppError::InvalidConfig(_))
@@ -1736,10 +1732,10 @@ async fn the_same_server_failure_twice_is_one_rejection_and_no_third_attempt() {
     let retries = std::sync::Mutex::new(Vec::new());
     let error = client
         .complete_with_retry_progress(
-            &CompletionRequest {
+            &legacy::completion(legacy::Completion {
                 no_time_limit: true,
                 ..Default::default()
-            },
+            }),
             &|_| Ok(()),
             &|attempt| {
                 retries.lock().unwrap().push(attempt);
@@ -1792,10 +1788,10 @@ async fn outages_and_failures_of_another_kind_are_still_retried() {
     .await;
     let response = LlamaCppLlm::new(&settings(server.uri()), credential())
         .unwrap()
-        .complete(&CompletionRequest {
+        .complete(&legacy::completion(legacy::Completion {
             no_time_limit: true,
             ..Default::default()
-        })
+        }))
         .await
         .unwrap();
     assert_eq!(response.text, "Recovered");
@@ -1812,10 +1808,10 @@ async fn a_failure_whose_words_change_each_time_is_still_the_same_failure() {
     .await;
     let error = LlamaCppLlm::new(&settings(server.uri()), credential())
         .unwrap()
-        .complete(&CompletionRequest {
+        .complete(&legacy::completion(legacy::Completion {
             no_time_limit: true,
             ..Default::default()
-        })
+        }))
         .await
         .unwrap_err();
     assert!(matches!(error, AppError::ModelRejected(_)), "{error}");
@@ -1837,14 +1833,14 @@ async fn a_rejection_shows_the_servers_words_but_never_the_prompt_they_quote() {
     .await;
     let error = LlamaCppLlm::new(&settings(server.uri()), credential())
         .unwrap()
-        .complete(&CompletionRequest {
+        .complete(&legacy::completion(legacy::Completion {
             input: vec![CompletionInput::Message {
                 role: "user".into(),
                 content: private.into(),
             }],
             no_time_limit: true,
             ..Default::default()
-        })
+        }))
         .await
         .unwrap_err();
     let told = error.to_string();
@@ -1877,14 +1873,14 @@ async fn a_request_the_configured_window_cannot_hold_is_never_sent() {
         .unwrap()
         .schedule(&SchedulerRegistry::default())
         .await
-        .complete(&CompletionRequest {
+        .complete(&legacy::completion(legacy::Completion {
             input: vec![CompletionInput::Message {
                 role: "user".into(),
                 content: "word ".repeat(4_000),
             }],
             max_output_tokens: Some(1_024),
             ..Default::default()
-        })
+        }))
         .await
         .unwrap_err();
     assert!(
@@ -1931,14 +1927,14 @@ async fn an_answer_larger_than_the_room_left_is_cut_to_fit_not_refused() {
         .unwrap()
         .schedule(&SchedulerRegistry::default())
         .await
-        .complete(&CompletionRequest {
+        .complete(&legacy::completion(legacy::Completion {
             input: vec![CompletionInput::Message {
                 role: "user".into(),
                 content: "x".repeat(11_996),
             }],
             max_output_tokens: Some(1_098),
             ..Default::default()
-        })
+        }))
         .await
         .unwrap();
     let requests = server.received_requests().await.unwrap();

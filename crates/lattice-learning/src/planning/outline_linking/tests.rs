@@ -509,7 +509,7 @@ impl LLMPort for Notation {
     ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
         use lattice_core::application::ports::llm_port::CompletionInput;
         let rendered = request
-            .input
+            .input()
             .iter()
             .flat_map(|item| match item {
                 CompletionInput::Message { role, content } => vec![role.clone(), content.clone()],
@@ -781,5 +781,35 @@ async fn linking_the_whole_outline_says_one_outline_item() {
     assert_eq!(
         progress.snapshot().detail.as_deref(),
         Some("Linked 1 outline item; 1 of 1 decided")
+    );
+}
+
+#[tokio::test]
+async fn prompt_snapshot_outline_linking() {
+    use crate::planning::outline_reference_tests::Capture;
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let mut draft = draft(candidate());
+    let llm = model(vec![json!({"links":[
+        {"id":"/modules/0/summary","candidate":"p2","reason":"The passage addresses interpreting observed differences."},
+        {"id":"/modules/0/outcomes/0","candidate":"p1","reason":"The passage explains random assignment and confounding."},
+        {"id":"/modules/0/outcomes/1","candidate":"p2","reason":"The passage is about uncertainty estimates, not assignment."},
+        {"id":"/modules/0/lessons/0","candidate":"none","reason":"Neither passage plans treatment groups."}
+    ]})]);
+    let capture = Capture::of::<OutlineLinking>(&llm);
+
+    link(
+        &capture,
+        &mut draft,
+        &sources(),
+        None,
+        &OutlineProgress::default(),
+    )
+    .await
+    .unwrap();
+
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "outline-linking",
+        &capture.requests(),
     );
 }

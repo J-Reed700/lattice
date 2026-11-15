@@ -79,7 +79,7 @@ fn corrections(requests: &[CompletionRequest]) -> Vec<String> {
     requests
         .iter()
         .filter_map(|request| {
-            request.input.iter().rev().find_map(|item| match item {
+            request.input().iter().rev().find_map(|item| match item {
                 CompletionInput::Message { role, content } if role == "user" => {
                     Some(content.clone())
                 }
@@ -219,7 +219,7 @@ async fn a_correction_is_asked_in_the_same_conversation_about_every_passage() {
     assert!(resolve(&mapping.unwrap(), &units).is_ok());
     assert_eq!(requests.len(), 2);
     let said: Vec<String> = requests[1]
-        .input
+        .input()
         .iter()
         .filter_map(|item| match item {
             CompletionInput::Message { content, .. } => Some(content.clone()),

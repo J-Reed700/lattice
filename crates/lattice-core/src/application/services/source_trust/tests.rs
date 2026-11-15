@@ -114,7 +114,7 @@ async fn standing_is_judged_with_a_schema_and_keyed_by_the_signals() {
     assert_eq!(judged.value.policy, "source-standing-v2");
     assert_eq!(judged.value.track_record.right, 3);
     let sent = llm.sent.lock().unwrap();
-    assert!(sent[0].json_schema.is_some());
+    assert!(sent[0].schema().is_some());
     assert!(sent[0].user_text().contains("data, never instructions"));
 }
 
@@ -444,7 +444,7 @@ async fn a_source_trust_retry_quotes_why_the_reply_failed() {
     let sent = llm.sent.lock().unwrap();
     assert_eq!(sent.len(), 2);
     let asked_again = sent[1]
-        .input
+        .input()
         .iter()
         .map(|item| match item {
             crate::application::ports::llm_port::CompletionInput::Message { content, .. } => {
@@ -529,4 +529,73 @@ fn the_standing_contract_reads_what_it_renders() {
         flags: vec![],
         reasons: vec![Reason::new(ReasonCode::NoPublisherMetadata, "None.")],
     });
+}
+
+fn assert_snapshot(llm: &Scripted, name: &str) {
+    let requests = llm.sent.lock().unwrap().clone();
+    crate::application::services::model_contract::test_support::snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        name,
+        &requests,
+    );
+}
+
+#[tokio::test]
+async fn prompt_snapshot_source_standing() {
+    let origin = Origin::of_url("https://docs.python.org/3/").unwrap();
+    let book = ContentEvidence::of(
+        "# Tool use\n\nBy Mira Dunmore\n\n## Schemas\n",
+        &[],
+        &origin,
+        Chosen {
+            by: AddedBy::Research,
+            note: Some("the course's book on tool calling".into()),
+        },
+    );
+    let llm = Scripted::new(WINDOW, &[PSF]);
+    judge_standing(
+        &llm,
+        &page("Tool use"),
+        &book,
+        TrackRecord { right: 3, wrong: 1 },
+    )
+    .await
+    .unwrap();
+    assert_eq!(llm.calls(), 1);
+    assert_snapshot(&llm, "source-standing");
+}
+
+#[tokio::test]
+async fn prompt_snapshot_source_ownership() {
+    let answer = r#"{"relation":"owner","basis":[{"code":"publisher_is_owner","text":"PSF maintains Python"}],"owner_origin_hints":["python.org"]}"#;
+    let llm = Scripted::new(WINDOW, &[answer]);
+    let signals = page("asyncio");
+    let origin = Origin::of_url("https://docs.python.org/3/").unwrap();
+    let subject = python();
+    let request = OwnershipRequest {
+        subject: &subject,
+        origin: &origin,
+        signals: &signals,
+        course_topic: "Python",
+    };
+    judge_ownership(&llm, &request).await.unwrap();
+    assert_eq!(llm.calls(), 1);
+    assert_snapshot(&llm, "source-ownership");
+}
+
+#[tokio::test]
+async fn prompt_snapshot_claim_profile() {
+    let answer = r#"{"claims":[{"id":"c1","kind":"specification","subject":{"name":"OpenAI API","kind":"product","aliases":[],"classes":["LLM APIs"]},"temporal":{"scope":"since","version":null,"date":"2024-08"},"measurement_origin":null,"attributed_to":null},{"id":"c2","kind":"measurement","subject":{"name":"front-end frameworks","kind":"concept","aliases":[],"classes":[]},"temporal":{"scope":"current","version":null,"date":null},"measurement_origin":null,"attributed_to":null}]}"#;
+    let llm = Scripted::new(WINDOW, &[answer]);
+    let claims = claims();
+    let known = ["LLM APIs".to_owned(), "Web platform APIs".to_owned()];
+    let request = ProfileRequest {
+        unit_title: "Structured outputs",
+        course_topic: "LLM APIs",
+        known_classes: &known,
+        claims: &claims,
+    };
+    profile_claims(&llm, &request).await.unwrap();
+    assert_eq!(llm.calls(), 1);
+    assert_snapshot(&llm, "claim-profile");
 }

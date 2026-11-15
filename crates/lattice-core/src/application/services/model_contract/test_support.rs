@@ -3,6 +3,9 @@ use crate::shared::error::Result;
 use std::fmt::Debug;
 
 mod scripted;
+pub mod samples;
+pub mod snapshot;
+pub mod taint;
 
 pub use scripted::{Reply, ScriptedModel, Sent, SCRIPTED_WINDOW};
 

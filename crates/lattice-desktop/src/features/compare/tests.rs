@@ -308,8 +308,8 @@ async fn a_row_sends_its_passages_once_at_interactive_priority() {
     assert_eq!(carried.len(), 3, "an 8k window carries every passage");
     let sent = llm.0.lock().unwrap();
     assert_eq!(sent[0].priority, InferencePriority::Interactive);
-    let [CompletionInput::Message { role, content }] = sent[0].input.as_slice() else {
-        panic!("one user message, got {:?}", sent[0].input);
+    let [CompletionInput::Message { role, content }] = sent[0].input() else {
+        panic!("one user message, got {:?}", sent[0].input());
     };
     assert_eq!(role, "user");
     assert_eq!(

@@ -165,6 +165,30 @@ async fn reference_selection_accepts_all_valid_selected_results_past_four() -> R
 }
 
 #[tokio::test]
+async fn prompt_snapshot_research_query() -> Result<()> {
+    let results: Vec<_> = (0..2)
+        .map(|i| WebSearchResult {
+            title: format!("Kiln firing guide {i}"),
+            url: format!("https://example.org/kiln-{i}"),
+            snippet: "How a kiln is brought up to temperature.".into(),
+            published_date: None,
+            source: Some("crossref".into()),
+        })
+        .collect();
+    let gaps = [json!({"statement":"A kiln heats in stages.","ownerOriginHints":["example.org"]})];
+    let inner = ScriptedModel {
+        outputs: Mutex::new([selection(&[0, 1])].into()),
+        prompts: Mutex::new(vec![]),
+    };
+    let llm = crate::lessons::course_generation_tests::RequestLog::new(&inner);
+
+    select_references(&llm, "Pottery", "kiln firing stages", &gaps, found(results)).await?;
+
+    llm.assert_snapshot::<ResearchQuery>();
+    Ok(())
+}
+
+#[tokio::test]
 async fn reference_selection_reads_the_results_its_window_holds_in_order() -> Result<()> {
     // Far more than a 128k window holds, as a paged catalog search brings.
     let results: Vec<_> = (0..3000)
@@ -1002,7 +1026,7 @@ impl LLMPort for Notation {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         use lattice_core::application::ports::llm_port::CompletionInput;
         let rendered = request
-            .input
+            .input()
             .iter()
             .filter_map(|item| match item {
                 CompletionInput::Message { role, content } => Some(format!("{role}\n{content}")),

@@ -5,6 +5,7 @@ use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::shared::persistence::Database;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -726,14 +727,14 @@ async fn live_corpus_retrieval_and_answer() {
         }
         Ok(())
     };
-    let request = CompletionRequest {
+    let request = legacy::completion(legacy::Completion {
         input: lattice_core::application::services::completion_input::from_context(
             &prompts.system_prompt,
             &[],
             &prompt,
         ),
         ..Default::default()
-    };
+    });
     let result = tokio::time::timeout(
         Duration::from_secs(300),
         llm.complete_with_progress(&request, &on_text),
@@ -859,7 +860,7 @@ fn explicit_book_order_keeps_editions_separate_and_reaches_the_first_chapter() {
 /// The system instructions a request carries.
 fn system_messages(request: &CompletionRequest) -> Vec<String> {
     request
-        .input
+        .input()
         .iter()
         .filter_map(|item| match item {
             CompletionInput::Message { role, content } if role == "system" => Some(content.clone()),
@@ -908,7 +909,7 @@ impl LLMPort for PlannerStub {
         self.schemas
             .lock()
             .unwrap()
-            .push(request.json_schema.clone());
+            .push(request.schema().map(|schema| schema.as_json().clone()));
         self.cancels.lock().unwrap().push(request.cancel.clone());
         Ok(CompletionResponse::from_text(
             self.responses

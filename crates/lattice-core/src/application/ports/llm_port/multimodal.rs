@@ -135,16 +135,16 @@ impl CompletionInput {
 impl CompletionRequest {
     /// Prompt tokens every picture in the request costs, by declared geometry.
     pub fn image_tokens(&self) -> usize {
-        self.input.iter().map(CompletionInput::image_tokens).sum()
+        self.input().iter().map(CompletionInput::image_tokens).sum()
     }
 
     /// Whether any message carries a picture.
     pub fn has_images(&self) -> bool {
-        self.input.iter().any(|item| item.images().next().is_some())
+        self.input().iter().any(|item| item.images().next().is_some())
     }
 
     /// How many pictures the request carries.
     pub fn image_count(&self) -> usize {
-        self.input.iter().map(|item| item.images().count()).sum()
+        self.input().iter().map(|item| item.images().count()).sum()
     }
 }

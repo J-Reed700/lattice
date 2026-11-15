@@ -33,8 +33,8 @@ pub(crate) async fn ask_request<V>(
     accept: impl Fn(&str) -> Result<V> + Send + Sync,
 ) -> Result<Asked<V>> {
     let call = ContractCall::of::<DrillStageAsk>(&PromptInput {
-        system: request.instructions.clone(),
-        prompt: request.task.clone(),
+        system: request.instructions().to_owned(),
+        prompt: request.task().to_owned(),
     })?;
     let (raw, value) = complete_checked_request(llm, &call, request, None, None, |raw| {
         accept(raw).map(|value| (raw.to_owned(), value))

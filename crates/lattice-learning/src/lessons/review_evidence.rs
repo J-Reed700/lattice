@@ -5,9 +5,8 @@ use crate::lessons::structured_call::{complete_checked_request, CallKind, Reason
 use crate::model_call::ErrorClass;
 use crate::reference_collection::{item_tokens, ReferenceCollection, ReferencePassage};
 use crate::review_findings::{FindingSite, ReviewFinding};
-use lattice_core::application::services::grounded_generation::GroundedRequest;
 use lattice_core::application::services::model_contract::{
-    Contract, ContractCall, ContractId, PromptInput,
+    legacy, Contract, ContractCall, ContractId, PromptInput,
 };
 use lattice_core::protocol;
 use lattice_core::shared::protocol::Protocol;
@@ -460,8 +459,8 @@ pub async fn check(
         &check_list,
         &recorded_list,
     );
-    let mut request = GroundedRequest::new(&system, skeleton.to_string());
-    request.output_tokens = 2 * OUTPUT_TOKENS;
+    let mut request = legacy::grounded(&system, skeleton.to_string());
+    *legacy::grounded_says(&mut request).output_tokens = 2 * OUTPUT_TOKENS;
     let room = crate::model_call::source_room(llm, &request, usize::MAX);
     let share = room / issues.len().max(1);
     let part = |passage: &ReferencePassage| {

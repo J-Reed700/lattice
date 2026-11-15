@@ -1017,7 +1017,10 @@ async fn before_the_explanation_the_passage_is_asked_whether_it_teaches_the_less
         last(request),
         check_message(&facts, "Spacing and memory", &source.text)
     );
-    assert_eq!(request.json_schema, Some(check_schema()));
+    assert_eq!(
+        request.schema().map(|schema| schema.as_json()),
+        Some(&check_schema())
+    );
     assert!(
         system(request).starts_with("You decide whether a passage from a course's sources"),
         "{}",
@@ -3142,4 +3145,24 @@ fn a_passage_is_picked_from_a_large_fresh_course_within_the_deadline() {
 #[test]
 fn a_passage_is_picked_from_a_large_course_whose_every_place_was_drilled_within_the_deadline() {
     picks_within_the_deadline(true);
+}
+
+#[tokio::test]
+async fn prompt_snapshot_passage_fix_judgement() -> Result<()> {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let model = ScriptedModel::new([
+        json!({"reason": "The 40% is gone; 20% is a new figure.", "errorGone": true}).to_string(),
+    ]);
+    let check = fixing_check();
+    let drill = planted_drill("drill");
+    let learner = drill.files[0].text.replace(FIRST_PLANTED, ABOUT_TWENTY);
+
+    fix_of(&model, &check, &drill, &learner).await?;
+
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "passage-fix-judgement",
+        &model.requests(),
+    );
+    Ok(())
 }

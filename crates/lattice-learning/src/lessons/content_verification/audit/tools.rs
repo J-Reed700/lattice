@@ -8,13 +8,14 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use lattice_core::application::ports::llm_port::{
-    CompletionInput, CompletionRequest, CompletionResponse, InferencePriority, SamplingOverride,
-    ToolChoice, ToolDefinition,
+    CompletionInput, CompletionResponse, InferencePriority, SamplingOverride, ToolChoice,
+    ToolDefinition,
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::context_assembler::budget::{
     BudgetAllocation, BudgetRequest, ModelCapacity,
 };
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::shared::error::Result;
 
 use crate::references::web_research::{self, PlannedNeed, Room};
@@ -86,7 +87,7 @@ pub(super) async fn ask(
     loop {
         let room = room_left(llm, &input, tool_tokens, reserve).ok_or(AskError::TooLarge)?;
         let offer = room > 0;
-        let request = CompletionRequest {
+        let request = legacy::completion(legacy::Completion {
             input: input.clone(),
             tools: tools.clone(),
             json_schema: Some(schema.clone()),
@@ -100,7 +101,7 @@ pub(super) async fn ask(
             priority: InferencePriority::Verification,
             no_time_limit: true,
             ..Default::default()
-        };
+        });
         let response = llm.complete(&request).await.map_err(AskError::from)?;
         input_tokens += response.input_tokens;
         output_tokens += response.output_tokens;

@@ -453,6 +453,7 @@ pub(crate) fn text_length_rules(schema: &serde_json::Value) -> Vec<String> {
 pub(crate) struct Reply {
     text: String,
     pub(crate) schemas: std::sync::Mutex<Vec<serde_json::Value>>,
+    pub(crate) requests: std::sync::Mutex<Vec<CompletionRequest>>,
 }
 
 impl Reply {
@@ -460,6 +461,7 @@ impl Reply {
         Self {
             text: text.into(),
             schemas: std::sync::Mutex::new(Vec::new()),
+            requests: std::sync::Mutex::new(Vec::new()),
         }
     }
 }
@@ -467,8 +469,11 @@ impl Reply {
 #[async_trait::async_trait]
 impl LLMPort for Reply {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        if let Ok(mut requests) = self.requests.lock() {
+            requests.push(request.clone());
+        }
         if let Ok(mut schemas) = self.schemas.lock() {
-            schemas.extend(request.json_schema.clone());
+            schemas.extend(request.schema().map(|schema| schema.as_json().clone()));
         }
         Ok(CompletionResponse::from_text(self.text.clone()))
     }
@@ -632,6 +637,64 @@ async fn the_graders_observation_and_quote_are_read_at_any_length() -> Result<()
         let graded = grade(&llm, &session).await;
         assert!(graded.is_ok(), "{what}: {:?}", graded.err());
     }
+    Ok(())
+}
+
+fn sent_by(llm: &Reply) -> Vec<CompletionRequest> {
+    llm.requests.lock().expect("requests").clone()
+}
+
+#[tokio::test]
+async fn prompt_snapshot_practice_tutor_reply() -> Result<()> {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let mut session = started_session("I tried the second approach first.").await?;
+    session.tutor_turns.push(LearningPracticeTutorTurnDto {
+        id: "turn-1".into(),
+        prompt: "Where do I start?".into(),
+        response: "What do you remember about the condition?".into(),
+        request_kind: LearningTutorRequestKind::Question,
+        hint_level: None,
+        citations: vec![],
+        proposal_ids: vec![],
+        model_name: "reply".into(),
+        created_at: 0,
+    });
+    let sources = [passage_source("The passage states one condition.")];
+    let llm = Reply::new(tutor_reply("Which step carries the weight?", json!([]), json!([])));
+    tutor(&llm, &session, &tutor_request(), &sources).await?;
+    snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "practice-tutor-reply", &sent_by(&llm));
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_snapshot_practice_reference_solution() -> Result<()> {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let session = started_session("I can explain the idea.").await?;
+    let sources = [passage_source("The passage states one condition.")];
+    let llm = Reply::new(json!({"solution": "Apply the condition.", "citations": []}).to_string());
+    solution(&llm, &session, &sources).await?;
+    snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "practice-reference-solution", &sent_by(&llm));
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_snapshot_practice_grade() -> Result<()> {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let session = started_session("I tried the second approach first.").await?;
+    let criteria = session
+        .rubric
+        .iter()
+        .map(|c| {
+            json!({
+                "criterion_id": c.id, "score": 2,
+                "observation": "The artifact states the condition.",
+                "evidence_quote": "I tried the second approach first."
+            })
+        })
+        .collect::<Vec<_>>();
+    let llm = Reply::new(json!({"status": "provisional", "criteria": criteria}).to_string());
+    grade(&llm, &session).await?;
+    snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "practice-grade", &sent_by(&llm));
     Ok(())
 }
 

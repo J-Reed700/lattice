@@ -342,9 +342,9 @@ mod tests {
         ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
             use lattice_core::application::ports::llm_port::CompletionResponse;
             let mut budgets = self.0.lock().unwrap();
-            budgets.push(request.max_output_tokens);
+            budgets.push(request.max_output_tokens());
             let first = budgets.first().copied().flatten().unwrap_or(0);
-            if request.max_output_tokens.unwrap_or(0) < first.saturating_mul(2) {
+            if request.max_output_tokens().unwrap_or(0) < first.saturating_mul(2) {
                 return Ok(CompletionResponse {
                     finish_reason: "length".into(),
                     ..CompletionResponse::from_text("{\"answers\":[{\"index\":0,\"reason\":")
@@ -450,5 +450,44 @@ mod tests {
                 ..solution("A second answer.")
             },
         ]);
+    }
+
+    #[tokio::test]
+    async fn prompt_snapshot_quiz_key_solve() -> Result<()> {
+        use lattice_core::application::services::model_contract::test_support::{
+            snapshot, ScriptedModel,
+        };
+        let choice = LearningAssessmentCandidate {
+            format: engine::LearningItemFormat::SingleChoice,
+            prompt: "Which option follows from the premises?".into(),
+            options: vec!["Alpha".into(), "Bravo".into(), "Charlie".into(), "Delta".into()],
+            key: engine::LearningAssessmentKey::Choice(0),
+            explanation: "Alpha follows.".into(),
+            ..rubric_item()
+        };
+        let written = rubric_item();
+        let model = ScriptedModel::new().on::<QuizKeySolve>(|_| {
+            (0..2)
+                .map(|index| Solution {
+                    index,
+                    ..solution("A written answer.")
+                })
+                .collect()
+        });
+
+        solve_items(
+            &model,
+            &[(&choice, "Alpha follows from the premises."), (&written, "The premises are listed in order.")],
+        )
+        .await?;
+
+        let requests = model
+            .sent()
+            .into_iter()
+            .filter(|sent| sent.call.id == QuizKeySolve::ID)
+            .map(|sent| sent.request)
+            .collect::<Vec<_>>();
+        snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "quiz-key-solve", &requests);
+        Ok(())
     }
 }

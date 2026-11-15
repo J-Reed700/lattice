@@ -1,6 +1,7 @@
 //! Source snapshots as request evidence: the room a request leaves for them
 //! and the passages of each that a query retrieves.
 use super::*;
+use lattice_core::application::services::model_contract::legacy;
 
 /// The room a request built with an empty snapshot list leaves for passages,
 /// by the planner's estimate: how deep retrieval goes, and the first room a
@@ -11,12 +12,8 @@ pub(crate) fn snapshot_room(
     skeleton: &serde_json::Value,
     output_tokens: usize,
 ) -> usize {
-    let mut request =
-        lattice_core::application::services::grounded_generation::GroundedRequest::new(
-            system,
-            skeleton.to_string(),
-        );
-    request.output_tokens = output_tokens;
+    let mut request = legacy::grounded(system, skeleton.to_string());
+    *legacy::grounded_says(&mut request).output_tokens = output_tokens;
     crate::model_call::source_room(llm, &request, usize::MAX)
 }
 

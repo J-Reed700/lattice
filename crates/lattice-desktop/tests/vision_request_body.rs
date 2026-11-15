@@ -20,6 +20,7 @@ use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, ImagePart, ToolDefinition,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::application::services::completion_input::{
     attach_images_to_last_user, strip_images,
 };
@@ -61,7 +62,7 @@ fn request(geometry: VisionGeometry) -> CompletionRequest {
         &mut input,
         vec![picture(geometry)]
     ));
-    CompletionRequest {
+    legacy::completion(legacy::Completion {
         input,
         tools: vec![ToolDefinition {
             name: "search".into(),
@@ -70,7 +71,7 @@ fn request(geometry: VisionGeometry) -> CompletionRequest {
         }],
         time_budget: Some(Duration::from_secs(30)),
         ..Default::default()
-    }
+    })
 }
 
 /// What the stub server received on `route`: a scheduled client may ask the
@@ -167,10 +168,9 @@ async fn a_model_nobody_declared_able_to_see_sends_nothing_and_its_fallback_carr
         .await
         .is_empty());
 
-    let fallback = CompletionRequest {
-        input: strip_images(&request.input),
-        ..request
-    };
+    let mut fallback = request;
+    let stripped = strip_images(fallback.input());
+    *legacy::says(&mut fallback).input = stripped;
     let _ = client.complete(&fallback).await;
     let body = received_body(&server, "/v1/chat/completions").await;
     let fitted = VisionPreset::Qwen25Vl.geometry().plan(1280, 960);

@@ -16,6 +16,7 @@ use lattice_core::application::ports::llm_port::{
     TEMPLATE_TOKENS_FOR_ANSWER, TEMPLATE_TOKENS_PER_MESSAGE,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::text::normalize_whitespace;
 use std::borrow::Cow;
@@ -242,14 +243,14 @@ pub(super) async fn append_notes(
     request: &mut CompletionRequest,
     notes: &Notes,
 ) -> bool {
-    let planned = request.input.len();
-    request.input.push(assistant(&notes.text));
-    let instruction = if request.tools.is_empty() {
+    let planned = request.input().len();
+    legacy::says(request).input.push(assistant(&notes.text));
+    let instruction = if request.tools().is_empty() {
         WRITE_INSTRUCTION
     } else {
         SEARCH_OR_WRITE_INSTRUCTION
     };
-    say_last(&mut request.input, instruction);
+    say_last(legacy::says(request).input, instruction);
     let room = room_left(llm, request).await;
     if room < notes.tokens {
         info!(
@@ -257,10 +258,11 @@ pub(super) async fn append_notes(
             notes = notes.tokens,
             "The notes would leave the answer less room than they take; answering without them"
         );
-        request.input.truncate(planned);
+        legacy::says(request).input.truncate(planned);
         return false;
     }
-    request.max_output_tokens = Some(within(request.max_output_tokens, room));
+    *legacy::says(request).max_output_tokens =
+        Some(within(request.max_output_tokens(), room));
     true
 }
 
@@ -276,8 +278,8 @@ pub(super) fn noted_in(transcript: &[CompletionInput]) -> bool {
 /// Have a round that can search do so, in place of the reading that found
 /// nothing. Without tools the reading is [`withdraw`]n like any other.
 pub(super) fn search_instead(request: &mut CompletionRequest) {
-    if !request.tools.is_empty() {
-        replace_reading(&mut request.input, NOTHING_BEARS_INSTRUCTION);
+    if !request.tools().is_empty() {
+        replace_reading(legacy::says(request).input, NOTHING_BEARS_INSTRUCTION);
     }
 }
 
@@ -333,20 +335,24 @@ pub(super) async fn add_what_was_left_out(
     let mut left = left_out(&notes.noted, &cited_labels(answer));
     // The turn ends after this, so the request is changed in place: calls
     // forbidden and no thinking, as for any round that may only write.
-    request.tool_choice = (!request.tools.is_empty()).then_some(ToolChoice::None);
+    *legacy::says(request).tool_choice = (!request.tools().is_empty()).then_some(ToolChoice::None);
     request.thinking = ThinkingMode::Off;
     while !left.is_empty() {
         let Ok(remaining) = clock.remaining() else {
             break;
         };
-        say_last(&mut request.input, &continue_instruction(&left, notes));
+        say_last(
+            legacy::says(request).input,
+            &continue_instruction(&left, notes),
+        );
         let room = room_left(llm, request).await;
         if room == 0 {
             info!(left_out = ?left, "No room left in the window to add what the answer left out; keeping the answer");
             break;
         }
         info!(left_out = ?left, "The answer left out passages its notes quote; asking for them");
-        request.max_output_tokens = Some(within(request.max_output_tokens, room));
+        *legacy::says(request).max_output_tokens =
+            Some(within(request.max_output_tokens(), room));
         request.time_budget = Some(remaining);
         let step = recorder.begin_guarded(TurnStepKind::Generate, "Adding what was left out", None);
         let completion = timeout(remaining, llm.complete(request));
@@ -397,7 +403,7 @@ pub(super) async fn add_what_was_left_out(
             emitter.content(&shown)?;
             answer.push_str(&shown);
         }
-        request.input.append(&mut response.replay);
+        legacy::says(request).input.append(&mut response.replay);
         if added == 0 || answer.ends_with(CUT_SHORT_NOTE) {
             break;
         }
@@ -488,7 +494,7 @@ pub(super) async fn room_left(llm: &dyn LLMPort, request: &CompletionRequest) ->
 /// `request`'s prompt in tokens, counted as the send-time gates count it.
 pub(super) async fn prompt_tokens(llm: &dyn LLMPort, request: &CompletionRequest) -> usize {
     let text = request
-        .input
+        .input()
         .iter()
         .flat_map(|item| match item {
             CompletionInput::Native { value } => vec![Cow::Owned(value.to_string())],
@@ -497,11 +503,11 @@ pub(super) async fn prompt_tokens(llm: &dyn LLMPort, request: &CompletionRequest
             }
             _ => vec![item.text()],
         })
-        .chain((!request.tools.is_empty()).then(|| Cow::Owned(tool_schema_text(&request.tools))))
+        .chain((!request.tools().is_empty()).then(|| Cow::Owned(tool_schema_text(request.tools()))))
         .collect::<Vec<_>>()
         .join("\n");
     tokens(llm, &text).await
-        + TEMPLATE_TOKENS_PER_MESSAGE * request.input.len()
+        + TEMPLATE_TOKENS_PER_MESSAGE * request.input().len()
         + TEMPLATE_TOKENS_FOR_ANSWER
         + request.image_tokens()
 }
@@ -530,10 +536,10 @@ fn reading_request(
     stop: &[String],
     time_budget: Option<Duration>,
 ) -> CompletionRequest {
-    CompletionRequest {
+    legacy::completion(legacy::Completion {
         input,
-        tools: request.tools.clone(),
-        tool_choice: (!request.tools.is_empty()).then_some(ToolChoice::None),
+        tools: request.tools().to_vec(),
+        tool_choice: (!request.tools().is_empty()).then_some(ToolChoice::None),
         sampling: Some(SamplingOverride::deterministic()),
         max_output_tokens,
         stop: stop.to_vec(),
@@ -545,7 +551,7 @@ fn reading_request(
         // Thinking did not help Claude copy lines and took two to three times as long.
         reasoning_effort: Some("none".into()),
         ..Default::default()
-    }
+    })
 }
 
 pub(super) fn assistant(text: &str) -> CompletionInput {

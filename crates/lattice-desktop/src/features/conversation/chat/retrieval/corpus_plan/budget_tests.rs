@@ -84,7 +84,7 @@ impl LLMPort for UtilityStub {
         self.output_caps
             .lock()
             .unwrap()
-            .push(request.max_output_tokens);
+            .push(request.max_output_tokens());
         self.timeless.lock().unwrap().push(request.no_time_limit);
         let (delay, reply) = self
             .replies

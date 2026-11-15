@@ -15,6 +15,7 @@ use lattice_core::application::ports::llm_port::{
     ToolChoice,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::shared::error::Result;
 use std::collections::HashSet;
 use std::ops::Range;
@@ -111,10 +112,10 @@ pub(super) async fn condense(
     cancel: &CancellationToken,
     clock: &TurnClock,
 ) -> Result<Option<Condensed>> {
-    let Some(span) = condensable_span(&request.input, loop_start) else {
+    let Some(span) = condensable_span(request.input(), loop_start) else {
         return Ok(None);
     };
-    let condensable = request.input.get(span.clone()).unwrap_or_default();
+    let condensable = request.input().get(span.clone()).unwrap_or_default();
     let chars_before = condensable.iter().map(result_chars).sum();
     let step = recorder.begin_guarded(
         TurnStepKind::Generate,
@@ -123,31 +124,31 @@ pub(super) async fn condense(
     );
     // In a message of its own: read as more of the last result, the
     // instruction got calls back from Qwen and dropped facts from Claude.
-    let mut input = request.input.clone();
+    let mut input = request.input().to_vec();
     input.push(CompletionInput::Message {
         role: "user".into(),
         content: CONDENSE_INSTRUCTION.into(),
     });
-    let notes_request = CompletionRequest {
+    let notes_request = legacy::completion(legacy::Completion {
         input,
         // The same tools, forbidden. Without them the prompt would differ from
         // its first token and the server would read it all again; with them
         // this request begins with the prompt the server has cached.
-        tools: request.tools.clone(),
-        tool_choice: (!request.tools.is_empty()).then_some(ToolChoice::None),
+        tools: request.tools().to_vec(),
+        tool_choice: (!request.tools().is_empty()).then_some(ToolChoice::None),
         // Notes are a transcription, not a composition: the same results
         // should condense the same way every time.
         sampling: Some(SamplingOverride::deterministic()),
         // The round's own reservation: the request is the next round's prompt
         // and a few lines more, and the window's planned slack covers those.
-        max_output_tokens: request.max_output_tokens,
+        max_output_tokens: request.max_output_tokens(),
         priority: request.priority,
         cancel: request.cancel.clone(),
         cache_key: request.cache_key.clone(),
         // A transcription: thinking would only spend the round's time.
         thinking: ThinkingMode::Off,
         ..Default::default()
-    };
+    });
     let Some(response) = ask(llm, &notes_request, cancel, clock).await? else {
         step.failed(Some("The model could not write notes".into()));
         return Ok(None);
@@ -171,7 +172,7 @@ pub(super) async fn condense(
         return Ok(None);
     }
     let result_ids = request
-        .input
+        .input()
         .get(span.clone())
         .unwrap_or_default()
         .iter()
@@ -180,7 +181,7 @@ pub(super) async fn condense(
             _ => None,
         })
         .collect();
-    request.input.splice(
+    legacy::says(request).input.splice(
         span,
         [CompletionInput::Message {
             role: "user".into(),
@@ -208,10 +209,8 @@ async fn ask(
     clock: &TurnClock,
 ) -> Result<Option<CompletionResponse>> {
     let remaining = clock.remaining()?;
-    let request = CompletionRequest {
-        time_budget: Some(remaining),
-        ..request.clone()
-    };
+    let mut request = request.clone();
+    request.time_budget = Some(remaining);
     let response = tokio::select! {
         biased;
         _ = cancel.cancelled() => return Err(cancelled_error()),
@@ -372,10 +371,10 @@ mod tests {
     }
 
     async fn condensed(model: &Script) -> Option<Condensed> {
-        let mut request = CompletionRequest {
+        let mut request = legacy::completion(legacy::Completion {
             input: transcript(&[&[3_000]]),
             ..Default::default()
-        };
+        });
         condense(
             model,
             &mut request,
@@ -399,13 +398,13 @@ mod tests {
         let sent = model.requests();
         assert_eq!(sent.len(), 1);
         let results_end = transcript(&[&[3_000]]).len();
-        assert_eq!(sent[0].input.len(), results_end + 1);
+        assert_eq!(sent[0].input().len(), results_end + 1);
         assert!(matches!(
-            &sent[0].input[results_end - 1],
+            &sent[0].input()[results_end - 1],
             CompletionInput::ToolResult { output, .. } if output.len() == 3_000
         ));
         assert!(matches!(
-            sent[0].input.last(),
+            sent[0].input().last(),
             Some(CompletionInput::Message { role, content })
                 if role == "user" && content == CONDENSE_INSTRUCTION
         ));

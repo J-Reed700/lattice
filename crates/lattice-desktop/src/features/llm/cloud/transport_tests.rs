@@ -1,5 +1,6 @@
 use super::protocol::protocols;
 use super::*;
+use lattice_core::application::services::model_contract::legacy;
 use crate::features::llm::fitting::SendUnscheduled;
 use lattice_core::application::contracts::settings::LLMProvider;
 use lattice_core::application::ports::llm_port::CompletionInput;
@@ -29,18 +30,14 @@ async fn interactive_completion_can_disable_the_wall_clock_budget() {
             "status":"completed", "output":[{"type":"message","content":[{"type":"output_text","text":"Completed"}]}]
         }))).mount(&server).await;
     let client = client(&server).await;
-    let request = CompletionRequest {
+    let request = legacy::completion(legacy::Completion {
         time_budget: Some(Duration::from_millis(10)),
         ..Default::default()
-    };
+    });
     assert!(client.complete(&request).await.is_err());
-    let response = client
-        .complete(&CompletionRequest {
-            no_time_limit: true,
-            ..request
-        })
-        .await
-        .unwrap();
+    let mut unlimited = request;
+    unlimited.no_time_limit = true;
+    let response = client.complete(&unlimited).await.unwrap();
     assert_eq!(response.text, "Completed");
 }
 
@@ -60,7 +57,7 @@ async fn streams_text_and_requires_terminal_event() {
         Ok(())
     };
     let response = client
-        .complete_with_progress(&CompletionRequest::default(), &on_text)
+        .complete_with_progress(&legacy::completion(legacy::Completion::default()), &on_text)
         .await
         .unwrap();
     assert_eq!(response.text, "héllo");
@@ -73,7 +70,7 @@ async fn streams_text_and_requires_terminal_event() {
         .mount(&server)
         .await;
     assert!(client
-        .complete_with_progress(&CompletionRequest::default(), &|_| Ok(()))
+        .complete_with_progress(&legacy::completion(legacy::Completion::default()), &|_| Ok(()))
         .await
         .is_err());
 }
@@ -98,10 +95,10 @@ async fn typed_reasoning_completion_requests_a_stream_and_keeps_its_native_resul
     let reasoning = std::sync::Mutex::new(String::new());
     let response = client
         .complete_with_reasoning_progress(
-            &CompletionRequest {
+            &legacy::completion(legacy::Completion {
                 include_reasoning: true,
                 ..Default::default()
-            },
+            }),
             &|_| Ok(()),
             &|delta| {
                 reasoning.lock().unwrap().push_str(&delta);
@@ -126,7 +123,7 @@ async fn typed_tool_calls_keep_native_call_ids_and_replay_them() {
             "status":"completed", "output":[{"type":"function_call", "call_id":"call_7", "name":"search", "arguments":"{}"}], "usage":{"input_tokens":4,"output_tokens":2}
         }))).mount(&server).await;
     let client = client(&server).await;
-    let request = CompletionRequest {
+    let request = legacy::completion(legacy::Completion {
         input: vec![
             CompletionInput::Message {
                 role: "system".into(),
@@ -143,7 +140,7 @@ async fn typed_tool_calls_keep_native_call_ids_and_replay_them() {
             parameters: json!({"type":"object","properties":{}}),
         }],
         ..Default::default()
-    };
+    });
     let response = client.complete(&request).await.unwrap();
     assert!(matches!(
         response.tool_calls.first(),
@@ -172,7 +169,7 @@ async fn authentication_failure_is_not_retried_or_echoed() {
         .await;
     let client = client(&server).await;
     let error = client
-        .complete(&CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .unwrap_err();
     assert!(error.to_string().contains("401"));
@@ -199,7 +196,7 @@ async fn refusals_are_typed_by_what_waiting_can_change() {
             .await;
         let error = client(&server)
             .await
-            .complete(&CompletionRequest::default())
+            .complete(&legacy::completion(legacy::Completion::default()))
             .await
             .unwrap_err();
         assert_eq!(
@@ -308,7 +305,7 @@ async fn a_request_refused_for_quota_is_sent_once_and_reaches_the_caller_as_a_se
         .await;
     let error = client(&server)
         .await
-        .complete(&CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .unwrap_err();
     assert!(matches!(error, AppError::InvalidConfig(_)), "{error:?}");
@@ -331,7 +328,7 @@ async fn a_persistent_rate_limit_reaches_the_caller_as_a_rate_limit() {
         .await;
     let error = client(&server)
         .await
-        .complete(&CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .unwrap_err();
     assert!(matches!(error, AppError::RateLimitExceeded(_)), "{error:?}");
@@ -350,10 +347,10 @@ async fn anthropic_client(server: &MockServer) -> CloudLlm {
 }
 
 fn structured() -> CompletionRequest {
-    CompletionRequest {
+    legacy::completion(legacy::Completion {
         json_schema: Some(json!({"type":"object","properties":{"ok":{"type":"boolean"}}})),
         ..Default::default()
-    }
+    })
 }
 
 /// Claude refuses some schemas it cannot compile ("The compiled grammar is
@@ -477,7 +474,7 @@ async fn any_other_bad_request_is_not_resent() {
 /// reworded, with or without a schema.
 #[tokio::test]
 async fn an_account_out_of_credit_is_a_setting_to_fix() {
-    for request in [CompletionRequest::default(), structured()] {
+    for request in [legacy::completion(legacy::Completion::default()), structured()] {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .respond_with(
@@ -518,7 +515,7 @@ async fn dropping_a_completion_cancels_the_request_without_a_retry() {
     let client = client(&server).await;
     let abandoned = tokio::time::timeout(
         Duration::from_millis(100),
-        client.complete_with_progress(&CompletionRequest::default(), &|_| Ok(())),
+        client.complete_with_progress(&legacy::completion(legacy::Completion::default()), &|_| Ok(())),
     )
     .await;
     assert!(abandoned.is_err());

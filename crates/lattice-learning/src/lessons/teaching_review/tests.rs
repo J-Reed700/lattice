@@ -1016,3 +1016,29 @@ fn the_review_contract_reads_what_it_renders() {
         open_findings: vec![json!({"id":"finding-1","quote":"","verdict":"resolved"})],
     });
 }
+
+#[tokio::test]
+async fn prompt_snapshot_teaching_review() {
+    let asked = [
+        asked_at(1, FindingSite::Section(0)),
+        asked_at(2, FindingSite::Section(0)),
+    ];
+    let present = quoted(1, "present", "Alpha holds the line.");
+    let resolved = quoted(2, "resolved", "");
+    let scripted = model(vec![answer_of(vec![present, resolved], vec![check(0)])]);
+    let log = crate::lessons::course_generation_tests::RequestLog::new(&scripted);
+    super::review(
+        &log,
+        "Review instructional quality.",
+        json!({"priorKnowledge":"The learner has seen a map of the town."}),
+        &two_parts(),
+        Scope {
+            sections: Some(&[0]),
+            asked: Some(&asked),
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    log.assert_snapshot::<TeachingReview>();
+}

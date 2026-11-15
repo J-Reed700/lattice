@@ -1,0 +1,169 @@
+######## request 1 of 2 ########
+=== input 1: message (system) ===
+Review instructional quality.
+
+Answer in two steps. Step 1, now: work through the task in prose. Go through the candidate part by part: for a lesson, every section listed in sectionIndicesToReview and every question; for an outline, every module. Solve each exercise and question yourself and check each worked example against its stated premises and result. For each part say what you checked, what you found and whether it has a material defect. For each entry of openFindings, read the part it names as the candidate now has it, whether or not sectionIndicesToReview lists that part. Quote the exact words of that part that still show the defect, or, for something left out, the words it should follow. When no words of the part show it any more, leave the quote empty and answer resolved. An open finding's id is never used for a different defect: report that as a new issue. Write out everything the final answer needs, in full. Step 2 is requested separately and turns this draft into the final answer.
+
+=== input 2: message (user) ===
+{"priorKnowledge":"The learner has seen a map of the town.","openFindings":[{"id":"reviewer/1","part":"Section 1","note":"A defect."},{"id":"reviewer/2","part":"Section 1","note":"A defect."}],"candidate":{"blocks":[{"index":0,"label":"Section 1","bodyPassages":[{"id":"section-0-passage-0","text":"Alpha holds the line."}]},{"index":1,"label":"Section 2","bodyPassages":[{"id":"section-1-passage-0","text":"Beta follows alpha."}]}],"questions":[]},"sectionIndicesToReview":[0]}
+
+=== sent with ===
+{
+  "reasoning_effort": "low",
+  "tool_choice": null,
+  "include_reasoning": false,
+  "sampling": null,
+  "thinking": "off",
+  "max_output_tokens": 6000,
+  "stop": [],
+  "want_logprobs": false,
+  "priority": "background",
+  "cache_key": null
+}
+######## request 2 of 2 ########
+=== input 1: message (system) ===
+Review instructional quality.
+
+Answer in two steps. Step 1, now: work through the task in prose. Go through the candidate part by part: for a lesson, every section listed in sectionIndicesToReview and every question; for an outline, every module. Solve each exercise and question yourself and check each worked example against its stated premises and result. For each part say what you checked, what you found and whether it has a material defect. For each entry of openFindings, read the part it names as the candidate now has it, whether or not sectionIndicesToReview lists that part. Quote the exact words of that part that still show the defect, or, for something left out, the words it should follow. When no words of the part show it any more, leave the quote empty and answer resolved. An open finding's id is never used for a different defect: report that as a new issue. Write out everything the final answer needs, in full. Step 2 is requested separately and turns this draft into the final answer.
+
+=== input 2: message (user) ===
+{"priorKnowledge":"The learner has seen a map of the town.","openFindings":[{"id":"reviewer/1","part":"Section 1","note":"A defect."},{"id":"reviewer/2","part":"Section 1","note":"A defect."}],"candidate":{"blocks":[{"index":0,"label":"Section 1","bodyPassages":[{"id":"section-0-passage-0","text":"Alpha holds the line."}]},{"index":1,"label":"Section 2","bodyPassages":[{"id":"section-1-passage-0","text":"Beta follows alpha."}]}],"questions":[]},"sectionIndicesToReview":[0]}
+
+=== input 3: message (assistant) ===
+Fixture draft: the task worked through in prose.
+
+=== input 4: message (user) ===
+Step 2: give the final answer from your draft. Keep its content, wording, numbers, citations and answers. Copy quotations and identifiers exactly as the task supplies them. Where the draft left something out or stopped early, complete it from the task.
+
+=== schema ===
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "openFindings",
+    "issues",
+    "blockChecks"
+  ],
+  "properties": {
+    "openFindings": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "quote",
+          "verdict"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": [
+              "reviewer/1",
+              "reviewer/2"
+            ]
+          },
+          "quote": {
+            "type": "string"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "present",
+              "resolved"
+            ]
+          }
+        }
+      }
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "note",
+          "continues"
+        ],
+        "properties": {
+          "note": {
+            "type": "string",
+            "minLength": 1
+          },
+          "continues": {
+            "type": "string",
+            "enum": [
+              "reviewer/1",
+              "reviewer/2",
+              "none"
+            ]
+          }
+        }
+      }
+    },
+    "blockChecks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sectionId",
+          "passageId",
+          "finding",
+          "hasDefect",
+          "continues"
+        ],
+        "properties": {
+          "sectionId": {
+            "type": "string",
+            "enum": [
+              "section-0"
+            ]
+          },
+          "passageId": {
+            "type": "string",
+            "enum": [
+              "section-0-passage-0"
+            ]
+          },
+          "finding": {
+            "type": "string",
+            "minLength": 1
+          },
+          "hasDefect": {
+            "type": "boolean"
+          },
+          "continues": {
+            "type": "string",
+            "enum": [
+              "reviewer/1",
+              "reviewer/2",
+              "none"
+            ]
+          }
+        }
+      }
+    }
+  }
+}
+
+=== sent with ===
+{
+  "reasoning_effort": "low",
+  "tool_choice": null,
+  "include_reasoning": false,
+  "sampling": {
+    "temperature": 0.0,
+    "top_p": 1.0,
+    "top_k": 1,
+    "presence_penalty": 0.0
+  },
+  "thinking": "off",
+  "max_output_tokens": 6000,
+  "stop": [],
+  "want_logprobs": false,
+  "priority": "background",
+  "cache_key": null
+}

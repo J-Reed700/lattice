@@ -373,3 +373,39 @@ async fn a_verified_assertion_is_listed_to_the_reviewer_and_a_repeat_is_dropped_
     assert_eq!(saved.findings_raised, 2);
     Ok(())
 }
+
+#[tokio::test]
+async fn prompt_snapshot_outline_review() -> Result<()> {
+    use lattice_core::application::services::model_contract::{
+        test_support::snapshot, ContractId,
+    };
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
+    let initial = candidate();
+    let llm = model(vec![
+        initial.clone(),
+        issue(0),
+        changed_module(
+            &initial,
+            0,
+            "Compare the groups with an observable measurement.",
+        ),
+        verdicts(&[("finding-1", "resolved")], vec![]),
+    ]);
+    let capture = Capture::named(&llm, ContractId::new("outline-review"));
+
+    service::generate(
+        &repo,
+        &DraftRunRegistry::new(),
+        &capture,
+        request(LearningCourseDepth::Course),
+        vec![],
+    )
+    .await?;
+
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "outline-review",
+        &capture.requests(),
+    );
+    Ok(())
+}

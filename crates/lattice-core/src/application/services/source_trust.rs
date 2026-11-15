@@ -41,6 +41,7 @@ use crate::application::ports::LLMPort;
 use crate::application::services::grounded_generation::{
     self, CallOptions, GroundedGenerationError, GroundedRequest, HistoryItem,
 };
+use crate::application::services::model_contract::legacy;
 use crate::application::services::model_contract::{
     answer, refusal, ContractCall, CutOffRemedy, Transport, CORRECTION_LEAD,
 };
@@ -113,15 +114,16 @@ impl Transport for Planned {
         refusal: &str,
     ) -> Result<GroundedRequest> {
         let mut next = request.clone();
-        next.history.push(HistoryItem {
+        let says = legacy::grounded_says(&mut next);
+        says.history.push(HistoryItem {
             role: "user".into(),
-            content: request.task.clone(),
+            content: request.task().to_string(),
         });
-        next.history.push(HistoryItem {
+        says.history.push(HistoryItem {
             role: "assistant".into(),
             content: previous.text.clone(),
         });
-        next.task = format!("{CORRECTION_LEAD} {refusal}");
+        *says.task = format!("{CORRECTION_LEAD} {refusal}");
         Ok(next)
     }
 
@@ -146,10 +148,11 @@ pub(crate) async fn judge<T>(
     schema: &Value,
     parse: impl Fn(&str) -> std::result::Result<T, String> + Send + Sync,
 ) -> Result<CallOutcome<T>> {
-    let mut request = GroundedRequest::new(system, prompt);
-    request.output_fills_window = true;
+    let mut request = legacy::grounded(system, prompt);
+    let says = legacy::grounded_says(&mut request);
+    *says.output_fills_window = true;
+    *says.schema = Some(legacy::schema(schema.clone()));
     request.call = CallOptions {
-        json_schema: Some(schema.clone()),
         reasoning_effort: Some(ANSWER_EFFORT.to_owned()),
         no_time_limit: true,
         ..CallOptions::default()

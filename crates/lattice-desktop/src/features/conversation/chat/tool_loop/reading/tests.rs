@@ -63,7 +63,7 @@ fn message(labels: &[u32]) -> String {
 }
 
 fn planned(labels: &[u32]) -> CompletionRequest {
-    CompletionRequest {
+    legacy::completion(legacy::Completion {
         input: vec![
             CompletionInput::Message {
                 role: "system".into(),
@@ -82,11 +82,11 @@ fn planned(labels: &[u32]) -> CompletionRequest {
         max_output_tokens: Some(777),
         cache_key: Some("conversation".into()),
         ..Default::default()
-    }
+    })
 }
 
 fn passages() -> Passages {
-    asked(&planned(&[1, 2, 3, 4]).input, &sources()).expect("the message asks for a reading")
+    asked(planned(&[1, 2, 3, 4]).input(), &sources()).expect("the message asks for a reading")
 }
 
 fn reply(text: &str, finish_reason: &str) -> CompletionResponse {
@@ -410,15 +410,15 @@ fn a_label_in_a_list_item_or_in_bold_is_read() {
 #[test]
 fn only_the_labels_the_message_shows_are_read() {
     let mut planned = planned(&[1, 2]);
-    let passages = asked(&planned.input, &sources()).unwrap();
+    let passages = asked(planned.input(), &sources()).unwrap();
     assert_eq!(passages.labels().collect::<Vec<_>>(), vec![1, 2]);
-    withdraw(&mut planned.input);
+    withdraw(legacy::says(&mut planned).input);
     assert!(
-        asked(&planned.input, &sources()).is_none(),
+        asked(planned.input(), &sources()).is_none(),
         "a message without the instruction asks for no reading"
     );
-    assert!(!planned.input[1].text().contains(READING_INSTRUCTION));
-    assert!(planned.input[1]
+    assert!(!planned.input()[1].text().contains(READING_INSTRUCTION));
+    assert!(planned.input()[1]
         .text()
         .ends_with("Question: What happened?"));
 }
@@ -449,7 +449,7 @@ async fn a_group_says_the_question_again_after_its_passages() {
     )]);
     read(&model, &planned(&[1, 2, 3, 4])).await.unwrap();
     let sent = model.requests();
-    let message = sent[0].input[1].text();
+    let message = sent[0].input()[1].text();
     let last_passage = message.rfind(MOLINO).expect("the passages shown again");
     let said_again = message[last_passage..]
         .find(&format!("My question is: \"{QUESTION}\""))
@@ -468,14 +468,14 @@ async fn a_group_is_read_on_the_planned_prompt_with_its_passages_shown_again() {
     let sent = model.requests();
     assert_eq!(sent.len(), 1, "one group, every label accounted for");
     let reading = &sent[0];
-    assert_eq!(json(&reading.input[0]), json(&request.input[0]));
+    assert_eq!(json(&reading.input()[0]), json(&request.input()[0]));
     let shown = format!("[1] {KITCHEN}\n\n[2] {MILL}\n\n[3] {MÜHLE}\n\n[4] {MOLINO}");
-    let planned_message = request.input[1].text();
+    let planned_message = request.input()[1].text();
     let (passages_and_question, _) = planned_message
         .split_once(READING_INSTRUCTION)
         .expect("the planned message closes with the reading instruction");
     assert_eq!(
-        reading.input[1].text(),
+        reading.input()[1].text(),
         format!(
             "{passages_and_question}{}",
             GROUP_INSTRUCTION
@@ -485,14 +485,14 @@ async fn a_group_is_read_on_the_planned_prompt_with_its_passages_shown_again() {
         ),
         "the message to its question, then the group shown again in place of the reading instruction"
     );
-    assert_eq!(json(&reading.tools), json(&request.tools));
-    assert_eq!(reading.tool_choice, Some(ToolChoice::None));
+    assert_eq!(json(&reading.tools()), json(&request.tools()));
+    assert_eq!(reading.tool_choice(), Some(ToolChoice::None));
     assert_eq!(
         json(&reading.sampling),
         json(&Some(SamplingOverride::deterministic()))
     );
     assert_eq!(reading.thinking, ThinkingMode::Off);
-    assert_eq!(reading.max_output_tokens, Some(777));
+    assert_eq!(reading.max_output_tokens(), Some(777));
     assert_eq!(notes.noted, [1, 2, 3, 4].into());
 }
 
@@ -511,16 +511,16 @@ async fn labels_the_notes_left_out_are_asked_for_until_a_sweep_adds_none() {
     let sent = model.requests();
     assert_eq!(sent.len(), 3, "the group's reading and two sweeps");
     assert_eq!(
-        sent[1].input.last().unwrap().text(),
+        sent[1].input().last().unwrap().text(),
         "You did not account for [2], [3], [4]. Write one line for each of them, in the same form."
     );
     assert_eq!(
-        sent[1].input[sent[1].input.len() - 2].text(),
+        sent[1].input()[sent[1].input().len() - 2].text(),
         "[1] -",
         "the notes so far, whole lines only, as the model's own message"
     );
     assert_eq!(
-        sent[2].input.last().unwrap().text(),
+        sent[2].input().last().unwrap().text(),
         "You did not account for [4]. Write one line for each of them, in the same form."
     );
     assert_eq!(
@@ -546,7 +546,7 @@ async fn every_sweep_writes_only_what_the_answer_reservation_has_left() {
         reply("[3] -\n[4] -", "stop"),
     ]);
     let mut request = planned(&[1, 2, 3, 4]);
-    request.max_output_tokens = Some(u32::try_from(reserved).unwrap());
+    *legacy::says(&mut request).max_output_tokens = Some(u32::try_from(reserved).unwrap());
     let read = read(&model, &request).await.unwrap();
     let sent = model.requests();
     assert_eq!(
@@ -554,7 +554,7 @@ async fn every_sweep_writes_only_what_the_answer_reservation_has_left() {
         2,
         "the reservation is spent: [3] and [4] are not asked for"
     );
-    let ceilings: Vec<_> = sent.iter().map(|sent| sent.max_output_tokens).collect();
+    let ceilings: Vec<_> = sent.iter().map(|sent| sent.max_output_tokens()).collect();
     let after_first = reserved - counter.count_tokens(first);
     assert_eq!(
         ceilings,
@@ -572,8 +572,8 @@ async fn every_sweep_writes_only_what_the_answer_reservation_has_left() {
 #[test]
 fn a_message_that_numbers_no_source_the_turn_holds_asks_for_no_reading() {
     let planned = planned(&[7, 8]);
-    assert!(planned.input[1].text().contains(READING_INSTRUCTION));
-    assert!(asked(&planned.input, &sources()).is_none());
+    assert!(planned.input()[1].text().contains(READING_INSTRUCTION));
+    assert!(asked(planned.input(), &sources()).is_none());
 }
 
 #[test]
@@ -635,12 +635,12 @@ async fn a_reading_with_no_label_in_it_is_shown_back_once_then_gives_no_notes() 
     let sent = model.requests();
     assert_eq!(sent.len(), 2, "the reading and one more ask");
     assert_eq!(
-        sent[1].input[sent[1].input.len() - 2].text(),
+        sent[1].input()[sent[1].input().len() - 2].text(),
         "The mill closed in 1887.",
         "the reply is shown back as the model's own message"
     );
     assert_eq!(
-        sent[1].input.last().unwrap().text(),
+        sent[1].input().last().unwrap().text(),
         "You did not account for [1], [2], [3], [4]. Write one line for each of them, in the same form."
     );
 }
@@ -724,23 +724,23 @@ async fn only_a_hyphen_for_every_passage_means_that_nothing_bears() {
 #[test]
 fn a_search_takes_the_readings_place_only_in_a_round_that_can_search() {
     let mut closed = planned(&[1]);
-    closed.tools.clear();
+    legacy::says(&mut closed).tools.clear();
     search_instead(&mut closed);
     assert!(closed
-        .input
+        .input()
         .last()
         .unwrap()
         .text()
         .contains(READING_INSTRUCTION));
 
     let mut open = planned(&[1]);
-    open.tools = vec![ToolDefinition {
+    *legacy::says(&mut open).tools = vec![ToolDefinition {
         name: "semantic_search".into(),
         description: String::new(),
         parameters: serde_json::json!({}),
     }];
     search_instead(&mut open);
-    let message = open.input.last().unwrap().text();
+    let message = open.input().last().unwrap().text();
     assert!(!message.contains(READING_INSTRUCTION));
     assert!(message.ends_with(NOTHING_BEARS_INSTRUCTION));
 }
@@ -798,7 +798,7 @@ async fn a_reading_and_its_sweeps_stop_at_a_line_for_the_first_label_not_shown()
     let sent = model.requests();
     assert_eq!(sent.len(), 2, "a reading and one sweep");
     for request in &sent {
-        assert_eq!(request.stop, ["\n[5]", "\n5."]);
+        assert_eq!(request.stop(), ["\n[5]", "\n5."]);
     }
 }
 
@@ -814,21 +814,21 @@ async fn the_writing_round_is_the_reading_round_with_the_notes_and_the_instructi
     };
     assert!(append_notes(&Model::new([]), &mut writing, &notes).await);
     assert_eq!(
-        writing.max_output_tokens,
+        writing.max_output_tokens(),
         Some(777),
         "a window with room keeps the reservation"
     );
     assert_eq!(
-        json(&writing.input[..request.input.len()].to_vec()),
-        json(&request.input)
+        json(&writing.input()[..request.input().len()].to_vec()),
+        json(&request.input())
     );
-    assert_eq!(writing.input.len(), request.input.len() + 2);
+    assert_eq!(writing.input().len(), request.input().len() + 2);
     assert!(matches!(
-        &writing.input[request.input.len()],
+        &writing.input()[request.input().len()],
         CompletionInput::Message { role, content } if role == "assistant" && content == "[1] -\n[2] -"
     ));
     assert_eq!(
-        writing.input.last().unwrap().text(),
+        writing.input().last().unwrap().text(),
         SEARCH_OR_WRITE_INSTRUCTION
     );
 }
@@ -845,18 +845,18 @@ async fn only_a_round_with_tools_is_told_to_search_for_what_is_missing() {
         tokens: 3,
     };
     let mut closed = planned(&[1]);
-    closed.tools.clear();
+    legacy::says(&mut closed).tools.clear();
     assert!(append_notes(&Model::new([]), &mut closed, &notes).await);
-    assert_eq!(closed.input.last().unwrap().text(), WRITE_INSTRUCTION);
+    assert_eq!(closed.input().last().unwrap().text(), WRITE_INSTRUCTION);
 
     let mut open = planned(&[1]);
-    open.tools = vec![ToolDefinition {
+    *legacy::says(&mut open).tools = vec![ToolDefinition {
         name: "semantic_search".into(),
         description: String::new(),
         parameters: serde_json::json!({}),
     }];
     assert!(append_notes(&Model::new([]), &mut open, &notes).await);
-    let instruction = open.input.last().unwrap().text();
+    let instruction = open.input().last().unwrap().text();
     assert_eq!(instruction, SEARCH_OR_WRITE_INSTRUCTION);
     assert!(instruction.starts_with("If the passages leave any part of my question unanswered"));
 }

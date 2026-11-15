@@ -42,7 +42,7 @@ impl ScriptedJudge {
     fn asked(&self) -> Vec<CompletionRequest> {
         self.sent()
             .into_iter()
-            .filter(|request| request.json_schema.is_some())
+            .filter(|request| request.schema().is_some())
             .collect()
     }
 }
@@ -51,7 +51,7 @@ impl ScriptedJudge {
 impl LLMPort for ScriptedJudge {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         self.sent.lock().unwrap().push(request.clone());
-        if request.json_schema.is_none() {
+        if request.schema().is_none() {
             return Ok(CompletionResponse::from_text(
                 "A draft of the grade, worked through in prose.",
             ));
@@ -300,7 +300,7 @@ fn repeat(answer: &mut Value, list: &str, at: usize) {
 
 fn messages(request: &CompletionRequest) -> Vec<(&str, &str)> {
     request
-        .input
+        .input()
         .iter()
         .filter_map(|item| match item {
             CompletionInput::Message { role, content } => Some((role.as_str(), content.as_str())),
@@ -974,7 +974,10 @@ async fn the_answer_is_asked_for_under_the_schema_and_decoded_deterministically(
     let llm = ScriptedJudge::answering(vec![valid().to_string()]);
     grade(&llm, &Scene::new()).await?;
     let asked = llm.asked();
-    assert_eq!(asked[0].json_schema, Some(schema()));
+    assert_eq!(
+        asked[0].schema().map(|schema| schema.as_json()),
+        Some(&schema())
+    );
     let sampling = asked[0].sampling.unwrap_or_default();
     assert_eq!((sampling.temperature, sampling.top_k), (Some(0.0), Some(1)));
     Ok(())
@@ -1419,5 +1422,16 @@ async fn refusals_name_issues_by_the_numbers_of_the_task() -> Result<()> {
         assert_eq!(asked.len(), 2, "{name}");
         assert_eq!(last_user_message(&asked[1]), reask(message), "{name}");
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_snapshot_grade_review() -> Result<()> {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let llm = ScriptedJudge::answering(vec![valid().to_string()]);
+
+    grade(&llm, &Scene::new()).await?;
+
+    snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "grade-review", &llm.sent());
     Ok(())
 }

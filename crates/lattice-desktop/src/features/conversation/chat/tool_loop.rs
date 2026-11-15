@@ -23,6 +23,7 @@ use lattice_core::application::contracts::settings::ToolOutputSettingsDto;
 use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::application::ports::llm_port::{CompletionInput, ThinkingMode};
 use lattice_core::application::ports::ToolDefinition;
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -103,7 +104,7 @@ pub(super) async fn run_agentic_tool_loop(
     // folder tools are only in `request.tools` when this is set.
     source: Option<&super::TurnSource>,
 ) -> Result<ToolLoopOutcome> {
-    use lattice_core::application::ports::llm_port::{CompletionRequest, InferencePriority};
+    use lattice_core::application::ports::llm_port::InferencePriority;
 
     let ChatTurn {
         conv_service,
@@ -176,7 +177,7 @@ pub(super) async fn run_agentic_tool_loop(
     // Background work waits for the turn rather than evicting its prompt
     // between rounds and reading groups.
     let _held = llm.hold_cache(conv_id);
-    let mut native_request = CompletionRequest {
+    let mut native_request = legacy::completion(legacy::Completion {
         // Someone is watching this turn; it goes ahead of background work and
         // may take the slot kept free for interactive requests.
         priority: InferencePriority::Interactive,
@@ -193,7 +194,7 @@ pub(super) async fn run_agentic_tool_loop(
         max_output_tokens: Some(u32::try_from(max_output_tokens).unwrap_or(u32::MAX))
             .filter(|budget| *budget > 0),
         ..Default::default()
-    };
+    });
     let cancellation_error = super::cancellation::cancelled_error;
     // Whether the user lets the answer think. A round that can still call a
     // tool never does (see `ThinkingMode`).
@@ -241,8 +242,8 @@ pub(super) async fn run_agentic_tool_loop(
     // A message that shows numbered passages asks for a reading of them
     // first; a resumed turn has its notes in the saved transcript already.
     let mut notes = None;
-    if native_request.input.len() == planned_len {
-        if let Some(passages) = reading::asked(&native_request.input, sources.as_slice()) {
+    if native_request.input().len() == planned_len {
+        if let Some(passages) = reading::asked(native_request.input(), sources.as_slice()) {
             let reading_start = Instant::now();
             let read = match reading::read_passages(
                 llm.as_ref(),
@@ -283,7 +284,7 @@ pub(super) async fn run_agentic_tool_loop(
         // answer is asked for exactly as before reading existed. A search asked
         // for instead has already taken the reading's place.
         if notes.is_none() {
-            reading::withdraw(&mut native_request.input);
+            reading::withdraw(legacy::says(&mut native_request).input);
         }
     }
     let mut condensed = 0;
@@ -302,13 +303,13 @@ pub(super) async fn run_agentic_tool_loop(
         if iteration > 0 && forced.is_none() && llm.counts_tokens_exactly() {
             let tokens = reading::prompt_tokens(llm.as_ref(), &native_request).await;
             window.measured(
-                chars_in_flight(&native_request.input) + tool_schema_chars,
+                chars_in_flight(native_request.input()) + tool_schema_chars,
                 tokens,
             );
             calls.set_window_chars(window.chars());
             if tokens > window.tokens()
                 && limits::shed(
-                    &mut native_request.input,
+                    legacy::says(&mut native_request).input,
                     planned_len,
                     window.chars_in(tokens - window.tokens()),
                     &mut calls,
@@ -324,7 +325,7 @@ pub(super) async fn run_agentic_tool_loop(
             && forced.is_none()
             && research_notes::should_condense(
                 window.chars(),
-                &native_request.input,
+                native_request.input(),
                 planned_len,
                 condensed,
             )
@@ -366,7 +367,7 @@ pub(super) async fn run_agentic_tool_loop(
         let window_full = iteration > 0
             && !window_has_room_for_a_result(
                 window.chars(),
-                chars_in_flight(&native_request.input) + tool_schema_chars,
+                chars_in_flight(native_request.input()) + tool_schema_chars,
             );
         // A forced round says what forced it. Out of rounds is named before a
         // full window: the last round skips condensing, so its window can
@@ -385,7 +386,7 @@ pub(super) async fn run_agentic_tool_loop(
             );
             // A round asked again after the firmer retry has no tools left
             // to forbid, and a provider refuses a choice that names none.
-            if answer_thinking || native_request.tools.is_empty() {
+            if answer_thinking || native_request.tools().is_empty() {
                 // Thinking with the tools still in the prompt wrote the call
                 // as text and answered nothing, so this answer has none.
                 final_round::ask_for_answer_without_tools(&mut native_request, last_round);
@@ -414,8 +415,8 @@ pub(super) async fn run_agentic_tool_loop(
         // Past the deadline the answering round alone runs on, bounded by
         // Stop and its output limit.
         let deadline = (last_round != Some(LastRound::OutOfTime)).then_some(&clock);
-        let sent = chars_in_flight(&native_request.input)
-            + if native_request.tools.is_empty() {
+        let sent = chars_in_flight(native_request.input())
+            + if native_request.tools().is_empty() {
                 0
             } else {
                 tool_schema_chars
@@ -477,7 +478,7 @@ pub(super) async fn run_agentic_tool_loop(
                 Some("the model called tools in the last round".into()),
             );
             final_round::insist_on_answer(&mut native_request, last_round);
-            let sent = chars_in_flight(&native_request.input);
+            let sent = chars_in_flight(native_request.input());
             round = match generation::generate(
                 llm.as_ref(),
                 &mut native_request,
@@ -544,7 +545,9 @@ pub(super) async fn run_agentic_tool_loop(
         // The model's turn goes back in the provider's own shape — its
         // tool calls, and any signed or opaque reasoning, included — so
         // the results below answer calls the provider recognises.
-        native_request.input.append(&mut response.replay);
+        legacy::says(&mut native_request)
+            .input
+            .append(&mut response.replay);
         let tool_calls = response
             .tool_calls
             .into_iter()
@@ -658,7 +661,7 @@ pub(super) async fn run_agentic_tool_loop(
         if let Err(error) = calls
             .run_round(
                 &tool_calls,
-                &mut native_request.input,
+                legacy::says(&mut native_request).input,
                 &mut timings,
                 sources,
                 retrieval_trace,
@@ -670,7 +673,7 @@ pub(super) async fn run_agentic_tool_loop(
             }
             warn!(%error, "The turn ran out of time running its tools; answering from what they found");
             final_round::answer_open_calls(
-                &mut native_request.input,
+                legacy::says(&mut native_request).input,
                 tool_calls.iter().map(|call| call.id.as_str()),
                 final_round::OUT_OF_TIME_RESULT,
             );
@@ -681,7 +684,7 @@ pub(super) async fn run_agentic_tool_loop(
                 .round(&ResearchRound {
                     completed: iteration + 1,
                     transcript: native_request
-                        .input
+                        .input()
                         .get(planned_len..)
                         .map(<[CompletionInput]>::to_vec)
                         .unwrap_or_default(),

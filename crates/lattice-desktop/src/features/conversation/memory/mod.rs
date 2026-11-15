@@ -34,10 +34,10 @@ use tokio_util::sync::CancellationToken;
 
 use lattice_core::application::ports::conversation_memory::{MemoryCommitError, SourceReadLimits};
 use lattice_core::application::ports::llm_port::{
-    CompletionInput, CompletionRequest, InferencePriority, SamplingOverride,
+    CompletionInput, InferencePriority, SamplingOverride,
 };
 use lattice_core::application::ports::LLMPort;
-use lattice_core::application::services::model_contract::{tagged, ContractCall};
+use lattice_core::application::services::model_contract::{legacy, tagged, ContractCall};
 use lattice_core::domain::conversation::memory::{
     MemoryCommit, MemorySnapshot, MemoryValidationError, SummaryRefold,
 };
@@ -285,7 +285,7 @@ async fn complete_json(
         max_output_tokens,
         "Memory utility model call started"
     );
-    let request = CompletionRequest {
+    let request = legacy::completion(legacy::Completion {
         input: vec![
             CompletionInput::Message {
                 role: "system".into(),
@@ -311,7 +311,7 @@ async fn complete_json(
         cancel: deadline.cancellation.clone(),
         cache_key: deadline.cache_key.clone(),
         ..Default::default()
-    };
+    });
     let tagged_llm = tagged(llm, call);
     let call = tagged_llm.complete(&request);
 

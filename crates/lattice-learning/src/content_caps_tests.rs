@@ -431,7 +431,7 @@ impl<'a> Recording<'a> {
 #[async_trait::async_trait]
 impl LLMPort for Recording<'_> {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        if let Some(schema) = &request.json_schema {
+        if let Some(schema) = request.schema().map(|schema| schema.as_json()) {
             self.schemas.lock().unwrap().push(schema.clone());
         }
         self.inner.complete(request).await

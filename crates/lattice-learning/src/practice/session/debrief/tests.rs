@@ -206,6 +206,14 @@ async fn a_clean_answer_is_asked_for_once_and_becomes_the_rows() {
 }
 
 #[tokio::test]
+async fn prompt_snapshot_debrief_answer() {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let (result, model) = ask(&[answer(good_rows())], &kind(), &session()).await;
+    result.expect("a debrief");
+    snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "debrief-answer", &model.requests());
+}
+
+#[tokio::test]
 async fn every_kind_of_evidence_the_session_has_is_kept() {
     let everything = vec![
         quote("t1", "start with"),

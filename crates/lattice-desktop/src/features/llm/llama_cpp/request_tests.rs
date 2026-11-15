@@ -1,5 +1,6 @@
 //! The thinking switch, per-mode sampling, tool choice and server timings.
 use super::*;
+use lattice_core::application::services::model_contract::legacy;
 use crate::features::llm::fitting::PromptMeasure;
 use lattice_core::application::contracts::settings::ThinkingOverrideDto;
 use lattice_core::application::ports::llm_port::{
@@ -90,11 +91,11 @@ fn every_request_switches_thinking_explicitly_and_off_by_default() {
     for effort in [None, Some("low"), Some("none")] {
         let body = body_of(
             &client,
-            &CompletionRequest {
+            &legacy::completion(legacy::Completion {
                 input: user("Hi"),
                 reasoning_effort: effort.map(str::to_owned),
                 ..Default::default()
-            },
+            }),
         )
         .unwrap();
         assert_eq!(
@@ -111,12 +112,12 @@ fn a_thinking_request_turns_it_on_and_passes_only_a_real_effort_through() {
     let thinking = |effort: Option<&str>| {
         body_of(
             &client,
-            &CompletionRequest {
+            &legacy::completion(legacy::Completion {
                 input: user("Why?"),
                 thinking: ThinkingMode::On,
                 reasoning_effort: effort.map(str::to_owned),
                 ..Default::default()
-            },
+            }),
         )
         .unwrap()
     };
@@ -132,36 +133,27 @@ fn a_thinking_request_turns_it_on_and_passes_only_a_real_effort_through() {
 #[test]
 fn a_round_that_can_call_tools_never_thinks_but_a_withdrawn_one_may() {
     let client = client();
-    let request = CompletionRequest {
+    let request = legacy::completion(legacy::Completion {
         input: user("Find it"),
         tools: vec![search_tool()],
         thinking: ThinkingMode::On,
         ..Default::default()
-    };
+    });
     let body = body_of(&client, &request).unwrap();
     assert_eq!(body["chat_template_kwargs"]["enable_thinking"], false);
     assert!(body.get("reasoning_effort").is_none());
     assert!(body.get("tool_choice").is_none(), "no choice leaves auto");
 
-    let withdrawn = CompletionRequest {
-        tool_choice: Some(ToolChoice::None),
-        ..request
-    };
+    let mut withdrawn = request;
+    *legacy::says(&mut withdrawn).tool_choice = Some(ToolChoice::None);
     let body = body_of(&client, &withdrawn).unwrap();
     assert_eq!(body["chat_template_kwargs"]["enable_thinking"], true);
     assert_eq!(body["tool_choice"], "none");
     assert_eq!(body["tools"][0]["function"]["name"], "search");
     assert_eq!(ThinkingMode::for_answer(true, &withdrawn), ThinkingMode::On);
-    assert_eq!(
-        ThinkingMode::for_answer(
-            true,
-            &CompletionRequest {
-                tool_choice: Some(ToolChoice::Auto),
-                ..withdrawn.clone()
-            }
-        ),
-        ThinkingMode::Off
-    );
+    let mut auto = withdrawn.clone();
+    *legacy::says(&mut auto).tool_choice = Some(ToolChoice::Auto);
+    assert_eq!(ThinkingMode::for_answer(true, &auto), ThinkingMode::Off);
     assert_eq!(
         ThinkingMode::for_answer(false, &withdrawn),
         ThinkingMode::Off
@@ -173,22 +165,22 @@ fn tool_choice_is_sent_only_alongside_tools() {
     let client = client();
     let required = body_of(
         &client,
-        &CompletionRequest {
+        &legacy::completion(legacy::Completion {
             input: user("Find it"),
             tools: vec![search_tool()],
             tool_choice: Some(ToolChoice::Required),
             ..Default::default()
-        },
+        }),
     )
     .unwrap();
     assert_eq!(required["tool_choice"], "required");
     let bare = body_of(
         &client,
-        &CompletionRequest {
+        &legacy::completion(legacy::Completion {
             input: user("Hi"),
             tool_choice: Some(ToolChoice::None),
             ..Default::default()
-        },
+        }),
     )
     .unwrap();
     assert!(bare.get("tool_choice").is_none());
@@ -200,20 +192,20 @@ fn stop_sequences_are_sent_only_when_asked_for() {
     let client = client();
     let stopped = body_of(
         &client,
-        &CompletionRequest {
+        &legacy::completion(legacy::Completion {
             input: user("Read them"),
             stop: vec!["[5]".into(), "\n5.".into()],
             ..Default::default()
-        },
+        }),
     )
     .unwrap();
     assert_eq!(stopped["stop"], json!(["[5]", "\n5."]));
     let open = body_of(
         &client,
-        &CompletionRequest {
+        &legacy::completion(legacy::Completion {
             input: user("Hi"),
             ..Default::default()
-        },
+        }),
     )
     .unwrap();
     assert!(open.get("stop").is_none());
@@ -227,10 +219,10 @@ fn each_mode_samples_with_its_own_profile_unless_the_caller_overrides() {
     let client = client();
     let answer = body_of(
         &client,
-        &CompletionRequest {
+        &legacy::completion(legacy::Completion {
             input: user("Hi"),
             ..Default::default()
-        },
+        }),
     )
     .unwrap();
     assert!(
@@ -240,11 +232,11 @@ fn each_mode_samples_with_its_own_profile_unless_the_caller_overrides() {
 
     let thinking = body_of(
         &client,
-        &CompletionRequest {
+        &legacy::completion(legacy::Completion {
             input: user("Why?"),
             thinking: ThinkingMode::On,
             ..Default::default()
-        },
+        }),
     )
     .unwrap();
     assert!(
@@ -257,12 +249,12 @@ fn each_mode_samples_with_its_own_profile_unless_the_caller_overrides() {
     for mode in [ThinkingMode::Off, ThinkingMode::On] {
         let greedy = body_of(
             &client,
-            &CompletionRequest {
+            &legacy::completion(legacy::Completion {
                 input: user("Supported or not?"),
                 thinking: mode,
                 sampling: Some(SamplingOverride::deterministic()),
                 ..Default::default()
-            },
+            }),
         )
         .unwrap();
         assert!(
@@ -274,14 +266,14 @@ fn each_mode_samples_with_its_own_profile_unless_the_caller_overrides() {
     // An override sets only what it names.
     let partial = body_of(
         &client,
-        &CompletionRequest {
+        &legacy::completion(legacy::Completion {
             input: user("Hi"),
             sampling: Some(SamplingOverride {
                 temperature: Some(0.2),
                 ..Default::default()
             }),
             ..Default::default()
-        },
+        }),
     )
     .unwrap();
     assert!(
@@ -364,16 +356,16 @@ fn a_whole_answer_reports_its_timing_too() {
 /// for cloud models does not ride along; the user's pin still wins.
 #[test]
 fn a_model_that_needs_thinking_thinks_on_every_request_unless_the_user_pins_it_off() {
-    let utility_call = CompletionRequest {
+    let utility_call = legacy::completion(legacy::Completion {
         input: user("Label this."),
         reasoning_effort: Some("low".into()),
         ..Default::default()
-    };
-    let tool_round = CompletionRequest {
+    });
+    let tool_round = legacy::completion(legacy::Completion {
         input: user("Find it"),
         tools: vec![search_tool()],
         ..Default::default()
-    };
+    });
     let laguna = local_client(ThinkingPolicy::AlwaysOn, ThinkingOverrideDto::Auto);
     for request in [&utility_call, &tool_round] {
         let body = body_of(&laguna, request).unwrap();
@@ -398,7 +390,7 @@ fn a_model_that_needs_thinking_thinks_on_every_request_unless_the_user_pins_it_o
 /// One 400 KB picture from the user, costing `tokens`, before `text`.
 fn picture_request(role: &str, text: &str, tokens: u32) -> CompletionRequest {
     use lattice_core::application::ports::llm_port::{ContentPart, ImagePart};
-    CompletionRequest {
+    legacy::completion(legacy::Completion {
         input: vec![CompletionInput::Multimodal {
             role: role.into(),
             parts: vec![
@@ -414,7 +406,7 @@ fn picture_request(role: &str, text: &str, tokens: u32) -> CompletionRequest {
             ],
         }],
         ..Default::default()
-    }
+    })
 }
 
 fn seeing(client: LlamaCppLlm) -> LlamaCppLlm {
@@ -479,16 +471,16 @@ fn a_pictures_declared_tokens_are_prefilled_on_top_of_one_batch_of_text() {
 #[test]
 fn the_ceiling_sent_is_the_one_the_shared_rule_settles_on() {
     let client = client();
-    let capped = CompletionRequest {
+    let capped = legacy::completion(legacy::Completion {
         input: user("hi"),
         max_output_tokens: Some(512),
         ..Default::default()
-    };
+    });
     assert_eq!(body_of(&client, &capped).unwrap()["max_tokens"], 512);
-    let open = CompletionRequest {
+    let open = legacy::completion(legacy::Completion {
         input: user("hi"),
         ..Default::default()
-    };
+    });
     let configured = u32::try_from(client.config.generation.max_tokens).unwrap();
     assert_eq!(client.output_limits(), OutputLimits::known(configured));
     assert_eq!(body_of(&client, &open).unwrap()["max_tokens"], configured);

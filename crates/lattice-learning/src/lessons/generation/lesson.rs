@@ -20,9 +20,8 @@ use crate::model_call;
 use crate::reference_collection::ReferenceCollection;
 use crate::review_findings::ReviewFinding;
 use lattice_core::application::ports::LLMPort;
-use lattice_core::application::services::grounded_generation::GroundedRequest;
 use lattice_core::application::services::model_contract::{
-    Contract, ContractCall, ContractId, PromptInput,
+    legacy, Contract, ContractCall, ContractId, PromptInput,
 };
 use lattice_core::protocol;
 use lattice_core::shared::error::{AppError, Result};
@@ -365,8 +364,8 @@ fn authoring_scope(prompt: &str) -> Result<serde_json::Value> {
 fn evidence_room(llm: &dyn LLMPort, skeleton: &str, output_tokens: usize) -> (usize, usize) {
     let system = lesson_system(true);
     let room = |reserve: usize| {
-        let mut request = GroundedRequest::new(system.as_str(), skeleton);
-        request.output_tokens = reserve;
+        let mut request = legacy::grounded(system.as_str(), skeleton);
+        *legacy::grounded_says(&mut request).output_tokens = reserve;
         (model_call::source_room(llm, &request, usize::MAX), reserve)
     };
     let brief = llm.count_tokens(&lesson_draft_brief()) + llm.count_tokens(CITATION_DRAFT_BRIEF);

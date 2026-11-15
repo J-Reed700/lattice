@@ -188,7 +188,7 @@ mod tests {
         let sent = llm.0.lock().await;
         assert_eq!(sent[0].priority, InferencePriority::Maintenance);
         assert!(matches!(
-            sent[0].input.as_slice(),
+            sent[0].input(),
             [
                 CompletionInput::Message { role: system, content: instructions },
                 CompletionInput::Message { role: user, content: message },

@@ -15,6 +15,7 @@ struct AnswerModel {
     independent_solutions: AtomicUsize,
     independent_prompts: Mutex<Vec<String>>,
     review_drafts: AtomicUsize,
+    requests: Mutex<Vec<CompletionRequest>>,
 }
 
 impl std::ops::Deref for AnswerModel {
@@ -27,13 +28,17 @@ impl std::ops::Deref for AnswerModel {
 #[async_trait::async_trait]
 impl LLMPort for AnswerModel {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        if request.json_schema.is_none() {
+        self.requests
+            .lock()
+            .expect("requests")
+            .push(request.clone());
+        if request.schema().is_none() {
             assert_eq!(
                 request.sampling.and_then(|sampling| sampling.temperature),
                 Some(0.0),
                 "Independent solutions and review drafts use deterministic sampling"
             );
-            let prompt = serde_json::to_string(&request.input)?;
+            let prompt = serde_json::to_string(request.input())?;
             if prompt.contains("Independently solve this interview question before seeing") {
                 self.independent_solutions.fetch_add(1, Ordering::Relaxed);
                 assert!(prompt.contains("question"));
@@ -81,6 +86,7 @@ fn model(outputs: Vec<Value>) -> AnswerModel {
         independent_solutions: AtomicUsize::new(0),
         independent_prompts: Mutex::new(Vec::new()),
         review_drafts: AtomicUsize::new(0),
+        requests: Mutex::new(Vec::new()),
         scripted: ScriptedModel {
             outputs: Mutex::new(
                 outputs
@@ -130,6 +136,40 @@ fn behavioral_standard() -> Value {
         ],
         "evidenceGaps":["This behavioral evidence standard has no captured source backing; it assesses the learner's own account."]
     })
+}
+
+fn sent_for(llm: &AnswerModel, id: &str) -> Vec<CompletionRequest> {
+    llm.requests
+        .lock()
+        .expect("requests")
+        .iter()
+        .filter(|request| request.contract().is_some_and(|call| call.id.as_str() == id))
+        .cloned()
+        .collect()
+}
+
+async fn snapshot_of(id: &str) {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let llm = model(vec![standard(), accepted_review()]);
+    generate_answer_guides(&llm, &plan(), &[source()])
+        .await
+        .expect("guides");
+    snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), id, &sent_for(&llm, id));
+}
+
+#[tokio::test]
+async fn prompt_snapshot_answer_standard_author() {
+    snapshot_of("interview-answer-standard").await;
+}
+
+#[tokio::test]
+async fn prompt_snapshot_independent_solution() {
+    snapshot_of("interview-independent-solution").await;
+}
+
+#[tokio::test]
+async fn prompt_snapshot_guide_review() {
+    snapshot_of("interview-guide-review").await;
 }
 
 #[test]

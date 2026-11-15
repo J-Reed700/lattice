@@ -337,8 +337,8 @@ async fn standard_for_question(
         );
         request.call.sampling = Some(SamplingOverride::deterministic());
         let call = ContractCall::of::<AnswerStandardAuthor>(&PromptInput {
-            system: request.instructions.clone(),
-            prompt: request.task.clone(),
+            system: request.instructions().to_owned(),
+            prompt: request.task().to_owned(),
         })?;
         let standard = crate::lessons::structured_call::complete_checked_request(
             llm,

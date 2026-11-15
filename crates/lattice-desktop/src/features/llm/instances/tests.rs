@@ -1,4 +1,5 @@
 use super::*;
+use lattice_core::application::services::model_contract::legacy;
 use crate::features::llm::engine::sidecar_manager::weights_fixture::sparse_file;
 use lattice_core::application::contracts::settings::LocalModelConfigDto;
 use lattice_core::application::ports::llm_port::{
@@ -660,7 +661,7 @@ async fn a_pinned_model_counts_its_holder_until_the_last_clone_drops() {
     assert_eq!(in_use(&instances), (1, vec!["chat: Notes".to_owned()]));
     assert_eq!(
         pinned
-            .complete(&CompletionRequest::default())
+            .complete(&legacy::completion(legacy::Completion::default()))
             .await
             .unwrap()
             .text,

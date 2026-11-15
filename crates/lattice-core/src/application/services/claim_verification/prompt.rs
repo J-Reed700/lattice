@@ -61,7 +61,7 @@ impl ClaimChecker<'_> {
     /// The request that asks `system` and `prompt`. `reasoned`: the check
     /// reasons before it answers, so no first-token probabilities are asked.
     pub(super) fn request(&self, system: &str, prompt: &str, reasoned: bool) -> CompletionRequest {
-        CompletionRequest {
+        legacy::completion(legacy::Completion {
             input: vec![
                 CompletionInput::Message {
                     role: "system".into(),
@@ -97,7 +97,7 @@ impl ClaimChecker<'_> {
             // whoever is waiting on the model, ahead of upkeep.
             priority: InferencePriority::Verification,
             ..Default::default()
-        }
+        })
     }
 }
 

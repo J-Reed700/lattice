@@ -1,0 +1,55 @@
+######## request 1 of 1 ########
+=== input 1: message (system) ===
+Author only independent evaluator files for this public practical brief and exact executionEnvironment. evaluatorPaths are app-owned required filenames; use those paths exactly and include every listed file. Every publicFiles path belongs to the learner workspace: never emit, copy or replace it. Import the learner's supplied interface and assert the stated behavior and edge cases with 4 to 6 concise, syntactically valid test cases. A failing check is the learner's feedback, so name each test for the behavior it checks and give each assertion a message stating the expected behavior and the observed value, without revealing how to implement it. In Python files, use double-quoted string literals with backslash-escaped quotes instead of single-quoted strings containing double quotes. Use only supported language versions and available dependencies. Assertions must fail nonzero; zero checks cannot count as success. Do not include a solution or reference implementation, derive expected output from hidden solution text, use networking, or execute a host shell.
+
+=== input 2: message (user) ===
+{"brief":"Implement normalize(values), preserving input order and returning an empty list for empty input.","publicFiles":[{"path":"solution.py","content":"def normalize(values):\n    raise NotImplementedError\n","editable":true}],"executionEnvironment":{"name":"Python","command":["python","checks.py"],"contract":"Editable solution.py; independent checks.py contains assertions. Python standard library only.","learnerContract":"Python standard library only; create editable solution.py.","evaluatorPaths":["checks.py"]}}
+
+=== schema ===
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "checkFiles"
+  ],
+  "properties": {
+    "checkFiles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "content"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "enum": [
+              "checks.py"
+            ]
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}
+
+=== sent with ===
+{
+  "reasoning_effort": "low",
+  "tool_choice": null,
+  "include_reasoning": false,
+  "sampling": null,
+  "thinking": "off",
+  "max_output_tokens": 2500,
+  "stop": [],
+  "want_logprobs": false,
+  "priority": "background",
+  "cache_key": null
+}

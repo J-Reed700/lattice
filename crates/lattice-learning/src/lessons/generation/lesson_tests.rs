@@ -717,6 +717,120 @@ fn the_writer_asks_questions_only_about_what_the_learner_was_taught() {
     );
 }
 
+#[tokio::test]
+async fn prompt_snapshot_lesson_writer() -> Result<()> {
+    use crate::curriculum::LearningGenerationJobKind;
+    use crate::curriculum_repository::LearningCurriculumRepository;
+    use crate::dto::{AcceptLearningProgramRequestDto, LearningCourseDepth};
+    use crate::lessons::course_generation_tests::{
+        lesson_response, outline, request, Model, RequestLog, REFERENCE,
+    };
+    use crate::plan_dto::StartLearningGenerationJobRequestDto;
+    use crate::repository::LearningRepository;
+    use lattice_core::shared::persistence::Database;
+    use lattice_core::shared::runtime::jobs::{JobContext, JobStore};
+    let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
+    let drafts = crate::outline_draft::DraftRunRegistry::new();
+    let draft = crate::service::generate(
+        &repo,
+        &drafts,
+        &outline(4, 3),
+        request(LearningCourseDepth::Course),
+        vec![],
+    )
+    .await?;
+    let accepted = crate::service::accept(
+        &repo,
+        &drafts,
+        AcceptLearningProgramRequestDto {
+            program_id: draft.summary.id.clone(),
+            expected_revision: draft.summary.revision,
+            title: "Experimental design".into(),
+        },
+    )
+    .await?;
+    crate::content_verification::tests::install_source_as(
+        &db,
+        &draft.summary.id,
+        REFERENCE,
+        (
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222",
+        ),
+    )
+    .await?;
+    let mut program = repo.get(&draft.summary.id).await?;
+    program.sources = repo.verification_sources(&draft.summary.id).await?;
+    // The prompt shows module ids, which are minted at random.
+    let minted: Vec<String> = program.modules.iter().map(|m| m.id.clone()).collect();
+    for module in &mut program.modules {
+        for id in &mut module.prerequisite_module_ids {
+            if let Some(position) = minted.iter().position(|known| known == id) {
+                *id = format!("module-{position}");
+            }
+        }
+    }
+    let lesson = &program.modules[0].lessons[0];
+    let mut candidate = lesson_response();
+    for field in ["blocks", "questions"] {
+        for item in candidate[field].as_array_mut().unwrap() {
+            item["sourceIndex"] = json!(0);
+            item["quote"] = json!("A randomized comparison isolates the intervention.");
+        }
+    }
+    let inner = Model(candidate.to_string());
+    let llm = RequestLog::new(&inner);
+    let jobs = LearningCurriculumRepository::new(db.clone());
+    jobs.plan(&program.summary.id).await?;
+    let job = jobs
+        .start_job(&StartLearningGenerationJobRequestDto {
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            program_id: program.summary.id.clone(),
+            expected_revision: accepted.summary.revision,
+            kind: LearningGenerationJobKind::LessonPreparation,
+            request_json: json!({"lessonIds":[lesson.id]}).to_string(),
+            progress_total: 1,
+        })
+        .await?;
+    JobStore::new(db.clone()).claim(&job.id).await?;
+    let runtimes = crate::embedded_runtime::BuiltinRuntimes::for_tests();
+    crate::lesson_progress::run(
+        &JobContext::detached(&JobStore::new(db.clone()), &job.id).await?,
+        crate::lesson_drafts::run(
+            &db,
+            &jobs,
+            &job.id,
+            &lesson.id,
+            prepare_lesson(
+                &llm,
+                &runtimes,
+                &program,
+                lesson,
+                &CoursePlan::blank(&program),
+            ),
+        ),
+    )
+    .await?;
+
+    // The slot-affinity key is the course's id, which is minted at random.
+    let mut sent = llm.sent_for::<LessonWriter>();
+    for request in &mut sent {
+        assert_eq!(
+            request.cache_key.as_deref(),
+            Some(program.summary.id.as_str())
+        );
+        request.cache_key = Some("course-0".into());
+    }
+    lattice_core::application::services::model_contract::test_support::snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        LessonWriter::ID.as_str(),
+        &sent,
+    );
+    Ok(())
+}
+
 #[test]
 fn the_writer_is_told_question_reasons_say_what_is_true() {
     let text = writer_requirements();

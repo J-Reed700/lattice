@@ -50,7 +50,7 @@ impl ScriptedModel {
             .iter()
             .map(|request| {
                 request
-                    .input
+                    .input()
                     .iter()
                     .filter_map(|input| match input {
                         CompletionInput::Message { content, .. } => Some(content.as_str()),

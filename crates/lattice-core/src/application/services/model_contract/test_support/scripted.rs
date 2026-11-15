@@ -201,7 +201,7 @@ impl ScriptedModel {
     }
 
     async fn answer(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        let Some(call) = request.contract.clone() else {
+        let Some(call) = request.contract().cloned() else {
             return self.miss(format!(
                 "a request names no contract: {}",
                 first_line_of(request)
@@ -238,7 +238,7 @@ impl ScriptedModel {
 
 fn first_line_of(request: &CompletionRequest) -> String {
     request
-        .input
+        .input()
         .iter()
         .rev()
         .find_map(|input| match input {
@@ -301,7 +301,7 @@ impl LLMPort for ScriptedModel {
 mod tests {
     use super::*;
     use crate::application::ports::llm_port::Finish;
-    use crate::application::services::model_contract::{tagged, PromptInput, Step};
+    use crate::application::services::model_contract::{legacy, tagged, PromptInput, Step};
 
     struct Number;
 
@@ -356,7 +356,7 @@ mod tests {
     ) -> Result<CompletionResponse> {
         let call = ContractCall::of::<C>(&input(prompt)).unwrap();
         let response = tagged(model, &call)
-            .complete(&CompletionRequest::default())
+            .complete(&legacy::completion(legacy::Completion::default()))
             .await;
         response
     }
@@ -439,10 +439,10 @@ mod tests {
             input: serde_json::json!(5),
             splits: false,
         };
-        let request = CompletionRequest {
+        let request = legacy::completion(legacy::Completion {
             contract: Some(call),
             ..Default::default()
-        };
+        });
         let error = model.complete(&request).await.unwrap_err();
         assert!(
             error.to_string().contains("could not be read back"),
@@ -482,7 +482,7 @@ mod tests {
         let call = ContractCall::of::<Word>(&input("a")).unwrap();
         let shown = Mutex::new(Vec::new());
         let response = tagged(&model, &call)
-            .complete_with_progress(&CompletionRequest::default(), &|text| {
+            .complete_with_progress(&legacy::completion(legacy::Completion::default()), &|text| {
                 shown.lock().unwrap().push(text);
                 Ok(())
             })
@@ -512,13 +512,13 @@ mod tests {
         assert!(error.to_string().contains("scripted-number"), "{error}");
         assert!(error.to_string().contains("\"prompt\":\"a\""), "{error}");
         let bare = model
-            .complete(&CompletionRequest {
+            .complete(&legacy::completion(legacy::Completion {
                 input: vec![CompletionInput::Message {
                     role: "user".into(),
                     content: "First line\nsecond".into(),
                 }],
                 ..Default::default()
-            })
+            }))
             .await
             .unwrap_err();
         assert!(bare.to_string().contains("names no contract: First line"));

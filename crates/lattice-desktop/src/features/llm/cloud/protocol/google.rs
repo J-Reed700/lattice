@@ -74,7 +74,7 @@ impl CompletionProtocol for Google {
 
     fn body(&self, model: &str, fitted: &Fitted<'_>, stream: bool) -> Result<Value> {
         let request = fitted.request();
-        let messages = chat_messages(&request.input)?;
+        let messages = chat_messages(request.input())?;
         let model = model.strip_prefix("models/").unwrap_or(model);
         let mut body = json!({
             "model": model,
@@ -98,15 +98,15 @@ impl CompletionProtocol for Google {
         if let Some(effort) = request.reasoning_effort.as_deref() {
             set_field(&mut body, "reasoning_effort", json!(effort))?;
         }
-        if !request.stop.is_empty() {
-            set_field(&mut body, "stop", json!(request.stop))?;
+        if !request.stop().is_empty() {
+            set_field(&mut body, "stop", json!(request.stop()))?;
         }
-        if !request.tools.is_empty() {
+        if !request.tools().is_empty() {
             set_field(
                 &mut body,
                 "tools",
                 json!(request
-                    .tools
+                    .tools()
                     .iter()
                     .map(|t| json!({
                         "type": "function",
@@ -118,7 +118,7 @@ impl CompletionProtocol for Google {
                     }))
                     .collect::<Vec<_>>()),
             )?;
-            if let Some(choice) = request.tool_choice {
+            if let Some(choice) = request.tool_choice() {
                 let choice_str = match choice {
                     ToolChoice::Auto => "auto",
                     ToolChoice::Required => "required",
@@ -127,7 +127,7 @@ impl CompletionProtocol for Google {
                 set_field(&mut body, "tool_choice", json!(choice_str))?;
             }
         }
-        if let Some(schema) = &request.json_schema {
+        if let Some(schema) = request.schema().map(|schema| schema.as_json()) {
             set_field(
                 &mut body,
                 "response_format",

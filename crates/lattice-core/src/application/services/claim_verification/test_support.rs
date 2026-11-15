@@ -461,6 +461,77 @@ mod tests {
         assert!(judged(with_case).is_common());
     }
 
+    fn assert_snapshot<C: Contract>(model: &ScriptedModel, name: &str) {
+        let requests = model
+            .sent()
+            .into_iter()
+            .filter(|sent| sent.call.id == C::ID)
+            .map(|sent| sent.request)
+            .collect::<Vec<_>>();
+        crate::application::services::model_contract::test_support::snapshot::assert_requests(
+            env!("CARGO_MANIFEST_DIR"),
+            name,
+            &requests,
+        );
+    }
+
+    #[tokio::test]
+    async fn prompt_snapshot_claim_check() {
+        let model = ScriptedModel::judging(truth());
+        let outcome = checker(&model, CheckPolicy::Strict)
+            .check_passages_without_deadline(STATED, &shown())
+            .await;
+        assert_eq!(judged(outcome).verdict, ClaimVerdict::Supported);
+        assert_snapshot::<ClaimCheck>(&model, "claim-check");
+    }
+
+    #[tokio::test]
+    async fn prompt_snapshot_claim_batch() {
+        let model = ScriptedModel::judging(truth());
+        let claim = |claim: &str, passages: &[&str]| LocatedClaim {
+            claim: claim.into(),
+            passages: passages.iter().map(|text| (*text).to_owned()).collect(),
+        };
+        let claims = [
+            claim(STATED, &[LEXER]),
+            claim(CONTRADICTED, &[LEXER, NEVER_PARSES]),
+        ];
+        let answered = checker(&model, CheckPolicy::Strict)
+            .check_batch_without_deadline(&claims, &|_| Ok(()), &|_| Ok(()))
+            .await
+            .unwrap();
+        assert_eq!(answered.judgments.len(), 2);
+        assert_snapshot::<ClaimBatch>(&model, "claim-batch");
+    }
+
+    #[tokio::test]
+    async fn prompt_snapshot_claim_parts() {
+        let model = ScriptedModel::judging(truth());
+        let parts = bridged(&model, PARTS, &shown()).await;
+        assert_eq!(parts.len(), 2);
+        assert_snapshot::<ClaimParts>(&model, "claim-parts");
+    }
+
+    #[tokio::test]
+    async fn prompt_snapshot_consistency() {
+        let model = ScriptedModel::judging(truth());
+        let outcome = checker(&model, CheckPolicy::Consistency)
+            .check_consistency(STATED, &shown())
+            .await;
+        assert_eq!(judged(outcome).verdict, ConsistencyVerdict::Consistent);
+        assert_snapshot::<Consistency>(&model, "consistency");
+    }
+
+    #[tokio::test]
+    async fn prompt_snapshot_knowledge() {
+        let model = ScriptedModel::judging(truth());
+        let outcome = checker(&model, CheckPolicy::Knowledge)
+            .check_knowledge(COMMON, Some("A worked case."))
+            .await;
+        assert!(judged(outcome).is_common());
+        assert_snapshot::<Knowledge>(&model, "knowledge");
+    }
+
     #[tokio::test]
     #[should_panic(expected = "nothing answers")]
     async fn a_statement_outside_the_truth_fails_the_test() {

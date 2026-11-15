@@ -10,6 +10,7 @@ use super::written_calls::WrittenCalls;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, ThinkingMode, ToolChoice,
 };
+use lattice_core::application::services::model_contract::legacy;
 use serde_json::Value;
 
 /// Why a round is the last one. The model is told which, so the answer does
@@ -66,18 +67,20 @@ const INSIST_INSTRUCTION: &str = "Do not call any tools: none can run now, and a
 /// Make the next round the answering one: the same tools, none callable, and
 /// an instruction to answer from what the turn already holds.
 pub(super) fn ask_for_answer(request: &mut CompletionRequest, last_round: LastRound) {
-    request.tool_choice = Some(ToolChoice::None);
-    say_last(&mut request.input, last_round.instruction());
+    let says = legacy::says(request);
+    *says.tool_choice = Some(ToolChoice::None);
+    say_last(says.input, last_round.instruction());
 }
 
 /// The answering round when the answer may think: the same instruction and no
 /// tools in the prompt, since a thinking model with calls forbidden writes the
 /// call as text instead.
 pub(super) fn ask_for_answer_without_tools(request: &mut CompletionRequest, last_round: LastRound) {
-    say_last(&mut request.input, last_round.instruction());
-    request.tools.clear();
+    let says = legacy::says(request);
+    say_last(says.input, last_round.instruction());
+    says.tools.clear();
     // Nothing is offered, so there is nothing to choose.
-    request.tool_choice = None;
+    *says.tool_choice = None;
 }
 
 /// The one retry after a last round that wrote only calls: no tools in the
@@ -86,12 +89,13 @@ pub(super) fn insist_on_answer(request: &mut CompletionRequest, last_round: Last
     // With no tools offered, a default that turns thinking on for tool-free
     // rounds would bring back the reply this retry exists to replace.
     request.thinking = ThinkingMode::Off;
-    request.tools.clear();
+    let says = legacy::says(request);
+    says.tools.clear();
     // Nothing is offered, so there is nothing to choose; some providers
     // refuse a choice that names no tools.
-    request.tool_choice = None;
-    unsay_last(&mut request.input, last_round.instruction());
-    say_last(&mut request.input, INSIST_INSTRUCTION);
+    *says.tool_choice = None;
+    unsay_last(says.input, last_round.instruction());
+    say_last(says.input, INSIST_INSTRUCTION);
 }
 
 /// Sets an instruction off from the result it is appended to.
@@ -117,8 +121,9 @@ pub(super) fn say_last(input: &mut Vec<CompletionInput>, instruction: &str) {
 /// Take back the last round's instruction, or the firmer one that replaced
 /// it, so a round asked again for another reason is told only what holds.
 pub(super) fn take_back(request: &mut CompletionRequest, last_round: LastRound) {
-    unsay_last(&mut request.input, last_round.instruction());
-    unsay_last(&mut request.input, INSIST_INSTRUCTION);
+    let says = legacy::says(request);
+    unsay_last(says.input, last_round.instruction());
+    unsay_last(says.input, INSIST_INSTRUCTION);
 }
 
 /// Answer every call in `ids` that `input` holds no result for with
@@ -341,7 +346,7 @@ mod tests {
     }
 
     fn request_with_a_tool() -> CompletionRequest {
-        CompletionRequest {
+        legacy::completion(legacy::Completion {
             input: vec![
                 CompletionInput::Message {
                     role: "system".into(),
@@ -358,7 +363,7 @@ mod tests {
                 parameters: serde_json::json!({}),
             }],
             ..Default::default()
-        }
+        })
     }
 
     /// Withdrawing the tools changed the prompt from its first token, so the
@@ -366,10 +371,10 @@ mod tests {
     #[test]
     fn the_last_round_keeps_its_tools_and_forbids_calling_them() {
         let mut request = request_with_a_tool();
-        let tools = json_of(&request.tools);
+        let tools = json_of(&request.tools());
         ask_for_answer(&mut request, LastRound::OutOfRounds);
-        assert_eq!(json_of(&request.tools), tools);
-        assert_eq!(request.tool_choice, Some(ToolChoice::None));
+        assert_eq!(json_of(&request.tools()), tools);
+        assert_eq!(request.tool_choice(), Some(ToolChoice::None));
     }
 
     /// The instruction has to be the last thing the model reads, and adding
@@ -377,30 +382,30 @@ mod tests {
     #[test]
     fn the_instruction_ends_the_last_result_and_changes_nothing_before_it() {
         let mut request = request_with_a_tool();
-        let first = json_of(&request.input[0]);
+        let first = json_of(&request.input()[0]);
         ask_for_answer(&mut request, LastRound::OutOfRounds);
-        assert_eq!(request.input.len(), 2, "no new message");
-        let Some(CompletionInput::ToolResult { output, .. }) = request.input.last() else {
+        assert_eq!(request.input().len(), 2, "no new message");
+        let Some(CompletionInput::ToolResult { output, .. }) = request.input().last() else {
             panic!("the prompt still ends with the result");
         };
         assert!(output.starts_with("file text"), "{output}");
         assert!(output.ends_with(OUT_OF_ROUNDS_INSTRUCTION), "{output}");
-        assert_eq!(json_of(&request.input[0]), first);
+        assert_eq!(json_of(&request.input()[0]), first);
     }
 
     /// A late system message is merged into the top of a llama.cpp prompt,
     /// tens of thousands of tokens before the model reads its last result.
     #[test]
     fn with_no_result_to_end_the_instruction_is_the_last_user_message() {
-        let mut request = CompletionRequest {
+        let mut request = legacy::completion(legacy::Completion {
             input: vec![CompletionInput::Message {
                 role: "user".into(),
                 content: "question".into(),
             }],
             ..Default::default()
-        };
+        });
         ask_for_answer(&mut request, LastRound::OutOfRounds);
-        assert!(matches!(request.input.last(),
+        assert!(matches!(request.input().last(),
             Some(CompletionInput::Message { role, content })
                 if role == "user" && content == OUT_OF_ROUNDS_INSTRUCTION));
     }
@@ -409,10 +414,10 @@ mod tests {
     fn a_thinking_answer_round_sends_no_tools() {
         let mut request = request_with_a_tool();
         ask_for_answer_without_tools(&mut request, LastRound::OutOfRounds);
-        assert!(request.tools.is_empty());
-        assert_eq!(request.tool_choice, None);
-        assert_eq!(request.input.len(), 2, "no new message");
-        assert!(matches!(request.input.last(),
+        assert!(request.tools().is_empty());
+        assert_eq!(request.tool_choice(), None);
+        assert_eq!(request.input().len(), 2, "no new message");
+        assert!(matches!(request.input().last(),
             Some(CompletionInput::ToolResult { output, .. })
                 if output.ends_with(OUT_OF_ROUNDS_INSTRUCTION)));
         assert_eq!(ThinkingMode::for_answer(true, &request), ThinkingMode::On);
@@ -428,22 +433,23 @@ mod tests {
         ] {
             for mut request in [
                 request_with_a_tool(),
-                CompletionRequest {
-                    input: vec![CompletionInput::Message {
+                {
+                    let mut next = request_with_a_tool();
+                    *legacy::says(&mut next).input = vec![CompletionInput::Message {
                         role: "user".into(),
                         content: "question".into(),
-                    }],
-                    ..request_with_a_tool()
+                    }];
+                    next
                 },
             ] {
                 ask_for_answer(&mut request, last_round);
-                let before = request.input.len();
+                let before = request.input().len();
                 insist_on_answer(&mut request, last_round);
-                assert!(request.tools.is_empty());
-                assert_eq!(request.tool_choice, None);
+                assert!(request.tools().is_empty());
+                assert_eq!(request.tool_choice(), None);
                 assert_eq!(request.thinking, ThinkingMode::Off);
-                assert_eq!(request.input.len(), before, "replaced, not stacked");
-                let last = json_of(request.input.last().unwrap()).to_string();
+                assert_eq!(request.input().len(), before, "replaced, not stacked");
+                let last = json_of(request.input().last().unwrap()).to_string();
                 assert!(last.contains("Do not call any tools"), "{last}");
                 assert!(!last.contains(last_round.instruction()), "{last}");
             }

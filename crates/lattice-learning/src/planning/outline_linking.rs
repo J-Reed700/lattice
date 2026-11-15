@@ -20,7 +20,7 @@ use lattice_core::{
         ports::LLMPort,
         services::{
             grounded_generation::GroundedRequest,
-            model_contract::{Contract, ContractCall, ContractId, PromptInput},
+            model_contract::{legacy, Contract, ContractCall, ContractId, PromptInput},
         },
     },
     shared::error::Result,
@@ -417,8 +417,8 @@ fn request(
 }
 
 fn chooser_request(prompt: &str, output_tokens: usize) -> GroundedRequest {
-    let mut request = GroundedRequest::new(LINK_SYSTEM, prompt);
-    request.output_tokens = output_tokens;
+    let mut request = legacy::grounded(LINK_SYSTEM, prompt);
+    *legacy::grounded_says(&mut request).output_tokens = output_tokens;
     request
 }
 
@@ -558,8 +558,8 @@ pub(crate) async fn link(
     // batch request's room.
     let batch = BATCH_SIZE.min(items.len()).max(1);
     let mut skeleton =
-        GroundedRequest::new(LINK_SYSTEM, json!({"passages":[],"items":[]}).to_string());
-    skeleton.output_tokens = 200 + 120 * batch;
+        legacy::grounded(LINK_SYSTEM, json!({"passages":[],"items":[]}).to_string());
+    *legacy::grounded_says(&mut skeleton).output_tokens = 200 + 120 * batch;
     let share = crate::model_call::source_room(llm, &skeleton, usize::MAX) / batch;
     let mut pending = Vec::new();
     for (path, kind) in items {

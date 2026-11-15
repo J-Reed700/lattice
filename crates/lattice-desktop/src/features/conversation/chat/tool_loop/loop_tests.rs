@@ -77,7 +77,7 @@ fn is_condense_request(request: &CompletionRequest) -> bool {
 
 /// What the model reads last: the final message or tool result.
 fn last_text(request: &CompletionRequest) -> &str {
-    match request.input.last() {
+    match request.input().last() {
         Some(CompletionInput::Message { content, .. }) => content,
         Some(CompletionInput::ToolResult { output, .. }) => output,
         _ => "",
@@ -415,7 +415,7 @@ fn json_of(value: &impl serde::Serialize) -> Value {
 
 fn result_ids(request: &CompletionRequest) -> Vec<&str> {
     request
-        .input
+        .input()
         .iter()
         .filter_map(|item| match item {
             CompletionInput::ToolResult { id, .. } => Some(id.as_str()),
@@ -426,7 +426,7 @@ fn result_ids(request: &CompletionRequest) -> Vec<&str> {
 
 fn results_mentioning<'r>(request: &'r CompletionRequest, text: &str) -> Vec<&'r str> {
     request
-        .input
+        .input()
         .iter()
         .filter_map(|item| match item {
             CompletionInput::ToolResult { output, .. } if output.contains(text) => {
@@ -587,13 +587,16 @@ async fn the_last_round_keeps_the_tools_and_forbids_calling_them() {
     assert_eq!(run.outcome.unwrap().response, "It opened in 1932 [1].");
     let requests = model.requests();
     assert_eq!(requests.len(), 2);
-    assert_eq!(requests[0].tool_choice, None);
-    assert_eq!(requests[1].tool_choice, Some(ToolChoice::None));
+    assert_eq!(requests[0].tool_choice(), None);
+    assert_eq!(requests[1].tool_choice(), Some(ToolChoice::None));
     // The same tools, so the prompt the server has cached is still a prefix
     // of this one.
-    assert_eq!(json_of(&requests[1].tools), json_of(&requests[0].tools));
-    let earlier = json_of(&requests[0].input);
-    let later = json_of(&requests[1].input);
+    assert_eq!(
+        json_of(&requests[1].tools()),
+        json_of(&requests[0].tools())
+    );
+    let earlier = json_of(&requests[0].input());
+    let later = json_of(&requests[1].input());
     assert_eq!(
         later.as_array().unwrap()[..earlier.as_array().unwrap().len()],
         earlier.as_array().unwrap()[..]
@@ -601,7 +604,7 @@ async fn the_last_round_keeps_the_tools_and_forbids_calling_them() {
     assert!(last_text(&requests[1]).ends_with(OUT_OF_ROUNDS_INSTRUCTION));
     // Said at the end of the last result, not as a message of its own.
     assert!(matches!(
-        requests[1].input.last(),
+        requests[1].input().last(),
         Some(CompletionInput::ToolResult { .. })
     ));
     // Thinking is off unless the user turns it on.
@@ -638,8 +641,8 @@ async fn a_thinking_answer_is_asked_for_without_tools() {
     let requests = model.requests();
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].thinking, ThinkingMode::Off, "a tool round");
-    assert!(requests[1].tools.is_empty());
-    assert_eq!(requests[1].tool_choice, None);
+    assert!(requests[1].tools().is_empty());
+    assert_eq!(requests[1].tool_choice(), None);
     assert_eq!(requests[1].thinking, ThinkingMode::On);
     assert!(last_text(&requests[1]).ends_with(OUT_OF_ROUNDS_INSTRUCTION));
 }
@@ -666,11 +669,11 @@ async fn a_last_round_of_calls_is_asked_again_without_tools() {
     let requests = model.requests();
     assert_eq!(requests.len(), 3);
     let retry = &requests[2];
-    assert!(retry.tools.is_empty(), "no tools at all on the retry");
-    assert_eq!(retry.tool_choice, None);
+    assert!(retry.tools().is_empty(), "no tools at all on the retry");
+    assert_eq!(retry.tool_choice(), None);
     // The calls it was not allowed to make are not replayed, and the firmer
     // instruction takes the first one's place.
-    assert_eq!(retry.input.len(), requests[1].input.len());
+    assert_eq!(retry.input().len(), requests[1].input().len());
     assert!(!last_text(retry).contains(OUT_OF_ROUNDS_INSTRUCTION));
     assert!(last_text(retry).contains("Do not call any tools"));
     assert_eq!(web.log().len(), 2, "the last round's call never ran");
@@ -703,7 +706,7 @@ async fn a_call_written_as_json_in_the_last_round_is_asked_again() {
 
     assert_eq!(run.outcome.unwrap().response, "It opened in 1932 [1].");
     assert_eq!(model.requests().len(), 3);
-    assert!(model.requests()[2].tools.is_empty());
+    assert!(model.requests()[2].tools().is_empty());
 }
 
 /// llama.cpp issue #30118: Qwen3.6 left out the `<tool_call>` opener, and
@@ -739,7 +742,7 @@ async fn a_call_written_as_text_in_a_round_that_may_call_is_run() {
     // the text the model wrote before it.
     let requests = model.requests();
     assert_eq!(requests.len(), 2);
-    let input = &requests[1].input;
+    let input = requests[1].input();
     let call_at = input
         .iter()
         .position(|item| {
@@ -836,7 +839,7 @@ async fn reads_in_one_round_run_together_and_come_back_in_call_order() {
     );
     for (index, page) in [PAGE_A, PAGE_B, PAGE_C].iter().enumerate() {
         let CompletionInput::ToolResult { output, .. } = answer_round
-            .input
+            .input()
             .iter()
             .filter(|item| matches!(item, CompletionInput::ToolResult { .. }))
             .nth(index)
@@ -993,7 +996,7 @@ async fn a_turn_that_fills_its_window_condenses_and_keeps_reading() {
     // The round after condensing is an ordinary one: tools callable, no
     // instruction to stop, and the notes in place of page A's text.
     let after = &requests[3];
-    assert_eq!(after.tool_choice, None);
+    assert_eq!(after.tool_choice(), None);
     assert!(!last_text(after).contains(OUT_OF_ROUNDS_INSTRUCTION));
     assert!(!last_text(after).contains(WINDOW_FULL_INSTRUCTION));
     assert!(last_text(after).starts_with(NOTES_HEADER));
@@ -1001,8 +1004,8 @@ async fn a_turn_that_fills_its_window_condenses_and_keeps_reading() {
     // The condensing request is the round before it and an instruction: the
     // cached prompt is a prefix of it, tools and all.
     let condense = &requests[2];
-    assert_eq!(json_of(&condense.tools), json_of(&requests[1].tools));
-    assert_eq!(condense.tool_choice, Some(ToolChoice::None));
+    assert_eq!(json_of(&condense.tools()), json_of(&requests[1].tools()));
+    assert_eq!(condense.tool_choice(), Some(ToolChoice::None));
     assert!(run.steps.iter().any(
         |step| step.label == "Condensing what it has read" && step.state == TurnStepState::Done
     ));

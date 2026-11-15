@@ -1,8 +1,7 @@
-use lattice_core::application::ports::llm_port::{
-    CompletionRequest, InferencePriority, SamplingOverride,
-};
+use lattice_core::application::ports::llm_port::{InferencePriority, SamplingOverride};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::completion_input::from_context;
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -245,7 +244,7 @@ impl IntentClassifier {
     async fn complete(&self, prompt: String) -> Result<String> {
         let response = self
             .llm
-            .complete(&CompletionRequest {
+            .complete(&legacy::completion(legacy::Completion {
                 input: from_context("", &[], &prompt),
                 json_schema: Some(intent_schema()),
                 sampling: Some(SamplingOverride::deterministic()),
@@ -254,7 +253,7 @@ impl IntentClassifier {
                 cancel: self.cancel.clone(),
                 no_time_limit: true,
                 ..Default::default()
-            })
+            }))
             .await?;
         if !response.tool_calls.is_empty() {
             return Err(AppError::InvalidState(
@@ -465,7 +464,10 @@ mod tests {
         let sent = llm.sent.lock().unwrap();
         assert_eq!(sent.len(), 1);
         let request = sent.first().unwrap();
-        assert_eq!(request.json_schema, Some(intent_schema()));
+        assert_eq!(
+            request.schema().map(|schema| schema.as_json()),
+            Some(&intent_schema())
+        );
         assert!(request.no_time_limit, "no clock cuts the classifier off");
         let prompt = request.user_text();
         for demand in ["JSON", "strict", "Respond with", "no other text", "bool"] {

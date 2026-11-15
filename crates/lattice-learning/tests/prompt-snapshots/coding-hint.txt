@@ -1,0 +1,70 @@
+######## request 1 of 1 ########
+=== input 1: message (system) ===
+You are the interviewer in a coding interview. Write the hint as the words you say to the candidate, in your own voice, staying in role. The reference solution is private: it is there so that your hint is right, never to be quoted. Never write a line of it, and never write code that solves the problem. Speak about the candidate's code only from what they have written and run. Fill `path` and `lines` only for a Line hint; otherwise give `lines` as an empty list and `path` as null.
+
+=== input 2: message (user) ===
+Reference solution (private):
+def two_sum(numbers, target):
+    seen = {}
+    for i, n in enumerate(numbers):
+        if target - n in seen:
+            return [seen[target - n], i]
+        seen[n] = i
+    return []
+
+
+What the candidate sees and has done:
+Problem: find two numbers that add up to the target.
+The candidate ran the cases: 1 of 3 passed.
+Their file solution.py returns on the first pass of the loop.
+
+Write a Idea hint. Give the idea or structure that fits, and why. You may name the technique. Give no fenced block.
+
+=== schema ===
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "text": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "lines": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "path": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "text",
+    "reason",
+    "lines",
+    "path"
+  ]
+}
+
+=== sent with ===
+{
+  "reasoning_effort": "low",
+  "tool_choice": null,
+  "include_reasoning": false,
+  "sampling": null,
+  "thinking": "off",
+  "max_output_tokens": 1600,
+  "stop": [],
+  "want_logprobs": false,
+  "priority": "background",
+  "cache_key": null
+}

@@ -75,9 +75,12 @@ async fn a_structured_call_sends_the_prompt_whole_with_its_schema() -> Result<()
         .first()
         .ok_or_else(|| AppError::InternalError("unsent".into()))?;
     assert_eq!(request.user_text(), "{\"task\":1}");
-    assert_eq!(request.json_schema, Some(schema));
+    assert_eq!(
+        request.schema().map(|schema| schema.as_json()),
+        Some(&schema)
+    );
     assert_eq!(request.reasoning_effort.as_deref(), Some("low"));
-    assert_eq!(request.max_output_tokens, Some(2000));
+    assert_eq!(request.max_output_tokens(), Some(2000));
     // No learning call is killed by a clock.
     assert!(request.no_time_limit);
     assert_eq!(request.wall_clock_budget(), None);
@@ -216,7 +219,7 @@ async fn source_room_is_what_the_planner_leaves_under_the_ceiling() {
 /// content, joined by newlines.
 fn rendered(request: &CompletionRequest) -> String {
     request
-        .input
+        .input()
         .iter()
         .flat_map(|item| match item {
             CompletionInput::Message { role, content } => vec![role.clone(), content.clone()],
@@ -368,7 +371,7 @@ async fn dense_material_shrinks_until_its_exact_count_fits() {
     assert!(measured.prompt_tokens <= measured.allowed);
     assert!(fit.fits());
     assert!(fit.room > 0 && fit.room < first);
-    assert_eq!(fit.request.task, packed(fit.room).task);
+    assert_eq!(fit.request.task(), packed(fit.room).task());
     // The skeleton first, then strictly smaller rooms from the first.
     assert_eq!(rooms.first(), Some(&0));
     let tried = rooms.get(1..).unwrap_or_default();
@@ -391,7 +394,7 @@ async fn a_skeleton_the_window_cannot_hold_settles_at_room_zero_unsent() {
     let fit = fit_room(&llm, 1_000, crowded).await;
     assert_eq!(fit.room, 0);
     assert!(!fit.fits());
-    assert_eq!(fit.request.task, crowded(0).task);
+    assert_eq!(fit.request.task(), crowded(0).task());
     assert_eq!(llm.counts.load(Ordering::SeqCst), 0);
 
     let contract = probe();

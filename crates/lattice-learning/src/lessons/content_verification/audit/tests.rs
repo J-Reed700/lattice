@@ -606,8 +606,42 @@ async fn what_is_sent_is_the_section_the_claims_and_their_passages_only() {
     assert_eq!(text.matches("[S0] Boiling").count(), 1, "the section once");
     assert!(text.contains(BOILS) && text.contains(SALT));
     assert!(text.contains("So the handbook says."));
-    assert!(request.json_schema.is_some(), "held to the verdict schema");
-    assert!(request.tools.is_empty(), "no web tools unless allowed");
+    assert!(request.schema().is_some(), "held to the verdict schema");
+    assert!(request.tools().is_empty(), "no web tools unless allowed");
+}
+
+#[tokio::test]
+async fn prompt_snapshot_verifier_audit() {
+    use lattice_core::application::services::model_contract::Contract;
+    let harness = Harness::new(vec![verified("a", BOILS), verified("b", SALT)]);
+    let llm = ScriptedVerifier::answering(BIG, supports);
+    let web = answers::SavingWeb {
+        search_fails: false,
+        saved: Mutex::new(Vec::new()),
+    };
+
+    harness
+        .audit(&llm, Some(&web as &dyn VerifierWeb))
+        .await
+        .unwrap();
+
+    let sent: Vec<CompletionRequest> = llm
+        .sent
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|request| {
+            request
+                .contract()
+                .is_some_and(|call| call.id == super::calls::VerifierAudit::ID)
+        })
+        .cloned()
+        .collect();
+    lattice_core::application::services::model_contract::test_support::snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "verifier-audit",
+        &sent,
+    );
 }
 
 #[tokio::test]

@@ -681,3 +681,20 @@ fn the_sort_contract_reads_what_it_renders() {
         SortStatements,
     >(&answer);
 }
+
+#[tokio::test]
+async fn prompt_snapshot_classify_statements() -> Result<()> {
+    let inner = scripted(vec![json!({"s0": "reasoning", "s1": "common"})]);
+    let model = crate::lessons::course_generation_tests::RequestLog::new(&inner);
+    let sorted = classify(
+        &model,
+        &[
+            body("A confidence score tells a reviewer how sure the sorter is."),
+            body("A bounding box is a rectangle that frames one region of a page."),
+        ],
+    )
+    .await?;
+    assert_eq!(sorted.len(), 2);
+    model.assert_snapshot::<SortStatements>();
+    Ok(())
+}

@@ -4,6 +4,7 @@
 
 use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::services::model_contract::shape::Schema;
 use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::Result;
 
@@ -46,6 +47,10 @@ pub(crate) trait ModelBackend: Send + Sync {
     fn supports_tool_calling(&self) -> bool;
     fn vision(&self) -> Option<VisionGeometry>;
     fn keeps_read_prompts(&self) -> bool;
+    /// Whether this backend holds an answer to `schema` as written.
+    fn enforces(&self, _schema: &Schema) -> bool {
+        false
+    }
     fn is_alive(&self) -> bool;
     async fn is_ready(&self) -> Result<bool>;
     async fn send(&self, fitted: &Fitted<'_>, progress: Progress<'_>)

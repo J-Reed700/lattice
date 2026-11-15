@@ -160,7 +160,7 @@ impl ConfiguredModel {
 fn replay_cap(request: &CompletionRequest, output: u32) -> Option<u32> {
     Some(
         request
-            .max_output_tokens
+            .max_output_tokens()
             .filter(|cap| *cap > 0)
             .map_or(output, |cap| cap.min(output)),
     )
@@ -170,7 +170,7 @@ fn replay_cap(request: &CompletionRequest, output: u32) -> Option<u32> {
 impl LLMPort for ConfiguredModel {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let messages: Vec<_> = request
-            .input
+            .input()
             .iter()
             .filter_map(|i| match i {
                 CompletionInput::Message { role, content } => {

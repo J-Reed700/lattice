@@ -3,6 +3,7 @@
 //! refusal.
 
 use super::*;
+use lattice_core::application::services::model_contract::legacy;
 use crate::features::llm::backend::{ModelBackend, Progress};
 use crate::features::llm::fitting::{Fitted, OutputLimits, Sent, Thinking};
 use async_trait::async_trait;
@@ -72,7 +73,7 @@ fn scheduled(model: Arc<Recorder>) -> ScheduledLlm {
 
 /// `text` from the user with one picture of 400 KB of base64 costing `tokens`.
 fn with_picture(text: &str, tokens: u32) -> CompletionRequest {
-    CompletionRequest {
+    legacy::completion(legacy::Completion {
         input: vec![CompletionInput::Multimodal {
             role: "user".into(),
             parts: vec![
@@ -89,7 +90,7 @@ fn with_picture(text: &str, tokens: u32) -> CompletionRequest {
         }],
         max_output_tokens: Some(512),
         ..Default::default()
-    }
+    })
 }
 
 #[tokio::test]

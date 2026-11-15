@@ -406,6 +406,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn prompt_snapshot_inventory_extraction() -> Result<()> {
+        let content = vec![
+            json!({"body":"The kiln in the town of Marrow heats to a set temperature before each firing."}),
+            json!({"body":"The handler awaits SaveChangesAsync, which writes tracked changes to the database."}),
+        ];
+        let inner = model(vec![fixture_response(vec![
+            answer(0, "unit-0-passage-0"),
+            answer(1, "unit-1-passage-0"),
+        ])]);
+        let llm = crate::lessons::course_generation_tests::RequestLog::new(&inner);
+
+        extract_remaining(&llm, &content, vec![]).await?;
+
+        llm.assert_snapshot::<InventoryExtraction>();
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn a_fact_mixed_with_example_names_is_extracted_without_them() -> Result<()> {
         let content = vec![
             json!({"body":"The Infrastructure layer implements data access interfaces defined by the Application Core, such as IOrderRepository, using technologies like EF Core."}),

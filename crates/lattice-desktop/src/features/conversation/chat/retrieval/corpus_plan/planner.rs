@@ -7,8 +7,9 @@ use tracing::warn;
 
 use lattice_core::application::contracts::search::CorpusDocument;
 use lattice_core::application::ports::hybrid_search::HybridSearchTrait;
-use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest};
+use lattice_core::application::ports::llm_port::CompletionInput;
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::shared::error::{AppError, Result};
 
 use super::{
@@ -226,7 +227,7 @@ async fn plan_with(
     // cancels the call, and the adapter's stall detection ends one whose
     // server has gone quiet. Any error falls back to the local plan.
     let response = llm
-        .complete(&CompletionRequest {
+        .complete(&legacy::completion(legacy::Completion {
             input: vec![
                 CompletionInput::Message {
                     role: "system".into(),
@@ -251,7 +252,7 @@ async fn plan_with(
             cancel: Some(cancel.clone()),
             no_time_limit: true,
             ..Default::default()
-        })
+        }))
         .await;
     let response = match response {
         Err(error) => {

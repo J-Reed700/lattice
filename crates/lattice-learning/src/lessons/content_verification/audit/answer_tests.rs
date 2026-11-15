@@ -181,7 +181,7 @@ async fn pages_the_verifier_fetches_are_saved_before_it_can_quote_them() {
             ),
             2 => tool_call("fetch_page", json!({"url": "https://example.org/salt"})),
             _ => {
-                let fetched = request.input.iter().any(|item| {
+                let fetched = request.input().iter().any(|item| {
                     matches!(item, CompletionInput::ToolResult { output, .. } if output.starts_with("[W1]"))
                 });
                 assert!(fetched, "the saved page reaches the Verifier as W1");
@@ -200,7 +200,7 @@ async fn pages_the_verifier_fetches_are_saved_before_it_can_quote_them() {
         web.saved.lock().unwrap().as_slice(),
         ["https://example.org/salt"]
     );
-    assert!(llm.sent.lock().unwrap()[0].tools.len() == 2);
+    assert!(llm.sent.lock().unwrap()[0].tools().len() == 2);
     assert_eq!(
         outcome.summary().disputes,
         1,

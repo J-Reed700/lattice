@@ -22,8 +22,9 @@
 //! HyDEInterpretation
 //! ```
 
-use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest};
+use lattice_core::application::ports::llm_port::CompletionInput;
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::domain::qa::hyde::{HyDEInterpretation, QueryType};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::text::safe_truncate;
@@ -81,7 +82,7 @@ impl HyDEGenerator {
     async fn rewrite(&self, prompt: &str) -> Result<String> {
         let response = self
             .llm
-            .complete(&CompletionRequest {
+            .complete(&legacy::completion(legacy::Completion {
                 input: vec![CompletionInput::Message {
                     role: "user".into(),
                     content: prompt.to_string(),
@@ -92,7 +93,7 @@ impl HyDEGenerator {
                     lattice_core::application::ports::llm_port::InferencePriority::Interactive,
                 cancel: self.cancel.clone(),
                 ..Default::default()
-            })
+            }))
             .await?;
         if !response.tool_calls.is_empty() {
             return Err(AppError::InvalidState(

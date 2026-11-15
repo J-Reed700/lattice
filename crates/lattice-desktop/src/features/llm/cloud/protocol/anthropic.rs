@@ -22,7 +22,7 @@ use crate::features::llm::cloud::{field, reply, set_field};
 use crate::features::llm::engine::vision::user_parts;
 use crate::features::llm::fitting::{Fitted, Thinking};
 
-pub(in crate::features::llm::cloud) mod schema;
+pub(in crate::features::llm) mod schema;
 mod stream;
 
 /// The API version every Anthropic request names.
@@ -84,9 +84,13 @@ impl CompletionProtocol for Anthropic {
         }
     }
 
+    fn enforces(&self, schema: &Value) -> bool {
+        schema::anthropic_schema(schema) == *schema && schema::anthropic_schema_compiles(schema)
+    }
+
     fn body(&self, model: &str, fitted: &Fitted<'_>, stream: bool) -> Result<Value> {
         let request = fitted.request();
-        let (system, messages) = messages(&request.input)?;
+        let (system, messages) = messages(request.input())?;
         // No sampling knobs are sent: current Claude models reject `temperature`,
         // `top_p` and `top_k` with a 400 (some for any non-default value, all
         // while thinking). Claude thinks unasked from the 5 family on, and "none"
@@ -101,8 +105,8 @@ impl CompletionProtocol for Anthropic {
         if !system.is_empty() {
             set_field(&mut body, "system", json!(system.join("\n\n")))?;
         }
-        if !request.stop.is_empty() {
-            set_field(&mut body, "stop_sequences", json!(request.stop))?;
+        if !request.stop().is_empty() {
+            set_field(&mut body, "stop_sequences", json!(request.stop()))?;
         }
         // A block asks for the thinking; on a model that thinks unasked
         // it is the same request, and says how its thinking is shown.
@@ -126,12 +130,12 @@ impl CompletionProtocol for Anthropic {
             let effort = if effort == "none" { "low" } else { effort };
             set_field(&mut body, "output_config", json!({"effort":effort}))?;
         }
-        if !request.tools.is_empty() {
-            set_field(&mut body, "tools", json!(request.tools.iter().map(|t| json!({"name":t.name,"description":t.description,"input_schema":t.parameters})).collect::<Vec<_>>()))?;
+        if !request.tools().is_empty() {
+            set_field(&mut body, "tools", json!(request.tools().iter().map(|t| json!({"name":t.name,"description":t.description,"input_schema":t.parameters})).collect::<Vec<_>>()))?;
             // A forced call is never sent: models refuse one while extended thinking
             // is on, and the newest refuse it outright with a 400, so the choice is
             // left to the model.
-            let choice = match request.tool_choice {
+            let choice = match request.tool_choice() {
                 Some(ToolChoice::Auto | ToolChoice::Required) => Some("auto"),
                 Some(ToolChoice::None) => Some("none"),
                 None => None,
@@ -140,7 +144,7 @@ impl CompletionProtocol for Anthropic {
                 set_field(&mut body, "tool_choice", json!({"type": choice}))?;
             }
         }
-        if let Some(schema) = &request.json_schema {
+        if let Some(schema) = request.schema().map(|schema| schema.as_json()) {
             let schema = schema::anthropic_schema(schema);
             let compiles = schema::anthropic_schema_compiles(&schema);
             let mut config = field(&body, "output_config").clone();
@@ -161,7 +165,7 @@ impl CompletionProtocol for Anthropic {
         // asked to cache it; a one-off request is not, since a cache write costs
         // more than a plain input token.
         if request.cache_key.is_some() {
-            body = with_cache_breakpoints(body, continues_an_exchange(&request.input))?;
+            body = with_cache_breakpoints(body, continues_an_exchange(request.input()))?;
         }
         Ok(body)
     }

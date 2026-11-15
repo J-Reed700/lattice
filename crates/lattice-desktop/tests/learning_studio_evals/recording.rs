@@ -33,7 +33,7 @@ impl RecordingLlm {
             "harnessVersion":HARNESS_VERSION,"recordedAt":chrono::Utc::now().to_rfc3339(),
             "sequence":self.sequence.fetch_add(1, Ordering::Relaxed),
             "model":self.config.model,"provider":self.config.provider,
-            "request":{"input":request.input,"schema":request.json_schema,"maxOutputTokens":request.max_output_tokens,"sampling":request.sampling},
+            "request":{"input":request.input(),"schema":request.schema().map(|schema| schema.as_json()),"maxOutputTokens":request.max_output_tokens(),"sampling":request.sampling},
             "response":{"text":response.text,"finishReason":response.finish_reason,"inputTokens":response.input_tokens,"outputTokens":response.output_tokens},
         })).map_err(|error| AppError::Serialization(error.to_string()))?;
         file.write_all(b"\n")?;

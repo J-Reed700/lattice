@@ -108,7 +108,7 @@ pub(crate) fn outline(modules: usize, lessons: usize) -> Model {
 }
 /// The one reference a topic course's lesson is prepared from: it holds the
 /// lessons' quote, and shares words with what the lessons teach.
-const REFERENCE: &str =
+pub(crate) const REFERENCE: &str =
     "A randomized comparison isolates the intervention. A controlled experiment states its limitations.";
 
 fn task_rubric() -> serde_json::Value {
@@ -134,7 +134,7 @@ const LESSON_SHAPE: [&str; 11] = [
     "recap",
 ];
 
-fn lesson_response() -> serde_json::Value {
+pub(crate) fn lesson_response() -> serde_json::Value {
     let teaching = |step: usize, pass: usize| {
         format!("Start with a measurable question, identify the comparison, and define the outcome before collecting data in design step {step}, pass {pass}. Explain the assumptions behind the design in design step {step}, pass {pass}. Work through the decisions in order and examine how a confounding variable could change the conclusion of design step {step}, pass {pass}. A concrete example should show both the result and the limitations of that result in design step {step}, pass {pass}. ")
     };
@@ -658,6 +658,111 @@ impl ScriptedModel {
             return Ok(link_reply(prompt, front));
         }
         Ok(outputs.pop_front().unwrap_or_default())
+    }
+}
+
+/// Gives the ids of `program`, its modules, lessons and sources fixed values.
+pub(crate) fn fixed_ids(program: &mut LearningProgramDto) {
+    program.summary.id = "program-1".into();
+    let mut first = None;
+    for (m, module) in program.modules.iter_mut().enumerate() {
+        module.id = format!("module-{m}");
+        for (l, lesson) in module.lessons.iter_mut().enumerate() {
+            lesson.id = format!("lesson-{m}-{l}");
+            first.get_or_insert_with(|| lesson.id.clone());
+        }
+    }
+    program.summary.current_lesson_id = first;
+    for (s, source) in program.sources.iter_mut().enumerate() {
+        source.id = format!("source-{s}");
+    }
+}
+
+/// A model that records every request it is sent and answers through `inner`.
+pub(crate) struct RequestLog<M> {
+    inner: M,
+    requests: std::sync::Mutex<Vec<CompletionRequest>>,
+}
+
+impl<M> RequestLog<M> {
+    pub(crate) fn new(inner: M) -> Self {
+        Self {
+            inner,
+            requests: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Every request sent for contract `C`, in order, a draft step included.
+    pub(crate) fn sent_for<C: lattice_core::application::services::model_contract::Contract>(
+        &self,
+    ) -> Vec<CompletionRequest> {
+        self.requests
+            .lock()
+            .expect("recording lock")
+            .iter()
+            .filter(|request| request.contract().is_some_and(|call| call.id == C::ID))
+            .cloned()
+            .collect()
+    }
+
+    /// Compares what the contract named `id` sent with its committed prompt snapshot.
+    pub(crate) fn assert_snapshot_of(&self, id: &str) {
+        let sent: Vec<CompletionRequest> = self
+            .requests
+            .lock()
+            .expect("recording lock")
+            .iter()
+            .filter(|request| request.contract().is_some_and(|call| call.id.as_str() == id))
+            .cloned()
+            .collect();
+        assert!(!sent.is_empty(), "{id} sent no request");
+        lattice_core::application::services::model_contract::test_support::snapshot::assert_requests(
+            env!("CARGO_MANIFEST_DIR"),
+            id,
+            &sent,
+        );
+    }
+
+    /// Compares what contract `C` sent with its committed prompt snapshot.
+    pub(crate) fn assert_snapshot<
+        C: lattice_core::application::services::model_contract::Contract,
+    >(
+        &self,
+    ) {
+        let sent = self.sent_for::<C>();
+        assert!(!sent.is_empty(), "{} sent no request", C::ID.as_str());
+        lattice_core::application::services::model_contract::test_support::snapshot::assert_requests(
+            env!("CARGO_MANIFEST_DIR"),
+            C::ID.as_str(),
+            &sent,
+        );
+    }
+}
+
+#[async_trait::async_trait]
+impl<M> LLMPort for RequestLog<M>
+where
+    M: std::ops::Deref + Send + Sync,
+    M::Target: LLMPort,
+{
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        self.requests
+            .lock()
+            .map_err(|_| AppError::InternalError("fixture lock".into()))?
+            .push(request.clone());
+        self.inner.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        self.inner.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.inner.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.inner.max_context_tokens()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        self.inner.is_ready().await
     }
 }
 
@@ -1256,12 +1361,12 @@ async fn outline_model_streams_without_a_deadline_and_rejects_truncated_output()
         ) -> Result<CompletionResponse> {
             assert!(request.no_time_limit);
             assert!(request.wall_clock_budget().is_none());
-            assert!(request.json_schema.is_some());
+            assert!(request.schema().is_some());
             assert!(
-                request.max_output_tokens.unwrap() > 4000,
+                request.max_output_tokens().unwrap() > 4000,
                 "the outline estimate must not cap reasoning plus JSON"
             );
-            assert!(request.max_output_tokens.unwrap() < self.max_context_tokens() as u32);
+            assert!(request.max_output_tokens().unwrap() < self.max_context_tokens() as u32);
             on_text("{\"draft\":".into())?;
             on_text("true}".into())?;
             Ok(CompletionResponse {
@@ -1338,7 +1443,7 @@ impl LLMPort for DelayedOutlineModel {
         );
         assert!(request.wall_clock_budget().is_none());
         let input_tokens: usize = request
-            .input
+            .input()
             .iter()
             .filter_map(|part| match part {
                 CompletionInput::Message { content, .. } => Some(self.count_tokens(content)),
@@ -1347,11 +1452,11 @@ impl LLMPort for DelayedOutlineModel {
             .sum();
         // The answer takes the window the prompt leaves, less only the
         // planner's safety margin, and never runs past the window.
-        let max_output = request.max_output_tokens.unwrap() as usize;
+        let max_output = request.max_output_tokens().unwrap() as usize;
         assert!(max_output + input_tokens <= self.max_context_tokens());
         assert!(max_output + input_tokens >= self.max_context_tokens() * 9 / 10);
         let prompt = request
-            .input
+            .input()
             .iter()
             .filter_map(|part| match part {
                 CompletionInput::Message { content, .. } => Some(content.as_str()),

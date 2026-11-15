@@ -236,7 +236,7 @@ async fn the_judge_gives_its_reasons_before_its_outcome_and_its_schema_caps_noth
     assert_eq!(results[1].outcome, FixOutcome::Partly);
 
     let requests = model.requests();
-    let schema = requests[0].json_schema.as_ref().expect("a structured call");
+    let schema = requests[0].schema().expect("a structured call").as_json();
     assert!(text_length_rules(schema).is_empty(), "{schema}");
     assert_eq!(schema["additionalProperties"], false);
     let properties: Vec<&str> = schema["properties"]
@@ -1393,4 +1393,21 @@ mod beside {
         );
         Ok(())
     }
+}
+
+#[tokio::test]
+async fn prompt_snapshot_fix_judgement() -> Result<()> {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let model = ScriptedModel::new([fix_answer(
+        "fixed",
+        "The learner uses the two constants again.",
+    )]);
+    let runner = FakeRunner::passing();
+    let mut learner = both_fixed();
+    learner[1].text.push_str("# the learner's own note\n");
+
+    grade(&model, Some(&runner), Some(SUITE), &drill(), &learner).await?;
+
+    snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "fix-judgement", &model.requests());
+    Ok(())
 }

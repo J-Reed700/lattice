@@ -58,7 +58,7 @@ impl LLMPort for ScriptedLlm {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let call = self.calls.fetch_add(1, Ordering::SeqCst);
         if let Ok(mut sent) = self.last_messages.lock() {
-            sent.push(match request.input.last() {
+            sent.push(match request.input().last() {
                 Some(CompletionInput::Message { content, .. }) => content.clone(),
                 _ => String::new(),
             });

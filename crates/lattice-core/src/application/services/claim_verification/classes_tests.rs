@@ -93,7 +93,7 @@ fn judged<T: std::fmt::Debug>(judgment: ClassJudgment<T>) -> T {
 /// Every message of a request, in order, as one text.
 pub(super) fn conversation(request: &CompletionRequest) -> String {
     request
-        .input
+        .input()
         .iter()
         .filter_map(|item| match item {
             CompletionInput::Message { content, .. } => Some(content.as_str()),
@@ -110,7 +110,7 @@ pub(super) fn conversation(request: &CompletionRequest) -> String {
 pub(super) fn messages(request: &CompletionRequest) -> (String, String) {
     let content = |wanted: &str| {
         request
-            .input
+            .input()
             .iter()
             .find_map(|item| match item {
                 CompletionInput::Message { role, content } if role == wanted => {
@@ -153,7 +153,7 @@ async fn a_consistency_check_sends_the_prompt_of_record_and_reads_each_verdict()
         );
         assert_eq!(sent[0].sampling, Some(SamplingOverride::deterministic()));
         assert_eq!(
-            sent[0].json_schema.as_ref().unwrap()["properties"]["verdict"]["enum"],
+            sent[0].schema().map(|schema| schema.as_json()).unwrap()["properties"]["verdict"]["enum"],
             json!(["consistent", "contradicted", "unfounded_specific"])
         );
     }

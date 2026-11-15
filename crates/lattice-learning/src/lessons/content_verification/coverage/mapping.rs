@@ -284,6 +284,24 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn prompt_snapshot_coverage_mapping() -> Result<()> {
+        let mut units = units();
+        units.push(json!({"index":1,"kind":"teaching",
+            "passages":[{"id":"p2","text":"A second unit asserts one more guarantee."}],
+            "claims":[{"id":"claim-1","statement":"One more guarantee is asserted."}]}));
+        let covered = json!({"claimIds":["claim-1"],"missingClaims":[],"nonFactualReason":""});
+        let inner = model(vec![listed(&[
+            ("p0", missing()),
+            ("p1", label()),
+            ("p2", covered),
+        ])]);
+        let recording = crate::lessons::course_generation_tests::RequestLog::new(&inner);
+        review(&recording, &units, None).await?;
+        recording.assert_snapshot::<CoverageMapping>();
+        Ok(())
+    }
+
     #[test]
     fn the_mapping_contract_reads_what_it_renders() {
         let answer = vec![("p0".to_owned(), missing()), ("p1".to_owned(), label())];

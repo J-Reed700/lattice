@@ -804,3 +804,143 @@ fn the_item_review_contract_reads_what_it_renders() {
         item_review::QuizItemReview,
     >(&checks);
 }
+
+use lattice_core::application::services::model_contract::test_support::{snapshot, ScriptedModel};
+
+/// Answers every call of `C` with the JSON `reply` makes of the call's prompt.
+pub(super) fn replying<C: Contract<Input = PromptInput>>(
+    model: ScriptedModel,
+    reply: impl Fn(&Value) -> Value + Send + Sync + 'static,
+) -> ScriptedModel {
+    model.on_request::<C>(move |sent, _| {
+        let context = sent
+            .call
+            .input_as::<C>()
+            .and_then(|input| serde_json::from_str::<Value>(&input.prompt).ok())
+            .unwrap_or(Value::Null);
+        let text = reply(&context).to_string();
+        Box::pin(std::future::ready(Ok::<_, AppError>(
+            CompletionResponse::from_text(text),
+        )))
+    })
+}
+
+/// The requests sent for `C`, in order.
+pub(super) fn requests_of<C: Contract>(model: &ScriptedModel) -> Vec<CompletionRequest> {
+    model
+        .sent()
+        .into_iter()
+        .filter(|sent| sent.call.id == C::ID)
+        .map(|sent| sent.request)
+        .collect()
+}
+
+/// A model that writes `first_write`, rewrites to `FIRST_FIXED`, solves every question right and finds no defect.
+fn quiz_model(first_write: Value) -> ScriptedModel {
+    let model = replying::<QuizAuthor>(ScriptedModel::new(), move |_| first_write.clone());
+    let model = replying::<QuizRewrite>(model, |_| written(&[FIRST_FIXED]));
+    let model = replying::<crate::key_review::QuizKeySolve>(model, |context| {
+        solved(context, right_option)
+    });
+    replying::<item_review::QuizItemReview>(model, |context| {
+        judged(context, |_| (String::new(), vec![]))
+    })
+}
+
+fn fixed_need(count: usize, existing: &[&str]) -> AuthoringNeed {
+    let mut need = need(LearningItemFormat::SingleChoice, count, existing);
+    need.requirement.outcome_id = "sorting-stamps".into();
+    need
+}
+
+fn stamp_item(prompt: &str) -> LearningAssessmentCandidate {
+    LearningAssessmentCandidate {
+        id: "stamp-item".into(),
+        outcome_ids: vec!["sorting-stamps".into()],
+        format: LearningItemFormat::SingleChoice,
+        difficulty: 3,
+        prompt: prompt.into(),
+        options: vec![
+            RIGHT.into(),
+            "The green box".into(),
+            "The red box".into(),
+            "The blue box".into(),
+        ],
+        left: vec![],
+        source_version_ids: vec![],
+        rubric: vec![],
+        key: LearningAssessmentKey::Choice(0),
+        explanation: "A torn stamp is set aside in the tray whatever its colour.".into(),
+        distractor_rationales: vec![
+            String::new(),
+            "A green box takes green stamps only.".into(),
+            "The red box takes whole red stamps only.".into(),
+            "The blue box takes whole blue stamps only.".into(),
+        ],
+    }
+}
+
+#[tokio::test]
+async fn prompt_snapshot_quiz_author() -> Result<()> {
+    let model = quiz_model(written(&[FIRST, SECOND]));
+    let existing = "A stamp with a smudged edge arrives at the desk. Which place takes it first?";
+
+    author_items(&model, &fixed_need(2, &[existing])).await?;
+
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "quiz-author",
+        &requests_of::<QuizAuthor>(&model),
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_snapshot_quiz_rewrite() -> Result<()> {
+    let mut unbuilt = written(&[FIRST]);
+    unbuilt["items"][0]["blockIndex"] = json!(5);
+    let model = quiz_model(unbuilt);
+
+    author_items(&model, &fixed_need(1, &[])).await?;
+
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "quiz-rewrite",
+        &requests_of::<QuizRewrite>(&model),
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_snapshot_quiz_item_review() -> Result<()> {
+    let model = quiz_model(Value::Null);
+    let first = stamp_item(FIRST);
+    let second = stamp_item(SECOND);
+    let entries = [
+        Entry {
+            item: &first,
+            quote: QUOTE,
+        },
+        Entry {
+            item: &second,
+            quote: QUOTE,
+        },
+    ];
+    let learner_has = vec![
+        "A stamp with a smudged edge arrives at the desk. Which place takes it first?".to_owned(),
+    ];
+    let context = Context {
+        outcome: "Sorting stamps",
+        outcome_description: "Say where a stamp goes by its colour and condition.",
+        learner_has: &learner_has,
+    };
+
+    item_review::review(&model, &entries, &context).await?;
+
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "quiz-item-review",
+        &requests_of::<item_review::QuizItemReview>(&model),
+    );
+    Ok(())
+}

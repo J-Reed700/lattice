@@ -301,7 +301,7 @@ async fn a_finding_whose_repairs_cannot_be_used_waits_after_its_second() -> Resu
 
 /// Whether `request` asks the model to repair the lesson.
 fn asks_for_repair(request: &CompletionRequest) -> bool {
-    request.input.iter().any(|item| {
+    request.input().iter().any(|item| {
         matches!(
             item,
             CompletionInput::Message { content, .. } if content.contains("issuesToFix")
@@ -2358,7 +2358,7 @@ struct RecordsSchemas<'a> {
 #[async_trait::async_trait]
 impl LLMPort for RecordsSchemas<'_> {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        if let Some(schema) = &request.json_schema {
+        if let Some(schema) = request.schema().map(|schema| schema.as_json()) {
             self.schemas.lock().unwrap().push(schema.clone());
         }
         self.inner.complete(request).await
@@ -2421,7 +2421,7 @@ impl lattice_core::application::ports::llm_port::LLMPort for Recording<'_> {
         request: &lattice_core::application::ports::llm_port::CompletionRequest,
     ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
         let text: Vec<&str> = request
-            .input
+            .input()
             .iter()
             .filter_map(|item| match item {
                 CompletionInput::Message { content, .. } => Some(content.as_str()),
@@ -3086,7 +3086,7 @@ impl LLMPort for ByRequest {
                 Vec::new(),
             ));
         };
-        let schema = request.json_schema.clone().unwrap_or(Value::Null);
+        let schema = request.schema().map(|schema| schema.as_json()).cloned().unwrap_or(Value::Null);
         let reply = if asks_for_repair(request) {
             let number = {
                 let mut seen = self.seen_repairs.lock().unwrap();
@@ -4128,4 +4128,39 @@ fn judged_issues(issues: &[&str]) -> String {
         ],
         &[],
     )
+}
+
+#[tokio::test]
+async fn prompt_snapshot_teaching_repair() -> Result<()> {
+    let scripted = model(vec![
+        review(Some(
+            "The example shows \"result\": \"4\" although the code returns the number 4.",
+        )),
+        actionable(),
+        retitle("Corrected example"),
+        judged(None, &[verdict("reviewer/1", "resolved")]),
+    ]);
+    let log = crate::lessons::course_generation_tests::RequestLog::new(&scripted);
+    run(&log, lesson(EXCERPT)).await?;
+    log.assert_snapshot::<super::repair::TeachingRepair>();
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_snapshot_teaching_rewrite() -> Result<()> {
+    let schema = json!({"type": "object", "required": ["blocks", "questions", "title"]});
+    let answering = Answering::new(
+        std::iter::repeat_with(|| parts_review(2, &[]))
+            .take(6)
+            .collect(),
+        |_| {
+            let mut whole = parts_lesson(2);
+            whole["title"] = json!("Two parts");
+            Ok(whole.to_string())
+        },
+    );
+    let log = crate::lessons::course_generation_tests::RequestLog::new(&answering);
+    run_with_schema(&log, parts_lesson(2), &schema).await?;
+    log.assert_snapshot::<super::repair::TeachingRewrite>();
+    Ok(())
 }

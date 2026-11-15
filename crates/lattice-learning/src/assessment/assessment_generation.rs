@@ -95,8 +95,8 @@ pub(crate) fn text_call<C: Contract<Input = PromptInput>>(
     request: &GroundedRequest,
 ) -> Result<ContractCall> {
     ContractCall::of::<C>(&PromptInput {
-        system: request.instructions.clone(),
-        prompt: request.task.clone(),
+        system: request.instructions().to_owned(),
+        prompt: request.task().to_owned(),
     })
 }
 

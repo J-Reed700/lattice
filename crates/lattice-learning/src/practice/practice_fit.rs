@@ -160,8 +160,8 @@ async fn ask(llm: &dyn LLMPort, kinds: &Kinds, outline: &CourseOutline) -> Resul
         FIT_ANSWER_TOKENS * kinds.iter().count(),
     );
     let call = ContractCall::of::<PracticeFit>(&PromptInput {
-        system: request.instructions.clone(),
-        prompt: request.task.clone(),
+        system: request.instructions().to_owned(),
+        prompt: request.task().to_owned(),
     })?;
     complete_checked_request(llm, &call, request, None, None, |raw| checked(raw, kinds)).await
 }

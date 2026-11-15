@@ -736,6 +736,27 @@ async fn a_flow_repair_changes_the_sentences_beside_a_gap_and_nothing_else() -> 
 }
 
 #[tokio::test]
+async fn prompt_snapshot_flow_repair() -> Result<()> {
+    let (section, taken, protected) = mended_section();
+    let inner = model(&[json!({"edits":[
+        {"path":"/blocks/0/body","before":"This follows from it.","after":"That follows from the setup."}
+    ]})]);
+    let llm = crate::lessons::course_generation_tests::RequestLog::new(&inner);
+
+    mend_section(
+        &llm,
+        (&json!({"type":"object"}), 4_000),
+        (0, true, &section),
+        (&taken, protected.as_slice()),
+        (&json!({}), &Default::default()),
+    )
+    .await?;
+
+    llm.assert_snapshot::<FlowRepair>();
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_flow_repair_that_rewrites_a_sentence_a_claim_stands_on_is_no_repair() -> Result<()> {
     let (_, mut taken, protected) = mended_section();
     taken.gaps = vec![gap(Some("This follows from it."), Some("Kept claim."))];

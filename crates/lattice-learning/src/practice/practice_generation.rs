@@ -421,7 +421,7 @@ mod window_tests {
     impl LLMPort for CutOnce {
         async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
             let mut budgets = self.0.lock().unwrap();
-            budgets.push(request.max_output_tokens);
+            budgets.push(request.max_output_tokens());
             if budgets.len() == 1 {
                 return Ok(CompletionResponse {
                     finish_reason: "length".into(),

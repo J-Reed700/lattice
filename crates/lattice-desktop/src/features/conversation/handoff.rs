@@ -16,6 +16,7 @@ use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::{
     self, CallOptions, EvidencePassage, EvidenceSelection, GroundedRequest,
 };
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::domain::conversation::memory::{SuppressedSpan, SuppressionsByMessage};
 use lattice_core::domain::conversation::{ConversationMessage, MessageRole};
 use lattice_core::shared::{error::AppError, ipc::ApiError};
@@ -247,14 +248,15 @@ fn summary_request(
     evidence: Vec<EvidencePassage>,
     conversation_id: &str,
 ) -> GroundedRequest {
-    let mut request = GroundedRequest::new(SYSTEM, prompt.task);
-    request.closing = match forgotten.rule() {
+    let mut request = legacy::grounded(SYSTEM, prompt.task);
+    let says = legacy::grounded_says(&mut request);
+    *says.closing = match forgotten.rule() {
         Some(rule) => format!("{}\n\n{rule}", prompt.closing),
         None => prompt.closing,
     };
-    request.evidence = evidence;
-    request.selection = EvidenceSelection::All;
-    request.output_tokens = CALL_MAX_OUTPUT_TOKENS;
+    *says.evidence = evidence;
+    *says.selection = EvidenceSelection::All;
+    *says.output_tokens = CALL_MAX_OUTPUT_TOKENS;
     request.call = CallOptions {
         // The user is waiting for the new chat to open, and every part
         // reads the same conversation, so it returns to the slot that holds
@@ -675,7 +677,7 @@ mod tests {
 
         let request = summary_request(prompt, &Forgotten::default(), Vec::new(), "conv-a");
         assert!(request
-            .closing
+            .closing()
             .ends_with("Do not answer it: put it under Open threads."));
     }
 
@@ -723,12 +725,12 @@ mod tests {
         );
 
         let request = summary_request(handoff_task("Lab", false), &forgotten, Vec::new(), "conv-a");
-        assert_eq!(request.task, handoff_task("Lab", false).task);
+        assert_eq!(request.task(), handoff_task("Lab", false).task);
         assert!(request
-            .closing
+            .closing()
             .starts_with(&handoff_task("Lab", false).closing));
-        assert!(request.closing.contains("asked memory to forget"));
-        assert!(request.closing.ends_with("\n- Locker code is 4471"));
+        assert!(request.closing().contains("asked memory to forget"));
+        assert!(request.closing().ends_with("\n- Locker code is 4471"));
 
         let plain = summary_request(
             handoff_task("Lab", false),
@@ -736,6 +738,6 @@ mod tests {
             Vec::new(),
             "conv-a",
         );
-        assert_eq!(plain.closing, handoff_task("Lab", false).closing);
+        assert_eq!(plain.closing(), handoff_task("Lab", false).closing);
     }
 }

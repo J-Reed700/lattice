@@ -92,7 +92,7 @@ impl LLMPort for Routed<'_> {
         }
         let is_contract = system.starts_with(contract::SYSTEM);
         if is_contract && crate::lessons::structured_call::is_draft_request(request) {
-            let said = request.input.iter().filter_map(|item| match item {
+            let said = request.input().iter().filter_map(|item| match item {
                 CompletionInput::Message { role, content } if role == "system" => {
                     Some(content.as_str())
                 }
@@ -1811,3 +1811,31 @@ fn the_check_and_the_confirming_read_define_taught_in_the_same_words() {
 #[cfg(test)]
 #[path = "contract_used_once_tests.rs"]
 mod used_once;
+
+#[tokio::test]
+async fn prompt_snapshot_lesson_contract_check() -> Result<()> {
+    let scripted = scripted(vec![reviewed(3)]);
+    let reported = answer(
+        json!([
+            taught("idea-0", "A terminal takes typed commands."),
+            taught("action-0", "The list shows names.")
+        ]),
+        json!([]),
+        json!([]),
+        json!([]),
+    );
+    let model = Routed::new(&scripted, vec![reported]);
+    let log = crate::lessons::course_generation_tests::RequestLog::new(&model);
+    let candidate = lesson([
+        "A terminal takes typed commands.",
+        "The list shows names.",
+        "Read the names.",
+    ]);
+    let context = context(
+        &["A terminal takes typed commands"],
+        &["Listing the files in a folder"],
+    );
+    run(&log, &candidate, &context, &[]).await?;
+    log.assert_snapshot::<contract::LessonContractCheck>();
+    Ok(())
+}

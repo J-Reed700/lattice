@@ -12,6 +12,7 @@ use crate::features::learning::review_findings::ReviewFinding;
 use crate::features::llm::llama_cpp::LlamaCppLlm;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::legacy;
 
 #[path = "live_claim_pairs_eval.rs"]
 mod claim_pairs;
@@ -303,7 +304,7 @@ impl ObservedModel {
             self.directory.join(format!("call-{call}.json")),
             serde_json::to_vec_pretty(&serde_json::json!({
                 "model":self.inner.model_name(),
-                "input":request.input,"answer":response.text,"finishReason":response.finish_reason,
+                "input":request.input(),"answer":response.text,"finishReason":response.finish_reason,
                 "inputTokens":response.input_tokens,"outputTokens":response.output_tokens,
                 "firstTokenLogprobs":response.first_token_logprobs
             }))?,
@@ -416,13 +417,13 @@ async fn a_saved_call_names_the_model_that_answered() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let model = ObservedModel::observing(Arc::new(TimedBackend), directory.path().to_path_buf(), 0);
     model
-        .complete(&CompletionRequest {
+        .complete(&legacy::completion(legacy::Completion {
             input: vec![CompletionInput::Message {
                 role: "user".into(),
                 content: "Check this claim.".into(),
             }],
             ..Default::default()
-        })
+        }))
         .await?;
     let saved: serde_json::Value =
         serde_json::from_slice(&std::fs::read(directory.path().join("call-0.json"))?)?;
@@ -451,13 +452,13 @@ async fn an_observed_model_sizes_claim_pages_by_its_measured_pace() -> Result<()
     );
     assert_eq!(model.pace(), None, "nothing is measured before an answer");
     model
-        .complete(&CompletionRequest {
+        .complete(&legacy::completion(legacy::Completion {
             input: vec![CompletionInput::Message {
                 role: "user".into(),
                 content: "Check this claim.".into(),
             }],
             ..Default::default()
-        })
+        }))
         .await?;
     let pace = model
         .pace()

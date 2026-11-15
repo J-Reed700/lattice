@@ -323,8 +323,8 @@ async fn write_checked(
     rung: Rung,
 ) -> Result<CodeHint> {
     let call = ContractCall::of::<HintAuthor>(&PromptInput {
-        system: request.instructions.clone(),
-        prompt: request.task.clone(),
+        system: request.instructions().to_owned(),
+        prompt: request.task().to_owned(),
     })?;
     let mut request = request;
     let mut again = false;
@@ -713,6 +713,22 @@ mod tests {
         assert_eq!(line.lines, vec![3]);
         assert_eq!(line.path.as_deref(), Some("solution.py"));
     }
+    #[tokio::test]
+    async fn prompt_snapshot_hint_author() {
+        use lattice_core::application::services::model_contract::test_support::snapshot;
+        let fixture = Fixture::new();
+        let llm = Scripted::new(&[&answer(CLEAN)]);
+        let hinting = fixture.hinting(Setting::Coached);
+        let observation = "Problem: find two numbers that add up to the target.
+The candidate ran the cases: 1 of 3 passed.
+Their file solution.py returns on the first pass of the loop.";
+        let request = ask(&fixture.reference, observation, Rung::Idea, true, Setting::Coached);
+        write_checked(&llm, &hinting, &Fake, request, Rung::Idea)
+            .await
+            .expect("clean");
+        snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "coding-hint", &llm.requests());
+    }
+
     const NEVER_NAME: &str = "Never name the technique or pattern that solves the problem.";
 
     #[test]
@@ -722,7 +738,7 @@ mod tests {
                 let request = ask("ref", "obs", rung, false, setting);
                 let allowed = setting == Setting::Coached && rung == Rung::Idea;
                 assert_eq!(
-                    request.instructions.contains(NEVER_NAME),
+                    request.instructions().contains(NEVER_NAME),
                     !allowed,
                     "{setting:?} {rung:?}"
                 );

@@ -1,4 +1,5 @@
 use super::*;
+use lattice_core::application::services::model_contract::legacy;
 use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use lattice_core::application::services::credentials::memory::InMemoryCredentials;
 use lattice_core::shared::error::ErrorClass;
@@ -287,7 +288,7 @@ async fn a_llama_cpp_model_uses_the_llama_cpp_connection_whatever_else_settings_
     use lattice_core::application::{
         contracts::settings::{LLMProvider, LlamaCppSettingsDto},
         ports::credentials_port::CredentialsPort,
-        ports::llm_port::{CompletionInput, CompletionRequest},
+        ports::llm_port::CompletionInput,
         services::credentials::CredentialKey,
     };
     use wiremock::{
@@ -362,13 +363,13 @@ async fn a_llama_cpp_model_uses_the_llama_cpp_connection_whatever_else_settings_
         assert_eq!(llm.provider_name(), "llamacpp");
         assert_eq!(llm.model_name(), "test-model");
         let response = llm
-            .complete(&CompletionRequest {
+            .complete(&legacy::completion(legacy::Completion {
                 input: vec![CompletionInput::Message {
                     role: "user".into(),
                     content: "Hi".into(),
                 }],
                 ..Default::default()
-            })
+            }))
             .await
             .unwrap();
         assert_eq!(response.text, "OK");
@@ -719,13 +720,13 @@ mod output_ceiling_on_the_wire {
     }
 
     fn ask() -> CompletionRequest {
-        CompletionRequest {
+        legacy::completion(legacy::Completion {
             input: vec![CompletionInput::Message {
                 role: "user".into(),
                 content: "When did the bridge open?".into(),
             }],
             ..Default::default()
-        }
+        })
     }
 
     fn chosen(max_output_tokens: u32) -> LLMSettingsDto {
@@ -819,10 +820,8 @@ mod output_ceiling_on_the_wire {
 
     #[tokio::test]
     async fn a_request_ceiling_is_sent_even_when_the_model_reports_none() {
-        let request = CompletionRequest {
-            max_output_tokens: Some(512),
-            ..ask()
-        };
+        let mut request = ask();
+        *legacy::says(&mut request).max_output_tokens = Some(512);
         let openai = sent_body(
             CloudProvider::Openai,
             &LLMSettingsDto::default(),
@@ -831,14 +830,13 @@ mod output_ceiling_on_the_wire {
         )
         .await;
         assert_eq!(openai["max_output_tokens"], json!(512));
+        let mut unreasoned = request;
+        unreasoned.reasoning_effort = Some("none".into());
         let google = sent_body(
             CloudProvider::Google,
             &LLMSettingsDto::default(),
             &ModelWindowDto::default(),
-            CompletionRequest {
-                reasoning_effort: Some("none".into()),
-                ..request
-            },
+            unreasoned,
         )
         .await;
         assert_eq!(google["max_tokens"], json!(512));
@@ -885,10 +883,8 @@ mod output_ceiling_on_the_wire {
 
     #[tokio::test]
     async fn an_openai_request_above_the_room_is_sent_the_room() {
-        let request = CompletionRequest {
-            max_output_tokens: Some(1_000_000),
-            ..ask()
-        };
+        let mut request = ask();
+        *legacy::says(&mut request).max_output_tokens = Some(1_000_000);
         let body = sent_body(
             CloudProvider::Openai,
             &small_window(),
@@ -940,10 +936,9 @@ mod output_ceiling_on_the_wire {
     }
 
     fn capped_at(max_output_tokens: u32) -> CompletionRequest {
-        CompletionRequest {
-            max_output_tokens: Some(max_output_tokens),
-            ..ask()
-        }
+        let mut request = ask();
+        *legacy::says(&mut request).max_output_tokens = Some(max_output_tokens);
+        request
     }
 
     #[tokio::test]
@@ -998,15 +993,13 @@ mod output_ceiling_on_the_wire {
 
     #[tokio::test]
     async fn a_fine_tune_of_a_reasoning_model_is_sent_its_ceiling_and_no_sampling() {
-        let request = CompletionRequest {
-            sampling: Some(
-                lattice_core::application::ports::llm_port::SamplingOverride {
-                    temperature: Some(0.7),
-                    ..Default::default()
-                },
-            ),
-            ..capped_at(512)
-        };
+        let mut request = capped_at(512);
+        request.sampling = Some(
+            lattice_core::application::ports::llm_port::SamplingOverride {
+                temperature: Some(0.7),
+                ..Default::default()
+            },
+        );
         let body = sent_body_of(
             CloudProvider::Openai,
             "ft:o4-mini:org::id",
@@ -1048,10 +1041,8 @@ mod output_ceiling_on_the_wire {
 
     #[tokio::test]
     async fn a_google_model_told_not_to_reason_is_sent_the_answers_cap() {
-        let request = CompletionRequest {
-            reasoning_effort: Some("none".into()),
-            ..capped_at(512)
-        };
+        let mut request = capped_at(512);
+        request.reasoning_effort = Some("none".into());
         let body = sent_body_of(
             CloudProvider::Google,
             "gemini-2.5-flash",
@@ -1078,10 +1069,8 @@ mod output_ceiling_on_the_wire {
 
     #[tokio::test]
     async fn a_claude_model_with_thinking_turned_off_is_sent_the_answers_cap() {
-        let request = CompletionRequest {
-            reasoning_effort: Some("none".into()),
-            ..capped_at(512)
-        };
+        let mut request = capped_at(512);
+        request.reasoning_effort = Some("none".into());
         let body = sent_body_of(
             CloudProvider::Anthropic,
             "claude-haiku-5-5",
@@ -1108,21 +1097,20 @@ mod local_reply_ceiling_on_the_wire {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn ask(content: &str) -> CompletionRequest {
-        CompletionRequest {
+        legacy::completion(legacy::Completion {
             input: vec![CompletionInput::Message {
                 role: "user".into(),
                 content: content.into(),
             }],
             max_output_tokens: Some(512),
             ..Default::default()
-        }
+        })
     }
 
     fn thinking(content: &str) -> CompletionRequest {
-        CompletionRequest {
-            thinking: ThinkingMode::On,
-            ..ask(content)
-        }
+        let mut request = ask(content);
+        request.thinking = ThinkingMode::On;
+        request
     }
 
     fn configured(context_window: u32, max_tokens: u32) -> LLMSettingsDto {
@@ -1319,10 +1307,8 @@ mod local_reply_ceiling_on_the_wire {
         // margin that plus the 4,096 asked for exceeds the 8,192 window, so
         // the server's own count (6,000) decides.
         let prompt = "word ".repeat(4_000);
-        let request = CompletionRequest {
-            max_output_tokens: Some(4_096),
-            ..ask(&prompt)
-        };
+        let mut request = ask(&prompt);
+        *legacy::says(&mut request).max_output_tokens = Some(4_096);
         let body = llama_body(&configured(8_192, 4_096), 6_000, request).await;
         let framing = TEMPLATE_TOKENS_PER_MESSAGE + TEMPLATE_TOKENS_FOR_ANSWER;
         assert_eq!(body["max_tokens"], json!(8_192 - (6_000 + framing)));
@@ -1334,10 +1320,8 @@ mod local_reply_ceiling_on_the_wire {
         // four-characters-a-token estimate reads as exactly 6,000 tokens, and
         // the framing adds 24.
         let prompt = "x".repeat(23_996);
-        let request = CompletionRequest {
-            max_output_tokens: None,
-            ..ask(&prompt)
-        };
+        let mut request = ask(&prompt);
+        *legacy::says(&mut request).max_output_tokens = None;
         let options = ollama_options(&configured(8_192, 4_096), request).await;
         assert_eq!(options["num_predict"], json!(8_192 - (6_000 + 24)));
     }

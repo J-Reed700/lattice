@@ -14,7 +14,7 @@ use lattice_core::application::services::grounded_generation::{
     self, CallOptions, GroundedGenerationError, GroundedOutput, GroundedRequest, Measured,
     Streaming,
 };
-use lattice_core::application::services::model_contract::{tagged, ContractCall};
+use lattice_core::application::services::model_contract::{legacy, tagged, ContractCall};
 pub use lattice_core::shared::error::ErrorClass;
 use lattice_core::shared::error::{AppError, Result};
 
@@ -48,10 +48,11 @@ pub(crate) fn structured(
     schema: serde_json::Value,
     output_tokens: usize,
 ) -> GroundedRequest {
-    let mut request = GroundedRequest::new(system, prompt);
-    request.output_tokens = output_tokens;
+    let mut request = legacy::grounded(system, prompt);
+    let says = legacy::grounded_says(&mut request);
+    *says.output_tokens = output_tokens;
+    *says.schema = Some(legacy::schema(schema));
     request.call = CallOptions {
-        json_schema: Some(schema),
         reasoning_effort: Some(ANSWER_EFFORT.to_owned()),
         ..Default::default()
     };
@@ -192,7 +193,11 @@ async fn settle(
         counts += usize::from(measured.is_some_and(|measured| measured.exact));
         let next = match measured {
             Some(measured) if measured.fits() => None,
-            Some(measured) => Some(shrunk(room, skeleton_tokens, &measured)),
+            Some(measured) => Some(grounded_generation::shrunk(
+                room,
+                skeleton_tokens,
+                &measured,
+            )),
             None => Some(room / 2),
         };
         // A request whose estimate is the skeleton's carries no material.
@@ -209,25 +214,6 @@ async fn settle(
                 return (fit, skeleton_tokens);
             }
         }
-    }
-}
-
-/// The room to try after a request built at `room` measured over: the
-/// material it carried, scaled by the room the skeleton leaves over what the
-/// prompt beside that skeleton measured. Every token of the overflow is
-/// blamed on the material, which shrinks too far rather than too little.
-/// Always below `room`; halved when the measurement says nothing better.
-fn shrunk(room: usize, skeleton_tokens: usize, measured: &Measured) -> usize {
-    let material = measured.estimated.saturating_sub(skeleton_tokens);
-    let beside = measured.allowed.saturating_sub(skeleton_tokens);
-    let next = material
-        .saturating_mul(beside)
-        .checked_div(measured.prompt_tokens.saturating_sub(skeleton_tokens))
-        .unwrap_or(0);
-    if next < room && measured.prompt_tokens > measured.allowed {
-        next
-    } else {
-        room / 2
     }
 }
 
@@ -275,7 +261,7 @@ where
                 counted_exactly,
                 ..
             }) => match measured.filter(|_| counted_exactly) {
-                Some(measured) => shrunk(
+                Some(measured) => grounded_generation::shrunk(
                     sent,
                     skeleton_tokens,
                     &Measured {

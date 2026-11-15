@@ -138,8 +138,8 @@ async fn the_request_holds_the_cited_sentences_the_edit_the_clean_files_and_the_
     assert!(user.contains("From Rate limiting notes:\nL3 "), "{user}");
     assert!(!user.contains("L2 "), "only the cited sentences: {user}");
     assert_eq!(
-        request.json_schema,
-        Some(json!({
+        request.schema().map(|schema| schema.as_json()),
+        Some(&json!({
             "type": "object",
             "additionalProperties": false,
             "required": ["reason", "editBreaksTheSentences", "codeBeforeTheEditFollowsTheSentences"],

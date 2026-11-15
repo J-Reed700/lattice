@@ -592,6 +592,7 @@ async fn the_consolidation_migration_moves_every_card_onto_fsrs() -> anyhow::Res
 /// or deck request it accepts with cards built from that request.
 struct Notation {
     calls: std::sync::Mutex<Vec<serde_json::Value>>,
+    requests: std::sync::Mutex<Vec<lattice_core::application::ports::llm_port::CompletionRequest>>,
     refusals: std::sync::atomic::AtomicUsize,
     /// Whether the next flashcard request's first card is out of shape.
     spoiled: std::sync::atomic::AtomicBool,
@@ -602,6 +603,7 @@ const NOTATION_WINDOW: usize = 8_192;
 fn notation() -> Notation {
     Notation {
         calls: std::sync::Mutex::new(Vec::new()),
+        requests: std::sync::Mutex::new(Vec::new()),
         refusals: std::sync::atomic::AtomicUsize::new(0),
         spoiled: std::sync::atomic::AtomicBool::new(false),
     }
@@ -620,8 +622,11 @@ impl lattice_core::application::ports::LLMPort for Notation {
         lattice_core::application::ports::llm_port::CompletionResponse,
     > {
         use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};
+        if let Ok(mut requests) = self.requests.lock() {
+            requests.push(request.clone());
+        }
         let rendered = request
-            .input
+            .input()
             .iter()
             .flat_map(|item| match item {
                 CompletionInput::Message { role, content } => vec![role.clone(), content.clone()],
@@ -776,6 +781,52 @@ async fn one_claim_the_window_cannot_hold_by_exact_count_names_the_window() {
         "{message}"
     );
     assert!(llm.calls.lock().unwrap().is_empty());
+}
+
+fn requests_of(llm: &Notation, id: &str) -> Vec<lattice_core::application::ports::llm_port::CompletionRequest> {
+    llm.requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|request| request.contract().is_some_and(|call| call.id.as_str() == id))
+        .cloned()
+        .collect()
+}
+
+#[tokio::test]
+async fn prompt_snapshot_recall_conversation_cards() {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let claims: Vec<_> = (0..3).map(|i| reaction_claim(i, 1)).collect();
+    let llm = notation();
+    super::study_generation::generate_from_conversation(&llm, &claims, "deck", 10)
+        .await
+        .unwrap();
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "recall-conversation-cards",
+        &requests_of(&llm, "recall-conversation-cards"),
+    );
+}
+
+#[tokio::test]
+async fn prompt_snapshot_recall_study_deck() {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let sources: Vec<_> = (0..2).map(|i| reaction_source(i, 1)).collect();
+    let llm = notation();
+    super::study_generation::generate(
+        &llm,
+        &reaction_deck("Understand the equilibrium condition".into()),
+        &sources,
+        "deck",
+        10,
+    )
+    .await
+    .unwrap();
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "recall-study-deck",
+        &requests_of(&llm, "recall-study-deck"),
+    );
 }
 
 fn reaction_deck(study_goal: String) -> GenerateStudyDeckRequestDto {

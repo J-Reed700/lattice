@@ -47,11 +47,11 @@ impl LLMPort for MockLLMPort {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         warn!("Using mock LLM - returning intelligent response");
 
-        let prompt = match request.input.last() {
+        let prompt = match request.input().last() {
             Some(CompletionInput::Message { content, .. }) => content.as_str(),
             _ => "",
         };
-        let context = request.input.len().saturating_sub(1);
+        let context = request.input().len().saturating_sub(1);
         let response = if context > 0 {
             // If context is provided, acknowledge it
             format!(

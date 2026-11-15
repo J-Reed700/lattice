@@ -104,22 +104,22 @@ async fn a_grounded_answer_reads_first_and_adds_the_passage_it_left_out() {
     assert_eq!(requests.len(), 3, "four passages are one group");
     let (reading, writing, continuation) = (&requests[0], &requests[1], &requests[2]);
     assert_eq!(
-        reading.input.len(),
+        reading.input().len(),
         2,
         "the planned prompt, its message closed by the group"
     );
     assert!(last_text(reading).contains(&format!("\n\n[9] {COOKING}\n\n")));
-    assert_eq!(reading.tool_choice, Some(ToolChoice::None));
+    assert_eq!(reading.tool_choice(), Some(ToolChoice::None));
     assert_eq!(reading.thinking, ThinkingMode::Off);
-    assert_eq!(reading.max_output_tokens, Some(512));
+    assert_eq!(reading.max_output_tokens(), Some(512));
 
-    assert_eq!(json_of(&writing.input[0]), json_of(&reading.input[0]));
+    assert_eq!(json_of(&writing.input()[0]), json_of(&reading.input()[0]));
     assert_eq!(
-        writing.input[1].text(),
+        writing.input()[1].text(),
         message(),
         "the answer is written on the planned message"
     );
-    assert_eq!(writing.input[2].text(), NOTES);
+    assert_eq!(writing.input()[2].text(), NOTES);
     assert_eq!(last_text(writing), SEARCH_OR_WRITE_INSTRUCTION);
     assert!(
         writing.may_call_tools(),
@@ -130,11 +130,11 @@ async fn a_grounded_answer_reads_first_and_adds_the_passage_it_left_out() {
     assert!(asked.contains(&format!("[7] \"{TOLL}\"")), "{asked}");
     assert!(!asked.contains("[2]") && !asked.contains("[5]"), "{asked}");
     assert_eq!(
-        json_of(&continuation.input[..writing.input.len()].to_vec()),
-        json_of(&writing.input),
+        json_of(&continuation.input()[..writing.input().len()].to_vec()),
+        json_of(&writing.input()),
         "the continuation reads on from the writing round's prompt"
     );
-    assert_eq!(continuation.tool_choice, Some(ToolChoice::None));
+    assert_eq!(continuation.tool_choice(), Some(ToolChoice::None));
     assert_eq!(continuation.thinking, ThinkingMode::Off);
 
     let labels: Vec<&str> = run.steps.iter().map(|step| step.label.as_str()).collect();
@@ -149,7 +149,7 @@ async fn a_grounded_answer_reads_first_and_adds_the_passage_it_left_out() {
 
 /// The turn's request as planned, measured as the send-time gates measure it.
 async fn planned_tokens(model: &Model) -> usize {
-    let planned = CompletionRequest {
+    let planned = legacy::completion(legacy::Completion {
         input: vec![
             CompletionInput::Message {
                 role: "system".into(),
@@ -162,7 +162,7 @@ async fn planned_tokens(model: &Model) -> usize {
         ],
         tools: vec![tool("search_documents")],
         ..Default::default()
-    };
+    });
     prompt_tokens(model, &planned).await
 }
 
@@ -184,11 +184,11 @@ async fn the_answer_gets_what_the_window_has_left_after_the_notes() {
     let requests = model.requests();
     assert_eq!(requests.len(), 2);
     let writing = &requests[1];
-    assert_eq!(writing.input[2].text(), NOTES);
+    assert_eq!(writing.input()[2].text(), NOTES);
     let room = model.window.load(Ordering::Relaxed) - prompt_tokens(&*model, writing).await;
     assert!(room < 512, "the notes took part of the reservation: {room}");
     assert_eq!(
-        writing.max_output_tokens,
+        writing.max_output_tokens(),
         Some(u32::try_from(room).unwrap())
     );
 }
@@ -205,10 +205,10 @@ async fn notes_that_would_crowd_out_the_answer_are_taken_back() {
     let requests = model.requests();
     assert_eq!(requests.len(), 2, "without notes there is nothing to add");
     let answering = &requests[1];
-    assert_eq!(answering.input.len(), 2, "no notes");
+    assert_eq!(answering.input().len(), 2, "no notes");
     assert!(!last_text(answering).contains(READING_INSTRUCTION));
     assert!(last_text(answering).ends_with("Question: Tell me about the bridge."));
-    assert_eq!(answering.max_output_tokens, Some(512));
+    assert_eq!(answering.max_output_tokens(), Some(512));
 }
 
 #[tokio::test]
@@ -245,7 +245,7 @@ async fn a_call_a_continuation_writes_as_text_is_neither_shown_nor_kept() {
 async fn a_window_with_no_room_left_adds_nothing_to_the_answer() {
     let model = Model::new([reply(NOTES), reply(ANSWER)]);
     // The continuation's request, as the loop would send it, fills the window.
-    let continuation = CompletionRequest {
+    let continuation = legacy::completion(legacy::Completion {
         input: vec![
             CompletionInput::Message {
                 role: "system".into(),
@@ -274,7 +274,7 @@ async fn a_window_with_no_room_left_adds_nothing_to_the_answer() {
         ],
         tools: vec![tool("search_documents")],
         ..Default::default()
-    };
+    });
     let window = prompt_tokens(&*model, &continuation).await;
     model.window.store(window, Ordering::Relaxed);
     let run = grounded(&model).await;
@@ -284,7 +284,7 @@ async fn a_window_with_no_room_left_adds_nothing_to_the_answer() {
     let requests = model.requests();
     assert_eq!(requests.len(), 2, "no continuation");
     assert_eq!(
-        requests[1].input[2].text(),
+        requests[1].input()[2].text(),
         NOTES,
         "the notes fit beside the answer"
     );
@@ -399,7 +399,7 @@ async fn a_reading_with_no_notes_is_taken_back_and_the_answer_asked_for_as_befor
         "the reading, shown back once, then the answer"
     );
     let answering = &requests[2];
-    assert_eq!(answering.input.len(), 2);
+    assert_eq!(answering.input().len(), 2);
     assert!(last_text(answering).ends_with("Question: Tell me about the bridge."));
     assert!(!last_text(answering).contains(READING_INSTRUCTION));
 }
@@ -415,7 +415,7 @@ async fn a_reading_that_copies_no_passage_is_taken_back_and_the_answer_asked_for
     let requests = model.requests();
     assert_eq!(requests.len(), 2, "without notes there is nothing to add");
     let answering = &requests[1];
-    assert_eq!(answering.input.len(), 2, "no notes");
+    assert_eq!(answering.input().len(), 2, "no notes");
     assert!(last_text(answering).ends_with("Question: Tell me about the bridge."));
     assert!(!last_text(answering).contains(READING_INSTRUCTION));
 }
@@ -431,7 +431,7 @@ async fn a_reading_that_finds_nothing_asks_for_a_search_in_its_place() {
     let requests = model.requests();
     assert_eq!(requests.len(), 2);
     let answering = &requests[1];
-    assert_eq!(answering.input.len(), 2, "no notes");
+    assert_eq!(answering.input().len(), 2, "no notes");
     let message = last_text(answering);
     assert!(!message.contains(READING_INSTRUCTION));
     assert!(message.ends_with(&format!(
@@ -453,14 +453,14 @@ async fn the_writer_is_given_the_notes_as_kept_and_only_the_reading_stops_at_the
     let requests = model.requests();
     assert_eq!(requests.len(), 2, "every passage the notes copy is cited");
     let (reading, writing) = (&requests[0], &requests[1]);
-    assert_eq!(reading.stop, ["\n[10]", "\n10."]);
+    assert_eq!(reading.stop(), ["\n[10]", "\n10."]);
     assert!(
-        writing.stop.is_empty(),
+        writing.stop().is_empty(),
         "the answer is not bound by the labels"
     );
     // [2]'s line copies [7]: it is [7]'s note, and not replayed under [2].
     let kept = format!("[2] -\n[5] {OPENING}\n[7] {TOLL}\n[9] -");
-    assert_eq!(writing.input[2].text(), kept);
+    assert_eq!(writing.input()[2].text(), kept);
     let step = run
         .steps
         .iter()

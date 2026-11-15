@@ -36,8 +36,8 @@ impl LLMPort for Mended<'_> {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let mut response = self.0.complete(request).await?;
         let judges = request
-            .json_schema
-            .as_ref()
+            .schema()
+            .map(|schema| schema.as_json())
             .is_some_and(|schema| schema.pointer("/properties/openFindings").is_some());
         let Ok(Value::Object(mut answer)) = serde_json::from_str::<Value>(&response.text) else {
             return Ok(response);

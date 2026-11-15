@@ -14,12 +14,12 @@ use lattice_core::application::services::context_assembler::budget::{
     BudgetAllocation, BudgetRequest, ModelCapacity,
 };
 use lattice_core::application::services::grounded_generation::{
-    self, CallOptions, GroundedGenerationError, GroundedRequest,
+    self, CallOptions, GroundedGenerationError,
 };
 #[cfg(any(test, feature = "test-support"))]
 use lattice_core::application::services::model_contract::test_support::RenderAnswer;
 use lattice_core::application::services::model_contract::{
-    Contract, ContractId, CutOffRemedy, PromptInput, Transport, CORRECTION_LEAD,
+    legacy, Contract, ContractId, CutOffRemedy, PromptInput, Transport, CORRECTION_LEAD,
 };
 use lattice_core::shared::error::AppError;
 
@@ -155,8 +155,8 @@ impl Sizer for WindowSizer<'_> {
             .with_output_limit(reserve);
         let answer_kept = BudgetAllocation::plan(&capacity, &BudgetRequest::new(0, 0, 0))
             .is_ok_and(|allocation| allocation.output_reserved >= reserve);
-        let mut request = GroundedRequest::new(SYSTEM_PROMPT, task);
-        request.output_tokens = reserve;
+        let mut request = legacy::grounded(SYSTEM_PROMPT, task);
+        *legacy::grounded_says(&mut request).output_tokens = reserve;
         answer_kept && grounded_generation::evidence_room(self.llm, &request).is_ok()
     }
 
@@ -185,13 +185,14 @@ pub(super) async fn ask(
         )
         .await;
     }
-    let mut request = GroundedRequest::new(SYSTEM_PROMPT, rendered.task.clone());
-    request.output_tokens = reserve;
+    let mut request = legacy::grounded(SYSTEM_PROMPT, rendered.task.clone());
+    let says = legacy::grounded_says(&mut request);
+    *says.output_tokens = reserve;
+    *says.schema = Some(legacy::schema(schema));
     request.call = CallOptions {
         priority: InferencePriority::Verification,
         sampling: Some(SamplingOverride::deterministic()),
         no_time_limit: true,
-        json_schema: Some(schema),
         reasoning_effort: Some(ANSWER_EFFORT.into()),
         ..Default::default()
     };

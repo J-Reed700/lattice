@@ -12,8 +12,9 @@ use tracing::debug;
 use crate::features::compare::di::CompareDeps;
 use lattice_core::application::ports::llm_port::InferencePriority;
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::application::services::grounded_generation::{
-    self, CallOptions, EvidencePassage, EvidenceSelection, GroundedRequest,
+    self, CallOptions, EvidencePassage, EvidenceSelection,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::timestamps::now_db_timestamp;
@@ -206,10 +207,11 @@ pub(super) async fn fill_row(
     columns: &[String],
     chunks: &[RetrievedChunk],
 ) -> Result<(String, Vec<RetrievedChunk>)> {
-    let mut request = GroundedRequest::new("", build_compare_task(title, columns));
-    request.output_tokens = columns.len().saturating_mul(CELL_OUTPUT_TOKENS);
-    request.evidence_heading = PASSAGES_HEADING.to_string();
-    request.evidence = chunks
+    let mut request = legacy::grounded("", build_compare_task(title, columns));
+    let says = legacy::grounded_says(&mut request);
+    *says.output_tokens = columns.len().saturating_mul(CELL_OUTPUT_TOKENS);
+    *says.evidence_heading = PASSAGES_HEADING.to_string();
+    *says.evidence = chunks
         .iter()
         .enumerate()
         .map(|(index, chunk)| EvidencePassage {
@@ -220,7 +222,7 @@ pub(super) async fn fill_row(
             rank: 1.0 / (index + 1) as f32,
         })
         .collect();
-    request.selection = EvidenceSelection::BestFirst;
+    *says.selection = EvidenceSelection::BestFirst;
     request.call = CallOptions {
         priority: InferencePriority::Interactive,
         ..Default::default()
@@ -305,8 +307,8 @@ async fn fill_columns(
 ) -> Result<Option<(Vec<CompareCellDto>, Option<String>)>> {
     // Each column reads as deep as its share of the call's evidence room
     // holds, at the chunker's passage size.
-    let mut task = GroundedRequest::new("", build_compare_task(&document.title, columns));
-    task.output_tokens = columns.len().saturating_mul(CELL_OUTPUT_TOKENS);
+    let mut task = legacy::grounded("", build_compare_task(&document.title, columns));
+    *legacy::grounded_says(&mut task).output_tokens = columns.len().saturating_mul(CELL_OUTPUT_TOKENS);
     let room = grounded_generation::evidence_room(llm.as_ref(), &task).map_err(AppError::from)?;
     let per_column = grounded_generation::retrieval_depth(room, None, llm.chars_per_token())
         .div_ceil(columns.len().max(1));

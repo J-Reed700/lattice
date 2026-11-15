@@ -48,7 +48,7 @@ async fn the_request_names_the_targets_the_runtime_and_the_suite() -> Result<()>
         .plant(&spec(), &baseline())
         .await?;
     let request = &model.requests()[0];
-    let schema = request.json_schema.clone().unwrap();
+    let schema = request.schema().unwrap().as_json().clone();
     let mutations = &schema["properties"]["mutations"];
     assert_eq!(mutations["minItems"], 2);
     assert_eq!(mutations["maxItems"], 2);
@@ -115,7 +115,7 @@ async fn without_a_runner_no_test_is_asked_for() -> Result<()> {
         .mutations
         .iter()
         .all(|mutation| mutation.verification == Verification::NotAsked));
-    let schema = model.requests()[0].json_schema.clone().unwrap();
+    let schema = model.requests()[0].schema().unwrap().as_json().clone();
     let item = &schema["properties"]["mutations"]["items"];
     assert!(item["properties"].get("killingTest").is_none());
     assert!(item["properties"].get("noTestBecause").is_none());
@@ -434,7 +434,7 @@ async fn a_brief_with_evidence_tells_the_planter_of_lesson_issues_and_gives_the_
         .collect();
     assert_eq!(catalogue, expected);
 
-    let schema = request.json_schema.clone().unwrap();
+    let schema = request.schema().unwrap().as_json().clone();
     let item = &schema["properties"]["mutations"]["items"];
     let every_pattern: Vec<&str> = patterns_for(&Material::code("python"))
         .map(|known| known.id)
@@ -477,10 +477,10 @@ async fn a_brief_with_no_evidence_leaves_the_planter_as_it_is_without_a_brief() 
     };
     assert_eq!(system(empty), system(without));
     assert_eq!(messages(empty), messages(without));
-    assert_eq!(empty.json_schema, without.json_schema);
+    assert_eq!(empty.schema(), without.schema());
     assert!(!system(empty).contains("lesson issues"));
     assert!(!messages(empty)[1].1.contains("<brief>"));
-    let schema = empty.json_schema.clone().unwrap();
+    let schema = empty.schema().unwrap().as_json().clone();
     let item = &schema["properties"]["mutations"]["items"];
     assert_eq!(
         item["properties"]["pattern"]["enum"],
@@ -510,7 +510,7 @@ async fn the_schema_puts_the_lesson_use_and_the_lesson_sentences_first_when_a_le
         .await?;
     let requests = model.requests();
 
-    let schema = requests[0].json_schema.clone().unwrap();
+    let schema = requests[0].schema().unwrap().as_json().clone();
     assert_eq!(schema["required"], json!(["lessonUse", "mutations"]));
     let top: Vec<&str> = schema["properties"]
         .as_object()
@@ -525,7 +525,7 @@ async fn the_schema_puts_the_lesson_use_and_the_lesson_sentences_first_when_a_le
     assert_eq!(first.map(String::as_str), Some("lessonSentences"));
     assert_eq!(item["required"][0], "lessonSentences");
 
-    let schema = requests[1].json_schema.clone().unwrap();
+    let schema = requests[1].schema().unwrap().as_json().clone();
     assert_eq!(schema["required"], json!(["mutations"]));
     assert!(schema["properties"].get("lessonUse").is_none());
     let item = &schema["properties"]["mutations"]["items"];

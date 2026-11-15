@@ -42,7 +42,7 @@ impl LLMPort for BatchModel {
 
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let user = request
-            .input
+            .input()
             .iter()
             .find_map(|item| match item {
                 CompletionInput::Message { role, content } if role == "user" => Some(content),

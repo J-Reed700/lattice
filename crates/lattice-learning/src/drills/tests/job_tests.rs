@@ -192,9 +192,9 @@ async fn a_queued_build_runs_on_the_runtime_and_the_judge_grades_its_blind_revie
     );
     for request in &requests {
         let schema = request
-            .json_schema
-            .as_ref()
-            .expect("every call is structured");
+            .schema()
+            .expect("every call is structured")
+            .as_json();
         assert!(text_length_rules(schema).is_empty(), "{schema}");
     }
     Ok(())

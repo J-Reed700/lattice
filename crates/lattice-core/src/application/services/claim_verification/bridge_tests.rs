@@ -101,7 +101,7 @@ async fn a_part_wise_check_sends_the_prompt_of_record_and_the_passages_under_the
         "Source passages:\n[passage-0]\nQuillet is a lexer shipped with the toolchain.\n\nClaim: Quillet is a lexer."
     );
     assert_eq!(sent[0].sampling, Some(SamplingOverride::deterministic()));
-    let schema = sent[0].json_schema.as_ref().unwrap();
+    let schema = sent[0].schema().map(|schema| schema.as_json()).unwrap();
     assert_eq!(
         schema["properties"]["parts"]["items"]["properties"]["kind"]["enum"],
         json!([

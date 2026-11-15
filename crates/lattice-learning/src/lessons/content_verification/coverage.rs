@@ -630,6 +630,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn prompt_snapshot_fidelity_audit() {
+        let units = vec![
+            json!({"index":0,"passages":[{"id":"a","text":"Equal inputs guarantee identical results. A rerun changes nothing."}],"claims":[{"id":"claim-a","statement":"Inputs are equal."},{"id":"claim-other","statement":"A rerun changes nothing."}]}),
+        ];
+        let raw = json!({"a":{"claimIds":["claim-a"],"nonFactualReason":"","missingClaims":[]}})
+            .to_string();
+        let mut coverage = resolve(&raw, &units).unwrap();
+        let inner = scripted(vec![represented()]);
+        let model = crate::lessons::course_generation_tests::RequestLog::new(&inner);
+        check_fidelity(&model, &raw, &units, &mut coverage)
+            .await
+            .unwrap();
+        model.assert_snapshot::<FidelityAudit>();
+    }
+
+    #[tokio::test]
     async fn a_long_reason_or_missing_assertion_from_the_judge_is_read_not_asked_for_again() {
         let units = vec![
             json!({"index":0,"passages":[{"id":"a","text":"A fact."}],"claims":[{"id":"c","statement":"Another fact."}]}),

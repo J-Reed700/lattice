@@ -1305,3 +1305,96 @@ async fn a_short_page_the_outline_research_found_is_still_swept() -> Result<()> 
         .all(|source| source.title != "Research reference"));
     Ok(())
 }
+
+/// Keeps, in order, every request sent for the contract `C` to the model it wraps.
+pub(super) struct Capture<'a> {
+    inner: &'a dyn lattice_core::application::ports::LLMPort,
+    id: lattice_core::application::services::model_contract::ContractId,
+    sent: Mutex<Vec<lattice_core::application::ports::llm_port::CompletionRequest>>,
+}
+
+impl<'a> Capture<'a> {
+    pub(super) fn of<C: lattice_core::application::services::model_contract::Contract>(
+        inner: &'a dyn lattice_core::application::ports::LLMPort,
+    ) -> Self {
+        Self::named(inner, C::ID)
+    }
+
+    /// For a contract whose type is private to its module: its id.
+    pub(super) fn named(
+        inner: &'a dyn lattice_core::application::ports::LLMPort,
+        id: lattice_core::application::services::model_contract::ContractId,
+    ) -> Self {
+        Self {
+            inner,
+            id,
+            sent: Mutex::new(vec![]),
+        }
+    }
+
+    pub(super) fn requests(
+        &self,
+    ) -> Vec<lattice_core::application::ports::llm_port::CompletionRequest> {
+        self.sent.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl lattice_core::application::ports::LLMPort for Capture<'_> {
+    async fn complete(
+        &self,
+        request: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        if request.contract().is_some_and(|call| call.id == self.id) {
+            self.sent.lock().unwrap().push(request.clone());
+        }
+        self.inner.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        self.inner.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.inner.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.inner.max_context_tokens()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        self.inner.is_ready().await
+    }
+}
+
+#[tokio::test]
+async fn prompt_snapshot_outline_reference_plan() -> Result<()> {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let request = request(LearningCourseDepth::Focused);
+    let existing = LearningSourceDto {
+        id: "overview".into(),
+        title: "Brief reference overview".into(),
+        excerpt: ORIGINAL.into(),
+        url: Some("https://example.org/overview".into()),
+        acquired_at: 0,
+    };
+    let llm = model(vec![plan_output(&[
+        (
+            "Randomized comparison",
+            &["randomized controlled trial design documentation"],
+        ),
+        ("Uncertainty", &["confidence interval interpretation textbook"]),
+    ])]);
+    let capture = Capture::named(
+        &llm,
+        lattice_core::application::services::model_contract::ContractId::new(
+            "outline-reference-plan",
+        ),
+    );
+
+    outline_references::plan(&capture, &request, &[existing], &OutlineProgress::default()).await?;
+
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "outline-reference-plan",
+        &capture.requests(),
+    );
+    Ok(())
+}

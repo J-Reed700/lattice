@@ -12,8 +12,7 @@ use lattice_core::{
             LLMPort,
         },
         services::{
-            grounded_generation::GroundedRequest,
-            model_contract::{Contract, ContractCall, ContractId, PromptInput},
+            model_contract::{legacy, Contract, ContractCall, ContractId, PromptInput},
         },
     },
     shared::error::Result,
@@ -63,13 +62,13 @@ pub async fn independent_solution(
     let context = json!({
         "question":question,"sourceCatalog":catalog,"sourceEvidence":evidence,
     });
-    let mut independent = GroundedRequest::new(INDEPENDENT_SOLUTION, context.to_string());
-    independent.output_tokens = 1_800;
+    let mut independent = legacy::grounded(INDEPENDENT_SOLUTION, context.to_string());
+    *legacy::grounded_says(&mut independent).output_tokens = 1_800;
     independent.call.reasoning_effort = Some(ANSWER_EFFORT.into());
     independent.call.sampling = Some(SamplingOverride::deterministic());
     let call = ContractCall::of::<IndependentSolution>(&PromptInput {
-        system: independent.instructions.clone(),
-        prompt: independent.task.clone(),
+        system: independent.instructions().to_owned(),
+        prompt: independent.task().to_owned(),
     })?;
     structured_call::complete_checked_request(llm, &call, independent, None, None, |raw| {
         present(raw, "Independent interview solution")?;
@@ -93,8 +92,8 @@ pub async fn review(
     let mut request = model_call::structured(&system, context.to_string(), schema(standard), 1_800);
     request.call.sampling = Some(SamplingOverride::deterministic());
     let call = ContractCall::of::<GuideReview>(&PromptInput {
-        system: request.instructions.clone(),
-        prompt: request.task.clone(),
+        system: request.instructions().to_owned(),
+        prompt: request.task().to_owned(),
     })?;
     structured_call::complete_checked_request(
         llm, &call, request, None,

@@ -261,7 +261,7 @@ async fn a_test_that_passes_on_both_is_sent_back_once_with_both_runs_for_a_new_t
         reask.contains("Run on the code without the change, it passed. Run on the code with the change, it passed."),
         "{reask}"
     );
-    assert!(text_length_rules(requests[0].json_schema.as_ref().unwrap()).is_empty());
+    assert!(text_length_rules(requests[0].schema().unwrap().as_json()).is_empty());
     Ok(())
 }
 
@@ -440,7 +440,7 @@ async fn the_judge_confirms_a_mutation_that_introduces_exactly_the_problem() -> 
     assert!(user.contains("The original code:"));
     assert!(user.contains("if len(recent) >= self.limit:"));
     assert!(user.contains("if len(recent) > self.limit:"));
-    let schema = request.json_schema.clone().unwrap();
+    let schema = request.schema().unwrap().as_json().clone();
     assert_eq!(
         schema["required"],
         json!(["reason", "editIntroducesIt", "cleanLacksIt"]),
@@ -577,7 +577,7 @@ async fn a_smell_that_fails_the_suite_is_sent_back_once_for_a_new_edit_that_keep
         sent[1].1.contains("In src/limiter.py, replacing:"),
         "the other edits stay"
     );
-    assert!(text_length_rules(requests[0].json_schema.as_ref().unwrap()).is_empty());
+    assert!(text_length_rules(requests[0].schema().unwrap().as_json()).is_empty());
     let reask = last(&requests[0]);
     assert!(
         reask.starts_with("That answer could not be used:"),

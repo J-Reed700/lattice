@@ -25,6 +25,7 @@ use lattice_core::application::ports::llm_port::{
     CacheHold, CompletionInput, CompletionRequest, CompletionResponse, Pace, RequestLoad,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::shape::Schema;
 use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::runtime::jobs::current_rank;
@@ -113,7 +114,7 @@ impl ScheduledLlm {
         if response.input_tokens == 0
             || request.has_images()
             || request
-                .input
+                .input()
                 .iter()
                 .any(|item| matches!(item, CompletionInput::Native { .. }))
         {
@@ -223,6 +224,10 @@ impl LLMPort for ScheduledLlm {
         self.inner.keeps_read_prompts()
     }
 
+    fn enforces(&self, schema: &Schema) -> bool {
+        self.inner.enforces(schema)
+    }
+
     async fn count_tokens_exact(&self, text: &str) -> Result<usize> {
         let Some(tokenizer) = &self.tokenizer else {
             return Ok(self.count_tokens(text));
@@ -248,7 +253,7 @@ impl LLMPort for ScheduledLlm {
     }
 
     fn thinks_before_answering(&self) -> bool {
-        self.inner.thinking(&CompletionRequest::default()).is_on()
+        self.inner.thinking(&CompletionRequest::probe()).is_on()
     }
 
     fn vision(&self) -> Option<VisionGeometry> {

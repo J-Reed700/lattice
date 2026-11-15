@@ -103,6 +103,20 @@ fn outline(lesson_title: &str) -> CourseOutline {
 }
 
 #[tokio::test]
+async fn prompt_snapshot_practice_fit() -> Result<()> {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let pool = active_memory_pool().await?;
+    let database = Database::new(pool.clone());
+    let (program, _lesson) = setup(&pool, &database).await?;
+    let repo = LearningPracticeRepository::new(database.clone());
+    let kinds = Kinds::new([kind("rope", ROPE), kind("beads", BEADS)])?;
+    let model = scripted(&[answer(&[("beads", true), ("rope", false)])]);
+    check_practice_fit(&repo, &kinds, &model, &program.summary.id).await?;
+    snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "practice-fit", &model.requests());
+    Ok(())
+}
+
+#[tokio::test]
 async fn two_kinds_are_decided_in_one_request_and_stored_on_one_basis() -> Result<()> {
     let pool = active_memory_pool().await?;
     let database = Database::new(pool.clone());

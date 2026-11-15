@@ -24,7 +24,7 @@ fn eight_passages() -> Passages {
 }
 
 fn planned_request() -> Vec<CompletionInput> {
-    planned(&[1, 2, 3, 4, 5, 6, 7, 8]).input
+    planned(&[1, 2, 3, 4, 5, 6, 7, 8]).input().to_vec()
 }
 
 async fn read_eight(model: &Model) -> Result<Option<Notes>> {
@@ -51,11 +51,11 @@ async fn room_needed(group: &[u32]) -> usize {
     let counter = Model::new([]);
     let request = planned(&[1, 2, 3, 4, 5, 6, 7, 8]);
     let again = shown(&eight_passages(), group);
-    let sent = CompletionRequest {
+    let sent = legacy::completion(legacy::Completion {
         input: group_input(&request, &again, group, QUESTION),
-        tools: request.tools.clone(),
+        tools: request.tools().to_vec(),
         ..Default::default()
-    };
+    });
     prompt_tokens(&counter, &sent).await + counter.count_tokens(&again)
 }
 
@@ -99,7 +99,7 @@ async fn every_group_is_read_in_label_order_with_only_its_own_passages_shown_aga
     let sent = model.requests();
     assert_eq!(sent.len(), 2, "one request per group");
     for (request, labels) in sent.iter().zip([[1, 2, 3, 4], [5, 6, 7, 8]]) {
-        let message = request.input[1].text();
+        let message = request.input()[1].text();
         for label in 1..=8 {
             let shown_again = message.matches(&format!("[{label}] ")).count() > 1;
             assert_eq!(
@@ -109,8 +109,8 @@ async fn every_group_is_read_in_label_order_with_only_its_own_passages_shown_aga
             );
         }
         let next = labels[3] + 1;
-        assert_eq!(request.stop, [format!("\n[{next}]"), format!("\n{next}.")]);
-        assert!(request.max_output_tokens.is_some());
+        assert_eq!(request.stop(), [format!("\n[{next}]"), format!("\n{next}.")]);
+        assert!(request.max_output_tokens().is_some());
     }
     assert_eq!(
         notes.text,
@@ -132,11 +132,11 @@ async fn a_backend_that_keeps_read_prompts_reads_the_message_alone_before_the_gr
     let notes = read_eight(&model).await.unwrap().expect("notes");
     let sent = model.requests();
     assert_eq!(sent.len(), 3, "the message, then one request per group");
-    assert_eq!(sent[0].max_output_tokens, Some(1));
-    let ahead = sent[0].input[1].text();
+    assert_eq!(sent[0].max_output_tokens(), Some(1));
+    let ahead = sent[0].input()[1].text();
     assert_eq!(ahead.matches("[5] ").count(), 1, "no passage shown again");
     for group in &sent[1..] {
-        let message = group.input[1].text();
+        let message = group.input()[1].text();
         assert!(message.len() > ahead.len() && message.starts_with(&*ahead));
     }
     assert_eq!(notes.noted, [1, 5].into());
@@ -166,7 +166,7 @@ async fn the_reservation_holds_every_group_together() {
     let reserved = counter.count_tokens(&first);
     let model = Model::with_context_tokens(four_at_a_time().await, [reply(&first, "stop")]);
     let mut request = planned(&[1, 2, 3, 4, 5, 6, 7, 8]);
-    request.max_output_tokens = Some(u32::try_from(reserved).unwrap());
+    *legacy::says(&mut request).max_output_tokens = Some(u32::try_from(reserved).unwrap());
     let reading = read_passages(
         &model,
         &request,
@@ -195,11 +195,11 @@ async fn a_group_the_window_cannot_hold_is_split_and_a_passage_it_cannot_hold_is
     let counter = Model::new([]);
     let sent_with = |group: &[u32]| {
         let input = group_input(&request, &shown(&passages, group), group, QUESTION);
-        CompletionRequest {
+        legacy::completion(legacy::Completion {
             input,
-            tools: request.tools.clone(),
+            tools: request.tools().to_vec(),
             ..Default::default()
-        }
+        })
     };
     // Room for [1] and [2] shown again with a copy of them, not for all four.
     let pair = sent_with(&[1, 2]);

@@ -15,7 +15,7 @@ use crate::lessons::text_edits;
 use crate::review_findings::FindingSite;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
 use lattice_core::application::services::model_contract::{
-    Contract, ContractCall, ContractId, PromptInput,
+    legacy, Contract, ContractCall, ContractId, PromptInput,
 };
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal};
 use std::collections::{BTreeSet, VecDeque};
@@ -177,8 +177,8 @@ fn repair_system(schema: &Value) -> String {
 /// answer the check refuses is carried, with this context, by its one
 /// correction.
 fn repair_request(system: &str, local: &Value, output_tokens: usize) -> GroundedRequest {
-    let mut request = GroundedRequest::new(system, local.to_string());
-    request.output_tokens = 2 * output_tokens;
+    let mut request = legacy::grounded(system, local.to_string());
+    *legacy::grounded_says(&mut request).output_tokens = 2 * output_tokens;
     request
 }
 

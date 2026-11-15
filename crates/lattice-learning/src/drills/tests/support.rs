@@ -43,7 +43,7 @@ pub const MODEL: &str = "scripted-drill-model";
 /// The role and the text of each message a request carries.
 pub(super) fn messages(request: &CompletionRequest) -> Vec<(String, String)> {
     request
-        .input
+        .input()
         .iter()
         .filter_map(|item| match item {
             CompletionInput::Message { role, content } => Some((role.clone(), content.clone())),

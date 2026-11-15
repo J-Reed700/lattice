@@ -1,6 +1,7 @@
 //! Tests for typed completions, streaming, tool calls and timeouts against scripted Ollama servers.
 
 use super::*;
+use lattice_core::application::services::model_contract::legacy;
 use crate::features::llm::fitting::SendUnscheduled;
 use std::sync::Arc;
 
@@ -16,9 +17,7 @@ impl UncutChatRequest for OllamaClient {
 
 #[tokio::test]
 async fn typed_completion_sends_schema_reasoning_sampling_and_output_budget() {
-    use lattice_core::application::ports::llm_port::{
-        CompletionInput, CompletionRequest, SamplingOverride,
-    };
+    use lattice_core::application::ports::llm_port::{CompletionInput, SamplingOverride};
     use wiremock::{
         matchers::{method, path},
         Mock, MockServer, ResponseTemplate,
@@ -67,7 +66,7 @@ async fn typed_completion_sends_schema_reasoning_sampling_and_output_budget() {
         Duration::from_secs(1),
     )
     .unwrap();
-    let request = CompletionRequest {
+    let request = legacy::completion(legacy::Completion {
         input: vec![
             CompletionInput::Message {
                 role: "system".into(),
@@ -84,7 +83,7 @@ async fn typed_completion_sends_schema_reasoning_sampling_and_output_budget() {
         max_output_tokens: Some(2048),
         time_budget: Some(Duration::from_secs(2)),
         ..Default::default()
-    };
+    });
     let response = SendUnscheduled::complete(&client, &request).await.unwrap();
     assert_eq!(response.text, "{\"ok\":true}");
     assert_eq!(response.input_tokens, 30);
@@ -107,9 +106,7 @@ async fn typed_completion_sends_schema_reasoning_sampling_and_output_budget() {
 
 #[tokio::test]
 async fn typed_completion_replays_native_tool_call_and_result_on_next_round() {
-    use lattice_core::application::ports::llm_port::{
-        CompletionInput, CompletionRequest, ToolDefinition,
-    };
+    use lattice_core::application::ports::llm_port::{CompletionInput, ToolDefinition};
     use wiremock::{
         matchers::{method, path},
         Mock, MockServer, ResponseTemplate,
@@ -160,7 +157,7 @@ async fn typed_completion_replays_native_tool_call_and_result_on_next_round() {
         Duration::from_secs(1),
     )
     .unwrap();
-    let request = CompletionRequest {
+    let request = legacy::completion(legacy::Completion {
         input: vec![CompletionInput::Message {
             role: "user".into(),
             content: "When is the trip?".into(),
@@ -168,7 +165,7 @@ async fn typed_completion_replays_native_tool_call_and_result_on_next_round() {
         tools: vec![tool],
         max_output_tokens: Some(1024),
         ..Default::default()
-    };
+    });
     let first_response = SendUnscheduled::complete(&client, &request).await.unwrap();
     let call = first_response.tool_calls.first().unwrap();
     let (id, name) = match call {
@@ -178,8 +175,9 @@ async fn typed_completion_replays_native_tool_call_and_result_on_next_round() {
     assert_eq!(name, "search_saved_knowledge");
 
     let mut next_request = request;
-    next_request.input.extend(first_response.replay.clone());
-    next_request.input.push(CompletionInput::ToolResult {
+    let says = legacy::says(&mut next_request);
+    says.input.extend(first_response.replay.clone());
+    says.input.push(CompletionInput::ToolResult {
         id,
         output: "The trip is on Friday.".into(),
     });
@@ -209,7 +207,7 @@ async fn typed_completion_replays_native_tool_call_and_result_on_next_round() {
 
 #[tokio::test]
 async fn typed_completion_cancels_http_work_when_request_budget_expires() {
-    use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest};
+    use lattice_core::application::ports::llm_port::CompletionInput;
     use wiremock::{
         matchers::{method, path},
         Mock, MockServer, ResponseTemplate,
@@ -237,23 +235,21 @@ async fn typed_completion_cancels_http_work_when_request_budget_expires() {
         Duration::from_secs(1),
     )
     .unwrap();
-    let request = CompletionRequest {
+    let request = legacy::completion(legacy::Completion {
         input: vec![CompletionInput::Message {
             role: "user".into(),
             content: "Please answer quickly.".into(),
         }],
         time_budget: Some(Duration::from_millis(20)),
         ..Default::default()
-    };
+    });
 
     let error = SendUnscheduled::complete(&client, &request)
         .await
         .unwrap_err();
     assert!(error.to_string().contains("time budget"));
-    let request = CompletionRequest {
-        no_time_limit: true,
-        ..request
-    };
+    let mut request = request;
+    request.no_time_limit = true;
     assert_eq!(
         SendUnscheduled::complete(&client, &request)
             .await
@@ -272,9 +268,7 @@ async fn typed_completion_cancels_http_work_when_request_budget_expires() {
 
 #[tokio::test]
 async fn typed_completion_streams_content_and_keeps_terminal_tool_calls() {
-    use lattice_core::application::ports::llm_port::{
-        CompletionInput, CompletionRequest, ToolDefinition,
-    };
+    use lattice_core::application::ports::llm_port::{CompletionInput, ToolDefinition};
     use wiremock::{
         matchers::{method, path},
         Mock, MockServer, ResponseTemplate,
@@ -310,7 +304,7 @@ async fn typed_completion_streams_content_and_keeps_terminal_tool_calls() {
         Duration::from_secs(1),
     )
     .unwrap();
-    let request = CompletionRequest {
+    let request = legacy::completion(legacy::Completion {
         input: vec![CompletionInput::Message {
             role: "user".into(),
             content: "When is the trip?".into(),
@@ -322,7 +316,7 @@ async fn typed_completion_streams_content_and_keeps_terminal_tool_calls() {
             parameters: serde_json::json!({"type":"object","properties":{}}),
         }],
         ..Default::default()
-    };
+    });
     let received = Arc::new(std::sync::Mutex::new(Vec::new()));
     let received_by_callback = received.clone();
     let on_text = move |text: String| {
@@ -372,7 +366,7 @@ async fn typed_completion_streams_content_and_keeps_terminal_tool_calls() {
 
 #[tokio::test]
 async fn typed_stream_handles_sparse_tool_indices_without_allocating_gaps() {
-    use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest};
+    use lattice_core::application::ports::llm_port::CompletionInput;
     use wiremock::{
         matchers::{method, path},
         Mock, MockServer, ResponseTemplate,
@@ -403,7 +397,7 @@ async fn typed_stream_handles_sparse_tool_indices_without_allocating_gaps() {
         .unwrap();
         let response = SendUnscheduled::complete_with_progress(
             &client,
-            &CompletionRequest::default(),
+            &legacy::completion(legacy::Completion::default()),
             &|_| Ok(()),
         )
         .await
@@ -455,7 +449,6 @@ async fn health_check_requires_an_ollama_route_not_just_a_listening_port() {
 
 #[tokio::test]
 async fn a_failed_status_says_what_it_means_without_echoing_the_body() {
-    use lattice_core::application::ports::llm_port::CompletionRequest;
     use wiremock::{
         matchers::{method, path},
         Mock, MockServer, ResponseTemplate,
@@ -473,7 +466,7 @@ async fn a_failed_status_says_what_it_means_without_echoing_the_body() {
         .await;
     let client = OllamaClient::with_model(server.uri(), "absent").unwrap();
     let error = client
-        .complete(&CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .unwrap_err();
     assert!(matches!(error, AppError::InvalidConfig(_)), "{error:?}");
@@ -530,7 +523,7 @@ async fn a_streamed_body_outlives_the_probe_timeout_and_keeps_split_characters()
     )
     .unwrap();
     let response = client
-        .complete(&lattice_core::application::ports::llm_port::CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .unwrap();
     assert_eq!(response.text, "Slow 世界");
@@ -553,7 +546,7 @@ async fn a_stream_that_goes_silent_is_a_stall_not_a_wait() {
     )
     .unwrap();
     let error = client
-        .complete(&lattice_core::application::ports::llm_port::CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .unwrap_err();
     assert!(error.to_string().contains("sent nothing"), "{error}");
@@ -570,10 +563,10 @@ fn a_thinking_answer_turns_think_on_with_the_thinking_profile() {
         Duration::from_secs(1),
     )
     .unwrap();
-    let mut request = CompletionRequest {
+    let mut request = legacy::completion(legacy::Completion {
         thinking: ThinkingMode::On,
         ..Default::default()
-    };
+    });
     let sent = serde_json::to_value(client.uncut_chat_request(&request).unwrap()).unwrap();
     assert_eq!(sent["think"], true);
     assert_eq!(sent["options"]["temperature"], 1.0);
@@ -581,7 +574,7 @@ fn a_thinking_answer_turns_think_on_with_the_thinking_profile() {
     request.reasoning_effort = Some("high".into());
     let sent = serde_json::to_value(client.uncut_chat_request(&request).unwrap()).unwrap();
     assert_eq!(sent["think"], "high");
-    request.tools = vec![ToolDefinition {
+    *legacy::says(&mut request).tools = vec![ToolDefinition {
         name: "search".into(),
         description: "Search".into(),
         parameters: serde_json::json!({"type":"object"}),
@@ -602,20 +595,20 @@ fn stop_sequences_go_in_the_options_only_when_asked_for() {
         Duration::from_secs(1),
     )
     .unwrap();
-    let mut request = CompletionRequest {
+    let mut request = legacy::completion(legacy::Completion {
         stop: vec!["[5]".into(), "\n5.".into()],
         ..Default::default()
-    };
+    });
     let sent = serde_json::to_value(client.uncut_chat_request(&request).unwrap()).unwrap();
     assert_eq!(sent["options"]["stop"], serde_json::json!(["[5]", "\n5."]));
-    request.stop.clear();
+    legacy::says(&mut request).stop.clear();
     let sent = serde_json::to_value(client.uncut_chat_request(&request).unwrap()).unwrap();
     assert!(sent["options"].get("stop").is_none());
 }
 
 fn picture_request() -> CompletionRequest {
     use lattice_core::application::ports::llm_port::ImagePart;
-    CompletionRequest {
+    legacy::completion(legacy::Completion {
         input: vec![CompletionInput::Multimodal {
             role: "user".into(),
             parts: vec![
@@ -633,7 +626,7 @@ fn picture_request() -> CompletionRequest {
             ],
         }],
         ..Default::default()
-    }
+    })
 }
 
 fn llava() -> OllamaClient {
@@ -728,7 +721,7 @@ async fn the_window_is_asked_for_and_held_to_what_the_server_reports() {
     assert_eq!(ModelBackend::window(&client), 16_384);
     let body = client
         .uncut_chat_request(
-            &lattice_core::application::ports::llm_port::CompletionRequest::default(),
+            &legacy::completion(legacy::Completion::default()),
         )
         .unwrap();
     assert_eq!(

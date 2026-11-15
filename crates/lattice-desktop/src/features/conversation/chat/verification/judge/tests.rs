@@ -4,7 +4,7 @@
 use super::super::lexical::lexical_pass;
 use super::super::test_support::source;
 use super::*;
-use lattice_core::application::ports::llm_port::CompletionResponse;
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 
 /// Room enough for any test page in one call.
 const WIDE: usize = 1_000_000;
@@ -387,7 +387,7 @@ async fn the_judge_starts_with_a_label_and_puts_document_first() {
     assert_eq!(sent.len(), 1);
     let request = &sent[0];
     assert!(request.want_logprobs);
-    assert!(request.json_schema.is_none());
+    assert!(request.schema().is_none());
     assert!(request.reasoning_effort.is_none());
     // No clock cuts a judge call off: stall detection and shutdown do.
     assert!(request.no_time_limit);
@@ -396,9 +396,9 @@ async fn the_judge_starts_with_a_label_and_puts_document_first() {
     let sampling = request.sampling.expect("the judge sets its own sampling");
     assert_eq!(sampling.temperature, Some(0.0));
     assert_eq!(sampling.top_k, Some(1));
-    assert_eq!(request.max_output_tokens, Some(DEFAULT_MAX_OUTPUT_TOKENS));
+    assert_eq!(request.max_output_tokens(), Some(DEFAULT_MAX_OUTPUT_TOKENS));
 
-    let CompletionInput::Message { content, .. } = &request.input[1] else {
+    let CompletionInput::Message { content, .. } = &request.input()[1] else {
         panic!("user message expected");
     };
     let document = content.find("4 to 6 inches of soil cover").unwrap();
@@ -424,7 +424,7 @@ async fn verification_settings_reach_the_request() {
     assert_eq!(sampling.temperature, Some(0.4));
     assert_eq!(sampling.top_p, Some(0.8));
     assert_eq!(sampling.top_k, Some(20));
-    assert_eq!(sent[0].max_output_tokens, Some(DEFAULT_MAX_OUTPUT_TOKENS));
+    assert_eq!(sent[0].max_output_tokens(), Some(DEFAULT_MAX_OUTPUT_TOKENS));
 }
 
 #[tokio::test]
@@ -459,7 +459,7 @@ struct PartAwareLlm {
 impl LLMPort for PartAwareLlm {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         *self.calls.lock().unwrap() += 1;
-        let holds_marker = request.input.iter().any(|input| {
+        let holds_marker = request.input().iter().any(|input| {
             matches!(input, CompletionInput::Message { content, .. } if content.contains(self.marker))
         });
         Ok(CompletionResponse {

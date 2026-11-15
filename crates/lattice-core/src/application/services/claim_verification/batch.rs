@@ -198,7 +198,7 @@ impl ClaimChecker<'_> {
         let ids: Vec<_> = (0..claims.len())
             .map(|index| format!("claim-{index}"))
             .collect();
-        let request = CompletionRequest {
+        let request = legacy::completion(legacy::Completion {
             input: vec![
                 CompletionInput::Message {
                     role: "system".into(),
@@ -218,7 +218,7 @@ impl ClaimChecker<'_> {
             no_time_limit: true,
             priority: InferencePriority::Verification,
             ..Default::default()
-        };
+        });
         let call = ContractCall::of::<ClaimBatch>(&evidence_bank(claims).0)?;
         let judging = Judging::showing(on_text, on_retry);
         let outcome = answer(self.llm, &call, &judging, request, |text| {

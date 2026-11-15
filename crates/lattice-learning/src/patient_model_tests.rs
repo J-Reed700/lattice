@@ -2,6 +2,7 @@ use super::*;
 use crate::dto::LearningCourseDepth;
 use crate::lessons::course_generation_tests::{outline, request, Model};
 use crate::repository::LearningRepository;
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::shared::error::AppError;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -138,7 +139,7 @@ async fn cancelling_during_the_wait_stops_it() {
         max: Duration::from_secs(300),
     };
     let started = std::time::Instant::now();
-    let request = CompletionRequest::default();
+    let request = legacy::completion(legacy::Completion::default());
     let error = patiently(&recorder, long, |_| flaky.complete(&request))
         .await
         .err()
@@ -169,7 +170,7 @@ async fn the_stop_button_ends_a_wait_in_an_outline_run() {
     });
     let llm = PatientModel::new(&flaky, progress.as_ref());
     let error = progress
-        .run(llm.complete(&CompletionRequest::default()))
+        .run(llm.complete(&legacy::completion(legacy::Completion::default())))
         .await
         .err()
         .unwrap();
@@ -185,7 +186,7 @@ async fn a_non_transient_error_still_fails_at_once() {
     let recorder = Recorder::default();
     let error = PatientModel::new(&flaky, &recorder)
         .with_backoff(FAST)
-        .complete(&CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .err()
         .unwrap();
@@ -243,7 +244,7 @@ async fn a_bundled_server_that_cannot_start_is_not_waited_for() {
         initial: Duration::from_secs(300),
         max: Duration::from_secs(300),
     };
-    let request = CompletionRequest::default();
+    let request = legacy::completion(legacy::Completion::default());
 
     let outcome = tokio::time::timeout(
         Duration::from_secs(5),
@@ -293,7 +294,7 @@ async fn a_server_that_is_starting_busy_or_unreachable_is_still_waited_for() {
         let recorder = Recorder::default();
         let response = PatientModel::new(&flaky, &recorder)
             .with_backoff(FAST)
-            .complete(&CompletionRequest::default())
+            .complete(&legacy::completion(legacy::Completion::default()))
             .await;
         assert!(response.is_ok(), "{:?}", response.err());
         assert_eq!(flaky.calls.load(Ordering::Relaxed), 2);
@@ -325,7 +326,7 @@ async fn a_wait_carries_the_code_of_its_cause_and_ends_when_the_server_answers()
         let recorder = Recorder::default();
         PatientModel::new(&flaky, &recorder)
             .with_backoff(FAST)
-            .complete(&CompletionRequest::default())
+            .complete(&legacy::completion(legacy::Completion::default()))
             .await
             .unwrap();
 

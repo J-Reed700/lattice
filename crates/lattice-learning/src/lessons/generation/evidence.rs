@@ -19,9 +19,8 @@ use crate::reference_collection::{
     item_tokens, ReferenceCollection, ReferencePassage, PASSAGE_CHARS,
 };
 use lattice_core::application::ports::LLMPort;
-use lattice_core::application::services::grounded_generation::GroundedRequest;
 use lattice_core::application::services::model_contract::{
-    Contract, ContractCall, ContractId, PromptInput,
+    legacy, Contract, ContractCall, ContractId, PromptInput,
 };
 use lattice_core::protocol;
 use lattice_core::shared::error::Result;
@@ -496,8 +495,8 @@ fn coverage_call(
 }
 
 async fn coverage_fits(llm: &dyn LLMPort, prompt: &str, output_tokens: usize) -> bool {
-    let mut request = GroundedRequest::new(COVERAGE_SYSTEM, prompt);
-    request.output_tokens = output_tokens;
+    let mut request = legacy::grounded(COVERAGE_SYSTEM, prompt);
+    *legacy::grounded_says(&mut request).output_tokens = output_tokens;
     model_call::fits(llm, &request).await
 }
 
@@ -513,11 +512,11 @@ fn coverage_groups(
     references: &ReferenceCollection<'_>,
     pairs: &[(usize, usize)],
 ) -> Vec<Vec<(usize, usize)>> {
-    let mut skeleton = GroundedRequest::new(
+    let mut skeleton = legacy::grounded(
         COVERAGE_SYSTEM,
         json!({"topics":[],"passages":[]}).to_string(),
     );
-    skeleton.output_tokens = coverage_output(pairs);
+    *legacy::grounded_says(&mut skeleton).output_tokens = coverage_output(pairs);
     let room = model_call::source_room(llm, &skeleton, usize::MAX);
     if room == 0 {
         tracing::warn!(

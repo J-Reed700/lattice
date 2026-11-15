@@ -198,7 +198,10 @@ async fn the_call_is_background_work_asked_under_the_plans_schema() {
 
     let sent = llm.request(0);
     assert_eq!(sent.priority, InferencePriority::Background);
-    assert_eq!(sent.json_schema, Some(plan_schema(&program)));
+    assert_eq!(
+        sent.schema().map(|schema| schema.as_json()),
+        Some(&plan_schema(&program))
+    );
     let (_, user) = crate::lessons::structured_call::task_messages(&sent);
     let task: Value = serde_json::from_str(user).unwrap();
     assert_eq!(task["goal"], program.summary.goal.as_str());
@@ -265,7 +268,7 @@ async fn a_gap_in_the_plan_is_asked_for_again_with_the_lesson_it_left_out() {
     assert_eq!(plan.lessons.len(), 4);
     let asked = llm.request(1);
     let said = asked
-        .input
+        .input()
         .iter()
         .filter_map(|item| match item {
             CompletionInput::Message { role, content } if role == "user" => Some(content.as_str()),
@@ -502,6 +505,62 @@ async fn a_written_lesson_is_planned_from_what_it_taught() {
     assert!(
         system.contains("A lesson with taught is already written"),
         "the planner is told what taught means: {system}"
+    );
+}
+
+#[tokio::test]
+async fn prompt_snapshot_course_plan() {
+    use crate::dto::{LearningBlockDto, LearningBlockKind};
+    use lattice_core::application::services::model_contract::Contract;
+    let pool = crate::tests::pool().await.unwrap();
+    let db = Database::new(pool.clone());
+    let mut program = crate::tests::fixture();
+    crate::lessons::course_generation_tests::fixed_ids(&mut program);
+    LearningRepository::new(db.clone())
+        .create(&program)
+        .await
+        .unwrap();
+    let block = |kind, title: &str, body: &str| {
+        LearningBlockDto::new(kind, title.into(), body.into(), Vec::new(), Vec::new())
+    };
+    {
+        let lessons = &mut program.modules[0].lessons;
+        lessons[0].blocks = vec![
+            block(
+                LearningBlockKind::Explanation,
+                "Flashing the card",
+                "Body one.",
+            ),
+            block(
+                LearningBlockKind::Recap,
+                "Recap",
+                "Takeaway: the card holds the system.",
+            ),
+        ];
+        lessons[1].blocks = Vec::new();
+    }
+    let llm = Planner::new();
+
+    ensure(&db, &llm, &program, 1, &Default::default())
+        .await
+        .unwrap();
+
+    let sent: Vec<CompletionRequest> = llm
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|request| {
+            request
+                .contract()
+                .is_some_and(|call| call.id == PlanCourse::ID)
+        })
+        .cloned()
+        .collect();
+    lattice_core::application::services::model_contract::test_support::snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "course-plan",
+        &sent,
     );
 }
 

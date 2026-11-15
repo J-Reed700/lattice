@@ -205,6 +205,57 @@ async fn an_uncovered_topic_triggers_one_research_round_before_writing() -> Resu
     Ok(())
 }
 
+#[tokio::test]
+async fn prompt_snapshot_evidence_plan() -> Result<()> {
+    let mut program = crate::tests::fixture();
+    crate::lessons::course_generation_tests::fixed_ids(&mut program);
+    let lesson = &program.modules[0].lessons[0];
+    let references = ReferenceCollection::lexical(&program.sources)?;
+    let inner = scripted(vec![json!({"topics":[
+        {"topic":"Aggregates","queries":["aggregate root invariants"]},
+        {"topic":"Command handlers","queries":["command handler state change"]}
+    ]})
+    .to_string()]);
+    let llm = crate::lessons::course_generation_tests::RequestLog::new(&inner);
+
+    plan(&llm, &program, lesson, &references).await?;
+
+    llm.assert_snapshot::<EvidencePlan>();
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_snapshot_evidence_coverage() -> Result<()> {
+    let sources = vec![
+        source(
+            "a",
+            "Aggregates protect invariants inside one consistency boundary.",
+        ),
+        source(
+            "b",
+            "Command handlers change state; query handlers only read it.",
+        ),
+    ];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let store = vec![
+        passage("a", 0, &sources[0].excerpt),
+        passage("b", 0, &sources[1].excerpt),
+    ];
+    let topics = vec![topic("Aggregates"), topic("CQRS")];
+    let lists = vec![vec![0, 1], vec![1]];
+    let answer = json!({"topics":[
+        {"id":"t1","covering":["p1"]},
+        {"id":"t2","covering":["p2"]}
+    ]});
+    let inner = scripted(vec![answer.to_string()]);
+    let llm = crate::lessons::course_generation_tests::RequestLog::new(&inner);
+
+    judge(&llm, &topics, &store, &lists, &references).await?;
+
+    llm.assert_snapshot::<EvidenceCoverage>();
+    Ok(())
+}
+
 #[test]
 fn the_pack_goes_round_robin_across_topics_within_the_room_without_cutting_passages() {
     let long = |tag: &str| format!("{tag} {}", "evidence ".repeat(375));

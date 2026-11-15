@@ -8,6 +8,7 @@ use lattice_core::application::{
     contracts::settings::LLMSettingsDto,
     ports::llm_port::{CompletionRequest, CompletionResponse, LLMPort},
 };
+use lattice_core::application::services::model_contract::shape::Schema;
 use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::{AppError, Result};
 use protocol::{cloud_provider, protocols, CompletionProtocol, ProviderApi};
@@ -16,7 +17,7 @@ use std::time::{Duration, Instant};
 
 pub mod catalog;
 pub(crate) mod limits;
-mod protocol;
+pub(in crate::features::llm) mod protocol;
 mod reply;
 mod streaming;
 mod timing;
@@ -297,6 +298,9 @@ impl ModelBackend for CloudLlm {
     }
     fn keeps_read_prompts(&self) -> bool {
         false
+    }
+    fn enforces(&self, schema: &Schema) -> bool {
+        self.protocol.enforces(schema.as_json())
     }
     fn is_alive(&self) -> bool {
         true

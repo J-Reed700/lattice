@@ -595,7 +595,7 @@ impl LLMPort for Seen {
             self.sent.lock().unwrap().push(Sent {
                 system: system.to_owned(),
                 user: serde_json::from_str(user).unwrap(),
-                schema: request.json_schema.clone().unwrap(),
+                schema: request.schema().map(|schema| schema.as_json()).cloned().unwrap(),
             });
         }
         self.inner.complete(request).await
@@ -684,6 +684,54 @@ async fn gate_checks(
         },
     )
     .await
+}
+
+#[tokio::test]
+async fn prompt_snapshot_review_evidence() -> Result<()> {
+    use crate::dto::LearningSourceDto;
+    use crate::lessons::course_generation_tests::{RequestLog, ScriptedModel};
+    let sources = vec![LearningSourceDto {
+        id: "source-0".into(),
+        title: "Reference".into(),
+        url: None,
+        excerpt: "The kettle boils when the water reaches its limit.".into(),
+        acquired_at: 1,
+    }];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let decision = |index: usize| {
+        json!({"issueId":format!("issue-{index}"),"verdict":"not_established","basis":"internal_conflict",
+            "evidenceIds":[],"requirementId":null,"partId":"lesson","leftTo":"none",
+            "reason":"The candidate contradicts itself."})
+    };
+    let inner = ScriptedModel {
+        outputs: std::sync::Mutex::new(
+            vec![json!({"decisions":[decision(0), decision(1)]}).to_string()].into(),
+        ),
+        prompts: Default::default(),
+    };
+    let model = RequestLog::new(&inner);
+    let issues = vec![
+        ReviewFinding::reviewer(1, None, "The kettle is described twice."),
+        ReviewFinding::reviewer(2, None, "The rope is never tied."),
+    ];
+    let recorded = recorded_findings();
+
+    check(
+        &model,
+        &issues,
+        Beside {
+            decides: &DECIDES,
+            recorded: &recorded,
+        },
+        &json!({"deliverable":"Record the resulting state."}),
+        &json!({"blocks":[{"title":"Part","body":"The kettle boils."},{"title":"Next","body":"Tie the rope."}],"questions":[{"prompt":"Is the lid shut?"}]}),
+        &references,
+        None,
+    )
+    .await?;
+
+    model.assert_snapshot::<ReviewEvidence>();
+    Ok(())
 }
 
 #[tokio::test]

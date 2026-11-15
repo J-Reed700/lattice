@@ -125,6 +125,7 @@ use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, ToolDefinition,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::domain::conversation::memory::{
     parse_patch, EvidencePurpose, MemoryItem, MemoryKind, MemoryState, SourceMessage, SourceRole,
     MAX_ACTIVE_ITEMS, MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE, MAX_QUOTE_BYTES,
@@ -782,7 +783,7 @@ impl EvalLlm {
 impl LLMPort for EvalLlm {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let system = request
-            .input
+            .input()
             .iter()
             .find_map(|input| match input {
                 CompletionInput::Message { role, content } if role == "system" => {
@@ -792,7 +793,7 @@ impl LLMPort for EvalLlm {
             })
             .unwrap_or_default();
         let user = request
-            .input
+            .input()
             .iter()
             .find_map(|input| match input {
                 CompletionInput::Message { role, content } if role == "user" => {
@@ -1030,7 +1031,7 @@ async fn eval_adapter_retries_an_empty_completion_and_records_the_recovery() {
     let adapter = EvalLlm::new(inner.clone(), false, Duration::ZERO, 3, Duration::ZERO);
 
     let response = adapter
-        .complete(&CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .expect("the second attempt should recover");
     assert_eq!(response.text, "recovered");
@@ -1052,7 +1053,7 @@ async fn eval_adapter_reports_when_empty_completion_retries_are_exhausted() {
     let adapter = EvalLlm::new(inner.clone(), false, Duration::ZERO, 3, Duration::ZERO);
 
     let error = adapter
-        .complete(&CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .expect_err("three empty attempts must fail the logical request");
     assert!(error.to_string().contains("after 3 attempts"));
@@ -2893,12 +2894,12 @@ async fn answer_with_tools(
 ) -> String {
     const MAX_TOOL_ITERATIONS: usize = 5;
     for round in 0..MAX_TOOL_ITERATIONS {
-        let request = CompletionRequest {
+        let request = legacy::completion(legacy::Completion {
             input: input.clone(),
             tools: tools.to_vec(),
             time_budget: Some(request_timeout),
             ..Default::default()
-        };
+        });
         let Ok(response) = llm.complete(&request).await else {
             metrics.continuation_failures += 1;
             return String::new();

@@ -795,3 +795,30 @@ async fn a_search_that_found_nothing_is_reached_and_ends_the_need() -> Result<()
     assert_eq!(web.searches.lock().unwrap().len(), 1);
     Ok(())
 }
+
+#[tokio::test]
+async fn prompt_snapshot_reference_needs() -> Result<()> {
+    let gaps = [
+        json!({"claim": "A loom holds its threads taut", "missingEvidence": "a maker's manual",
+               "kind": "specification", "subject": "Hand loom", "ownerOriginHints": ["looms.example.org"],
+               "needsIndependentSource": true, "needsNewerThan": "2024-01-01"}),
+        json!({"claim": "Wool shrinks when washed hot",
+               "missingEvidence": "a textile study", "kind": "measurement", "subject": "Wool"}),
+    ];
+    let scripted = scripted(vec![json!({"needs": [
+        {"gap": 0, "query": "hand loom tension", "kind": "official_docs", "site": "looms.example.org"},
+        {"gap": 1, "query": "wool shrinkage hot wash", "kind": "paper"}
+    ]})
+    .to_string()]);
+    let log = crate::lessons::course_generation_tests::RequestLog::new(&scripted);
+    plan_needs(
+        &log,
+        "weaving",
+        &gaps,
+        json!([{"title": "A weaver's handbook", "versionId": "source-1"}]),
+        &["hand loom basics".to_owned()],
+    )
+    .await?;
+    log.assert_snapshot_of("reference-needs");
+    Ok(())
+}

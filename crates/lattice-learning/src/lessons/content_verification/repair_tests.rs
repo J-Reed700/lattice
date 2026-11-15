@@ -82,7 +82,7 @@ impl LLMPort for Recording {
 
 fn messages(request: &CompletionRequest) -> Vec<(&str, &str)> {
     request
-        .input
+        .input()
         .iter()
         .filter_map(|item| match item {
             CompletionInput::Message { role, content } => Some((role.as_str(), content.as_str())),
@@ -607,6 +607,51 @@ async fn a_repaired_sentence_cites_the_passage_it_was_given_and_leaves_no_uncite
     let mut bare = repaired.clone();
     bare["blocks"][0]["citations"] = json!([]);
     assert_eq!(uncited(&bare), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_snapshot_section_repair() -> Result<()> {
+    let original = json!({"blocks":[{"kind":"explanation","title":"The kiln","body":"Keep this. Fix this.","citations":[]}],"questions":[]});
+    let local = json!({"candidate":original,"failedClaims":[{"unit":0,"statement":"Fix this."}]});
+    let sentence =
+        "The guide says \"a timeout of 30 seconds applies to each request\" before it fails.";
+    let quote = "A timeout of 30 seconds applies to each request.";
+    let response = json!({
+        "edits":[{"path":"/blocks/0/body","before":"Fix this.","after":sentence}],
+        "citations":[{"path":"/blocks/0","sentence":sentence,"sourceIndex":0,"quote":quote}]
+    });
+    let inner = ScriptedModel {
+        outputs: Mutex::new(vec![response.to_string()].into()),
+        prompts: Mutex::new(Vec::new()),
+    };
+    let model = crate::lessons::course_generation_tests::RequestLog::new(&inner);
+    let schema = json!({"type":"object","properties":{"blocks":{"type":"array","items":{"type":"object"}},"questions":{"type":"array","items":{"type":"object"}}}});
+    let failed = Protected {
+        unit: 0,
+        field: "body".into(),
+        quote: "Fix this.".into(),
+        released: false,
+    };
+    let kept = Protected {
+        unit: 0,
+        field: "body".into(),
+        quote: "Keep this.".into(),
+        released: false,
+    };
+
+    repair_group(
+        &model,
+        "system",
+        (&local, &original, &original, &Default::default()),
+        &schema,
+        "blocks",
+        4_000,
+        (&[failed], &[kept]),
+    )
+    .await?;
+
+    model.assert_snapshot::<SectionRepair>();
     Ok(())
 }
 
@@ -1449,11 +1494,11 @@ async fn a_claim_repair_whose_edits_never_apply_charges_its_claims_and_the_lesso
     let second = &sent[1];
     assert!(
         second
-            .json_schema
-            .as_ref()
+            .schema()
+            .map(|schema| schema.as_json())
             .is_some_and(|schema| schema.pointer("/properties/edits").is_some()),
         "the correction turn asks for edits again: {:?}",
-        second.json_schema
+        second.schema().map(|schema| schema.as_json())
     );
     assert!(
         messages(second).contains(&("assistant", missing_edit().as_str())),

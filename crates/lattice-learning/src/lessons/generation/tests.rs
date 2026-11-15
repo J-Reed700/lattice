@@ -606,6 +606,85 @@ async fn a_lesson_block_of_any_length_does_not_stop_recall_drafts() {
     );
 }
 
+#[tokio::test]
+async fn prompt_snapshot_outline_description() -> Result<()> {
+    use crate::lessons::course_generation_tests::{outline, RequestLog};
+    let inner = outline(2, 2);
+    let llm = RequestLog::new(&inner);
+    let input = outline_request();
+    let sources = [source()];
+
+    draft_outline(
+        &llm,
+        &input,
+        &sources,
+        &["Stable identifiers".to_owned()],
+        &crate::outline_progress::OutlineProgress::default(),
+        |raw| decode_outline(raw, &input, &sources).map(|_| raw.to_owned()),
+    )
+    .await?;
+
+    llm.assert_snapshot::<super::outline::OutlineDescription>();
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_snapshot_recall_drafts() -> Result<()> {
+    use crate::dto::{
+        LearningBlockDto, LearningBlockKind, LearningPreparation, LearningProgramStatus,
+    };
+    use crate::lessons::course_generation_tests::{fixed_ids, RequestLog, ScriptedModel};
+    let mut program = crate::tests::fixture();
+    fixed_ids(&mut program);
+    program.summary.status = LearningProgramStatus::Active;
+    let source_id = program.sources[0].id.clone();
+    let quote = program.sources[0].excerpt.clone();
+    let lesson = &mut program.modules[0].lessons[0];
+    lesson.preparation = LearningPreparation::Ready;
+    lesson.blocks = vec![
+        LearningBlockDto::new(
+            LearningBlockKind::Explanation,
+            "Bounded passages".into(),
+            "A bounded passage keeps a course to the material it was given.".into(),
+            vec![source_id.clone()],
+            vec![],
+        ),
+        LearningBlockDto::new(
+            LearningBlockKind::Recap,
+            "Recap".into(),
+            "Takeaway: a bounded passage limits what a course may claim.".into(),
+            vec![source_id.clone()],
+            vec![],
+        ),
+    ];
+    let lesson_id = lesson.id.clone();
+    let card = |question: &str| {
+        json!({
+            "question":question,
+            "answer":"A bounded passage limits what the course may claim.",
+            "explanation":"The excerpt says the passage is bounded.",
+            "sourceIds":[source_id],
+            "quote":quote
+        })
+    };
+    let inner = ScriptedModel {
+        outputs: std::sync::Mutex::new(
+            vec![recall_response(json!([
+                card("What does a bounded passage limit?"),
+                card("Why does a course use a bounded passage?")
+            ]))]
+            .into(),
+        ),
+        prompts: Default::default(),
+    };
+    let llm = RequestLog::new(&inner);
+
+    generate_recall_drafts(&llm, &program, &lesson_id, 2).await?;
+
+    llm.assert_snapshot::<super::recall::RecallDrafts>();
+    Ok(())
+}
+
 #[test]
 fn the_outline_schema_bounds_no_text_but_a_blank() {
     for sources in [0, 1] {

@@ -215,14 +215,14 @@ async fn test_typed_rewrites_keep_model_default_reasoning() {
     for request in &requests {
         assert!(request.reasoning_effort.is_none());
         assert_eq!(request.time_budget, Some(REWRITE_TIME_BUDGET));
-        assert!(request.tools.is_empty());
-        assert!(request.json_schema.is_none());
+        assert!(request.tools().is_empty());
+        assert!(request.schema().is_none());
         assert!(matches!(
-            request.input.as_slice(),
+            request.input(),
             [CompletionInput::Message { role, .. }] if role == "user"
         ));
     }
-    let CompletionInput::Message { content, .. } = &requests[2].input[0] else {
+    let CompletionInput::Message { content, .. } = &requests[2].input()[0] else {
         unreachable!("asserted above");
     };
     assert!(content.contains("Question: How does Rust ownership work?"));

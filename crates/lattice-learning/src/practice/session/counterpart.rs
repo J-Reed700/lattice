@@ -143,8 +143,8 @@ pub async fn respond(
         REPLY_OUTPUT_TOKENS,
     );
     let call = ContractCall::of::<CounterpartReply>(&PromptInput {
-        system: request.instructions.clone(),
-        prompt: request.task.clone(),
+        system: request.instructions().to_owned(),
+        prompt: request.task().to_owned(),
     })?;
     let mut again = false;
     loop {

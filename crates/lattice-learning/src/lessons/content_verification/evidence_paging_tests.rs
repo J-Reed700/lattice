@@ -577,7 +577,7 @@ impl LLMPort for DenseModel {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         use lattice_core::application::ports::llm_port::CompletionInput;
         let estimate: usize = request
-            .input
+            .input()
             .iter()
             .map(|item| match item {
                 CompletionInput::Message { content, .. } => self.count_tokens(content),
@@ -681,7 +681,7 @@ impl LLMPort for CountingDenseModel {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         use lattice_core::application::ports::llm_port::CompletionInput;
         let text = request
-            .input
+            .input()
             .iter()
             .filter_map(|item| match item {
                 CompletionInput::Message { content, .. } => Some(content.as_str()),

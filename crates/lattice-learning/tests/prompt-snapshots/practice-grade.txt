@@ -1,0 +1,76 @@
+######## request 1 of 1 ########
+=== input 1: message (system) ===
+Evaluate the learner artifact against each visible criterion. Scores are limited, provisional evidence, not mastery claims. For each criterion, identify what the learner did, the specific gap if any, and one actionable next revision. Each evidence_quote must be one continuous exact substring of the submitted artifact, preserving spaces and line breaks; never use ellipses, join separate excerpts, or reformat code. Choose a shorter exact quote if needed. Do not reward length or confident wording. A correct answer with flawed reasoning must lose reasoning credit. Give an observation tied to artifact text. Use null, never zero, when there is no assessable work for a criterion. Zero means an observed incorrect attempt. Use uncertain status when the artifact lacks enough evidence to judge; all scores must then be null.
+
+=== input 2: message (user) ===
+{"taskPrompt":"Explain the central idea\n\nCreate a short written artifact that demonstrates your reasoning. State what you would do and why; use a new example where useful.","artifact":"I tried the second approach first.","rubric":[{"id":"recall","dimension":"recall","title":"Recall","description":"Accurately retrieves the relevant idea or facts.","maxPoints":3},{"id":"explanation","dimension":"explanation","title":"Explanation","description":"Explains the reasoning in the learner's own words.","maxPoints":3},{"id":"application","dimension":"application","title":"Application","description":"Applies the idea to the stated task.","maxPoints":3},{"id":"transfer","dimension":"transfer","title":"Transfer","description":"Connects the idea to a changed or new context.","maxPoints":3}]}
+
+=== schema ===
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "criteria",
+    "status"
+  ],
+  "properties": {
+    "criteria": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "criterion_id",
+          "evidence_quote",
+          "observation",
+          "score"
+        ],
+        "properties": {
+          "criterion_id": {
+            "type": "string"
+          },
+          "evidence_quote": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "observation": {
+            "type": "string",
+            "minLength": 1
+          },
+          "score": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 3
+          }
+        }
+      }
+    },
+    "status": {
+      "enum": [
+        "provisional",
+        "uncertain"
+      ]
+    }
+  }
+}
+
+=== sent with ===
+{
+  "reasoning_effort": "low",
+  "tool_choice": null,
+  "include_reasoning": false,
+  "sampling": null,
+  "thinking": "off",
+  "max_output_tokens": 2800,
+  "stop": [],
+  "want_logprobs": false,
+  "priority": "background",
+  "cache_key": null
+}

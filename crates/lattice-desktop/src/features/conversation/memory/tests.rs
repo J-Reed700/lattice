@@ -743,6 +743,7 @@ struct FakeLlm {
     prompts: Mutex<Vec<String>>,
     request_limits: Mutex<Vec<(Option<String>, Option<u32>)>>,
     samplings: Mutex<Vec<Option<SamplingOverride>>>,
+    requests: Mutex<Vec<CompletionRequest>>,
 }
 
 impl FakeLlm {
@@ -759,6 +760,7 @@ impl FakeLlm {
             prompts: Mutex::new(Vec::new()),
             request_limits: Mutex::new(Vec::new()),
             samplings: Mutex::new(Vec::new()),
+            requests: Mutex::new(Vec::new()),
         })
     }
 
@@ -894,10 +896,11 @@ impl LLMPort for FakeLlm {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         self.request_limits
             .lock()
-            .push((request.reasoning_effort.clone(), request.max_output_tokens));
+            .push((request.reasoning_effort.clone(), request.max_output_tokens()));
         self.samplings.lock().push(request.sampling);
+        self.requests.lock().push(request.clone());
         let prompt = request
-            .input
+            .input()
             .iter()
             .filter_map(|input| match input {
                 lattice_core::application::ports::llm_port::CompletionInput::Message {
@@ -3238,4 +3241,113 @@ async fn a_second_ask_cannot_change_a_reading_it_did_not_ask_for() {
         .inserts
         .iter()
         .all(|item| item.review == MemoryReview::Supported));
+}
+
+// ---------------------------------------------------------------------------
+// Prompt snapshots
+// ---------------------------------------------------------------------------
+
+fn assert_snapshot(llm: &FakeLlm, id: &str) {
+    let requests = llm
+        .requests
+        .lock()
+        .iter()
+        .filter(|request| {
+            request
+                .contract()
+                .is_some_and(|call| call.id.as_str() == id)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    assert!(!requests.is_empty(), "no request was sent for {id}");
+    lattice_core::application::services::model_contract::test_support::snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        id,
+        &requests,
+    );
+}
+
+/// A pass over a chat with two committed items, one superseded and one
+/// retired by the same message, and one forgotten fact.
+async fn snapshot_pass() -> Arc<FakeLlm> {
+    let messages = four_turns();
+    let mut on_hold = committed_constraint("item-hold", &messages[0]);
+    on_hold.label = "Staging deploys are on hold".to_string();
+    let port = FakePort::new(
+        messages.clone(),
+        vec![committed_constraint("item-old", &messages[0]), on_hold],
+        0,
+    );
+    port.inner
+        .lock()
+        .forgotten
+        .push("The user's locker code".to_string());
+    let quote = "Actually you may deploy staging.";
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(
+            vec![proposed_constraint(
+                "c1",
+                "Staging deploys need no approval",
+                "m3",
+                quote,
+            )],
+            vec![
+                proposed_supersession("item-old", "c1", "m3", quote),
+                proposed_transition("item-hold", "m3", quote),
+            ],
+            &PREFIX_SEGMENTS,
+        ))],
+        vec![Ok(verdict_response(&[
+            ("addition:c1", "supported"),
+            ("transition:item-old", "supported"),
+            ("transition:item-hold", "supported"),
+        ]))],
+        vec![Ok("Staging may be deployed.".to_string())],
+    );
+    job(port, llm.clone(), small_config())
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .expect("the pass commits");
+    llm
+}
+
+#[tokio::test]
+async fn prompt_snapshot_memory_extraction() {
+    assert_snapshot(snapshot_pass().await.as_ref(), "memory-extraction");
+}
+
+#[tokio::test]
+async fn prompt_snapshot_memory_review() {
+    assert_snapshot(snapshot_pass().await.as_ref(), "memory-review");
+}
+
+#[tokio::test]
+async fn prompt_snapshot_memory_fold() {
+    assert_snapshot(snapshot_pass().await.as_ref(), "memory-fold");
+}
+
+#[tokio::test]
+async fn prompt_snapshot_memory_shrink() {
+    let port = FakePort::new(four_turns(), Vec::new(), 0);
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(vec![], vec![], &PREFIX_SEGMENTS))],
+        vec![],
+        vec![
+            Ok((0..40).map(|i| format!("word{i} ")).collect::<String>()),
+            Ok("Approval gate; staging allowed.".to_string()),
+        ],
+    );
+    let outcome = job(
+        port,
+        llm.clone(),
+        CompactionConfig {
+            summary_token_budget: 10,
+            ..small_config()
+        },
+    )
+    .run(CONVERSATION, CompactionRequest::default())
+    .await
+    .unwrap();
+    assert!(outcome.summary_regenerated);
+    assert_snapshot(&llm, "memory-shrink");
 }

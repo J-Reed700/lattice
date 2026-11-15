@@ -237,6 +237,201 @@ fn a_long_company_and_role_keep_the_interview_title_whole() -> Result<()> {
     Ok(())
 }
 
+/// Answers the nth request with the nth of `answers` (the last one after them) and keeps every request.
+struct RecordingLlm {
+    answers: Vec<String>,
+    requests: Mutex<Vec<CompletionRequest>>,
+}
+
+impl RecordingLlm {
+    fn answering(answers: Vec<String>) -> Self {
+        Self {
+            answers,
+            requests: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn sent(&self) -> Vec<CompletionRequest> {
+        self.requests.lock().expect("requests").clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl LLMPort for RecordingLlm {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let mut requests = self
+            .requests
+            .lock()
+            .map_err(|_| invalid("Request lock poisoned"))?;
+        let answer = self
+            .answers
+            .get(requests.len())
+            .or(self.answers.last())
+            .cloned()
+            .unwrap_or_default();
+        requests.push(request.clone());
+        Ok(CompletionResponse::from_text(answer))
+    }
+    fn model_name(&self) -> &str {
+        "recording-test"
+    }
+    fn max_context_tokens(&self) -> usize {
+        131_072
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.split_whitespace().count()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn prompt_snapshot_interview_plan() -> Result<()> {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let llm = RecordingLlm::answering(vec![
+        plan_json(LearningInterviewRoundKind::FullLoop).to_string()
+    ]);
+    let program = crate::tests::fixture();
+    let target = LearningInterviewTargetDto {
+        company_name: Some("Acme".into()),
+        company_url: Some("https://acme.example".into()),
+        target_role: Some("Staff Engineer".into()),
+        company_context: Some("A made-up parcel company.".into()),
+        round_kind: Some(LearningInterviewRoundKind::FullLoop),
+    };
+    let source = crate::practice::interview_answers::test_support::source();
+    generate_interview_plan(
+        &llm,
+        &target,
+        &program.modules[0].lessons[0],
+        "Interview at Acme",
+        &[source],
+        &["version".to_owned()],
+    )
+    .await?;
+    snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "interview-plan", &llm.sent());
+    Ok(())
+}
+
+/// Every request of the code lab flow: the public activity, then its independent checks.
+async fn code_lab_requests() -> Result<Vec<CompletionRequest>> {
+    use super::super::PracticalRuntimeContext;
+    let llm = RecordingLlm::answering(vec![
+        json!({"title":"Normalize values","brief":"Implement normalize(values), preserving input order and returning an empty list for empty input.","sourceVersionIds":["version"],"rubric":[
+            {"title":"Behavior","description":"Meets the stated contract.","maxPoints":4},
+            {"title":"Verification","description":"Covers empty input.","maxPoints":4}
+        ],"starterFiles":[{"path":"solution.py","content":"def normalize(values):\n    raise NotImplementedError\n"}],"referenceFiles":[]}).to_string(),
+        json!({"checkFiles":[{"path":"checks.py","content":"from solution import normalize\nassert normalize([]) == []\n"}]}).to_string(),
+    ]);
+    let program = crate::tests::fixture();
+    let runtime = PracticalRuntimeContext {
+        name: "Python".into(),
+        command: vec!["python".into(), "checks.py".into()],
+        contract: "Editable solution.py; independent checks.py contains assertions. Python standard library only.".into(),
+        learner_contract: "Python standard library only; create editable solution.py.".into(),
+        evaluator_paths: vec!["checks.py".into()],
+    };
+    generate_activity(
+        &llm,
+        LearningPracticalActivityKind::CodeLab,
+        "Practice implementing a list transformation.",
+        &program.modules[0].lessons[0],
+        &[crate::practice::interview_answers::test_support::source()],
+        Some(&runtime),
+        None,
+        &[],
+    )
+    .await?;
+    Ok(llm.sent())
+}
+
+#[tokio::test]
+async fn prompt_snapshot_simulation_turn() -> Result<()> {
+    use super::super::{generate_simulation_turn, SimulationActivityContext};
+    use crate::assessment_engine::LearningRubricCriterion;
+    use crate::practical_dto::*;
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let llm = RecordingLlm::answering(vec![
+        json!({"content":"The parcel scanner now reports two pickups for one door. What do you check first?","citations":[]}).to_string(),
+    ]);
+    let turn = |ordinal: i64, speaker: LearningSimulationSpeaker, content: &str| LearningSimulationTurnDto {
+        id: format!("turn-{ordinal}"),
+        ordinal,
+        speaker,
+        content: content.into(),
+        citations: vec![],
+        model_name: None,
+        created_at: 0,
+    };
+    let session = LearningSimulationSessionDto {
+        id: "session".into(),
+        program_id: "program".into(),
+        activity_id: "activity".into(),
+        activity_revision: 0,
+        practice_session_id: None,
+        learner_role: "Dispatcher".into(),
+        counterpart_role: "Depot manager".into(),
+        status: LearningSimulationStatus::Active,
+        revision: 3,
+        turns: vec![
+            turn(0, LearningSimulationSpeaker::Counterpart, "A van left the depot with the wrong route sheet."),
+            turn(1, LearningSimulationSpeaker::Learner, "I would call the driver and confirm the stops already made."),
+            turn(2, LearningSimulationSpeaker::Counterpart, "The driver does not answer."),
+            turn(3, LearningSimulationSpeaker::Learner, "Then I check the last scan for the van."),
+        ],
+        created_at: 0,
+        updated_at: 0,
+        submitted_at: None,
+    };
+    let context = SimulationActivityContext {
+        title: "Depot incident".into(),
+        brief: "Handle a misrouted van at a made-up depot.".into(),
+        rubric: vec![LearningRubricCriterion {
+            id: "criterion-1".into(),
+            title: "Decisions".into(),
+            description: "Each decision follows from what the scan shows.".into(),
+            max_points: 4,
+        }],
+        interview_plan: None,
+        interview_answers: None,
+    };
+    generate_simulation_turn(
+        &llm,
+        &context,
+        &session,
+        &[crate::practice::interview_answers::test_support::source()],
+        false,
+    )
+    .await?;
+    let requests = requests_of(llm.sent(), "simulation-turn");
+    snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "simulation-turn", &requests);
+    Ok(())
+}
+
+fn requests_of(requests: Vec<CompletionRequest>, id: &str) -> Vec<CompletionRequest> {
+    requests
+        .into_iter()
+        .filter(|request| request.contract().is_some_and(|call| call.id.as_str() == id))
+        .collect()
+}
+
+#[tokio::test]
+async fn prompt_snapshot_practical_activity() -> Result<()> {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let requests = requests_of(code_lab_requests().await?, "practical-activity");
+    snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "practical-activity", &requests);
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_snapshot_practical_evaluator() -> Result<()> {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let requests = requests_of(code_lab_requests().await?, "practical-evaluator");
+    snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "practical-evaluator", &requests);
+    Ok(())
+}
+
 #[derive(Default)]
 struct InterviewLlm {
     requests: Mutex<Vec<String>>,
@@ -250,15 +445,15 @@ struct InterviewLlm {
 #[async_trait::async_trait]
 impl LLMPort for InterviewLlm {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        if request.json_schema.is_none() {
+        if request.schema().is_none() {
             return Ok(CompletionResponse::from_text(
                 "The fixture question is answerable and its hypothetical standard has no defects.",
             ));
         }
         let prompt = serde_json::to_string(request).map_err(|e| invalid(e.to_string()))?;
         let properties = request
-            .json_schema
-            .as_ref()
+            .schema()
+            .map(|schema| schema.as_json())
             .and_then(|schema| schema.get("properties"));
         let plan_request = properties.is_some_and(|fields| fields.get("companySummary").is_some());
         self.requests

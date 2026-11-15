@@ -72,8 +72,8 @@ impl ReviewGrader for JudgeGrader<'_> {
             brief: wording.brief,
         };
         let call = ContractCall::of::<GradeReview>(&PromptInput {
-            system: request.instructions.clone(),
-            prompt: request.task.clone(),
+            system: request.instructions().to_owned(),
+            prompt: request.task().to_owned(),
         })?;
         complete_checked_request(self.llm, &call, request, None, Some(reasoning), |raw| {
             accept::accept(raw, review)

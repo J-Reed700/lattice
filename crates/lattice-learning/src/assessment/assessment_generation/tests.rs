@@ -32,7 +32,7 @@ fn exact(text: &str) -> usize {
 impl LLMPort for Notation {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let rendered = request
-            .input
+            .input()
             .iter()
             .flat_map(|item| match item {
                 CompletionInput::Message { role, content } => vec![role.clone(), content.clone()],
@@ -385,7 +385,7 @@ impl LLMPort for CutOnce {
         let (_, user) = crate::lessons::structured_call::task_messages(request);
         let prompt: Value = serde_json::from_str(user).unwrap_or(Value::Null);
         let mut budgets = self.0.lock().unwrap();
-        budgets.push(request.max_output_tokens);
+        budgets.push(request.max_output_tokens());
         if budgets.len() == 1 {
             return Ok(CompletionResponse {
                 finish_reason: "length".into(),
@@ -458,7 +458,10 @@ struct SchemaRecorder(Mutex<Vec<Value>>);
 #[async_trait::async_trait]
 impl LLMPort for SchemaRecorder {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        self.0.lock().unwrap().extend(request.json_schema.clone());
+        self.0
+            .lock()
+            .unwrap()
+            .extend(request.schema().map(|schema| schema.as_json().clone()));
         Ok(CompletionResponse::from_text("{\"items\":[]}"))
     }
     fn model_name(&self) -> &str {
@@ -908,7 +911,7 @@ struct Incomplete {
 impl LLMPort for Incomplete {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let rendered = request
-            .input
+            .input()
             .iter()
             .flat_map(|item| match item {
                 CompletionInput::Message { role, content } => vec![role.clone(), content.clone()],
@@ -1035,4 +1038,104 @@ fn the_quiz_writing_contracts_read_what_they_render() {
     lattice_core::application::services::model_contract::test_support::assert_round_trip::<
         QuizRewrite,
     >(&items);
+}
+
+fn rubric_criterion(id: &str) -> LearningRubricCriterion {
+    LearningRubricCriterion {
+        id: id.into(),
+        title: id.into(),
+        description: "Explains it.".into(),
+        max_points: 2,
+    }
+}
+
+fn the_items_of(context: &Value) -> Vec<Value> {
+    context["items"].as_array().cloned().unwrap_or_default()
+}
+
+#[tokio::test]
+async fn prompt_snapshot_grade_written() -> Result<()> {
+    use super::grading::GradeWritten;
+    use super::review_tests::{replying, requests_of};
+    use lattice_core::application::services::model_contract::test_support::{
+        snapshot, ScriptedModel,
+    };
+    let model = replying::<GradeWritten>(ScriptedModel::new(), |context| {
+        let items: Vec<Value> = the_items_of(context)
+            .iter()
+            .map(|item| {
+                serde_json::json!({
+                    "itemId": item["itemId"],
+                    "criteria": [
+                        {"criterionId": "mechanism", "yourWords": ["takes the oxygen"], "whatWasMissing": "", "fullCreditIncludes": "The gas takes the oxygen.", "sourceQuote": "CO reduces Fe2O3.", "verdict": "met", "points": 2},
+                        {"criterionId": "evidence", "yourWords": [], "whatWasMissing": "No evidence is given.", "fullCreditIncludes": "A measured result.", "sourceQuote": "", "verdict": "missed", "points": 0}
+                    ],
+                    "summary": "The mechanism is right and no evidence is given.",
+                    "responseToNote": "The note is weighed."
+                })
+            })
+            .collect();
+        serde_json::json!({ "items": items })
+    });
+    let answer = |id: &str, note: Option<&str>| WrittenAnswer {
+        item_id: id.into(),
+        prompt: "Why does the ore reduce?".into(),
+        rubric: vec![rubric_criterion("mechanism"), rubric_criterion("evidence")],
+        answer: "Carbon monoxide takes the oxygen.".into(),
+        reference: "CO reduces Fe2O3.".into(),
+        learner_note: note.map(str::to_owned),
+    };
+
+    grade_written(
+        &model,
+        &[
+            answer("q1", None),
+            answer("q2", Some("I named the mechanism.")),
+        ],
+    )
+    .await?;
+
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "quiz-grade-written",
+        &requests_of::<GradeWritten>(&model),
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_snapshot_judge_short() -> Result<()> {
+    use super::grading::JudgeShort;
+    use super::review_tests::{replying, requests_of};
+    use lattice_core::application::services::model_contract::test_support::{
+        snapshot, ScriptedModel,
+    };
+    let model = replying::<JudgeShort>(ScriptedModel::new(), |context| {
+        let items: Vec<Value> = the_items_of(context)
+            .iter()
+            .map(|item| {
+                serde_json::json!({
+                    "itemId": item["itemId"],
+                    "yourWords": ["In 1887"],
+                    "whatWasMissing": "",
+                    "fullCreditIncludes": "The mill closed in 1887.",
+                    "verdict": "equivalent",
+                    "summary": "“In 1887.” says the same.",
+                    "responseToNote": "The note is weighed."
+                })
+            })
+            .collect();
+        serde_json::json!({ "items": items })
+    });
+    let mut noted = short("b");
+    noted.learner_note = Some("I meant the same thing.".into());
+
+    judge_short_answers(&model, &[short("a"), noted]).await?;
+
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "quiz-judge-short",
+        &requests_of::<JudgeShort>(&model),
+    );
+    Ok(())
 }

@@ -102,7 +102,7 @@ pub(super) async fn read_in_groups(
     cancel: &CancellationToken,
     clock: &TurnClock,
 ) -> Result<BTreeMap<u32, Option<String>>> {
-    let reserved = request.max_output_tokens;
+    let reserved = request.max_output_tokens();
     let mut lines = BTreeMap::new();
     let mut written = 0usize;
     let readings = planned(llm, request, passages, question).await;
@@ -129,7 +129,7 @@ async fn read_ahead(
     cancel: &CancellationToken,
     clock: &TurnClock,
 ) -> Result<()> {
-    let mut input = request.input.clone();
+    let mut input = request.input().to_vec();
     replace_reading(&mut input, "");
     let remaining = clock.remaining()?;
     let ahead = reading_request(request, input, Some(1), &[], Some(remaining));
@@ -263,7 +263,7 @@ pub(super) fn group_input(
     group: &[u32],
     question: &str,
 ) -> Vec<CompletionInput> {
-    let mut input = request.input.clone();
+    let mut input = request.input().to_vec();
     replace_reading(
         &mut input,
         &GROUP_INSTRUCTION
@@ -277,7 +277,7 @@ pub(super) fn group_input(
 /// The turn's prompt with the reading instruction narrowed to `group`, its
 /// passages read where they stand.
 fn labels_input(request: &CompletionRequest, group: &[u32]) -> Vec<CompletionInput> {
-    let mut input = request.input.clone();
+    let mut input = request.input().to_vec();
     replace_reading(
         &mut input,
         &LABELS_INSTRUCTION

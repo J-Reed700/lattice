@@ -48,7 +48,7 @@ impl LLMPort for Sweep {
             if let Ok(asked) = serde_json::from_str::<Value>(user) {
                 self.requests.lock().unwrap().push(asked);
             }
-            if let Some(schema) = &request.json_schema {
+            if let Some(schema) = request.schema().map(|schema| schema.as_json()) {
                 self.schemas.lock().unwrap().push(schema.clone());
             }
             return Ok(CompletionResponse::from_text(self.clash.as_str()));

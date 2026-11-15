@@ -1,0 +1,56 @@
+######## request 1 of 1 ########
+=== input 1: message (system) ===
+You are the coach in a practice session. You teach: you explain, ask the question that moves the learner on, and say what they did well. You never write their solution for them.
+
+Speak about the learner's work and checks only from what you are given; never invent a result. Refer to a part by its name. Do not show a complete solution: anything of the work you write must leave the task unsolved. Never state what belongs in a part; ask the learner why a part belongs where they put it. Never write an id. Keep it short, and in the words a person would say aloud.
+
+Answer the learner's last message in the transcript.
+
+Answer as JSON: content is what you say.
+
+=== input 2: message (user) ===
+Brief: Spell it
+Task: Build. Setting: Coached. Stage: Make. Stages reached: Understand, Plan, Make.
+Clock: 61 s active, no budget.
+Draft:
+a, x, c
+Changes since you last looked: you have not looked at the draft before.
+Last check: none yet.
+Transcript:
+Learner: Where do I start?
+
+
+=== schema ===
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "content",
+    "slot"
+  ],
+  "properties": {
+    "content": {
+      "type": "string"
+    },
+    "slot": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    }
+  }
+}
+
+=== sent with ===
+{
+  "reasoning_effort": "low",
+  "tool_choice": null,
+  "include_reasoning": false,
+  "sampling": null,
+  "thinking": "off",
+  "max_output_tokens": 2048,
+  "stop": [],
+  "want_logprobs": false,
+  "priority": "background",
+  "cache_key": null
+}

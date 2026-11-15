@@ -456,9 +456,9 @@ async fn a_resumed_research_turn_carries_on_after_its_last_saved_round() {
         "one round, to answer: nothing is searched again"
     );
     // The planned request, then the saved rounds' calls and results.
-    assert_eq!(requests[0].input.len(), planned_len + saved.len());
+    assert_eq!(requests[0].input().len(), planned_len + saved.len());
     assert!(matches!(
-        &requests[0].input[planned_len + 3],
+        &requests[0].input()[planned_len + 3],
         CompletionInput::ToolResult { output, .. } if output == "What the web says about second."
     ));
     // Counting goes on from the saved rounds.

@@ -5,7 +5,9 @@ use crate::generation::validate_excerpt_quote;
 use crate::model_call;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
-use lattice_core::application::services::model_contract::{Contract, ContractId, PromptInput};
+use lattice_core::application::services::model_contract::{
+    legacy, Contract, ContractId, PromptInput,
+};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::text::same_text::fold;
 use serde::Deserialize;
@@ -239,7 +241,7 @@ fn conversation_request(system: &str, batch: &[VerifiedConversationClaim]) -> Gr
         schema,
         batch.len() * CLAIM_CARD_OUTPUT_TOKENS + 600,
     );
-    request.output_fills_window = true;
+    *legacy::grounded_says(&mut request).output_fills_window = true;
     request
 }
 
@@ -439,7 +441,7 @@ pub(super) async fn generate(
             schema,
             output_tokens,
         );
-        call.output_fills_window = true;
+        *legacy::grounded_says(&mut call).output_fills_window = true;
         call
     };
     let selected = |room: usize| bounded_sources(sources, room, |text| llm.count_tokens(text));
