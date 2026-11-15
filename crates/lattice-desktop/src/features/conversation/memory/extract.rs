@@ -674,7 +674,8 @@ fn unread(why: &Why) -> MemoryValidationError {
 /// # Errors
 ///
 /// * [`CompactionError::Rejected`] when the answer did not end or could not be
-///   read. The caller must not advance the watermark past these segments (§6.2).
+///   read, or held proposals and none of them stands. The caller must not
+///   advance the watermark past these segments (§6.2).
 /// * [`CompactionError::DeadlineExceeded`] / [`CompactionError::Cancelled`]
 ///   when the job's shared deadline ran out or the caller cancelled.
 /// * [`CompactionError::Model`] when the utility model itself failed.
@@ -700,7 +701,11 @@ pub async fn extract_segments(
     )
     .await;
     let attempts = usize::try_from(transport.used().sends).unwrap_or(usize::MAX);
-    let Found { items, rest, .. } = match asked {
+    let Found {
+        items,
+        rest,
+        left_out,
+    } = match asked {
         Ok(found) => found,
         Err(error) => {
             // A hard limit stops the job; anything else is the model failing.
@@ -720,6 +725,7 @@ pub async fn extract_segments(
 
     let mut add: Vec<ProposedItem> = Vec::new();
     let mut transitions: Vec<ProposedTransition> = Vec::new();
+    let mut refused = 0_usize;
     for entry in &items {
         let part = Fragment::of(&entry.proposal, add.len(), quotable);
         let mut with_add = add.clone();
@@ -737,12 +743,25 @@ pub async fn extract_segments(
                 add = with_add;
                 transitions = with_transitions;
             }
-            Err(error) => warn!(
-                code = error.code(),
-                segments = segments.len(),
-                "Memory extraction proposal refused — left out"
-            ),
+            Err(error) => {
+                refused += 1;
+                warn!(
+                    code = error.code(),
+                    segments = segments.len(),
+                    "Memory extraction proposal refused — left out"
+                );
+            }
         }
+    }
+    if add.is_empty() && transitions.is_empty() && left_out + refused > 0 {
+        let error =
+            MemoryValidationError::Malformed("every proposal of the answer was left out".to_owned());
+        warn!(
+            code = error.code(),
+            segments = segments.len(),
+            "Every proposal of the answer was left out — these segments stay unprocessed"
+        );
+        return Err(CompactionError::Rejected(error));
     }
     let patch = check(add, transitions, manifest, quotable, existing).map_err(|error| {
         warn!(

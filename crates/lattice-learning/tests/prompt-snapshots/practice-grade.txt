@@ -1,64 +1,49 @@
 ######## request 1 of 1 ########
 === input 1: message (system) ===
-Evaluate the learner artifact against each visible criterion. Scores are limited, provisional evidence, not mastery claims. For each criterion, identify what the learner did, the specific gap if any, and one actionable next revision. Each evidence_quote must be one continuous exact substring of the submitted artifact, preserving spaces and line breaks; never use ellipses, join separate excerpts, or reformat code. Choose a shorter exact quote if needed. Do not reward length or confident wording. A correct answer with flawed reasoning must lose reasoning credit. Give an observation tied to artifact text. Use null, never zero, when there is no assessable work for a criterion. Zero means an observed incorrect attempt. Use uncertain status when the artifact lacks enough evidence to judge; all scores must then be null.
+Evaluate the learner artifact against each visible criterion. Scores are limited, provisional evidence, not mastery claims. For each criterion, identify what the learner did, the specific gap if any, and one actionable next revision. Each evidence cites the sentences of the submitted artifact that show what you observed, by the ids in square brackets before them; cite only sentences shown. Do not reward length or confident wording. A correct answer with flawed reasoning must lose reasoning credit. Give an observation tied to artifact text. Use none, never a score of zero, when there is no assessable work for a criterion. Zero means an observed incorrect attempt. Use none for every criterion when the artifact lacks enough evidence to judge. Return an entries array with one entry for each criterion in rubric, and set each entry's of to that criterion's id. In each entry write evidence, then observation, then score: the id of one of that criterion's scores, or none.
 
 === input 2: message (user) ===
-{"taskPrompt":"Explain the central idea\n\nCreate a short written artifact that demonstrates your reasoning. State what you would do and why; use a new example where useful.","artifact":"I tried the second approach first.","rubric":[{"id":"recall","dimension":"recall","title":"Recall","description":"Accurately retrieves the relevant idea or facts.","maxPoints":3},{"id":"explanation","dimension":"explanation","title":"Explanation","description":"Explains the reasoning in the learner's own words.","maxPoints":3},{"id":"application","dimension":"application","title":"Application","description":"Applies the idea to the stated task.","maxPoints":3},{"id":"transfer","dimension":"transfer","title":"Transfer","description":"Connects the idea to a changed or new context.","maxPoints":3}]}
+{"taskPrompt":"Explain the central idea\n\nCreate a short written artifact that demonstrates your reasoning. State what you would do and why; use a new example where useful.","artifact":"[u1] I tried the second approach first.","rubric":[{"id":"c1","dimension":"recall","title":"Recall","description":"Accurately retrieves the relevant idea or facts.","maxPoints":3,"scores":[{"id":"l1","points":0},{"id":"l2","points":1},{"id":"l3","points":2},{"id":"l4","points":3}]},{"id":"c2","dimension":"explanation","title":"Explanation","description":"Explains the reasoning in the learner's own words.","maxPoints":3,"scores":[{"id":"l1","points":0},{"id":"l2","points":1},{"id":"l3","points":2},{"id":"l4","points":3}]},{"id":"c3","dimension":"application","title":"Application","description":"Applies the idea to the stated task.","maxPoints":3,"scores":[{"id":"l1","points":0},{"id":"l2","points":1},{"id":"l3","points":2},{"id":"l4","points":3}]},{"id":"c4","dimension":"transfer","title":"Transfer","description":"Connects the idea to a changed or new context.","maxPoints":3,"scores":[{"id":"l1","points":0},{"id":"l2","points":1},{"id":"l3","points":2},{"id":"l4","points":3}]}]}
 
 === schema ===
 {
   "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "criteria",
-    "status"
-  ],
   "properties": {
-    "criteria": {
+    "entries": {
       "type": "array",
-      "minItems": 4,
-      "maxItems": 4,
       "items": {
         "type": "object",
-        "additionalProperties": false,
+        "properties": {
+          "of": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "observation": {
+            "type": "string"
+          },
+          "score": {
+            "type": "string"
+          }
+        },
         "required": [
-          "criterion_id",
-          "evidence_quote",
+          "of",
+          "evidence",
           "observation",
           "score"
         ],
-        "properties": {
-          "criterion_id": {
-            "type": "string"
-          },
-          "evidence_quote": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "observation": {
-            "type": "string",
-            "minLength": 1
-          },
-          "score": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "minimum": 0,
-            "maximum": 3
-          }
-        }
+        "additionalProperties": false
       }
-    },
-    "status": {
-      "enum": [
-        "provisional",
-        "uncertain"
-      ]
     }
-  }
+  },
+  "required": [
+    "entries"
+  ],
+  "additionalProperties": false
 }
 
 === sent with ===

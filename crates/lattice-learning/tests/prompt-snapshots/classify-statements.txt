@@ -6,37 +6,43 @@ You sort statements extracted from a lesson by what it would take to check them.
 - common: a definition or elementary fact every practitioner of the subject accepts and no textbook would cite: what a kind of tool does, what a page number identifies, elementary arithmetic. No figures, versions, measured results or product-specific behaviour.
 - internal: about this lesson's own scenario, exercise, rubric, answer options or learners; or about what this lesson's sources do or do not say; or an instruction or recommendation. Not a checkable fact about the world.
 The lesson's own figures are the quantities its own example, scenario or exercise sets, and the results calculated from them. They are not specifics, and no source states them: a statement that calculates with them is reasoning, and one that only sets them is internal.
-When a statement mixes kinds, answer sourced if any part needs a source. Answer with JSON: {"<id>": "<class>", ...}, one entry per id, nothing else.
+When a statement mixes kinds, answer sourced if any part needs a source. Answer with JSON: {"entries": [{"of": "<id>", "class": "<class>"}, ...]}, one entry per id, nothing else.
 
 === input 2: message (user) ===
-{"s0":"A confidence score tells a reviewer how sure the sorter is.","s1":"A bounding box is a rectangle that frames one region of a page."}
+{"s1":"A confidence score tells a reviewer how sure the sorter is.","s2":"A bounding box is a rectangle that frames one region of a page."}
 
 === schema ===
 {
   "type": "object",
   "properties": {
-    "s0": {
-      "type": "string",
-      "enum": [
-        "sourced",
-        "reasoning",
-        "common",
-        "internal"
-      ]
-    },
-    "s1": {
-      "type": "string",
-      "enum": [
-        "sourced",
-        "reasoning",
-        "common",
-        "internal"
-      ]
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "of": {
+            "type": "string"
+          },
+          "class": {
+            "type": "string",
+            "enum": [
+              "sourced",
+              "reasoning",
+              "common",
+              "internal"
+            ]
+          }
+        },
+        "required": [
+          "of",
+          "class"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [
-    "s0",
-    "s1"
+    "entries"
   ],
   "additionalProperties": false
 }

@@ -1,79 +1,60 @@
 ######## request 1 of 1 ########
 === input 1: message (system) ===
-You are a subject-neutral learning tutor. Do not write or replace the learner's artifact. Keep feedback actionable and tied to the visible rubric. Respond to the learner's actual work and previous tutor turns. Prefer making the learner retrieve or explain before telling: ask what they remember about the relevant idea, or why their last step works. For an orienting hint ask one question about where to start; for a concept hint point to the relevant idea; for a partial strategy give only the next step. Never give the final answer in Practice mode, hints or critiques. A critique should identify the first specific reasoning gap, name the misconception behind it when one shows, and ask the learner to revise it. Acknowledge correct steps without praising unsupported conclusions. Cite only exact source passages from the supplied frozen snapshots. If none are supplied, tutor from the task and general knowledge, acknowledge uncertainty, and return empty citations. Never claim mastery.
+You are a subject-neutral learning tutor. Do not write or replace the learner's artifact. Keep feedback actionable and tied to the visible rubric. Respond to the learner's actual work and previous tutor turns. Prefer making the learner retrieve or explain before telling: ask what they remember about the relevant idea, or why their last step works. For an orienting hint ask one question about where to start; for a concept hint point to the relevant idea; for a partial strategy give only the next step. Never give the final answer in Practice mode, hints or critiques. A critique should identify the first specific reasoning gap, name the misconception behind it when one shows, and ask the learner to revise it. Acknowledge correct steps without praising unsupported conclusions. Cite only sentences of the supplied frozen snapshots, each by the id in square brackets before it. If none are supplied, tutor from the task and general knowledge, acknowledge uncertainty, and return empty citations. Never claim mastery. Write response, then citations, the ids of the snapshot sentences you cite, then proposals; each proposal has a kind, its text, and evidence, the ids of the sentences of the learner's artifact it rests on, empty when it rests on none.
 
 === input 2: message (user) ===
-{"taskPrompt":"Explain the central idea\n\nCreate a short written artifact that demonstrates your reasoning. State what you would do and why; use a new example where useful.","objective":"Explain the central idea","learnerArtifact":"I tried the second approach first.","rubric":[{"id":"recall","dimension":"recall","title":"Recall","description":"Accurately retrieves the relevant idea or facts.","maxPoints":3},{"id":"explanation","dimension":"explanation","title":"Explanation","description":"Explains the reasoning in the learner's own words.","maxPoints":3},{"id":"application","dimension":"application","title":"Application","description":"Applies the idea to the stated task.","maxPoints":3},{"id":"transfer","dimension":"transfer","title":"Transfer","description":"Connects the idea to a changed or new context.","maxPoints":3}],"mode":"practice","recentTurns":[{"request":"Where do I start?","response":"What do you remember about the condition?","hintLevel":null}],"earlierTurns":"","revisionContext":[],"requestKind":"question","hintLevel":null,"learnerRequest":"Why does this step hold?","sourceSnapshots":[{"sourceId":"logical-source","versionId":"version-1","title":"Stored source","passages":["The passage states one condition."]}]}
+{"taskPrompt":"Explain the central idea\n\nCreate a short written artifact that demonstrates your reasoning. State what you would do and why; use a new example where useful.","objective":"Explain the central idea","learnerArtifact":"[u1] I tried the second approach first.","rubric":[{"id":"recall","dimension":"recall","title":"Recall","description":"Accurately retrieves the relevant idea or facts.","maxPoints":3},{"id":"explanation","dimension":"explanation","title":"Explanation","description":"Explains the reasoning in the learner's own words.","maxPoints":3},{"id":"application","dimension":"application","title":"Application","description":"Applies the idea to the stated task.","maxPoints":3},{"id":"transfer","dimension":"transfer","title":"Transfer","description":"Connects the idea to a changed or new context.","maxPoints":3}],"mode":"practice","recentTurns":[{"request":"Where do I start?","response":"What do you remember about the condition?","hintLevel":null}],"earlierTurns":"","revisionContext":[],"requestKind":"question","hintLevel":null,"learnerRequest":"Why does this step hold?","sourceSnapshots":[{"title":"Stored source","passages":["[q1] The passage states one condition."]}]}
 
 === schema ===
 {
   "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "response",
-    "citations",
-    "proposals"
-  ],
   "properties": {
     "response": {
-      "type": "string",
-      "minLength": 1
+      "type": "string"
     },
     "citations": {
       "type": "array",
       "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "sourceId",
-          "versionId",
-          "quote"
-        ],
-        "properties": {
-          "sourceId": {
-            "type": "string"
-          },
-          "versionId": {
-            "type": "string"
-          },
-          "quote": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
+        "type": "string"
       }
     },
     "proposals": {
       "type": "array",
       "items": {
         "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "kind",
-          "text",
-          "evidenceQuote"
-        ],
         "properties": {
           "kind": {
+            "type": "string",
             "enum": [
               "misconception",
               "follow_up"
             ]
           },
           "text": {
-            "type": "string",
-            "minLength": 1
+            "type": "string"
           },
-          "evidenceQuote": {
-            "type": [
-              "string",
-              "null"
-            ]
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
-        }
+        },
+        "required": [
+          "kind",
+          "text",
+          "evidence"
+        ],
+        "additionalProperties": false
       }
     }
-  }
+  },
+  "required": [
+    "response",
+    "citations",
+    "proposals"
+  ],
+  "additionalProperties": false
 }
 
 === sent with ===

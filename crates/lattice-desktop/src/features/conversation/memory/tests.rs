@@ -3623,6 +3623,71 @@ async fn a_proposal_the_rules_refuse_is_left_out_and_the_others_stand() {
 }
 
 #[tokio::test]
+async fn an_answer_whose_proposals_cannot_be_read_leaves_the_batch_unprocessed() {
+    let port = FakePort::new(four_turns(), Vec::new(), 0);
+    let llm = FakeLlm::new(
+        vec![Ok(items_answer(vec![add_item(
+            "constraint",
+            "Deployment requires approval",
+            "s99",
+        )]))],
+        vec![],
+        vec![],
+    );
+
+    job(port.clone(), llm, small_config())
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .expect_err("an answer with no proposal that stands cannot be committed");
+
+    assert_eq!(port.commits(), 0);
+    assert_eq!(port.watermark(), 0);
+    assert_eq!(port.errors(), vec!["malformed_json".to_string()]);
+}
+
+#[tokio::test]
+async fn an_answer_whose_proposals_the_rules_all_refuse_leaves_the_batch_unprocessed() {
+    let port = FakePort::new(four_turns(), Vec::new(), 0);
+    let llm = FakeLlm::new(
+        vec![Ok(items_answer(vec![add_item(
+            "constraint",
+            "The assistant will wait",
+            "s2",
+        )]))],
+        vec![],
+        vec![],
+    );
+
+    job(port.clone(), llm, small_config())
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .expect_err("an answer with no proposal that stands cannot be committed");
+
+    assert_eq!(port.commits(), 0);
+    assert_eq!(port.watermark(), 0);
+    assert_eq!(port.errors(), vec!["malformed_json".to_string()]);
+}
+
+#[tokio::test]
+async fn an_answer_with_no_proposals_is_an_empty_patch() {
+    let port = FakePort::new(four_turns(), Vec::new(), 0);
+    let llm = FakeLlm::new(
+        vec![Ok(items_answer(Vec::new()))],
+        vec![],
+        vec![Ok("Nothing new to record.".to_string())],
+    );
+
+    let outcome = job(port.clone(), llm.clone(), small_config())
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .unwrap();
+
+    assert!(outcome.commit.updates.is_empty() && outcome.commit.inserts.is_empty());
+    assert_eq!(llm.count(Task::Review), 0, "nothing to review");
+    assert!(port.errors().is_empty());
+}
+
+#[tokio::test]
 async fn an_answer_that_does_not_end_leaves_the_batch_unprocessed() {
     let whole = items_answer(vec![add_item(
         "constraint",

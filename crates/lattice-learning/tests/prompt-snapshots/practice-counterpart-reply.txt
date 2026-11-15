@@ -20,25 +20,84 @@ Transcript:
 Learner: Where do I start?
 
 
+Parts of the learner's work you may point at, each under its handle:
+[l1] slot 0
+[l2] slot 1
+[l3] slot 2
+
 === schema ===
 {
   "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "content",
-    "slot"
-  ],
   "properties": {
     "content": {
       "type": "string"
     },
-    "slot": {
+    "parts": {
       "type": "array",
       "items": {
-        "type": "integer"
+        "type": "string"
       }
+    },
+    "clarification": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "none"
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "your_call"
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "from"
+              ]
+            },
+            "which": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "which"
+          ],
+          "additionalProperties": false
+        }
+      ]
     }
-  }
+  },
+  "required": [
+    "content",
+    "parts",
+    "clarification"
+  ],
+  "additionalProperties": false
 }
 
 === sent with ===
