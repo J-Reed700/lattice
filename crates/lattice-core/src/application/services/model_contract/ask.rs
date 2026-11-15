@@ -219,6 +219,7 @@ where
     C::Answer: Listed,
 {
     let mut standing: Vec<Statement<C>> = Vec::new();
+    let mut left_out = 0;
     loop {
         if let Some(cut) = fitted::<C>(llm, scope, &input, call).await? {
             input = cut;
@@ -229,12 +230,12 @@ where
         let (showing, request) = render::<C>(llm, scope, &input, call)?;
         let asked = request.clone();
         let sent = transport.send(llm, request).await?;
-        let mut outcome = new_round::<C>(&input, sent, &showing, &mut standing);
+        let mut outcome = new_round::<C>(&input, sent, &showing, &mut standing, &mut left_out);
         if outcome.added == 0 && outcome.rest.is_some() {
             if outcome.rest == Some(Why::CutOff) {
                 if let Some(larger) = larger_if_room(llm, &outcome.sent).await {
                     let sent = transport.follow(llm, larger).await?;
-                    outcome = new_round::<C>(&input, sent, &showing, &mut standing);
+                    outcome = new_round::<C>(&input, sent, &showing, &mut standing, &mut left_out);
                 }
             }
             if outcome.added == 0 && standing.is_empty() {
@@ -242,7 +243,7 @@ where
                 if let Some(told) = told {
                     if let Some(again) = correction_for(llm, &outcome.sent, &told).await {
                         let sent = transport.follow(llm, again).await?;
-                        outcome = new_round::<C>(&input, sent, &showing, &mut standing);
+                        outcome = new_round::<C>(&input, sent, &showing, &mut standing, &mut left_out);
                     }
                 }
             }
@@ -252,11 +253,11 @@ where
             transport.unanswered(llm, &asked).await?;
         }
         if rest.is_none() || added == 0 {
-            return found::<C>(standing, rest);
+            return found::<C>(standing, rest, left_out);
         }
         match rest_for(&standing) {
             Some(next) => input = next,
-            None => return found::<C>(standing, rest),
+            None => return found::<C>(standing, rest, left_out),
         }
     }
 }
@@ -274,17 +275,26 @@ fn new_round<C>(
     sent: Sent,
     showing: &Showing<'_>,
     standing: &mut Vec<Statement<C>>,
+    left_out: &mut usize,
 ) -> Round
 where
     C: Answered,
     C::Answer: Listed,
 {
-    let Found { items, rest } = <C::Answer as Listed>::read(&written(&sent), showing);
+    let Found {
+        items,
+        rest,
+        left_out: unread,
+    } = <C::Answer as Listed>::read(&written(&sent), showing);
+    *left_out += unread;
     let before = standing.len();
     for statement in items {
         match C::accept(input, &statement) {
             Ok(()) => standing.push(statement),
-            Err(Refusal(_)) => trace::<C>("", "refused"),
+            Err(Refusal(_)) => {
+                *left_out += 1;
+                trace::<C>("", "refused");
+            }
         }
     }
     let added = standing.len().saturating_sub(before);
@@ -292,7 +302,11 @@ where
 }
 
 /// What `ask_new` returns: an outcome with no item whose answer never ended fails when [`Alone::Fails`].
-fn found<C: Answered>(items: Vec<Statement<C>>, rest: Option<Why>) -> Result<Found<Statement<C>>> {
+fn found<C: Answered>(
+    items: Vec<Statement<C>>,
+    rest: Option<Why>,
+    left_out: usize,
+) -> Result<Found<Statement<C>>> {
     if let Some(why) = &rest {
         if !matches!(why, Why::Refused(_)) {
             trace::<C>("", reason(why));
@@ -301,7 +315,11 @@ fn found<C: Answered>(items: Vec<Statement<C>>, rest: Option<Why>) -> Result<Fou
             return Err(failed(why));
         }
     }
-    Ok(Found { items, rest })
+    Ok(Found {
+        items,
+        rest,
+        left_out,
+    })
 }
 
 /// One item of an [`ask_each`] and how it settled.

@@ -10,7 +10,7 @@ fn passages(body: &str) -> Vec<String> {
         .iter()
         .map(|p| p["text"].as_str().unwrap().to_owned())
         .collect();
-    assert_eq!(ids[0].len(), texts.len());
+    assert_eq!(ids.iter().filter(|p| p.section == 0).count(), texts.len());
     texts
 }
 

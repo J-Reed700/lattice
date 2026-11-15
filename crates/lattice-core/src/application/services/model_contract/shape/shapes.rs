@@ -390,6 +390,7 @@ pub(super) fn read_new<V: Authored>(written: &Written<'_>, showing: &Showing<'_>
             return Found {
                 items: Vec::new(),
                 rest: Some(why),
+                left_out: 0,
             }
         }
     };
@@ -397,6 +398,7 @@ pub(super) fn read_new<V: Authored>(written: &Written<'_>, showing: &Showing<'_>
         return Found {
             items: Vec::new(),
             rest: Some(lacking(written, &document)),
+            left_out: 0,
         };
     };
     let mut items = Vec::with_capacity(elements.len());
@@ -410,9 +412,11 @@ pub(super) fn read_new<V: Authored>(written: &Written<'_>, showing: &Showing<'_>
             None => trace("unread-item", None),
         }
     }
+    let left_out = elements.len().saturating_sub(items.len());
     Found {
         items,
         rest: (!document.closed).then(|| unfinished(written)),
+        left_out,
     }
 }
 

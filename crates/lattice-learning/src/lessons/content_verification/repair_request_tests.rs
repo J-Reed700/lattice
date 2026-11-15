@@ -127,7 +127,7 @@ impl Corrections {
                 .map(|statement| json!({"sentenceId":sentence_id(passage, statement),"statement":statement}))
                 .collect();
             return Ok(inventory::fixture_response(vec![
-                json!({"index":0,"claims":claims,"nonFactualReason":""}),
+                json!({"of":"s1","claims":claims,"nonFactualReason":""}),
             ])
             .to_string());
         }

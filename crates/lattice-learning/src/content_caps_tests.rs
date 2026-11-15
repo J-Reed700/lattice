@@ -187,7 +187,7 @@ async fn research_plans_as_many_searches_as_the_gaps_need() -> Result<()> {
         .iter()
         .map(|query| json!({"gap": 0, "query": query, "kind": "web"}))
         .collect();
-    let llm = scripted(vec![json!({ "needs": needs }).to_string()]);
+    let llm = scripted(vec![crate::references::web_research::needs_answer(json!(needs)).to_string()]);
     let planned = crate::references::web_research::plan_needs(
         &llm,
         "topic",
@@ -227,8 +227,8 @@ async fn the_starting_point_check_covers_every_module() -> Result<()> {
             created_at: 0,
         })
         .collect();
-    let tasks: Vec<_> = outcomes.iter().map(|o| json!({"outcomeId":o.id,"prompt":"Predict the result of this concrete case and explain why.","expectedAnswer":"The result follows from the stated rule applied to the case.","criteria":"Names the rule, applies it, and states the predicted result."})).collect();
-    let llm = Model(json!({ "tasks": tasks }).to_string());
+    let entries: Vec<_> = (0..outcomes.len()).map(|i| json!({"of":format!("o{}", i + 1),"prompt":"Predict the result of this concrete case and explain why.","expectedAnswer":"The result follows from the stated rule applied to the case.","criteria":"Names the rule, applies it, and states the predicted result."})).collect();
+    let llm = Model(json!({ "entries": entries }).to_string());
     let sources = vec![source("s", "Skill guidance for every module.".into())];
     let authored =
         crate::diagnostic_generation::author(&llm, &program, &outcomes, &sources).await?;
@@ -494,13 +494,12 @@ fn starting_point_tasks(
     expected_answer: &str,
     criteria: &str,
 ) -> String {
-    let tasks: Vec<_> = outcomes
-        .iter()
-        .map(|outcome| {
-            json!({"outcomeId":outcome.id,"prompt":prompt,"expectedAnswer":expected_answer,"criteria":criteria})
+    let entries: Vec<_> = (0..outcomes.len())
+        .map(|at| {
+            json!({"of":format!("o{}", at + 1),"prompt":prompt,"expectedAnswer":expected_answer,"criteria":criteria})
         })
         .collect();
-    json!({ "tasks": tasks }).to_string()
+    json!({ "entries": entries }).to_string()
 }
 
 #[tokio::test]

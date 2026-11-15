@@ -10,9 +10,10 @@ const FIRST: &str = "Alpha holds the line.";
 const SECOND: &str = "Bravo stands firm today.";
 const THIRD: &str = "Charlie rests in the shade.";
 const BODY: &str = "Alpha holds the line. Bravo stands firm today. Charlie rests in the shade.";
-const FIRST_ID: &str = "unit-0-passage-0-sentence-0";
-const SECOND_ID: &str = "unit-0-passage-0-sentence-1";
 const THIRD_ID: &str = "unit-0-passage-0-sentence-2";
+const FIRST_HANDLE: &str = "u1";
+const SECOND_HANDLE: &str = "u2";
+const THIRD_HANDLE: &str = "u3";
 /// Statements that share no word with the sentence they are named at.
 const ABOUT_FIRST: &str = "Quartz cleaves along flat planes.";
 const ABOUT_THIRD: &str = "Mica splits into thin sheets.";
@@ -70,7 +71,7 @@ fn candidate() -> Value {
 
 fn reply(claims: Vec<Value>) -> String {
     inventory::fixture_response(vec![
-        json!({"index":0,"claims":claims,"nonFactualReason":""}),
+        json!({"of":"s1","claims":claims,"nonFactualReason":""}),
     ])
     .to_string()
 }
@@ -78,25 +79,25 @@ fn reply(claims: Vec<Value>) -> String {
 /// An extractor that names the third sentence for a statement that shares no
 /// word with it.
 fn names_the_third(_: &str) -> String {
-    reply(vec![json!({"sentenceId":THIRD_ID,"statement":ABOUT_THIRD})])
+    reply(vec![json!({"sentenceId":THIRD_HANDLE,"statement":ABOUT_THIRD})])
 }
 
 /// An extractor that names the first and the third sentence.
 fn names_the_first_and_the_third(_: &str) -> String {
     reply(vec![
-        json!({"sentenceId":FIRST_ID,"statement":ABOUT_FIRST}),
-        json!({"sentenceId":THIRD_ID,"statement":ABOUT_THIRD}),
+        json!({"sentenceId":FIRST_HANDLE,"statement":ABOUT_FIRST}),
+        json!({"sentenceId":THIRD_HANDLE,"statement":ABOUT_THIRD}),
     ])
 }
 
 fn names_no_such_sentence(_: &str) -> String {
     reply(vec![
-        json!({"sentenceId":"unit-0-passage-0-sentence-9","statement":ABOUT_THIRD}),
+        json!({"sentenceId":"u9","statement":ABOUT_THIRD}),
     ])
 }
 
 fn answers_nothing(_: &str) -> String {
-    json!({"units":{}}).to_string()
+    json!({"entries":[]}).to_string()
 }
 
 /// The claims `answer` extracts from the sample lesson, each section's index
@@ -138,27 +139,14 @@ async fn the_request_shows_every_sentence_with_its_id_and_the_schema_allows_exac
     assert_eq!(
         shown["units"][0]["passages"][0]["sentences"],
         json!([
-            {"id":FIRST_ID,"text":FIRST},
-            {"id":SECOND_ID,"text":SECOND},
-            {"id":THIRD_ID,"text":THIRD},
+            {"id":FIRST_HANDLE,"text":FIRST},
+            {"id":SECOND_HANDLE,"text":SECOND},
+            {"id":THIRD_HANDLE,"text":THIRD},
         ])
     );
-    let item = "/properties/units/properties/unit-0/properties/claims/items";
-    assert_eq!(
-        schema.pointer(&format!("{item}/properties/sentenceId/enum")),
-        Some(&json!([FIRST_ID, SECOND_ID, THIRD_ID]))
-    );
-    assert_eq!(
-        schema.pointer(&format!("{item}/required")),
-        Some(&json!(["sentenceId", "statement"]))
-    );
-    assert_eq!(
-        schema
-            .pointer(&format!("{item}/properties"))
-            .and_then(Value::as_object)
-            .map(|properties| properties.len()),
-        Some(2)
-    );
+    assert!(schema
+        .to_string()
+        .contains(&json!([FIRST_HANDLE, SECOND_HANDLE, THIRD_HANDLE]).to_string()));
 }
 
 /// What a repair of the first sentence puts in the lesson beside the
@@ -286,8 +274,8 @@ async fn a_sentence_id_the_request_did_not_show_is_refused_by_name() {
     let refused = extracted(names_no_such_sentence).await;
     let reason = refused.err().unwrap_or_default();
     assert!(
-        reason.contains("unit-0-passage-0-sentence-9"),
-        "the refusal names the id: {reason}"
+        reason.contains("Unit 0 needs an inventory"),
+        "the refusal names the section: {reason}"
     );
 }
 

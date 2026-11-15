@@ -173,10 +173,10 @@ struct Planner;
 impl Planner {
     fn respond(prompt: &str) -> String {
         if prompt.starts_with("Plan focused reference searches") {
-            return json!({"needs":[
+            return crate::references::web_research::needs_answer(json!([
                 {"gap":0,"kind":"web","query":"operator station status strip console"},
                 {"gap":1,"kind":"web","query":"rota shift depot code panel"}
-            ]})
+            ]))
             .to_string();
         }
         if prompt.starts_with("Select trustworthy references") {

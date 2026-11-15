@@ -443,7 +443,7 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
         initial.clone(),
         no_links(),
         findings(vec![factual_finding("/modules/0/summary", claim, reason)]),
-        json!({"needs":[{"gap":0,"query":"random assignment confounding primary source","kind":"web"}]}),
+        crate::references::web_research::needs_answer(json!([{"gap":0,"query":"random assignment confounding primary source","kind":"web"}])),
         select_all(1),
         judged("unsupported", None),
         repair_answer(initial["modules"][0].clone()),
@@ -507,7 +507,7 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
     let llm = model(vec![
         no_links(),
         json!({"verdicts":[{"id":"finding-1","status":"unresolved","reason":"The summary still asserts the guarantee without support."}],"newFindings":[]}),
-        json!({"needs":[{"gap":0,"query":"random assignment confounding textbook","kind":"web"}]}),
+        crate::references::web_research::needs_answer(json!([{"gap":0,"query":"random assignment confounding textbook","kind":"web"}])),
         select_all(1),
         judged("supported", Some(0)),
     ]);
@@ -937,12 +937,13 @@ async fn a_kept_lesson_after_an_inserted_one_keeps_its_citation_and_the_new_less
         json!("Explain how a randomized comparison isolates the intervention.");
     // The kept lesson keeps its citation by construction; the new one is linked afterwards.
     let sources = vec![original_source()];
+    let repaired = json!({"modules":[module.clone()]});
     let llm = model(vec![
         initial.clone(),
-        links(&[("/modules/0/lessons/1", ORIGINAL)]),
+        links(&initial, &[("/modules/0/lessons/1", ORIGINAL)]),
         issue(0),
         repair_answer_with(module, &[Some(0), None, Some(1), Some(2)]),
-        links(&[("/modules/0/lessons/1", ORIGINAL)]),
+        links(&repaired, &[("/modules/0/lessons/1", ORIGINAL)]),
         verdicts(&[("finding-1", "resolved")], vec![]),
     ]);
     let program = generate_with(&repo, &llm, sources).await?;
@@ -961,8 +962,14 @@ async fn a_kept_lesson_after_an_inserted_one_keeps_its_citation_and_the_new_less
     // Only the new lesson was offered for linking after the repair.
     let offered = linking_prompts(&llm);
     let last = offered.last().unwrap();
-    assert!(last.contains("/modules/0/lessons/1"));
-    assert!(!last.contains("/modules/0/lessons/2"));
+    assert!(last.contains("Explain how a randomized comparison isolates the intervention."));
+    assert_eq!(
+        crate::lessons::content_verification::tests::fixture_task(last).unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
     // Each citation is shown on its own lesson.
     let evidence = crate::outline_evidence_view::project(&program, &saved);
     let kept = evidence

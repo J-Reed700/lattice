@@ -191,6 +191,11 @@ impl Listed for Names {
             .filter_map(|line| line.strip_prefix("+ "))
             .map(str::to_owned)
             .collect();
+        let left_out = written
+            .text
+            .lines()
+            .filter(|line| line.starts_with("- "))
+            .count();
         let rest = match written.ended {
             Ended::Complete if items.is_empty() && !written.text.trim().is_empty() => {
                 Some(Why::NotRead)
@@ -199,7 +204,11 @@ impl Listed for Names {
             Ended::CutOff => Some(Why::CutOff),
             Ended::Declined => Some(Why::Declined),
         };
-        Found { items, rest }
+        Found {
+            items,
+            rest,
+            left_out,
+        }
     }
 }
 
@@ -1006,7 +1015,8 @@ async fn items_of_a_cut_off_reply_stand_and_the_next_request_is_built_from_them(
         found,
         Found {
             items: vec!["a".to_owned(), "b".to_owned(), "c".to_owned()],
-            rest: None
+            rest: None,
+            left_out: 0
         }
     );
     assert_eq!(script.sent(), 2);
@@ -1034,7 +1044,8 @@ async fn no_input_stops_the_asking() {
         found,
         Found {
             items: vec!["a".to_owned()],
-            rest: Some(Why::CutOff)
+            rest: Some(Why::CutOff),
+            left_out: 0
         }
     );
     assert_eq!(script.sent(), 1);
@@ -1046,6 +1057,29 @@ async fn a_refused_item_is_left_out() {
     let found = run_new(&script, 10).await.unwrap();
     assert_eq!(found.items, vec!["a".to_owned(), "c".to_owned()]);
     assert_eq!(found.rest, None);
+    assert_eq!(found.left_out, 1);
+}
+
+#[tokio::test]
+async fn an_unread_item_is_counted_and_a_clean_answer_counts_none() {
+    let script = Script::new(&[("+ a
+- x
++ b", STOP)]);
+    let found = run_new(&script, 10).await.unwrap();
+    assert_eq!(found.items, vec!["a".to_owned(), "b".to_owned()]);
+    assert_eq!(found.left_out, 1);
+
+    let script = Script::new(&[("+ a", STOP)]);
+    assert_eq!(run_new(&script, 10).await.unwrap().left_out, 0);
+}
+
+#[tokio::test]
+async fn an_item_left_in_a_cut_off_tail_is_not_counted() {
+    let script = Script::new(&[("+ a
++ b", LENGTH)]);
+    let found = run_new(&script, 1).await.unwrap();
+    assert_eq!(found.rest, Some(Why::CutOff));
+    assert_eq!(found.left_out, 0);
 }
 
 #[tokio::test]
@@ -1072,7 +1106,8 @@ async fn nothing_read_and_nothing_standing_gets_one_correction() {
         found,
         Found {
             items: Vec::new(),
-            rest: Some(Why::NotRead)
+            rest: Some(Why::NotRead),
+            left_out: 0
         }
     );
     assert_eq!(script.sent(), 2);

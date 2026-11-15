@@ -37,15 +37,6 @@ pub(super) fn listed(passage: &Value) -> Value {
     shown
 }
 
-/// `unit` with its passages listed.
-pub(super) fn shown(unit: &Value) -> Value {
-    let mut shown = unit.clone();
-    if let Some(passages) = shown.get_mut("passages").and_then(Value::as_array_mut) {
-        *passages = passages.iter().map(listed).collect();
-    }
-    shown
-}
-
 /// The id of every sentence of `passages`.
 pub(super) fn ids(passages: &[Value]) -> Vec<String> {
     passages.iter().flat_map(of).map(|(id, _)| id).collect()

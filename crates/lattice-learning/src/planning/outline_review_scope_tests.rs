@@ -31,8 +31,8 @@ async fn single_module_recheck_reuses_completed_checks_and_keeps_whole_course_co
     let mut fixed = initial["modules"][1].clone();
     fixed["project"]["brief"] = json!("Extend the Experimental design module 0 project with a measurement protocol and observable outcomes.");
     let llm = model(vec![
-        initial,
-        links(&[("/modules/1/summary", ORIGINAL)]),
+        initial.clone(),
+        links(&initial, &[("/modules/1/summary", ORIGINAL)]),
         issue(1),
         repair_answer(fixed.clone()),
         verdicts(&[("finding-1", "resolved")], vec![]),
@@ -208,8 +208,8 @@ async fn interrupted_incremental_review_resumes_from_last_completed_receipt_with
     // The rewrite changes the summary text, so that one item is linked again
     // after the repair (nothing qualifies) before the review that fails.
     let llm = model(vec![
-        initial,
-        links(&[("/modules/0/summary", ORIGINAL)]),
+        initial.clone(),
+        links(&initial, &[("/modules/0/summary", ORIGINAL)]),
         issue(1),
         repair_answer(fixed.clone()),
         no_links(),
@@ -289,7 +289,7 @@ async fn incremental_review_anchors_cross_module_effects_to_the_module_that_must
     // unchanged, which declines the plan finding: it stays as a suggestion.
     let llm = model(vec![
         initial.clone(),
-        links(&[("/modules/0/summary", ORIGINAL)]),
+        links(&initial, &[("/modules/0/summary", ORIGINAL)]),
         issue(1),
         repair_answer(fixed.clone()),
         verdicts(
@@ -325,7 +325,7 @@ async fn incremental_review_anchors_cross_module_effects_to_the_module_that_must
     // module is rewritten for a problem anchored to module 1.
     assert_eq!(prompts.len(), 5);
     let recheck = fixture_task(&prompts[3]).unwrap();
-    assert_eq!(recheck["openFindings"][0]["id"], "finding-1");
+    assert_eq!(recheck["openFindings"][0]["id"], "f1");
     assert_eq!(recheck["openFindings"][0]["attempts"], 1);
     assert_eq!(fixture_task(&prompts[4]).unwrap()["moduleNumber"], 2);
     Ok(())

@@ -26,9 +26,9 @@ use std::sync::Arc;
 const VERIFIER_WINDOW: usize = 200_000;
 const NO_PASSAGE: &str = "No passage states this.";
 
-/// A Verifier that gives every claim `verdict`: `supported` quotes the first
+/// A Verifier that gives every claim `verdict`: `supported` cites the first
 /// sentence of the claim's first passage (could not verify without one),
-/// anything else quotes nothing. Counts its requests.
+/// anything else cites nothing. Counts its requests.
 pub(super) struct AuditingModel {
     verdict: &'static str,
     calls: AtomicUsize,
@@ -48,25 +48,20 @@ impl AuditingModel {
 
     fn answer(&self, task: &str) -> String {
         let lines: Vec<&str> = task.lines().collect();
-        let passage = |label: &str| {
-            lines
+        let first_sentence = |passage: &str| {
+            let at = lines
                 .iter()
-                .position(|line| line.starts_with(&format!("[{label}] ")))
-                .and_then(|index| lines.get(index + 1))
-                .map(|text| {
-                    text.split_inclusive('.')
-                        .next()
-                        .unwrap_or_default()
-                        .trim()
-                        .to_owned()
-                })
+                .position(|line| line.starts_with(&format!("{passage} ")))?;
+            let row = lines.get(at + 1)?;
+            let (handle, _) = row.strip_prefix('[')?.split_once("] ")?;
+            Some(handle.to_owned())
         };
-        let mut verdicts = Vec::new();
+        let mut entries = Vec::new();
         for (index, line) in lines.iter().enumerate() {
-            let Some(label) = line
-                .strip_prefix("[C")
+            let Some(handle) = line
+                .strip_prefix("[c")
                 .and_then(|rest| rest.split_once("] "))
-                .map(|(number, _)| format!("C{number}"))
+                .map(|(number, _)| format!("c{number}"))
             else {
                 continue;
             };
@@ -74,30 +69,30 @@ impl AuditingModel {
                 .iter()
                 .find_map(|line| line.strip_prefix("Passages: "))
                 .and_then(|cited| cited.split(", ").next())
-                .filter(|first| first.starts_with('P') || first.starts_with('W'))
-                .and_then(|first| passage(first).map(|quote| (first.to_owned(), quote)));
-            verdicts.push(match (self.verdict, cited) {
-                ("supported", Some((passage, quote))) => json!({
-                    "claim": label,
-                    "passagesUsed": [{"passage": passage, "quote": quote}],
+                .filter(|first| first.starts_with("[p"))
+                .and_then(first_sentence);
+            entries.push(match (self.verdict, cited) {
+                ("supported", Some(sentence)) => json!({
+                    "of": handle,
+                    "sentencesUsed": [sentence],
                     "verdict": "supported",
                     "reason": "The passage states this.",
                 }),
                 ("supported", None) => json!({
-                    "claim": label,
-                    "passagesUsed": [],
+                    "of": handle,
+                    "sentencesUsed": [],
                     "verdict": "could_not_verify",
                     "reason": "No passage was supplied.",
                 }),
                 (verdict, _) => json!({
-                    "claim": label,
-                    "passagesUsed": [],
+                    "of": handle,
+                    "sentencesUsed": [],
                     "verdict": verdict,
                     "reason": NO_PASSAGE,
                 }),
             });
         }
-        json!({ "verdicts": verdicts }).to_string()
+        json!({ "entries": entries }).to_string()
     }
 }
 

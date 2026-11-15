@@ -164,6 +164,8 @@ pub struct Found<S> {
     /// `None` when the answer was read to its end: only then is it known that
     /// there are no others. Otherwise why it is not known.
     pub rest: Option<Why>,
+    /// How many items the model wrote that are not in `items`, whatever the cause.
+    pub left_out: usize,
 }
 
 /// `V`: judgement and text about the one subject of the call. No identity exists to get wrong.

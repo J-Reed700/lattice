@@ -308,9 +308,8 @@ impl Standing {
                 crate::lessons::trace::Stage::TeachingReview,
                 finding,
                 "still present",
-                &format!("the reviewer judged it again at \"{}\"", verdict.quote),
+                "the reviewer judged it again",
             );
-            finding.passage = Some(verdict.quote);
             let written = sentence_digests(&sentences_of(candidate, finding));
             self.about.entry(verdict.id).or_default().extend(written);
         }

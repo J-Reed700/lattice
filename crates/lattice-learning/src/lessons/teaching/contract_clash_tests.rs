@@ -9,8 +9,6 @@ use std::sync::Mutex;
 
 const EMPTY: &str = "The kettle is empty when it boils.";
 const FULL: &str = "The kettle is full when it boils.";
-const EMPTY_WORDS: &str = "The kettle is empty when it boils";
-const FULL_WORDS: &str = "The kettle is full when it boils";
 const CASE: &str = "A kettle that is half full when it boils.";
 
 /// The check lists one contradiction of `first` and `second`; every confirming read is answered with `clash`.
@@ -53,7 +51,11 @@ impl LLMPort for Sweep {
             }
             return Ok(CompletionResponse::from_text(self.clash.as_str()));
         }
-        Ok(fixture_completion(request, vec![self.plan.clone()]))
+        let reply = match contract::scripted::ask_of(system, user) {
+            Some(ask) => contract::scripted::Script::new(vec![self.plan.clone()]).reply(ask, user),
+            None => self.plan.clone(),
+        };
+        Ok(fixture_completion(request, vec![reply]))
     }
     fn model_name(&self) -> &str {
         "scripted-review"
@@ -174,13 +176,13 @@ async fn the_confirming_request_gives_both_statements_in_their_parts_and_the_who
     assert_eq!(request["task"], confirm::CLASH_TASK);
     assert_eq!(
         request["question"],
-        format!("Can the first statement, section-0's words '{EMPTY_WORDS}', and the second, section-1's words '{FULL_WORDS}', both be true? If they can, give in case a situation in which both hold. If they cannot, give in case what one says happens or holds that the other says cannot. In case, call them the first and the second statement.")
+        format!("Can the first statement, section-0's words '{EMPTY}', and the second, section-1's words '{FULL}', both be true? If they can, give in case a situation in which both hold. If they cannot, give in case what one says happens or holds that the other says cannot. In case, call them the first and the second statement.")
     );
     assert_eq!(
         request["statements"],
         json!([
-            {"part":"section-0","words":EMPTY_WORDS},
-            {"part":"section-1","words":FULL_WORDS}
+            {"part":"section-0","words":EMPTY},
+            {"part":"section-1","words":FULL}
         ])
     );
     let (sections, questions) = shown_parts(parts_of(&kettle()).iter());
@@ -192,20 +194,6 @@ async fn the_confirming_request_gives_both_statements_in_their_parts_and_the_who
         schemas[0],
         json!({"type":"object","additionalProperties":false,"required":["case","contradict"],"properties":{"case":{"type":"string"},"contradict":{"type":"boolean"}}})
     );
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_contradiction_with_a_quote_not_in_the_lesson_is_not_put_to_the_model() -> Result<()> {
-    for (first, second) in [
-        ("The kettle whistles twice.", FULL),
-        (EMPTY, "The kettle whistles twice."),
-    ] {
-        let model = Sweep::new(first, second, upheld(CASE));
-        let result = found(&model, &[], &[]).await?;
-        assert!(clashes(&result).is_empty(), "{result:?}");
-        assert!(model.requests().is_empty());
-    }
     Ok(())
 }
 

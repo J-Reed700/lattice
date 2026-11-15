@@ -39,6 +39,14 @@ impl LLMPort for Model {
 }
 impl Model {
     async fn respond(&self, prompt: &str) -> Result<String> {
+        if let Some(reply) = crate::generation::outline::fixture::prerequisites_answer(prompt) {
+            return Ok(reply);
+        }
+        if let Some(reply) =
+            crate::generation::outline::fixture::description_answer(prompt, &self.0)
+        {
+            return Ok(reply);
+        }
         if let Some(reply) = crate::content_verification::tests::fixture_response(prompt) {
             return Ok(reply);
         }
@@ -46,16 +54,10 @@ impl Model {
             return Ok("supported\nReason: The fixture reference supports the experimental design.\nSource quote: A randomized comparison isolates the intervention.\nSource passage: passage-0".into());
         }
         if prompt.starts_with("Review instructional quality.") {
-            let context: serde_json::Value = fixture_task(prompt).expect("a JSON task");
-            // Only the outline plan review numbers the modules it shows;
-            // the teaching reviews keep their own response shape.
-            if context.get("moduleNumbering").is_some() {
-                return Ok(json!({"newFindings":[]}).to_string());
-            }
-            if context["candidate"].get("blocks").is_none() {
-                return Ok(json!({"issues":[]}).to_string());
-            }
-            return Ok(json!({"issues":[],"sectionDefects":[]}).to_string());
+            return Ok(json!({"items":[]}).to_string());
+        }
+        if prompt.starts_with("Teach one rigorous, accessible lesson") {
+            return Ok(crate::generation::scripted_lesson(&self.0, prompt));
         }
         Ok(self.0.clone())
     }
@@ -431,9 +433,9 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
         Err(AppError::ModelAnswerUnusable(_))
     ));
 
-    let recall = Model(json!({"cards":[
-        {"question":"When should the outcome be defined?","answer":"Before collecting data.","explanation":"Define it when designing the experiment.","sourceIds":[prepared.sources[0].id],"quote":"A randomized comparison isolates the intervention."},
-        {"question":"What should a concrete example show?","answer":"The result and its limitations.","explanation":"Interpret the result within its limits.","sourceIds":[prepared.sources[0].id],"quote":"A randomized comparison isolates the intervention."}
+    let recall = Model(json!({"items":[
+        {"question":"When should the outcome be defined?","answer":"Before collecting data.","explanation":"Define it when designing the experiment.","cites":["s1"]},
+        {"question":"What should a concrete example show?","answer":"The result and its limitations.","explanation":"Interpret the result within its limits.","cites":["s1"]}
     ]}).to_string());
     let cards = generation::generate_recall_drafts(&recall, &prepared, &lesson_id, 2).await?;
     assert_eq!(cards.len(), 2);
@@ -753,6 +755,9 @@ pub(crate) fn review_reply(
 
 impl ScriptedModel {
     async fn respond(&self, prompt: &str) -> Result<String> {
+        if let Some(reply) = crate::generation::outline::fixture::prerequisites_answer(prompt) {
+            return Ok(reply);
+        }
         self.prompts
             .lock()
             .map_err(|_| AppError::InternalError("fixture lock".into()))?
@@ -789,7 +794,16 @@ impl ScriptedModel {
         if linking && front.starts_with(LINKS_SENTINEL) {
             return Ok(link_reply(prompt, front));
         }
-        Ok(outputs.pop_front().unwrap_or_default())
+        if let Some(reply) = crate::outline_review::scripted::reply(prompt, front) {
+            outputs.pop_front();
+            return Ok(reply);
+        }
+        if let Some(reply) = crate::teaching_review::scripted::reply(prompt, front) {
+            outputs.pop_front();
+            return Ok(reply);
+        }
+        let reply = outputs.pop_front().unwrap_or_default();
+        Ok(crate::generation::outline::fixture::description_answer(prompt, &reply).unwrap_or(reply))
     }
 }
 
@@ -926,7 +940,7 @@ impl LLMPort for Windowed<'_> {
 
 /// Prefix of a scripted evidence-linking reply. How many batches a run makes
 /// and which items each holds depend on retrieval, so the reply is built from
-/// the prompt: the sentinel maps item paths to the passage text to choose and
+/// the prompt: the sentinel maps item texts to the passage text to choose and
 /// every other item gets `none`.
 pub(crate) const LINKS_SENTINEL: &str = "{\"@links\":";
 
@@ -947,23 +961,24 @@ fn link_reply(prompt: &str, sentinel: &str) -> String {
         .flatten()
         .map(|item| {
             let id = item["id"].as_str().unwrap_or_default();
+            let text = item["item"].as_str().unwrap_or_default();
             let candidates: Vec<&str> = item["candidates"]
                 .as_array()
                 .into_iter()
                 .flatten()
                 .filter_map(|c| c.as_str())
                 .collect();
-            let chosen = picks["@links"][id].as_str().and_then(|wanted| {
+            let chosen = picks["@links"][text].as_str().and_then(|wanted| {
                 candidates
                     .iter()
                     .find(|c| text_of(c) == wanted)
                     .or_else(|| candidates.iter().find(|c| text_of(c).contains(wanted)))
                     .copied()
             });
-            json!({"id":id,"candidate":chosen.unwrap_or("none"),"reason":if chosen.is_some() {"The passage addresses this item."} else {"No candidate addresses this item."}})
+            json!({"of":id,"candidate":chosen.unwrap_or("none"),"reason":if chosen.is_some() {"The passage addresses this item."} else {"No candidate addresses this item."}})
         })
         .collect();
-    json!({"links":links}).to_string()
+    json!({"entries":links}).to_string()
 }
 
 #[tokio::test]
@@ -1002,7 +1017,7 @@ async fn a_question_may_cite_a_reference_verification_saved_for_the_program() ->
                 return Ok(json!({"topics":[{"id":"t1","covering":["p1"]}]}).to_string());
             }
             if prompt.starts_with("Plan focused reference searches") {
-                return Ok(json!({"needs":[{"gap":0,"query":"random assignment confounding official guidance","kind":"web"}]}).to_string());
+                return Ok(crate::references::web_research::needs_answer(json!([{"gap":0,"query":"random assignment confounding official guidance","kind":"web"}])).to_string());
             }
             if prompt.starts_with("Select trustworthy references") {
                 return Ok(research_tests::selection(&[0]));
@@ -1668,6 +1683,10 @@ async fn outline_citations_are_optional_and_unmatched_ones_are_stripped_not_repo
 {
     let quote = "A randomized comparison isolates the intervention.";
     let mut candidate: serde_json::Value = serde_json::from_str(&outline(4, 3).0)?;
+    let outcome = candidate["modules"][0]["outcomes"][0]["text"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
     // One citation quotes the capture exactly; one does not. Neither is a finding.
     candidate["modules"][0]["outcomes"][0]["sourceIndex"] = json!(0);
     candidate["modules"][0]["outcomes"][0]["quote"] = json!(quote);
@@ -1704,7 +1723,7 @@ async fn outline_citations_are_optional_and_unmatched_ones_are_stripped_not_repo
         outputs: std::sync::Mutex::new(
             vec![
                 candidate.to_string(),
-                json!({"@links":{"/modules/0/outcomes/0":quote}}).to_string(),
+                json!({"@links":{outcome:quote}}).to_string(),
                 json!({"newFindings":[]}).to_string(),
             ]
             .into(),
@@ -2093,176 +2112,4 @@ fn program_request_goal_and_prior_knowledge_have_no_character_limit() -> Result<
     input.goal = "Detailed learning goal. ".repeat(1_000);
     input.prior_knowledge = "Relevant experience and context. ".repeat(1_000);
     service::validate_request(&input)
-}
-
-#[tokio::test]
-async fn a_drafts_citation_list_is_gone_before_review_and_verification_read_it() -> Result<()> {
-    use crate::{
-        curriculum::LearningGenerationJobKind, curriculum_repository::LearningCurriculumRepository,
-        plan_dto::*,
-    };
-    use std::sync::Mutex;
-    struct Recording {
-        inner: Model,
-        drafted: Mutex<bool>,
-        later: Mutex<Vec<String>>,
-    }
-    #[async_trait::async_trait]
-    impl LLMPort for Recording {
-        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-            let mut replies = Vec::new();
-            for prompt in fixture_prompts(request) {
-                replies.push(self.respond(&prompt).await?);
-            }
-            Ok(fixture_completion(request, replies))
-        }
-        fn model_name(&self) -> &str {
-            self.inner.model_name()
-        }
-        fn count_tokens(&self, text: &str) -> usize {
-            self.inner.count_tokens(text)
-        }
-        fn max_context_tokens(&self) -> usize {
-            self.inner.max_context_tokens()
-        }
-        async fn is_ready(&self) -> Result<bool> {
-            Ok(true)
-        }
-    }
-    impl Recording {
-        async fn respond(&self, prompt: &str) -> Result<String> {
-            {
-                let mut drafted = self
-                    .drafted
-                    .lock()
-                    .map_err(|_| AppError::InternalError("fixture lock".into()))?;
-                if *drafted {
-                    self.later
-                        .lock()
-                        .map_err(|_| AppError::InternalError("fixture lock".into()))?
-                        .push(prompt.into());
-                }
-                if prompt.starts_with("Teach one rigorous, accessible lesson") {
-                    *drafted = true;
-                }
-            }
-            self.inner.respond(prompt).await
-        }
-    }
-
-    let pool = crate::tests::pool().await?;
-    let db = Database::new(pool.clone());
-    let repo = LearningRepository::new(db.clone());
-    let drafts = crate::outline_draft::DraftRunRegistry::new();
-    let draft = service::generate(
-        &repo,
-        &drafts,
-        &outline(4, 3),
-        request(LearningCourseDepth::Course),
-        vec![],
-    )
-    .await?;
-    let accepted = service::accept(
-        &repo,
-        &drafts,
-        AcceptLearningProgramRequestDto {
-            program_id: draft.summary.id.clone(),
-            expected_revision: draft.summary.revision,
-            title: "Experimental design".into(),
-        },
-    )
-    .await?;
-    let quote = "A randomized comparison isolates the intervention.";
-    crate::content_verification::tests::install_source(&db, &draft.summary.id, REFERENCE).await?;
-    let mut program = repo.get(&draft.summary.id).await?;
-    program.sources = repo.verification_sources(&draft.summary.id).await?;
-    let lesson = &program.modules[0].lessons[0];
-    let mut candidate = lesson_response();
-    for item in candidate["blocks"].as_array_mut().unwrap() {
-        let body = item["body"].as_str().unwrap_or_default().to_owned();
-        item["body"] = json!(format!(
-            "{body}\n\n**Citations:**\n*   \"{quote}\" (SourceIndex: 0)\n*   \"A controlled experiment states its limitations.\" (SourceIndex: 0)"
-        ));
-    }
-    for field in ["blocks", "questions"] {
-        for item in candidate[field].as_array_mut().unwrap() {
-            item["sourceIndex"] = json!(0);
-            item["quote"] = json!(quote);
-        }
-    }
-    let llm = Recording {
-        inner: Model(candidate.to_string()),
-        drafted: Mutex::new(false),
-        later: Mutex::new(Vec::new()),
-    };
-    let jobs = LearningCurriculumRepository::new(db.clone());
-    jobs.plan(&program.summary.id).await?;
-    let job = jobs
-        .start_job(&StartLearningGenerationJobRequestDto {
-            operation_id: uuid::Uuid::new_v4().to_string(),
-            program_id: program.summary.id.clone(),
-            expected_revision: accepted.summary.revision,
-            kind: LearningGenerationJobKind::LessonPreparation,
-            request_json: json!({"lessonIds":[lesson.id]}).to_string(),
-            progress_total: 1,
-        })
-        .await?;
-    JobStore::new(db.clone()).claim(&job.id).await?;
-    let runtimes = crate::embedded_runtime::BuiltinRuntimes::for_tests();
-    let prepared = crate::lesson_progress::run(
-        &JobContext::detached(&JobStore::new(db.clone()), &job.id).await?,
-        crate::lesson_drafts::run(
-            &db,
-            &jobs,
-            &job.id,
-            &lesson.id,
-            generation::prepare_lesson(
-                &llm,
-                &runtimes,
-                &program,
-                lesson,
-                &CoursePlan::blank(&program),
-            ),
-        ),
-    )
-    .await?;
-
-    assert_eq!(prepared.blocks.len(), LESSON_SHAPE.len());
-    for block in &prepared.blocks {
-        assert!(!block.body.contains("SourceIndex"), "{}", block.body);
-        assert!(!block.body.contains("Citations:"), "{}", block.body);
-    }
-    let later = llm
-        .later
-        .lock()
-        .map_err(|_| AppError::InternalError("fixture lock".into()))?;
-    assert!(!later.is_empty(), "review and verification made no calls");
-    let injected = [
-        "(SourceIndex:",
-        "Citations:",
-        "\"A randomized comparison isolates the intervention.\" (SourceIndex",
-        "\"A controlled experiment states its limitations.\" (SourceIndex",
-    ];
-    let leak = later.iter().find_map(|prompt| {
-        injected.iter().find_map(|needle| {
-            prompt.find(needle).map(|at| {
-                let mut from = at.saturating_sub(40);
-                while !prompt.is_char_boundary(from) {
-                    from -= 1;
-                }
-                let mut to = (at + 40).min(prompt.len());
-                while !prompt.is_char_boundary(to) {
-                    to += 1;
-                }
-                let head: String = prompt.chars().take(80).collect();
-                format!("{head:?} holds {:?}", &prompt[from..to])
-            })
-        })
-    });
-    assert!(
-        leak.is_none(),
-        "a prompt after the draft still holds the citation apparatus: {}",
-        leak.unwrap_or_default()
-    );
-    Ok(())
 }

@@ -1,5 +1,6 @@
 //! The concerns a lesson's reviewer reports, and the section kinds each applies to.
 use crate::dto::LearningBlockKind;
+use lattice_core::application::services::model_contract::shape::Vocabulary;
 use serde::{Deserialize, Serialize};
 
 /// A defect a lesson's reviewer owns; every other check is left to other checks.
@@ -36,15 +37,6 @@ impl LessonConcern {
             .map(Self::id)
             .collect::<Vec<_>>()
             .join(", ")
-    }
-
-    /// The ids of the concerns `keep` accepts, in the order of `ALL`.
-    pub(crate) fn ids_where(keep: fn(Self) -> bool) -> Vec<&'static str> {
-        Self::ALL
-            .into_iter()
-            .filter(|concern| keep(*concern))
-            .map(Self::id)
-            .collect()
     }
 
     /// The concern's serialized name.
@@ -85,18 +77,6 @@ impl LessonConcern {
         }
     }
 
-    /// Whether a section's check can name this concern.
-    pub(crate) fn in_checks(self) -> bool {
-        LearningBlockKind::ALL
-            .iter()
-            .any(|kind| self.applies_to(kind))
-    }
-
-    /// Whether the concern is reported as an issue, outside every section.
-    pub(crate) fn in_issues(self) -> bool {
-        matches!(self, Self::Promise | Self::LaterLesson | Self::Workload)
-    }
-
     /// What the reviewer is asked about this concern.
     pub(crate) fn asks(self) -> &'static str {
         match self {
@@ -110,4 +90,32 @@ impl LessonConcern {
             Self::Workload => "A specific objective cannot be scoped to the stated session, with every preceding lesson taken as known; a topic title alone is not a workload defect.",
         }
     }
+}
+
+/// The concerns an issue, outside every section, may name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct IssueConcern(pub(super) LessonConcern);
+
+impl Vocabulary for IssueConcern {
+    const WORDS: &'static [(&'static str, Self)] = &[
+        ("promise", Self(LessonConcern::Promise)),
+        ("later_lesson", Self(LessonConcern::LaterLesson)),
+        ("workload", Self(LessonConcern::Workload)),
+    ];
+}
+
+/// The concerns a section's defect may name: those some section kind takes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct CheckConcern(pub(super) LessonConcern);
+
+impl Vocabulary for CheckConcern {
+    const WORDS: &'static [(&'static str, Self)] = &[
+        ("worked_example", Self(LessonConcern::WorkedExample)),
+        ("exercise", Self(LessonConcern::Exercise)),
+        ("answer_given_away", Self(LessonConcern::AnswerGivenAway)),
+        ("check_answer", Self(LessonConcern::CheckAnswer)),
+        ("near_miss", Self(LessonConcern::NearMiss)),
+        ("promise", Self(LessonConcern::Promise)),
+        ("later_lesson", Self(LessonConcern::LaterLesson)),
+    ];
 }

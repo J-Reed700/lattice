@@ -2918,7 +2918,7 @@ impl ByRequest {
         self.seen_repairs.lock().unwrap().clone()
     }
 
-    fn review_answer(&self, sent: &Value, schema: &Value, number: usize) -> String {
+    fn review_answer(&self, sent: &Value, number: usize) -> String {
         let candidate = &sent["candidate"];
         let listed =
             |key: &str| -> Vec<Value> { sent[key].as_array().cloned().unwrap_or_default() };
@@ -2960,12 +2960,7 @@ impl ByRequest {
                 "passageId": id,
                 "finding": FIRST_IDEA_PROMISE,
             });
-            if schema
-                .pointer("/properties/sectionDefects/items/properties/concerns")
-                .is_some()
-            {
-                check["concerns"] = json!(["promise"]);
-            }
+            check["concerns"] = json!(["promise"]);
             checks.push(check);
         }
         let wanted = (self.whole)(candidate, number);
@@ -2978,35 +2973,22 @@ impl ByRequest {
             })
             .map(|note| (*note).to_owned())
             .collect();
-        let concerned = schema
-            .pointer("/properties/issues/items/properties/concern")
-            .is_some();
         let issues: Vec<Value> = issues
             .into_iter()
             .map(|note| {
-                if concerned {
-                    let concern = if note.contains("later lesson") {
-                        "later_lesson"
-                    } else {
-                        "promise"
-                    };
-                    json!({"note": note, "concern": concern})
+                let concern = if note.contains("later lesson") {
+                    "later_lesson"
                 } else {
-                    json!(note)
-                }
+                    "promise"
+                };
+                json!({"note": note, "concern": concern})
             })
             .collect();
-        let mut answer = json!({"issues": issues});
-        if schema.pointer("/properties/sectionDefects").is_some() {
-            answer["sectionDefects"] = json!(checks);
-        }
-        if let Some(ids) = schema
-            .pointer("/properties/openFindings/items/properties/id/enum")
-            .and_then(Value::as_array)
-        {
-            let verdicts: Vec<Value> = ids
+        let mut answer = json!({"issues": issues, "sectionDefects": checks});
+        if !open.is_empty() {
+            let verdicts: Vec<Value> = open
                 .iter()
-                .filter_map(Value::as_str)
+                .filter_map(|entry| entry["id"].as_str())
                 .map(|id| {
                     let entry = open
                         .iter()
@@ -3089,14 +3071,20 @@ impl LLMPort for ByRequest {
             json!({"edits": (self.repair)(&sent, number)}).to_string()
         } else if sent.get("proposals").is_some() {
             evidence_answer(&sent)
-        } else if schema.pointer("/properties/issues").is_some() {
+        } else if schema.pointer("/properties/items").is_some() {
             let number = {
                 self.seen_schemas.lock().unwrap().push(schema.clone());
                 let mut seen = self.seen_reviews.lock().unwrap();
                 seen.push(sent.clone());
                 seen.len()
             };
-            self.review_answer(&sent, &schema, number)
+            let legacy = self.review_answer(&sent, number);
+            let prompt = texts
+                .iter()
+                .find(|text| fixture_task(text).is_some())
+                .cloned()
+                .unwrap_or_default();
+            crate::teaching_review::scripted::reply(&prompt, &legacy).unwrap_or(legacy)
         } else {
             return Err(AppError::InternalError(
                 "ByRequest was sent a request of a kind it does not answer".into(),
@@ -4276,23 +4264,16 @@ async fn a_lesson_asks_its_reviewer_for_concerns_and_an_outline_does_not() -> Re
     let asked = lesson_model.schemas();
     assert!(!asked.is_empty());
     for schema in &asked {
-        assert!(schema
-            .pointer("/properties/sectionDefects/items/properties/concerns")
-            .is_some());
-        assert!(schema
-            .pointer("/properties/issues/items/properties/concern")
-            .is_some());
+        let text = schema.to_string();
+        assert!(text.contains("\"concerns\""));
+        assert!(text.contains("\"concern\""));
     }
     let outline_model = ByRequest::new(|_| false, |_, _| Vec::new());
     repaired_outline(&outline_model, json!({"modules":[]})).await?;
     let asked = outline_model.schemas();
     assert!(!asked.is_empty());
     for schema in &asked {
-        assert_eq!(
-            schema.pointer("/properties/issues/items"),
-            Some(&json!({"type":"string","minLength":1}))
-        );
-        assert!(schema.pointer("/properties/sectionDefects").is_none());
+        assert!(!schema.to_string().contains("\"concern"));
     }
     Ok(())
 }

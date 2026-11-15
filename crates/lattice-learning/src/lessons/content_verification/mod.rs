@@ -22,10 +22,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
-mod apparatus;
-#[cfg(test)]
-use apparatus::strip_citation_apparatus;
-pub(crate) use apparatus::strip_draft_apparatus;
 mod right_choice;
 pub(crate) use right_choice::clear_right_choice_reasons;
 mod citations;

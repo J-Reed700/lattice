@@ -109,7 +109,7 @@ impl Classes {
                             .filter(|statement| text.contains(**statement))
                             .map(|statement| json!({"sentenceId":sentence_id(passage, statement),"statement":statement}))
                             .collect();
-                        json!({"index":unit["index"],"claims":claims,"nonFactualReason":""})
+                        json!({"of":unit["id"],"claims":claims,"nonFactualReason":""})
                     })
                     .collect(),
             )
@@ -120,7 +120,7 @@ impl Classes {
             let Some(Value::Object(statements)) = fixture_task(prompt) else {
                 panic!("a JSON task");
             };
-            let answer: serde_json::Map<String, Value> = statements
+            let answer: Vec<Value> = statements
                 .iter()
                 .map(|(id, statement)| {
                     let statement = statement.as_str().unwrap_or_default();
@@ -129,10 +129,10 @@ impl Classes {
                         .iter()
                         .find(|(part, _)| statement.contains(part))
                         .map_or("sourced", |(_, class)| *class);
-                    (id.clone(), json!(class))
+                    json!({"of": id, "class": class})
                 })
                 .collect();
-            return Ok(Value::Object(answer).to_string());
+            return Ok(json!({"entries": answer}).to_string());
         }
         if let Some((_, statement)) = prompt.split_once("\n\nExplanatory statement: ") {
             self.asked.lock().unwrap().push("consistency");

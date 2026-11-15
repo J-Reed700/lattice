@@ -98,9 +98,7 @@ pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
         assert_schema_request_holds_the_shape(request, schema);
     }
     let (system, user) = fixture_messages(request);
-    if system.starts_with(crate::lessons::teaching::contract::SYSTEM)
-        || system.starts_with(crate::lessons::teaching::contract::confirm::SYSTEM)
-    {
+    if crate::lessons::teaching::contract::scripted::ask_of(system, user).is_some() {
         return Vec::new();
     }
     if let Some(batch) = fixture_batch(user) {
@@ -127,7 +125,34 @@ pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
         .and_then(|call| call.input["unit"].as_u64())
         .map(|unit| format!("\n\nMapped unit: {unit}"))
         .unwrap_or_default();
-    vec![format!("{system}{mapped}\n\n{user}{correction}")]
+    let extracted = request
+        .contract()
+        .filter(|call| call.id == inventory::InventoryExtraction::ID)
+        .map(|call| {
+            let indices: Vec<String> = call.input["sections"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|section| section["index"].as_u64())
+                .map(|index| index.to_string())
+                .collect();
+            format!("\n\nExtracted sections: {}", indices.join(","))
+        })
+        .unwrap_or_default();
+    vec![format!("{system}{mapped}{extracted}\n\n{user}{correction}")]
+}
+
+/// The sections an extraction prompt of the fixture asked about.
+pub(crate) fn extracted_sections_of(prompt: &str) -> Vec<usize> {
+    prompt
+        .split("\n\n")
+        .find_map(|chunk| chunk.strip_prefix("Extracted sections: "))
+        .map(|list| {
+            list.split(',')
+                .filter_map(|index| index.parse().ok())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The section a coverage mapping prompt of the fixture was asked about.
@@ -156,19 +181,6 @@ fn fixture_correction(request: &CompletionRequest) -> String {
         .unwrap_or_default()
 }
 
-/// What a fixture model answers a lesson's check against its course plan
-/// with, unless a test routes that call itself (`teaching::contract_tests`).
-pub(crate) const CONTRACT_NOTHING: &str =
-    "{\"planned\":[],\"usedBeforeTaught\":[],\"contradictions\":[],\"unseen\":[]}";
-
-/// What a fixture model answers a confirming read of the lesson's check with:
-/// not taught, and an item belongs in no part in particular.
-pub(crate) const CONFIRM_PLANNED_NOTHING: &str =
-    "{\"taught\":false,\"quote\":\"\",\"belongs\":\"\"}";
-pub(crate) const CONFIRM_USE_NOTHING: &str =
-    "{\"asked\":true,\"taught\":false,\"where\":\"thisLesson\",\"quote\":\"\"}";
-pub(crate) const CONFIRM_CLASH_NOTHING: &str = "{\"case\":\"\",\"contradict\":false}";
-
 /// The fixture's replies to [`fixture_prompts`], answered in the typed
 /// protocol: one batched reply, a check's verdict as its last line, or the
 /// reply text unchanged.
@@ -180,23 +192,12 @@ pub(crate) fn fixture_completion(
         return CompletionResponse::from_text(crate::lessons::structured_call::FIXTURE_DRAFT);
     }
     let (system, user) = fixture_messages(request);
-    if system.starts_with(crate::lessons::teaching::contract::confirm::SYSTEM) {
-        return CompletionResponse::from_text(
-            if user.contains(crate::lessons::teaching::contract::confirm::PLANNED_TASK) {
-                CONFIRM_PLANNED_NOTHING
-            } else if user.contains(crate::lessons::teaching::contract::confirm::CLASH_TASK) {
-                CONFIRM_CLASH_NOTHING
-            } else {
-                CONFIRM_USE_NOTHING
-            },
-        );
-    }
-    if system.starts_with(crate::lessons::teaching::contract::SYSTEM) {
+    if let Some(ask) = crate::lessons::teaching::contract::scripted::ask_of(system, user) {
         let text = replies.concat();
         return CompletionResponse::from_text(if text.is_empty() {
-            CONTRACT_NOTHING
+            crate::lessons::teaching::contract::scripted::nothing(ask, user)
         } else {
-            text.as_str()
+            text
         });
     }
     let text = if let Some(batch) = fixture_batch(user) {
@@ -573,13 +574,8 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
             panic!("a JSON task");
         };
         return Some(
-            Value::Object(
-                statements
-                    .keys()
-                    .map(|id| (id.clone(), json!("sourced")))
-                    .collect(),
-            )
-            .to_string(),
+            json!({"entries": statements.keys().map(|id| json!({"of": id, "class": "sourced"})).collect::<Vec<_>>()})
+                .to_string(),
         );
     }
     if prompt.starts_with("Audit inventory fidelity.") {
@@ -598,9 +594,8 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
             let passages = v["passages"].as_array().unwrap();
             let passage = passages.iter().find(|p|p["field"]=="/body" || p["field"]=="/explanation").unwrap();
             let quote = passage_text(passage);
-            let index = v["index"].as_u64().unwrap() as usize;
             let statement = if quote.contains(BAD) { BAD } else if quote.contains(GOOD) { GOOD } else if quote.contains(FIXED) { FIXED } else { quote.as_str() };
-            json!({"index":index,"claims":[{"sentenceId":sentence_id(passage, statement),"statement":statement}],"nonFactualReason":""})
+            json!({"of":v["id"],"claims":[{"sentenceId":sentence_id(passage, statement),"statement":statement}],"nonFactualReason":""})
         }).collect::<Vec<_>>()).to_string());
     }
     if prompt.starts_with("Audit claim coverage independently.") {
@@ -645,9 +640,7 @@ impl Model {
             self.extracted_sections
                 .lock()
                 .unwrap()
-                .push(serde_json::from_value(
-                    fixture_task(prompt).unwrap()["requestedIndices"].clone(),
-                )?);
+                .push(extracted_sections_of(prompt));
         }
         if prompt.starts_with("Audit claim coverage independently.") {
             let index = mapped_unit(prompt).unwrap();
@@ -694,14 +687,13 @@ impl Model {
         }
         if prompt.starts_with("Review instructional quality.") {
             let data = fixture_task(prompt).unwrap();
-            let mut answer = json!({"issues":[],"sectionDefects":[]});
-            if let Some(open) = data["openFindings"].as_array() {
-                answer["openFindings"] = open
-                    .iter()
-                    .map(|finding| json!({"id":finding["id"],"quote":"","verdict":"resolved"}))
-                    .collect();
-            }
-            return Ok(answer.to_string());
+            let resolved: Vec<Value> = data["openFindings"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|finding| json!({"entry":{"kind":"resolved","openFinding":finding["id"]}}))
+                .collect();
+            return Ok(json!({"items":resolved}).to_string());
         }
         if prompt.starts_with("Source passages:") {
             if !prompt.contains(CORRECTION_LEAD) {
@@ -934,9 +926,6 @@ mod repair_request_tests;
 
 #[path = "born_of_repair_tests.rs"]
 mod born_of_repair_tests;
-
-#[path = "apparatus_tests.rs"]
-mod apparatus_tests;
 
 #[path = "right_choice_tests.rs"]
 mod right_choice_tests;
@@ -1435,7 +1424,7 @@ async fn a_contradicted_claim_gets_a_correction_then_is_taken_out() -> Result<()
                     .map(|statement| json!({"sentenceId":sentence_id(passage, statement),"statement":statement}))
                     .collect();
                 return Ok(inventory::fixture_response(vec![
-                    json!({"index":0,"claims":claims,"nonFactualReason":""}),
+                    json!({"of":unit["id"],"claims":claims,"nonFactualReason":""}),
                 ])
                 .to_string());
             }
@@ -2024,7 +2013,7 @@ async fn an_open_fence_is_no_example_and_the_closed_ones_still_run() -> Result<(
 async fn unlabeled_data_and_code_are_labeled_without_changing_their_bytes() -> Result<()> {
     let runtimes = BuiltinRuntimes::for_tests();
     use crate::lessons::course_generation_tests::ScriptedModel;
-    let model=ScriptedModel {outputs:Mutex::new(vec![json!({"fences":[{"id":"block-0-fence-0","language":"text"},{"id":"block-0-fence-1","language":"javascript"}]}).to_string()].into()),prompts:Mutex::new(Vec::new())};
+    let model=ScriptedModel {outputs:Mutex::new(vec![json!({"entries":[{"of":"f1","language":"text"},{"of":"f2","language":"javascript"}]}).to_string()].into()),prompts:Mutex::new(Vec::new())};
     let tree = "project/\n└── main.rs\n";
     let code = "console.log(' a  b ');\n";
     let body = format!("Directory tree:\n```\n{tree}```\nRunnable example:\n```\n{code}```\n");
@@ -2051,7 +2040,7 @@ async fn prompt_snapshot_fence_labels() -> Result<()> {
     use crate::lessons::course_generation_tests::{RequestLog, ScriptedModel};
     let inner = ScriptedModel {
         outputs: Mutex::new(
-            vec![json!({"fences":[{"id":"block-0-fence-0","language":"text"},{"id":"block-0-fence-1","language":"javascript"}]}).to_string()].into(),
+            vec![json!({"entries":[{"of":"f1","language":"text"},{"of":"f2","language":"javascript"}]}).to_string()].into(),
         ),
         prompts: Mutex::new(Vec::new()),
     };
@@ -2069,7 +2058,7 @@ async fn an_unclosed_fence_is_left_as_written_and_a_closed_one_elsewhere_is_stil
     use crate::lessons::course_generation_tests::ScriptedModel;
     let model = ScriptedModel {
         outputs: Mutex::new(
-            vec![json!({"fences":[{"id":"block-1-fence-0","language":"text"}]}).to_string()].into(),
+            vec![json!({"entries":[{"of":"f1","language":"text"}]}).to_string()].into(),
         ),
         prompts: Mutex::new(Vec::new()),
     };
@@ -2098,17 +2087,22 @@ async fn invalid_fence_classification_cannot_hide_an_unexecuted_program() {
     use crate::lessons::course_generation_tests::ScriptedModel;
     let lesson = json!({"blocks":[{"kind":"worked_example","body":"```\nconsole.log(42);\n```"}],"questions":[]});
     for response in [
-        json!({"fences":[]}),
-        json!({"fences":[{"id":"invented","language":"text"}]}),
-        json!({"fences":[{"id":"block-0-fence-0","language":"invalid-label"}]}),
+        json!({"entries":[]}),
+        json!({"entries":[{"of":"f9","language":"text"}]}),
+        json!({"entries":[{"of":"f1","language":"invalid-label"}]}),
     ] {
         let model = ScriptedModel {
-            outputs: Mutex::new(vec![response.to_string()].into()),
+            outputs: Mutex::new(vec![response.to_string(), response.to_string()].into()),
             prompts: Mutex::new(Vec::new()),
         };
-        assert!(normalize_example_fences(&model, lesson.to_string())
-            .await
-            .is_err());
+        let kept: Value = serde_json::from_str(
+            &normalize_example_fences(&model, lesson.to_string())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(kept["blocks"][0]["body"], "```\nconsole.log(42);\n```");
+        assert!(execution::observe(&runtimes, &kept).await.is_err());
     }
     assert!(execution::observe(&runtimes, &lesson).await.is_err());
 }

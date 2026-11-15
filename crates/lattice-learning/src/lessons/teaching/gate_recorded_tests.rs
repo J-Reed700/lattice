@@ -2,12 +2,12 @@
 //! reviewer's finding of it.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
-use crate::content_verification::tests::{fixture_completion, fixture_task, CONTRACT_NOTHING};
+use crate::content_verification::tests::{fixture_completion, fixture_task};
+use contract::scripted::{ask_of, Ask, Script, CONTRACT_NOTHING};
 use crate::lessons::course_generation_tests::{clean_review, review_reply, ScriptedModel};
 use crate::reference_collection::ReferenceCollection;
 use crate::review_findings::Held;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-use std::collections::VecDeque;
 use std::sync::Mutex;
 
 const EXCERPT: &str = "This saved reference describes the exact behavior of the example tool.";
@@ -21,7 +21,7 @@ const REVIEWER_ONLY: &str =
 /// from `plan` and the evidence gate's requests kept.
 struct Routed {
     inner: ScriptedModel,
-    plan: Mutex<VecDeque<String>>,
+    plan: Script,
     gate: Mutex<Vec<Value>>,
     plan_asked: Mutex<Vec<Value>>,
     clash_reply: Mutex<String>,
@@ -33,21 +33,16 @@ impl LLMPort for Routed {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let (system, user) = crate::lessons::structured_call::task_messages(request);
         let drafting = crate::lessons::structured_call::is_draft_request(request);
-        if !drafting && system.starts_with(contract::SYSTEM) {
+        let ask = ask_of(system, user);
+        if !drafting && matches!(ask, Some(Ask::Planned | Ask::Find | Ask::Reports)) {
             if let Ok(asked) = serde_json::from_str::<Value>(user) {
                 self.plan_asked.lock().unwrap().push(asked);
             }
-            let reply = self
-                .plan
-                .lock()
-                .unwrap()
-                .pop_front()
-                .unwrap_or_else(|| CONTRACT_NOTHING.to_owned());
+            let reply = self.plan.reply(ask.unwrap_or(Ask::Find), user);
             return Ok(fixture_completion(request, vec![reply]));
         }
         if !drafting
-            && system.starts_with(contract::confirm::SYSTEM)
-            && user.contains(contract::confirm::CLASH_TASK)
+            && ask == Some(Ask::ConfirmClash)
         {
             *self.clash_asked.lock().unwrap() += 1;
             let reply = self.clash_reply.lock().unwrap().clone();
@@ -83,7 +78,7 @@ fn routed(outputs: Vec<String>, plan: Vec<String>) -> Routed {
             outputs: Mutex::new(outputs.into()),
             prompts: Mutex::new(Vec::new()),
         },
-        plan: Mutex::new(plan.into()),
+        plan: Script::new(plan),
         gate: Mutex::new(Vec::new()),
         plan_asked: Mutex::new(Vec::new()),
         clash_reply: Mutex::new(

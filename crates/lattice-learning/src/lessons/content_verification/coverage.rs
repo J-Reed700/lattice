@@ -106,7 +106,7 @@ fn fidelity_request(unit: &Value, passage: &Value) -> Value {
         .as_array()
         .into_iter()
         .flatten()
-        .map(|claim| json!({"id":claim["id"],"statement":claim["statement"]}))
+        .map(|claim| json!({"statement":claim["statement"]}))
         .collect();
     let mut request =
         json!({"targetPassage":claim_sentences::listed(passage),"inventory":inventory});

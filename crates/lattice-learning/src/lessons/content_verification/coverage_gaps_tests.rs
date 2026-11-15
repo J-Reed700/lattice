@@ -92,7 +92,11 @@ impl JudgingModel {
                     .iter()
                     .any(|passage| passage_text(passage) == self.proposed_passage);
                 if exercise {
-                    response["units"][format!("unit-{}", unit["index"])] = json!({"claims":[],"nonFactualReason":"An exercise instruction: the lesson's own task."});
+                    for entry in response["entries"].as_array_mut().unwrap() {
+                        if entry["of"] == unit["id"] {
+                            *entry = json!({"of":unit["id"],"claims":[],"nonFactualReason":"An exercise instruction: the lesson's own task."});
+                        }
+                    }
                 }
             }
             return Ok(response.to_string());

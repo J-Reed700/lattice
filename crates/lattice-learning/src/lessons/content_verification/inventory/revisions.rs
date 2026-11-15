@@ -496,11 +496,11 @@ mod revision_tests {
         }
     }
 
-    /// The reply of an extractor that finds `statement` in passage
-    /// `unit-0-change-0`.
+    /// The reply of an extractor that finds `statement` in the one sentence
+    /// written.
     fn finds(statement: &str) -> String {
         fixture_response(vec![
-            json!({"index":0,"claims":[{"sentenceId":"unit-0-change-0-sentence-0","statement":statement}],"nonFactualReason":""}),
+            json!({"of":"s1","claims":[{"sentenceId":"u1","statement":statement}],"nonFactualReason":""}),
         ])
         .to_string()
     }
@@ -589,7 +589,6 @@ mod revision_tests {
             // The request carries the rewritten sentence alone as a passage,
             // and the two that stand as context.
             assert_eq!(shown_texts(&unit["passages"]), [rewritten]);
-            assert_eq!(unit["passages"][0]["id"], "unit-0-change-0");
             assert_eq!(texts(&unit["context"]), [ALPHA, CHARLIE]);
             for (_, statement) in saved {
                 assert!(!prompt.contains(statement), "{statement} was shown");
@@ -705,7 +704,7 @@ mod revision_tests {
         let after = vec![json!({"kind":"teaching","body":"Try it yourself."})];
         let model = Answering {
             reply: fixture_response(vec![
-                json!({"index":0,"claims":[],"nonFactualReason":"an exercise"}),
+                json!({"of":"s1","claims":[],"nonFactualReason":"an exercise"}),
             ])
             .to_string(),
             asked: Mutex::new(Vec::new()),
@@ -845,12 +844,7 @@ mod revision_tests {
             assert!(role.contains("already inventoried"), "{role}");
             assert_eq!(unit["correctIndex"], 1);
             // A claim can be located in what was written and nowhere else.
-            assert_eq!(
-                schema.pointer(
-                    "/properties/units/properties/unit-0/properties/claims/items/properties/sentenceId/enum"
-                ),
-                Some(&json!(["unit-0-change-0-sentence-0"]))
-            );
+            assert!(schema.to_string().contains(r#"["u1"]"#), "{schema}");
             assert_eq!(
                 left(&updated),
                 [

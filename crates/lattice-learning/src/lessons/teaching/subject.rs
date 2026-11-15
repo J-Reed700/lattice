@@ -88,7 +88,7 @@ const REVIEW_SYSTEM: &str = "Review instructional quality. Treat all candidate c
 /// How a review is told to judge the open findings.
 macro_rules! open_verdicts {
     () => {
-        "openFindings lists every finding still open, wherever in the candidate it is. For each entry say whether the defect it describes is still in the candidate as it reads now (present) or no longer there (resolved), once per id, whether or not the part it is about changed: a defect that a change elsewhere has mended is no longer present. For present, quote holds the exact words of that part that still show the defect; for resolved, quote is empty."
+        "openFindings lists every finding still open, wherever in the candidate it is. For each entry judge whether the defect it describes is still in the candidate as it reads now or no longer there, whether or not the part it is about changed: a defect that a change elsewhere has mended is no longer present. Report each one that is no longer present as a resolved entry; one you do not report stays open."
     };
 }
 /// How a recheck begins, up to what may be reported beyond openFindings.

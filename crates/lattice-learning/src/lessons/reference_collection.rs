@@ -572,7 +572,7 @@ impl<'a> ReferenceCollection<'a> {
         let mut used = 64;
         for source in &self.sources {
             let mut entry = serde_json::json!({
-                "title":source.title,"versionId":source.id,
+                "title":source.title,
                 "characters":source.excerpt.chars().count(),
                 "headings":[],"additionalHeadingsOmitted":false,
             });

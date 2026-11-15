@@ -425,30 +425,35 @@ pub(super) fn usage(mut response: CompletionResponse) -> CompletionResponse {
     response
 }
 
-/// A claim or passage of a rendered request: `(label, text)`.
+/// A claim or a sentence of a rendered request: `(handle, text)`.
 pub(super) type Labelled = (String, String);
 
-/// The request's claims as `(label, statement)` and passages as
-/// `(label, text)`, read back from the rendered task.
+fn is_handle(label: &str, prefix: char) -> bool {
+    label
+        .strip_prefix(prefix)
+        .is_some_and(|digits| !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// The request's claims as `(handle, statement)` and the sentences of its
+/// passages and fetched pages as `(handle, sentence)`, read back from the
+/// rendered task.
 pub(super) fn parse_request(user_text: &str) -> (Vec<Labelled>, Vec<Labelled>) {
-    let lines: Vec<&str> = user_text.lines().collect();
     let mut claims = Vec::new();
-    let mut passages = Vec::new();
-    for (index, line) in lines.iter().enumerate() {
+    let mut sentences = Vec::new();
+    for line in user_text.lines() {
         let Some(rest) = line.strip_prefix('[') else {
             continue;
         };
         let Some((label, tail)) = rest.split_once("] ") else {
             continue;
         };
-        if label.starts_with('C') {
+        if is_handle(label, 'c') {
             claims.push((label.to_owned(), tail.to_owned()));
-        } else if label.starts_with('P') {
-            let text = lines.get(index + 1).copied().unwrap_or_default();
-            passages.push((label.to_owned(), text.to_owned()));
+        } else if is_handle(label, 'u') {
+            sentences.push((label.to_owned(), tail.to_owned()));
         }
     }
-    (claims, passages)
+    (claims, sentences)
 }
 
 /// The statements of the claims a request carried (its section text holds
@@ -461,40 +466,43 @@ pub(super) fn sent_claims(user_text: &str) -> Vec<String> {
         .collect()
 }
 
-/// An answer giving each claim `verdict(statement, passages)`, which
-/// returns `{verdict, reason?, passagesUsed?}`.
+/// The handle of the sentence reading `text`.
+pub(super) fn handle_of_sentence(sentences: &[Labelled], text: &str) -> String {
+    sentences
+        .iter()
+        .find(|(_, sentence)| sentence == text)
+        .map(|(handle, _)| handle.clone())
+        .unwrap_or_default()
+}
+
+/// An answer giving each claim `verdict(statement, sentences)`, which
+/// returns `{verdict, reason?, sentencesUsed?}`.
 pub(super) fn answer_each(
     request: &CompletionRequest,
     verdict: &dyn Fn(&str, &[Labelled]) -> Value,
 ) -> String {
-    let (claims, passages) = parse_request(request.user_text());
-    let verdicts: Vec<Value> = claims
+    let (claims, sentences) = parse_request(request.user_text());
+    let entries: Vec<Value> = claims
         .iter()
-        .map(|(label, statement)| {
-            let mut answer = verdict(statement, &passages);
-            answer["claim"] = json!(label);
+        .map(|(handle, statement)| {
+            let mut answer = verdict(statement, &sentences);
+            answer["of"] = json!(handle);
             if answer.get("reason").is_none() {
                 answer["reason"] = json!("judged on the passages");
             }
-            if answer.get("passagesUsed").is_none() {
-                answer["passagesUsed"] = json!([]);
+            if answer.get("sentencesUsed").is_none() {
+                answer["sentencesUsed"] = json!([]);
             }
             answer
         })
         .collect();
-    json!({ "verdicts": verdicts }).to_string()
+    json!({ "entries": entries }).to_string()
 }
 
-/// "supported", quoting the first passage's first sentence.
-pub(super) fn supports(_: &str, passages: &[Labelled]) -> Value {
-    let (label, text) = passages.first().cloned().unwrap_or_default();
-    let quote = text
-        .split_inclusive('.')
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .to_owned();
-    json!({"verdict": "supported", "passagesUsed": [{"passage": label, "quote": quote}]})
+/// "supported", citing the first sentence shown.
+pub(super) fn supports(_: &str, sentences: &[Labelled]) -> Value {
+    let (handle, _) = sentences.first().cloned().unwrap_or_default();
+    json!({"verdict": "supported", "sentencesUsed": [handle]})
 }
 
 pub(super) struct Harness {
@@ -649,7 +657,7 @@ async fn a_contradiction_on_a_verified_claim_is_a_dispute_that_blocks_publishing
     let harness = Harness::new(vec![verified("a", BOILS)]);
     let llm = ScriptedVerifier::answering(BIG, |_, passages| {
         json!({"verdict": "contradicted", "reason": "the handbook gives another figure",
-               "passagesUsed": [{"passage": passages[0].0, "quote": "So the handbook says."}]})
+               "sentencesUsed": [handle_of_sentence(passages, "So the handbook says.")]})
     });
 
     let outcome = harness.audit(&llm, None).await.unwrap();
@@ -711,13 +719,13 @@ async fn general_knowledge_is_audited_for_contradiction_only() {
 #[tokio::test]
 async fn a_verdict_from_memory_counts_as_could_not_verify() {
     let harness = Harness::new(vec![verified("a", BOILS), general_knowledge("g", SALT)]);
-    let llm = ScriptedVerifier::answering(BIG, |statement, passages| {
+    let llm = ScriptedVerifier::answering(BIG, |statement, _| {
         if statement == SALT {
-            // No passage to quote: a contradiction from memory.
+            // No sentence to cite: a contradiction from memory.
             json!({"verdict": "contradicted", "reason": "everyone knows"})
         } else {
             json!({"verdict": "supported", "reason": "I recall it",
-                   "passagesUsed": [{"passage": passages[0].0, "quote": "Water boils at 90 °C."}]})
+                   "sentencesUsed": ["u9999"]})
         }
     });
 

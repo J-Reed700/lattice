@@ -35,19 +35,22 @@ struct Mended<'a>(&'a ByRequest);
 impl LLMPort for Mended<'_> {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let mut response = self.0.complete(request).await?;
+        let task = crate::content_verification::tests::fixture_prompts(request)
+            .iter()
+            .find_map(|text| crate::content_verification::tests::fixture_task(text));
         let judges = request
             .schema()
             .map(|schema| schema.as_json())
-            .is_some_and(|schema| schema.pointer("/properties/openFindings").is_some());
+            .is_some_and(|schema| schema.pointer("/properties/items").is_some());
         let Ok(Value::Object(mut answer)) = serde_json::from_str::<Value>(&response.text) else {
             return Ok(response);
         };
         if !judges {
             return Ok(response);
         }
-        if let Some(Value::Array(verdicts)) = answer.get_mut("openFindings") {
-            for verdict in verdicts {
-                verdict["verdict"] = json!("resolved");
+        if let (Some(task), Some(Value::Array(items))) = (task, answer.get_mut("items")) {
+            for finding in task["openFindings"].as_array().into_iter().flatten() {
+                items.push(json!({"entry":{"kind":"resolved","openFinding":finding["id"]}}));
             }
         }
         let mended = CompletionResponse::from_text(Value::Object(answer).to_string());

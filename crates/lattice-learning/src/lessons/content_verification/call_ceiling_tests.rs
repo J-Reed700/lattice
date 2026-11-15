@@ -113,7 +113,8 @@ fn fault(prompt: &str, section: usize, sentence: &str) -> String {
         })
         .unwrap();
     let defect = json!({"passageId":passage["id"],"finding":"This step promises that the tutor runs the learner's code and reports whether the tests pass.","concerns":["promise"]});
-    json!({"issues":[],"sectionDefects":[defect]}).to_string()
+    let legacy = json!({"issues":[],"sectionDefects":[defect]}).to_string();
+    crate::teaching_review::scripted::reply(prompt, &legacy).unwrap_or(legacy)
 }
 
 #[async_trait::async_trait]
