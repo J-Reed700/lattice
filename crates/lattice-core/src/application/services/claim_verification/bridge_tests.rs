@@ -316,12 +316,7 @@ async fn a_reply_that_cannot_be_read_is_asked_for_once_more_and_then_left_unjudg
 
 #[tokio::test]
 async fn a_reply_cut_off_twice_is_left_unjudged() {
-    let cut = || {
-        Reply::Cut(
-            json!({"parts": [stated("A part.")], "reason": "Fine."})
-                .to_string(),
-        )
-    };
+    let cut = || Reply::Cut(json!({"parts": [stated("A part.")], "reason": "Fine."}).to_string());
     let llm = Scripted::new(vec![cut(), cut(), cut()]);
     let judgment = checker(&llm, CheckPolicy::Bridge)
         .check_bridge("A part.", &passages())
@@ -344,14 +339,18 @@ async fn a_stated_part_that_names_no_shown_passage_is_corrected_naming_the_part(
     ]);
     let read = judged(
         checker(&llm, CheckPolicy::Bridge)
-            .check_bridge("Quillet is a lexer shipped with the toolchain.", &passages())
+            .check_bridge(
+                "Quillet is a lexer shipped with the toolchain.",
+                &passages(),
+            )
             .await,
     );
     assert_eq!(read.parts[1].passage, Some(0));
     let sent = llm.sent();
     assert_eq!(sent.len(), 2);
     assert!(
-        conversation(&sent[1]).contains("The part \"It ships with the toolchain\" is marked stated"),
+        conversation(&sent[1])
+            .contains("The part \"It ships with the toolchain\" is marked stated"),
         "{}",
         conversation(&sent[1])
     );
@@ -599,8 +598,7 @@ async fn a_reason_past_600_characters_is_kept_whole() {
         .to_string();
     assert!(reason.chars().count() > 600);
     let llm = Scripted::new(vec![Reply::Text(
-        json!({"parts": [stated("Quillet is a lexer.")], "reason": reason})
-            .to_string(),
+        json!({"parts": [stated("Quillet is a lexer.")], "reason": reason}).to_string(),
     )]);
     let outcome = judged(
         checker(&llm, CheckPolicy::Bridge)

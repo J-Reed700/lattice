@@ -61,7 +61,7 @@ pub struct ProfileRequest<'a> {
 
 /// One claim of the request, as the model names it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct Claim {
+pub struct Claim {
     pub(super) index: usize,
     pub(super) statement: Told<String>,
 }
@@ -78,7 +78,7 @@ impl Kind for Claim {
 
 /// What is asked about the claims still open in one unit.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct Input {
+pub struct Input {
     pub(super) unit_title: Told<String>,
     pub(super) course_topic: Told<String>,
     pub(super) known_classes: Told<Vec<String>>,
@@ -281,7 +281,7 @@ impl Temporal {
 
 /// What the model decided for one claim.
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct Profile {
+pub struct Profile {
     pub(super) kind: ClaimKind,
     pub(super) subject: Subject,
     pub(super) temporal: Temporal,

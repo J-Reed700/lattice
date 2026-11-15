@@ -75,7 +75,7 @@ impl Kind for Flag {
 
 /// What is asked: the signals and the evidence, and the flags still open.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct Input {
+pub struct Input {
     pub(super) facts: Told<Value>,
     pub(super) flags: Vec<Flag>,
 }
@@ -304,7 +304,7 @@ impl Union for Publisher {
 
 /// What the model concluded about the source.
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct Conclusion {
+pub struct Conclusion {
     standing: Standing,
     publisher: Publisher,
     editorial: EditorialProcess,
@@ -355,7 +355,10 @@ impl Answered for SourceStanding {
         let offer = if listed.is_empty() {
             NO_FLAG_LEFT.to_owned()
         } else {
-            format!("Risk flags you may raise, each by its id:\n{}", listed.join("\n"))
+            format!(
+                "Risk flags you may raise, each by its id:\n{}",
+                listed.join("\n")
+            )
         };
         let task = format!(
             "{}\n\n{offer}\n\n{ANSWER_FORM}",
@@ -470,7 +473,10 @@ fn settled(signals: &ProvenanceSignals) -> Vec<(RiskFlag, Reason)> {
                 RiskFlag::SelfDeclaredOfficial,
                 Reason::new(
                     ReasonCode::SelfDescribedOfficial,
-                    format!("It describes itself as {}", page.self_description.join(", ")),
+                    format!(
+                        "It describes itself as {}",
+                        page.self_description.join(", ")
+                    ),
                 ),
             ));
         }
@@ -508,7 +514,7 @@ fn fallback(judging: &Judging<'_>, reason: Reason, flags: Vec<RiskFlag>) -> Stan
 
 /// How one request of the judgement ended.
 enum Attempt {
-    Judged(Judged<StandingAssessment>),
+    Judged(Box<Judged<StandingAssessment>>),
     /// The request, or the answer to it, did not fit the window.
     TooLarge(String),
 }
@@ -523,8 +529,8 @@ async fn attempt(
     let input = Input::of(facts, judging.signals);
     let plain = Plain;
     let metered = Metered::new(&plain);
-    let settled = ask::<SourceStanding>(llm, &metered, &mut Scope::for_question(), &input, call)
-        .await;
+    let settled =
+        ask::<SourceStanding>(llm, &metered, &mut Scope::for_question(), &input, call).await;
     let settled = match settled {
         Ok(settled) => settled,
         Err(error) if smaller_parts_may_succeed(&error) => {
@@ -547,11 +553,11 @@ async fn attempt(
             vec![],
         ),
     };
-    Ok(Attempt::Judged(Judged {
+    Ok(Attempt::Judged(Box::new(Judged {
         value,
         input_tokens: used.input,
         output_tokens: used.output,
-    }))
+    })))
 }
 
 /// Judges a source's standing from its signals and its content evidence.
@@ -592,7 +598,7 @@ pub async fn judge_standing(
     let mut shown = content.clone();
     loop {
         match attempt(llm, &judging, &shown, &call).await? {
-            Attempt::Judged(judged) => return Ok(judged),
+            Attempt::Judged(judged) => return Ok(*judged),
             Attempt::TooLarge(_) if shown.can_shrink() => shown.shrink(),
             Attempt::TooLarge(cause) => {
                 return Ok(Judged {

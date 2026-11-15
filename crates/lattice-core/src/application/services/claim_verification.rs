@@ -59,8 +59,8 @@ pub use classes::{
     CONSISTENCY_POLICY, CONSISTENCY_SYSTEM, KNOWLEDGE_CASE, KNOWLEDGE_POLICY, KNOWLEDGE_SYSTEM,
 };
 use reading::{
-    final_verdict, labeled_value, located_quote, normalize_reasoned_fields,
-    read_reasoned, strip_wrapping_quotes, without_field_emphasis,
+    final_verdict, labeled_value, located_quote, normalize_reasoned_fields, read_reasoned,
+    strip_wrapping_quotes, without_field_emphasis,
 };
 pub use reading::{
     parse_judge_explanation, parse_verdict_word, verdict_from_logprobs, JudgeExplanation,
@@ -272,13 +272,6 @@ struct Judging<'a> {
 }
 
 impl<'a> Judging<'a> {
-    fn showing(on_text: OnText<'a>, on_retry: OnRetry<'a>) -> Self {
-        Self {
-            progress: Some((on_text, on_retry)),
-            ..Self::default()
-        }
-    }
-
     /// Output tokens every reply took, a corrected one's too.
     fn spent(&self) -> u64 {
         self.spent.load(Ordering::Relaxed)

@@ -174,10 +174,12 @@ fn answer_check(truth: &Truth, input: &CheckInput) -> Reply<CheckReply> {
 fn answer_batch(truth: &Truth, sent: &Sent) -> Result<CompletionResponse> {
     let mut entries = Vec::new();
     for claim in batch::shown_claims(&sent.request) {
-        let fact = truth
-            .fact(&claim.claim)
-            .map_err(AppError::InternalError)?;
-        let texts: Vec<String> = claim.passages.iter().map(|(_, text)| text.clone()).collect();
+        let fact = truth.fact(&claim.claim).map_err(AppError::InternalError)?;
+        let texts: Vec<String> = claim
+            .passages
+            .iter()
+            .map(|(_, text)| text.clone())
+            .collect();
         let parts = fact.read(&claim.claim, &texts);
         let (verdict, at) = page(&parts);
         let source = at
