@@ -3494,7 +3494,6 @@ fn review_with_context(text: &str) -> super::verify::Input {
     use super::verify::{Excerpt, Input, Passage, Review, Subject};
     use lattice_core::application::services::model_contract::shown::{Internal, Told};
     let harbour = |text: &str| Passage {
-        message_id: Told("m3".into()),
         sequence: Told(3),
         role: Told("user".into()),
         text: Some(Told(text.into())),
@@ -3508,7 +3507,6 @@ fn review_with_context(text: &str) -> super::verify::Input {
         existing: Vec::new(),
         existing_label: None,
         context: vec![Excerpt {
-            message_id: Told("m3".into()),
             sequence: Told(3),
             role: Told("user".into()),
             text: Told(text.into()),
@@ -3562,13 +3560,11 @@ fn the_review_request_holds_no_identity_of_the_app() {
     use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
     let mut marks = Marks::new();
     let passage = Passage {
-        message_id: marks.told("message-quay-3".to_owned()),
         sequence: Told(3),
         role: marks.told("assistant".to_owned()),
         text: Some(marks.told("The kiln closes at dusk.".to_owned())),
     };
     let excerpt = Excerpt {
-        message_id: marks.told("message-quay-3".to_owned()),
         sequence: Told(3),
         role: marks.told("assistant".to_owned()),
         text: marks.told("The kiln closes at dusk, and the quay with it.".to_owned()),

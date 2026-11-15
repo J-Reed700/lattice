@@ -27,7 +27,7 @@ use lattice_core::domain::conversation::memory::{
 use lattice_core::shared::error::Result;
 
 use super::prompts::{
-    render_verifier_prompt, ContextPassage, ReviewPassage, ReviewRequest, VERIFIER_SYSTEM,
+    render_verifier_prompt, ReviewPassage, ReviewRequest, SurroundingPassage, VERIFIER_SYSTEM,
 };
 use super::segment::clip_chars;
 use super::{CompactionError, Deadline};
@@ -299,7 +299,6 @@ pub(super) enum Subject {
 /// One quoted span offered to the reviewer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct Passage {
-    pub(super) message_id: Told<String>,
     pub(super) sequence: Told<i64>,
     pub(super) role: Told<String>,
     pub(super) text: Option<Told<String>>,
@@ -308,7 +307,6 @@ pub(super) struct Passage {
 /// An original message beside the quotes of a review; `quoted` is the byte range they cover.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct Excerpt {
-    pub(super) message_id: Told<String>,
     pub(super) sequence: Told<i64>,
     pub(super) role: Told<String>,
     pub(super) text: Told<String>,
@@ -476,7 +474,6 @@ fn passages(spans: &[EvidenceSpan], evidence: &EvidenceText) -> Vec<Passage> {
     spans
         .iter()
         .map(|span| Passage {
-            message_id: Told(span.message_id.clone()),
             sequence: Told(span.sequence),
             role: Told(span.role.as_str().to_owned()),
             text: evidence.text(span).map(|text| Told(text.to_owned())),
@@ -488,7 +485,6 @@ fn shown_passages(passages: &[Passage]) -> Vec<ReviewPassage<'_>> {
     passages
         .iter()
         .map(|passage| ReviewPassage {
-            message_id: passage.message_id.0.as_str(),
             sequence: passage.sequence.0,
             role: passage.role.0.as_str(),
             text: passage.text.as_ref().map(|text| text.0.as_str()),
@@ -497,7 +493,7 @@ fn shown_passages(passages: &[Passage]) -> Vec<ReviewPassage<'_>> {
 }
 
 /// Each message whole when `share` holds it, centred on its quotes and flagged when not.
-fn shown_context(context: &[Excerpt], share: Share) -> Vec<ContextPassage<'_>> {
+fn shown_context(context: &[Excerpt], share: Share) -> Vec<SurroundingPassage<'_>> {
     let max_chars = match share {
         Share::Omitted => return Vec::new(),
         Share::Whole => usize::MAX,
@@ -511,8 +507,7 @@ fn shown_context(context: &[Excerpt], share: Share) -> Vec<ContextPassage<'_>> {
                 Some((start, end)) => clip_around(text, *start, *end, max_chars),
                 None => clip_chars(text, max_chars),
             };
-            ContextPassage {
-                message_id: excerpt.message_id.0.as_str(),
+            SurroundingPassage {
                 sequence: excerpt.sequence.0,
                 role: excerpt.role.0.as_str(),
                 text,
@@ -565,7 +560,6 @@ fn surrounding<'a>(
             .max()
             .unwrap_or(message.content.len());
         out.push(Excerpt {
-            message_id: Told(message.id.clone()),
             sequence: Told(message.sequence),
             role: Told(message.role.as_str().to_owned()),
             text: Told(message.content.clone()),
@@ -593,7 +587,6 @@ fn surrounding<'a>(
             }
             adjacent_seen.push(neighbour.id.as_str());
             out.push(Excerpt {
-                message_id: Told(neighbour.id.clone()),
                 sequence: Told(neighbour.sequence),
                 role: Told(neighbour.role.as_str().to_owned()),
                 text: Told(neighbour.content.clone()),

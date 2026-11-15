@@ -139,8 +139,7 @@ pub fn render_extractor_prompt(
 
 /// One proposal the reviewer must judge.
 pub struct ReviewRequest<'a> {
-    /// Echoed back as `id`: a candidate id for an addition, an item id for a
-    /// transition.
+    /// The handle the review is shown under.
     pub id: &'a str,
     pub change: &'a str,
     pub kind: &'a str,
@@ -152,12 +151,20 @@ pub struct ReviewRequest<'a> {
     pub existing_evidence: Vec<ReviewPassage<'a>>,
     pub existing_label: Option<&'a str>,
     /// Original message text around the proposed spans.
-    pub surrounding: Vec<ContextPassage<'a>>,
+    pub surrounding: Vec<SurroundingPassage<'a>>,
+}
+
+/// One original message beside a review's quotes, named by its sequence number.
+pub struct SurroundingPassage<'a> {
+    pub sequence: i64,
+    pub role: &'a str,
+    pub text: &'a str,
+    /// True when `text` is an excerpt of a longer message.
+    pub truncated: bool,
 }
 
 /// One quoted span offered to the reviewer.
 pub struct ReviewPassage<'a> {
-    pub message_id: &'a str,
     pub sequence: i64,
     pub role: &'a str,
     /// `None` when the span no longer resolves. The reviewer is told that
@@ -183,7 +190,6 @@ pub fn render_verifier_prompt(requests: &[ReviewRequest<'_>]) -> String {
                     .surrounding
                     .iter()
                     .map(|passage| serde_json::json!({
-                        "message_id": passage.message_id,
                         "sequence": passage.sequence,
                         "role": passage.role,
                         "text": passage.text,
@@ -212,7 +218,6 @@ fn passages(items: &[ReviewPassage<'_>]) -> Vec<serde_json::Value> {
         .iter()
         .map(|passage| {
             serde_json::json!({
-                "message_id": passage.message_id,
                 "sequence": passage.sequence,
                 "role": passage.role,
                 "text": passage.text,
