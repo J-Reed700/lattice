@@ -6,7 +6,7 @@ use futures::future::BoxFuture;
 use lattice_core::application::ports::llm_port::CompletionResponse;
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use lattice_core::application::services::model_contract::test_support::{ScriptedModel, Sent};
-use lattice_core::shared::error::Result;
+use lattice_core::shared::error::{AppError, Result};
 
 fn reply(text: String) -> BoxFuture<'static, Result<CompletionResponse>> {
     Box::pin(std::future::ready(Ok(CompletionResponse::from_text(text))))
