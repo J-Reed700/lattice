@@ -936,10 +936,22 @@ async fn a_batch_that_does_not_fit_is_split_before_any_send() {
 }
 
 #[tokio::test]
-async fn a_single_item_that_cannot_fit_is_a_fault_of_sending() {
+async fn a_single_item_the_window_cannot_hold_waits_and_is_not_sent() {
     let script = Script::new(&[]).window(300).responding(answer_all);
-    let result = run_each(&script, &tiles(1), &no_calls(), 4_000, false).await;
-    assert!(result.is_err());
+    let settled = run_each(&script, &tiles(1), &no_calls(), 4_000, false)
+        .await
+        .unwrap();
+    assert_eq!(settled, vec![no_room()]);
+    assert_eq!(script.sent(), 0);
+}
+
+#[tokio::test]
+async fn a_single_item_the_window_cannot_hold_fails_a_contract_whose_item_cannot_stay_open() {
+    let script = Script::new(&[]).window(300).responding(answer_all);
+    let error = run_each_fails(&script, &tiles(1), &no_calls(), 4_000, false)
+        .await
+        .unwrap_err();
+    assert_eq!(ErrorClass::of(&error), ErrorClass::DoesNotFit, "{error:?}");
     assert_eq!(script.sent(), 0);
 }
 

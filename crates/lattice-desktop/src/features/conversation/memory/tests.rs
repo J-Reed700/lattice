@@ -3625,21 +3625,21 @@ async fn a_proposal_the_rules_refuse_is_left_out_and_the_others_stand() {
 #[tokio::test]
 async fn an_answer_whose_proposals_cannot_be_read_leaves_the_batch_unprocessed() {
     let port = FakePort::new(four_turns(), Vec::new(), 0);
-    let llm = FakeLlm::new(
-        vec![Ok(items_answer(vec![add_item(
+    let unreadable = || {
+        Ok(items_answer(vec![add_item(
             "constraint",
             "Deployment requires approval",
             "s99",
-        )]))],
-        vec![],
-        vec![],
-    );
+        )]))
+    };
+    let llm = FakeLlm::new(vec![unreadable(), unreadable()], vec![], vec![]);
 
-    job(port.clone(), llm, small_config())
+    job(port.clone(), llm.clone(), small_config())
         .run(CONVERSATION, CompactionRequest::default())
         .await
         .expect_err("an answer with no proposal that stands cannot be committed");
 
+    assert_eq!(llm.count(Task::Extract), 2, "asked once more");
     assert_eq!(port.commits(), 0);
     assert_eq!(port.watermark(), 0);
     assert_eq!(port.errors(), vec!["malformed_json".to_string()]);
@@ -3648,21 +3648,21 @@ async fn an_answer_whose_proposals_cannot_be_read_leaves_the_batch_unprocessed()
 #[tokio::test]
 async fn an_answer_whose_proposals_the_rules_all_refuse_leaves_the_batch_unprocessed() {
     let port = FakePort::new(four_turns(), Vec::new(), 0);
-    let llm = FakeLlm::new(
-        vec![Ok(items_answer(vec![add_item(
+    let refused = || {
+        Ok(items_answer(vec![add_item(
             "constraint",
             "The assistant will wait",
             "s2",
-        )]))],
-        vec![],
-        vec![],
-    );
+        )]))
+    };
+    let llm = FakeLlm::new(vec![refused(), refused()], vec![], vec![]);
 
-    job(port.clone(), llm, small_config())
+    job(port.clone(), llm.clone(), small_config())
         .run(CONVERSATION, CompactionRequest::default())
         .await
         .expect_err("an answer with no proposal that stands cannot be committed");
 
+    assert_eq!(llm.count(Task::Extract), 2, "asked once more");
     assert_eq!(port.commits(), 0);
     assert_eq!(port.watermark(), 0);
     assert_eq!(port.errors(), vec!["malformed_json".to_string()]);
