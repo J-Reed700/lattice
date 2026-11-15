@@ -520,7 +520,7 @@ impl ChatStorage for FakeRuntime {
         unreachable!("{UNUSED}")
     }
     fn conversation_branches(&self) -> Arc<dyn ConversationBranches> {
-        unreachable!("{UNUSED}")
+        self.conversations.clone()
     }
     async fn turn_source(
         &self,

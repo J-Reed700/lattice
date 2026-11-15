@@ -490,6 +490,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_truncate_hands_back_an_answer_saved_before_references_with_its_references() {
+        use crate::features::conversation::chat::ports::ChatStorage;
+        use crate::features::conversation::chat::test_runtime::FakeRuntime;
+        use lattice_core::application::contracts::replies::ReplyPieceDto;
+        use lattice_core::domain::conversation::MessageRole;
+
+        let runtime = FakeRuntime::default();
+        let service = runtime.conversation_service();
+        let id = service
+            .create_conversation("Thread".to_owned(), None)
+            .await
+            .unwrap()
+            .id
+            .to_string();
+        service
+            .add_user_message(&id, "Why is the valley colder?".to_owned(), 0)
+            .await
+            .unwrap();
+        let sources = serde_json::json!({ "sources": [{
+            "documentId": "doc-weather", "chunkId": "doc-weather-chunk", "content": "Cold air sinks.",
+            "score": 0.5, "fileName": "weather.txt", "filePath": "/notes/weather.txt",
+            "mimeType": "text/plain", "category": "Text File", "fileSizeBytes": 10,
+            "modifiedAt": "2025-01-01T00:00:00Z", "citationId": 1,
+        }] });
+        let answer = service
+            .add_message_with_metadata(
+                &id,
+                MessageRole::Assistant,
+                "Cold air sinks [1].".to_owned(),
+                0,
+                "completed".to_owned(),
+                Some(sources.to_string()),
+            )
+            .await
+            .unwrap();
+        service
+            .add_user_message(&id, "And at noon?".to_owned(), 0)
+            .await
+            .unwrap();
+
+        let truncated = truncate_conversation_after_impl(
+            TruncateConversationAfterRequestDto {
+                conversation_id: id,
+                message_id: answer.id.to_string(),
+                inclusive: false,
+            },
+            &runtime,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(truncated.deleted_count, 1);
+        let [question, answer] = truncated.messages.as_slice() else {
+            panic!("two messages stay, got {}", truncated.messages.len());
+        };
+        assert_eq!(question.reply, None);
+        let Some(
+            [ReplyPieceDto::Text { text }, ReplyPieceDto::Reference { reference }, ReplyPieceDto::Text { text: end }],
+        ) = answer.reply.as_deref()
+        else {
+            panic!("the answer's pieces: {:?}", answer.reply);
+        };
+        assert_eq!(text, "Cold air sinks ");
+        assert_eq!(reference.kind, "source");
+        assert_eq!(end, ".");
+    }
+
+    #[tokio::test]
     async fn a_question_the_failed_turn_already_saved_is_not_restored_twice() {
         let (repo, id) = thread().await;
         // What the chat turn leaves behind when generation fails.
