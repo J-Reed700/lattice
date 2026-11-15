@@ -4,7 +4,7 @@
 use crate::assessment::assessment_engine::{option_order, LearningItemFormat};
 use crate::dto::LearningSourceDto;
 use crate::lessons::rows::Quotes;
-use crate::lessons::shape::{self as lesson_shape, Lengths, ShapePolicy};
+use crate::lessons::shape::{self as lesson_shape, Lengths};
 use crate::lessons::structured_call::{Asking, CallKind, ReasonFirst};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::model_contract::ask::{

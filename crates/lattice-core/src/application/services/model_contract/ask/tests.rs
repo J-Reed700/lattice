@@ -250,6 +250,7 @@ contract!(NewFails, "test-new-fails", Names, Alone::Fails);
 
 type Responder = Box<dyn Fn(&str) -> (String, &'static str) + Send + Sync>;
 type TooLarge = Box<dyn Fn(&str) -> bool + Send + Sync>;
+type Holds = Box<dyn Fn(&Schema) -> bool + Send + Sync>;
 
 /// A model that returns queued replies, then the responder's, then the fallback, and records every request.
 struct Script {
@@ -259,7 +260,7 @@ struct Script {
     fallback: Option<(String, &'static str)>,
     seen: Mutex<Vec<CompletionRequest>>,
     enforcing: bool,
-    enforces_where: Option<Box<dyn Fn(&Schema) -> bool + Send + Sync>>,
+    enforces_where: Option<Holds>,
     fail_at: Option<usize>,
     too_large: Option<TooLarge>,
 }
