@@ -1,3 +1,4 @@
+use super::outline::outline_schema;
 use super::recall::{parse_recall_drafts, recall_draft_prompt, recall_draft_schema};
 use super::*;
 use crate::dto::LearningProgramDto;

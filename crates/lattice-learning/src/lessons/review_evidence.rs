@@ -664,7 +664,7 @@ pub async fn check(
                 issues: open.iter().map(|issue| (*issue).clone()).collect(),
                 requirements: requirements.clone(),
                 parts: parts.clone(),
-                references: Packed::new(list, &cost_of),
+                references: Packed::new(list, cost_of),
                 rulers: rulers.clone(),
             }
         },
