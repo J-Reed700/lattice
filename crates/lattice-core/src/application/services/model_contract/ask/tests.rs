@@ -919,6 +919,184 @@ async fn a_single_item_that_cannot_fit_is_a_fault_of_sending() {
     assert_eq!(script.sent(), 0);
 }
 
+const HEAVY: u32 = 90;
+const CAPACITY: usize = 2;
+
+/// The opening of the open tiles the request holds: none from a heavy tile on,
+/// at most `CAPACITY`, and none while facts stand beside them.
+fn held_within(input: &Input) -> Option<Input> {
+    let room = if input.settled.is_empty() {
+        CAPACITY
+    } else {
+        0
+    };
+    let open = input
+        .open
+        .iter()
+        .copied()
+        .take_while(|number| *number < HEAVY)
+        .take(room)
+        .collect();
+    Some(Input {
+        open,
+        ..input.clone()
+    })
+}
+
+macro_rules! packing {
+    ($name:ident, $id:literal, $alone:expr) => {
+        struct $name;
+
+        impl Contract for $name {
+            const ID: ContractId = ContractId::new($id);
+            type Input = Input;
+        }
+
+        impl Answered for $name {
+            type Answer = Verdicts;
+            const ALONE: Alone = $alone;
+
+            fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
+                says(input, showing)
+            }
+
+            fn accept(_input: &Input, statement: &String) -> std::result::Result<(), Refusal> {
+                refuse(statement)
+            }
+
+            fn within(input: &Input, _room: usize) -> Option<Input> {
+                held_within(input)
+            }
+        }
+    };
+}
+
+packing!(Packing, "test-packing", Alone::Pending);
+packing!(PackingFails, "test-packing-fails", Alone::Fails);
+
+async fn run_packing<C>(
+    script: &Script,
+    noting: &Noting,
+    numbers: &[u32],
+    facts: bool,
+) -> Result<Vec<Settled<String>>>
+where
+    C: Answered<Answer = Verdicts, Input = Input>,
+{
+    let things: Vec<Tile> = numbers.iter().map(|number| Tile(*number)).collect();
+    let mut scope = Scope::for_question();
+    ask_each::<C>(
+        script,
+        noting,
+        &mut scope,
+        &things,
+        |open: &[&Tile], entries: &[Entry<C>]| Input {
+            settled: if facts {
+                entries
+                    .iter()
+                    .map(|(picked, word)| (picked.reference, word.clone()))
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            ..Input::of(&open.iter().map(|tile| tile.0).collect::<Vec<u32>>())
+        },
+        &CallOptions::default(),
+    )
+    .await
+}
+
+fn no_room() -> Settled<String> {
+    Settled::Unanswered(Why::NoRoom)
+}
+
+fn ok() -> Settled<String> {
+    Settled::Answered("ok".to_owned())
+}
+
+#[tokio::test]
+async fn a_batch_whose_request_shows_none_of_its_items_is_not_sent_but_split() {
+    let script = Script::new(&[]).responding(answer_all);
+    let noting = Noting::new();
+    let settled = run_packing::<Packing>(&script, &noting, &[91, 92, 1, 2], false)
+        .await
+        .unwrap();
+    assert_eq!(settled, vec![no_room(), no_room(), ok(), ok()]);
+    assert_eq!(script.sent(), 1, "only the half that shows something");
+    let prompt = script.prompt(0);
+    assert_eq!(listed(&prompt), 2);
+    assert!(prompt.contains("tile 1") && prompt.contains("tile 2"), "{prompt}");
+    assert!(noting.told().is_empty());
+}
+
+#[tokio::test]
+async fn an_item_whose_material_never_fits_is_unanswered_for_want_of_room_and_not_asked() {
+    let script = Script::new(&[]).responding(answer_all);
+    let settled = run_packing::<Packing>(&script, &Noting::new(), &[1, 91, 2], false)
+        .await
+        .unwrap();
+    assert_eq!(settled, vec![ok(), no_room(), ok()]);
+    assert_eq!(script.sent(), 2);
+    for at in 0..script.sent() {
+        assert!(!script.prompt(at).contains("tile 91"), "{}", script.prompt(at));
+    }
+}
+
+#[tokio::test]
+async fn an_item_that_does_not_fit_fails_a_contract_whose_item_cannot_stay_open() {
+    let script = Script::new(&[]).responding(answer_all);
+    let error = run_packing::<PackingFails>(&script, &Noting::new(), &[1, 91], false)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        crate::shared::error::ErrorClass::of(&error),
+        crate::shared::error::ErrorClass::DoesNotFit,
+        "{error:?}"
+    );
+    assert_eq!(script.sent(), 1);
+}
+
+#[tokio::test]
+async fn a_batch_answered_for_every_item_it_showed_is_not_reported_and_the_rest_is_asked_next() {
+    let script = Script::new(&[]).responding(answer_all);
+    let noting = Noting::new();
+    let settled = run_packing::<Packing>(&script, &noting, &[1, 2, 3], false)
+        .await
+        .unwrap();
+    assert_eq!(settled, vec![ok(), ok(), ok()]);
+    assert_eq!(script.sent(), 2);
+    assert_eq!(listed(&script.prompt(0)), 2);
+    let next = script.prompt(1);
+    assert_eq!(listed(&next), 1);
+    assert!(next.contains("tile 3"), "{next}");
+    assert!(noting.told().is_empty(), "{:?}", noting.told());
+}
+
+#[tokio::test]
+async fn a_batch_that_leaves_a_shown_item_unanswered_is_reported_once() {
+    let script = Script::new(&[(&*rows(&[("t1", "a")]), STOP)]).responding(answer_all);
+    let noting = Noting::new();
+    let settled = run_packing::<Packing>(&script, &noting, &[1, 2, 3], false)
+        .await
+        .unwrap();
+    assert_eq!(settled, vec![Settled::Answered("a".to_owned()), ok(), ok()]);
+    let told = noting.told();
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert!(told[0].contains("tile 1") && told[0].contains("tile 2"), "{}", told[0]);
+    assert!(!told[0].contains("tile 3"), "{}", told[0]);
+}
+
+#[tokio::test]
+async fn an_item_refused_in_a_batch_and_no_longer_shown_alone_is_unanswered_for_want_of_room() {
+    let script = Script::new(&[(&*rows(&[("t1", "a"), ("t2", "bad")]), STOP)])
+        .responding(answer_all);
+    let settled = run_packing::<Packing>(&script, &Noting::new(), &[1, 2], true)
+        .await
+        .unwrap();
+    assert_eq!(settled, vec![Settled::Answered("a".to_owned()), no_room()]);
+    assert_eq!(script.sent(), 1, "the restated request was not sent");
+}
+
 /// The smallest window (in steps of 50 tokens) in which `n` tiles padded by `pad` fit.
 async fn window_holding(n: u32, pad: usize) -> usize {
     let things: Vec<u32> = (1..=n).collect();

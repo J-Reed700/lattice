@@ -309,9 +309,10 @@ fn a_citation_the_repair_appends_is_checked_against_its_source_like_any_other() 
     let candidate = lesson(EXCERPT);
     let sentence = "A substantive teaching explanation with practice context.";
     let appended = |quote: &str| {
-        let patch = json!({"edits":[],"citations":[
-            {"path":"/blocks/0","sentence":sentence,"sourceIndex":0,"quote":quote}]});
-        super::super::text_edits::apply(&candidate, &patch.to_string()).unwrap()
+        let mut appended = candidate.clone();
+        appended["blocks"][0]["citations"] =
+            json!([{"sentence":sentence,"sourceIndex":0,"quote":quote}]);
+        appended
     };
 
     // A quote the source holds stands.

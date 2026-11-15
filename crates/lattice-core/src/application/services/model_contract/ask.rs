@@ -436,6 +436,14 @@ where
         let open: Vec<&<C::Answer as PerItem>::Item> =
             batch.iter().filter_map(|&index| items.get(index)).collect();
         let input = input_for(&open, &entries);
+        if let [only] = batch.as_slice() {
+            if let Some(item) = items.get(*only) {
+                let at = (*only, item);
+                let settled = ask_alone::<C>(llm, transport, scope, input, call, at, None).await?;
+                record::<C>(&mut slots, &mut owners, &mut entries, *only, settled);
+            }
+            continue;
+        }
         let input = match fitted::<C>(llm, scope, &input, call).await? {
             Some(cut) => cut,
             None => input,
@@ -449,22 +457,15 @@ where
         let mut split = false;
         {
             let (showing, request) = render::<C>(batch_llm, scope, &input, call)?;
-            if let [only] = batch.as_slice() {
-                if let Some(item) = items.get(*only) {
-                    let settled = settle_item::<C>(
-                        batch_llm, transport, &showing, &input, request, item, false,
-                    )
-                    .await?;
-                    match settled {
-                        Settled::Answered(entry) => accepted.push((*only, entry)),
-                        Settled::Unanswered(why) => {
-                            if let Some(slot) = slots.get_mut(*only) {
-                                *slot = Some(Settled::Unanswered(why));
-                            }
-                        }
-                    }
-                }
-            } else if !fits(batch_llm, &request).await {
+            let shown = batch
+                .iter()
+                .filter(|&&index| {
+                    items
+                        .get(index)
+                        .is_some_and(|item| handle_of(&showing, item).is_some())
+                })
+                .count();
+            if shown == 0 || !fits(batch_llm, &request).await {
                 split = true;
             } else {
                 let asked = request.clone();
@@ -492,7 +493,7 @@ where
                         }
                     }
                 }
-                if accepted.len() < batch.len() {
+                if accepted.len() < shown {
                     transport.unanswered(batch_llm, &asked).await?;
                 }
             }
@@ -523,39 +524,10 @@ where
                 continue;
             };
             let alone_input = input_for(&[item], &entries);
-            let alone_input = match fitted::<C>(llm, scope, &alone_input, call).await? {
-                Some(cut) => cut,
-                None => alone_input,
-            };
-            let alone_contract = ContractCall::of::<C>(&alone_input)?;
-            let alone_tagging = tagged(llm, &alone_contract);
-            let alone_llm: &dyn LLMPort = &alone_tagging;
-            let (showing, request) = render::<C>(alone_llm, scope, &alone_input, call)?;
-            let request = match told(&Why::Refused(why), &handle_of(&showing, item)) {
-                Some(told) => request.restated(&told),
-                None => request,
-            };
-            let settled = settle_item::<C>(
-                alone_llm,
-                transport,
-                &showing,
-                &alone_input,
-                request,
-                item,
-                true,
-            )
-            .await?;
-            match settled {
-                Settled::Answered(entry) => {
-                    owners.push(index);
-                    entries.push(entry);
-                }
-                Settled::Unanswered(why) => {
-                    if let Some(slot) = slots.get_mut(index) {
-                        *slot = Some(Settled::Unanswered(why));
-                    }
-                }
-            }
+            let at = (index, item);
+            let settled =
+                ask_alone::<C>(llm, transport, scope, alone_input, call, at, Some(why)).await?;
+            record::<C>(&mut slots, &mut owners, &mut entries, index, settled);
         }
         if rest.is_empty() {
             continue;
@@ -596,6 +568,9 @@ pub fn failed(why: &Why) -> AppError {
         Why::Contradicted(what) => AppError::ModelAnswerUnusable(what.clone()),
         Why::Declined => AppError::ModelAnswerUnusable("The model declined to answer.".into()),
         Why::Refused(reason) => AppError::ModelAnswerUnusable(reason.clone()),
+        Why::NoRoom => AppError::WindowTooSmall(
+            "What was asked about, with the material it needs, does not fit in this model's context window".into(),
+        ),
     }
 }
 
@@ -617,7 +592,7 @@ fn told(why: &Why, handle: &str) -> Option<String> {
         Why::Unplaced => Some(UNPLACED.to_owned()),
         Why::Contradicted(what) => Some(format!("{what} Answer again and say one thing.")),
         Why::Refused(reason) => Some(format!("{reason} Answer again.")),
-        Why::Declined => None,
+        Why::Declined | Why::NoRoom => None,
     }
 }
 
@@ -631,6 +606,7 @@ fn reason(why: &Why) -> &'static str {
         Why::Contradicted(_) => "contradicted",
         Why::Declined => "declined",
         Why::Refused(_) => "refused",
+        Why::NoRoom => "no_room",
     }
 }
 
@@ -850,15 +826,14 @@ async fn alone<C: Answered, P>(
     Ok(settled)
 }
 
-/// The written handle `showing` gives `item`; empty when it shows none.
-fn handle_of<K: Kind>(showing: &Showing<'_>, item: &K) -> String {
+/// The written handle `showing` gives `item`; `None` when it shows none.
+fn handle_of<K: Kind>(showing: &Showing<'_>, item: &K) -> Option<String> {
     let reference = item.reference();
     showing
         .shown::<K>()
         .into_iter()
         .find(|picked| picked.reference == reference)
         .map(|picked| picked.handle.written())
-        .unwrap_or_default()
 }
 
 /// What a reply said about the item `reference` names.
@@ -873,30 +848,76 @@ fn lone<K: Kind, S>(reference: &K::Ref, rows: Rows<K, S>) -> Settled<(Picked<K>,
     }
 }
 
-/// One item of an `ask_each` asked alone, as `request` shows it.
-async fn settle_item<C>(
+/// Files what `settled` says of the item at `index` of an `ask_each`.
+fn record<C>(
+    slots: &mut [Option<Settled<Statement<C>>>],
+    owners: &mut Vec<usize>,
+    entries: &mut Vec<Entry<C>>,
+    index: usize,
+    settled: Settled<Entry<C>>,
+) where
+    C: Answered,
+    C::Answer: PerItem,
+{
+    match settled {
+        Settled::Answered(entry) => {
+            owners.push(index);
+            entries.push(entry);
+        }
+        Settled::Unanswered(why) => {
+            if let Some(slot) = slots.get_mut(index) {
+                *slot = Some(Settled::Unanswered(why));
+            }
+        }
+    }
+}
+
+/// `at`, an item of an `ask_each` and its place in the items, asked alone
+/// about `input`. A request that does not show the item is not sent. After a
+/// refusal, the request restates why and the item gets no further correction.
+async fn ask_alone<C>(
     llm: &dyn LLMPort,
     transport: &impl Transport,
-    showing: &Showing<'_>,
-    input: &C::Input,
-    request: GroundedRequest,
-    item: &<C::Answer as PerItem>::Item,
-    corrected: bool,
+    scope: &mut Scope,
+    input: C::Input,
+    call: &CallOptions,
+    at: (usize, &<C::Answer as PerItem>::Item),
+    refusal: Option<String>,
 ) -> Result<Settled<Entry<C>>>
 where
     C: Answered,
     C::Answer: PerItem,
 {
-    let handle = handle_of(showing, item);
+    let (index, item) = at;
+    let input = match fitted::<C>(llm, scope, &input, call).await? {
+        Some(cut) => cut,
+        None => input,
+    };
+    let contract = ContractCall::of::<C>(&input)?;
+    let tagging = tagged(llm, &contract);
+    let llm: &dyn LLMPort = &tagging;
+    let (showing, request) = render::<C>(llm, scope, &input, call)?;
+    let Some(handle) = handle_of(&showing, item) else {
+        trace::<C>(&index.to_string(), reason(&Why::NoRoom));
+        if C::ALONE == Alone::Fails {
+            return Err(failed(&Why::NoRoom));
+        }
+        return Ok(Settled::Unanswered(Why::NoRoom));
+    };
+    let corrected = refusal.is_some();
+    let request = match refusal.and_then(|why| told(&Why::Refused(why), &handle)) {
+        Some(told) => request.restated(&told),
+        None => request,
+    };
     let reference = item.reference();
     let read = |sent: &Sent| {
         lone(
             &reference,
-            <C::Answer as PerItem>::read(&written(sent), showing),
+            <C::Answer as PerItem>::read(&written(sent), &showing),
         )
     };
     let accept = |picked: &Picked<<C::Answer as PerItem>::Item>, statement: &Statement<C>| {
-        C::accept_for(input, picked, statement)
+        C::accept_for(&input, picked, statement)
     };
     alone::<C, _>(llm, transport, request, &handle, corrected, read, accept).await
 }

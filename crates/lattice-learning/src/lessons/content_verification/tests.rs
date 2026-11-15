@@ -250,6 +250,9 @@ fn fixture_repair_edits(user: &str, text: String) -> String {
     if let Some(task) = task_of(user) {
         return teaching_repair_answer(&task, &Value::Object(answer));
     }
+    if let Some(task) = repair_script::task_of(user) {
+        return repair_script::answer(&task, &Value::Object(answer));
+    }
     for key in ["edits", "citations"] {
         let Some(Value::Array(changes)) = answer.get_mut(key) else {
             continue;
@@ -1134,6 +1137,9 @@ mod reading_record_tests;
 
 #[path = "repair_request_tests.rs"]
 mod repair_request_tests;
+
+#[path = "repair_script.rs"]
+pub(super) mod repair_script;
 
 #[path = "born_of_repair_tests.rs"]
 mod born_of_repair_tests;

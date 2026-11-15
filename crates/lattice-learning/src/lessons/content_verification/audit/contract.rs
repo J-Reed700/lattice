@@ -416,10 +416,7 @@ impl Evidence {
     pub(super) fn judged(&self, settled: &Settled<Stated>) -> Judged {
         match settled {
             Settled::Answered(stated) => self.ground(stated),
-            Settled::Unanswered(why) => Judged::could_not_verify(format!(
-                "The Verifier's answer could not be used: {}.",
-                cause(why)
-            )),
+            Settled::Unanswered(why) => Judged::could_not_verify(unanswered(why)),
         }
     }
 
@@ -468,8 +465,12 @@ impl Evidence {
 }
 
 /// Why a statement was left without a usable answer, in words for the audit's reason.
-fn cause(why: &Why) -> &'static str {
-    match why {
+fn unanswered(why: &Why) -> String {
+    let cause = match why {
+        Why::NoRoom => {
+            return "The Verifier was not asked: the statement and its evidence do not fit in this model's context window."
+                .to_owned()
+        }
         Why::NotRead => "it could not be read",
         Why::CutOff => "it was cut off before it ended",
         Why::Missing => "it said nothing about this statement",
@@ -477,7 +478,8 @@ fn cause(why: &Why) -> &'static str {
         Why::Contradicted(_) => "it gave two different verdicts for this statement",
         Why::Declined => "the Verifier declined to answer",
         Why::Refused(_) => "it was refused",
-    }
+    };
+    format!("The Verifier's answer could not be used: {cause}.")
 }
 
 #[cfg(test)]

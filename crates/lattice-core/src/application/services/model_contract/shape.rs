@@ -76,6 +76,8 @@ pub enum Why {
     Declined,
     /// The contract's `accept` refused what the model authored, for this reason.
     Refused(String),
+    /// The item, with what it needs, does not fit the model's window: it was not asked.
+    NoRoom,
 }
 
 /// How the text of an answer ended.

@@ -9,24 +9,30 @@
 //! the checks keep per unit stays valid, and the last step takes them out in
 //! code and moves the report and the ledger to the lesson's new numbering.
 use super::claim_ledger::ClaimLedger;
-use super::repair::accept_edits;
 use super::repair_work::unmade;
 use super::*;
 use crate::dto::LearningSourceDto;
 use crate::generation::{parse_json, split_check, teaching_sentences};
 use crate::lessons::copied_wording::Wording;
 use crate::lessons::shape::{LessonShape, ShapePolicy};
-use crate::lessons::text_edits;
+use crate::lessons::rows::{self, words, Held, Left, Quotes, Rows};
+use crate::lessons::structured_call::Asking;
 use crate::lessons::trace::{self, Cause, Stage};
 use crate::review_findings::{site_sha256, FindingSite};
-use lattice_core::application::services::model_contract::{
-    Contract, ContractCall, ContractId, PromptInput,
+use lattice_core::application::services::model_contract::ask::{
+    self, ask_each, Alone, Answered, Refusal, Says,
 };
+use lattice_core::application::services::model_contract::edit::Anchor;
+use lattice_core::application::services::model_contract::shape::{Authored, Each, Fields, Form};
+use lattice_core::application::services::model_contract::shown::{
+    Drawn, Internal, Kind, Picked, Scope, Showing, Told,
+};
+use lattice_core::application::services::model_contract::{Contract, ContractId};
 use lattice_core::domain::learning::claim_review::ClaimId;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// What the flow repair is told besides the edit protocol.
-const FLOW: &str = "Sentences were taken out of this lesson section because they were shown to be wrong. Restore the flow of what is left: fix a word that now points at nothing (\"this\", \"these\", \"as above\", a step number) and join the sentences on either side of a gap if they no longer follow, changing as little as you can. gaps lists, for each place a sentence was taken out, the sentence kept before it and the one kept after it: change only those sentences, or add a short connecting sentence between them. verifiedSentences are checked and must stay exactly as they are; connect around them. Add no statement of fact: no new claim, figure, name, quotation, cause or consequence. If the section reads well as it is, give no edits.";
+/// What the flow repair is told besides the form of its answer.
+const FLOW: &str = "Sentences were taken out of this lesson section because they were shown to be wrong. Restore the flow of what is left: fix a word that now points at nothing (\"this\", \"these\", \"as above\", a step number) and join the sentences on either side of a gap if they no longer follow, changing as little as you can. gaps lists, for each place a sentence was taken out, the labels of the sentence kept before it and the one kept after it: change only those sentences, or add a short connecting sentence between them. verifiedSentences lists the labels of sentences that are checked and must stay exactly as they are; connect around them. Add no statement of fact: no new claim, figure, name, quotation, cause or consequence. Give an entry with no edits for a gap that reads well as it is.";
 
 /// What a lesson is told when the cuts leave it no statement: the part of it
 /// that would have to be taken out.
@@ -483,33 +489,224 @@ pub(super) fn gap_around_code(field: &str, before: &str, after: &str) -> Vec<Gap
     }]
 }
 
-/// What a flow repair is asked: the edits of the sentences beside a gap.
+/// One place a sentence was taken out of: what the flow repair answers once.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Place {
+    at: usize,
+    gap: Internal<Gap>,
+}
+
+impl Kind for Place {
+    const PREFIX: &'static str = "g";
+    const DRAWN: Drawn = Drawn::Itself;
+    type Ref = usize;
+
+    fn reference(&self) -> usize {
+        self.at
+    }
+}
+
+/// What a flow repair is asked about one section.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct FlowInput {
+    /// The lesson, for what the other sections already say.
+    lesson: Internal<Value>,
+    /// The section's place in the lesson.
+    part: Internal<String>,
+    section: Told<Value>,
+    gaps: Vec<Place>,
+    verified: Internal<Vec<Protected>>,
+    wording: Internal<Wording>,
+    output_tokens: usize,
+}
+
+impl FlowInput {
+    /// The lesson with the section as this request holds it.
+    fn material(&self) -> Value {
+        let mut lesson = self.lesson.value().clone();
+        if let Some(slot) = lesson.pointer_mut(self.part.value()) {
+            *slot = self.section.0.clone();
+        }
+        lesson
+    }
+
+    fn pointer(&self, field: &str) -> String {
+        format!("{}/{field}", self.part.value())
+    }
+}
+
+/// What the model answers for one gap: the edits that restore its flow.
+#[derive(Debug, Clone, PartialEq)]
+struct Fix {
+    edits: rows::Edits,
+}
+
+impl Authored for Fix {
+    fn form() -> Form {
+        Form::new().group::<rows::Edits>("edits")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(Self {
+            edits: fields.group("edits")?,
+        })
+    }
+}
+
+/// What a flow repair is asked: the edits of the sentences beside each gap.
 struct FlowRepair;
 
 impl Contract for FlowRepair {
     const ID: ContractId = ContractId::new("flow-repair");
-    type Input = PromptInput;
+    type Input = FlowInput;
 }
 
-#[cfg(any(test, feature = "test-support"))]
-impl lattice_core::application::services::model_contract::test_support::RenderAnswer
-    for FlowRepair
-{
-    type Answer = text_edits::Patch;
+fn flow_system() -> String {
+    format!(
+        "{FLOW} {} {} {}",
+        words::SENTENCES,
+        words::EDITING,
+        words::NO_CITATIONS
+    )
+}
 
-    fn render(answer: &text_edits::Patch) -> String {
-        serde_json::to_string(answer).unwrap_or_default()
+/// Why the entry for the gap `of` is refused, when it is.
+fn flow_check(input: &FlowInput, of: usize, fix: &Fix) -> std::result::Result<(), Refusal> {
+    let edits = &fix.edits;
+    if !edits.cite.is_empty() || !edits.recite.is_empty() || !edits.uncite.is_empty() {
+        return Err(Refusal(words::NO_CITATIONS.to_owned()));
     }
-
-    fn read(text: &str) -> Result<text_edits::Patch> {
-        text_edits::read_patch(text)
+    if !edits.keys.is_empty() {
+        return Err(Refusal(
+            "This repair changes no answer key: leave keys empty.".to_owned(),
+        ));
+    }
+    if edits.is_empty() {
+        return Ok(());
+    }
+    let material = input.material();
+    let mut rows = Rows::of_part(&material, input.part.value());
+    let Some(place) = input.gaps.iter().find(|place| place.at == of) else {
+        return Ok(());
+    };
+    let gap = place.gap.value();
+    let beside = |sentence: &Option<String>| {
+        sentence
+            .as_deref()
+            .and_then(|text| rows.sentence_at(&input.pointer(&gap.field), text))
+    };
+    let (before, after) = (beside(&gap.before), beside(&gap.after));
+    let verified: Vec<_> = input
+        .verified
+        .value()
+        .iter()
+        .filter_map(|item| rows.sentence_at(&input.pointer(&item.field), &item.quote))
+        .collect();
+    let change = edits.sentences.change();
+    let named = change
+        .replace
+        .iter()
+        .map(|(unit, _)| unit)
+        .chain(change.remove.iter());
+    for unit in named {
+        if verified.contains(&unit.reference) {
+            return Err(Refusal(format!(
+                "{} states a checked claim and must stay as it is.",
+                unit.handle.written()
+            )));
+        }
+        if Some(unit.reference) != before && Some(unit.reference) != after {
+            return Err(Refusal(format!(
+                "{} is outside the two sentences beside this gap. Change only those two sentences, or add a sentence between them.",
+                unit.handle.written()
+            )));
+        }
+    }
+    for (anchor, _) in &change.insert {
+        if let Anchor::After(unit) = anchor {
+            if Some(unit.reference) != before {
+                return Err(Refusal(format!(
+                    "New text after {} is not between the two sentences beside this gap. Add a sentence only directly after the sentence kept before the gap.",
+                    unit.handle.written()
+                )));
+            }
+        }
+    }
+    if !change.moved.is_empty() {
+        return Err(Refusal(
+            "A sentence is not moved to restore a gap's flow: change the two sentences beside the gap, or add a sentence between them.".to_owned(),
+        ));
+    }
+    let held = Held {
+        wording: input.wording.value(),
+    };
+    match rows.take(edits, &Quotes::default(), &held) {
+        Ok(_) => Ok(()),
+        Err(Left::Refused(reasons)) => Err(Refusal(reasons.join(" "))),
+        Err(Left::Met(words)) => Err(Refusal(words)),
     }
 }
 
-/// One section's flow repair: the section with the edits the model gave for
-/// its gaps, or `None` when it gave none that can stand. A change to a
-/// sentence a claim stands on is no repair, and neither is one outside the
-/// sentences beside a gap, which is taken back.
+impl Answered for FlowRepair {
+    type Answer = Each<Place, Fix>;
+    const ALONE: Alone = Alone::Pending;
+
+    fn says(input: &FlowInput, showing: &mut Showing<'_>) -> Result<Says> {
+        let places = showing.show(&input.gaps)?;
+        let material = input.material();
+        let rows = Rows::of_part(&material, input.part.value());
+        let shown = rows.shown(showing)?;
+        let label = |field: &str, sentence: &str| {
+            rows.sentence_at(&input.pointer(field), sentence)
+                .and_then(|unit| shown.handle_of(unit))
+                .map(|handle| handle.written())
+        };
+        let gaps: Vec<Value> = places
+            .iter()
+            .map(|(handle, place)| {
+                let gap = place.gap.value();
+                let beside = |sentence: &Option<String>| {
+                    sentence
+                        .as_deref()
+                        .and_then(|text| label(&gap.field, text))
+                };
+                json!({
+                    "gap": handle.written(),
+                    "field": gap.field,
+                    "before": beside(&gap.before),
+                    "after": beside(&gap.after),
+                })
+            })
+            .collect();
+        let verified: Vec<String> = input
+            .verified
+            .value()
+            .iter()
+            .filter_map(|item| label(&item.field, &item.quote))
+            .collect();
+        let section = rows
+            .rendered(&shown)
+            .pointer(input.part.value())
+            .cloned()
+            .unwrap_or(Value::Null);
+        let task = json!({"section": section, "gaps": gaps, "verifiedSentences": verified});
+        let mut says = Says::new(flow_system(), task.to_string());
+        says.output_tokens = input.output_tokens;
+        Ok(says)
+    }
+
+    fn accept_for(
+        input: &FlowInput,
+        of: &Picked<Place>,
+        fix: &Fix,
+    ) -> std::result::Result<(), Refusal> {
+        flow_check(input, of.reference, fix)
+    }
+}
+
+/// One section's flow repair: the section with the entries that stand, or
+/// `None` when none can. A gap whose entry cannot stand stays as cut, and so
+/// does a gap whose entry would leave the section no lesson.
 async fn mend_section(
     llm: &dyn LLMPort,
     (schema, output_tokens): (&Value, usize),
@@ -517,13 +714,16 @@ async fn mend_section(
     (taken, protected): (&Taken, &[Protected]),
     (lesson, wording): (&Value, &Wording),
 ) -> Result<Option<Value>> {
+    let Some(part) = FindingSite::in_candidate(lesson, unit).pointer() else {
+        return Ok(None);
+    };
     let stands = |gap: &Gap, sentence: &Option<String>| -> Option<String> {
         let text = section.pointer(&format!("/{}", gap.field))?.as_str()?;
         sentence
             .clone()
             .filter(|sentence| text.contains(sentence.as_str()))
     };
-    let gaps: Vec<Gap> = taken
+    let places: Vec<Place> = taken
         .gaps
         .iter()
         .filter_map(|gap| {
@@ -534,80 +734,94 @@ async fn mend_section(
                 after,
             })
         })
+        .enumerate()
+        .map(|(at, gap)| Place {
+            at,
+            gap: Internal::of(gap),
+        })
         .collect();
-    if gaps.is_empty() {
+    if places.is_empty() {
         return Ok(None);
     }
-    let mut targets = Vec::new();
-    for gap in &gaps {
-        for quote in [&gap.before, &gap.after].into_iter().flatten() {
-            targets.push(Protected {
-                unit,
-                field: gap.field.clone(),
-                quote: quote.clone(),
-                released: false,
-            });
-        }
-    }
-    let verified: Vec<&str> = protected.iter().map(|item| item.quote.as_str()).collect();
-    let local = json!({"section": section, "gaps": gaps, "verifiedSentences": verified});
-    let (list, original) = if block {
-        ("blocks", json!({"blocks":[section],"questions":[]}))
-    } else {
-        ("questions", json!({"blocks":[],"questions":[section]}))
-    };
-    let system = format!("{FLOW} {}", text_edits::INSTRUCTIONS);
-    let prompt = local.to_string();
-    let call = ContractCall::of::<FlowRepair>(&PromptInput {
-        system: system.clone(),
-        prompt: prompt.clone(),
-    })?;
-    let request = crate::model_call::structured(
-        &system,
-        prompt,
-        text_edits::schema_for(&original, schema),
+    let base = FlowInput {
+        lesson: Internal::of(lesson.clone()),
+        part: Internal::of(part.clone()),
+        section: Told(section.clone()),
+        gaps: Vec::new(),
+        verified: Internal::of(protected.to_vec()),
+        wording: Internal::of(wording.clone()),
         output_tokens,
-    );
+    };
     let _model_call = crate::lesson_progress::model_call(crate::lesson_progress::Term::FlowRepair);
-    let (repaired, _) = crate::lessons::structured_call::complete_checked_request(
+    let settled = ask_each::<FlowRepair>(
         llm,
-        &call,
-        request,
-        None,
-        None,
-        |raw| {
-            if text_edits::read_patch(raw)?.asks_nothing() {
-                return Ok((original.clone(), Vec::new()));
-            }
-            accept_edits(
-                raw,
-                (&original, lesson, wording),
-                (schema, list),
-                (&targets, protected),
-            )
+        &Asking {
+            progress: None,
+            reasoning: None,
         },
+        &mut Scope::for_question(),
+        &places,
+        |open, _| FlowInput {
+            gaps: open.iter().map(|place| (*place).clone()).collect(),
+            ..base.clone()
+        },
+        &crate::model_call::answer_options(),
     )
     .await?;
-    let pointer = format!("/{list}/0");
-    let (Some(before), Some(confined)) = (original.pointer(&pointer), repaired.pointer(&pointer))
-    else {
-        return Ok(None);
-    };
-    if crate::generation::reads_as_part(before, block)
-        && !crate::generation::reads_as_part(confined, block)
-    {
-        tracing::info!(
-            "claim.state: a flow repair left the section no lesson; it keeps the text as cut"
-        );
-        trace::refused(
-            Stage::FlowRepair,
-            &format!("the flow repair of section {unit}"),
-            "it left the section no lesson, so the section keeps the text as cut",
-            Some((&before.to_string(), &confined.to_string())),
-        );
-        return Ok(None);
+    let list = if block { "blocks" } else { "questions" };
+    let validator = schema
+        .pointer(&format!("/properties/{list}/items"))
+        .cloned()
+        .unwrap_or_else(|| json!({"type":"object"}));
+    let validator = jsonschema::JSONSchema::compile(&validator).ok();
+    let material = base.material();
+    let mut rows = Rows::of_part(&material, &part);
+    let held = Held { wording };
+    let quotes = Quotes::default();
+    for answer in settled {
+        let ask::Settled::Answered(fix) = answer else {
+            continue;
+        };
+        if fix.edits.is_empty() {
+            continue;
+        }
+        let mut trial = rows.clone();
+        if trial.take(&fix.edits, &quotes, &held).is_err() {
+            continue;
+        }
+        let made = trial.value();
+        let standing = rows.value();
+        let (Some(before), Some(after)) = (standing.pointer(&part), made.pointer(&part)) else {
+            continue;
+        };
+        if before == after {
+            continue;
+        }
+        let valid = validator
+            .as_ref()
+            .is_some_and(|validator| validator.is_valid(after))
+            && before.get("kind") == after.get("kind");
+        if !valid {
+            continue;
+        }
+        if crate::generation::reads_as_part(before, block)
+            && !crate::generation::reads_as_part(after, block)
+        {
+            tracing::info!(
+                "claim.state: a flow repair left the section no lesson; it keeps the text as cut"
+            );
+            trace::refused(
+                Stage::FlowRepair,
+                &format!("the flow repair of section {unit}"),
+                "it left the section no lesson, so the section keeps the text as cut",
+                Some((&before.to_string(), &after.to_string())),
+            );
+            continue;
+        }
+        rows = trial;
     }
-    Ok((confined != before).then(|| confined.clone()))
+    let repaired = rows.value().pointer(&part).cloned();
+    Ok(repaired.filter(|repaired| repaired != section))
 }
 
 /// What the lesson needs once nothing is left for the checks.

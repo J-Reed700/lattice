@@ -575,21 +575,13 @@ fn the_writer_is_told_never_to_name_a_source_in_the_text() {
 }
 
 #[test]
-fn the_writer_and_the_claim_repair_are_told_quoted_wording_takes_double_quotation_marks() {
-    let schema = lesson_schema(2);
-    for (who, text) in [
-        ("writer", citation_instructions(true)),
-        (
-            "claim repair",
-            crate::lessons::text_edits::rewrite_instructions(&schema),
-        ),
-    ] {
-        assert!(text.contains("double quotation marks"), "{who}: {text}");
-        assert!(
-            text.contains("never put wording in single quotation marks"),
-            "{who}"
-        );
-    }
+fn the_writer_is_told_quoted_wording_takes_double_quotation_marks() {
+    let text = citation_instructions(true);
+    assert!(text.contains("double quotation marks"), "{text}");
+    assert!(
+        text.contains("never put wording in single quotation marks"),
+        "{text}"
+    );
 }
 
 #[test]

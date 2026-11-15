@@ -339,6 +339,41 @@ impl Units {
     }
 }
 
+/// Several texts shown in one request, each as units, and what each is a text of.
+#[derive(Debug, Clone)]
+pub struct Texts<P> {
+    texts: Vec<(P, Units)>,
+}
+
+impl<P> Texts<P> {
+    pub fn new() -> Self {
+        Self { texts: Vec::new() }
+    }
+
+    /// Adds a text of `of`. `place` tells this text from an equal text elsewhere in the request.
+    pub fn push(&mut self, of: P, place: &str, text: &str, grain: Grain) {
+        self.texts.push((of, Units::of_at(text, grain, place)));
+    }
+
+    /// Each text and what it is a text of, in the order added.
+    pub fn iter(&self) -> impl Iterator<Item = (&P, &Units)> {
+        self.texts.iter().map(|(of, units)| (of, units))
+    }
+
+    /// What `unit` is a unit of, and its words. `None` when no text here holds it.
+    pub fn found(&self, unit: UnitRef) -> Option<(&P, &str)> {
+        self.texts
+            .iter()
+            .find_map(|(of, units)| units.text_of(unit).map(|text| (of, text)))
+    }
+}
+
+impl<P> Default for Texts<P> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// How strong a gap is: its line feeds, then its length.
 fn breaks(gap: &str) -> (usize, usize) {
     (gap.matches('\n').count(), gap.len())

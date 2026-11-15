@@ -2,7 +2,34 @@
 
 use super::*;
 
+impl ShownRows<'_> {
+    /// The handle a unit was shown under.
+    pub(crate) fn handle_of(&self, unit: UnitRef) -> Option<Handle<Unit>> {
+        self.units
+            .iter()
+            .flat_map(|units| units.iter())
+            .find(|(_, held)| held.reference() == unit)
+            .map(|(handle, _)| handle.clone())
+    }
+}
+
 impl Rows {
+    /// The sentence of the text at `pointer` that is `sentence`, else the first that holds it.
+    pub(crate) fn sentence_at(&self, pointer: &str, sentence: &str) -> Option<UnitRef> {
+        let sentence = sentence.trim();
+        if sentence.is_empty() {
+            return None;
+        }
+        let field = self.fields.iter().find(|field| field.pointer == pointer)?;
+        let units: Vec<UnitRef> = field.units.spans().into_iter().map(|(unit, _)| unit).collect();
+        let text = |unit: &&UnitRef| field.units.text_of(**unit).unwrap_or_default();
+        units
+            .iter()
+            .find(|unit| text(unit).trim() == sentence)
+            .or_else(|| units.iter().find(|unit| text(unit).contains(sentence)))
+            .copied()
+    }
+
     /// Shows every unit, field by field in document order, then every citation.
     pub(crate) fn shown<'a>(&'a self, showing: &mut Showing<'_>) -> Result<ShownRows<'a>> {
         let mut units = Vec::with_capacity(self.fields.len());
@@ -26,6 +53,9 @@ impl Rows {
             }
         }
         for (part_pointer, _) in part_pointers(&self.base) {
+            if self.only.as_ref().is_some_and(|only| *only != part_pointer) {
+                continue;
+            }
             if let Some(Value::Object(map)) = out.pointer_mut(&part_pointer) {
                 *map = self.part_rendered(&part_pointer, std::mem::take(map), shown);
             }
