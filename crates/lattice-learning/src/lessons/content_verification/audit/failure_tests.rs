@@ -461,7 +461,7 @@ async fn a_service_outage_during_an_audit_defers_instead_of_failing() {
 }
 
 #[tokio::test]
-async fn an_audit_item_correction_quotes_the_refusal() {
+async fn an_unreadable_audit_answer_is_told_so_when_asked_again() {
     let harness = Harness::new(vec![verified("a", BOILS)]);
     let llm = ScriptedVerifier::new(BIG, |request, call| {
         Ok(CompletionResponse::from_text(if call == 1 {
@@ -475,10 +475,6 @@ async fn an_audit_item_correction_quotes_the_refusal() {
 
     assert!(outcome.publishable());
     let second = llm.user_texts().remove(1);
-    assert!(
-        second.contains("That answer could not be used:"),
-        "{second}"
-    );
     assert!(
         second.contains("Your answer could not be read."),
         "{second}"

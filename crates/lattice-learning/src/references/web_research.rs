@@ -23,7 +23,7 @@ use lattice_core::application::services::model_contract::shown::{
 };
 use lattice_core::application::services::model_contract::{Contract, ContractId};
 use lattice_core::domain::sourcing::{lift_sites, Ecosystem, NeedKind, Origin};
-use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashSet;

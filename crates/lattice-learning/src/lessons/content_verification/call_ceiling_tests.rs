@@ -76,7 +76,20 @@ impl Rounds {
                 }));
             }
             if prompt.starts_with("You are editing a rejected draft.") {
-                return Ok(json!({"edits":[{"path":format!("/blocks/{section}/body"),"before":sentence,"after":written}]}).to_string());
+                // The repair writes over the sentence once; after that it has nothing to change.
+                let path = format!("/blocks/{section}/body");
+                let there = fixture_task(prompt).is_some_and(|task| {
+                    task["candidate"]
+                        .pointer(&path)
+                        .and_then(Value::as_str)
+                        .is_some_and(|body| unmarked(body).contains(sentence))
+                });
+                let edits = if there {
+                    json!([{"path":path,"before":sentence,"after":written}])
+                } else {
+                    json!([])
+                };
+                return Ok(json!({ "edits": edits }).to_string());
             }
         }
         if prompt.starts_with("Repair verified lesson defects.") {
@@ -108,13 +121,13 @@ fn fault(prompt: &str, section: usize, sentence: &str) -> String {
         .as_array()
         .unwrap()
         .iter()
-        .find(|passage| {
+        .position(|passage| {
             passage["text"]
                 .as_str()
                 .is_some_and(|text| text.contains(sentence))
         })
         .unwrap();
-    let defect = json!({"passageId":passage["id"],"finding":"This step promises that the tutor runs the learner's code and reports whether the tests pass.","concerns":["promise"]});
+    let defect = json!({"passageId":format!("section-{section}-passage-{passage}"),"finding":"This step promises that the tutor runs the learner's code and reports whether the tests pass.","concerns":["promise"]});
     let legacy = json!({"issues":[],"sectionDefects":[defect]}).to_string();
     crate::teaching_review::scripted::reply(prompt, &legacy).unwrap_or(legacy)
 }

@@ -49,7 +49,8 @@ pub(super) enum Outcome {
     Applied,
     /// It was named, and none of its changes could be applied.
     NotApplied(Vec<String>),
-    /// Its correction as a whole was refused: it changed what must stay or what it was not asked to change.
+    /// Its correction was refused: asked again in the same repair it stayed refused, or it
+    /// changed what must stay.
     Refused(Vec<String>),
     /// No change named it.
     Unnamed,

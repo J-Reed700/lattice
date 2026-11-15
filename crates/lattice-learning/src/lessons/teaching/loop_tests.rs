@@ -316,7 +316,7 @@ async fn a_finding_whose_repairs_cannot_be_used_waits_after_its_second() -> Resu
         .is_some_and(|request| request["issuesToFix"][0]["lastAttempt"]
             .as_str()
             .is_some_and(|attempt| attempt
-                .starts_with("The last repair's edits for this finding could not be applied"))));
+                .starts_with("The last repair's correction for this finding was refused"))));
     Ok(())
 }
 
@@ -1027,7 +1027,7 @@ async fn one_finding_s_unusable_answer_does_not_stop_the_others() -> Result<()> 
     assert!(last["issuesToFix"][0]["lastAttempt"]
         .as_str()
         .is_some_and(|attempt| attempt
-            .starts_with("The last repair's edits for this finding could not be applied")));
+            .starts_with("The last repair's correction for this finding was refused")));
     Ok(())
 }
 
@@ -1792,7 +1792,7 @@ async fn an_entry_s_edit_outside_its_finding_s_part_is_refused_and_the_other_ent
     assert_eq!(parts_of(&asked[1]), [part_of(1)]);
     assert!(asked[2]["issuesToFix"][0]["lastAttempt"]
         .as_str()
-        .is_some_and(|attempt| attempt.contains("could not be applied")));
+        .is_some_and(|attempt| attempt.contains("was refused")));
     assert!(reviewed.set_aside.is_empty());
     Ok(())
 }
@@ -1860,7 +1860,7 @@ async fn an_edit_outside_its_finding_s_part_leaves_the_other_findings_edits_appl
     assert_eq!(parts_of(&asked[1]), [part_of(1)]);
     assert!(asked[2]["issuesToFix"][0]["lastAttempt"]
         .as_str()
-        .is_some_and(|attempt| attempt.contains("could not be applied")));
+        .is_some_and(|attempt| attempt.contains("was refused")));
     assert!(reviewed.set_aside.is_empty());
     Ok(())
 }

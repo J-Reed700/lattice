@@ -533,7 +533,7 @@ impl Taking<'_, '_> {
         let repair = match settled {
             Settled::Unanswered(Why::Missing) => return Ok((Outcome::Unnamed, Vec::new())),
             Settled::Unanswered(Why::Refused(reason) | Why::Contradicted(reason)) => {
-                return Ok((Outcome::NotApplied(vec![reason]), Vec::new()));
+                return Ok((Outcome::Refused(vec![reason]), Vec::new()));
             }
             Settled::Unanswered(Why::NoRoom) => return Ok((Outcome::NoRoom, Vec::new())),
             Settled::Unanswered(why) => {

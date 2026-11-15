@@ -481,7 +481,8 @@ pub(super) fn answer_each(
     request: &CompletionRequest,
     verdict: &dyn Fn(&str, &[Labelled]) -> Value,
 ) -> String {
-    let (claims, sentences) = parse_request(crate::lessons::structured_call::latest_ask(request));
+    let (_, task) = crate::lessons::structured_call::task_messages(request);
+    let (claims, sentences) = parse_request(task);
     let entries: Vec<Value> = claims
         .iter()
         .map(|(handle, statement)| {
