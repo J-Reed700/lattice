@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { findSourcedPassages } from '@/features/reading/model/sourcedPassages';
+import { findNoteMarks } from '@/utils/noteCitations';
 
-import { findNoteMarks, noteSentencesByOccurrence, noteSentencesCiting } from '../noteCitations';
+import { noteSentencesByOccurrence, noteSentencesCiting } from '../noteSentences';
 
 const NOTE = [
   'Kale outgrows chard in cool weather [1][2].',

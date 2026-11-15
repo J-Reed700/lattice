@@ -1,10 +1,3 @@
-import {
-  byOccurrence,
-  citing,
-  closeGaps,
-  sentencesOf,
-  type ReferenceReader,
-} from '@/features/reading/model/answerSentences';
 import type { FoundMark } from '@/utils/foundMark';
 
 /**
@@ -13,7 +6,7 @@ import type { FoundMark } from '@/utils/foundMark';
  * nowhere else; a conversation's reply never goes through this module, its
  * references are pieces.
  */
-const NOTE_MARKER = /\[(\d{1,5})\]/g;
+export const NOTE_MARKER = /\[(\d{1,5})\]/g;
 
 export function findNoteMarks(text: string): FoundMark[] {
   return Array.from(text.matchAll(NOTE_MARKER), (match) => ({
@@ -22,19 +15,4 @@ export function findNoteMarks(text: string): FoundMark[] {
     number: Number(match[1]),
     glyph: false,
   }));
-}
-
-const noteReader: ReferenceReader = {
-  numbersIn: (sentence) => findNoteMarks(sentence).map((mark) => mark.number),
-  withoutReferences: (sentence) => closeGaps(sentence.replace(NOTE_MARKER, ' ')),
-};
-
-/** The sentences of a note that cite source `citationNumber`, markers taken out. */
-export function noteSentencesCiting(note: string, citationNumber: number): string[] {
-  return citing(sentencesOf(note, noteReader), citationNumber);
-}
-
-/** Entry `k` is the sentence holding the k-th `[n]` of source `citationNumber` in the note. */
-export function noteSentencesByOccurrence(note: string, citationNumber: number): string[] {
-  return byOccurrence(sentencesOf(note, noteReader), citationNumber);
 }

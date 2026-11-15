@@ -4,6 +4,7 @@ import { ChevronDown, ChevronUp } from 'lucide-react';
 
 import { IconButton } from '@/components/ui';
 import { sentencesByOccurrence, sentencesCiting } from '@/features/reading/model/answerSentences';
+import { noteSentencesByOccurrence, noteSentencesCiting } from '@/features/reading/model/noteSentences';
 import {
   findQuoteSpan,
   findSourcedPassages,
@@ -13,7 +14,6 @@ import {
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import type { PassageLocator, SourceWithMetadata } from '@/types/conversation';
 import { formatRelativeTime } from '@/utils/formatters';
-import { noteSentencesByOccurrence, noteSentencesCiting } from '@/utils/noteCitations';
 import { replyOf, type ReplyPiece } from '@/utils/replyPieces';
 
 
