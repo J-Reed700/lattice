@@ -20,6 +20,7 @@ pub(super) struct Events {
     /// llama-server sends with its last chunk.
     timings: Option<Value>,
     reasoning: ReasoningParts,
+    begun: bool,
 }
 
 #[derive(Default)]
@@ -59,6 +60,7 @@ impl EventDecoder for Events {
                 continue;
             }
             if let Some(text) = field(delta, "content").as_str().filter(|t| !t.is_empty()) {
+                self.begun = true;
                 self.text.push_str(text);
                 on_text(text.to_owned())?;
             }
@@ -68,11 +70,13 @@ impl EventDecoder for Events {
                 .or_else(|| field(delta, "thought").as_str())
                 .filter(|t| !t.is_empty())
             {
+                self.begun = true;
                 self.reasoning_text.push_str(reasoning);
                 self.reasoning
                     .push((String::new(), 0), reasoning, on_reasoning)?;
             }
             if let Some(tool_calls) = field(delta, "tool_calls").as_array() {
+                self.begun |= !tool_calls.is_empty();
                 for call in tool_calls {
                     let index = field(call, "index").as_u64().unwrap_or(0);
                     let draft = self.tool_calls.entry(index).or_default();
@@ -107,6 +111,10 @@ impl EventDecoder for Events {
 
     fn has_tool_output(&self) -> bool {
         !self.tool_calls.is_empty()
+    }
+
+    fn answer_begun(&self) -> bool {
+        self.begun
     }
 
     fn finish(mut self: Box<Self>) -> Result<Option<Value>> {

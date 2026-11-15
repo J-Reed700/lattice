@@ -186,6 +186,10 @@ impl EventDecoder for Events {
         !self.input_json.is_empty()
     }
 
+    fn answer_begun(&self) -> bool {
+        !self.blocks.is_empty()
+    }
+
     fn finish(self: Box<Self>) -> Result<Option<Value>> {
         Ok(self.completed)
     }

@@ -823,10 +823,11 @@ fn stream_of(events: &[Value]) -> Vec<u8> {
 }
 
 /// A streamed answer is timed by the app's own clock on its own request:
-/// until the first delta the backend was reading, after it writing. The
-/// prompt tokens it read leave out those its usage says were cached.
+/// until the model began its answer the backend was reading, after it
+/// writing. The prompt tokens it read leave out those its usage says were
+/// cached.
 #[tokio::test]
-async fn a_streamed_answer_is_timed_from_its_first_delta() {
+async fn a_streamed_answer_is_timed_from_its_first_output() {
     let bytes = stream_of(&[
         json!({"type":"response.output_text.delta","delta":"Hello"}),
         json!({"type":"response.completed","response":{"status":"completed",
@@ -848,6 +849,116 @@ async fn a_streamed_answer_is_timed_from_its_first_delta() {
     assert_eq!((timing.prompt_tokens, timing.output_tokens), (1700, 226));
     assert!(timing.prompt_seconds >= 2.0, "{timing:?}");
     assert!(timing.output_seconds < timing.prompt_seconds, "{timing:?}");
+}
+
+/// Two chunks with a pause between them, as a model's silence is.
+fn paused(
+    first: Vec<u8>,
+    second: Vec<u8>,
+) -> impl futures::Stream<Item = std::result::Result<Vec<u8>, std::io::Error>> + Unpin {
+    use futures::StreamExt as _;
+    Box::pin(
+        futures::stream::iter([Ok::<_, std::io::Error>(first)]).chain(futures::stream::once(
+            async move {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                Ok::<_, std::io::Error>(second)
+            },
+        )),
+    )
+}
+
+/// A model that thinks without showing it began its answer when its thinking
+/// did: the silence after that is writing, not the prompt being read.
+#[tokio::test]
+async fn a_claude_answer_that_thinks_unseen_is_timed_from_its_thinking() {
+    let first = stream_of(&[
+        json!({"type":"message_start","message":{"id":"m1","content":[],"usage":{"input_tokens":2000,"output_tokens":1},"stop_reason":null}}),
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}),
+    ]);
+    let second = stream_of(&[
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig"}}),
+        json!({"type":"content_block_stop","index":0}),
+        json!({"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}),
+        json!({"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Done."}}),
+        json!({"type":"content_block_stop","index":1}),
+        json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":300}}),
+        json!({"type":"message_stop"}),
+    ]);
+    let sent = Instant::now().checked_sub(Duration::from_secs(2)).unwrap();
+    let response = streaming::drain(
+        protocols(CloudProvider::Anthropic).completion,
+        paused(first, second),
+        Duration::from_secs(5),
+        sent,
+        &|_| Ok(()),
+        &|_| Ok(()),
+    )
+    .await
+    .unwrap();
+    let timing = response.timing.unwrap();
+    assert!(timing.output_seconds >= 0.5, "{timing:?}");
+    assert!((2.0..2.5).contains(&timing.prompt_seconds), "{timing:?}");
+}
+
+/// An OpenAI reasoning model with no summary announces its reasoning item and
+/// then sends nothing to show; the answer began with that item.
+#[tokio::test]
+async fn an_openai_answer_that_reasons_unseen_is_timed_from_its_reasoning() {
+    let first = stream_of(&[
+        json!({"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","id":"rs_1","summary":[]}}),
+    ]);
+    let second = stream_of(&[
+        json!({"type":"response.output_item.added","output_index":1,"item":{"type":"message","id":"msg_1","content":[]}}),
+        json!({"type":"response.output_text.delta","delta":"Done."}),
+        json!({"type":"response.completed","response":{"status":"completed",
+            "usage":{"input_tokens":2000,"output_tokens":300},
+            "output":[{"type":"message","content":[{"type":"output_text","text":"Done."}]}]}}),
+    ]);
+    let sent = Instant::now().checked_sub(Duration::from_secs(2)).unwrap();
+    let response = streaming::drain(
+        protocols(CloudProvider::Openai).completion,
+        paused(first, second),
+        Duration::from_secs(5),
+        sent,
+        &|_| Ok(()),
+        &|_| Ok(()),
+    )
+    .await
+    .unwrap();
+    let timing = response.timing.unwrap();
+    assert!(timing.output_seconds >= 0.5, "{timing:?}");
+    assert!((2.0..2.5).contains(&timing.prompt_seconds), "{timing:?}");
+}
+
+/// A chat-completions answer of tool calls alone streams nothing to show, but
+/// the call's first chunk is where the model began and is timed from there.
+#[tokio::test]
+async fn a_chat_answer_of_tool_calls_alone_is_timed_from_its_first_call() {
+    let first = stream_of(&[
+        json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"search","arguments":""}}]}}]}),
+    ]);
+    let second = stream_of(&[
+        json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"query\":\"a\"}"}}]}}]}),
+        json!({"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],
+            "usage":{"prompt_tokens":2000,"completion_tokens":300}}),
+    ]);
+    let sent = Instant::now().checked_sub(Duration::from_secs(2)).unwrap();
+    let response = streaming::drain(
+        protocols(CloudProvider::Google).completion,
+        paused(first, second),
+        Duration::from_secs(5),
+        sent,
+        &|_| Ok(()),
+        &|_| Ok(()),
+    )
+    .await
+    .unwrap();
+    assert!(
+        response.timing.is_some(),
+        "an answer of tool calls alone was not timed"
+    );
+    let timing = response.timing.unwrap();
+    assert!(timing.output_seconds >= 0.5, "{timing:?}");
 }
 
 /// A chat-completions stream whose last chunk carries the server's own

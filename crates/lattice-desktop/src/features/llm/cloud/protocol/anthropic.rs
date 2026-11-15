@@ -54,6 +54,15 @@ impl ProviderApi for Anthropic {
                 .and_then(Value::as_str)
                 .is_some_and(|message| message.to_ascii_lowercase().contains("credit balance"))
     }
+
+    /// The monthly spend limit is a 429 whose error details carry a code.
+    fn spend_limit_reached(&self, status: StatusCode, reply: &Value) -> bool {
+        status == StatusCode::TOO_MANY_REQUESTS
+            && reply
+                .pointer("/error/details/error_code")
+                .and_then(Value::as_str)
+                == Some("enforced_spend_limit_reached")
+    }
 }
 
 impl CompletionProtocol for Anthropic {
