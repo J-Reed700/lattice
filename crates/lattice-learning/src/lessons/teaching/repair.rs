@@ -387,7 +387,7 @@ fn citing() -> String {
 }
 
 /// The instructions of an edit repair, with the rules of citing when the material takes citations.
-pub(super) fn system(cites: bool) -> String {
+pub(in crate::lessons) fn system(cites: bool) -> String {
     let mut parts = vec![
         OPENING.to_owned(),
         SENTENCES.to_owned(),

@@ -18,7 +18,7 @@ pub(crate) mod contract;
 mod passes;
 mod protected;
 pub(crate) mod quotes;
-mod repair;
+pub(in crate::lessons) mod repair;
 #[cfg(test)]
 pub(crate) mod repair_script;
 mod review_loop;

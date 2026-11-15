@@ -1134,7 +1134,7 @@ async fn a_rewrite_that_cannot_be_used_is_asked_again_whole_not_in_halves() -> R
     assert!(
         requests.iter().all(|request| parts_of(request).len() == 2),
         "{:?}",
-        requests.iter().map(ids_of).collect::<Vec<_>>()
+        requests.iter().map(parts_of).collect::<Vec<_>>()
     );
     assert_eq!(requests.len(), 2);
     assert_eq!(parts_of(&requests[0]), parts_of(&requests[1]));

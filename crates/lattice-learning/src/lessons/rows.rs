@@ -52,6 +52,7 @@ impl Kind for Citation {
 }
 
 impl Citation {
+    #[cfg(test)]
     pub(crate) fn at(&self) -> &CitationRef {
         &self.at
     }
@@ -93,6 +94,7 @@ impl Kind for Quotable {
 }
 
 impl Quotable {
+    #[cfg(test)]
     pub(crate) fn source_index(&self) -> u64 {
         self.source_index
     }

@@ -806,11 +806,12 @@ fn an_entry_reports_the_parts_it_changed_and_the_sentences_it_wrote() {
         let mut scope = Scope::for_question();
         let mut showing = scope.request();
         let shown = rows.shown(&mut showing).expect("shown");
-        shown
+        let own = shown
             .citations()
             .find(|(_, citation)| citation.at().part == "/questions/0")
             .map(|(handle, _)| handle.written())
-            .expect("the question has its own citation")
+            .expect("the question has its own citation");
+        own
     };
     assert_ne!(own_of_question, c4);
     let new = "Pilots check the table well before every sailing.";
