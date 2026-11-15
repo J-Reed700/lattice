@@ -73,7 +73,7 @@ pub(crate) fn reply(prompt: &str, script: &str) -> Option<String> {
             .unwrap_or(json!("p999"));
         let continues = defect["continues"]
             .as_str()
-            .map_or(json!("none"), |id| shown(id));
+            .map_or(json!("none"), &mut shown);
         let mut entry = json!({"kind":"sectionDefect","passageId":place,"finding":defect["finding"],"continues":continues});
         if lesson {
             let concerns: Vec<Value> = defect["concerns"]

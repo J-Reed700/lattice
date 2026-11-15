@@ -98,6 +98,7 @@ pub struct GeneratedSimulationTurn {
 struct SimulationJson {
     content: String,
     citations: Vec<crate::dto::LearningPracticeCitationDto>,
+    #[cfg(test)]
     #[serde(default, rename = "evaluatedQuestionIds")]
     evaluated_question_ids: Option<Vec<String>>,
 }
@@ -737,59 +738,6 @@ pub async fn generate_activity_with_plan(
         rubric,
         files,
     })
-}
-
-/// `prompt` with the newest whole turns of `transcript`, in order, while they
-/// fit the room the window leaves under `system` (half of it when source
-/// snapshots share it), and a line saying how many earlier turns are not
-/// shown. The learner's newest turn, and any turn after it, is always sent:
-/// when those do not fit the window the request is refused, as the context
-/// assembler refuses one it cannot fit, rather than sent without them.
-fn with_transcript(
-    llm: &dyn LLMPort,
-    system: &str,
-    mut prompt: serde_json::Value,
-    transcript: Vec<serde_json::Value>,
-    output_tokens: usize,
-    shared: bool,
-) -> Result<serde_json::Value> {
-    let window = crate::reference_collection::snapshot_room(llm, system, &prompt, output_tokens);
-    let room = if shared { window / 2 } else { window };
-    let newest_learner_turn = transcript.iter().rposition(|turn| {
-        turn.get("speaker").and_then(serde_json::Value::as_str) == Some("learner")
-    });
-    let mut used = 0;
-    let mut kept = 0;
-    for (index, turn) in transcript.iter().enumerate().rev() {
-        used += llm.count_tokens(&turn.to_string()) + 1;
-        if newest_learner_turn.is_some_and(|newest| index >= newest) {
-            if used > window {
-                return Err(crate::model_call::window_too_small(
-                    llm,
-                    "Your latest response does not fit",
-                ));
-            }
-        } else if used > room {
-            break;
-        }
-        kept += 1;
-    }
-    let earlier = transcript.len() - kept;
-    if let Some(fields) = prompt.as_object_mut() {
-        fields.insert(
-            "transcript".into(),
-            serde_json::Value::Array(transcript.into_iter().skip(earlier).collect()),
-        );
-        fields.insert(
-            "earlierTurns".into(),
-            serde_json::json!(if earlier == 0 {
-                String::new()
-            } else {
-                format!("{earlier} earlier turns not shown")
-            }),
-        );
-    }
-    Ok(prompt)
 }
 
 struct SimulationTurn;

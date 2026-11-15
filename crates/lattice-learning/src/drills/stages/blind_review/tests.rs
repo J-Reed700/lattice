@@ -175,7 +175,10 @@ async fn a_review_is_read_into_remarks_whose_lines_the_app_places() {
         .collect();
     assert_eq!(findings.len(), 2);
     assert_eq!(findings[0].path, "tide/harbour.py");
-    assert_eq!(findings[0].quote, "    low = chart[mark]\n    return low - 1");
+    assert_eq!(
+        findings[0].quote,
+        "    low = chart[mark]\n    return low - 1"
+    );
     let span = findings[0].span.clone().expect("a span");
     assert_eq!((span.start, span.end), (2, 3));
     assert_eq!(findings[1].path, "kiln/stack.py");
@@ -195,11 +198,7 @@ async fn a_remark_over_two_files_or_backwards_is_not_a_finding() {
 
 #[tokio::test]
 async fn a_remark_at_a_line_that_was_not_shown_is_left_out() {
-    let found = reviewed(vec![review(vec![
-        remark("u99", "u99"),
-        remark("u3", "u3"),
-    ])])
-    .await;
+    let found = reviewed(vec![review(vec![remark("u99", "u99"), remark("u3", "u3")])]).await;
     assert_eq!(found.items.len(), 1);
 }
 

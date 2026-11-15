@@ -14,7 +14,9 @@ use lattice_core::application::services::grounded_generation::{
     self, CallOptions, GroundedGenerationError, GroundedOutput, GroundedRequest, Measured,
     Streaming,
 };
-use lattice_core::application::services::model_contract::{legacy, tagged, ContractCall};
+use lattice_core::application::services::model_contract::legacy;
+#[cfg(test)]
+use lattice_core::application::services::model_contract::{tagged, ContractCall};
 pub use lattice_core::shared::error::ErrorClass;
 use lattice_core::shared::error::{AppError, Result};
 
@@ -81,6 +83,7 @@ impl<'a> From<&'a str> for TooLarge<'a> {
 
 /// Send `request` with no elapsed-time limit, tagged with `call`. A request
 /// the model's window cannot hold fails as `too_large` says and is never sent.
+#[cfg(test)]
 pub(crate) async fn send<'a>(
     llm: &dyn LLMPort,
     call: &ContractCall,

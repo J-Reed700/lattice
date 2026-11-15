@@ -177,17 +177,6 @@ pub(crate) fn describe_fault(
     }
 }
 
-/// The schema of a severity.
-pub(crate) fn severity_schema() -> Value {
-    json!({"type": "string", "enum": ["critical", "major", "minor", "nit"]})
-}
-
-/// The schema of an edit's path: one of the files.
-pub(crate) fn path_schema(files: &[DrillFile]) -> Value {
-    let paths: Vec<&str> = files.iter().map(|file| file.path.as_str()).collect();
-    json!({"type": "string", "enum": paths})
-}
-
 /// The schema of a text that must say something.
 pub(crate) fn text_schema() -> Value {
     json!({"type": "string", "minLength": 1})

@@ -74,6 +74,7 @@ macro_rules! answer_intro {
 }
 
 /// The words every confirming read begins with.
+#[cfg(test)]
 pub(crate) const INTRO: &str = answer_intro!();
 
 pub(crate) const SYSTEM: &str = concat!(answer_intro!(), "A planned item is taught when the lesson teaches it. ", taught!(), "\nA part uses something when its words ask the learner to do or use it, when its practice deliverable needs it, or when it treats it as known. What a part only mentions, and does not ask of the learner, it does not use; then asked is false and quote is empty.\nA use is taught when what the part uses has been taught before it or in it. ", use_taught!(), " What the actions and terms of earlierLessons cover, and the learner's priorKnowledge, are taught too.\nTwo statements contradict each other when there is a case in which one says something happens or holds and the other says it cannot; statements that can both be true, read with their conditions, do not.\nCopy every quotation exactly from the text it comes from; a quotation is empty when nothing teaches it.");

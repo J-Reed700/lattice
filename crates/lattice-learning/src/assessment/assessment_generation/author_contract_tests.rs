@@ -151,20 +151,20 @@ fn what_the_quiz_writers_are_told_reaches_their_request_and_no_constant_writes_a
 fn the_key_is_the_option_marked_right_wherever_it_stands() {
     let need = single_choice();
     let held = passage("Firing", FIRING);
-    for at in 0..TEXTS.len() {
+    for (at, text) in TEXTS.iter().enumerate() {
         let raw = one_item(&[&held], &kiln_choice(ASKED, &[at], &["u1"]));
         let item = to_candidate(raw, &need, &[&held]).unwrap();
         let LearningAssessmentKey::Choice(key) = item.candidate.key else {
             panic!("expected a single-choice key");
         };
-        assert_eq!(item.candidate.options[key], TEXTS[at]);
+        assert_eq!(item.candidate.options[key], *text);
         for (option, reason) in item
             .candidate
             .options
             .iter()
             .zip(&item.candidate.distractor_rationales)
         {
-            let expected = if *option == TEXTS[at] {
+            let expected = if *option == *text {
                 String::new()
             } else {
                 format!("{option} is not when the kiln is lit.")

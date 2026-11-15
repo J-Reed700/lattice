@@ -154,6 +154,7 @@ pub(crate) async fn complete_json_with_progress(
 ///
 /// Inside a lesson job the draft is checkpointed, so a job interrupted
 /// between the steps resumes at the answer.
+#[cfg(test)]
 pub(crate) async fn complete_reasoned_json(
     llm: &dyn LLMPort,
     call: &ContractCall,

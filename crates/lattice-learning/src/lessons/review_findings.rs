@@ -754,6 +754,7 @@ pub(crate) fn sentences_of(candidate: &Value, finding: &ReviewFinding) -> Vec<St
 
 /// The lesson bytes of the first string of the part `site` names (the whole
 /// candidate for the lesson) that holds `quote` as a copy.
+#[cfg(test)]
 pub(crate) fn part_quote<'c>(
     candidate: &'c Value,
     site: FindingSite,

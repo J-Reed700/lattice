@@ -19,6 +19,8 @@ use crate::drills::runner::{CodeRunner, RunOutcome};
 use crate::drills::schedules;
 use crate::drills::spec::DrillSpec;
 use crate::lessons::structured_call::is_draft_request;
+#[cfg(test)]
+use lattice_core::domain::learning::drills::patterns_for;
 use crate::persistence::now;
 use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{
@@ -26,7 +28,7 @@ use lattice_core::application::ports::llm_port::{
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::drills::{
-    apply, patterns_for, Assessment, Drill, DrillFile, Edit, Finding, FindingOutcome, IssueOutcome,
+    apply, Assessment, Drill, DrillFile, Edit, Finding, FindingOutcome, IssueOutcome,
     KeyIssue, LessonBrief, LessonSentence, LineSpan, Material, PatternDue, Proof,
     Severity,
 };
@@ -735,6 +737,7 @@ pub(super) fn line_handle(files: &[DrillFile], path: &str, line: usize) -> Strin
 }
 
 /// The name the describer is shown for the pattern `id` among the patterns of `material`.
+#[cfg(test)]
 pub(super) fn pattern_handle(material: &Material, id: &str) -> String {
     let at = patterns_for(material)
         .position(|pattern| pattern.id == id)
@@ -820,6 +823,7 @@ pub(super) fn grade_extras_answer() -> String {
 
 /// An entry of the key as the model writes it: an instance of the pattern `pattern` that the one line `line` of
 /// src/limiter.py becomes `with` repairs.
+#[cfg(test)]
 pub(super) fn entry_for(pattern_id: &str, line: usize, with: &str) -> String {
     let at = line_handle(&proved().files, "src/limiter.py", line);
     json!({"entry": {
@@ -834,6 +838,7 @@ pub(super) fn entry_for(pattern_id: &str, line: usize, with: &str) -> String {
 }
 
 /// What the model answers when asked to describe the extra finding as an entry of the key.
+#[cfg(test)]
 pub(super) fn entry_answer() -> String {
     entry_for(
         "resources.unbounded_growth",

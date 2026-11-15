@@ -21,22 +21,8 @@ fn task_of(prompt: &str) -> Option<Value> {
     })
 }
 
-fn is_task(prompt: &str, name: &str) -> bool {
-    task_of(prompt).is_some_and(|task| task["task"] == name)
-}
-
 fn key_of(titles: &[&str]) -> String {
     titles.join("\u{1f}")
-}
-
-/// Whether `prompt` asks for an outline.
-pub(crate) fn is_description(prompt: &str) -> bool {
-    is_task(prompt, DESCRIBE_TASK)
-}
-
-/// Whether `prompt` asks which earlier modules each module builds on.
-pub(crate) fn is_prerequisites(prompt: &str) -> bool {
-    is_task(prompt, PREREQUISITES_TASK)
 }
 
 fn lines(texts: &Value) -> Value {
