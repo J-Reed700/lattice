@@ -93,6 +93,8 @@ impl<K: Kind, W> Change<K, W> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Consistent<K: Kind, W>(Change<K, W>);
 
+type Split<G, K, W> = Vec<(G, Consistent<K, W>)>;
+
 impl<K: Kind, W> Consistent<K, W> {
     pub fn change(&self) -> &Change<K, W> {
         &self.0
@@ -125,7 +127,7 @@ impl<K: Kind, W> Consistent<K, W> {
     pub fn split_by<G: PartialEq>(
         self,
         group: impl Fn(&K::Ref) -> Option<G>,
-    ) -> std::result::Result<Vec<(G, Consistent<K, W>)>, String> {
+    ) -> std::result::Result<Split<G, K, W>, String> {
         let Change {
             replace,
             insert,

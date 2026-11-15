@@ -74,6 +74,8 @@ pub struct Units {
     gaps: Vec<String>,
 }
 
+type Laying = (String, Vec<(Option<UnitRef>, Range<usize>)>);
+
 impl Units {
     pub fn of(text: &str, grain: Grain) -> Self {
         Self::cut(text, grain, sha256_prefix(text))
@@ -82,7 +84,7 @@ impl Units {
     /// [`Units::of`] for a text that is one of several shown in one request: `place` says which (a JSON
     /// pointer, a field name), so units of equal texts in two places are not one thing.
     pub fn of_at(text: &str, grain: Grain, place: &str) -> Self {
-        Self::cut(text, grain, sha256_prefix(&format!("{place}\u{0}{text}")))
+        Self::cut(text, grain, sha256_prefix(format!("{place}\u{0}{text}")))
     }
 
     fn cut(text: &str, grain: Grain, of: u64) -> Self {
@@ -240,7 +242,7 @@ impl Units {
     }
 
     /// The text as it stands, and for each place the shown unit it holds and its bytes of that text.
-    fn laid(&self) -> (String, Vec<(Option<UnitRef>, Range<usize>)>) {
+    fn laid(&self) -> Laying {
         // A text with no unit has one gap, its whole content.
         let (lead, tail) = match self.gaps.as_slice() {
             [lead, .., tail] => (lead.as_str(), tail.as_str()),
