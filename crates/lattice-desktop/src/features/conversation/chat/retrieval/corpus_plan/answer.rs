@@ -19,7 +19,7 @@ use super::{CORRECTION_INSTRUCTION, PLANNER_SYSTEM};
 
 pub(super) struct PlanContract;
 
-static QUERIES: Count = Count("queries");
+const QUERIES: Count = Count("queries");
 const MAX_QUERIES: usize = 3;
 
 impl Contract for PlanContract {

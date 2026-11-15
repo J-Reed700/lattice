@@ -25,10 +25,10 @@ use serde_json::{json, Map, Value};
 /// Said after the lesson's own instructions: the answer's fields, in words.
 const FORM: &str = " Write the answer as one object. ideas lists the lesson's core ideas in teaching order, each with its sections in teaching order: every section has a kind (explanation, worked_example, contrast or check), a title, a body, cites and citations. guidedPractice, independentPractice, reflection and recap are one section each, written in their own fields; the two practice sections also have a rubric of criteria, each with a title, a description and a dimension. questions lists the questions, each with a kind, a prompt, the wrong choices in wrong (each with its option and its reason), then the right choice in right, an explanation, cites and citations. cites names, by their handles, the sentences of the excerpts shown in sources that the section or question rests on: at least one whenever sources are shown, whatever its kind. Each entry of citations has the sentence it cites and, in cites, the handles of the excerpt sentences that state it.";
 
-static IDEAS: Count = Count("ideas");
-static SECTIONS: Count = Count("sections");
-static QUESTIONS: Count = Count("questions");
-static WRONG: Count = Count("wrong");
+const IDEAS: Count = Count("ideas");
+const SECTIONS: Count = Count("sections");
+const QUESTIONS: Count = Count("questions");
+const WRONG: Count = Count("wrong");
 
 /// The lesson writer's call: its reasoning step and its answer.
 pub(crate) struct LessonWriter;

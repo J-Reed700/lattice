@@ -247,7 +247,7 @@ fn places(cited: Vec<Picked<Sentence>>) -> Vec<Place> {
     cited.into_iter().map(|picked| picked.reference).collect()
 }
 
-static EVIDENCE: Count = Count("evidence");
+const EVIDENCE: Count = Count("evidence");
 
 /// A quotation of an addition: the sentences it quotes and what they do.
 #[derive(Debug, Clone, PartialEq)]

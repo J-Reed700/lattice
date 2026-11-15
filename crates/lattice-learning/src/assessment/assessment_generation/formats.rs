@@ -14,11 +14,11 @@ use std::ops::RangeInclusive;
 /// How many ordered values a writer is asked for.
 pub(super) const ORDERING_ASKED: RangeInclusive<usize> = 3..=8;
 
-static OPTIONS: Count = Count("options");
-static PAIRS: Count = Count("pairs");
-static ORDERED: Count = Count("orderedValues");
-static ACCEPTED: Count = Count("acceptedAnswers");
-static BLANKS: Count = Count("blanks");
+const OPTIONS: Count = Count("options");
+const PAIRS: Count = Count("pairs");
+const ORDERED: Count = Count("orderedValues");
+const ACCEPTED: Count = Count("acceptedAnswers");
+const BLANKS: Count = Count("blanks");
 
 /// One fill-in blank as the key keeps it.
 #[derive(Debug, Default)]

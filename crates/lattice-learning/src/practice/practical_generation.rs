@@ -354,7 +354,7 @@ pub async fn generate_activity(
 
 struct PracticalActivity;
 
-static RUBRIC: Count = Count("rubric");
+const RUBRIC: Count = Count("rubric");
 impl Contract for PracticalActivity {
     const ID: ContractId = ContractId::new("practical-activity");
     type Input = ActivityInput;

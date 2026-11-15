@@ -25,11 +25,11 @@ use std::collections::HashMap;
 
 pub(crate) struct OutlineDescription;
 
-static MODULES: Count = Count("modules");
-static LESSONS: Count = Count("lessons");
-static OUTCOMES: Count = Count("outcomes");
-static DELIVERABLES: Count = Count("deliverables");
-static CRITERIA: Count = Count("successCriteria");
+const MODULES: Count = Count("modules");
+const LESSONS: Count = Count("lessons");
+const OUTCOMES: Count = Count("outcomes");
+const DELIVERABLES: Count = Count("deliverables");
+const CRITERIA: Count = Count("successCriteria");
 
 impl Contract for OutlineDescription {
     const ID: ContractId = ContractId::new("outline-description");

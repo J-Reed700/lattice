@@ -89,7 +89,7 @@ pub struct BridgeOutcome {
 /// The model call of the part-wise judge.
 pub struct ClaimParts;
 
-static PARTS: Count = Count("parts");
+const PARTS: Count = Count("parts");
 
 /// One passage the part-wise judge is shown, and its place among those shown.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -31,7 +31,7 @@ use crate::shared::hash::sha256_hex;
 /// The model call of the standing judgement.
 pub(crate) struct SourceStanding;
 
-static REASONS: Count = Count("reasons");
+const REASONS: Count = Count("reasons");
 
 impl Contract for SourceStanding {
     const ID: ContractId = ContractId::new("source-standing");

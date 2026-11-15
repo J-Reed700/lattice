@@ -786,7 +786,7 @@ fn a_plain_cite_holds_no_count() {
     });
 }
 
-static STEPS: Count = Count("steps");
+const STEPS: Count = Count("steps");
 
 /// A statement with a list whose length the request sets.
 #[derive(Debug, PartialEq)]

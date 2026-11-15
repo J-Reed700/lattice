@@ -26,9 +26,9 @@ use std::marker::PhantomData;
 /// The answer's reservation.
 const OUTPUT_TOKENS: usize = 3_000;
 
-static QUESTIONS: Count = Count("questions");
-static PROBES: Count = Count("followUpProbes");
-static SIGNALS: Count = Count("evaluationSignals");
+const QUESTIONS: Count = Count("questions");
+const PROBES: Count = Count("followUpProbes");
+const SIGNALS: Count = Count("evaluationSignals");
 
 /// How many questions a plan of the round is asked to hold.
 fn questions_asked(full_loop: bool) -> std::ops::RangeInclusive<usize> {

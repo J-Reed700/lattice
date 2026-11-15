@@ -39,7 +39,7 @@ impl Authored for Distractor {
 /// How many wrong choices a card holds.
 const DISTRACTORS_PER_CARD: usize = 4;
 
-static DISTRACTORS: Count = Count("distractors");
+const DISTRACTORS: Count = Count("distractors");
 
 fn blank(text: &str) -> bool {
     text.trim().is_empty()
