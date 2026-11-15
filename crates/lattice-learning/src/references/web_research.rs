@@ -344,7 +344,7 @@ pub(crate) struct Gap {
 
 impl Kind for Gap {
     const PREFIX: &'static str = "g";
-    const DRAWN: Drawn = Drawn::Number;
+    const DRAWN: Drawn = Drawn::Itself;
     type Ref = usize;
 
     fn reference(&self) -> usize {
@@ -466,12 +466,6 @@ pub(crate) async fn plan_needs(
         &crate::model_call::answer_options(),
     )
     .await?;
-    if found.items.is_empty() && found.left_out > 0 {
-        return Err(AppError::ModelAnswerUnusable(
-            "The reference search planner's answer held searches, but none of them could be used."
-                .into(),
-        ));
-    }
     let mut planned = Vec::new();
     for GapNeed { gap, need } in found.items {
         let served = gaps.get(gap);

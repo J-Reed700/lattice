@@ -8,7 +8,7 @@ use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::model_contract::ask::{ask_each, Settled};
 use lattice_core::application::services::model_contract::shown::{Scope, Told};
 use lattice_core::domain::learning::drills::{Assessment, IssueOutcome};
-use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, ErrorClass, Result};
 
 use super::grader::{Review, ReviewGrader};
 use super::material::JudgeWording;
@@ -142,11 +142,10 @@ impl ReviewGrader for JudgeGrader<'_> {
 impl JudgeGrader<'_> {
     /// `error`, as the learner reads it when the window cannot hold the drill and the review.
     fn too_large(&self, error: AppError) -> AppError {
-        match error {
-            AppError::PromptExceedsWindow { .. } => {
-                model_call::window_too_small(self.llm, DOES_NOT_FIT)
-            }
-            error => error,
+        if ErrorClass::of(&error) == ErrorClass::DoesNotFit {
+            model_call::window_too_small(self.llm, DOES_NOT_FIT)
+        } else {
+            error
         }
     }
 }

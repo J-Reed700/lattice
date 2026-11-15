@@ -498,7 +498,9 @@ async fn a_brief_with_evidence_tells_the_planter_of_lesson_issues_and_names_the_
     let request = &model.requests()[0];
     let system = system(request);
     assert!(
-        system.ends_with(&format!("\n\n{LESSON_PARAGRAPH}")),
+        system.contains(&format!(
+            "\n\n{LESSON_PARAGRAPH} Answer with an `entries` list holding one entry for each pattern of the list, its `of` the label of the pattern. An entry holds `lessonSentences`"
+        )),
         "{system}"
     );
     let user = &messages(request)[1].1;

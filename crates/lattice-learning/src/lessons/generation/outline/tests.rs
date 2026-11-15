@@ -3,7 +3,7 @@
 use super::describe::{Bounds, Describe, Frame, Outline, Passage, Piece};
 use super::prerequisites::{self, Earlier, Module, Needs};
 use super::*;
-use crate::content_verification::tests::{fixture_prompts, fixture_task};
+use crate::content_verification::tests::fixture_prompts;
 use crate::lessons::course_generation_tests::outline;
 use futures::future::BoxFuture;
 use lattice_core::application::ports::llm_port::CompletionResponse;
@@ -26,7 +26,10 @@ fn task(sent: &Sent) -> Json {
         .into_iter()
         .next()
         .unwrap_or_default();
-    fixture_task(&prompt).unwrap()
+    prompt
+        .split("\n\n")
+        .find_map(|chunk| serde_json::from_str::<Json>(chunk).ok().filter(Json::is_object))
+        .unwrap()
 }
 
 fn request() -> GenerateLearningProgramRequestDto {

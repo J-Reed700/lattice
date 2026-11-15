@@ -538,10 +538,21 @@ fn more_lessons_than_the_course_allows_a_module_is_refused_with_the_count() {
 fn the_modules_rules_alone_refuse_what_decoding_an_outline_refuses_with_the_same_words() {
     let mut broken = candidate();
     broken["modules"][1]["prerequisiteIndices"] = json!([1]);
+    broken["modules"]
+        .as_array_mut()
+        .unwrap()
+        .push(module_json("Glaze work", 3));
+    let sources = vec![LearningSourceDto {
+        id: "source-tide".into(),
+        title: "Tide notes".into(),
+        url: None,
+        excerpt: format!("{GATE} {TABLES}"),
+        acquired_at: 1,
+    }];
     let from_outline = generation::decode_outline(
         &broken.to_string(),
         &request(LearningCourseDepth::Course),
-        &[],
+        &sources,
     )
     .unwrap_err();
     let module: GeneratedModule = serde_json::from_value(broken["modules"][1].clone()).unwrap();

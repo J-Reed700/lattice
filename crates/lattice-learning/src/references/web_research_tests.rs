@@ -711,14 +711,16 @@ async fn a_search_for_a_gap_the_planner_was_not_given_is_left_out() -> Result<()
             .collect::<Vec<_>>(),
         ["another public search"]
     );
-    let alone = scripted(vec![crate::references::web_research::needs_answer(json!([
+    let unknown = crate::references::web_research::needs_answer(json!([
         {"gap": 1, "query": "some public search", "kind": "web"}
     ]))
-    .to_string()]);
+    .to_string();
+    let alone = scripted(vec![unknown.clone(), unknown]);
     let error = plan_needs(&alone, "topic", &gaps, json!([]), &[])
         .await
         .unwrap_err();
     assert!(matches!(error, AppError::ModelAnswerUnusable(_)), "{error:?}");
+    assert_eq!(alone.prompts.lock().unwrap().len(), 2);
     Ok(())
 }
 

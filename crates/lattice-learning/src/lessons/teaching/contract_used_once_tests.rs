@@ -7,6 +7,7 @@ const FLAT: &str = "Press the fold flat.";
 const SHARP: &str = "Crease the fold sharply.";
 const KNOT: &str = "Tie the knot twice.";
 const DEFINED: &str = "A fold is a crease made by bending the sheet back on itself.";
+const BEGIN: &str = "Press the fold flat to begin";
 
 fn entry(what: &str, uses: &[&str], later: &str) -> Value {
     json!({"what":what,"uses":uses,"taughtLater":later})
@@ -138,7 +139,7 @@ async fn two_different_things_used_in_one_part_are_two_findings() {
 #[tokio::test]
 async fn a_thing_taught_after_its_first_use_is_told_to_move_its_teaching_to_the_use() {
     let inner = scripted(vec![]);
-    let model = model_answering(&inner, vec![entry("the fold", &[FLAT], DEFINED)]);
+    let model = model_answering(&inner, vec![entry("the fold", &[BEGIN], DEFINED)]);
     let candidate = lesson([
         "Press the fold flat to begin.",
         "Hold the sheet.",
@@ -181,7 +182,7 @@ async fn a_thing_taught_after_its_use_in_the_same_part_has_no_second_part() {
 #[tokio::test]
 async fn a_guarded_use_taught_later_keeps_its_words_and_takes_the_teaching_beside_them() {
     let inner = scripted(vec![]);
-    let model = model_answering(&inner, vec![entry("the fold", &[FLAT], DEFINED)]);
+    let model = model_answering(&inner, vec![entry("the fold", &[BEGIN], DEFINED)]);
     let candidate = lesson([
         "Press the fold flat to begin.",
         "Hold the sheet.",
@@ -201,7 +202,7 @@ async fn a_guarded_use_taught_later_keeps_its_words_and_takes_the_teaching_besid
 #[tokio::test]
 async fn a_later_teaching_in_guarded_words_gives_the_teach_here_note_and_no_second_part() {
     let inner = scripted(vec![]);
-    let model = model_answering(&inner, vec![entry("the fold", &[FLAT], DEFINED)]);
+    let model = model_answering(&inner, vec![entry("the fold", &[BEGIN], DEFINED)]);
     let candidate = lesson([
         "Press the fold flat to begin.",
         "Hold the sheet.",
@@ -303,7 +304,7 @@ async fn a_use_in_a_practice_step_is_taught_in_the_last_teaching_part_before_it(
 #[tokio::test]
 async fn a_use_in_a_question_is_taught_in_the_last_teaching_block_of_the_lesson() {
     let inner = scripted(vec![]);
-    let model = model_answering(&inner, never_taught(&[HANG]));
+    let model = model_answering(&inner, never_taught(&["hang the kettle on the hook"]));
     let candidate = of_kinds(
         &[
             ("explanation", "A kettle keeps water hot."),

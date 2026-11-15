@@ -325,12 +325,7 @@ impl ClaimChecker<'_> {
             };
         }
         let counting = Counting::default();
-        let call = CallOptions {
-            priority: InferencePriority::Verification,
-            sampling: Some(self.sampling),
-            no_time_limit: true,
-            ..CallOptions::default()
-        };
+        let call = self.bridge_call();
         let settled = ask::ask::<ClaimParts>(
             self.llm,
             &counting,
@@ -351,25 +346,19 @@ impl ClaimChecker<'_> {
     }
 
     /// Whether a part-wise check of `statement` against `passages` fits the
-    /// window beside its answer.
+    /// window, as the check asks it.
     pub fn bridge_fits(&self, statement: &str, passages: &[String]) -> bool {
-        self.bridge_tokens(statement, passages)
-            .is_some_and(|tokens| {
-                tokens.saturating_add(self.max_output_tokens as usize)
-                    <= self.llm.max_context_tokens()
-            })
+        let input = PartsInput::of(statement, passages, self.max_output_tokens);
+        ask::room::<ClaimParts>(self.llm, &input, &self.bridge_call()).is_ok_and(|room| room > 0)
     }
 
-    fn bridge_tokens(&self, statement: &str, passages: &[String]) -> Option<usize> {
-        let input = PartsInput::of(statement, passages, self.max_output_tokens);
-        let mut scope = Scope::for_question();
-        let mut showing = scope.request();
-        let says = <ClaimParts as ask::Answered>::says(&input, &mut showing).ok()?;
-        Some(
-            self.llm
-                .count_tokens(&says.instructions)
-                .saturating_add(self.llm.count_tokens(&says.task)),
-        )
+    fn bridge_call(&self) -> CallOptions {
+        CallOptions {
+            priority: InferencePriority::Verification,
+            sampling: Some(self.sampling),
+            no_time_limit: true,
+            ..CallOptions::default()
+        }
     }
 }
 

@@ -929,7 +929,11 @@ fn link_reply(prompt: &str, sentinel: &str) -> String {
                 .flatten()
                 .filter_map(|c| c.as_str())
                 .collect();
-            let chosen = picks["@links"][text].as_str().and_then(|wanted| {
+            let module = item["moduleTitle"].as_str().unwrap_or_default();
+            let wanted = picks["@links"][format!("{module}\u{1f}{text}")]
+                .as_str()
+                .or_else(|| picks["@links"][text].as_str());
+            let chosen = wanted.and_then(|wanted| {
                 candidates
                     .iter()
                     .find(|c| text_of(c) == wanted)
@@ -1608,7 +1612,7 @@ async fn outline_final_review_and_save_survive_the_old_ten_minute_cutoff() -> Re
         },
         // Every call exceeds the former 300s learning cap and the default
         // 600s provider cap. Checkpoints between steps must remain safe.
-        delays: std::sync::Mutex::new(vec![700, 700, 700, 700].into()),
+        delays: std::sync::Mutex::new(vec![700, 700, 700, 700, 700].into()),
     };
     let progress = crate::outline_progress::OutlineProgress::default();
     let drafts = crate::outline_draft::DraftRunRegistry::new();
@@ -1649,6 +1653,8 @@ async fn outline_citations_are_optional_and_unmatched_ones_are_stripped_not_repo
 {
     let quote = "A randomized comparison isolates the intervention.";
     let mut candidate: serde_json::Value = serde_json::from_str(&outline(4, 3).0)?;
+    candidate["modules"][0]["outcomes"][0]["text"] =
+        json!("Explain how a randomized comparison isolates an intervention.");
     let outcome = candidate["modules"][0]["outcomes"][0]["text"]
         .as_str()
         .unwrap_or_default()
@@ -1874,8 +1880,15 @@ async fn outline_draft_survives_cancellation_and_resumes_without_redrafting() ->
             if prompt.starts_with("Review instructional quality.") {
                 self.entered.notify_one();
                 std::future::pending().await
+            } else if let Some(reply) =
+                crate::generation::outline::fixture::prerequisites_answer(prompt)
+            {
+                Ok(reply)
             } else {
-                Ok(self.draft.clone())
+                Ok(
+                    crate::generation::outline::fixture::description_answer(prompt, &self.draft)
+                        .unwrap_or_else(|| self.draft.clone()),
+                )
             }
         }
     }

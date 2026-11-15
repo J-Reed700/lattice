@@ -134,7 +134,7 @@ fn entry(shows: &Shows, criteria: Vec<Value>, response: &str) -> Value {
 fn criterion(id: &str) -> LearningRubricCriterion {
     LearningRubricCriterion {
         id: id.into(),
-        title: id.into(),
+        title: format!("Title of {}", id.len()),
         description: "Explains it.".into(),
         max_points: 2,
     }

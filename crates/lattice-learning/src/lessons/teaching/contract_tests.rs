@@ -446,7 +446,7 @@ async fn a_use_before_it_is_taught_is_a_finding_only_when_its_words_are_in_the_l
         waiting(&result),
         [(
             "teaching:section-1".to_owned(),
-            Some("Type `ls -l`\nto see sizes".to_owned())
+            Some("Type `ls -l`".to_owned())
         )]
     );
     assert!(result.set_aside[0]
@@ -1554,7 +1554,7 @@ async fn waiting_after_planned_contrast(
         .confirming("A planned confusion", reply);
     let candidate = json!({"blocks":[
         block_of("explanation", "Opening", TYPED),
-        block_of("contrast", "Contrast", "The list shows names."),
+        block_of("contrast", "Listing", "The list shows names."),
         block_of("explanation", "Reading", "Read the names.")
     ],"questions":[]});
     let ctx = context_planning(&[], &[], &[], "A planned confusion");

@@ -193,7 +193,7 @@ async fn two_kinds_are_decided_in_one_request_and_stored_on_one_basis() -> Resul
     let checked = check_practice_fit(&repo, &kinds, &model, &program.summary.id).await?;
 
     assert_eq!(model.sent().len(), 1);
-    let listing = format!("\n\nKinds of work:\n- beads: {BEADS}\n- rope: {ROPE}");
+    let listing = format!("\n\nKinds of work:\n- [k1] {BEADS}\n- [k2] {ROPE}");
     let sent = texts(&model);
     assert!(
         sent.first().is_some_and(|text| text.contains(&listing)),

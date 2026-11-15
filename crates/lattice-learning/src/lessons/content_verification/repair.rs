@@ -508,10 +508,7 @@ impl Answered for SectionRepair {
                 json!({"passage": handle.written(), "sourceTitle": passage.title, "text": text})
             })
             .collect();
-        let mut section = shown_section(&rows, &shown, part);
-        if let Some(fields) = section.as_object_mut() {
-            fields.remove("part");
-        }
+        let section = shown_section(&rows, &shown, part);
         let candidate = if input.question {
             json!({"blocks": [], "questions": [section]})
         } else {
@@ -539,12 +536,17 @@ impl Answered for SectionRepair {
     }
 }
 
-/// The section `rows` are of, as a request shows it.
-fn shown_section(rows: &Rows, shown: &rows::ShownRows<'_>, part: &str) -> Value {
-    rows.rendered(shown)
+/// The section `rows` are of, as a request that shows it alone shows it: without its pointer.
+pub(super) fn shown_section(rows: &Rows, shown: &rows::ShownRows<'_>, part: &str) -> Value {
+    let mut section = rows
+        .rendered(shown)
         .pointer(part)
         .cloned()
-        .unwrap_or(Value::Null)
+        .unwrap_or(Value::Null);
+    if let Some(fields) = section.as_object_mut() {
+        fields.remove("part");
+    }
+    section
 }
 
 /// The material a request shows: the lesson with every part but `part` emptied.

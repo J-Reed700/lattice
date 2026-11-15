@@ -15,6 +15,8 @@ use lattice_core::domain::learning::practice::work::Rung;
 use lattice_core::domain::learning::practice::ScoreStatus;
 use std::collections::BTreeMap;
 
+mod golden;
+
 const SOLUTION: &str = "def two_sum(numbers, target):\n    seen = {}\n    for i, n in enumerate(numbers):\n        if target - n in seen:\n            return [seen[target - n], i]\n        seen[n] = i\n";
 
 fn problem() -> Problem {

@@ -58,10 +58,16 @@ pub(crate) fn description_answer(prompt: &str, stored: &str) -> Option<String> {
         if quote.is_empty() {
             return json!([]);
         }
-        passages
-            .iter()
-            .find(|(_, text)| text.contains(quote))
-            .map_or(json!([]), |(id, _)| json!([id]))
+        let whole = passages.iter().find(|(_, text)| text.contains(quote));
+        let ids: Vec<&String> = match whole {
+            Some((id, _)) => vec![id],
+            None => passages
+                .iter()
+                .filter(|(_, text)| quote.contains(text.as_str()))
+                .map(|(id, _)| id)
+                .collect(),
+        };
+        json!(ids)
     };
     let titles: Vec<&str> = modules
         .iter()

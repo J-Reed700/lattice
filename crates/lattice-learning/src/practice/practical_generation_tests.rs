@@ -267,7 +267,7 @@ fn older_turns_are_cut_before_the_newest_and_the_passages_get_the_rest() {
         |_| 10,
     );
     input.earlier_total = Internal::of(2);
-    let cut = SimulationTurn::within(&input, 30).unwrap();
+    let cut = SimulationTurn::within(&input, 40).unwrap();
     let kept: Vec<_> = cut.earlier.iter().collect();
     assert_eq!(kept.len(), 1);
     assert_eq!(kept[0].turn.0["content"], "The newest earlier turn.");
@@ -316,8 +316,16 @@ async fn an_activity_with_an_evaluator_file_is_refused_once_and_then_corrected()
 async fn an_unreadable_activity_stays_unanswered() {
     let model = ScriptedModel::new()
         .on_request::<PracticalActivity>(|_, _| reply("The tide is in.".to_owned()));
-    assert!(matches!(
-        asked_activity(&model, &activity_input(&[])).await,
-        Settled::Unanswered(_)
-    ));
+    let asked = ask::<PracticalActivity>(
+        &model,
+        &Asking {
+            progress: None,
+            reasoning: None,
+        },
+        &mut Scope::for_question(),
+        &activity_input(&[]),
+        &crate::model_call::answer_options(),
+    )
+    .await;
+    assert!(matches!(asked, Err(AppError::ModelAnswerUnusable(_))));
 }

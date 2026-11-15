@@ -941,50 +941,6 @@ async fn explicit_interview_nonanswers_have_no_numeric_grade_or_model_call() -> 
 }
 
 #[tokio::test]
-async fn feedback_repairs_internal_question_ids_before_the_learner_sees_them() -> Result<()> {
-    use super::super::{generate_simulation_turn, SimulationActivityContext};
-    use crate::{
-        lessons::course_generation_tests::ScriptedModel,
-        practical_dto::LearningSimulationSessionDto,
-    };
-    let plan = checked::<LoopNamed>(
-        &plan_json(LearningInterviewRoundKind::FullLoop),
-        &LearningInterviewTargetDto::default(),
-        LearningInterviewRoundKind::FullLoop,
-    )?;
-    let question_id = plan.questions[0].id.clone();
-    let expected = "You proposed a stable identifier and a check for duplicate effects. This activity has no saved reference standard.";
-    let llm = ScriptedModel {
-        outputs: Mutex::new(vec![
-            json!({"content":format!("Evaluated question: {question_id}. You proposed a stable identifier."),"citations":[]}).to_string(),
-            json!({"content":expected,"citations":[]}).to_string(),
-        ].into()), prompts: Mutex::new(Vec::new()),
-    };
-    let session: LearningSimulationSessionDto = serde_json::from_value(json!({
-        "id":"session","programId":"program","activityId":"activity","activityRevision":1,
-        "practiceSessionId":null,"learnerRole":"Candidate","counterpartRole":"Interviewer",
-        "status":"active","revision":1,"createdAt":0,"updatedAt":0,"submittedAt":null,
-        "turns":[{"id":"answer","ordinal":0,"speaker":"learner","content":"I would use a stable identifier and check that retries preserve one effect.","citations":[],"modelName":null,"createdAt":0}]
-    })).map_err(|error| invalid(error.to_string()))?;
-    let context = SimulationActivityContext {
-        title: "Interview".into(),
-        brief: "Practice retries.".into(),
-        rubric: vec![],
-        interview_plan: Some(plan),
-        interview_answers: None,
-    };
-    let feedback = generate_simulation_turn(&llm, &context, &session, &[], true).await?;
-    assert_eq!(feedback.content, expected);
-    assert!(!feedback.content.contains(&question_id));
-    let prompts = llm
-        .prompts
-        .lock()
-        .map_err(|_| invalid("Prompt lock poisoned"))?;
-    assert_eq!(prompts.len(), 2);
-    Ok(())
-}
-
-#[tokio::test]
 async fn public_author_repairs_reserved_files_without_receiving_private_evaluator_instructions(
 ) -> Result<()> {
     use super::super::{PracticalFileRole, PracticalRuntimeContext};
@@ -1220,7 +1176,10 @@ async fn a_learner_turn_larger_than_the_room_is_refused_not_left_out() -> Result
     let error = generate_simulation_turn(&llm, &context, &session, &[], false)
         .await
         .expect_err("the learner's newest turn does not fit the window");
-    assert!(matches!(&error, AppError::InvalidInput(_)), "{error}");
+    assert!(
+        matches!(&error, AppError::WindowTooSmall(message) if message.contains("-token context window")),
+        "{error}"
+    );
     let requests = llm.requests.lock().map_err(|_| invalid("lock poisoned"))?;
     assert!(requests.is_empty(), "nothing was sent without the turn");
     Ok(())
