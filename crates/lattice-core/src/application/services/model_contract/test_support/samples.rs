@@ -10,8 +10,8 @@ use crate::application::services::model_contract::ask::{Alone, Answered, Says};
 use crate::application::services::model_contract::edit::Change;
 use crate::application::services::model_contract::packed::Packed;
 use crate::application::services::model_contract::shape::{
-    Authored, Each, Fields, Flagged, Form, Lead, New, Order, Pick, PickSome, Pointers, Schema,
-    Shape, Union, Value, Vocabulary,
+    Authored, Each, Fields, Flagged, Form, Lead, New, Pick, PickSome, Pointers, Schema, Shape,
+    Union, Value, Vocabulary,
 };
 use crate::application::services::model_contract::shown::{
     Drawn, Internal, Kind, Picked, Scope, Showing, Told,
@@ -466,6 +466,23 @@ impl SamplePickSome {
     }
 }
 
+/// Every tool on the shelf, in the order the model judges.
+pub struct ToolOrder {
+    pub order: Vec<Picked<Tool>>,
+}
+
+impl Authored for ToolOrder {
+    fn form() -> Form {
+        Form::new().order::<Tool>("order")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(Self {
+            order: fields.order("order")?,
+        })
+    }
+}
+
 pub struct SampleOrder;
 
 impl Contract for SampleOrder {
@@ -474,7 +491,7 @@ impl Contract for SampleOrder {
 }
 
 impl Answered for SampleOrder {
-    type Answer = Order<Tool>;
+    type Answer = Value<ToolOrder>;
     const ALONE: Alone = Alone::Pending;
 
     fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {

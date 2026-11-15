@@ -37,13 +37,6 @@ pub(super) fn pick_some_schema<K: Kind>(
     )])))
 }
 
-pub(super) fn order_schema<K: Kind>(showing: &Showing<'_>, pointers: Pointers) -> Option<Schema> {
-    Some(made(closed(vec![(
-        "order".to_owned(),
-        handles_schema(K::PREFIX, showing, pointers),
-    )])))
-}
-
 pub(super) fn new_schema<V: Authored>(showing: &Showing<'_>, pointers: Pointers) -> Option<Schema> {
     let items = array(form_object(&V::form(), showing, pointers));
     Some(made(closed(vec![("items".to_owned(), items)])))
@@ -152,13 +145,12 @@ fn point_schema(
     if pointers == Pointers::Plain {
         let words = extra.join(" or ");
         let description = match (shown.first(), words.is_empty()) {
-            (Some(first), true) => format!(
-                "One name shown in square brackets, written without the brackets, such as {first}."
-            ),
-            (Some(first), false) => format!(
-                "One name shown in square brackets, written without the brackets, such as \
-                 {first}, or the word {words}."
-            ),
+            (Some(first), true) => {
+                format!("One of the names the request shows, such as {first}.")
+            }
+            (Some(first), false) => {
+                format!("One of the names the request shows, such as {first}, or the word {words}.")
+            }
             (None, false) => format!("The word {words}."),
             (None, true) => return json!({ "type": "string" }),
         };
@@ -185,9 +177,23 @@ fn field_schema(field: &Field, showing: &Showing<'_>, pointers: Pointers) -> Val
             let extra: &[&str] = if *none { &["none"] } else { &[] };
             point_schema(prefix, *among, extra, showing, pointers)
         }
-        Field::Cite { prefix, among } => {
-            array(point_schema(prefix, *among, &[], showing, pointers))
+        Field::Cite {
+            prefix,
+            among,
+            some,
+        } => {
+            let shown = match among {
+                Among::Shown => showing.written(prefix),
+                Among::Own => showing.written_under(prefix),
+            };
+            let items = point_schema(prefix, *among, &[], showing, pointers);
+            if *some && !shown.is_empty() {
+                json!({ "type": "array", "items": items, "minItems": 1 })
+            } else {
+                array(items)
+            }
         }
+        Field::Order { prefix } => handles_schema(prefix, showing, pointers),
         Field::Group(form) => form_object(form, showing, pointers),
         Field::List(form) => array(form_object(form, showing, pointers)),
         Field::EachOwn { prefix, form } => {
@@ -375,33 +381,6 @@ pub(super) fn read_pick_some<K: Kind>(
     }
 }
 
-pub(super) fn read_order<K: Kind>(
-    written: &Written<'_>,
-    showing: &Showing<'_>,
-) -> Settled<Vec<Picked<K>>> {
-    let order = match read_handles::<K>(written, showing, "order") {
-        Ok(order) => order,
-        Err(why) => return Settled::Unanswered(why),
-    };
-    for (at, handle) in order.iter().enumerate() {
-        if order.iter().take(at).any(|earlier| earlier == handle) {
-            return Settled::Unanswered(Why::Contradicted(format!(
-                "The order holds {handle} twice.",
-                handle = handle.handle
-            )));
-        }
-    }
-    for shown in showing.shown::<K>() {
-        if !order.contains(&shown) {
-            return Settled::Unanswered(Why::Contradicted(format!(
-                "The order lacks {}.",
-                shown.handle
-            )));
-        }
-    }
-    Settled::Answered(order)
-}
-
 pub(super) fn read_new<V: Authored>(written: &Written<'_>, showing: &Showing<'_>) -> Found<V> {
     let document = match open(written) {
         Ok(document) => document,
@@ -424,9 +403,9 @@ pub(super) fn read_new<V: Authored>(written: &Written<'_>, showing: &Showing<'_>
     };
     let mut items = Vec::with_capacity(elements.len());
     let mut unread = None;
-    for element in elements {
+    for (place, element) in elements.iter().enumerate() {
         let item = element.as_object().map(|object| {
-            let mut fields = Fields::of(object, showing, None);
+            let mut fields = Fields::of(object, showing, None).placed(place);
             V::read(&mut fields).ok_or_else(|| fields.why())
         });
         match item {
@@ -458,7 +437,7 @@ fn read_entries<K: Kind, V: Authored>(
 ) -> (Rows<K, V>, bool) {
     let mut entries = Vec::with_capacity(elements.len());
     let mut all_placed = true;
-    for element in elements {
+    for (place, element) in elements.iter().enumerate() {
         let Some(object) = element.as_object() else {
             trace("unread-item", None);
             all_placed = false;
@@ -475,7 +454,7 @@ fn read_entries<K: Kind, V: Authored>(
             continue;
         };
         let settled = {
-            let mut fields = Fields::of(object, showing, Some(item.handle.name()));
+            let mut fields = Fields::of(object, showing, Some(item.handle.name())).placed(place);
             match V::read(&mut fields) {
                 Some(value) => Settled::Answered(value),
                 None => Settled::Unanswered(fields.why()),

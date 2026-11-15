@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 /// Said after the lesson's own instructions: the answer's fields, in words.
-const FORM: &str = " Write the answer as one object. ideas lists the lesson's core ideas in teaching order, each with its sections in teaching order: every section has a kind (explanation, worked_example, contrast or check), a title, a body, cites and citations. guidedPractice, independentPractice, reflection and recap are one section each, written in their own fields; the two practice sections also have a rubric of criteria, each with a title, a description and a dimension. questions lists the questions, each with a kind, a prompt, the right choice in right, the other choices in wrong (each with its option and its reason), an explanation, cites and citations. cites names, by their handles, the sentences of the excerpts shown in sources that support the section or question. Each entry of citations has the sentence it cites and, in cites, the handles of the excerpt sentences that state it.";
+const FORM: &str = " Write the answer as one object. ideas lists the lesson's core ideas in teaching order, each with its sections in teaching order: every section has a kind (explanation, worked_example, contrast or check), a title, a body, cites and citations. guidedPractice, independentPractice, reflection and recap are one section each, written in their own fields; the two practice sections also have a rubric of criteria, each with a title, a description and a dimension. questions lists the questions, each with a kind, a prompt, the wrong choices in wrong (each with its option and its reason), then the right choice in right, an explanation, cites and citations. cites names, by their handles, the sentences of the excerpts shown in sources that the section or question rests on: at least one whenever sources are shown, whatever its kind. Each entry of citations has the sentence it cites and, in cites, the handles of the excerpt sentences that state it.";
 
 /// The lesson writer's call: its reasoning step and its answer.
 pub(crate) struct LessonWriter;
@@ -249,7 +249,7 @@ fn part_of(fields: &mut Fields<'_, '_>) -> Option<Part> {
     Some(Part {
         title: fields.text("title")?,
         body: fields.text("body")?,
-        cites: fields.cite("cites"),
+        cites: fields.cite_some("cites")?,
         cited: fields.list("citations")?,
     })
 }
@@ -260,7 +260,7 @@ impl Authored for Part {
         Form::new()
             .text("title")
             .text("body")
-            .cite::<Quoted>("cites")
+            .cite_some::<Quoted>("cites")
             .list::<Cited>("citations")
     }
 
@@ -281,7 +281,7 @@ impl Authored for Section {
             .word::<Teaching>("kind")
             .text("title")
             .text("body")
-            .cite::<Quoted>("cites")
+            .cite_some::<Quoted>("cites")
             .list::<Cited>("citations")
     }
 
@@ -348,7 +348,7 @@ impl Authored for Practice {
             .text("title")
             .text("body")
             .list::<Criterion>("rubric")
-            .cite::<Quoted>("cites")
+            .cite_some::<Quoted>("cites")
             .list::<Cited>("citations")
     }
 
@@ -396,10 +396,10 @@ impl Authored for Question {
         Form::new()
             .word::<Asked>("kind")
             .text("prompt")
-            .text("right")
             .list::<Wrong>("wrong")
+            .text("right")
             .text("explanation")
-            .cite::<Quoted>("cites")
+            .cite_some::<Quoted>("cites")
             .list::<Cited>("citations")
     }
 
@@ -407,10 +407,10 @@ impl Authored for Question {
         Some(Self {
             kind: fields.word("kind")?,
             prompt: fields.text("prompt")?,
-            right: fields.text("right")?,
             wrong: fields.list("wrong")?,
+            right: fields.text("right")?,
             explanation: fields.text("explanation")?,
-            cites: fields.cite("cites"),
+            cites: fields.cite_some("cites")?,
             cited: fields.list("citations")?,
         })
     }

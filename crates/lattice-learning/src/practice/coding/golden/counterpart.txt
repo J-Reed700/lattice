@@ -60,7 +60,7 @@ What the problem already answers, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {
@@ -106,7 +106,7 @@ What the problem already answers, each under its handle:
             },
             "which": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as k1."
+              "description": "One of the names the request shows, such as k1."
             }
           },
           "required": [
@@ -202,7 +202,7 @@ What the problem already answers, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {
@@ -248,7 +248,7 @@ What the problem already answers, each under its handle:
             },
             "which": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as k1."
+              "description": "One of the names the request shows, such as k1."
             }
           },
           "required": [
@@ -344,7 +344,7 @@ What the problem already answers, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {
@@ -390,7 +390,7 @@ What the problem already answers, each under its handle:
             },
             "which": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as k1."
+              "description": "One of the names the request shows, such as k1."
             }
           },
           "required": [
@@ -486,7 +486,7 @@ What the problem already answers, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {
@@ -532,7 +532,7 @@ What the problem already answers, each under its handle:
             },
             "which": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as k1."
+              "description": "One of the names the request shows, such as k1."
             }
           },
           "required": [
@@ -628,7 +628,7 @@ What the problem already answers, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {
@@ -674,7 +674,7 @@ What the problem already answers, each under its handle:
             },
             "which": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as k1."
+              "description": "One of the names the request shows, such as k1."
             }
           },
           "required": [
@@ -770,7 +770,7 @@ What the problem already answers, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {
@@ -816,7 +816,7 @@ What the problem already answers, each under its handle:
             },
             "which": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as k1."
+              "description": "One of the names the request shows, such as k1."
             }
           },
           "required": [
@@ -912,7 +912,7 @@ What the problem already answers, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {
@@ -958,7 +958,7 @@ What the problem already answers, each under its handle:
             },
             "which": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as k1."
+              "description": "One of the names the request shows, such as k1."
             }
           },
           "required": [
@@ -1054,7 +1054,7 @@ What the problem already answers, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {
@@ -1100,7 +1100,7 @@ What the problem already answers, each under its handle:
             },
             "which": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as k1."
+              "description": "One of the names the request shows, such as k1."
             }
           },
           "required": [
@@ -1196,7 +1196,7 @@ What the problem already answers, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {
@@ -1242,7 +1242,7 @@ What the problem already answers, each under its handle:
             },
             "which": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as k1."
+              "description": "One of the names the request shows, such as k1."
             }
           },
           "required": [
@@ -1346,7 +1346,7 @@ What the problem already answers, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {
@@ -1392,7 +1392,7 @@ What the problem already answers, each under its handle:
             },
             "which": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as k1."
+              "description": "One of the names the request shows, such as k1."
             }
           },
           "required": [
@@ -1488,7 +1488,7 @@ What the problem already answers, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {
@@ -1534,7 +1534,7 @@ What the problem already answers, each under its handle:
             },
             "which": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as k1."
+              "description": "One of the names the request shows, such as k1."
             }
           },
           "required": [
@@ -1634,7 +1634,7 @@ What the problem already answers, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {
@@ -1680,7 +1680,7 @@ What the problem already answers, each under its handle:
             },
             "which": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as k1."
+              "description": "One of the names the request shows, such as k1."
             }
           },
           "required": [
@@ -1776,7 +1776,7 @@ What the problem already answers, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {
@@ -1822,7 +1822,7 @@ What the problem already answers, each under its handle:
             },
             "which": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as k1."
+              "description": "One of the names the request shows, such as k1."
             }
           },
           "required": [
@@ -1918,7 +1918,7 @@ What the problem already answers, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {
@@ -1964,7 +1964,7 @@ What the problem already answers, each under its handle:
             },
             "which": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as k1."
+              "description": "One of the names the request shows, such as k1."
             }
           },
           "required": [
@@ -2060,7 +2060,7 @@ What the problem already answers, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {
@@ -2106,7 +2106,7 @@ What the problem already answers, each under its handle:
             },
             "which": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as k1."
+              "description": "One of the names the request shows, such as k1."
             }
           },
           "required": [
@@ -2202,7 +2202,7 @@ What the problem already answers, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {
@@ -2248,7 +2248,7 @@ What the problem already answers, each under its handle:
             },
             "which": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as k1."
+              "description": "One of the names the request shows, such as k1."
             }
           },
           "required": [
@@ -2344,7 +2344,7 @@ What the problem already answers, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {
@@ -2390,7 +2390,7 @@ What the problem already answers, each under its handle:
             },
             "which": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as k1."
+              "description": "One of the names the request shows, such as k1."
             }
           },
           "required": [
@@ -2486,7 +2486,7 @@ What the problem already answers, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {
@@ -2532,7 +2532,7 @@ What the problem already answers, each under its handle:
             },
             "which": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as k1."
+              "description": "One of the names the request shows, such as k1."
             }
           },
           "required": [
@@ -2628,7 +2628,7 @@ What the problem already answers, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {
@@ -2674,7 +2674,7 @@ What the problem already answers, each under its handle:
             },
             "which": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as k1."
+              "description": "One of the names the request shows, such as k1."
             }
           },
           "required": [
@@ -2770,7 +2770,7 @@ What the problem already answers, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {
@@ -2816,7 +2816,7 @@ What the problem already answers, each under its handle:
             },
             "which": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as k1."
+              "description": "One of the names the request shows, such as k1."
             }
           },
           "required": [
@@ -2912,7 +2912,7 @@ What the problem already answers, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {
@@ -2958,7 +2958,7 @@ What the problem already answers, each under its handle:
             },
             "which": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as k1."
+              "description": "One of the names the request shows, such as k1."
             }
           },
           "required": [
@@ -3062,7 +3062,7 @@ What the problem already answers, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {
@@ -3108,7 +3108,7 @@ What the problem already answers, each under its handle:
             },
             "which": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as k1."
+              "description": "One of the names the request shows, such as k1."
             }
           },
           "required": [
@@ -3204,7 +3204,7 @@ What the problem already answers, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {
@@ -3250,7 +3250,7 @@ What the problem already answers, each under its handle:
             },
             "which": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as k1."
+              "description": "One of the names the request shows, such as k1."
             }
           },
           "required": [
@@ -3350,7 +3350,7 @@ What the problem already answers, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {
@@ -3396,7 +3396,7 @@ What the problem already answers, each under its handle:
             },
             "which": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as k1."
+              "description": "One of the names the request shows, such as k1."
             }
           },
           "required": [

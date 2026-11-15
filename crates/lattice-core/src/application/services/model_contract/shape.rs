@@ -7,9 +7,10 @@
 //!
 //! Every schema is written in one dialect, the subset every backend's
 //! translator enforces as written: closed objects, every property required,
-//! string `enum`s, lists without count keywords, `anyOf` only between closed
-//! objects. No optional property, no nullable, no integer, no range, no
-//! `$ref`. Absence is the named member `"none"`, never a missing field.
+//! string `enum`s, lists with no count keyword but `minItems: 1`, `anyOf`
+//! only between closed objects. No optional property, no nullable, no
+//! integer, no range, no `$ref`. Absence is the named member `"none"`, never
+//! a missing field.
 
 use std::marker::PhantomData;
 
@@ -74,7 +75,8 @@ pub enum Why {
     Contradicted(String),
     /// The model declined to answer.
     Declined,
-    /// The contract's `accept` refused what the model authored, for this reason.
+    /// What the model authored was refused for this reason: by the contract's
+    /// `accept`, or by a field that must hold something and holds nothing.
     Refused(String),
     /// The item, with what it needs, does not fit the model's window: it was not asked.
     NoRoom,
@@ -183,11 +185,6 @@ pub struct Pick<K>(PhantomData<K>);
 /// counts once. Written `{ "picks": ["s4", "s7"] }`.
 pub struct PickSome<K>(PhantomData<K>);
 
-/// Every thing shown, as a list of handles in the order the model judges. A
-/// list that repeats a thing, lacks one or was cut off is no order. Written
-/// `{ "order": ["s2", "s1"] }`.
-pub struct Order<K>(PhantomData<K>);
-
 /// A list of new things, each a `V`. Written `{ "items": [V, …] }`. The
 /// number asked for is a request, never a rule of the reading.
 pub struct New<V>(PhantomData<V>);
@@ -253,20 +250,6 @@ impl<K: Kind> Shape for PickSome<K> {
 impl<K: Kind> Single for PickSome<K> {
     fn read(written: &Written<'_>, showing: &Showing<'_>) -> Settled<Vec<Picked<K>>> {
         shapes::read_pick_some(written, showing)
-    }
-}
-
-impl<K: Kind> Shape for Order<K> {
-    type Statement = Vec<Picked<K>>;
-
-    fn schema(showing: &Showing<'_>, pointers: Pointers) -> Option<Schema> {
-        shapes::order_schema::<K>(showing, pointers)
-    }
-}
-
-impl<K: Kind> Single for Order<K> {
-    fn read(written: &Written<'_>, showing: &Showing<'_>) -> Settled<Vec<Picked<K>>> {
-        shapes::read_order(written, showing)
     }
 }
 

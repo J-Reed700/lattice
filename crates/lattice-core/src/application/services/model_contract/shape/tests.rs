@@ -8,8 +8,8 @@ use super::super::shown::{Drawn, Kind, Picked, Scope, Showing};
 use super::document;
 use super::Value as Whole;
 use super::{
-    Authored, Each, Ended, Fields, Flagged, Form, Found, Lead, Led, Listed, New, Order, PerItem,
-    Pick, PickSome, Pointers, Settled, Shape, Single, Union, Vocabulary, Why, Written,
+    Authored, Each, Ended, Fields, Flagged, Form, Found, Lead, Led, Listed, New, PerItem, Pick,
+    PickSome, Pointers, Settled, Shape, Single, Union, Vocabulary, Why, Written,
 };
 
 // ---- kinds and statements ----
@@ -194,6 +194,63 @@ impl Authored for Amount {
     }
 }
 
+/// A statement of a reason and an order of every shown sheet.
+#[derive(Debug, PartialEq)]
+struct Ranked {
+    reason: String,
+    order: Vec<Picked<Sheet>>,
+}
+
+impl Authored for Ranked {
+    fn form() -> Form {
+        Form::new().text("reason").order::<Sheet>("order")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(Ranked {
+            reason: fields.text("reason")?,
+            order: fields.order("order")?,
+        })
+    }
+}
+
+/// A statement whose evidence must name a shown sheet.
+#[derive(Debug, PartialEq)]
+struct Backed {
+    cites: Vec<Picked<Sheet>>,
+}
+
+impl Authored for Backed {
+    fn form() -> Form {
+        Form::new().cite_some::<Sheet>("cites")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(Backed {
+            cites: fields.cite_some("cites")?,
+        })
+    }
+}
+
+/// A statement that holds where the model wrote it.
+#[derive(Debug, PartialEq)]
+struct Placed {
+    place: usize,
+}
+
+impl Authored for Placed {
+    fn form() -> Form {
+        Form::new().text("note")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        fields.text("note")?;
+        Some(Placed {
+            place: fields.place(),
+        })
+    }
+}
+
 // ---- helpers ----
 
 struct Rng(u64);
@@ -337,7 +394,10 @@ fn via_pick_some(text: &str, ended: Ended, showing: &Showing<'_>) -> Settled<Vec
 }
 
 fn via_order(text: &str, ended: Ended, showing: &Showing<'_>) -> Settled<Vec<Picked<Sheet>>> {
-    <Order<Sheet> as Single>::read(&written(text, ended), showing)
+    match <Whole<Ranked> as Single>::read(&written(text, ended), showing) {
+        Settled::Answered(ranked) => Settled::Answered(ranked.order),
+        Settled::Unanswered(why) => Settled::Unanswered(why),
+    }
 }
 
 fn via_new(text: &str, ended: Ended, showing: &Showing<'_>) -> Found<Note> {
@@ -374,8 +434,9 @@ fn via_lead(text: &str, ended: Ended, showing: &Showing<'_>) -> Settled<Led<Verd
 
 // ---- the dialect and a structural validator for its subset ----
 
-const ALLOWED: [&str; 8] = [
+const ALLOWED: [&str; 9] = [
     "type",
+    "minItems",
     "properties",
     "required",
     "additionalProperties",
@@ -415,7 +476,11 @@ fn assert_dialect(schema: &Value) {
         }
         "integer" => assert_eq!(object.len(), 1),
         "array" => {
-            assert_eq!(object.len(), 2);
+            let counted = usize::from(object.contains_key("minItems"));
+            assert_eq!(object.len(), 2 + counted);
+            if counted == 1 {
+                assert_eq!(object["minItems"], json!(1));
+            }
             assert_dialect(&object["items"]);
         }
         "object" => {
@@ -458,9 +523,11 @@ fn validate(schema: &Value, value: &Value) -> bool {
         }),
         "integer" => value.as_u64().is_some(),
         "array" => value.as_array().is_some_and(|elements| {
-            elements
-                .iter()
-                .all(|element| validate(&schema["items"], element))
+            let least = schema.get("minItems").and_then(Value::as_u64).unwrap_or(0);
+            elements.len() as u64 >= least
+                && elements
+                    .iter()
+                    .all(|element| validate(&schema["items"], element))
         }),
         "object" => value.as_object().is_some_and(|object| {
             let properties = schema["properties"].as_object().unwrap();
@@ -578,7 +645,8 @@ fn every_schema_obeys_the_dialect() {
                     schema_of::<Whole<Rich>>(showing, pointers),
                     schema_of::<Pick<Sheet>>(showing, pointers),
                     schema_of::<PickSome<Sheet>>(showing, pointers),
-                    schema_of::<Order<Sheet>>(showing, pointers),
+                    schema_of::<Whole<Ranked>>(showing, pointers),
+                    schema_of::<Whole<Backed>>(showing, pointers),
                     schema_of::<New<Rich>>(showing, pointers),
                     schema_of::<Each<Sheet, Rich>>(showing, pointers),
                     schema_of::<Flagged<Sheet, Rich>>(showing, pointers),
@@ -623,10 +691,9 @@ fn pointer_enums_hold_the_shown_handles_and_none() {
     });
 }
 
-const PLAIN_NOTE: &str =
-    "One name shown in square brackets, written without the brackets, such as s1.";
+const PLAIN_NOTE: &str = "One of the names the request shows, such as s1.";
 const PLAIN_NOTE_OR_NONE: &str =
-    "One name shown in square brackets, written without the brackets, such as s1, or the word none.";
+    "One of the names the request shows, such as s1, or the word none.";
 
 #[test]
 fn a_plain_pointer_says_how_a_handle_is_written() {
@@ -683,6 +750,38 @@ fn nothing_shown_renders_a_plain_pointer() {
         );
         let schema = schema_of::<Pick<Sheet>>(showing, Pointers::Enum);
         assert_eq!(schema["properties"]["pick"]["enum"], json!(["none"]));
+    });
+}
+
+#[test]
+fn cite_some_holds_one_item_at_least_when_things_are_shown() {
+    with_showing(3, 0, |showing| {
+        for pointers in [Pointers::Enum, Pointers::Plain] {
+            let schema = schema_of::<Whole<Backed>>(showing, pointers);
+            assert_eq!(schema["properties"]["cites"]["minItems"], json!(1));
+        }
+    });
+}
+
+#[test]
+fn cite_some_holds_no_count_when_nothing_is_shown() {
+    with_showing(0, 0, |showing| {
+        let schema = schema_of::<Whole<Backed>>(showing, Pointers::Enum);
+        assert_eq!(
+            schema["properties"]["cites"],
+            json!({"type": "array", "items": {"type": "string"}})
+        );
+    });
+}
+
+#[test]
+fn a_plain_cite_holds_no_count() {
+    with_showing(3, 0, |showing| {
+        let schema = schema_of::<Whole<Note>>(showing, Pointers::Enum);
+        assert_eq!(
+            schema["properties"]["cites"],
+            json!({"type": "array", "items": {"type": "string", "enum": ["s1", "s2", "s3"]}})
+        );
     });
 }
 
@@ -945,8 +1044,8 @@ proptest! {
             for at in (1..order.len()).rev() {
                 order.swap(at, rng.below(at + 1));
             }
-            let text = json!({ "order": order }).to_string();
-            assert_valid::<Order<Sheet>>(showing, &text);
+            let text = json!({ "reason": "r", "order": order }).to_string();
+            assert_valid::<Whole<Ranked>>(showing, &text);
             let Settled::Answered(read) = via_order(&text, Ended::Complete, showing) else {
                 panic!("a whole order was not read");
             };
@@ -959,7 +1058,7 @@ proptest! {
                 );
             }
             if let Some(dropped) = order.pop() {
-                let text = json!({ "order": order }).to_string();
+                let text = json!({ "reason": "r", "order": order }).to_string();
                 let Settled::Unanswered(Why::Contradicted(told)) =
                     via_order(&text, Ended::Complete, showing)
                 else {
@@ -968,7 +1067,7 @@ proptest! {
                 assert_eq!(told, format!("The order lacks {dropped}."));
                 order.push(dropped.clone());
                 order.push(dropped.clone());
-                let text = json!({ "order": order }).to_string();
+                let text = json!({ "reason": "r", "order": order }).to_string();
                 let Settled::Unanswered(Why::Contradicted(told)) =
                     via_order(&text, Ended::Complete, showing)
                 else {
@@ -984,17 +1083,119 @@ proptest! {
 fn order_reasons() {
     with_showing(2, 0, |showing| {
         assert_eq!(
-            via_order(r#"{"order":["s1","s99"]}"#, Ended::Complete, showing),
+            via_order(
+                r#"{"reason":"r","order":["s1","s99"]}"#,
+                Ended::Complete,
+                showing
+            ),
             Settled::Unanswered(Why::Unplaced)
         );
         assert_eq!(
-            via_order(r#"{"order":"s1"}"#, Ended::Complete, showing),
+            via_order(r#"{"reason":"r","order":"s1"}"#, Ended::Complete, showing),
             Settled::Unanswered(Why::NotRead)
         );
         assert_eq!(
-            via_order(r#"{"order":["s2","s1"]}"#, Ended::Declined, showing),
+            via_order(
+                r#"{"reason":"r","order":["s2","s1"]}"#,
+                Ended::Declined,
+                showing
+            ),
             Settled::Unanswered(Why::Declined)
         );
+    });
+}
+
+#[test]
+fn an_order_reads_with_the_fields_beside_it() {
+    with_showing(2, 0, |showing| {
+        let Settled::Answered(read) = <Whole<Ranked> as Single>::read(
+            &written(r#"{"reason":"why","order":["s2","s1"]}"#, Ended::Complete),
+            showing,
+        ) else {
+            panic!("an order was not read");
+        };
+        assert_eq!(read.reason, "why");
+    });
+}
+
+// ---- cite_some ----
+
+#[test]
+fn an_empty_cite_some_is_unanswered_when_things_are_shown() {
+    with_showing(2, 0, |showing| {
+        let told = "cites names none of the things shown: name at least one.";
+        for text in [r#"{"cites":[]}"#, r#"{"cites":["s9"]}"#] {
+            assert_eq!(
+                <Whole<Backed> as Single>::read(&written(text, Ended::Complete), showing),
+                Settled::Unanswered(Why::Refused(told.to_owned()))
+            );
+        }
+        assert_eq!(
+            <Whole<Backed> as Single>::read(
+                &written(r#"{"cites":["s1"]}"#, Ended::Complete),
+                showing
+            ),
+            Settled::Answered(Backed {
+                cites: vec![showing.resolve::<Sheet>("s1").unwrap()]
+            })
+        );
+    });
+}
+
+#[test]
+fn an_empty_cite_some_is_answered_when_nothing_is_shown() {
+    with_showing(0, 0, |showing| {
+        assert_eq!(
+            <Whole<Backed> as Single>::read(&written(r#"{"cites":[]}"#, Ended::Complete), showing),
+            Settled::Answered(Backed { cites: Vec::new() })
+        );
+    });
+}
+
+// ---- place ----
+
+#[test]
+fn a_mark_holds_the_place_it_was_written_at() {
+    with_showing(3, 0, |showing| {
+        let text =
+            r#"{"marks":[{"at":"s3","note":"a"},{"at":"s1","note":"b"},{"at":"s2","note":"c"}]}"#;
+        let rows =
+            <Flagged<Sheet, Placed> as PerItem>::read(&written(text, Ended::Complete), showing);
+        let places: Vec<(String, usize)> = rows
+            .into_iter()
+            .map(|(item, settled)| match settled {
+                Settled::Answered(Some(placed)) => (item.handle.written(), placed.place),
+                other => panic!("a mark was not read: {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            places,
+            vec![
+                ("s1".to_owned(), 1),
+                ("s2".to_owned(), 2),
+                ("s3".to_owned(), 0)
+            ]
+        );
+    });
+}
+
+#[test]
+fn a_place_counts_the_elements_that_were_skipped() {
+    with_showing(2, 0, |showing| {
+        let text = r#"{"marks":[{"at":"s99","note":"a"},{"at":"s2","note":"b"}]}"#;
+        let rows =
+            <Flagged<Sheet, Placed> as PerItem>::read(&written(text, Ended::Complete), showing);
+        let second = rows.into_iter().nth(1).map(|(_, settled)| settled);
+        assert_eq!(second, Some(Settled::Answered(Some(Placed { place: 1 }))));
+    });
+}
+
+#[test]
+fn a_new_item_holds_the_place_it_was_written_at() {
+    with_showing(1, 0, |showing| {
+        let text = r#"{"items":[{"note":"a"},{"note":"b"}]}"#;
+        let found = <New<Placed> as Listed>::read(&written(text, Ended::Complete), showing);
+        assert_eq!(found.items, vec![Placed { place: 0 }, Placed { place: 1 }]);
     });
 }
 

@@ -36,6 +36,12 @@ pub enum Field {
     Cite {
         prefix: &'static str,
         among: Among,
+        /// Whether at least one must be given whenever the request shows any.
+        some: bool,
+    },
+    /// Every shown thing of a kind, each once, in the order the model judges.
+    Order {
+        prefix: &'static str,
     },
     /// A closed object of fixed fields.
     Group(Form),
@@ -112,8 +118,26 @@ impl Form {
             Field::Cite {
                 prefix: K::PREFIX,
                 among: Among::Shown,
+                some: false,
             },
         )
+    }
+
+    /// Evidence that must be given: at least one shown `K` whenever the request shows any.
+    pub fn cite_some<K: Kind>(self, name: &'static str) -> Self {
+        self.with(
+            name,
+            Field::Cite {
+                prefix: K::PREFIX,
+                among: Among::Shown,
+                some: true,
+            },
+        )
+    }
+
+    /// Every shown `K`, each once, in the order the model judges.
+    pub fn order<K: Kind>(self, name: &'static str) -> Self {
+        self.with(name, Field::Order { prefix: K::PREFIX })
     }
 
     /// Evidence among the own things of the entry's item.
@@ -123,6 +147,7 @@ impl Form {
             Field::Cite {
                 prefix: C::PREFIX,
                 among: Among::Own,
+                some: false,
             },
         )
     }

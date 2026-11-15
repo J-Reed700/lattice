@@ -18,6 +18,7 @@ pub struct Fields<'r, 's> {
     pub(super) why: Option<Why>,
     /// Evidence pointers that did not resolve: traced, and they cost nothing else.
     pub(super) lost_cites: usize,
+    place: usize,
 }
 
 impl<'r, 's> Fields<'r, 's> {
@@ -32,7 +33,19 @@ impl<'r, 's> Fields<'r, 's> {
             item,
             why: None,
             lost_cites: 0,
+            place: 0,
         }
+    }
+
+    pub(super) fn placed(mut self, place: usize) -> Self {
+        self.place = place;
+        self
+    }
+
+    /// Where the model wrote this entry among the entries of its list, counted from 0: a contract that asks
+    /// for an order reads it here.
+    pub fn place(&self) -> usize {
+        self.place
     }
 
     /// Why the statement is unanswered, once an accessor returned `None`.
@@ -103,6 +116,42 @@ impl<'r, 's> Fields<'r, 's> {
     pub fn cite<K: Kind>(&mut self, name: &'static str) -> Vec<Picked<K>> {
         let showing = self.showing;
         self.cited(name, |written| showing.resolve::<K>(written))
+    }
+
+    /// The cites that resolve, each once, and at least one whenever the request shows a `K`: with none,
+    /// the statement is refused and the model is told why.
+    pub fn cite_some<K: Kind>(&mut self, name: &'static str) -> Option<Vec<Picked<K>>> {
+        let cites = self.cite::<K>(name);
+        if cites.is_empty() && !self.showing.shown::<K>().is_empty() {
+            let why = Why::Refused(format!(
+                "{name} names none of the things shown: name at least one."
+            ));
+            return self.fail(why);
+        }
+        Some(cites)
+    }
+
+    /// Every shown `K`, each once, in the order the model wrote them.
+    pub fn order<K: Kind>(&mut self, name: &'static str) -> Option<Vec<Picked<K>>> {
+        let object = self.object;
+        let written = self.strings(object, name)?;
+        let mut order: Vec<Picked<K>> = Vec::with_capacity(written.len());
+        for handle in written {
+            order.push(self.resolved::<K>(handle)?);
+        }
+        for (at, picked) in order.iter().enumerate() {
+            if order.iter().take(at).any(|earlier| earlier == picked) {
+                let why = Why::Contradicted(format!("The order holds {} twice.", picked.handle));
+                return self.fail(why);
+            }
+        }
+        for shown in self.showing.shown::<K>() {
+            if !order.contains(&shown) {
+                let why = Why::Contradicted(format!("The order lacks {}.", shown.handle));
+                return self.fail(why);
+            }
+        }
+        Some(order)
     }
 
     pub fn cite_own<C: Kind>(&mut self, name: &'static str) -> Vec<Picked<C>> {

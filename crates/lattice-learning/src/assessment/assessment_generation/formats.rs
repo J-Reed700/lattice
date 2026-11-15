@@ -467,17 +467,18 @@ pub(super) struct Unbuilt {
     pub(super) difficulty: u8,
 }
 
-/// The passage the cited sentences lie in and what they say, read from the
-/// app's own copy of the passages; a fault when they name no sentence of one.
+/// The passages the cited sentences lie in, each once in the order first cited,
+/// and what the sentences say, read from the app's own copy of the passages; a
+/// fault when they name no sentence of any.
 fn quoted<'a>(
     cited: &[Picked<Unit>],
     passages: &[&'a MaterialPassage],
-) -> std::result::Result<(&'a MaterialPassage, String), String> {
+) -> std::result::Result<(Vec<&'a MaterialPassage>, String), String> {
     let sentences: Vec<(&'a MaterialPassage, Units)> = passages
         .iter()
         .map(|passage| (*passage, Units::of(&passage.text, Grain::Sentence)))
         .collect();
-    let mut home: Option<&'a MaterialPassage> = None;
+    let mut homes: Vec<&'a MaterialPassage> = Vec::new();
     let mut said: Vec<String> = Vec::new();
     for cite in cited {
         let found = sentences.iter().find_map(|(passage, units)| {
@@ -488,16 +489,15 @@ fn quoted<'a>(
         let Some((passage, text)) = found else {
             continue;
         };
-        if home.is_some_and(|held| !std::ptr::eq(held, passage)) {
-            return Err("The item's quote cites sentences of more than one passage.".into());
+        if !homes.iter().any(|held| std::ptr::eq(*held, passage)) {
+            homes.push(passage);
         }
-        home = Some(passage);
         said.push(text);
     }
-    match home {
-        Some(home) => Ok((home, said.join(" "))),
-        None => Err("The item's quote cites no sentence of the supplied passages.".into()),
+    if homes.is_empty() {
+        return Err("The item's quote cites no sentence of the supplied passages.".into());
     }
+    Ok((homes, said.join(" ")))
 }
 
 /// Turn one model item into a validated candidate, or say every fault it has.
@@ -515,7 +515,7 @@ pub(super) fn to_candidate(
         faults,
         difficulty,
     };
-    let (passage, quote) = match quoted(&raw.cited, passages) {
+    let (cited_passages, quote) = match quoted(&raw.cited, passages) {
         Ok(found) => found,
         Err(fault) => return Err(refuse(said, vec![fault])),
     };
@@ -524,7 +524,7 @@ pub(super) fn to_candidate(
     if !long_enough_quote(&quote) {
         faults.push(format!("The item's quote is shorter than {MIN_QUOTE_CHARS} characters or {MIN_QUOTE_WORDS} words."));
     }
-    let mut candidate = match candidate_of(raw, need, passage) {
+    let mut candidate = match candidate_of(raw, need, &cited_passages) {
         Ok(candidate) => candidate,
         Err(fault) => {
             faults.push(fault);
@@ -551,7 +551,7 @@ pub(super) fn to_candidate(
 fn candidate_of(
     raw: RawItem,
     need: &AuthoringNeed,
-    passage: &MaterialPassage,
+    passages: &[&MaterialPassage],
 ) -> std::result::Result<LearningAssessmentCandidate, String> {
     let format = need.requirement.format;
     let mut options = vec![];
@@ -643,12 +643,15 @@ fn candidate_of(
         prompt: raw.prompt.trim().to_string(),
         options,
         left,
-        source_version_ids: passage
-            .source_version_ids
-            .iter()
-            .filter(|id| uuid::Uuid::parse_str(id).is_ok())
-            .cloned()
-            .collect(),
+        source_version_ids: {
+            let mut ids: Vec<String> = Vec::new();
+            for id in passages.iter().flat_map(|p| p.source_version_ids.iter()) {
+                if uuid::Uuid::parse_str(id).is_ok() && !ids.contains(id) {
+                    ids.push(id.clone());
+                }
+            }
+            ids
+        },
         rubric,
         key,
         explanation: raw.explanation.trim().to_string(),
