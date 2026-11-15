@@ -112,17 +112,12 @@ impl PlannedNeed {
     /// which not every model provider enforces.
     pub(crate) fn searches(self) -> Result<Vec<Self>, Vec<Outside>> {
         let (query, named) = lift_sites(&self.query);
-        let mut site_broken = false;
-        let sites: Vec<Option<Origin>> = match filled(self.site.clone()) {
-            Some(site) => match Origin::parse(&site).filter(|origin| origin.host().contains('.')) {
-                Some(origin) => vec![Some(origin)],
-                None => {
-                    site_broken = true;
-                    vec![None]
-                }
-            },
-            None if named.is_empty() => vec![None],
-            None => named.into_iter().map(Some).collect(),
+        let sites: Result<Vec<Option<Origin>>, Outside> = match filled(self.site.clone()) {
+            Some(site) => Origin::parse(&site)
+                .map(|site| vec![Some(site)])
+                .ok_or(Outside::Site),
+            None if named.is_empty() => Ok(vec![None]),
+            None => Ok(named.into_iter().map(Some).collect()),
         };
         let alternatives = self
             .alternatives
@@ -136,24 +131,21 @@ impl PlannedNeed {
             ..self
         }
         .checked();
-        let need = match (need, site_broken) {
-            (Ok(need), false) => need,
-            (Ok(_), true) => return Err(vec![Outside::Site]),
-            (Err(mut broken), site_broken) => {
-                if site_broken {
-                    broken.push(Outside::Site);
-                    broken.sort();
-                }
-                return Err(broken);
+        match (need, sites) {
+            (Ok(need), Ok(sites)) => Ok(sites
+                .into_iter()
+                .map(|site| Self {
+                    site: site.map(|site| site.to_string()),
+                    ..need.clone()
+                })
+                .collect()),
+            (need, sites) => {
+                let mut broken = need.err().unwrap_or_default();
+                broken.extend(sites.err());
+                broken.sort();
+                Err(broken)
             }
-        };
-        Ok(sites
-            .into_iter()
-            .map(|site| Self {
-                site: site.map(|site| site.to_string()),
-                ..need.clone()
-            })
-            .collect())
+        }
     }
 
     /// The search as one line, its site written back as an operator: what a

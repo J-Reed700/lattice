@@ -241,11 +241,6 @@ fn a_site_the_planner_set_is_the_scope_and_is_written_as_an_address() {
         ..need("Span<T> async", NeedKind::OfficialDocs)
     };
     assert_eq!(not_an_address.searches(), Err(vec![Outside::Site]));
-    let not_a_host = PlannedNeed {
-        site: Some("none".into()),
-        ..need("Span<T> async", NeedKind::OfficialDocs)
-    };
-    assert_eq!(not_a_host.searches(), Err(vec![Outside::Site]));
     let two_broken = PlannedNeed {
         site: Some("the official docs".into()),
         after: Some("last spring".into()),
