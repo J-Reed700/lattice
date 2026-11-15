@@ -318,7 +318,8 @@ async fn a_lesson_left_out_is_asked_for_again_alone_with_the_others_shown_as_pla
 
     assert_eq!(llm.calls(), 2);
     assert_eq!(plan.lessons.len(), 4);
-    let (system, user) = crate::lessons::structured_call::task_messages(&llm.request(1));
+    let request = llm.request(1);
+    let (system, user) = crate::lessons::structured_call::task_messages(&request);
     let task = task_of(user);
     let lessons: Vec<&Value> = task["modules"][0]["lessons"]
         .as_array()
@@ -383,7 +384,8 @@ async fn an_entry_with_a_blank_topic_is_corrected_for_that_lesson_alone() {
 
     assert_eq!(llm.calls(), 2);
     assert!(said_in(&llm.request(1)).contains("cannot be blank"));
-    let (_, user) = crate::lessons::structured_call::task_messages(&llm.request(1));
+    let request = llm.request(1);
+    let (_, user) = crate::lessons::structured_call::task_messages(&request);
     let task = task_of(user);
     let asked: Vec<&Value> = task["modules"][0]["lessons"]
         .as_array()

@@ -361,7 +361,7 @@ async fn the_writers_excerpts_are_shown_the_cited_first() {
 #[test]
 fn the_review_request_shows_what_it_must_and_nothing_internal() {
     let mut marks = Marks::new();
-    let finding = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "x".into());
+    let finding = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "x");
     let input = Input {
         system: marks.told("Review the harbour notes with care.".to_owned()),
         prompt: marks.told(json!({"task":"Review instructional quality at the quay","authoringContext":{"goal":"Learn the harbour tides"}})),

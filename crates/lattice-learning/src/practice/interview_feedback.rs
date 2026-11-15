@@ -307,13 +307,7 @@ fn task(
         rubric.push(entry);
     }
     let mut turns = Vec::new();
-    for turn in material
-        .turns
-        .iter()
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-    {
+    for turn in material.turns.iter().collect::<Vec<_>>().into_iter().rev() {
         let content = if scoring && turn.learner {
             let units = Units::of(&turn.content.0, Grain::Sentence);
             let shown = units.shown(showing)?;
@@ -503,9 +497,7 @@ impl Answered for ClosingReview {
             ));
         }
         let material = &input.material;
-        if input.standing.iter().any(|row| row.observed)
-            && evaluated(material, review).is_empty()
-        {
+        if input.standing.iter().any(|row| row.observed) && evaluated(material, review).is_empty() {
             return Err(Refusal(
                 "The scorecard credits learner evidence, so name in answered the questions the learner answered.".into(),
             ));
@@ -659,8 +651,9 @@ impl ClosingEvidence {
             choices: self.choices.clone(),
             criteria: self.criteria.clone(),
             turns: Packed::new(turns, |turn| {
-                llm.count_tokens(&json!({"speaker": turn.speaker, "content": turn.content}).to_string())
-                    + 1
+                llm.count_tokens(
+                    &json!({"speaker": turn.speaker, "content": turn.content}).to_string(),
+                ) + 1
             }),
             earlier: Told(0),
         }
@@ -717,20 +710,15 @@ impl ClosingEvidence {
             material: material.clone(),
             standing,
         };
-        let review = match ask::<ClosingReview>(
-            llm,
-            &asking,
-            &mut Scope::for_question(),
-            &reviewed,
-            &call,
-        )
-        .await?
-        {
-            Settled::Answered(review) => review,
-            Settled::Unanswered(_) => {
-                return Err(invalid("The closing review could not be used."));
-            }
-        };
+        let review =
+            match ask::<ClosingReview>(llm, &asking, &mut Scope::for_question(), &reviewed, &call)
+                .await?
+            {
+                Settled::Answered(review) => review,
+                Settled::Unanswered(_) => {
+                    return Err(invalid("The closing review could not be used."));
+                }
+            };
         present(&review.reference_approach, "Reference approach")?;
         present(&review.next_practice_step, "Next practice step")?;
         let named = evaluated(&material, &review);
@@ -778,7 +766,9 @@ impl ClosingEvidence {
         Ok(SimulationJson {
             content: rows.join("\n\n"),
             citations,
-            evaluated_question_ids: Some(named.iter().map(|question| question.id.clone()).collect()),
+            evaluated_question_ids: Some(
+                named.iter().map(|question| question.id.clone()).collect(),
+            ),
         })
     }
 }

@@ -497,7 +497,6 @@ fn read<'a>(
 fn findings(
     unseen: &[Unseen<'_>],
     settled: &confirm::Settled<'_>,
-    parts: &[Part],
     candidate: &Value,
     protected: &[Protected],
 ) -> Vec<ReviewFinding> {
@@ -889,7 +888,7 @@ pub(super) async fn check(
         receipts.record(item, hits);
     }
     Ok(Ruled {
-        findings: findings(&unseen, &settled, &parts, candidate, protected),
+        findings: findings(&unseen, &settled, candidate, protected),
         outside: outside_of(&ruled),
     })
 }

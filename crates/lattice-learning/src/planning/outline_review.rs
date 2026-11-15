@@ -575,7 +575,6 @@ mod placement_tests {
     }
 }
 
-
 #[cfg(test)]
 mod apply_tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
@@ -615,7 +614,10 @@ mod apply_tests {
     fn places_of(draft: &OutlineDraft) -> Vec<Place> {
         crate::outline_review_scope::module_paths(&draft.candidate, 0)
             .into_iter()
-            .chain(crate::outline_review_scope::module_paths(&draft.candidate, 1))
+            .chain(crate::outline_review_scope::module_paths(
+                &draft.candidate,
+                1,
+            ))
             .map(|path| Place { path: Told(path) })
             .collect()
     }
@@ -662,7 +664,11 @@ mod apply_tests {
             &draft,
             vec![
                 verdict("f1", "resolved", "The objective now names the tide."),
-                verdict("f2", "unresolved", "The objective still names no measurement."),
+                verdict(
+                    "f2",
+                    "unresolved",
+                    "The objective still names no measurement.",
+                ),
             ],
         );
         apply(&mut draft, answer, true, &[]);
@@ -734,7 +740,11 @@ mod apply_tests {
         let lesson = place_at(&draft, "/modules/0/lessons/0");
         let answer = entries(
             &draft,
-            vec![found(&lesson, "factual", "No single design suits every question.")],
+            vec![found(
+                &lesson,
+                "factual",
+                "No single design suits every question.",
+            )],
         );
         apply(&mut draft, answer, true, &[]);
         assert_eq!(draft.review.issues.len(), 1);
@@ -754,6 +764,7 @@ mod apply_tests {
                 ],
             ),
             rest: Some(Why::CutOff),
+            left_out: 0,
         };
         apply(&mut draft, cut.items, cut.rest.is_none(), &[]);
         let paths: Vec<&str> = draft

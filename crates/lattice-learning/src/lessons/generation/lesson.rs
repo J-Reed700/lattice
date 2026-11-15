@@ -29,9 +29,10 @@ use serde::Deserialize;
 use serde_json::json;
 
 mod answer;
-pub(crate) use answer::LessonWriter;
 #[cfg(test)]
 pub(crate) use answer::scripted_lesson;
+#[cfg(test)]
+pub(crate) use answer::LessonWriter;
 
 /// What the prose step of a lesson works through. Solving the questions here
 /// is the point: the schema puts each `correctIndex` before its explanation,

@@ -1,5 +1,7 @@
 //! Grounded interview plans and the validation their company and round promises require.
 use super::{invalid, present, with_snapshots};
+use crate::lessons::structured_call::Asking;
+use crate::model_call;
 use crate::{
     dto::{LearningLessonDto, LearningSourceVersionDto},
     practical_dto::{
@@ -7,8 +9,6 @@ use crate::{
         LearningInterviewTargetDto,
     },
 };
-use crate::lessons::structured_call::Asking;
-use crate::model_call;
 use lattice_core::application::services::model_contract::ask::{
     self, Alone, Answered, Refusal, Says, Settled,
 };
@@ -317,7 +317,13 @@ macro_rules! variant {
 variant!(LoopGiven, "interview-plan", true, InLoop, Given);
 variant!(LoopNamed, "interview-plan-named", true, InLoop, Named);
 variant!(RoundGiven, "interview-plan-round", false, OfRound, Given);
-variant!(RoundNamed, "interview-plan-round-named", false, OfRound, Named);
+variant!(
+    RoundNamed,
+    "interview-plan-round-named",
+    false,
+    OfRound,
+    Named
+);
 
 /// The model call that designs an interview plan.
 pub(super) struct InterviewPlan<V>(PhantomData<V>);
@@ -352,7 +358,10 @@ impl<V: Variant> Answered for InterviewPlan<V> {
         Ok(says)
     }
 
-    fn accept(_input: &Input, plan: &Plan<V::Question, V::Who>) -> std::result::Result<(), Refusal> {
+    fn accept(
+        _input: &Input,
+        plan: &Plan<V::Question, V::Who>,
+    ) -> std::result::Result<(), Refusal> {
         kept(&plan.draft(), V::FULL_LOOP)
             .map(|_| ())
             .map_err(|error| match error {
@@ -774,12 +783,9 @@ async fn plan_of<V: Variant>(
     )
     .await?;
     match settled {
-        Settled::Answered(plan) => checked_interview_plan(
-            &plan.draft(),
-            target,
-            round,
-            researched_source_version_ids,
-        ),
+        Settled::Answered(plan) => {
+            checked_interview_plan(&plan.draft(), target, round, researched_source_version_ids)
+        }
         Settled::Unanswered(why) => Err(ask::failed(&why)),
     }
 }

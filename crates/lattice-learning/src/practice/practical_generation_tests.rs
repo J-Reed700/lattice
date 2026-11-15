@@ -187,9 +187,8 @@ fn the_turn_request_shows_what_the_model_is_told_and_nothing_internal() {
         |_| 5,
     ));
     input.system = marks.told("Play the counterpart of the harbour review.".to_owned());
-    input.context = marks.told(
-        json!({"scenario": {"title": "Harbour review", "brief": "Check the tide tables."}}),
-    );
+    input.context = marks
+        .told(json!({"scenario": {"title": "Harbour review", "brief": "Check the tide tables."}}));
     input.earlier = Packed::new(
         vec![Said {
             turn: marks
@@ -261,7 +260,10 @@ fn older_turns_are_cut_before_the_newest_and_the_passages_get_the_rest() {
         |_| 5,
     ));
     input.earlier = Packed::new(
-        vec![said("The newest earlier turn."), said("The oldest earlier turn.")],
+        vec![
+            said("The newest earlier turn."),
+            said("The oldest earlier turn."),
+        ],
         |_| 10,
     );
     input.earlier_total = Internal::of(2);
@@ -304,7 +306,10 @@ async fn an_activity_with_an_evaluator_file_is_refused_once_and_then_corrected()
     };
     assert_eq!(model.sent().len(), 2);
     let json = draft.into_json();
-    assert!(json.starter_files.iter().all(|file| file.path != "checks.py"));
+    assert!(json
+        .starter_files
+        .iter()
+        .all(|file| file.path != "checks.py"));
 }
 
 #[tokio::test]

@@ -51,8 +51,8 @@ impl LLMPort for Sweep {
             }
             return Ok(CompletionResponse::from_text(self.clash.as_str()));
         }
-        let reply = match contract::scripted::ask_of(system, user) {
-            Some(ask) => contract::scripted::Script::new(vec![self.plan.clone()]).reply(ask, user),
+        let reply = match super::scripted::ask_of(system, user) {
+            Some(ask) => super::scripted::Script::new(vec![self.plan.clone()]).reply(ask, user),
             None => self.plan.clone(),
         };
         Ok(fixture_completion(request, vec![reply]))

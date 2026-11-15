@@ -30,7 +30,9 @@ pub(crate) fn reply(prompt: &str, script: &str) -> Option<String> {
         .flatten()
         .enumerate()
     {
-        let handle = open.get(at).map_or(json!("f999"), |shown| shown["id"].clone());
+        let handle = open
+            .get(at)
+            .map_or(json!("f999"), |shown| shown["id"].clone());
         items.push(json!({"entry":{"kind":"verdict","at":handle,"status":verdict["status"],"reason":verdict["reason"]}}));
     }
     for finding in wanted["newFindings"].as_array().into_iter().flatten() {

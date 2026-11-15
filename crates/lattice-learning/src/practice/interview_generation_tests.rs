@@ -333,12 +333,8 @@ fn a_long_interview_plan_is_read_not_refused() {
         assert!(checked_plan.is_ok(), "{pointer}: {:?}", checked_plan.err());
     }
     let padded = format!("{valid}{}", " ".repeat(80_001));
-    let checked_plan = checked_interview_plan(
-        &read_text::<LoopNamed>(&padded).draft(),
-        &target,
-        full,
-        &[],
-    );
+    let checked_plan =
+        checked_interview_plan(&read_text::<LoopNamed>(&padded).draft(), &target, full, &[]);
     assert!(
         checked_plan.is_ok(),
         "whitespace around the reply: {:?}",
@@ -352,11 +348,9 @@ fn the_interview_plan_schema_holds_no_text_length_cap() {
     fn rules<V: Variant>() -> Vec<String> {
         let mut scope = Scope::for_question();
         let showing = scope.request();
-        let schema = <<InterviewPlan<V> as Answered>::Answer as Shape>::schema(
-            &showing,
-            Pointers::Enum,
-        )
-        .expect("a schema");
+        let schema =
+            <<InterviewPlan<V> as Answered>::Answer as Shape>::schema(&showing, Pointers::Enum)
+                .expect("a schema");
         text_length_rules(schema.as_json())
     }
     for found in [
@@ -1263,7 +1257,9 @@ async fn an_older_turn_larger_than_the_room_is_still_left_out() -> Result<()> {
 }
 
 mod evaluator {
-    use super::super::super::practical_evaluator::{generate, CustomEvaluator, Input, PracticalEvaluator, PublicFile, EvaluatorFile};
+    use super::super::super::practical_evaluator::{
+        generate, CustomEvaluator, EvaluatorFile, Input, PracticalEvaluator, PublicFile,
+    };
     use super::super::super::{GeneratedPracticalFile, PracticalFileRole, PracticalRuntimeContext};
     use futures::future::BoxFuture;
     use lattice_core::application::ports::llm_port::CompletionInput;
@@ -1274,7 +1270,10 @@ mod evaluator {
 
     const STARTER: &str = "def kiln(values):\n    raise NotImplementedError\n";
 
-    fn reply(text: String) -> BoxFuture<'static, Result<lattice_core::application::ports::llm_port::CompletionResponse>> {
+    fn reply(
+        text: String,
+    ) -> BoxFuture<'static, Result<lattice_core::application::ports::llm_port::CompletionResponse>>
+    {
         Box::pin(std::future::ready(Ok(
             lattice_core::application::ports::llm_port::CompletionResponse::from_text(text),
         )))
@@ -1363,7 +1362,8 @@ mod evaluator {
                 content: marks.told("def fire(bowls): pass".to_owned()),
                 editable: marks.told(true),
             }],
-            environment: marks.told(json!({"name":"Harbour runtime","reservedPaths":["kiln/checks.py"]})),
+            environment: marks
+                .told(json!({"name":"Harbour runtime","reservedPaths":["kiln/checks.py"]})),
             files: vec![EvaluatorFile {
                 at: marks.reference(100_001_usize),
                 path: marks.told("kiln/checks.py".to_owned()),
@@ -1380,20 +1380,41 @@ mod evaluator {
     #[tokio::test]
     async fn every_required_file_is_written_by_its_own_entry() -> Result<()> {
         let model = writing(|path, _| Some(check(path)));
-        let checks = generate(&model, "Fire the bowls.", &starter(), &runtime(&["checks.py", "helpers.py"])).await?;
+        let checks = generate(
+            &model,
+            "Fire the bowls.",
+            &starter(),
+            &runtime(&["checks.py", "helpers.py"]),
+        )
+        .await?;
         assert_eq!(
-            checks.iter().map(|file| (file.path.as_str(), file.content.clone())).collect::<Vec<_>>(),
-            [("checks.py", check("checks.py")), ("helpers.py", check("helpers.py"))]
+            checks
+                .iter()
+                .map(|file| (file.path.as_str(), file.content.clone()))
+                .collect::<Vec<_>>(),
+            [
+                ("checks.py", check("checks.py")),
+                ("helpers.py", check("helpers.py"))
+            ]
         );
-        assert!(checks.iter().all(|file| file.role == PracticalFileRole::Check));
+        assert!(checks
+            .iter()
+            .all(|file| file.role == PracticalFileRole::Check));
         assert_eq!(model.count::<PracticalEvaluator>(), 1);
         Ok(())
     }
 
     #[tokio::test]
     async fn a_file_left_out_is_asked_for_again_alone_and_the_others_stand() -> Result<()> {
-        let model = writing(|path, earlier| (earlier > 0 || path == "checks.py").then(|| check(path)));
-        let checks = generate(&model, "Fire the bowls.", &starter(), &runtime(&["checks.py", "helpers.py"])).await?;
+        let model =
+            writing(|path, earlier| (earlier > 0 || path == "checks.py").then(|| check(path)));
+        let checks = generate(
+            &model,
+            "Fire the bowls.",
+            &starter(),
+            &runtime(&["checks.py", "helpers.py"]),
+        )
+        .await?;
         assert_eq!(checks.len(), 2);
         let sent = model.sent();
         assert_eq!(sent.len(), 2);
@@ -1407,9 +1428,19 @@ mod evaluator {
     #[tokio::test]
     async fn a_blank_file_is_corrected_alone() -> Result<()> {
         let model = writing(|path, earlier| {
-            Some(if path == "helpers.py" && earlier == 0 { "  ".to_owned() } else { check(path) })
+            Some(if path == "helpers.py" && earlier == 0 {
+                "  ".to_owned()
+            } else {
+                check(path)
+            })
         });
-        let checks = generate(&model, "Fire the bowls.", &starter(), &runtime(&["checks.py", "helpers.py"])).await?;
+        let checks = generate(
+            &model,
+            "Fire the bowls.",
+            &starter(),
+            &runtime(&["checks.py", "helpers.py"]),
+        )
+        .await?;
         assert_eq!(checks[1].content, check("helpers.py"));
         let sent = model.sent();
         assert_eq!(sent.len(), 2);
@@ -1420,19 +1451,34 @@ mod evaluator {
     #[tokio::test]
     async fn a_file_that_stays_unwritten_fails_the_activity() {
         let model = writing(|path, _| (path == "checks.py").then(|| check(path)));
-        let error = generate(&model, "Fire the bowls.", &starter(), &runtime(&["checks.py", "helpers.py"]))
-            .await
-            .expect_err("an evaluator file is missing");
+        let error = generate(
+            &model,
+            "Fire the bowls.",
+            &starter(),
+            &runtime(&["checks.py", "helpers.py"]),
+        )
+        .await
+        .expect_err("an evaluator file is missing");
         assert!(matches!(error, AppError::ModelAnswerUnusable(_)), "{error}");
     }
 
     #[tokio::test]
     async fn an_evaluator_path_that_is_a_public_file_fails_the_activity() {
         let model = writing(|path, _| Some(check(path)));
-        let error = generate(&model, "Fire the bowls.", &starter(), &runtime(&["solution.py"]))
-            .await
-            .expect_err("the evaluator would replace the starter");
-        assert!(error.to_string().contains("cannot replace a public practical file"), "{error}");
+        let error = generate(
+            &model,
+            "Fire the bowls.",
+            &starter(),
+            &runtime(&["solution.py"]),
+        )
+        .await
+        .expect_err("the evaluator would replace the starter");
+        assert!(
+            error
+                .to_string()
+                .contains("cannot replace a public practical file"),
+            "{error}"
+        );
     }
 
     #[tokio::test]
@@ -1448,7 +1494,10 @@ mod evaluator {
         });
         let checks = generate(&model, "Fire the bowls.", &starter(), &runtime(&[])).await?;
         assert_eq!(
-            checks.iter().map(|file| file.path.as_str()).collect::<Vec<_>>(),
+            checks
+                .iter()
+                .map(|file| file.path.as_str())
+                .collect::<Vec<_>>(),
             ["checks.py"]
         );
         assert_eq!(model.count::<CustomEvaluator>(), 1);

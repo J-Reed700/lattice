@@ -14,6 +14,7 @@ use lattice_core::domain::sourcing::NeedKind;
 use lattice_core::shared::error::AppError;
 
 use super::*;
+use serde_json::json;
 use crate::lessons::verifier_audit::tests::ScriptedVerifier;
 
 /// Runs one tool call as a round of the research does.

@@ -8,7 +8,8 @@ use lattice_core::application::services::model_contract::test_support::taint::{h
 use lattice_core::application::services::model_contract::test_support::{ScriptedModel, Sent};
 
 const LEARNER: &str = "I preserve the intended effect. I would drop the acknowledgement and retry, then check that only one effect was committed.";
-const CHECK: &str = "I would drop the acknowledgement and retry, then check that only one effect was committed.";
+const CHECK: &str =
+    "I would drop the acknowledgement and retry, then check that only one effect was committed.";
 const QUOTE: &str = "An idempotent operation has the same intended effect when repeated.";
 const FIRST: &str = "00000000-0000-4000-8000-000000000301";
 
@@ -238,7 +239,8 @@ async fn close(
 }
 
 #[tokio::test]
-async fn a_closing_debrief_names_sentences_levels_and_choices_and_the_app_renders_it() -> Result<()> {
+async fn a_closing_debrief_names_sentences_levels_and_choices_and_the_app_renders_it() -> Result<()>
+{
     let (evidence, session) = fixture(&[4, 4]);
     let model = plain("Preserve intended effects across retries; verify a lost response.");
     let result = close(&model, &evidence, &session).await?;
@@ -259,7 +261,9 @@ async fn a_closing_debrief_names_sentences_levels_and_choices_and_the_app_render
     assert!(result
         .content
         .contains("Collaboration: insufficient evidence; no points assigned"));
-    assert!(result.content.contains(&format!("Learner evidence: “{CHECK}”")));
+    assert!(result
+        .content
+        .contains(&format!("Learner evidence: “{CHECK}”")));
     assert!(!result.content.contains("Collaboration: 0/4"));
     assert!(result
         .content
@@ -306,9 +310,8 @@ async fn a_criterion_the_answer_leaves_out_is_asked_for_alone_and_the_others_sta
             let task = task_of(sent);
             if nth == 0 {
                 entries(&task, |criterion| {
-                    (criterion["title"] == "Evidence and reasoning").then(|| {
-                        observed(&task, criterion, 3, "drop the acknowledgement")
-                    })
+                    (criterion["title"] == "Evidence and reasoning")
+                        .then(|| observed(&task, criterion, 3, "drop the acknowledgement"))
                 })
             } else {
                 scorecard(&task)
@@ -444,8 +447,7 @@ async fn the_review_is_told_the_scores_and_sees_no_levels() -> Result<()> {
     );
     assert!(task["rubric"][0].get("levels").is_none());
     assert_eq!(
-        task["transcript"][1]["content"],
-        LEARNER,
+        task["transcript"][1]["content"], LEARNER,
         "the review reads the learner's turn as written"
     );
     Ok(())

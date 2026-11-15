@@ -1,6 +1,7 @@
 //! Changing a lesson's topics by hand, by asking the model, and undoing.
 #![allow(clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
 use super::topics_support::*;
+use super::edit::ChangeInput;
 use super::*;
 use lattice_core::application::ports::llm_port::{CompletionInput, InferencePriority};
 
@@ -383,7 +384,7 @@ async fn a_change_is_asked_at_interactive_priority_with_every_lesson_shown_by_ha
         })
         .collect();
     assert_eq!(
-        planned,
+        json!(planned),
         json!(["o1", "l2", "o2", "l1"]),
         "the whole plan, in course order"
     );

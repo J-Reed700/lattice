@@ -486,17 +486,7 @@ impl Asking<'_> {
     ) -> Result<ask::Sent> {
         let request = request.filling_window(fills_window(self.progress, step));
         let output = send_step(llm, request.clone(), self.progress, step).await?;
-        Ok(sent_by(request, output))
-    }
-}
-
-/// `output` as the reply to `request`.
-fn sent_by(request: GroundedRequest, output: GroundedOutput) -> ask::Sent {
-    let finish = output.finish();
-    ask::Sent {
-        request,
-        text: output.text,
-        finish,
+        Ok(ask::Sent::of(request, output))
     }
 }
 
@@ -518,7 +508,7 @@ impl ask::Transport for Asking<'_> {
         lesson_progress::stage("The model's answer left something open; asking once more.");
         let request = step.into_request();
         let output = send_step(llm, request.clone(), self.progress, Step::Followup).await?;
-        Ok(sent_by(request, output))
+        Ok(ask::Sent::of(request, output))
     }
 
     async fn unanswered(&self, llm: &dyn LLMPort, request: &GroundedRequest) -> Result<()> {
@@ -739,7 +729,7 @@ async fn send_step(
 pub(crate) const FIXTURE_DRAFT: &str = "Fixture draft: the task worked through in prose.";
 
 /// Whether `request` is the prose step of a two-step call.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn is_draft_request(
     request: &lattice_core::application::ports::llm_port::CompletionRequest,
 ) -> bool {
@@ -766,7 +756,7 @@ pub(crate) fn task_messages(
 }
 
 /// Contents of `role`'s messages, last first.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 fn messages<'a>(
     request: &'a lattice_core::application::ports::llm_port::CompletionRequest,
     role: &'a str,

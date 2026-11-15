@@ -49,3 +49,24 @@ pub(crate) fn finding_labels(task: &Value) -> Vec<String> {
     }
     labels
 }
+
+/// The label of the first sentence of the text at `pointer` in the task's candidate.
+pub(crate) fn first_label(task: &Value, pointer: &str) -> Option<String> {
+    let marked = task.pointer(&format!("/candidate{pointer}"))?.as_str()?;
+    let close = marked.find("] ")?;
+    let open = marked.get(..close)?.find('[')?;
+    marked.get(open + 1..close).map(str::to_owned)
+}
+
+/// The `keys` item a flat change of a question's `correctIndex` stands for: the first sentence of the option now right.
+pub(crate) fn key_item(task: &Value, edit: &Value) -> Option<Value> {
+    let path = edit.get("path")?.as_str()?;
+    let question = path.strip_suffix("/correctIndex")?;
+    let right = edit.get("after")?.as_u64()?;
+    let label = first_label(task, &format!("{question}/options/{right}"))?;
+    let was_wrong = edit
+        .get("wasWrong")
+        .and_then(Value::as_str)
+        .unwrap_or("It is not the right answer.");
+    Some(serde_json::json!({"right": label, "wasWrong": was_wrong}))
+}

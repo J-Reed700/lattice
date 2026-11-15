@@ -686,5 +686,3 @@ fn a_bug_fix_lists_its_own_stages() {
         [(Stage::Reproduce, 2_000), (Stage::Locate, 3_000)]
     );
 }
-
-mod golden;

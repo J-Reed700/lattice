@@ -156,12 +156,7 @@ impl Audit {
             spent.0 += output.input_tokens;
             spent.1 += output.output_tokens;
         }
-        let finish = output.finish();
-        Ok(Sent {
-            request,
-            text: output.text,
-            finish,
-        })
+        Ok(Sent::of(request, output))
     }
 }
 

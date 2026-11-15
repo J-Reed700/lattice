@@ -2,6 +2,7 @@
 use super::*;
 use crate::lessons::course_generation_tests::length_bounds;
 use crate::review_findings::{FindingSite, Rule};
+use lattice_core::application::services::model_contract::Contract;
 use serde_json::{json, Value};
 
 const STEPS_IN_ORDER: &str = "The learner does the lesson's steps in order, with their own tools and materials, so each step starts from what the steps before it left: a later step uses what an earlier one made or set up, and never has the learner make or set it up again.";

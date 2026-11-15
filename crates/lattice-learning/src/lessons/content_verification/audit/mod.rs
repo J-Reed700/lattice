@@ -39,7 +39,7 @@ use lattice_core::shared::ErrorCode;
 use crate::model_call::ErrorClass;
 use batches::Item;
 use calls::{Audit, VerifierAudit, WindowSizer};
-use contract::{Claim, Evidence, Passage};
+use contract::{Claim, Evidence, Input, Passage};
 use ledger::LedgerWriter;
 use policy::{Consent, Judged, AUDIT_POLICY_ID};
 use runs::{AuditRunStore, BatchOutcome, BatchRecord, RunKey, RunState};

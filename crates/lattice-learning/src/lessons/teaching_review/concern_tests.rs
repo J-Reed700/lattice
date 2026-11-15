@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::tests::{issue, items, passage, reviewer, run};
 use super::*;
+use lattice_core::application::services::model_contract::shape::Vocabulary;
 
 fn concerned(at: &str, concerns: &[&str]) -> Value {
     let concerns: Vec<Value> = concerns.iter().map(|c| json!({"concern":c})).collect();

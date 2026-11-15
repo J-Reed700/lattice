@@ -119,20 +119,32 @@ impl Answered for PracticeFit {
         let outline = &input.outline.0;
         let mut task = format!("Course: {}", outline.title);
         for module in &outline.modules {
-            task.push_str(&format!("
+            task.push_str(&format!(
+                "
 
-Module: {}", module.title));
+Module: {}",
+                module.title
+            ));
             for lesson in &module.lessons {
-                task.push_str(&format!("
-- {}: {}", lesson.title, lesson.objective));
+                task.push_str(&format!(
+                    "
+- {}: {}",
+                    lesson.title, lesson.objective
+                ));
             }
         }
-        task.push_str("
+        task.push_str(
+            "
 
-Kinds of work:");
+Kinds of work:",
+        );
         for (handle, kind) in showing.show(&input.kinds)?.iter() {
-            task.push_str(&format!("
-- {} {}", handle.bracketed(), kind.asked_when.0));
+            task.push_str(&format!(
+                "
+- {} {}",
+                handle.bracketed(),
+                kind.asked_when.0
+            ));
         }
         let mut says = Says::new(SYSTEM, task);
         says.output_tokens = FIT_ANSWER_TOKENS * input.kinds.len();
@@ -296,7 +308,7 @@ pub async fn check_practice_fit(
     if fresh.is_empty() {
         return Ok(decided);
     }
-    let verdicts: Vec<KindVerdict> = state
+    let kept: Vec<KindVerdict> = state
         .stored
         .iter()
         .filter(|stored| {
@@ -307,8 +319,8 @@ pub async fn check_practice_fit(
             fits: stored.fits,
             reason: stored.reason.clone(),
         })
-        .chain(fresh)
         .collect();
+    let verdicts: Vec<KindVerdict> = kept.into_iter().chain(fresh).collect();
     repo.record_fits(program_id, &basis, &verdicts, llm.model_name(), now())
         .await?;
     state.stored = verdicts

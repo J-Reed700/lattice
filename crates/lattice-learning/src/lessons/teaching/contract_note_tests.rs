@@ -25,7 +25,7 @@ fn missing_note(belongs: Option<&Part>) -> String {
         uses: Vec::new(),
         clashes: Vec::new(),
     };
-    let found = findings(&[], &settled, &[], &Value::Null, &[]);
+    let found = findings(&[], &settled, &Value::Null, &[]);
     assert_eq!(found.len(), 1);
     found[0].note.clone()
 }
@@ -66,7 +66,7 @@ fn used_note(protected: &[Protected]) -> String {
         clashes: Vec::new(),
     };
     let candidate = json!({"blocks":[{"body":"Alpha holds the line."}],"questions":[]});
-    let found = findings(&[], &settled, &parts, &candidate, protected);
+    let found = findings(&[], &settled, &candidate, protected);
     assert_eq!(found.len(), 1);
     found[0].note.clone()
 }
