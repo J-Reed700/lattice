@@ -7,7 +7,7 @@ use crate::practical_dto::{
 use futures::future::BoxFuture;
 use lattice_core::application::ports::llm_port::CompletionResponse;
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
-use lattice_core::application::services::model_contract::test_support::{ScriptedModel, Sent};
+use lattice_core::application::services::model_contract::test_support::ScriptedModel;
 use serde_json::json;
 
 const GATE: &str = "The harbour gate opens at first light.";
