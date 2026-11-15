@@ -387,8 +387,10 @@ pub(super) struct AppliedFor {
     pub value: Value,
     /// For each finding the patch named: the fields its applied changes wrote,
     /// and why its other changes were left out.
+    #[cfg(test)]
     pub named: BTreeMap<String, Named>,
     /// The sentences applied edits wrote: (finding, path, sentence).
+    #[cfg(test)]
     pub written: Vec<(String, String, String)>,
 }
 
@@ -798,7 +800,7 @@ pub(super) fn apply_patch_for(
         may_change,
     );
     let mut result = candidate.clone();
-    let written = write_changes(candidate, accepted.kept, &mut result);
+    let _written = write_changes(candidate, accepted.kept, &mut result);
     accepted.problems.sort_by_key(|(index, _)| *index);
     let problems: Vec<String> = accepted
         .problems
@@ -832,8 +834,10 @@ pub(super) fn apply_patch_for(
     }
     Ok(AppliedFor {
         value: result,
+        #[cfg(test)]
         named,
-        written,
+        #[cfg(test)]
+        written: _written,
     })
 }
 
