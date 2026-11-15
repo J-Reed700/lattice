@@ -114,10 +114,10 @@ fn written_answer(user: &str) -> Value {
                  "cites": ["zz9", kiln], "citations": [{"sentence": "Bowls fire once shut.", "cites": ["q99"]}]}
             ]}
         ],
-        "guidedPractice": practice("Try", &[first.clone()]),
-        "independentPractice": practice("Make", &[first.clone()]),
-        "reflection": part("Reflect", &[kiln.clone()]),
-        "recap": part("Recap", &[kiln.clone()]),
+        "guidedPractice": practice("Try", std::slice::from_ref(&first)),
+        "independentPractice": practice("Make", std::slice::from_ref(&first)),
+        "reflection": part("Reflect", std::slice::from_ref(&kiln)),
+        "recap": part("Recap", std::slice::from_ref(&kiln)),
         "questions": [{
             "kind": "quiz", "prompt": "When does the gate open?", "right": "Early",
             "wrong": [
