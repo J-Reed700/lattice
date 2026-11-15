@@ -23,7 +23,7 @@ use lattice_core::application::services::model_contract::ask::{
 };
 use lattice_core::application::services::model_contract::edit::{consistent, Anchor, Change};
 use lattice_core::application::services::model_contract::packed::Packed;
-use lattice_core::application::services::model_contract::shape::{Authored, Each, Fields, Form};
+use lattice_core::application::services::model_contract::shape::{Authored, Each, Fields, Form, Why};
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Internal, Kind, Picked, Scope, Showing, Told,
 };
@@ -255,7 +255,7 @@ fn quotes_of(input: &Input) -> Quotes {
 fn units_of(rows: &Rows, part: &str, set: &[Protected]) -> Vec<UnitRef> {
     let mut units: Vec<UnitRef> = Vec::new();
     for held in set {
-        for unit in rows.units_over(part, &held.field, &held.quote) {
+        for unit in rows.units_over(&format!("{part}/{}", held.field), &held.quote) {
             if !units.contains(&unit) {
                 units.push(unit);
             }
@@ -266,7 +266,8 @@ fn units_of(rows: &Rows, part: &str, set: &[Protected]) -> Vec<UnitRef> {
 
 /// An entry's edits kept to the sentence it is for.
 struct Narrowed {
-    edits: rows::Edits,
+    /// What is left of the entry's edits; none when the part kept is refused.
+    edits: Option<rows::Edits>,
     /// Why the entry is not taken at all: it changes a sentence of a live claim together with its own.
     put_back: Option<String>,
 }
@@ -281,7 +282,7 @@ fn narrowed(rows: &Rows, part: &str, item: &Failed, edits: &rows::Edits) -> Narr
         .map(|held| {
             (
                 held.quote.as_str(),
-                rows.units_over(part, &held.field, &held.quote),
+                rows.units_over(&format!("{part}/{}", held.field), &held.quote),
             )
         })
         .collect();
@@ -311,7 +312,7 @@ fn narrowed(rows: &Rows, part: &str, item: &Failed, edits: &rows::Edits) -> Narr
     }
     for (anchor, with) in &change.insert {
         let stays = match anchor {
-            Anchor::Start => true,
+            Anchor::Start => false,
             Anchor::After(after) => {
                 own.contains(&after.reference)
                     || rows
@@ -343,25 +344,30 @@ fn narrowed(rows: &Rows, part: &str, item: &Failed, edits: &rows::Edits) -> Narr
         let covered = rows.covered_by(&citation.reference);
         !covered.is_empty() && covered.iter().all(|unit| own.contains(unit))
     };
-    Narrowed {
-        edits: rows::Edits {
-            sentences: consistent(kept).unwrap_or_else(|_| edits.sentences.clone()),
-            cite: edits.cite.clone(),
-            recite: edits
-                .recite
-                .iter()
-                .filter(|recite| for_its_sentence(&recite.citation))
-                .cloned()
-                .collect(),
-            uncite: edits
-                .uncite
-                .iter()
-                .filter(|citation| for_its_sentence(citation))
-                .cloned()
-                .collect(),
-            keys: edits.keys.clone(),
-        },
-        put_back,
+    let edits = consistent(kept).ok().map(|sentences| rows::Edits {
+        sentences,
+        cite: edits.cite.clone(),
+        recite: edits
+            .recite
+            .iter()
+            .filter(|recite| for_its_sentence(&recite.citation))
+            .cloned()
+            .collect(),
+        uncite: edits
+            .uncite
+            .iter()
+            .filter(|citation| for_its_sentence(citation))
+            .cloned()
+            .collect(),
+        keys: edits.keys.clone(),
+    });
+    Narrowed { edits, put_back }
+}
+
+impl Narrowed {
+    /// The edits that remain, when any do.
+    fn remaining(&self) -> Option<&rows::Edits> {
+        self.edits.as_ref().filter(|edits| !edits.is_empty())
     }
 }
 
@@ -375,13 +381,13 @@ fn check(input: &Input, id: &str, correction: &Correction) -> std::result::Resul
     }
     let mut rows = Rows::of_part(input.lesson.value(), input.part.value());
     let narrowed = narrowed(&rows, input.part.value(), item, &correction.edits);
-    if narrowed.put_back.is_some() || narrowed.edits.is_empty() {
+    let Some(remaining) = narrowed.remaining().filter(|_| narrowed.put_back.is_none()) else {
         return Ok(());
-    }
+    };
     let held = Held {
         wording: input.wording.value(),
     };
-    match rows.take(&narrowed.edits, &quotes_of(input), &held) {
+    match rows.take(remaining, &quotes_of(input), &held) {
         Ok(_) => Ok(()),
         Err(Left::Refused(reasons)) => Err(Refusal(reasons.join(" "))),
         Err(Left::Met(words)) => Err(Refusal(words)),
@@ -405,6 +411,17 @@ impl Answered for SectionRepair {
             .into_iter()
             .filter_map(|(owner, places)| {
                 let item = input.items.get(owner)?;
+                let needs = needs.get(owner)?;
+                if !needs.is_empty() && places.is_empty() {
+                    return None;
+                }
+                if places.len() < needs.len() {
+                    tracing::warn!(
+                        kept = places.len(),
+                        recorded = needs.len(),
+                        "A failed claim's evidence exceeds the repair budget; sending the passages that fit"
+                    );
+                }
                 Some(Failed {
                     shown: Internal::of(Some(places)),
                     ..item.clone()
@@ -445,7 +462,11 @@ impl Answered for SectionRepair {
         let shown = rows.shown(showing)?;
         let mut claims: Vec<Value> = Vec::new();
         for (handle, item) in items.iter() {
-            let labels = Rows::handles_of(&shown, &units_of(&rows, part, item.targets.value()));
+            let labels: Vec<String> = units_of(&rows, part, item.targets.value())
+                .into_iter()
+                .filter_map(|unit| shown.handle_of(unit))
+                .map(|handle| handle.written())
+                .collect();
             let shown_places = item.places();
             for claim in &item.claims {
                 let evidence: Vec<&str> = claim
@@ -779,6 +800,7 @@ impl Taking<'_> {
     ) -> std::result::Result<(), String> {
         let correction = match settled {
             Settled::Answered(correction) => correction,
+            Settled::Unanswered(Why::NoRoom) => return Err(NO_ROOM.to_owned()),
             Settled::Unanswered(why) => return Err(refusal(&ask::failed(&why))),
         };
         let part = self.input.part.value();
@@ -786,14 +808,14 @@ impl Taking<'_> {
         if let Some(reason) = narrowed.put_back {
             return Err(reason);
         }
-        if narrowed.edits.is_empty() {
+        let Some(remaining) = narrowed.remaining() else {
             return Err(NO_CHANGE.to_owned());
-        }
+        };
         let mut trial = self.rows.clone();
         let held = Held {
             wording: self.input.wording.value(),
         };
-        if let Err(left) = trial.take(&narrowed.edits, &self.quotes, &held) {
+        if let Err(left) = trial.take(remaining, &self.quotes, &held) {
             return Err(match left {
                 Left::Met(words) => words,
                 Left::Refused(reasons) => reasons.join(" "),
@@ -982,41 +1004,15 @@ async fn repair_sections(
             ledger.reject(policy, &claims, &error.to_string()).await?;
             continue;
         }
-        let mut asked: Vec<Failed> = Vec::new();
+        let own = Rows::of_part(&candidate, &part);
         for item in &input.items {
-            let needs = item.needs();
-            let alone = Input {
-                items: vec![Failed {
-                    shown: Internal::of(Some(Vec::new())),
-                    ..item.clone()
-                }],
-                ..input.clone()
-            };
-            let room = ask::room::<SectionRepair>(llm, &alone, &options)?;
-            let places = input
-                .passages
-                .for_owners(room, std::slice::from_ref(&needs))
-                .into_iter()
-                .next()
-                .map(|(_, places)| places)
-                .unwrap_or_default();
-            if room == 0 || (!needs.is_empty() && places.is_empty()) {
-                ledger.reject(policy, &item.claim_ids(), NO_ROOM).await?;
-                continue;
-            }
-            if places.len() < needs.len() {
+            if units_of(&own, &part, item.targets.value()).is_empty() {
                 tracing::warn!(
                     unit,
-                    kept = places.len(),
-                    recorded = needs.len(),
-                    "A failed claim's evidence exceeds the repair budget; sending the passages that fit"
+                    claim = item.id.as_str(),
+                    "A failed claim's sentence was not found in its section; its correction cannot be applied"
                 );
             }
-            asked.push(item.clone());
-        }
-        if asked.is_empty() {
-            drop_group(&mut context, unit, failures.len(), true);
-            continue;
         }
         crate::lesson_progress::phase(
             crate::lesson_progress::Phase::Repair,
@@ -1036,7 +1032,7 @@ async fn repair_sections(
                     reasoning: None,
                 },
                 &mut Scope::for_question(),
-                &asked,
+                &input.items,
                 |open, _| Input {
                     items: open.iter().map(|item| (*item).clone()).collect(),
                     ..input.clone()
@@ -1050,7 +1046,7 @@ async fn repair_sections(
         match answered {
             Err(error) if !unmade(&error) => return Err(error),
             Err(error) => {
-                let sent: Vec<ClaimId> = asked.iter().flat_map(Failed::claim_ids).collect();
+                let sent: Vec<ClaimId> = input.items.iter().flat_map(Failed::claim_ids).collect();
                 ledger.reject(policy, &sent, &error.to_string()).await?;
             }
             Ok(settled) => {
@@ -1061,7 +1057,7 @@ async fn repair_sections(
                     quotes: quotes_of(&input),
                     rows: Rows::of_part(&candidate, &part),
                 };
-                for (item, settled) in asked.iter().zip(settled) {
+                for (item, settled) in input.items.iter().zip(settled) {
                     match taking.settle(item, settled) {
                         Ok(()) => made.extend(item.claim_ids()),
                         Err(reason) => {

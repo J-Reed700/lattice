@@ -418,28 +418,67 @@ async fn an_entry_that_changes_nothing_it_may_change_is_charged() -> Result<()> 
     Ok(())
 }
 
+/// A recording model whose window is `window` tokens.
+struct Narrow {
+    inner: Recording,
+    window: usize,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Narrow {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        self.inner.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        "narrow"
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len() / 4
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.window
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
 #[tokio::test]
-async fn a_failed_claim_whose_evidence_does_not_fit_the_window_is_charged_and_no_request_is_sent(
+async fn a_failed_claim_whose_evidence_does_not_fit_is_charged_and_not_asked_while_the_others_are(
 ) -> Result<()> {
     let body = format!("{FIRST_OLD} {STEADY}");
-    let llm = SmallWindow {
+    let steady_new = "A slow, even ramp keeps the clay from cracking.";
+    let answer = json!({"edits":[{"path":"/blocks/0/body","before":STEADY,"after":steady_new}]});
+    let llm = Narrow {
+        inner: recording(vec![answer.to_string()]),
         window: 4_000,
-        requests: Mutex::new(Vec::new()),
     };
-    let mut ledger = rewriting(&llm, &body, &[("a", FIRST_OLD)]).await?;
+    let mut ledger = rewriting(&llm, &body, &[("a", FIRST_OLD), ("b", STEADY)]).await?;
     let context = context_of(
         &body,
-        vec![failed_row("a", FIRST_OLD, &["ev-big"])],
+        vec![
+            failed_row("a", FIRST_OLD, &["ev-big"]),
+            failed_row("b", STEADY, &[]),
+        ],
         vec![passage_row("ev-big", &"x".repeat(24_000))],
     );
 
-    repaired(&llm, &mut ledger, (context, schema()), 500).await?;
+    let after = repaired(&llm, &mut ledger, (context, schema()), 500).await?;
 
     assert_eq!(
         rejections(ledger.entry(&ClaimId("a".into())).unwrap()),
         vec![NO_ROOM.to_owned()]
     );
-    assert!(llm.requests.lock().unwrap().is_empty());
+    let sent = llm.inner.sent.lock().unwrap().clone();
+    assert_eq!(sent.len(), 1);
+    let task = task_in(&sent[0]).unwrap();
+    let rows = task["failedClaims"].as_array().unwrap();
+    assert!(
+        matches!(rows.as_slice(), [row] if row["statement"] == "Statement of b"),
+        "{rows:?}"
+    );
+    assert_eq!(after["blocks"][0]["body"], format!("{FIRST_OLD} {steady_new}"));
+    assert!(rejections(ledger.entry(&ClaimId("b".into())).unwrap()).is_empty());
     Ok(())
 }
 
@@ -808,6 +847,75 @@ async fn a_failed_example_on_its_last_attempt_is_taken_out_with_its_fences() -> 
         "Intro.\n\nAfter."
     );
     assert!(section_examples(&context, 0).is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_failed_example_is_asked_with_its_run_and_only_its_own_lines_are_corrected() -> Result<()> {
+    let body = "Intro.
+
+```python
+print(1)
+```
+
+After.";
+    let answer = json!({"edits":[
+        {"path":"/blocks/0/body","before":"print(1)","after":"print(2)"},
+        {"path":"/blocks/0/body","before":"After.","after":"Changed after."},
+    ]});
+    let llm = recording(vec![answer.to_string()]);
+    let mut ledger = failed_ledger(&llm, body, &[("example", "print(1)", 0)]).await?;
+    let example = ClaimId("example".into());
+    let run = ClaimEvent::CodeExample {
+        observation: "example-0".into(),
+    };
+    assert!(ledger.append(&example, run).await?);
+    ledger
+        .begin_repairs(
+            &StandardPolicy::new(),
+            &lesson_of(body),
+            std::slice::from_ref(&example),
+        )
+        .await?;
+    let observation = json!({
+        "id": "example-0", "unit": 0, "runtime": "python", "code_sha256": "none",
+        "code": "print(1)",
+        "result": {
+            "status": "passed", "exitCode": 1, "stdout": "", "stderr": "boom",
+            "outputTruncated": false, "durationMs": 1
+        }
+    });
+    let context = json!({
+        "candidate": lesson_of(body), "requirements": {}, "evidence": [],
+        "executions": [observation], "repairHistory": [], "failedClaims": [],
+        "exampleClaims": [{"unit":0,"claimId":"example"}],
+    });
+
+    let after = repaired(&llm, &mut ledger, (context, schema()), 4_000).await?;
+
+    let sent = llm.sent.lock().unwrap().clone();
+    assert_eq!(sent.len(), 1);
+    let task = task_in(&sent[0]).unwrap();
+    let rows = task["failedClaims"].as_array().unwrap();
+    let [row] = rows.as_slice() else {
+        panic!("one row for the example: {rows:?}");
+    };
+    assert!(row["entry"].is_string(), "{row}");
+    assert!(
+        row["sentence"].as_array().is_some_and(|labels| !labels.is_empty()),
+        "{row}"
+    );
+    assert_eq!(row["execution"]["id"], "example-0");
+    assert_eq!(
+        after["blocks"][0]["body"],
+        "Intro.
+
+```python
+print(2)
+```
+
+After."
+    );
     Ok(())
 }
 
