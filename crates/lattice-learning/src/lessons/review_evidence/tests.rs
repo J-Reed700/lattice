@@ -901,7 +901,7 @@ async fn passages_beyond_the_window_are_left_out_and_every_finding_keeps_its_bes
             &json!({"id":"r0000","title":"Reference source-0-0","url":null,"text":best[0]}),
         )
     };
-    let window = (6_000..60_000)
+    let window = (1_024..60_000)
         .find(|window| {
             let model = ScriptedModel::new().window(*window);
             ask::room::<ReviewEvidence>(&model, &skeleton, &call)

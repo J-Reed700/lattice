@@ -26,6 +26,17 @@ fn input(marks: &mut Marks) -> Input {
         objective: "Read the depth of a mark".to_owned(),
         evidence,
     };
+    let _ = marks.told((
+        &brief.course,
+        &brief.goal,
+        &brief.prior_knowledge,
+        &brief.module,
+        &brief.module_summary,
+        &brief.outcomes,
+        &brief.lesson,
+        &brief.objective,
+        &brief.evidence,
+    ));
     Input {
         instructions: marks
             .told("Plant a defect for each pattern as a hurried pilot might.".to_owned()),
@@ -37,7 +48,7 @@ fn input(marks: &mut Marks) -> Input {
             gap: "\n".to_owned(),
             after: String::new(),
         }),
-        brief: Some(marks.told(brief)),
+        brief: Some(Told(brief)),
         files: vec![CodeFile {
             path: marks.told("tide/harbour.py".to_owned()),
             text: marks.told("depth = chart[mark]\nberth = depth + 1\n".to_owned()),

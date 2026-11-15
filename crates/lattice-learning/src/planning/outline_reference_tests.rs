@@ -280,7 +280,15 @@ pub(super) fn links(outline: &Value, picks: &[(&str, &str)]) -> Value {
             .unwrap_or_default()
             .to_owned()
     };
-    json!({"@links":picks.iter().map(|(path, quote)| (text_at(path), json!(quote))).collect::<serde_json::Map<_, _>>()})
+    let key_at = |path: &str| {
+        let module = path.split('/').take(3).collect::<Vec<_>>().join("/");
+        let title = outline
+            .pointer(&module)
+            .and_then(|module| module["title"].as_str())
+            .unwrap_or_default();
+        format!("{title}\u{1f}{}", text_at(path))
+    };
+    json!({"@links":picks.iter().map(|(path, quote)| (key_at(path), json!(quote))).collect::<serde_json::Map<_, _>>()})
 }
 /// An evidence-linking run that links nothing.
 pub(super) fn no_links() -> Value {

@@ -211,27 +211,19 @@ async fn reference_selection_asks_about_every_result_in_as_many_requests_as_the_
             source: Some("crossref".into()),
         })
         .collect();
-    let llm = ScriptedModel {
-        outputs: Mutex::new((0..400).map(|_| selection(&[0])).collect()),
-        prompts: Mutex::new(vec![]),
-    };
+    let llm = selector(
+        |shown, _| json!({"marks":[marked(&shown[0], "Directly relevant primary reference for the requested concept.")]}),
+    );
     let candidates = found(results);
     let selected =
         select_references(&llm, "Tonality", "tonal centre", &[], candidates.clone()).await?;
     assert_eq!(selected[0].url, "https://doi.org/10.1000/paper.0");
 
-    let prompts = llm.prompts.lock().unwrap();
-    assert!(prompts.len() > 1, "no one request holds every result");
-    let shown: usize = prompts
-        .iter()
-        .map(|prompt| prompt.matches("\"id\":\"r").count())
-        .sum();
+    let asked: Vec<Vec<String>> = llm.sent().iter().map(results_of).collect();
+    assert!(asked.len() > 1, "no one request holds every result");
+    let shown: usize = asked.iter().map(Vec::len).sum();
     assert_eq!(shown, candidates.len(), "every result is read once");
-    assert_eq!(
-        selected.len(),
-        prompts.len(),
-        "each request marks its first"
-    );
+    assert_eq!(selected.len(), asked.len(), "each request marks its first");
     Ok(())
 }
 
@@ -250,38 +242,27 @@ async fn reference_selection_selects_only_what_it_marks_and_never_invents_pages(
         source: None,
     })
     .collect::<Vec<_>>();
-    let llm = ScriptedModel {
-        outputs: Mutex::new(
-            [
-                json!({"marks":[
-                    {"at":"r2","reason":"The manual addresses the command's behavior."}
-                ]})
-                .to_string(),
-                selection(&[]),
-                selection(&[2]),
-                selection(&[1, 1]),
-            ]
-            .into(),
-        ),
-        prompts: Mutex::new(vec![]),
+    let ask = |llm: Scripted| {
+        let results = results.clone();
+        async move {
+            select_references(&llm, "Rust programming", "cargo build", &[], found(results)).await
+        }
     };
-    let ask = || {
-        select_references(
-            &llm,
-            "Rust programming",
-            "cargo build",
-            &[],
-            found(results.clone()),
-        )
-    };
-    let chosen = ask().await?;
+    let chosen = ask(selector(
+        |_, _| json!({"marks":[marked("r2", "The manual addresses the command's behavior.")]}),
+    ))
+    .await?;
     assert_eq!(chosen.len(), 1);
     assert_eq!(chosen[0].url, results[1].url);
-    assert!(ask().await?.is_empty());
+    assert!(ask(selector(|_, _| json!({"marks":[]}))).await?.is_empty());
     // A mark that names nothing shown is no mark; it spoils nothing.
-    assert!(ask().await?.is_empty());
+    let unplaced = selector(|_, _| json!({"marks":[marked("r3", "Directly relevant.")]}));
+    assert!(ask(unplaced).await?.is_empty());
     // Two equal marks for one result are one.
-    let chosen = ask().await?;
+    let chosen = ask(selector(|_, _| {
+        json!({"marks":[marked("r2", "Directly relevant."), marked("r2", "Directly relevant.")]})
+    }))
+    .await?;
     assert_eq!(chosen.len(), 1);
     assert_eq!(chosen[0].url, results[1].url);
     Ok(())
@@ -1190,8 +1171,16 @@ impl LLMPort for Notation {
                 message: "It was not sent.".into(),
             });
         }
+        let first = rendered
+            .split("\"id\":\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .unwrap_or("r1")
+            .to_owned();
         self.prompts.lock().unwrap().push(rendered);
-        Ok(CompletionResponse::from_text(selection(&[0])))
+        Ok(CompletionResponse::from_text(
+            json!({"marks":[marked(&first, "Directly relevant primary reference for the requested concept.")]}).to_string(),
+        ))
     }
     fn model_name(&self) -> &str {
         "notation"
@@ -1267,7 +1256,7 @@ async fn reference_selection_splits_dense_results_instead_of_refusing() -> Resul
 #[tokio::test]
 async fn reference_selection_leaves_the_gap_open_when_no_dense_result_fits() -> Result<()> {
     // Chemistry formulas: every subscript and arrow is a token of its own.
-    let llm = notation(8192);
+    let llm = notation(16_384);
     let (topic, query) = ("Fermentation", "glucose to ethanol");
     let room = selection_room(&llm, topic, query, &[]);
     let formula = "C₆H₁₂O₆→2C₂H₅OH+2CO₂ ";

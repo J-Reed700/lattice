@@ -598,11 +598,7 @@ impl Answered for FlowRepair {
             .iter()
             .filter_map(|item| label(&item.field, &item.quote))
             .collect();
-        let section = rows
-            .rendered(&shown)
-            .pointer(input.part.value())
-            .cloned()
-            .unwrap_or(Value::Null);
+        let section = repair::shown_section(&rows, &shown, input.part.value());
         let task = json!({"section": section, "gaps": gaps, "verifiedSentences": verified});
         let mut says = Says::new(flow_system(), task.to_string());
         says.output_tokens = input.output_tokens;

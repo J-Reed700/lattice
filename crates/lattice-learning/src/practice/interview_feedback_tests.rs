@@ -12,6 +12,8 @@ const CHECK: &str =
     "I would drop the acknowledgement and retry, then check that only one effect was committed.";
 const QUOTE: &str = "An idempotent operation has the same intended effect when repeated.";
 const FIRST: &str = "00000000-0000-4000-8000-000000000301";
+const FIRST_GAP: &str = "No company hiring practices are established.";
+const SECOND_GAP: &str = "The lost-response check is not sourced.";
 
 fn fixture(max_points: &[u32]) -> (ClosingEvidence, LearningSimulationSessionDto) {
     let question = LearningInterviewQuestionDto {
@@ -46,7 +48,7 @@ fn fixture(max_points: &[u32]) -> (ClosingEvidence, LearningSimulationSessionDto
             }]}],
             "acceptableAlternatives":["Any valid approach preserving effects."],
             "commonMistakes":["Requiring identical response bytes."],
-            "scoringCriteria":[],"evidenceGaps":["No company hiring practices are established."]
+            "scoringCriteria":[],"evidenceGaps":[if question.id == FIRST { FIRST_GAP } else { SECOND_GAP }]
         }
     })).collect::<Vec<_>>();
     let guides: InterviewAnswerGuides = serde_json::from_value(json!({
@@ -119,7 +121,10 @@ fn task_of(sent: &Sent) -> Value {
         .input()
         .iter()
         .filter_map(|item| match item {
-            CompletionInput::Message { content, .. } => serde_json::from_str::<Value>(content).ok(),
+            CompletionInput::Message { content, .. } => serde_json::Deserializer::from_str(content)
+                .into_iter::<Value>()
+                .next()
+                .and_then(std::result::Result::ok),
             _ => None,
         })
         .find(|task| task.get("rubric").is_some())
@@ -254,7 +259,8 @@ async fn a_closing_debrief_names_sentences_levels_and_choices_and_the_app_render
         "00000000-0000-4000-8000-000000000202"
     );
     assert_eq!(result.citations[0].quote, QUOTE);
-    assert_eq!(result.evaluated_question_ids, Some(vec![FIRST.into()]));
+    assert!(result.content.contains(FIRST_GAP));
+    assert!(!result.content.contains(SECOND_GAP));
     assert!(result
         .content
         .contains("Evidence and reasoning: 4/4 (provisional)"));
@@ -265,9 +271,6 @@ async fn a_closing_debrief_names_sentences_levels_and_choices_and_the_app_render
         .content
         .contains(&format!("Learner evidence: “{CHECK}”")));
     assert!(!result.content.contains("Collaboration: 0/4"));
-    assert!(result
-        .content
-        .contains("No company hiring practices are established."));
     Ok(())
 }
 
@@ -494,7 +497,8 @@ async fn a_credited_score_needs_an_answered_question() -> Result<()> {
     );
     let result = close(&model, &evidence, &session).await?;
     assert_eq!(model.count::<ClosingReview>(), 2);
-    assert_eq!(result.evaluated_question_ids, Some(vec![FIRST.into()]));
+    assert!(result.content.contains(FIRST_GAP));
+    assert!(!result.content.contains(SECOND_GAP));
     Ok(())
 }
 
@@ -506,13 +510,9 @@ async fn a_selected_source_names_its_question_and_equal_quotes_count_once() -> R
         |_, _| review("Preserve intended effects.", &["q1"], &["e1", "e2"]),
     );
     let result = close(&model, &evidence, &session).await?;
-    assert_eq!(
-        result.evaluated_question_ids,
-        Some(vec![
-            FIRST.into(),
-            "00000000-0000-4000-8000-000000000302".into()
-        ])
-    );
+    assert!(result
+        .content
+        .contains(&format!("{FIRST_GAP}\n\n{SECOND_GAP}")));
     assert_eq!(
         result.citations.len(),
         1,
@@ -533,7 +533,8 @@ async fn with_no_answered_question_and_no_credit_the_debrief_stands_unsourced() 
     );
     let result = close(&model, &evidence, &session).await?;
     assert!(result.citations.is_empty());
-    assert_eq!(result.evaluated_question_ids, Some(vec![]));
+    assert!(!result.content.contains(FIRST_GAP));
+    assert!(!result.content.contains(SECOND_GAP));
     assert!(!result.content.contains("Source limits"));
     Ok(())
 }

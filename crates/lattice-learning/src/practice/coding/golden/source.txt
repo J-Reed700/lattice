@@ -1,13 +1,36 @@
 === Problem Easy, request 1 of 1 ===
 --- system ---
-You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case.
+You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case. Write title, statement, functionName, params (each with a name and an annotation), returns, constraints (each with a text), clarifications (each with a question and an answer), targetComplexity, patterns, compare, tolerance, reference, misreadings (each with a description and code), examples and hidden (each with a category, args and expected) and scale (each with a category and args). Each of args holds one object with a text for each argument. In patterns write the handles of the patterns the problem calls for, from the list shown. Write tolerance as a decimal number, 0 unless compare is float_within.
 --- user ---
 Write one easy python problem. The learner writes a single function in solution.py. Programs run on a fake Python.
 
 It practises the lesson "Lookups", whose objective is: Use a table to avoid repeated scans.
 
-The problem must call for these patterns, and its "patterns" must list them:
-hash_map_lookup (Hash map lookup): Something is asked again and again about values already seen, and remembering them by key answers it at once.
+The problem must call for these patterns:
+Hash map lookup: Something is asked again and again about values already seen, and remembering them by key answers it at once.
+
+The problem may also call for other patterns, each named by the handle written before it:
+[t1] Frequency counting: The answer depends on how many times each value occurs, not on where it occurs.
+[t2] Prefix sums: Many questions about the total of a stretch of values, each of which one running total settles.
+[t3] Two pointers: Two positions move through the input by a rule, and each move rules out part of it.
+[t4] Sliding window: The answer is about a contiguous stretch that grows at one end and shrinks at the other.
+[t5] Fast and slow pointers: A walk through linked or repeating data where two walkers at different speeds meet or part.
+[t6] Monotonic stack: Each element wants the nearest earlier or later element that is larger or smaller than it.
+[t7] Sort first: The input has no useful order, but once it has one, the answer is found in a single pass.
+[t8] Interval merging: Ranges overlap or touch, and ordering them by start makes the overlaps adjacent.
+[t9] Heap selection: Only the best few of a stream matter, and the next best must be available as items come and go.
+[t10] Bucket counting: The values fall in a small known range, so counting them in slots orders them without comparing.
+[t11] Trie: Many strings share beginnings, and queries are about prefixes.
+[t12] Union find: Items are joined into groups as the input goes on, and the question is whether two are in one group.
+[t13] Tree traversal: The answer is gathered by visiting every node of a hierarchy, with each node's answer built from its children's.
+[t14] Graph traversal: Items are linked, and the question is what can be reached from where, or by how few steps.
+[t15] Binary search: The input is ordered, or the answer is on one side of a line that a single check can find.
+[t16] Binary search on the answer: The answer is a number, and for any guess it is cheap to tell whether the guess is too small or too large.
+[t17] Backtracking: Every way of making a series of choices must be tried, and a bad partial choice can be abandoned early.
+[t18] Greedy choice: At each step one choice is never worse than the others, so it can be made and never revisited.
+[t19] Dynamic programming: The same smaller questions come up again and again, and each answer is built from answers to those.
+[t20] Divide and conquer: The input splits into independent parts that are solved alike and then combined.
+[t21] Bit manipulation: The values are small sets or flags, and operating on their bits does what a loop over members would.
 
 Rules:
 - The title and statement must never name a pattern or technique that solves the problem, or hint at one by name. The learner recognises the pattern.
@@ -20,7 +43,216 @@ Rules:
 --- schema ---
 {
   "type": "object",
-  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "type": "string"
+    },
+    "statement": {
+      "type": "string"
+    },
+    "functionName": {
+      "type": "string"
+    },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "annotation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "annotation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "returns": {
+      "type": "string"
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "clarifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "answer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "question",
+          "answer"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "targetComplexity": {
+      "type": "string"
+    },
+    "patterns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "compare": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "unordered",
+        "float_within"
+      ]
+    },
+    "tolerance": {
+      "type": "string"
+    },
+    "reference": {
+      "type": "string"
+    },
+    "misreadings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "code"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "hidden": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "scale": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "category",
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
   "required": [
     "title",
     "statement",
@@ -39,226 +271,7 @@ Rules:
     "hidden",
     "scale"
   ],
-  "properties": {
-    "title": {
-      "type": "string",
-      "minLength": 1
-    },
-    "statement": {
-      "type": "string",
-      "minLength": 1
-    },
-    "functionName": {
-      "type": "string",
-      "minLength": 1
-    },
-    "params": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "name",
-          "annotation"
-        ],
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1
-          },
-          "annotation": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "returns": {
-      "type": "string",
-      "minLength": 1
-    },
-    "constraints": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      }
-    },
-    "clarifications": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "question",
-          "answer"
-        ],
-        "properties": {
-          "question": {
-            "type": "string",
-            "minLength": 1
-          },
-          "answer": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "targetComplexity": {
-      "type": "string",
-      "minLength": 1
-    },
-    "patterns": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "string",
-        "enum": [
-          "hash_map_lookup",
-          "frequency_counting",
-          "prefix_sums",
-          "two_pointers",
-          "sliding_window",
-          "fast_slow_pointers",
-          "monotonic_stack",
-          "sort_first",
-          "interval_merging",
-          "heap_selection",
-          "bucket_counting",
-          "trie",
-          "union_find",
-          "tree_traversal",
-          "graph_traversal",
-          "binary_search",
-          "binary_search_on_answer",
-          "backtracking",
-          "greedy_choice",
-          "dynamic_programming",
-          "divide_and_conquer",
-          "bit_manipulation"
-        ]
-      }
-    },
-    "compare": {
-      "type": "string",
-      "enum": [
-        "exact",
-        "unordered",
-        "float_within"
-      ]
-    },
-    "tolerance": {
-      "type": "number"
-    },
-    "reference": {
-      "type": "string",
-      "minLength": 1
-    },
-    "misreadings": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "description",
-          "code"
-        ],
-        "properties": {
-          "description": {
-            "type": "string",
-            "minLength": 1
-          },
-          "code": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "examples": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args",
-          "expected"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "expected": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "hidden": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args",
-          "expected"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "expected": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "scale": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        }
-      }
-    }
-  }
+  "additionalProperties": false
 }
 --- options ---
 {
@@ -277,14 +290,37 @@ Rules:
 
 === Problem Medium, request 1 of 1 ===
 --- system ---
-You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case.
+You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case. Write title, statement, functionName, params (each with a name and an annotation), returns, constraints (each with a text), clarifications (each with a question and an answer), targetComplexity, patterns, compare, tolerance, reference, misreadings (each with a description and code), examples and hidden (each with a category, args and expected) and scale (each with a category and args). Each of args holds one object with a text for each argument. In patterns write the handles of the patterns the problem calls for, from the list shown. Write tolerance as a decimal number, 0 unless compare is float_within.
 --- user ---
 Write one medium python problem. The learner writes a single function in solution.py. Programs run on a fake Python.
 
 It practises the lesson "Lookups", whose objective is: Use a table to avoid repeated scans.
 
-The problem must call for these patterns, and its "patterns" must list them:
-hash_map_lookup (Hash map lookup): Something is asked again and again about values already seen, and remembering them by key answers it at once.
+The problem must call for these patterns:
+Hash map lookup: Something is asked again and again about values already seen, and remembering them by key answers it at once.
+
+The problem may also call for other patterns, each named by the handle written before it:
+[t1] Frequency counting: The answer depends on how many times each value occurs, not on where it occurs.
+[t2] Prefix sums: Many questions about the total of a stretch of values, each of which one running total settles.
+[t3] Two pointers: Two positions move through the input by a rule, and each move rules out part of it.
+[t4] Sliding window: The answer is about a contiguous stretch that grows at one end and shrinks at the other.
+[t5] Fast and slow pointers: A walk through linked or repeating data where two walkers at different speeds meet or part.
+[t6] Monotonic stack: Each element wants the nearest earlier or later element that is larger or smaller than it.
+[t7] Sort first: The input has no useful order, but once it has one, the answer is found in a single pass.
+[t8] Interval merging: Ranges overlap or touch, and ordering them by start makes the overlaps adjacent.
+[t9] Heap selection: Only the best few of a stream matter, and the next best must be available as items come and go.
+[t10] Bucket counting: The values fall in a small known range, so counting them in slots orders them without comparing.
+[t11] Trie: Many strings share beginnings, and queries are about prefixes.
+[t12] Union find: Items are joined into groups as the input goes on, and the question is whether two are in one group.
+[t13] Tree traversal: The answer is gathered by visiting every node of a hierarchy, with each node's answer built from its children's.
+[t14] Graph traversal: Items are linked, and the question is what can be reached from where, or by how few steps.
+[t15] Binary search: The input is ordered, or the answer is on one side of a line that a single check can find.
+[t16] Binary search on the answer: The answer is a number, and for any guess it is cheap to tell whether the guess is too small or too large.
+[t17] Backtracking: Every way of making a series of choices must be tried, and a bad partial choice can be abandoned early.
+[t18] Greedy choice: At each step one choice is never worse than the others, so it can be made and never revisited.
+[t19] Dynamic programming: The same smaller questions come up again and again, and each answer is built from answers to those.
+[t20] Divide and conquer: The input splits into independent parts that are solved alike and then combined.
+[t21] Bit manipulation: The values are small sets or flags, and operating on their bits does what a loop over members would.
 
 Rules:
 - The title and statement must never name a pattern or technique that solves the problem, or hint at one by name. The learner recognises the pattern.
@@ -297,7 +333,216 @@ Rules:
 --- schema ---
 {
   "type": "object",
-  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "type": "string"
+    },
+    "statement": {
+      "type": "string"
+    },
+    "functionName": {
+      "type": "string"
+    },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "annotation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "annotation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "returns": {
+      "type": "string"
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "clarifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "answer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "question",
+          "answer"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "targetComplexity": {
+      "type": "string"
+    },
+    "patterns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "compare": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "unordered",
+        "float_within"
+      ]
+    },
+    "tolerance": {
+      "type": "string"
+    },
+    "reference": {
+      "type": "string"
+    },
+    "misreadings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "code"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "hidden": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "scale": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "category",
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
   "required": [
     "title",
     "statement",
@@ -316,226 +561,7 @@ Rules:
     "hidden",
     "scale"
   ],
-  "properties": {
-    "title": {
-      "type": "string",
-      "minLength": 1
-    },
-    "statement": {
-      "type": "string",
-      "minLength": 1
-    },
-    "functionName": {
-      "type": "string",
-      "minLength": 1
-    },
-    "params": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "name",
-          "annotation"
-        ],
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1
-          },
-          "annotation": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "returns": {
-      "type": "string",
-      "minLength": 1
-    },
-    "constraints": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      }
-    },
-    "clarifications": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "question",
-          "answer"
-        ],
-        "properties": {
-          "question": {
-            "type": "string",
-            "minLength": 1
-          },
-          "answer": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "targetComplexity": {
-      "type": "string",
-      "minLength": 1
-    },
-    "patterns": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "string",
-        "enum": [
-          "hash_map_lookup",
-          "frequency_counting",
-          "prefix_sums",
-          "two_pointers",
-          "sliding_window",
-          "fast_slow_pointers",
-          "monotonic_stack",
-          "sort_first",
-          "interval_merging",
-          "heap_selection",
-          "bucket_counting",
-          "trie",
-          "union_find",
-          "tree_traversal",
-          "graph_traversal",
-          "binary_search",
-          "binary_search_on_answer",
-          "backtracking",
-          "greedy_choice",
-          "dynamic_programming",
-          "divide_and_conquer",
-          "bit_manipulation"
-        ]
-      }
-    },
-    "compare": {
-      "type": "string",
-      "enum": [
-        "exact",
-        "unordered",
-        "float_within"
-      ]
-    },
-    "tolerance": {
-      "type": "number"
-    },
-    "reference": {
-      "type": "string",
-      "minLength": 1
-    },
-    "misreadings": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "description",
-          "code"
-        ],
-        "properties": {
-          "description": {
-            "type": "string",
-            "minLength": 1
-          },
-          "code": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "examples": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args",
-          "expected"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "expected": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "hidden": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args",
-          "expected"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "expected": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "scale": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        }
-      }
-    }
-  }
+  "additionalProperties": false
 }
 --- options ---
 {
@@ -554,14 +580,37 @@ Rules:
 
 === Problem Hard, request 1 of 1 ===
 --- system ---
-You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case.
+You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case. Write title, statement, functionName, params (each with a name and an annotation), returns, constraints (each with a text), clarifications (each with a question and an answer), targetComplexity, patterns, compare, tolerance, reference, misreadings (each with a description and code), examples and hidden (each with a category, args and expected) and scale (each with a category and args). Each of args holds one object with a text for each argument. In patterns write the handles of the patterns the problem calls for, from the list shown. Write tolerance as a decimal number, 0 unless compare is float_within.
 --- user ---
 Write one hard python problem. The learner writes a single function in solution.py. Programs run on a fake Python.
 
 It practises the lesson "Lookups", whose objective is: Use a table to avoid repeated scans.
 
-The problem must call for these patterns, and its "patterns" must list them:
-hash_map_lookup (Hash map lookup): Something is asked again and again about values already seen, and remembering them by key answers it at once.
+The problem must call for these patterns:
+Hash map lookup: Something is asked again and again about values already seen, and remembering them by key answers it at once.
+
+The problem may also call for other patterns, each named by the handle written before it:
+[t1] Frequency counting: The answer depends on how many times each value occurs, not on where it occurs.
+[t2] Prefix sums: Many questions about the total of a stretch of values, each of which one running total settles.
+[t3] Two pointers: Two positions move through the input by a rule, and each move rules out part of it.
+[t4] Sliding window: The answer is about a contiguous stretch that grows at one end and shrinks at the other.
+[t5] Fast and slow pointers: A walk through linked or repeating data where two walkers at different speeds meet or part.
+[t6] Monotonic stack: Each element wants the nearest earlier or later element that is larger or smaller than it.
+[t7] Sort first: The input has no useful order, but once it has one, the answer is found in a single pass.
+[t8] Interval merging: Ranges overlap or touch, and ordering them by start makes the overlaps adjacent.
+[t9] Heap selection: Only the best few of a stream matter, and the next best must be available as items come and go.
+[t10] Bucket counting: The values fall in a small known range, so counting them in slots orders them without comparing.
+[t11] Trie: Many strings share beginnings, and queries are about prefixes.
+[t12] Union find: Items are joined into groups as the input goes on, and the question is whether two are in one group.
+[t13] Tree traversal: The answer is gathered by visiting every node of a hierarchy, with each node's answer built from its children's.
+[t14] Graph traversal: Items are linked, and the question is what can be reached from where, or by how few steps.
+[t15] Binary search: The input is ordered, or the answer is on one side of a line that a single check can find.
+[t16] Binary search on the answer: The answer is a number, and for any guess it is cheap to tell whether the guess is too small or too large.
+[t17] Backtracking: Every way of making a series of choices must be tried, and a bad partial choice can be abandoned early.
+[t18] Greedy choice: At each step one choice is never worse than the others, so it can be made and never revisited.
+[t19] Dynamic programming: The same smaller questions come up again and again, and each answer is built from answers to those.
+[t20] Divide and conquer: The input splits into independent parts that are solved alike and then combined.
+[t21] Bit manipulation: The values are small sets or flags, and operating on their bits does what a loop over members would.
 
 Rules:
 - The title and statement must never name a pattern or technique that solves the problem, or hint at one by name. The learner recognises the pattern.
@@ -574,7 +623,216 @@ Rules:
 --- schema ---
 {
   "type": "object",
-  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "type": "string"
+    },
+    "statement": {
+      "type": "string"
+    },
+    "functionName": {
+      "type": "string"
+    },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "annotation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "annotation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "returns": {
+      "type": "string"
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "clarifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "answer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "question",
+          "answer"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "targetComplexity": {
+      "type": "string"
+    },
+    "patterns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "compare": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "unordered",
+        "float_within"
+      ]
+    },
+    "tolerance": {
+      "type": "string"
+    },
+    "reference": {
+      "type": "string"
+    },
+    "misreadings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "code"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "hidden": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "scale": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "category",
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
   "required": [
     "title",
     "statement",
@@ -593,226 +851,7 @@ Rules:
     "hidden",
     "scale"
   ],
-  "properties": {
-    "title": {
-      "type": "string",
-      "minLength": 1
-    },
-    "statement": {
-      "type": "string",
-      "minLength": 1
-    },
-    "functionName": {
-      "type": "string",
-      "minLength": 1
-    },
-    "params": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "name",
-          "annotation"
-        ],
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1
-          },
-          "annotation": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "returns": {
-      "type": "string",
-      "minLength": 1
-    },
-    "constraints": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      }
-    },
-    "clarifications": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "question",
-          "answer"
-        ],
-        "properties": {
-          "question": {
-            "type": "string",
-            "minLength": 1
-          },
-          "answer": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "targetComplexity": {
-      "type": "string",
-      "minLength": 1
-    },
-    "patterns": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "string",
-        "enum": [
-          "hash_map_lookup",
-          "frequency_counting",
-          "prefix_sums",
-          "two_pointers",
-          "sliding_window",
-          "fast_slow_pointers",
-          "monotonic_stack",
-          "sort_first",
-          "interval_merging",
-          "heap_selection",
-          "bucket_counting",
-          "trie",
-          "union_find",
-          "tree_traversal",
-          "graph_traversal",
-          "binary_search",
-          "binary_search_on_answer",
-          "backtracking",
-          "greedy_choice",
-          "dynamic_programming",
-          "divide_and_conquer",
-          "bit_manipulation"
-        ]
-      }
-    },
-    "compare": {
-      "type": "string",
-      "enum": [
-        "exact",
-        "unordered",
-        "float_within"
-      ]
-    },
-    "tolerance": {
-      "type": "number"
-    },
-    "reference": {
-      "type": "string",
-      "minLength": 1
-    },
-    "misreadings": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "description",
-          "code"
-        ],
-        "properties": {
-          "description": {
-            "type": "string",
-            "minLength": 1
-          },
-          "code": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "examples": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args",
-          "expected"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "expected": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "hidden": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args",
-          "expected"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "expected": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "scale": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        }
-      }
-    }
-  }
+  "additionalProperties": false
 }
 --- options ---
 {
@@ -831,14 +870,37 @@ Rules:
 
 === BugFix Easy, request 1 of 1 ===
 --- system ---
-You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case.
+You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case. Write title, statement, functionName, params (each with a name and an annotation), returns, constraints (each with a text), clarifications (each with a question and an answer), targetComplexity, patterns, compare, tolerance, reference, misreadings (each with a description and code), examples and hidden (each with a category, args and expected) and scale (each with a category and args). Each of args holds one object with a text for each argument. In patterns write the handles of the patterns the problem calls for, from the list shown. Write tolerance as a decimal number, 0 unless compare is float_within.
 --- user ---
 Write one easy python problem. The learner writes a single function in solution.py. Programs run on a fake Python.
 
 It practises the lesson "Lookups", whose objective is: Use a table to avoid repeated scans.
 
-The problem must call for these patterns, and its "patterns" must list them:
-hash_map_lookup (Hash map lookup): Something is asked again and again about values already seen, and remembering them by key answers it at once.
+The problem must call for these patterns:
+Hash map lookup: Something is asked again and again about values already seen, and remembering them by key answers it at once.
+
+The problem may also call for other patterns, each named by the handle written before it:
+[t1] Frequency counting: The answer depends on how many times each value occurs, not on where it occurs.
+[t2] Prefix sums: Many questions about the total of a stretch of values, each of which one running total settles.
+[t3] Two pointers: Two positions move through the input by a rule, and each move rules out part of it.
+[t4] Sliding window: The answer is about a contiguous stretch that grows at one end and shrinks at the other.
+[t5] Fast and slow pointers: A walk through linked or repeating data where two walkers at different speeds meet or part.
+[t6] Monotonic stack: Each element wants the nearest earlier or later element that is larger or smaller than it.
+[t7] Sort first: The input has no useful order, but once it has one, the answer is found in a single pass.
+[t8] Interval merging: Ranges overlap or touch, and ordering them by start makes the overlaps adjacent.
+[t9] Heap selection: Only the best few of a stream matter, and the next best must be available as items come and go.
+[t10] Bucket counting: The values fall in a small known range, so counting them in slots orders them without comparing.
+[t11] Trie: Many strings share beginnings, and queries are about prefixes.
+[t12] Union find: Items are joined into groups as the input goes on, and the question is whether two are in one group.
+[t13] Tree traversal: The answer is gathered by visiting every node of a hierarchy, with each node's answer built from its children's.
+[t14] Graph traversal: Items are linked, and the question is what can be reached from where, or by how few steps.
+[t15] Binary search: The input is ordered, or the answer is on one side of a line that a single check can find.
+[t16] Binary search on the answer: The answer is a number, and for any guess it is cheap to tell whether the guess is too small or too large.
+[t17] Backtracking: Every way of making a series of choices must be tried, and a bad partial choice can be abandoned early.
+[t18] Greedy choice: At each step one choice is never worse than the others, so it can be made and never revisited.
+[t19] Dynamic programming: The same smaller questions come up again and again, and each answer is built from answers to those.
+[t20] Divide and conquer: The input splits into independent parts that are solved alike and then combined.
+[t21] Bit manipulation: The values are small sets or flags, and operating on their bits does what a loop over members would.
 
 Rules:
 - The title and statement must never name a pattern or technique that solves the problem, or hint at one by name. The learner recognises the pattern.
@@ -853,7 +915,216 @@ The learner will be handed one misreading as buggy code to repair, so write each
 --- schema ---
 {
   "type": "object",
-  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "type": "string"
+    },
+    "statement": {
+      "type": "string"
+    },
+    "functionName": {
+      "type": "string"
+    },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "annotation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "annotation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "returns": {
+      "type": "string"
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "clarifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "answer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "question",
+          "answer"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "targetComplexity": {
+      "type": "string"
+    },
+    "patterns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "compare": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "unordered",
+        "float_within"
+      ]
+    },
+    "tolerance": {
+      "type": "string"
+    },
+    "reference": {
+      "type": "string"
+    },
+    "misreadings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "code"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "hidden": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "scale": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "category",
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
   "required": [
     "title",
     "statement",
@@ -872,226 +1143,7 @@ The learner will be handed one misreading as buggy code to repair, so write each
     "hidden",
     "scale"
   ],
-  "properties": {
-    "title": {
-      "type": "string",
-      "minLength": 1
-    },
-    "statement": {
-      "type": "string",
-      "minLength": 1
-    },
-    "functionName": {
-      "type": "string",
-      "minLength": 1
-    },
-    "params": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "name",
-          "annotation"
-        ],
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1
-          },
-          "annotation": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "returns": {
-      "type": "string",
-      "minLength": 1
-    },
-    "constraints": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      }
-    },
-    "clarifications": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "question",
-          "answer"
-        ],
-        "properties": {
-          "question": {
-            "type": "string",
-            "minLength": 1
-          },
-          "answer": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "targetComplexity": {
-      "type": "string",
-      "minLength": 1
-    },
-    "patterns": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "string",
-        "enum": [
-          "hash_map_lookup",
-          "frequency_counting",
-          "prefix_sums",
-          "two_pointers",
-          "sliding_window",
-          "fast_slow_pointers",
-          "monotonic_stack",
-          "sort_first",
-          "interval_merging",
-          "heap_selection",
-          "bucket_counting",
-          "trie",
-          "union_find",
-          "tree_traversal",
-          "graph_traversal",
-          "binary_search",
-          "binary_search_on_answer",
-          "backtracking",
-          "greedy_choice",
-          "dynamic_programming",
-          "divide_and_conquer",
-          "bit_manipulation"
-        ]
-      }
-    },
-    "compare": {
-      "type": "string",
-      "enum": [
-        "exact",
-        "unordered",
-        "float_within"
-      ]
-    },
-    "tolerance": {
-      "type": "number"
-    },
-    "reference": {
-      "type": "string",
-      "minLength": 1
-    },
-    "misreadings": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "description",
-          "code"
-        ],
-        "properties": {
-          "description": {
-            "type": "string",
-            "minLength": 1
-          },
-          "code": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "examples": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args",
-          "expected"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "expected": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "hidden": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args",
-          "expected"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "expected": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "scale": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        }
-      }
-    }
-  }
+  "additionalProperties": false
 }
 --- options ---
 {
@@ -1110,14 +1162,37 @@ The learner will be handed one misreading as buggy code to repair, so write each
 
 === BugFix Medium, request 1 of 1 ===
 --- system ---
-You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case.
+You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case. Write title, statement, functionName, params (each with a name and an annotation), returns, constraints (each with a text), clarifications (each with a question and an answer), targetComplexity, patterns, compare, tolerance, reference, misreadings (each with a description and code), examples and hidden (each with a category, args and expected) and scale (each with a category and args). Each of args holds one object with a text for each argument. In patterns write the handles of the patterns the problem calls for, from the list shown. Write tolerance as a decimal number, 0 unless compare is float_within.
 --- user ---
 Write one medium python problem. The learner writes a single function in solution.py. Programs run on a fake Python.
 
 It practises the lesson "Lookups", whose objective is: Use a table to avoid repeated scans.
 
-The problem must call for these patterns, and its "patterns" must list them:
-hash_map_lookup (Hash map lookup): Something is asked again and again about values already seen, and remembering them by key answers it at once.
+The problem must call for these patterns:
+Hash map lookup: Something is asked again and again about values already seen, and remembering them by key answers it at once.
+
+The problem may also call for other patterns, each named by the handle written before it:
+[t1] Frequency counting: The answer depends on how many times each value occurs, not on where it occurs.
+[t2] Prefix sums: Many questions about the total of a stretch of values, each of which one running total settles.
+[t3] Two pointers: Two positions move through the input by a rule, and each move rules out part of it.
+[t4] Sliding window: The answer is about a contiguous stretch that grows at one end and shrinks at the other.
+[t5] Fast and slow pointers: A walk through linked or repeating data where two walkers at different speeds meet or part.
+[t6] Monotonic stack: Each element wants the nearest earlier or later element that is larger or smaller than it.
+[t7] Sort first: The input has no useful order, but once it has one, the answer is found in a single pass.
+[t8] Interval merging: Ranges overlap or touch, and ordering them by start makes the overlaps adjacent.
+[t9] Heap selection: Only the best few of a stream matter, and the next best must be available as items come and go.
+[t10] Bucket counting: The values fall in a small known range, so counting them in slots orders them without comparing.
+[t11] Trie: Many strings share beginnings, and queries are about prefixes.
+[t12] Union find: Items are joined into groups as the input goes on, and the question is whether two are in one group.
+[t13] Tree traversal: The answer is gathered by visiting every node of a hierarchy, with each node's answer built from its children's.
+[t14] Graph traversal: Items are linked, and the question is what can be reached from where, or by how few steps.
+[t15] Binary search: The input is ordered, or the answer is on one side of a line that a single check can find.
+[t16] Binary search on the answer: The answer is a number, and for any guess it is cheap to tell whether the guess is too small or too large.
+[t17] Backtracking: Every way of making a series of choices must be tried, and a bad partial choice can be abandoned early.
+[t18] Greedy choice: At each step one choice is never worse than the others, so it can be made and never revisited.
+[t19] Dynamic programming: The same smaller questions come up again and again, and each answer is built from answers to those.
+[t20] Divide and conquer: The input splits into independent parts that are solved alike and then combined.
+[t21] Bit manipulation: The values are small sets or flags, and operating on their bits does what a loop over members would.
 
 Rules:
 - The title and statement must never name a pattern or technique that solves the problem, or hint at one by name. The learner recognises the pattern.
@@ -1132,7 +1207,216 @@ The learner will be handed one misreading as buggy code to repair, so write each
 --- schema ---
 {
   "type": "object",
-  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "type": "string"
+    },
+    "statement": {
+      "type": "string"
+    },
+    "functionName": {
+      "type": "string"
+    },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "annotation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "annotation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "returns": {
+      "type": "string"
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "clarifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "answer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "question",
+          "answer"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "targetComplexity": {
+      "type": "string"
+    },
+    "patterns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "compare": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "unordered",
+        "float_within"
+      ]
+    },
+    "tolerance": {
+      "type": "string"
+    },
+    "reference": {
+      "type": "string"
+    },
+    "misreadings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "code"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "hidden": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "scale": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "category",
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
   "required": [
     "title",
     "statement",
@@ -1151,226 +1435,7 @@ The learner will be handed one misreading as buggy code to repair, so write each
     "hidden",
     "scale"
   ],
-  "properties": {
-    "title": {
-      "type": "string",
-      "minLength": 1
-    },
-    "statement": {
-      "type": "string",
-      "minLength": 1
-    },
-    "functionName": {
-      "type": "string",
-      "minLength": 1
-    },
-    "params": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "name",
-          "annotation"
-        ],
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1
-          },
-          "annotation": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "returns": {
-      "type": "string",
-      "minLength": 1
-    },
-    "constraints": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      }
-    },
-    "clarifications": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "question",
-          "answer"
-        ],
-        "properties": {
-          "question": {
-            "type": "string",
-            "minLength": 1
-          },
-          "answer": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "targetComplexity": {
-      "type": "string",
-      "minLength": 1
-    },
-    "patterns": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "string",
-        "enum": [
-          "hash_map_lookup",
-          "frequency_counting",
-          "prefix_sums",
-          "two_pointers",
-          "sliding_window",
-          "fast_slow_pointers",
-          "monotonic_stack",
-          "sort_first",
-          "interval_merging",
-          "heap_selection",
-          "bucket_counting",
-          "trie",
-          "union_find",
-          "tree_traversal",
-          "graph_traversal",
-          "binary_search",
-          "binary_search_on_answer",
-          "backtracking",
-          "greedy_choice",
-          "dynamic_programming",
-          "divide_and_conquer",
-          "bit_manipulation"
-        ]
-      }
-    },
-    "compare": {
-      "type": "string",
-      "enum": [
-        "exact",
-        "unordered",
-        "float_within"
-      ]
-    },
-    "tolerance": {
-      "type": "number"
-    },
-    "reference": {
-      "type": "string",
-      "minLength": 1
-    },
-    "misreadings": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "description",
-          "code"
-        ],
-        "properties": {
-          "description": {
-            "type": "string",
-            "minLength": 1
-          },
-          "code": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "examples": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args",
-          "expected"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "expected": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "hidden": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args",
-          "expected"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "expected": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "scale": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        }
-      }
-    }
-  }
+  "additionalProperties": false
 }
 --- options ---
 {
@@ -1389,14 +1454,37 @@ The learner will be handed one misreading as buggy code to repair, so write each
 
 === BugFix Hard, request 1 of 1 ===
 --- system ---
-You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case.
+You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case. Write title, statement, functionName, params (each with a name and an annotation), returns, constraints (each with a text), clarifications (each with a question and an answer), targetComplexity, patterns, compare, tolerance, reference, misreadings (each with a description and code), examples and hidden (each with a category, args and expected) and scale (each with a category and args). Each of args holds one object with a text for each argument. In patterns write the handles of the patterns the problem calls for, from the list shown. Write tolerance as a decimal number, 0 unless compare is float_within.
 --- user ---
 Write one hard python problem. The learner writes a single function in solution.py. Programs run on a fake Python.
 
 It practises the lesson "Lookups", whose objective is: Use a table to avoid repeated scans.
 
-The problem must call for these patterns, and its "patterns" must list them:
-hash_map_lookup (Hash map lookup): Something is asked again and again about values already seen, and remembering them by key answers it at once.
+The problem must call for these patterns:
+Hash map lookup: Something is asked again and again about values already seen, and remembering them by key answers it at once.
+
+The problem may also call for other patterns, each named by the handle written before it:
+[t1] Frequency counting: The answer depends on how many times each value occurs, not on where it occurs.
+[t2] Prefix sums: Many questions about the total of a stretch of values, each of which one running total settles.
+[t3] Two pointers: Two positions move through the input by a rule, and each move rules out part of it.
+[t4] Sliding window: The answer is about a contiguous stretch that grows at one end and shrinks at the other.
+[t5] Fast and slow pointers: A walk through linked or repeating data where two walkers at different speeds meet or part.
+[t6] Monotonic stack: Each element wants the nearest earlier or later element that is larger or smaller than it.
+[t7] Sort first: The input has no useful order, but once it has one, the answer is found in a single pass.
+[t8] Interval merging: Ranges overlap or touch, and ordering them by start makes the overlaps adjacent.
+[t9] Heap selection: Only the best few of a stream matter, and the next best must be available as items come and go.
+[t10] Bucket counting: The values fall in a small known range, so counting them in slots orders them without comparing.
+[t11] Trie: Many strings share beginnings, and queries are about prefixes.
+[t12] Union find: Items are joined into groups as the input goes on, and the question is whether two are in one group.
+[t13] Tree traversal: The answer is gathered by visiting every node of a hierarchy, with each node's answer built from its children's.
+[t14] Graph traversal: Items are linked, and the question is what can be reached from where, or by how few steps.
+[t15] Binary search: The input is ordered, or the answer is on one side of a line that a single check can find.
+[t16] Binary search on the answer: The answer is a number, and for any guess it is cheap to tell whether the guess is too small or too large.
+[t17] Backtracking: Every way of making a series of choices must be tried, and a bad partial choice can be abandoned early.
+[t18] Greedy choice: At each step one choice is never worse than the others, so it can be made and never revisited.
+[t19] Dynamic programming: The same smaller questions come up again and again, and each answer is built from answers to those.
+[t20] Divide and conquer: The input splits into independent parts that are solved alike and then combined.
+[t21] Bit manipulation: The values are small sets or flags, and operating on their bits does what a loop over members would.
 
 Rules:
 - The title and statement must never name a pattern or technique that solves the problem, or hint at one by name. The learner recognises the pattern.
@@ -1411,7 +1499,216 @@ The learner will be handed one misreading as buggy code to repair, so write each
 --- schema ---
 {
   "type": "object",
-  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "type": "string"
+    },
+    "statement": {
+      "type": "string"
+    },
+    "functionName": {
+      "type": "string"
+    },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "annotation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "annotation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "returns": {
+      "type": "string"
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "clarifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "answer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "question",
+          "answer"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "targetComplexity": {
+      "type": "string"
+    },
+    "patterns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "compare": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "unordered",
+        "float_within"
+      ]
+    },
+    "tolerance": {
+      "type": "string"
+    },
+    "reference": {
+      "type": "string"
+    },
+    "misreadings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "code"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "hidden": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "scale": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "category",
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
   "required": [
     "title",
     "statement",
@@ -1430,226 +1727,7 @@ The learner will be handed one misreading as buggy code to repair, so write each
     "hidden",
     "scale"
   ],
-  "properties": {
-    "title": {
-      "type": "string",
-      "minLength": 1
-    },
-    "statement": {
-      "type": "string",
-      "minLength": 1
-    },
-    "functionName": {
-      "type": "string",
-      "minLength": 1
-    },
-    "params": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "name",
-          "annotation"
-        ],
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1
-          },
-          "annotation": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "returns": {
-      "type": "string",
-      "minLength": 1
-    },
-    "constraints": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      }
-    },
-    "clarifications": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "question",
-          "answer"
-        ],
-        "properties": {
-          "question": {
-            "type": "string",
-            "minLength": 1
-          },
-          "answer": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "targetComplexity": {
-      "type": "string",
-      "minLength": 1
-    },
-    "patterns": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "string",
-        "enum": [
-          "hash_map_lookup",
-          "frequency_counting",
-          "prefix_sums",
-          "two_pointers",
-          "sliding_window",
-          "fast_slow_pointers",
-          "monotonic_stack",
-          "sort_first",
-          "interval_merging",
-          "heap_selection",
-          "bucket_counting",
-          "trie",
-          "union_find",
-          "tree_traversal",
-          "graph_traversal",
-          "binary_search",
-          "binary_search_on_answer",
-          "backtracking",
-          "greedy_choice",
-          "dynamic_programming",
-          "divide_and_conquer",
-          "bit_manipulation"
-        ]
-      }
-    },
-    "compare": {
-      "type": "string",
-      "enum": [
-        "exact",
-        "unordered",
-        "float_within"
-      ]
-    },
-    "tolerance": {
-      "type": "number"
-    },
-    "reference": {
-      "type": "string",
-      "minLength": 1
-    },
-    "misreadings": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "description",
-          "code"
-        ],
-        "properties": {
-          "description": {
-            "type": "string",
-            "minLength": 1
-          },
-          "code": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "examples": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args",
-          "expected"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "expected": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "hidden": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args",
-          "expected"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "expected": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "scale": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        }
-      }
-    }
-  }
+  "additionalProperties": false
 }
 --- options ---
 {
@@ -1668,13 +1746,37 @@ The learner will be handed one misreading as buggy code to repair, so write each
 
 === Problem Easy, no lesson or pattern, with a focus and details, request 1 of 1 ===
 --- system ---
-You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case.
+You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case. Write title, statement, functionName, params (each with a name and an annotation), returns, constraints (each with a text), clarifications (each with a question and an answer), targetComplexity, patterns, compare, tolerance, reference, misreadings (each with a description and code), examples and hidden (each with a category, args and expected) and scale (each with a category and args). Each of args holds one object with a text for each argument. In patterns write the handles of the patterns the problem calls for, from the list shown. Write tolerance as a decimal number, 0 unless compare is float_within.
 --- user ---
 Write one easy python problem. The learner writes a single function in solution.py. Programs run on a fake Python.
 
 The learner asked to focus on: The focus text.
 
 The learner is preparing for: The details text.
+
+The problem must call for at least one of these patterns, each named by the handle written before it:
+[t1] Hash map lookup: Something is asked again and again about values already seen, and remembering them by key answers it at once.
+[t2] Frequency counting: The answer depends on how many times each value occurs, not on where it occurs.
+[t3] Prefix sums: Many questions about the total of a stretch of values, each of which one running total settles.
+[t4] Two pointers: Two positions move through the input by a rule, and each move rules out part of it.
+[t5] Sliding window: The answer is about a contiguous stretch that grows at one end and shrinks at the other.
+[t6] Fast and slow pointers: A walk through linked or repeating data where two walkers at different speeds meet or part.
+[t7] Monotonic stack: Each element wants the nearest earlier or later element that is larger or smaller than it.
+[t8] Sort first: The input has no useful order, but once it has one, the answer is found in a single pass.
+[t9] Interval merging: Ranges overlap or touch, and ordering them by start makes the overlaps adjacent.
+[t10] Heap selection: Only the best few of a stream matter, and the next best must be available as items come and go.
+[t11] Bucket counting: The values fall in a small known range, so counting them in slots orders them without comparing.
+[t12] Trie: Many strings share beginnings, and queries are about prefixes.
+[t13] Union find: Items are joined into groups as the input goes on, and the question is whether two are in one group.
+[t14] Tree traversal: The answer is gathered by visiting every node of a hierarchy, with each node's answer built from its children's.
+[t15] Graph traversal: Items are linked, and the question is what can be reached from where, or by how few steps.
+[t16] Binary search: The input is ordered, or the answer is on one side of a line that a single check can find.
+[t17] Binary search on the answer: The answer is a number, and for any guess it is cheap to tell whether the guess is too small or too large.
+[t18] Backtracking: Every way of making a series of choices must be tried, and a bad partial choice can be abandoned early.
+[t19] Greedy choice: At each step one choice is never worse than the others, so it can be made and never revisited.
+[t20] Dynamic programming: The same smaller questions come up again and again, and each answer is built from answers to those.
+[t21] Divide and conquer: The input splits into independent parts that are solved alike and then combined.
+[t22] Bit manipulation: The values are small sets or flags, and operating on their bits does what a loop over members would.
 
 Rules:
 - The title and statement must never name a pattern or technique that solves the problem, or hint at one by name. The learner recognises the pattern.
@@ -1687,7 +1789,216 @@ Rules:
 --- schema ---
 {
   "type": "object",
-  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "type": "string"
+    },
+    "statement": {
+      "type": "string"
+    },
+    "functionName": {
+      "type": "string"
+    },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "annotation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "annotation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "returns": {
+      "type": "string"
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "clarifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "answer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "question",
+          "answer"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "targetComplexity": {
+      "type": "string"
+    },
+    "patterns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "compare": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "unordered",
+        "float_within"
+      ]
+    },
+    "tolerance": {
+      "type": "string"
+    },
+    "reference": {
+      "type": "string"
+    },
+    "misreadings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "code"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "hidden": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "scale": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "category",
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
   "required": [
     "title",
     "statement",
@@ -1706,226 +2017,7 @@ Rules:
     "hidden",
     "scale"
   ],
-  "properties": {
-    "title": {
-      "type": "string",
-      "minLength": 1
-    },
-    "statement": {
-      "type": "string",
-      "minLength": 1
-    },
-    "functionName": {
-      "type": "string",
-      "minLength": 1
-    },
-    "params": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "name",
-          "annotation"
-        ],
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1
-          },
-          "annotation": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "returns": {
-      "type": "string",
-      "minLength": 1
-    },
-    "constraints": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      }
-    },
-    "clarifications": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "question",
-          "answer"
-        ],
-        "properties": {
-          "question": {
-            "type": "string",
-            "minLength": 1
-          },
-          "answer": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "targetComplexity": {
-      "type": "string",
-      "minLength": 1
-    },
-    "patterns": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "string",
-        "enum": [
-          "hash_map_lookup",
-          "frequency_counting",
-          "prefix_sums",
-          "two_pointers",
-          "sliding_window",
-          "fast_slow_pointers",
-          "monotonic_stack",
-          "sort_first",
-          "interval_merging",
-          "heap_selection",
-          "bucket_counting",
-          "trie",
-          "union_find",
-          "tree_traversal",
-          "graph_traversal",
-          "binary_search",
-          "binary_search_on_answer",
-          "backtracking",
-          "greedy_choice",
-          "dynamic_programming",
-          "divide_and_conquer",
-          "bit_manipulation"
-        ]
-      }
-    },
-    "compare": {
-      "type": "string",
-      "enum": [
-        "exact",
-        "unordered",
-        "float_within"
-      ]
-    },
-    "tolerance": {
-      "type": "number"
-    },
-    "reference": {
-      "type": "string",
-      "minLength": 1
-    },
-    "misreadings": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "description",
-          "code"
-        ],
-        "properties": {
-          "description": {
-            "type": "string",
-            "minLength": 1
-          },
-          "code": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "examples": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args",
-          "expected"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "expected": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "hidden": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args",
-          "expected"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "expected": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "scale": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        }
-      }
-    }
-  }
+  "additionalProperties": false
 }
 --- options ---
 {
@@ -1944,14 +2036,37 @@ Rules:
 
 === Problem Easy, after an unproven draft, request 1 of 2 ===
 --- system ---
-You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case.
+You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case. Write title, statement, functionName, params (each with a name and an annotation), returns, constraints (each with a text), clarifications (each with a question and an answer), targetComplexity, patterns, compare, tolerance, reference, misreadings (each with a description and code), examples and hidden (each with a category, args and expected) and scale (each with a category and args). Each of args holds one object with a text for each argument. In patterns write the handles of the patterns the problem calls for, from the list shown. Write tolerance as a decimal number, 0 unless compare is float_within.
 --- user ---
 Write one easy python problem. The learner writes a single function in solution.py. Programs run on a fake Python.
 
 It practises the lesson "Lookups", whose objective is: Use a table to avoid repeated scans.
 
-The problem must call for these patterns, and its "patterns" must list them:
-hash_map_lookup (Hash map lookup): Something is asked again and again about values already seen, and remembering them by key answers it at once.
+The problem must call for these patterns:
+Hash map lookup: Something is asked again and again about values already seen, and remembering them by key answers it at once.
+
+The problem may also call for other patterns, each named by the handle written before it:
+[t1] Frequency counting: The answer depends on how many times each value occurs, not on where it occurs.
+[t2] Prefix sums: Many questions about the total of a stretch of values, each of which one running total settles.
+[t3] Two pointers: Two positions move through the input by a rule, and each move rules out part of it.
+[t4] Sliding window: The answer is about a contiguous stretch that grows at one end and shrinks at the other.
+[t5] Fast and slow pointers: A walk through linked or repeating data where two walkers at different speeds meet or part.
+[t6] Monotonic stack: Each element wants the nearest earlier or later element that is larger or smaller than it.
+[t7] Sort first: The input has no useful order, but once it has one, the answer is found in a single pass.
+[t8] Interval merging: Ranges overlap or touch, and ordering them by start makes the overlaps adjacent.
+[t9] Heap selection: Only the best few of a stream matter, and the next best must be available as items come and go.
+[t10] Bucket counting: The values fall in a small known range, so counting them in slots orders them without comparing.
+[t11] Trie: Many strings share beginnings, and queries are about prefixes.
+[t12] Union find: Items are joined into groups as the input goes on, and the question is whether two are in one group.
+[t13] Tree traversal: The answer is gathered by visiting every node of a hierarchy, with each node's answer built from its children's.
+[t14] Graph traversal: Items are linked, and the question is what can be reached from where, or by how few steps.
+[t15] Binary search: The input is ordered, or the answer is on one side of a line that a single check can find.
+[t16] Binary search on the answer: The answer is a number, and for any guess it is cheap to tell whether the guess is too small or too large.
+[t17] Backtracking: Every way of making a series of choices must be tried, and a bad partial choice can be abandoned early.
+[t18] Greedy choice: At each step one choice is never worse than the others, so it can be made and never revisited.
+[t19] Dynamic programming: The same smaller questions come up again and again, and each answer is built from answers to those.
+[t20] Divide and conquer: The input splits into independent parts that are solved alike and then combined.
+[t21] Bit manipulation: The values are small sets or flags, and operating on their bits does what a loop over members would.
 
 Rules:
 - The title and statement must never name a pattern or technique that solves the problem, or hint at one by name. The learner recognises the pattern.
@@ -1964,7 +2079,216 @@ Rules:
 --- schema ---
 {
   "type": "object",
-  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "type": "string"
+    },
+    "statement": {
+      "type": "string"
+    },
+    "functionName": {
+      "type": "string"
+    },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "annotation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "annotation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "returns": {
+      "type": "string"
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "clarifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "answer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "question",
+          "answer"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "targetComplexity": {
+      "type": "string"
+    },
+    "patterns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "compare": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "unordered",
+        "float_within"
+      ]
+    },
+    "tolerance": {
+      "type": "string"
+    },
+    "reference": {
+      "type": "string"
+    },
+    "misreadings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "code"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "hidden": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "scale": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "category",
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
   "required": [
     "title",
     "statement",
@@ -1983,226 +2307,7 @@ Rules:
     "hidden",
     "scale"
   ],
-  "properties": {
-    "title": {
-      "type": "string",
-      "minLength": 1
-    },
-    "statement": {
-      "type": "string",
-      "minLength": 1
-    },
-    "functionName": {
-      "type": "string",
-      "minLength": 1
-    },
-    "params": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "name",
-          "annotation"
-        ],
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1
-          },
-          "annotation": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "returns": {
-      "type": "string",
-      "minLength": 1
-    },
-    "constraints": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      }
-    },
-    "clarifications": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "question",
-          "answer"
-        ],
-        "properties": {
-          "question": {
-            "type": "string",
-            "minLength": 1
-          },
-          "answer": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "targetComplexity": {
-      "type": "string",
-      "minLength": 1
-    },
-    "patterns": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "string",
-        "enum": [
-          "hash_map_lookup",
-          "frequency_counting",
-          "prefix_sums",
-          "two_pointers",
-          "sliding_window",
-          "fast_slow_pointers",
-          "monotonic_stack",
-          "sort_first",
-          "interval_merging",
-          "heap_selection",
-          "bucket_counting",
-          "trie",
-          "union_find",
-          "tree_traversal",
-          "graph_traversal",
-          "binary_search",
-          "binary_search_on_answer",
-          "backtracking",
-          "greedy_choice",
-          "dynamic_programming",
-          "divide_and_conquer",
-          "bit_manipulation"
-        ]
-      }
-    },
-    "compare": {
-      "type": "string",
-      "enum": [
-        "exact",
-        "unordered",
-        "float_within"
-      ]
-    },
-    "tolerance": {
-      "type": "number"
-    },
-    "reference": {
-      "type": "string",
-      "minLength": 1
-    },
-    "misreadings": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "description",
-          "code"
-        ],
-        "properties": {
-          "description": {
-            "type": "string",
-            "minLength": 1
-          },
-          "code": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "examples": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args",
-          "expected"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "expected": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "hidden": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args",
-          "expected"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "expected": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "scale": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        }
-      }
-    }
-  }
+  "additionalProperties": false
 }
 --- options ---
 {
@@ -2221,14 +2326,37 @@ Rules:
 
 === Problem Easy, after an unproven draft, request 2 of 2 ===
 --- system ---
-You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case.
+You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case. Write title, statement, functionName, params (each with a name and an annotation), returns, constraints (each with a text), clarifications (each with a question and an answer), targetComplexity, patterns, compare, tolerance, reference, misreadings (each with a description and code), examples and hidden (each with a category, args and expected) and scale (each with a category and args). Each of args holds one object with a text for each argument. In patterns write the handles of the patterns the problem calls for, from the list shown. Write tolerance as a decimal number, 0 unless compare is float_within.
 --- user ---
 Write one easy python problem. The learner writes a single function in solution.py. Programs run on a fake Python.
 
 It practises the lesson "Lookups", whose objective is: Use a table to avoid repeated scans.
 
-The problem must call for these patterns, and its "patterns" must list them:
-hash_map_lookup (Hash map lookup): Something is asked again and again about values already seen, and remembering them by key answers it at once.
+The problem must call for these patterns:
+Hash map lookup: Something is asked again and again about values already seen, and remembering them by key answers it at once.
+
+The problem may also call for other patterns, each named by the handle written before it:
+[t1] Frequency counting: The answer depends on how many times each value occurs, not on where it occurs.
+[t2] Prefix sums: Many questions about the total of a stretch of values, each of which one running total settles.
+[t3] Two pointers: Two positions move through the input by a rule, and each move rules out part of it.
+[t4] Sliding window: The answer is about a contiguous stretch that grows at one end and shrinks at the other.
+[t5] Fast and slow pointers: A walk through linked or repeating data where two walkers at different speeds meet or part.
+[t6] Monotonic stack: Each element wants the nearest earlier or later element that is larger or smaller than it.
+[t7] Sort first: The input has no useful order, but once it has one, the answer is found in a single pass.
+[t8] Interval merging: Ranges overlap or touch, and ordering them by start makes the overlaps adjacent.
+[t9] Heap selection: Only the best few of a stream matter, and the next best must be available as items come and go.
+[t10] Bucket counting: The values fall in a small known range, so counting them in slots orders them without comparing.
+[t11] Trie: Many strings share beginnings, and queries are about prefixes.
+[t12] Union find: Items are joined into groups as the input goes on, and the question is whether two are in one group.
+[t13] Tree traversal: The answer is gathered by visiting every node of a hierarchy, with each node's answer built from its children's.
+[t14] Graph traversal: Items are linked, and the question is what can be reached from where, or by how few steps.
+[t15] Binary search: The input is ordered, or the answer is on one side of a line that a single check can find.
+[t16] Binary search on the answer: The answer is a number, and for any guess it is cheap to tell whether the guess is too small or too large.
+[t17] Backtracking: Every way of making a series of choices must be tried, and a bad partial choice can be abandoned early.
+[t18] Greedy choice: At each step one choice is never worse than the others, so it can be made and never revisited.
+[t19] Dynamic programming: The same smaller questions come up again and again, and each answer is built from answers to those.
+[t20] Divide and conquer: The input splits into independent parts that are solved alike and then combined.
+[t21] Bit manipulation: The values are small sets or flags, and operating on their bits does what a loop over members would.
 
 Rules:
 - The title and statement must never name a pattern or technique that solves the problem, or hint at one by name. The learner recognises the pattern.
@@ -2239,7 +2367,7 @@ Rules:
 - A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals, arithmetic, comparisons, conditional expressions, indexing and comprehensions, such as list(range(50000)), [3] * 100000 or [i * 7919 % 100003 for i in range(100000)]. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
 - "clarifications" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume.
 --- assistant ---
-{"title":"Pair with a given sum","statement":"Return the positions of the two numbers that add up to the target.","functionName":"pair_positions","params":[{"name":"numbers","annotation":"list[int]"},{"name":"target","annotation":"int"}],"returns":"list[int]","constraints":["There is exactly one pair."],"clarifications":[],"targetComplexity":"O(n) time, O(n) space","patterns":["hash_map_lookup"],"compare":"exact","tolerance":0,"reference":"REF BAD","misreadings":[{"description":"Uses a number twice.","code":"LATE"},{"description":"Stops at the first sum.","code":"EARLY"},{"description":"Same as the reference.","code":"SAME"}],"examples":[{"category":"a pair at the start","args":["[1, 2, 3]","5"],"expected":"[1, 2]"},{"category":"a pair in the middle","args":["[1, 2, 3]","5"],"expected":"[1, 2]"}],"hidden":[{"category":"duplicate numbers","args":["[1, 2, 3]","5"],"expected":"[1, 2]"},{"category":"negative numbers","args":["[1, 2, 3]","5"],"expected":"[1, 2]"},{"category":"the pair at the end","args":["[1, 2, 3]","5"],"expected":"[1, 2]"}],"scale":[{"category":"a long list","args":["list(range(50000))","99997"]}]}
+{"title":"Pair with a given sum","statement":"Return the positions of the two numbers that add up to the target.","functionName":"pair_positions","params":[{"name":"numbers","annotation":"list[int]"},{"name":"target","annotation":"int"}],"returns":"list[int]","constraints":[{"text":"There is exactly one pair."}],"clarifications":[],"targetComplexity":"O(n) time, O(n) space","patterns":[],"compare":"exact","tolerance":"0","reference":"REF BAD","misreadings":[{"description":"Uses a number twice.","code":"LATE"},{"description":"Stops at the first sum.","code":"EARLY"},{"description":"Same as the reference.","code":"SAME"}],"examples":[{"category":"a pair at the start","args":[{"text":"[1, 2, 3]"},{"text":"5"}],"expected":"[1, 2]"},{"category":"a pair in the middle","args":[{"text":"[1, 2, 3]"},{"text":"5"}],"expected":"[1, 2]"}],"hidden":[{"category":"duplicate numbers","args":[{"text":"[1, 2, 3]"},{"text":"5"}],"expected":"[1, 2]"},{"category":"negative numbers","args":[{"text":"[1, 2, 3]"},{"text":"5"}],"expected":"[1, 2]"},{"category":"the pair at the end","args":[{"text":"[1, 2, 3]"},{"text":"5"}],"expected":"[1, 2]"}],"scale":[{"category":"a long list","args":[{"text":"list(range(50000))"},{"text":"99997"}]}]}
 --- user ---
 That answer could not be used: The reference solution did not pass every case:
 - hidden-1 (duplicate numbers): the reference returned 'wrong' where [1, 2] was expected
@@ -2247,7 +2375,216 @@ Fix the reference, or the cases that disagree with the statement. Answer the sam
 --- schema ---
 {
   "type": "object",
-  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "type": "string"
+    },
+    "statement": {
+      "type": "string"
+    },
+    "functionName": {
+      "type": "string"
+    },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "annotation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "annotation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "returns": {
+      "type": "string"
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "clarifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "answer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "question",
+          "answer"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "targetComplexity": {
+      "type": "string"
+    },
+    "patterns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "compare": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "unordered",
+        "float_within"
+      ]
+    },
+    "tolerance": {
+      "type": "string"
+    },
+    "reference": {
+      "type": "string"
+    },
+    "misreadings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "code"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "hidden": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "scale": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "category",
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
   "required": [
     "title",
     "statement",
@@ -2266,226 +2603,7 @@ Fix the reference, or the cases that disagree with the statement. Answer the sam
     "hidden",
     "scale"
   ],
-  "properties": {
-    "title": {
-      "type": "string",
-      "minLength": 1
-    },
-    "statement": {
-      "type": "string",
-      "minLength": 1
-    },
-    "functionName": {
-      "type": "string",
-      "minLength": 1
-    },
-    "params": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "name",
-          "annotation"
-        ],
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1
-          },
-          "annotation": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "returns": {
-      "type": "string",
-      "minLength": 1
-    },
-    "constraints": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      }
-    },
-    "clarifications": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "question",
-          "answer"
-        ],
-        "properties": {
-          "question": {
-            "type": "string",
-            "minLength": 1
-          },
-          "answer": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "targetComplexity": {
-      "type": "string",
-      "minLength": 1
-    },
-    "patterns": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "string",
-        "enum": [
-          "hash_map_lookup",
-          "frequency_counting",
-          "prefix_sums",
-          "two_pointers",
-          "sliding_window",
-          "fast_slow_pointers",
-          "monotonic_stack",
-          "sort_first",
-          "interval_merging",
-          "heap_selection",
-          "bucket_counting",
-          "trie",
-          "union_find",
-          "tree_traversal",
-          "graph_traversal",
-          "binary_search",
-          "binary_search_on_answer",
-          "backtracking",
-          "greedy_choice",
-          "dynamic_programming",
-          "divide_and_conquer",
-          "bit_manipulation"
-        ]
-      }
-    },
-    "compare": {
-      "type": "string",
-      "enum": [
-        "exact",
-        "unordered",
-        "float_within"
-      ]
-    },
-    "tolerance": {
-      "type": "number"
-    },
-    "reference": {
-      "type": "string",
-      "minLength": 1
-    },
-    "misreadings": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "description",
-          "code"
-        ],
-        "properties": {
-          "description": {
-            "type": "string",
-            "minLength": 1
-          },
-          "code": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "examples": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args",
-          "expected"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "expected": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "hidden": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args",
-          "expected"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "expected": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "scale": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        }
-      }
-    }
-  }
+  "additionalProperties": false
 }
 --- options ---
 {
@@ -2504,14 +2622,37 @@ Fix the reference, or the cases that disagree with the statement. Answer the sam
 
 === BugFix Easy, after an unproven draft, request 1 of 2 ===
 --- system ---
-You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case.
+You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case. Write title, statement, functionName, params (each with a name and an annotation), returns, constraints (each with a text), clarifications (each with a question and an answer), targetComplexity, patterns, compare, tolerance, reference, misreadings (each with a description and code), examples and hidden (each with a category, args and expected) and scale (each with a category and args). Each of args holds one object with a text for each argument. In patterns write the handles of the patterns the problem calls for, from the list shown. Write tolerance as a decimal number, 0 unless compare is float_within.
 --- user ---
 Write one easy python problem. The learner writes a single function in solution.py. Programs run on a fake Python.
 
 It practises the lesson "Lookups", whose objective is: Use a table to avoid repeated scans.
 
-The problem must call for these patterns, and its "patterns" must list them:
-hash_map_lookup (Hash map lookup): Something is asked again and again about values already seen, and remembering them by key answers it at once.
+The problem must call for these patterns:
+Hash map lookup: Something is asked again and again about values already seen, and remembering them by key answers it at once.
+
+The problem may also call for other patterns, each named by the handle written before it:
+[t1] Frequency counting: The answer depends on how many times each value occurs, not on where it occurs.
+[t2] Prefix sums: Many questions about the total of a stretch of values, each of which one running total settles.
+[t3] Two pointers: Two positions move through the input by a rule, and each move rules out part of it.
+[t4] Sliding window: The answer is about a contiguous stretch that grows at one end and shrinks at the other.
+[t5] Fast and slow pointers: A walk through linked or repeating data where two walkers at different speeds meet or part.
+[t6] Monotonic stack: Each element wants the nearest earlier or later element that is larger or smaller than it.
+[t7] Sort first: The input has no useful order, but once it has one, the answer is found in a single pass.
+[t8] Interval merging: Ranges overlap or touch, and ordering them by start makes the overlaps adjacent.
+[t9] Heap selection: Only the best few of a stream matter, and the next best must be available as items come and go.
+[t10] Bucket counting: The values fall in a small known range, so counting them in slots orders them without comparing.
+[t11] Trie: Many strings share beginnings, and queries are about prefixes.
+[t12] Union find: Items are joined into groups as the input goes on, and the question is whether two are in one group.
+[t13] Tree traversal: The answer is gathered by visiting every node of a hierarchy, with each node's answer built from its children's.
+[t14] Graph traversal: Items are linked, and the question is what can be reached from where, or by how few steps.
+[t15] Binary search: The input is ordered, or the answer is on one side of a line that a single check can find.
+[t16] Binary search on the answer: The answer is a number, and for any guess it is cheap to tell whether the guess is too small or too large.
+[t17] Backtracking: Every way of making a series of choices must be tried, and a bad partial choice can be abandoned early.
+[t18] Greedy choice: At each step one choice is never worse than the others, so it can be made and never revisited.
+[t19] Dynamic programming: The same smaller questions come up again and again, and each answer is built from answers to those.
+[t20] Divide and conquer: The input splits into independent parts that are solved alike and then combined.
+[t21] Bit manipulation: The values are small sets or flags, and operating on their bits does what a loop over members would.
 
 Rules:
 - The title and statement must never name a pattern or technique that solves the problem, or hint at one by name. The learner recognises the pattern.
@@ -2526,7 +2667,216 @@ The learner will be handed one misreading as buggy code to repair, so write each
 --- schema ---
 {
   "type": "object",
-  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "type": "string"
+    },
+    "statement": {
+      "type": "string"
+    },
+    "functionName": {
+      "type": "string"
+    },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "annotation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "annotation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "returns": {
+      "type": "string"
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "clarifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "answer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "question",
+          "answer"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "targetComplexity": {
+      "type": "string"
+    },
+    "patterns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "compare": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "unordered",
+        "float_within"
+      ]
+    },
+    "tolerance": {
+      "type": "string"
+    },
+    "reference": {
+      "type": "string"
+    },
+    "misreadings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "code"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "hidden": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "scale": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "category",
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
   "required": [
     "title",
     "statement",
@@ -2545,226 +2895,7 @@ The learner will be handed one misreading as buggy code to repair, so write each
     "hidden",
     "scale"
   ],
-  "properties": {
-    "title": {
-      "type": "string",
-      "minLength": 1
-    },
-    "statement": {
-      "type": "string",
-      "minLength": 1
-    },
-    "functionName": {
-      "type": "string",
-      "minLength": 1
-    },
-    "params": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "name",
-          "annotation"
-        ],
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1
-          },
-          "annotation": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "returns": {
-      "type": "string",
-      "minLength": 1
-    },
-    "constraints": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      }
-    },
-    "clarifications": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "question",
-          "answer"
-        ],
-        "properties": {
-          "question": {
-            "type": "string",
-            "minLength": 1
-          },
-          "answer": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "targetComplexity": {
-      "type": "string",
-      "minLength": 1
-    },
-    "patterns": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "string",
-        "enum": [
-          "hash_map_lookup",
-          "frequency_counting",
-          "prefix_sums",
-          "two_pointers",
-          "sliding_window",
-          "fast_slow_pointers",
-          "monotonic_stack",
-          "sort_first",
-          "interval_merging",
-          "heap_selection",
-          "bucket_counting",
-          "trie",
-          "union_find",
-          "tree_traversal",
-          "graph_traversal",
-          "binary_search",
-          "binary_search_on_answer",
-          "backtracking",
-          "greedy_choice",
-          "dynamic_programming",
-          "divide_and_conquer",
-          "bit_manipulation"
-        ]
-      }
-    },
-    "compare": {
-      "type": "string",
-      "enum": [
-        "exact",
-        "unordered",
-        "float_within"
-      ]
-    },
-    "tolerance": {
-      "type": "number"
-    },
-    "reference": {
-      "type": "string",
-      "minLength": 1
-    },
-    "misreadings": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "description",
-          "code"
-        ],
-        "properties": {
-          "description": {
-            "type": "string",
-            "minLength": 1
-          },
-          "code": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "examples": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args",
-          "expected"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "expected": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "hidden": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args",
-          "expected"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "expected": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "scale": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        }
-      }
-    }
-  }
+  "additionalProperties": false
 }
 --- options ---
 {
@@ -2783,14 +2914,37 @@ The learner will be handed one misreading as buggy code to repair, so write each
 
 === BugFix Easy, after an unproven draft, request 2 of 2 ===
 --- system ---
-You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case.
+You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case. Write title, statement, functionName, params (each with a name and an annotation), returns, constraints (each with a text), clarifications (each with a question and an answer), targetComplexity, patterns, compare, tolerance, reference, misreadings (each with a description and code), examples and hidden (each with a category, args and expected) and scale (each with a category and args). Each of args holds one object with a text for each argument. In patterns write the handles of the patterns the problem calls for, from the list shown. Write tolerance as a decimal number, 0 unless compare is float_within.
 --- user ---
 Write one easy python problem. The learner writes a single function in solution.py. Programs run on a fake Python.
 
 It practises the lesson "Lookups", whose objective is: Use a table to avoid repeated scans.
 
-The problem must call for these patterns, and its "patterns" must list them:
-hash_map_lookup (Hash map lookup): Something is asked again and again about values already seen, and remembering them by key answers it at once.
+The problem must call for these patterns:
+Hash map lookup: Something is asked again and again about values already seen, and remembering them by key answers it at once.
+
+The problem may also call for other patterns, each named by the handle written before it:
+[t1] Frequency counting: The answer depends on how many times each value occurs, not on where it occurs.
+[t2] Prefix sums: Many questions about the total of a stretch of values, each of which one running total settles.
+[t3] Two pointers: Two positions move through the input by a rule, and each move rules out part of it.
+[t4] Sliding window: The answer is about a contiguous stretch that grows at one end and shrinks at the other.
+[t5] Fast and slow pointers: A walk through linked or repeating data where two walkers at different speeds meet or part.
+[t6] Monotonic stack: Each element wants the nearest earlier or later element that is larger or smaller than it.
+[t7] Sort first: The input has no useful order, but once it has one, the answer is found in a single pass.
+[t8] Interval merging: Ranges overlap or touch, and ordering them by start makes the overlaps adjacent.
+[t9] Heap selection: Only the best few of a stream matter, and the next best must be available as items come and go.
+[t10] Bucket counting: The values fall in a small known range, so counting them in slots orders them without comparing.
+[t11] Trie: Many strings share beginnings, and queries are about prefixes.
+[t12] Union find: Items are joined into groups as the input goes on, and the question is whether two are in one group.
+[t13] Tree traversal: The answer is gathered by visiting every node of a hierarchy, with each node's answer built from its children's.
+[t14] Graph traversal: Items are linked, and the question is what can be reached from where, or by how few steps.
+[t15] Binary search: The input is ordered, or the answer is on one side of a line that a single check can find.
+[t16] Binary search on the answer: The answer is a number, and for any guess it is cheap to tell whether the guess is too small or too large.
+[t17] Backtracking: Every way of making a series of choices must be tried, and a bad partial choice can be abandoned early.
+[t18] Greedy choice: At each step one choice is never worse than the others, so it can be made and never revisited.
+[t19] Dynamic programming: The same smaller questions come up again and again, and each answer is built from answers to those.
+[t20] Divide and conquer: The input splits into independent parts that are solved alike and then combined.
+[t21] Bit manipulation: The values are small sets or flags, and operating on their bits does what a loop over members would.
 
 Rules:
 - The title and statement must never name a pattern or technique that solves the problem, or hint at one by name. The learner recognises the pattern.
@@ -2803,7 +2957,7 @@ Rules:
 
 The learner will be handed one misreading as buggy code to repair, so write each misreading as a small, realistic change to the reference (an off-by-one, a wrong comparison, a missed case) that keeps the function's shape.
 --- assistant ---
-{"title":"Pair with a given sum","statement":"Return the positions of the two numbers that add up to the target.","functionName":"pair_positions","params":[{"name":"numbers","annotation":"list[int]"},{"name":"target","annotation":"int"}],"returns":"list[int]","constraints":["There is exactly one pair."],"clarifications":[],"targetComplexity":"O(n) time, O(n) space","patterns":["hash_map_lookup"],"compare":"exact","tolerance":0,"reference":"REF BAD","misreadings":[{"description":"Uses a number twice.","code":"LATE"},{"description":"Stops at the first sum.","code":"EARLY"},{"description":"Same as the reference.","code":"SAME"}],"examples":[{"category":"a pair at the start","args":["[1, 2, 3]","5"],"expected":"[1, 2]"},{"category":"a pair in the middle","args":["[1, 2, 3]","5"],"expected":"[1, 2]"}],"hidden":[{"category":"duplicate numbers","args":["[1, 2, 3]","5"],"expected":"[1, 2]"},{"category":"negative numbers","args":["[1, 2, 3]","5"],"expected":"[1, 2]"},{"category":"the pair at the end","args":["[1, 2, 3]","5"],"expected":"[1, 2]"}],"scale":[{"category":"a long list","args":["list(range(50000))","99997"]}]}
+{"title":"Pair with a given sum","statement":"Return the positions of the two numbers that add up to the target.","functionName":"pair_positions","params":[{"name":"numbers","annotation":"list[int]"},{"name":"target","annotation":"int"}],"returns":"list[int]","constraints":[{"text":"There is exactly one pair."}],"clarifications":[],"targetComplexity":"O(n) time, O(n) space","patterns":[],"compare":"exact","tolerance":"0","reference":"REF BAD","misreadings":[{"description":"Uses a number twice.","code":"LATE"},{"description":"Stops at the first sum.","code":"EARLY"},{"description":"Same as the reference.","code":"SAME"}],"examples":[{"category":"a pair at the start","args":[{"text":"[1, 2, 3]"},{"text":"5"}],"expected":"[1, 2]"},{"category":"a pair in the middle","args":[{"text":"[1, 2, 3]"},{"text":"5"}],"expected":"[1, 2]"}],"hidden":[{"category":"duplicate numbers","args":[{"text":"[1, 2, 3]"},{"text":"5"}],"expected":"[1, 2]"},{"category":"negative numbers","args":[{"text":"[1, 2, 3]"},{"text":"5"}],"expected":"[1, 2]"},{"category":"the pair at the end","args":[{"text":"[1, 2, 3]"},{"text":"5"}],"expected":"[1, 2]"}],"scale":[{"category":"a long list","args":[{"text":"list(range(50000))"},{"text":"99997"}]}]}
 --- user ---
 That answer could not be used: The reference solution did not pass every case:
 - hidden-1 (duplicate numbers): the reference returned 'wrong' where [1, 2] was expected
@@ -2811,7 +2965,216 @@ Fix the reference, or the cases that disagree with the statement. Answer the sam
 --- schema ---
 {
   "type": "object",
-  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "type": "string"
+    },
+    "statement": {
+      "type": "string"
+    },
+    "functionName": {
+      "type": "string"
+    },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "annotation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "annotation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "returns": {
+      "type": "string"
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "clarifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "answer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "question",
+          "answer"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "targetComplexity": {
+      "type": "string"
+    },
+    "patterns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "compare": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "unordered",
+        "float_within"
+      ]
+    },
+    "tolerance": {
+      "type": "string"
+    },
+    "reference": {
+      "type": "string"
+    },
+    "misreadings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "code"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "hidden": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "expected": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "scale": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "category",
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
   "required": [
     "title",
     "statement",
@@ -2830,226 +3193,7 @@ Fix the reference, or the cases that disagree with the statement. Answer the sam
     "hidden",
     "scale"
   ],
-  "properties": {
-    "title": {
-      "type": "string",
-      "minLength": 1
-    },
-    "statement": {
-      "type": "string",
-      "minLength": 1
-    },
-    "functionName": {
-      "type": "string",
-      "minLength": 1
-    },
-    "params": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "name",
-          "annotation"
-        ],
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1
-          },
-          "annotation": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "returns": {
-      "type": "string",
-      "minLength": 1
-    },
-    "constraints": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1
-      }
-    },
-    "clarifications": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "question",
-          "answer"
-        ],
-        "properties": {
-          "question": {
-            "type": "string",
-            "minLength": 1
-          },
-          "answer": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "targetComplexity": {
-      "type": "string",
-      "minLength": 1
-    },
-    "patterns": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "string",
-        "enum": [
-          "hash_map_lookup",
-          "frequency_counting",
-          "prefix_sums",
-          "two_pointers",
-          "sliding_window",
-          "fast_slow_pointers",
-          "monotonic_stack",
-          "sort_first",
-          "interval_merging",
-          "heap_selection",
-          "bucket_counting",
-          "trie",
-          "union_find",
-          "tree_traversal",
-          "graph_traversal",
-          "binary_search",
-          "binary_search_on_answer",
-          "backtracking",
-          "greedy_choice",
-          "dynamic_programming",
-          "divide_and_conquer",
-          "bit_manipulation"
-        ]
-      }
-    },
-    "compare": {
-      "type": "string",
-      "enum": [
-        "exact",
-        "unordered",
-        "float_within"
-      ]
-    },
-    "tolerance": {
-      "type": "number"
-    },
-    "reference": {
-      "type": "string",
-      "minLength": 1
-    },
-    "misreadings": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "description",
-          "code"
-        ],
-        "properties": {
-          "description": {
-            "type": "string",
-            "minLength": 1
-          },
-          "code": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "examples": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args",
-          "expected"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "expected": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "hidden": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args",
-          "expected"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "expected": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "scale": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "args"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        }
-      }
-    }
-  }
+  "additionalProperties": false
 }
 --- options ---
 {

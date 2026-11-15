@@ -1136,7 +1136,7 @@ async fn a_claim_whose_card_came_back_out_of_shape_is_asked_for_again() {
 #[tokio::test]
 async fn one_claim_the_window_cannot_hold_by_exact_count_names_the_window() {
     // Within the window by the estimate, over it by the exact count.
-    let claims = vec![reaction_claim(0, 140)];
+    let claims = vec![reaction_claim(0, 150)];
     let llm = notation();
     let error = super::study_generation::generate_from_conversation(&llm, &claims, "deck", 10)
         .await

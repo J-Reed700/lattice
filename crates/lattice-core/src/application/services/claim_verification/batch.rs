@@ -3,7 +3,7 @@
 use super::*;
 use crate::application::services::grounded_generation::{self, CallOptions, Streaming};
 use crate::application::services::model_contract::ask::{
-    ask_each, room, Alone, Answered as Asked, Followup, Refusal, Says, Sent, Settled,
+    ask_each, room, send_error, Alone, Answered as Asked, Followup, Refusal, Says, Sent, Settled,
     Transport as AskTransport,
 };
 use crate::application::services::model_contract::request::GroundedRequest;
@@ -228,8 +228,9 @@ impl AskTransport for Batching<'_> {
             on_text: self.on_text,
             on_retry: Some(self.on_retry),
         };
-        let output =
-            grounded_generation::generate_streaming(llm, request.clone(), &streaming).await?;
+        let output = grounded_generation::generate_streaming(llm, request.clone(), &streaming)
+            .await
+            .map_err(send_error)?;
         self.spent
             .fetch_add(output.output_tokens, Ordering::Relaxed);
         Ok(Sent::of(request, output))

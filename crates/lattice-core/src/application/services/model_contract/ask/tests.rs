@@ -197,7 +197,9 @@ impl Listed for Names {
             .filter(|line| line.starts_with("- "))
             .count();
         let rest = match written.ended {
-            Ended::Complete if items.is_empty() && !written.text.trim().is_empty() => {
+            Ended::Complete
+                if items.is_empty() && left_out == 0 && !written.text.trim().is_empty() =>
+            {
                 Some(Why::NotRead)
             }
             Ended::Complete => None,
@@ -244,6 +246,7 @@ contract!(New, "test-new", Names, Alone::Pending);
 contract!(NewFails, "test-new-fails", Names, Alone::Fails);
 
 type Responder = Box<dyn Fn(&str) -> (String, &'static str) + Send + Sync>;
+type TooLarge = Box<dyn Fn(&str) -> bool + Send + Sync>;
 
 /// A model that returns queued replies, then the responder's, then the fallback, and records every request.
 struct Script {
@@ -254,6 +257,7 @@ struct Script {
     seen: Mutex<Vec<CompletionRequest>>,
     enforcing: bool,
     fail_at: Option<usize>,
+    too_large: Option<TooLarge>,
 }
 
 impl Script {
@@ -271,6 +275,7 @@ impl Script {
             seen: Mutex::new(Vec::new()),
             enforcing: false,
             fail_at: None,
+            too_large: None,
         }
     }
 
@@ -294,6 +299,15 @@ impl Script {
 
     fn failing_at(mut self, send: usize) -> Self {
         self.fail_at = Some(send);
+        self
+    }
+
+    /// Refuses, as too large for the window, every request whose prompt `too_large` says is.
+    fn refusing_for_size(
+        mut self,
+        too_large: impl Fn(&str) -> bool + Send + Sync + 'static,
+    ) -> Self {
+        self.too_large = Some(Box::new(too_large));
         self
     }
 
@@ -337,6 +351,16 @@ impl LLMPort for Script {
         };
         if self.fail_at == Some(number) {
             return Err(AppError::Network("the model is unreachable".into()));
+        }
+        if let Some(too_large) = &self.too_large {
+            if too_large(&prompt_of(request)) {
+                return Err(AppError::PromptExceedsWindow {
+                    prompt_tokens: 40_000,
+                    window: self.window,
+                    counted_exactly: true,
+                    message: "the request is over the window".into(),
+                });
+            }
         }
         let queued = self.replies.lock().unwrap().pop_front();
         let (text, finish) = if let Some(reply) = queued {
@@ -912,10 +936,22 @@ async fn a_batch_that_does_not_fit_is_split_before_any_send() {
 }
 
 #[tokio::test]
-async fn a_single_item_that_cannot_fit_is_a_fault_of_sending() {
+async fn a_single_item_the_window_cannot_hold_waits_and_is_not_sent() {
     let script = Script::new(&[]).window(300).responding(answer_all);
-    let result = run_each(&script, &tiles(1), &no_calls(), 4_000, false).await;
-    assert!(result.is_err());
+    let settled = run_each(&script, &tiles(1), &no_calls(), 4_000, false)
+        .await
+        .unwrap();
+    assert_eq!(settled, vec![no_room()]);
+    assert_eq!(script.sent(), 0);
+}
+
+#[tokio::test]
+async fn a_single_item_the_window_cannot_hold_fails_a_contract_whose_item_cannot_stay_open() {
+    let script = Script::new(&[]).window(300).responding(answer_all);
+    let error = run_each_fails(&script, &tiles(1), &no_calls(), 4_000, false)
+        .await
+        .unwrap_err();
+    assert_eq!(ErrorClass::of(&error), ErrorClass::DoesNotFit, "{error:?}");
     assert_eq!(script.sent(), 0);
 }
 
@@ -1061,6 +1097,46 @@ async fn an_item_that_does_not_fit_fails_a_contract_whose_item_cannot_stay_open(
         "{error:?}"
     );
     assert_eq!(script.sent(), 1);
+}
+
+#[tokio::test]
+async fn a_batch_the_backend_refuses_for_size_is_split_and_every_item_is_answered() {
+    let script = Script::new(&[])
+        .responding(answer_all)
+        .refusing_for_size(|prompt| listed(prompt) > 2);
+    let things: Vec<Tile> = (1..=4).map(Tile).collect();
+    let settled = run_each(&script, &things, &Calls::default(), 0, false)
+        .await
+        .unwrap();
+    assert_eq!(settled, vec![ok(), ok(), ok(), ok()]);
+    assert_eq!(script.sent(), 3);
+}
+
+#[tokio::test]
+async fn an_item_the_backend_refuses_for_size_alone_waits_and_the_others_are_answered() {
+    let script = Script::new(&[])
+        .responding(answer_all)
+        .refusing_for_size(|prompt| prompt.contains("tile 91"));
+    let things = [Tile(1), Tile(91), Tile(2)];
+    let settled = run_each(&script, &things, &Calls::default(), 0, false)
+        .await
+        .unwrap();
+    assert_eq!(settled, vec![ok(), no_room(), ok()]);
+}
+
+#[tokio::test]
+async fn an_item_the_backend_refuses_for_size_alone_fails_a_contract_whose_item_cannot_stay_open() {
+    let script = Script::new(&[])
+        .responding(answer_all)
+        .refusing_for_size(|prompt| prompt.contains("tile 91"));
+    let things = [Tile(1), Tile(91), Tile(2)];
+    let error = run_each_fails(&script, &things, &Calls::default(), 0, false)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, AppError::PromptExceedsWindow { .. }),
+        "{error:?}"
+    );
 }
 
 #[tokio::test]
@@ -1369,6 +1445,70 @@ async fn a_failing_contract_with_no_item_and_an_unread_answer_is_an_error() {
     let script = Script::new(&[("+ a", LENGTH)]);
     let found = run_new_fails(&script, 1).await.unwrap();
     assert_eq!(found.items, vec!["a".to_owned()]);
+}
+
+#[tokio::test]
+async fn an_answer_whose_items_were_all_left_out_gets_one_correction() {
+    let script = Script::new(&[("+ bad", STOP), ("+ a", STOP)]);
+    let found = run_new(&script, 10).await.unwrap();
+    assert_eq!(found.items, vec!["a".to_owned()]);
+    assert_eq!(found.rest, None);
+    assert!(
+        script.prompt(1).contains(BAD_REASON),
+        "{}",
+        script.prompt(1)
+    );
+
+    let script = Script::new(&[("- x", STOP), ("+ a", STOP)]);
+    let found = run_new(&script, 10).await.unwrap();
+    assert_eq!(found.items, vec!["a".to_owned()]);
+    assert_eq!(found.rest, None);
+    assert!(script.prompt(1).contains(NOT_READ), "{}", script.prompt(1));
+}
+
+#[tokio::test]
+async fn an_answer_left_out_whole_twice_is_unanswered() {
+    let script = Script::new(&[]).always("+ bad", STOP);
+    let found = run_new(&script, 10).await.unwrap();
+    assert_eq!(
+        found,
+        Found {
+            items: Vec::new(),
+            rest: Some(Why::Refused(BAD_REASON.into())),
+            left_out: 2
+        }
+    );
+    assert_eq!(script.sent(), 2);
+
+    let script = Script::new(&[]).always("+ bad", STOP);
+    let error = run_new_fails(&script, 10).await.unwrap_err();
+    assert!(
+        matches!(&error, AppError::ModelAnswerUnusable(why) if why.contains(BAD_REASON)),
+        "{error:?}"
+    );
+    assert_eq!(script.sent(), 2);
+
+    let script = Script::new(&[]).always("- x", STOP);
+    let error = run_new_fails(&script, 10).await.unwrap_err();
+    assert!(
+        matches!(error, AppError::ModelAnswerUnusable(_)),
+        "{error:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_answer_that_holds_nothing_is_read_to_its_end_and_not_asked_again() {
+    let script = Script::new(&[("", STOP)]);
+    let found = run_new(&script, 10).await.unwrap();
+    assert_eq!(
+        found,
+        Found {
+            items: Vec::new(),
+            rest: None,
+            left_out: 0
+        }
+    );
+    assert_eq!(script.sent(), 1);
 }
 
 // The transport's notice of an unanswered request.

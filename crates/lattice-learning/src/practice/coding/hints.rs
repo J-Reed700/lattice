@@ -803,13 +803,25 @@ mod tests {
     #[tokio::test]
     async fn a_block_that_runs_as_the_solution_is_asked_for_again_once() {
         let fixture = Fixture::new();
-        let solving = answer("Try this:\n```python\nPASSES\n```");
-        let llm = Scripted::new(&[&solving, &answer(CLEAN)]);
-        let hint = written(&llm, &fixture, Rung::Nudge).await;
-        assert!(
-            hint.is_err(),
-            "a Nudge hint holds no fenced block: {hint:?}"
-        );
+        let pointing = |text: &str| {
+            serde_json::json!({
+                "text": text,
+                "reason": "It points at what the code does not yet do.",
+                "lines": ["l3"],
+            })
+            .to_string()
+        };
+        let llm = Scripted::new(&[
+            &pointing("Try this:\n```python\nPASSES\n```"),
+            &pointing(CLEAN),
+        ]);
+        let hint = written(&llm, &fixture, Rung::Point)
+            .await
+            .expect("second is clean");
+        assert_eq!(hint.text, CLEAN);
+        let requests = llm.requests();
+        assert_eq!(requests.len(), 2);
+        assert!(text_of(&requests[1]).contains("A block in the hint solves the problem."));
 
         let solving = answer("Steps:\n```\nPARSES\n```");
         let llm = Scripted::new(&[&solving, &answer(CLEAN)]);

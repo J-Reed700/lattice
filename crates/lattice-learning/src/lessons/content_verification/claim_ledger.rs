@@ -828,6 +828,12 @@ impl ClaimLedger {
         self.examples.get(observation_id)
     }
 
+    #[cfg(test)]
+    pub(super) fn tracking_example(&mut self, observation_id: &str, claim_id: &ClaimId) {
+        self.examples
+            .insert(observation_id.to_owned(), claim_id.clone());
+    }
+
     /// Whether `claim_id` is a statement of the lesson, which the acceptance
     /// policy decides, and not a failed code example, which keeps its own rule.
     pub(super) fn is_statement(&self, claim_id: &ClaimId) -> bool {

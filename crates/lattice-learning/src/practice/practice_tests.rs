@@ -728,7 +728,9 @@ mod contracts {
     };
     use futures::future::BoxFuture;
     use lattice_core::application::services::model_contract::packed::Packed;
-    use lattice_core::application::services::model_contract::shape::{Each, Pointers, Shape};
+    use lattice_core::application::services::model_contract::shape::{
+        Each, Pointers, Schema, Shape,
+    };
     use lattice_core::application::services::model_contract::shown::{Scope, Told};
     use lattice_core::application::services::model_contract::test_support::snapshot::rendered;
     use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
@@ -764,6 +766,30 @@ mod contracts {
             .on_request::<TutorReply>(move |sent, nth| reply(answer(&prompt_of(sent), nth)))
     }
 
+    struct Enforcing<'a>(&'a ScriptedModel);
+
+    #[async_trait::async_trait]
+    impl LLMPort for Enforcing<'_> {
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            self.0.complete(request).await
+        }
+        fn model_name(&self) -> &str {
+            self.0.model_name()
+        }
+        fn max_context_tokens(&self) -> usize {
+            self.0.max_context_tokens()
+        }
+        fn counts_tokens_exactly(&self) -> bool {
+            self.0.counts_tokens_exactly()
+        }
+        fn enforces(&self, _schema: &Schema) -> bool {
+            true
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
     fn grading(answer: impl Fn(&str, usize) -> String + Send + Sync + 'static) -> ScriptedModel {
         ScriptedModel::new()
             .on_request::<PracticeGrade>(move |sent, nth| reply(answer(&prompt_of(sent), nth)))
@@ -785,17 +811,19 @@ mod contracts {
 
     #[test]
     fn the_practice_requests_tell_what_they_should_and_hold_no_identity() {
+        let passages = |marks: &mut Marks| {
+            Packed::new(
+                vec![Passage {
+                    at: 0,
+                    source_id: marks.internal("source-id-sentinel-001".to_owned()),
+                    version_id: marks.internal("version-id-sentinel-002".to_owned()),
+                    title: marks.told("A harbour almanac".to_owned()),
+                    text: marks.told("The kiln is fired at dawn before the tide.".to_owned()),
+                }],
+                |_| 1,
+            )
+        };
         let mut marks = Marks::new();
-        let passages = Packed::new(
-            vec![Passage {
-                at: 0,
-                source_id: marks.internal("source-id-sentinel-001".to_owned()),
-                version_id: marks.internal("version-id-sentinel-002".to_owned()),
-                title: marks.told("A harbour almanac".to_owned()),
-                text: marks.told("The kiln is fired at dawn before the tide.".to_owned()),
-            }],
-            |_| 1,
-        );
         let turns = Packed::new(
             vec![Turn {
                 entry: marks.told(json!({"request": "Where do I begin with the tide?", "response": "What do you remember about the tide?"})),
@@ -817,15 +845,17 @@ mod contracts {
             learner_request: marks.told("Why does this step hold?".to_owned()),
             turns,
             turns_held: 1,
-            passages: passages.clone(),
+            passages: passages(&mut marks),
         };
         holds::<TutorReply>(&tutoring, &marks);
+        let mut marks = Marks::new();
         let solving = SolutionInput {
             task_prompt: marks.told("Chart the harbour's tide tables.".to_owned()),
             objective: marks.told("Read a tide table correctly.".to_owned()),
-            passages,
+            passages: passages(&mut marks),
         };
         holds::<ReferenceSolution>(&solving, &marks);
+        let mut marks = Marks::new();
         let grading = GradeInput {
             task_prompt: marks.told("Chart the harbour's tide tables.".to_owned()),
             artifact: marks.told("I shut the damper before the tide turned.".to_owned()),
@@ -921,7 +951,7 @@ mod contracts {
         let sources = [passage_source(&format!("{STEP} {TIDE}"))];
         let model =
             tutoring(|_, _| tutor_reply("Which step carries the weight?", json!([]), json!([])));
-        tutor(&model, &session, &tutor_request(), &sources).await?;
+        tutor(&Enforcing(&model), &session, &tutor_request(), &sources).await?;
         let sent = model.sent();
         let schema = sent[0]
             .request

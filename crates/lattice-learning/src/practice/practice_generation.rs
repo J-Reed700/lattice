@@ -568,7 +568,7 @@ pub(crate) struct Level {
 
 impl Kind for Level {
     const PREFIX: &'static str = "l";
-    const DRAWN: Drawn = Drawn::Number;
+    const DRAWN: Drawn = Drawn::Itself;
     type Ref = i64;
 
     fn reference(&self) -> i64 {

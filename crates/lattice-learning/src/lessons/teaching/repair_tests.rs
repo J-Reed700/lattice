@@ -143,18 +143,24 @@ async fn an_applied_entry_stands_and_says_the_sentences_it_wrote() -> Result<()>
         vec![entry(
             &finding_labels(task)[0],
             "Shut the lid.",
-            edits(vec![replacing(&lid, "The lid is shut.")]),
+            edits(vec![replacing(
+                &lid,
+                "The lid is shut tight until it boils.",
+            )]),
         )]
     });
     let findings = [at(FindingSite::Section(0), 1)];
     let made = mended(&model, &findings, Keeps::Anything, &material()).await?;
     assert!(made.changed);
-    assert_eq!(body_of(&made, 0), format!("{STOVE} The lid is shut."));
+    assert_eq!(
+        body_of(&made, 0),
+        format!("{STOVE} The lid is shut tight until it boils.")
+    );
     assert_eq!(body_of(&made, 1), format!("{ROPE} {KNOT}"));
     assert_eq!(made.outcomes, [Outcome::Applied]);
     assert!(made.written[0]
         .iter()
-        .any(|sentence| sentence.contains("The lid is shut.")));
+        .any(|sentence| sentence.contains("The lid is shut tight until it boils.")));
     Ok(())
 }
 

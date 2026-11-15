@@ -537,7 +537,7 @@ async fn an_entry_of_another_pattern_on_a_planted_issues_lines_is_added() -> Res
     let extras = extras_for(entry_for(
         "resources.unbounded_growth",
         13,
-        "        if len(recent) >= self.limit:",
+        "        if len(recent) >= max(self.limit, 1):",
     ))
     .await?;
     assert_eq!(extras.len(), 1);

@@ -101,9 +101,6 @@ pub struct GeneratedSimulationTurn {
 struct SimulationJson {
     content: String,
     citations: Vec<crate::dto::LearningPracticeCitationDto>,
-    #[cfg(test)]
-    #[serde(default, rename = "evaluatedQuestionIds")]
-    evaluated_question_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]

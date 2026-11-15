@@ -102,7 +102,7 @@ pub(super) struct Level {
 
 impl Kind for Level {
     const PREFIX: &'static str = "l";
-    const DRAWN: Drawn = Drawn::Number;
+    const DRAWN: Drawn = Drawn::Itself;
     type Ref = u32;
 
     fn reference(&self) -> u32 {
@@ -135,7 +135,7 @@ pub(super) struct Question {
 
 impl Kind for Question {
     const PREFIX: &'static str = "q";
-    const DRAWN: Drawn = Drawn::Number;
+    const DRAWN: Drawn = Drawn::Itself;
     type Ref = String;
 
     fn reference(&self) -> String {
@@ -166,7 +166,7 @@ impl Choice {
 
 impl Kind for Choice {
     const PREFIX: &'static str = "e";
-    const DRAWN: Drawn = Drawn::Number;
+    const DRAWN: Drawn = Drawn::Itself;
     type Ref = usize;
 
     fn reference(&self) -> usize {
@@ -766,10 +766,6 @@ impl ClosingEvidence {
         Ok(SimulationJson {
             content: rows.join("\n\n"),
             citations,
-            #[cfg(test)]
-            evaluated_question_ids: Some(
-                named.iter().map(|question| question.id.clone()).collect(),
-            ),
         })
     }
 }

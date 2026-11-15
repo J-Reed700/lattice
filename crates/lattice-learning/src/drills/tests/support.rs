@@ -804,7 +804,7 @@ pub(super) fn grade_answer() -> String {
         },
         {
             "of": "i2", "reason": "No comment mentions the literals.", "outcome": "missed",
-            "finding": null, "findings": []
+            "finding": "none", "findings": []
         }
     ]})
     .to_string()
@@ -813,9 +813,9 @@ pub(super) fn grade_answer() -> String {
 /// What the judge answers when asked about the findings of [`blind_answer`] that no issue claims.
 pub(super) fn grade_extras_answer() -> String {
     json!({"entries": [
-        {"of": "f2", "reason": "That is how the code is meant to read.", "outcome": "false_positive"},
-        {"of": "f3", "reason": "The dictionary really does grow without bound.", "outcome": "valid_extra"},
-        {"of": "f4", "reason": "It names nothing.", "outcome": "false_positive"}
+        {"of": "f1", "reason": "That is how the code is meant to read.", "outcome": "false_positive"},
+        {"of": "f2", "reason": "The dictionary really does grow without bound.", "outcome": "valid_extra"},
+        {"of": "f3", "reason": "It names nothing.", "outcome": "false_positive"}
     ]})
     .to_string()
 }

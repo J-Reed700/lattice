@@ -752,7 +752,8 @@ pub(crate) fn task_messages(
         .map_or(system, |(task, _)| task);
     let answer_step = answer_step_task();
     let user = messages(request, "user")
-        .find(|content| *content != answer_step && !content.starts_with(CORRECTION_LEAD));
+        .filter(|content| *content != answer_step && !content.starts_with(CORRECTION_LEAD))
+        .last();
     (system, user.unwrap_or(""))
 }
 

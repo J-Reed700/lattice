@@ -653,12 +653,16 @@ fn check(
     validate_patch(&patch, &SourceIndex::new(messages), active, &segment_ids)
 }
 
-/// Why an answer that did not end leaves the batch unprocessed.
-fn unread(why: &Why) -> MemoryValidationError {
+const ALL_LEFT_OUT: &str = "every proposal of the answer was left out";
+
+/// Why an answer with nothing that stands leaves the batch unprocessed;
+/// `left_out` counts its proposals that were left out.
+fn unread(why: &Why, left_out: usize) -> MemoryValidationError {
     MemoryValidationError::Malformed(
         match why {
             Why::CutOff => "the answer was cut off before it ended",
             Why::Declined => "the model declined to answer",
+            _ if left_out > 0 => ALL_LEFT_OUT,
             _ => "the answer could not be read",
         }
         .to_owned(),
@@ -714,7 +718,7 @@ pub async fn extract_segments(
         }
     };
     if let Some(why) = rest {
-        let error = unread(&why);
+        let error = unread(&why, left_out);
         warn!(
             code = error.code(),
             segments = segments.len(),
@@ -754,9 +758,7 @@ pub async fn extract_segments(
         }
     }
     if add.is_empty() && transitions.is_empty() && left_out + refused > 0 {
-        let error = MemoryValidationError::Malformed(
-            "every proposal of the answer was left out".to_owned(),
-        );
+        let error = MemoryValidationError::Malformed(ALL_LEFT_OUT.to_owned());
         warn!(
             code = error.code(),
             segments = segments.len(),

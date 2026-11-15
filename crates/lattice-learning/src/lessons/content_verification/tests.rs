@@ -123,7 +123,7 @@ pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
     }
     let correction = fixture_correction(request);
     if is_claim_check(user) || system.is_empty() {
-        return vec![format!("{user}{correction}")];
+        return vec![format!("{}{correction}", passages_by_place(user))];
     }
     let mapped = request
         .contract()
@@ -171,6 +171,9 @@ pub(crate) fn mapped_unit(prompt: &str) -> Option<usize> {
 /// The correction a request asks again with, as the text that follows its task
 /// prompt: nothing for a first ask.
 fn fixture_correction(request: &CompletionRequest) -> String {
+    if let Some((_, told)) = asked_again_with(request) {
+        return format!("\n\n{CORRECTION_LEAD} {told}");
+    }
     request
         .input()
         .iter()
@@ -185,6 +188,34 @@ fn fixture_correction(request: &CompletionRequest) -> String {
             _ => None,
         })
         .unwrap_or_default()
+}
+
+/// The first message of a request's user: the task a re-ask repeats.
+fn first_task(request: &CompletionRequest) -> Option<&str> {
+    request.input().iter().find_map(|item| match item {
+        lattice_core::application::ports::llm_port::CompletionInput::Message { role, content }
+            if role == "user" =>
+        {
+            Some(content.as_str())
+        }
+        _ => None,
+    })
+}
+
+/// The task a request asks again and what it tells the model in asking: the
+/// first user message and the last when that is a message of its own, or the
+/// task and the sentence a restated task adds to it.
+fn asked_again_with(request: &CompletionRequest) -> Option<(&str, &str)> {
+    let (_, last) = crate::lessons::structured_call::task_messages(request);
+    let first = first_task(request)?;
+    if last != first && !last.is_empty() {
+        return Some((first, last));
+    }
+    let (task, told) = last.rsplit_once("\n\n")?;
+    let is_object =
+        |text: &str| serde_json::from_str::<Value>(text).is_ok_and(|value| value.is_object());
+    (is_object(task.rsplit("\n\n").next()?) && serde_json::from_str::<Value>(told).is_err())
+        .then_some((task, told))
 }
 
 /// The fixture's replies to [`fixture_prompts`], answered in the typed
@@ -673,7 +704,30 @@ fn assert_schema_request_holds_the_shape(request: &CompletionRequest, schema: &V
 /// The task's own system and user text, so the answer step of a two-step call
 /// reads as the one-step request it replaces.
 fn fixture_messages(request: &CompletionRequest) -> (&str, &str) {
-    crate::lessons::structured_call::task_messages(request)
+    let (system, user) = crate::lessons::structured_call::task_messages(request);
+    match asked_again_with(request) {
+        Some((task, _)) => (system, task),
+        None => (system, user),
+    }
+}
+
+/// A part-wise check's prompt with each passage under the label the fixtures
+/// answer by its place (`[passage-0]`) instead of the handle it is shown under
+/// (`[p1]`).
+fn passages_by_place(user: &str) -> String {
+    if !user.starts_with("Source passages:") {
+        return user.to_owned();
+    }
+    user.split('\n')
+        .map(|line| {
+            line.strip_prefix("[p")
+                .and_then(|rest| rest.strip_suffix(']'))
+                .and_then(|digits| digits.parse::<usize>().ok())
+                .and_then(|handle| handle.checked_sub(1))
+                .map_or_else(|| line.to_owned(), |place| format!("[passage-{place}]"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn is_claim_check(user: &str) -> bool {
@@ -760,7 +814,19 @@ fn verdict_last(reply: &str, ids: &[String]) -> String {
 pub(crate) fn question_review_response(prompt: &str) -> Option<String> {
     if prompt.starts_with("Solve quiz questions independently") {
         let task = fixture_task(prompt).unwrap();
-        return Some(crate::key_review::scripted::solved(&task, |_| vec![0]).to_string());
+        let picks = task["questions"].as_array().is_some_and(|questions| {
+            questions
+                .iter()
+                .all(|question| question["options"].is_array())
+        });
+        return Some(
+            if picks {
+                crate::key_review::scripted::solved(&task, |_| vec![0])
+            } else {
+                crate::key_review::scripted::solved_text(&task, "The fixture's key.")
+            }
+            .to_string(),
+        );
     }
     if prompt.starts_with("Review quiz questions one at a time") {
         let task = fixture_task(prompt).unwrap();

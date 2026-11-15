@@ -243,6 +243,9 @@ async fn a_review_the_judge_cannot_grade_fails_the_build_with_the_work_before_it
         blind_answer(),
         nothing(),
         nothing(),
+        nothing(),
+        nothing(),
+        nothing(),
     ]));
     let spec = code_spec(&pool, &database).await?;
     let id = queue_build(&database, &spec, "ungradable").await?;
@@ -260,9 +263,9 @@ async fn a_review_the_judge_cannot_grade_fails_the_build_with_the_work_before_it
     );
     let purposes = model.purposes();
     assert_eq!(
-        purposes[purposes.len() - 2..],
-        ["grade", "grade"],
-        "the judge is asked once more, never twice"
+        purposes[purposes.len() - 5..],
+        ["grade"; 5],
+        "the judge is asked for the whole key, then for each of its two issues alone and once more, never twice"
     );
     assert_eq!(drills(&pool).await?, 0);
     for stage in ["clean_code", "clean_review", "plant", "prove"] {

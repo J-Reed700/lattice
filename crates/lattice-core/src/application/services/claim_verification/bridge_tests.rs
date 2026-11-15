@@ -316,7 +316,7 @@ async fn a_reply_that_cannot_be_read_is_asked_for_once_more_and_then_left_unjudg
 
 #[tokio::test]
 async fn a_reply_cut_off_twice_is_left_unjudged() {
-    let cut = || Reply::Cut(json!({"parts": [stated("A part.")], "reason": "Fine."}).to_string());
+    let cut = || Reply::Cut(r#"{"parts": [{"part": "A part.", "kind": "stated""#.into());
     let llm = Scripted::new(vec![cut(), cut(), cut()]);
     let judgment = checker(&llm, CheckPolicy::Bridge)
         .check_bridge("A part.", &passages())

@@ -6,7 +6,6 @@ use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResp
 use lattice_core::application::services::model_contract::test_support::{
     ScriptedModel as Scripted, Sent as Asked,
 };
-use lattice_core::application::services::model_contract::CORRECTION_LEAD;
 use lattice_core::domain::learning::claim_review::{
     Actor, Check, CheckResult, Checker, ClaimEvent, ClaimLocation, ClaimState, EvidenceFingerprint,
     UnitKind,
@@ -771,7 +770,7 @@ async fn a_flow_repair_that_inserts_a_sentence_the_lesson_already_has_is_asked_o
     );
     let sent = llm.sent();
     assert_eq!(sent.len(), 2);
-    assert!(flow_prompt(&sent[1]).contains(CORRECTION_LEAD));
+    assert!(flow_prompt(&sent[1]).contains("Answer again."));
 
     let elsewhere = "Another section says exactly this.";
     let lesson = json!({"blocks":[section, block("explanation","Other",elsewhere)],"questions":[]});

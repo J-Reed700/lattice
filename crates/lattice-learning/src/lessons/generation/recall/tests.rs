@@ -142,16 +142,18 @@ async fn generated(
 
 #[tokio::test]
 async fn a_complete_answer_is_read_and_each_card_cites_its_source() {
-    let (model, result) = generated(true, 2, |shown| {
-        vec![
+    let (program, lesson_id) = prepared(true);
+    let model = ScriptedModel::new().on_request::<RecallDrafts>(|sent, _| {
+        let shown = names(sent);
+        reply(answer(vec![
             card("What opens at first light?", &[&shown[0]]),
             card("What does the table list?", &[&shown[1], &shown[2]]),
-        ]
-    })
-    .await;
-    let drafts = result.unwrap();
+        ]))
+    });
+    let drafts = generate_recall_drafts(&model, &program, &lesson_id, 2)
+        .await
+        .unwrap();
     assert_eq!(drafts.len(), 2);
-    let (program, _) = prepared(true);
     assert_eq!(drafts[0].question, "What opens at first light?");
     assert_eq!(drafts[0].source_ids, vec![program.sources[0].id.clone()]);
     assert_eq!(drafts[1].source_ids, vec![program.sources[0].id.clone()]);
@@ -309,8 +311,8 @@ fn the_request_shows_what_the_model_is_told_and_nothing_internal() {
         count: Told(2),
         written: Vec::new(),
         blocks: vec![Block {
-            kind: marks.told(LearningBlockKind::Recap),
-            title: marks.told("Recap".to_owned()),
+            kind: marks.told(LearningBlockKind::Reflection),
+            title: marks.told("Recap of the kiln".to_owned()),
             body: marks.told(KILN.to_owned()),
         }],
         sourced: marks.internal(false),

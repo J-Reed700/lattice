@@ -892,6 +892,7 @@ After.";
         observation: "example-0".into(),
     };
     assert!(ledger.append(&example, run).await?);
+    ledger.tracking_example("example-0", &example);
     ledger
         .begin_repairs(
             &StandardPolicy::new(),

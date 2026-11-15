@@ -5,7 +5,9 @@ use super::contract::{Context, IssueView};
 use super::*;
 use crate::lessons::structured_call::{is_draft_request, task_messages};
 use futures::future::BoxFuture;
-use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};
+use lattice_core::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse,
+};
 use lattice_core::application::services::model_contract::shape::Pointers;
 use lattice_core::application::services::model_contract::test_support::samples::schema_of;
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
@@ -34,8 +36,20 @@ fn scripted_on<C: Contract>(
             return reply("The grade is worked through in prose.".to_owned());
         }
         let earlier = asked.fetch_add(1, Ordering::SeqCst);
-        reply(answer(task_messages(&sent.request).1, earlier))
+        reply(answer(first_task(&sent.request), earlier))
     })
+}
+
+/// The task the call was first asked: a correction restates it in the history, after it.
+fn first_task(request: &CompletionRequest) -> &str {
+    request
+        .input()
+        .iter()
+        .find_map(|item| match item {
+            CompletionInput::Message { role, content } if role == "user" => Some(content.as_str()),
+            _ => None,
+        })
+        .unwrap_or_default()
 }
 
 /// A model that answers the question about the issues with `issues` and the one about the findings no issue claims
@@ -514,10 +528,6 @@ fn refusals() -> Vec<(&'static str, &'static str)> {
             "a missed issue with findings listed as about it",
             "This issue is missed but findings are listed as about it: credit it to the finding that earns it, or leave findings empty.",
         ),
-        (
-            "an issue found by something that is not shown",
-            "Your answer pointed at something that is not shown. Point only at what is shown, by the name it is shown under.",
-        ),
     ]
 }
 
@@ -572,6 +582,37 @@ async fn each_fault_is_refused_for_that_issue_alone_and_the_next_entry_is_accept
 }
 
 #[tokio::test]
+async fn an_issue_found_by_something_not_shown_is_asked_again_alone_and_then_told_what_is_wrong(
+) -> Result<()> {
+    let message = "Your answer pointed at something that is not shown. Point only at what is shown, by the name it is shown under.";
+    let llm = judge(
+        |task, earlier| {
+            let mut list = issue_entries(task);
+            if earlier < 2 {
+                let finding = shown(task, "Finding")[1].0.clone();
+                spoil(
+                    "an issue found by something that is not shown",
+                    &mut list[0],
+                    &finding,
+                );
+            }
+            entries(list)
+        },
+        extras_answer,
+    );
+    let graded = grade(&llm, &Scene::new()).await;
+    assert_eq!(graded.ok(), Some(assessment()));
+    let asked = asks::<GradeReview>(&llm);
+    assert_eq!(asked.len(), 3);
+    assert_eq!(shown(&prompt_of(&asked[1]), "Issue").len(), 1);
+    assert!(!prompt_of(&asked[1]).contains(message));
+    let again = prompt_of(&asked[2]);
+    assert!(again.contains(message), "{message} is not in {again}");
+    assert_eq!(shown(&again, "Issue").len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
 async fn an_issue_the_answer_leaves_out_is_asked_for_alone_and_the_others_stand() -> Result<()> {
     let llm = judge(
         |task, earlier| {
@@ -609,8 +650,9 @@ async fn an_answer_that_cannot_be_read_is_asked_for_again() -> Result<()> {
         },
         extras_answer,
     );
-    assert_eq!(grade(&llm, &Scene::new()).await?, assessment());
-    assert_eq!(asks::<GradeReview>(&llm).len(), 2);
+    let scene = Scene::new();
+    assert_eq!(grade(&llm, &scene).await?, assessment());
+    assert_eq!(asks::<GradeReview>(&llm).len(), 1 + scene.drill.key.len());
     Ok(())
 }
 
@@ -796,7 +838,7 @@ async fn the_request_about_the_findings_no_issue_claims_holds_the_key_and_only_t
         "Issue: SQL injection (critical), orders.py line 9",
         "Issue: Swallowed exception (minor), notify.py lines 4 to 5",
         "The findings about no issue of the key: 1 finding, in the order they were made.",
-        "Finding [f3]: no lines selected, severity given: minor\nText:\n  Nothing here is tested.",
+        "Finding [f1]: no lines selected, severity given: minor\nText:\n  Nothing here is tested.",
         "Give an entry for every finding, the reason first.",
     ];
     let mut last = 0;
@@ -805,7 +847,15 @@ async fn the_request_about_the_findings_no_issue_claims_holds_the_key_and_only_t
         assert!(found >= last, "{section:?} is out of order");
         last = found;
     }
-    assert!(!task.contains("Finding [f1]"), "{task}");
+    assert!(!task.contains("Finding [f2]"), "{task}");
+    for claimed in Scene::new()
+        .findings
+        .iter()
+        .filter(|finding| finding.span.is_some())
+    {
+        let first_line = claimed.text.lines().next().unwrap_or_default();
+        assert!(!task.contains(first_line), "{task}");
+    }
     assert!(!task.contains("overlap"), "{task}");
     Ok(())
 }

@@ -5,7 +5,7 @@ use crate::lessons::structured_call::Asking;
 use crate::model_call;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::model_contract::ask::{
-    self, ask_each, ask_new, Alone, Answered, Refusal, Says, Settled,
+    self, ask_each, ask_new, Alone, Answered, Refusal, Says, Settled, Why,
 };
 use lattice_core::application::services::model_contract::packed::Packed;
 use lattice_core::application::services::model_contract::shape::{
@@ -16,7 +16,7 @@ use lattice_core::application::services::model_contract::shown::{
 };
 use lattice_core::application::services::model_contract::units::{Grain, Unit, UnitRef, Units};
 use lattice_core::application::services::model_contract::{Contract, ContractId};
-use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::error::{AppError, ErrorClass, Result};
 use lattice_core::shared::text::same_text::fold;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -290,6 +290,12 @@ pub(super) async fn generate_from_conversation(
     for (claim, settled) in claims.iter().zip(settled) {
         let card = match settled {
             Settled::Answered(card) => claim_card(claim, &card, deck_id, now),
+            Settled::Unanswered(Why::NoRoom) => {
+                return Err(model_call::window_too_small(
+                    llm,
+                    "This verified claim and its citations do not fit",
+                ));
+            }
             Settled::Unanswered(_) => None,
         };
         match card {
@@ -615,9 +621,12 @@ pub(super) async fn generate(
         &call,
     )
     .await
-    .map_err(|error| match error {
-        AppError::WindowTooSmall(_) => AppError::InvalidInput(TOO_SMALL.into()),
-        other => other,
+    .map_err(|error| {
+        if ErrorClass::of(&error) == ErrorClass::DoesNotFit {
+            AppError::InvalidInput(TOO_SMALL.into())
+        } else {
+            error
+        }
     })?;
     let texts: Vec<&str> = ordered
         .iter()

@@ -485,6 +485,12 @@ mod revision_tests {
         fn model_name(&self) -> &str {
             "answering-fixture"
         }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            true
+        }
         fn count_tokens(&self, text: &str) -> usize {
             text.len() / 4
         }

@@ -207,7 +207,11 @@ async fn a_review_that_was_cut_off_says_it_is_incomplete() {
     let model = ScriptedModel::new().on_request::<BlindReviewAsk>(|_, _| {
         let cut = CompletionResponse {
             finish_reason: "length".into(),
-            ..CompletionResponse::from_text(review(vec![remark("u3", "u3")]))
+            ..CompletionResponse::from_text(
+                review(vec![remark("u3", "u3")])
+                    .trim_end_matches("]}")
+                    .to_owned(),
+            )
         };
         Box::pin(std::future::ready(Ok(cut)))
     });

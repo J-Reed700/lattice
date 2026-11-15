@@ -21,9 +21,10 @@ use super::shown::{Kind, Picked, Scope, Showing};
 use super::{tagged, Contract, ContractCall};
 use crate::application::ports::llm_port::{Finish, LLMPort};
 use crate::application::services::grounded_generation::{
-    self, CallOptions, EvidencePassage, EvidenceSelection, GroundedOutput, HistoryItem,
+    self, CallOptions, EvidencePassage, EvidenceSelection, GroundedGenerationError, GroundedOutput,
+    HistoryItem,
 };
-use crate::shared::error::{AppError, Result};
+use crate::shared::error::{AppError, ErrorClass, Result};
 
 pub use super::shape::{Settled, Why};
 
@@ -192,13 +193,24 @@ pub trait Transport: Sync {
     }
 }
 
+/// The error of a send that failed. A request the app built and the planner
+/// refuses does not fit the window.
+pub fn send_error(error: GroundedGenerationError) -> AppError {
+    match error {
+        GroundedGenerationError::Budget(error) => AppError::WindowTooSmall(error.to_string()),
+        GroundedGenerationError::Model(error) => error,
+    }
+}
+
 /// A request sent as it is.
 pub struct Plain;
 
 #[async_trait]
 impl Transport for Plain {
     async fn send(&self, llm: &dyn LLMPort, request: GroundedRequest) -> Result<Sent> {
-        let output = grounded_generation::generate(llm, request.clone()).await?;
+        let output = grounded_generation::generate(llm, request.clone())
+            .await
+            .map_err(send_error)?;
         Ok(Sent::of(request, output))
     }
 
@@ -285,6 +297,7 @@ where
 
 /// Asks for new things with `input`. Each item that closed stands, also in an
 /// answer cut off after it; an item `accept` refuses is left out and traced.
+/// An answer whose items were all left out, with nothing standing, is unanswered.
 /// After an answer that was not read to its end, `rest_for` is given what
 /// stands so far and returns the input that asks for the rest, or `None` to stop.
 pub async fn ask_new<C>(
@@ -352,6 +365,8 @@ struct Round {
 }
 
 /// Appends to `standing` every item of the reply `sent` that `accept` takes.
+/// A reply read to its end that held items and leaves nothing standing is
+/// unanswered: for the first refusal's reason, or as not read.
 fn new_round<C>(
     input: &C::Input,
     sent: Sent,
@@ -370,16 +385,26 @@ where
     } = <C::Answer as Listed>::read(&written(&sent), showing);
     *left_out += unread;
     let before = standing.len();
+    let mut refusal = None;
     for statement in items {
         match C::accept(input, &statement) {
             Ok(()) => standing.push(statement),
-            Err(Refusal(_)) => {
+            Err(Refusal(why)) => {
                 *left_out += 1;
                 trace::<C>("", "refused");
+                if refusal.is_none() {
+                    refusal = Some(why);
+                }
             }
         }
     }
     let added = standing.len().saturating_sub(before);
+    let rest = match rest {
+        None if standing.is_empty() && (unread > 0 || refusal.is_some()) => {
+            Some(refusal.map_or(Why::NotRead, Why::Refused))
+        }
+        rest => rest,
+    };
     Round { sent, rest, added }
 }
 
@@ -469,11 +494,17 @@ where
                         .is_some_and(|item| handle_of(&showing, item).is_some())
                 })
                 .count();
-            if shown == 0 || !fits(batch_llm, &request).await {
-                split = true;
+            let sent = if shown == 0 || !fits(batch_llm, &request).await {
+                None
             } else {
                 let asked = request.clone();
-                let sent = transport.send(batch_llm, request).await?;
+                match transport.send(batch_llm, request).await {
+                    Ok(sent) => Some((asked, sent)),
+                    Err(error) if ErrorClass::of(&error) == ErrorClass::DoesNotFit => None,
+                    Err(error) => return Err(error),
+                }
+            };
+            if let Some((asked, sent)) = sent {
                 complete = sent.finish == Finish::Complete;
                 for (picked, settled) in <C::Answer as PerItem>::read(&written(&sent), &showing) {
                     let found = batch.iter().copied().find(|&index| {
@@ -500,6 +531,8 @@ where
                 if accepted.len() < shown {
                     transport.unanswered(batch_llm, &asked).await?;
                 }
+            } else {
+                split = true;
             }
         }
         if split {
@@ -788,6 +821,7 @@ fn settle<C: Answered, P>(
 
 /// One subject or one item alone: send, one larger send after a cut-off,
 /// one correction (unless `corrected`), then settle by [`Answered::ALONE`].
+/// A request the backend refuses for its size is unanswered for want of room.
 async fn alone<C: Answered, P>(
     llm: &dyn LLMPort,
     transport: &impl Transport,
@@ -798,7 +832,16 @@ async fn alone<C: Answered, P>(
     accept: impl Fn(&P, &Statement<C>) -> std::result::Result<(), Refusal>,
 ) -> Result<Settled<(P, Statement<C>)>> {
     let asked = request.clone();
-    let mut sent = transport.send(llm, request).await?;
+    let mut sent = match transport.send(llm, request).await {
+        Ok(sent) => sent,
+        Err(error)
+            if C::ALONE == Alone::Pending && ErrorClass::of(&error) == ErrorClass::DoesNotFit =>
+        {
+            trace::<C>(handle, reason(&Why::NoRoom));
+            return Ok(Settled::Unanswered(Why::NoRoom));
+        }
+        Err(error) => return Err(error),
+    };
     let mut settled = settle::<C, P>(&sent, handle, &read, &accept);
     if matches!(settled, Settled::Unanswered(Why::CutOff)) {
         if let Some(larger) = larger_if_room(llm, &sent).await {

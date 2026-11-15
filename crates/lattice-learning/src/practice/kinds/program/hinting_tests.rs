@@ -2,7 +2,7 @@
 
 #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 
-use crate::practice::coding::golden_support::{render_completion, rich_session, Recorder};
+use crate::practice::coding::golden_support::{render_completion, rich_session, Golden, Recorder};
 use crate::practice::coding::problem::SOLUTION_PATH;
 use crate::practice::kinds::program::observation_tests::{engine_observation, program_kind};
 use crate::practice::kinds::program::parts::part_of;
@@ -129,7 +129,14 @@ async fn the_requests_say_what_the_coding_hints_golden_says() {
         }
     }
     let golden = variants(include_str!("../../coding/golden/hints.txt"), &names);
+    let mut actual = Golden::default();
+    for (name, sent) in names.iter().zip(&sent) {
+        actual.add(name, sent);
+    }
     for ((name, sent), expected) in names.iter().zip(&sent).zip(&golden) {
+        if before_options(sent) != without_empty_frame(expected) {
+            eprintln!("<<<GOLDEN hints\n{}GOLDEN>>>", actual.text());
+        }
         assert_eq!(
             before_options(sent),
             without_empty_frame(expected),

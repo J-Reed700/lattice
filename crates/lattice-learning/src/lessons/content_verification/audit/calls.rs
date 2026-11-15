@@ -12,7 +12,7 @@ use lattice_core::application::services::context_assembler::budget::{
 };
 use lattice_core::application::services::grounded_generation::{self, GroundedRequest};
 use lattice_core::application::services::model_contract::ask::{
-    Answered, Followup, Sent, Transport,
+    send_error, Answered, Followup, Sent, Transport,
 };
 use lattice_core::application::services::model_contract::packed::Packed;
 use lattice_core::application::services::model_contract::shown::Scope;
@@ -155,7 +155,9 @@ impl Audit {
     }
 
     async fn generate(&self, llm: &dyn LLMPort, request: GroundedRequest) -> Result<Sent> {
-        let output = grounded_generation::generate(llm, request.clone()).await?;
+        let output = grounded_generation::generate(llm, request.clone())
+            .await
+            .map_err(send_error)?;
         {
             let mut spent = self.spent.lock().unwrap_or_else(PoisonError::into_inner);
             spent.0 += output.input_tokens;
