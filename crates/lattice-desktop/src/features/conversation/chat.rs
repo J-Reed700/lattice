@@ -45,6 +45,7 @@ mod persistence;
 pub(crate) use persistence::index_memory_note;
 mod prompting;
 pub(crate) mod source_snapshots;
+pub(crate) mod transcript;
 // Public so the retrieval evaluation harness can reuse the pipeline's own
 // sufficiency judgement instead of reimplementing it.
 mod research_job;

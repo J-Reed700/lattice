@@ -263,18 +263,12 @@ pub(super) async fn finalize_successful_turn(
     );
 
     let messages = turn_transcript(
-        conv_service
-            .get_conversation(conversation_id)
-            .await
-            .and_then(|aggregate| {
-                aggregate.ok_or_else(|| {
-                    AppError::NotFound(format!("Conversation {conversation_id} not found"))
-                })
-            }),
+        super::transcript::shown_messages(container, conv_service, conversation_id).await,
         user_message_id,
         user_message,
         message_tokens,
         &assistant_msg,
+        &reply,
     );
 
     Ok(SavedAnswer {
@@ -313,27 +307,22 @@ async fn commit_turn(
     }
 }
 
-fn message_dto(
-    message: &lattice_core::domain::conversation::ConversationMessage,
-) -> ConversationMessage {
-    ConversationMessage::of(message)
-}
-
 /// The conversation as it stands after the commit. The answer is already
 /// saved, so a failed read returns what the turn itself wrote rather than
 /// failing the turn.
 fn turn_transcript(
-    read: Result<lattice_core::domain::conversation::ConversationAggregate>,
+    read: Result<Vec<ConversationMessage>>,
     user_message_id: &str,
     user_message: &str,
     message_tokens: usize,
     answer: &lattice_core::domain::conversation::ConversationMessage,
+    reply: &ReplyText,
 ) -> Vec<ConversationMessage> {
     match read {
-        Ok(aggregate) => aggregate.messages().iter().map(message_dto).collect(),
+        Ok(messages) => messages,
         Err(error) => {
             warn!(%error, "Answer saved but the conversation could not be re-read; returning this turn only");
-            let answer = message_dto(answer);
+            let answer = ConversationMessage::of(answer, Some(reply.pieces()));
             let question = ConversationMessage {
                 id: user_message_id.to_string(),
                 role: "user".to_string(),
@@ -341,6 +330,7 @@ fn turn_transcript(
                 tokens: message_tokens as i64,
                 status: "completed".to_string(),
                 metadata: None,
+                reply: None,
                 ..answer.clone()
             };
             vec![question, answer]

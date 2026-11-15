@@ -223,8 +223,7 @@ async fn plan_synthesis(
             };
 
             let messages =
-                conversation::get_conversation_messages_impl(runtime, conversation_id.clone())
-                    .await?;
+                super::chat::transcript::saved_messages(runtime, conversation_id).await?;
             let transcript = build_synthesis_transcript(&messages);
             let (sources, prompt_messages) = source_keys_by_message(&messages);
             if transcript.is_empty() {

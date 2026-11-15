@@ -1,8 +1,9 @@
-//! Reading a conversation's messages.
+//! A conversation's messages as they are read back.
 
-use crate::features::conversation::chat::ports::ChatRuntime;
-use crate::features::conversation::chat::reply_text::ReplyText;
-use crate::interfaces::di::container::Container;
+use super::ports::ChatRuntime;
+use super::reply_text::ReplyText;
+use crate::features::conversation::dto::MessageDto;
+use crate::features::conversation::ConversationServiceTrait;
 use lattice_core::application::contracts::replies::ReplyPieceDto;
 use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::domain::conversation::MessageRole;
@@ -10,7 +11,6 @@ use lattice_core::domain::ConversationMessage;
 use lattice_core::shared::error::{AppError, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tauri::State;
 
 /// All messages of a conversation, oldest first.
 ///
@@ -18,28 +18,33 @@ use tauri::State;
 ///
 /// * `AppError::NotFound` - Conversation ID not found
 /// * `AppError::Other` - Database query failed
-pub async fn get_conversation_messages_impl(
+pub async fn saved_messages(
     runtime: &dyn ChatRuntime,
-    conversation_id: String,
+    conversation_id: &str,
 ) -> Result<Vec<ConversationMessage>> {
-    let service = runtime.conversation_service();
-    let aggregate = service
-        .get_conversation(&conversation_id)
+    read(runtime, &runtime.conversation_service(), conversation_id).await
+}
+
+async fn read(
+    runtime: &dyn ChatRuntime,
+    conversations: &Arc<dyn ConversationServiceTrait>,
+    conversation_id: &str,
+) -> Result<Vec<ConversationMessage>> {
+    let aggregate = conversations
+        .get_conversation(conversation_id)
         .await?
         .ok_or_else(|| {
             AppError::NotFound(format!("Conversation not found: {}", conversation_id))
         })?;
 
-    // 3. Return messages from aggregate
     let mut messages = aggregate.messages().to_vec();
     for message in &mut messages {
-        message.metadata =
-            crate::features::conversation::chat::source_snapshots::hydrate_message_metadata(
-                runtime,
-                &conversation_id,
-                message.metadata.take(),
-            )
-            .await;
+        message.metadata = super::source_snapshots::hydrate_message_metadata(
+            runtime,
+            conversation_id,
+            message.metadata.take(),
+        )
+        .await;
         message.metadata = claims_without_old_markers(message.metadata.take());
     }
     Ok(messages)
@@ -80,7 +85,7 @@ fn claims_without_old_markers(metadata: Option<String>) -> Option<String> {
 /// saved references, or for a message saved before them its old `[n]` read once
 /// against that message's own sources, which are named in the conversation's
 /// scope in the order the messages come. Nothing is written back to a message.
-pub async fn replies_of(
+async fn replies_of(
     runtime: &dyn ChatRuntime,
     conversation_id: &str,
     messages: &[ConversationMessage],
@@ -112,11 +117,18 @@ pub async fn replies_of(
     Ok(replies)
 }
 
-/// Tauri command wrapper
-#[tracing::instrument(skip(container), fields(conversation_id = %conversation_id))]
-pub async fn get_conversation_messages(
-    container: State<'_, Container>,
-    conversation_id: String,
-) -> Result<Vec<ConversationMessage>> {
-    get_conversation_messages_impl(container.inner(), conversation_id).await
+/// The conversation's messages as the frontend draws them, each assistant
+/// message with its pieces. Whatever hands the frontend a conversation's
+/// messages reads them here.
+pub async fn shown_messages(
+    runtime: &dyn ChatRuntime,
+    conversations: &Arc<dyn ConversationServiceTrait>,
+    conversation_id: &str,
+) -> Result<Vec<MessageDto>> {
+    let messages = read(runtime, conversations, conversation_id).await?;
+    let mut replies = replies_of(runtime, conversation_id, &messages).await?;
+    Ok(messages
+        .iter()
+        .map(|message| MessageDto::of(message, replies.remove(&message.id)))
+        .collect())
 }

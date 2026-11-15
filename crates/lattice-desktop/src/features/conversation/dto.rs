@@ -125,8 +125,11 @@ pub struct MessageDto {
 }
 
 impl MessageDto {
-    /// A saved message; an assistant message saved with references carries its pieces.
-    pub fn of(message: &lattice_core::domain::conversation::ConversationMessage) -> Self {
+    /// A saved message, and for an assistant message the pieces it is drawn from.
+    pub fn of(
+        message: &lattice_core::domain::conversation::ConversationMessage,
+        reply: Option<Vec<ReplyPieceDto>>,
+    ) -> Self {
         Self {
             id: message.id.to_string(),
             conversation_id: message.conversation_id.to_string(),
@@ -136,7 +139,7 @@ impl MessageDto {
             created_at: message.created_at.to_rfc3339(),
             metadata: message.metadata.clone(),
             status: message.status.clone(),
-            reply: crate::features::conversation::chat::reply_text::saved_pieces(message),
+            reply,
         }
     }
 }

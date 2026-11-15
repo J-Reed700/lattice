@@ -140,24 +140,18 @@ pub async fn get_conversation_messages_impl(
     request: GetConversationMessagesRequestDto,
     container: &Container,
 ) -> Result<GetConversationMessagesResponseDto, ApiError> {
-    let messages =
-        conversation::get_conversation_messages_impl(container, request.conversation_id.clone())
-            .await
-            .map_err(ApiError::from)?;
-
-    let mut replies = conversation::replies_of(container, &request.conversation_id, &messages)
-        .await
-        .map_err(ApiError::from)?;
+    let runtime: &dyn crate::features::conversation::chat::ports::ChatRuntime = container;
+    let messages = crate::features::conversation::chat::transcript::shown_messages(
+        runtime,
+        &runtime.conversation_service(),
+        &request.conversation_id,
+    )
+    .await
+    .map_err(ApiError::from)?;
 
     Ok(GetConversationMessagesResponseDto {
-        messages: messages
-            .iter()
-            .map(|m| crate::features::conversation::dto::MessageDto {
-                reply: replies.remove(&m.id),
-                ..crate::features::conversation::dto::MessageDto::of(m)
-            })
-            .collect(),
         total: messages.len(),
+        messages,
     })
 }
 

@@ -107,6 +107,10 @@ async fn a_committed_turn_is_not_undone_by_a_failed_re_read() {
         "question",
         2,
         &answer,
+        &ReplyText {
+            text: "answer".into(),
+            ..Default::default()
+        },
     );
 
     assert_eq!(status_of(&pool, &user_id).await, "completed");

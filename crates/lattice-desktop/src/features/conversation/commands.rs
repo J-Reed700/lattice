@@ -9,14 +9,12 @@ use tauri::State;
 
 mod delete;
 pub mod images;
-mod messages;
 mod rename;
 mod space;
 #[cfg(test)]
 mod tests;
 
 pub use delete::{delete_conversation, delete_conversation_impl};
-pub use messages::{get_conversation_messages, get_conversation_messages_impl, replies_of};
 pub use rename::{rename_conversation, rename_conversation_impl};
 pub use space::create_conversation_space_impl;
 

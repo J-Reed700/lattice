@@ -130,12 +130,6 @@ pub async fn promote_conversation_tangent_impl(
         .map_err(ApiError::from)
 }
 
-fn to_message_dto(
-    message: &lattice_core::domain::conversation::ConversationMessage,
-) -> crate::features::conversation::dto::MessageDto {
-    crate::features::conversation::dto::MessageDto::of(message)
-}
-
 /// Free the picture files of messages a truncate or regenerate deleted.
 /// Their rows went with the messages by cascade, which recorded the files as
 /// let go of; they go now rather than at the next start's sweep. A failure is
@@ -167,15 +161,18 @@ pub async fn truncate_conversation_after_impl(
         remove_unclaimed_pictures(runtime);
     }
 
-    let messages = branches
-        .get_messages(&request.conversation_id)
-        .await
-        .map_err(ApiError::from)?;
+    let messages = crate::features::conversation::chat::transcript::shown_messages(
+        runtime,
+        &runtime.conversation_service(),
+        &request.conversation_id,
+    )
+    .await
+    .map_err(ApiError::from)?;
 
     Ok(TruncateConversationAfterResponseDto {
         conversation_id: request.conversation_id,
         deleted_count: deleted as u32,
-        messages: messages.iter().map(to_message_dto).collect(),
+        messages,
     })
 }
 

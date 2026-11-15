@@ -13,7 +13,6 @@ use lattice_core::application::services::model_contract::reply::{
 };
 use lattice_core::application::services::model_contract::shown::{Drawn, Kind};
 use lattice_core::application::services::tool_handles::{FolderFile, Source};
-use lattice_core::domain::conversation::{ConversationMessage, MessageRole};
 use lattice_core::shared::citation_markers::old_markers;
 use lattice_core::shared::stored_references::{cut, stored_places};
 use serde_json::{json, Value};
@@ -290,14 +289,4 @@ fn handles(written: &str, labels: &[&str], new_number: &dyn Fn(u32) -> Option<u3
             None => format!("[{label}]"),
         })
         .collect()
-}
-
-/// The pieces of an assistant message saved with its references; `None` for any
-/// other message, and for an assistant message saved before references.
-pub fn saved_pieces(message: &ConversationMessage) -> Option<Vec<ReplyPieceDto>> {
-    if !matches!(message.role, MessageRole::Assistant) {
-        return None;
-    }
-    let metadata: Value = serde_json::from_str(message.metadata.as_deref()?).ok()?;
-    ReplyText::stored(&message.content, &metadata).map(|reply| reply.pieces())
 }
