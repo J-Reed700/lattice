@@ -150,9 +150,9 @@ async fn the_request_shows_every_sentence_with_its_id_and_the_schema_allows_exac
 }
 
 /// What a repair of the first sentence puts in the lesson beside the
-/// third's claim, and how many corrections were put back: the repair is
-/// confined to the failed first sentence, and the third is protected.
-async fn repair_beside_the_protected_third() -> std::result::Result<(String, usize), String> {
+/// third's claim: the repair is confined to the failed first sentence, and
+/// the third is protected.
+async fn repair_beside_the_protected_third() -> std::result::Result<String, String> {
     let candidate = candidate();
     let claims = extracted(names_the_first_and_the_third).await?;
     let model = Naming::new(answers_nothing);
@@ -177,24 +177,18 @@ async fn repair_beside_the_protected_third() -> std::result::Result<(String, usi
         &Protected::of_ledger(&ledger, &targets),
     )
     .map_err(|error| error.to_string())?;
-    Ok((
-        confined.section["body"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned(),
-        confined.put_back.len(),
-    ))
+    Ok(confined.section["body"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned())
 }
 
 #[tokio::test]
 async fn protecting_a_claim_protects_its_sentence_and_not_the_passage_it_is_in() {
     assert_eq!(
         repair_beside_the_protected_third().await,
-        Ok((
-            "Alpha now holds the line. Bravo stands firm today. Charlie rests in the shade."
-                .to_owned(),
-            0
-        ))
+        Ok("Alpha now holds the line. Bravo stands firm today. Charlie rests in the shade."
+            .to_owned())
     );
 }
 

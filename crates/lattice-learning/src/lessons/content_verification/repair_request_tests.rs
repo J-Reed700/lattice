@@ -26,6 +26,9 @@ const SECOND: &str = "DictReader removes all whitespace from CSV values by defau
 const WHAT_THE_PASSAGES_STATE: &str = "Say only what the claim's evidence passages state. Where no passage states a detail, keep the sentence's point and leave that detail out.";
 /// Why a rewrite that left the sentence as it was could not be applied.
 const LEFT_AS_IT_WAS: &str = "The repair left the sentence as it was.";
+/// Why a correction that changed nothing in its sentence is charged.
+const NOT_CHANGED: &str =
+    "The correction made no change to the sentence it was asked to correct.";
 
 /// The steps that leave a Sourced statement at `s.rewrite`.
 const AT_REWRITE: [(Step, Outcome); 3] = [
@@ -139,11 +142,11 @@ impl Corrections {
                     "the run ends at the second repair request".into(),
                 ));
             }
-            let body = fixture_task(prompt).unwrap()["candidate"]["blocks"][0]["body"]
-                .as_str()
-                .unwrap()
-                .replace(&format!("{BAD} "), "");
-            return Ok(repair_body(prompt, json!(body)));
+            let removal = json!({"edits":[{"path":"/blocks/0/body","before":format!("{BAD} "),"after":""}]});
+            return Ok(super::super::tests::repair_script::answer(
+                &fixture_task(prompt).unwrap(),
+                &removal,
+            ));
         }
         if prompt.starts_with("Source passages:")
             && prompt
@@ -232,7 +235,7 @@ async fn a_statement_at_the_retry_of_a_rewrite_is_told_why_its_first_correction_
 
     let retried = &requests[1]["failedClaims"][0];
     assert_eq!(retried["statement"], SECOND);
-    assert_eq!(retried["notApplied"], LEFT_AS_IT_WAS, "{retried}");
+    assert_eq!(retried["notApplied"], NOT_CHANGED, "{retried}");
     Ok(())
 }
 

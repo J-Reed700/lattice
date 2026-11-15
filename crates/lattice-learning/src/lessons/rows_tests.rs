@@ -1081,3 +1081,73 @@ fn an_entry_that_changes_a_reason_an_earlier_key_rewrote_is_left() {
         json!("Neap tides are not the first.")
     );
 }
+
+fn two_blocks() -> Value {
+    json!({
+        "blocks": [
+            {"kind": "teaching", "title": "First part", "body": "Tides rise twice a day. Pilots read the table."},
+            {"kind": "teaching", "title": "Second part", "body": "Kilns are fired at dawn. Boats leave at noon.",
+             "sourceIndex": 0, "quote": QUOTE_A,
+             "citations": [{"sentence": "Kilns are fired at dawn.", "sourceIndex": 1, "quote": QUOTE_KILN}]}
+        ],
+        "questions": []
+    })
+}
+
+#[test]
+fn a_part_s_fields_have_their_real_pointers() {
+    let material = two_blocks();
+    let rows = Rows::of_part(&material, "/blocks/1");
+    let rendered = render(&rows);
+    assert_eq!(
+        rendered["blocks"][1]["body"],
+        json!("[u2] Kilns are fired at dawn. [u3] Boats leave at noon.")
+    );
+    assert_eq!(rendered["blocks"][1]["title"], json!("[u1] Second part"));
+    assert_eq!(rows.value(), material);
+    let units = Rows::of(&material);
+    let whole = render(&units);
+    assert_eq!(whole["blocks"][1]["body"], json!("[u5] Kilns are fired at dawn. [u6] Boats leave at noon."));
+}
+
+#[test]
+fn a_change_in_a_part_gives_the_whole_lesson_with_only_that_part_changed() {
+    let material = two_blocks();
+    let mut rows = Rows::of_part(&material, "/blocks/1");
+    let rendered = render(&rows);
+    let dawn = h(&rendered, "Kilns are fired at dawn.");
+    take(&mut rows, &Quotes::default(), replacing(&dawn, "Kilns are lit at first light."))
+        .expect("taken");
+    let mut expected = material.clone();
+    expected["blocks"][1]["body"] = json!("Kilns are lit at first light. Boats leave at noon.");
+    assert_eq!(rows.value()["blocks"][0], material["blocks"][0]);
+    assert_eq!(rows.value()["blocks"][1]["body"], expected["blocks"][1]["body"]);
+    assert_eq!(rows.value()["questions"], material["questions"]);
+}
+
+#[test]
+fn a_label_of_another_part_is_not_shown() {
+    let material = two_blocks();
+    let rendered = render(&Rows::of_part(&material, "/blocks/1"));
+    assert_eq!(rendered["blocks"][0], material["blocks"][0]);
+    assert!(!rendered.to_string().contains("[u1] Tides"));
+    assert_eq!(rendered["blocks"][1]["part"], json!("/blocks/1"));
+    assert_eq!(rendered["blocks"][1]["citation"]["at"], json!("c1"));
+}
+
+#[test]
+fn a_pointer_that_names_nothing_gives_rows_with_no_field() {
+    let material = two_blocks();
+    let rows = Rows::of_part(&material, "/blocks/9");
+    assert_eq!(render(&rows), material);
+    assert_eq!(rows.value(), material);
+}
+
+#[test]
+fn the_edits_words_are_the_ones_the_teaching_repair_sends() {
+    use super::rows::words::{citing, KEYS, NO_CITATIONS, SENTENCES};
+    assert!(SENTENCES.starts_with("candidate shows the material with a label"));
+    assert!(KEYS.starts_with("A question's answer key"));
+    assert!(NO_CITATIONS.starts_with("This material takes no citations"));
+    assert!(citing().starts_with("A sentence that states a figure"));
+}

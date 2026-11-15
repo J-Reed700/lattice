@@ -20,8 +20,11 @@ use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
 
 mod keys;
+mod located;
+mod part;
 mod rendering;
 mod value;
+pub(crate) mod words;
 
 pub(crate) use keys::Rekey;
 
@@ -320,6 +323,8 @@ pub(crate) struct Rows {
     added: Vec<Added>,
     /// A question's part and the option its key names now.
     keyed: Vec<(String, usize)>,
+    /// The one part these rows are of, when they are of a part.
+    only: Option<String>,
 }
 
 /// What `Rows::shown` showed.
@@ -470,12 +475,19 @@ fn push_once(problems: &mut Vec<String>, problem: String) {
 
 impl Rows {
     pub(crate) fn of(material: &Value) -> Self {
+        Self::build(material, None)
+    }
+
+    fn build(material: &Value, only: Option<&str>) -> Self {
         let mut pointers = Vec::new();
         string_fields(material, "", &mut pointers);
         let fields: Vec<Field> = pointers
             .into_iter()
             .filter_map(|pointer| {
                 let text = material.pointer(&pointer)?.as_str()?;
+                if only.is_some_and(|only| part_of(&pointer) != only) {
+                    return None;
+                }
                 Some(Field {
                     part: part_of(&pointer),
                     units: Units::of_at(text, Grain::Sentence, &pointer),
@@ -485,6 +497,9 @@ impl Rows {
             .collect();
         let mut citations = Vec::new();
         for (part_pointer, question) in part_pointers(material) {
+            if only.is_some_and(|only| part_pointer != only) {
+                continue;
+            }
             let Some(part) = material.pointer(&part_pointer) else {
                 continue;
             };
@@ -532,6 +547,7 @@ impl Rows {
             recited: Vec::new(),
             added: Vec::new(),
             keyed: Vec::new(),
+            only: only.map(str::to_owned),
         }
     }
 

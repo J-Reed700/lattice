@@ -3,6 +3,7 @@ use super::super::repair_script::{
     finding_labels, first_label, key_item, quote_label, sentence_label, task_of,
 };
 use super::*;
+use crate::lessons::text_edits::{OWN_FIGURES, OWN_SENTENCE};
 use futures::future::BoxFuture;
 use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};
 use lattice_core::application::services::model_contract::test_support::assert_round_trip;
