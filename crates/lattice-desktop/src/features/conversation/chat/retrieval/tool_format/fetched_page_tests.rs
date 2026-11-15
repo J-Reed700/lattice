@@ -480,7 +480,7 @@ fn render_labelled(
     )
 }
 
-fn line_and_body<'a>(rendered: &'a Rendered, at: usize) -> (&'a str, &'a str) {
+fn line_and_body(rendered: &Rendered, at: usize) -> (&str, &str) {
     let passage = &rendered.passages[at];
     (
         rendered.text.get(passage.line.clone()).unwrap_or_default(),

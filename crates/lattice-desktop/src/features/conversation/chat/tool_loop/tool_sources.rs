@@ -552,7 +552,7 @@ mod citable_tests {
         assert!(text.contains("Citable passage [s1] — Page A\n"), "{text}");
     }
 
-    fn body_of<'a>(rendered: &'a Rendered, at: usize) -> &'a str {
+    fn body_of(rendered: &Rendered, at: usize) -> &str {
         rendered
             .passages
             .get(at)

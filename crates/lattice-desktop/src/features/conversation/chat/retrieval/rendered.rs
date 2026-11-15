@@ -116,7 +116,7 @@ mod tests {
         }
     }
 
-    fn body_of<'a>(rendered: &'a Rendered, at: usize) -> Option<&'a str> {
+    fn body_of(rendered: &Rendered, at: usize) -> Option<&str> {
         rendered
             .passages
             .get(at)
