@@ -9,7 +9,7 @@ use lattice_core::application::services::model_contract::ask::{
 };
 use lattice_core::application::services::model_contract::packed::Packed;
 use lattice_core::application::services::model_contract::shape::{
-    Authored, Each, Fields, Form, New,
+    Authored, Count, Each, Fields, Form, New, STATEMENTS,
 };
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Kind, Picked, Scope, Showing, Told,
@@ -36,13 +36,18 @@ impl Authored for Distractor {
     }
 }
 
+/// How many wrong choices a card holds.
+const DISTRACTORS_PER_CARD: usize = 4;
+
+static DISTRACTORS: Count = Count("distractors");
+
 fn blank(text: &str) -> bool {
     text.trim().is_empty()
 }
 
 /// Why the four wrong choices of a card cannot be used, when they cannot.
 fn choices_refusal(answer: Option<&str>, distractors: &[Distractor]) -> Option<Refusal> {
-    if distractors.len() != 4 {
+    if distractors.len() != DISTRACTORS_PER_CARD {
         return Some(Refusal(
             "Write exactly four distractors in distractors.".into(),
         ));
@@ -152,7 +157,7 @@ impl Authored for ClaimCard {
     fn form() -> Form {
         Form::new()
             .text("question")
-            .list::<Distractor>("distractors")
+            .counted::<Distractor>("distractors", &DISTRACTORS)
             .text("explanation")
             .text("topic")
     }
@@ -181,6 +186,7 @@ impl Answered for ConversationCards {
     const ALONE: Alone = Alone::Pending;
 
     fn says(input: &ClaimCards, showing: &mut Showing<'_>) -> Result<Says> {
+        showing.asks(&DISTRACTORS, DISTRACTORS_PER_CARD..=DISTRACTORS_PER_CARD);
         let shown = showing.show(&input.claims)?;
         let claims: Vec<serde_json::Value> = shown
             .iter()
@@ -358,7 +364,7 @@ impl Authored for DeckCard {
         Form::new()
             .text("question")
             .text("answer")
-            .list::<Distractor>("distractors")
+            .counted::<Distractor>("distractors", &DISTRACTORS)
             .text("explanation")
             .cite::<Unit>("sourceIds")
             .text("topic")
@@ -408,6 +414,8 @@ impl Answered for StudyDeck {
     }
 
     fn says(input: &DeckPassages, showing: &mut Showing<'_>) -> Result<Says> {
+        showing.asks(&STATEMENTS, 1..=input.count.0);
+        showing.asks(&DISTRACTORS, DISTRACTORS_PER_CARD..=DISTRACTORS_PER_CARD);
         let mut passages = Vec::new();
         for passage in input.passages.iter() {
             let units = Units::of(&passage.text.0, Grain::Sentence);

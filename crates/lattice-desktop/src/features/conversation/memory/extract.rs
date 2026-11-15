@@ -18,7 +18,7 @@ use lattice_core::application::services::model_contract::ask::{
     ask_new, Alone, Answered, Metered, Plain, Refusal, Says, Why,
 };
 use lattice_core::application::services::model_contract::shape::{
-    Authored, Fields, Form, Found, New, Union, Vocabulary,
+    Authored, Count, Fields, Form, Found, New, Union, Vocabulary, STATEMENTS,
 };
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Internal, Kind, Picked, Scope, Showing, Shown, Told,
@@ -27,7 +27,7 @@ use lattice_core::application::services::model_contract::{Contract, ContractId};
 use lattice_core::domain::conversation::memory::{
     validate_patch, MemoryId, MemoryItem, MemoryPatch, MemoryValidationError, ProposedEvidence,
     ProposedItem, ProposedTransition, SourceIndex, SourceMessage, ValidatedPatch,
-    MEMORY_SCHEMA_VERSION,
+    MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE, MEMORY_SCHEMA_VERSION,
 };
 use lattice_core::shared::error::Result;
 use lattice_core::shared::text::sentences;
@@ -247,6 +247,8 @@ fn places(cited: Vec<Picked<Sentence>>) -> Vec<Place> {
     cited.into_iter().map(|picked| picked.reference).collect()
 }
 
+static EVIDENCE: Count = Count("evidence");
+
 /// A quotation of an addition: the sentences it quotes and what they do.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Quote {
@@ -297,7 +299,7 @@ pub(super) struct Addition {
 impl Authored for Addition {
     fn form() -> Form {
         Form::new()
-            .list::<Quote>("evidence")
+            .counted::<Quote>("evidence", &EVIDENCE)
             .word::<Sort>("kind")
             .text("label")
     }
@@ -341,20 +343,20 @@ impl Union for Proposal {
             (
                 "supersede",
                 Form::new()
-                    .list::<Grounds>("evidence")
+                    .counted::<Grounds>("evidence", &EVIDENCE)
                     .point::<Memory>("item_id")
                     .group::<Addition>("replacement"),
             ),
             (
                 "resolve",
                 Form::new()
-                    .list::<Grounds>("evidence")
+                    .counted::<Grounds>("evidence", &EVIDENCE)
                     .point::<Memory>("item_id"),
             ),
             (
                 "correct",
                 Form::new()
-                    .list::<Grounds>("evidence")
+                    .counted::<Grounds>("evidence", &EVIDENCE)
                     .group::<Addition>("earlier")
                     .group::<Addition>("later"),
             ),
@@ -419,6 +421,8 @@ impl Answered for MemoryExtraction {
     const ALONE: Alone = Alone::Pending;
 
     fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
+        showing.asks(&STATEMENTS, 0..=MAX_OPERATIONS_PER_RESPONSE);
+        showing.asks(&EVIDENCE, 0..=MAX_EVIDENCE_PER_ITEM);
         let mut segments = Vec::with_capacity(input.segments.len());
         for segment in &input.segments {
             let shown = showing.show(&segment.sentences)?;

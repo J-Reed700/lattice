@@ -13,7 +13,7 @@ use lattice_core::application::services::model_contract::ask::{
     self, Alone, Answered, Refusal, Says, Settled,
 };
 use lattice_core::application::services::model_contract::shape::{
-    Authored, Fields, Form, Value, Vocabulary,
+    Authored, Count, Fields, Form, Value, Vocabulary,
 };
 use lattice_core::application::services::model_contract::shown::{Scope, Showing, Told};
 use lattice_core::application::services::model_contract::{Contract, ContractId};
@@ -25,6 +25,19 @@ use std::marker::PhantomData;
 
 /// The answer's reservation.
 const OUTPUT_TOKENS: usize = 3_000;
+
+static QUESTIONS: Count = Count("questions");
+static PROBES: Count = Count("followUpProbes");
+static SIGNALS: Count = Count("evaluationSignals");
+
+/// How many questions a plan of the round is asked to hold.
+fn questions_asked(full_loop: bool) -> std::ops::RangeInclusive<usize> {
+    if full_loop {
+        4..=6
+    } else {
+        3..=6
+    }
+}
 
 const MISMATCH: &str = "The interview plan must match the requested round and contain 3–6 distinct questions (4–6 for a full loop).";
 
@@ -111,8 +124,8 @@ pub(super) struct Drafted {
 fn body(form: Form) -> Form {
     form.text("question")
         .text("companyRationale")
-        .list::<Probe>("followUpProbes")
-        .list::<Signal>("evaluationSignals")
+        .counted::<Probe>("followUpProbes", &PROBES)
+        .counted::<Signal>("evaluationSignals", &SIGNALS)
 }
 
 fn drafted(fields: &mut Fields<'_, '_>, round: Option<Round>) -> Option<Drafted> {
@@ -262,7 +275,7 @@ impl<Q: Question, I: Identity> Authored for Plan<Q, I> {
     fn form() -> Form {
         I::form(Form::new())
             .text("companySummary")
-            .list::<Q>("questions")
+            .counted::<Q>("questions", &QUESTIONS)
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
@@ -352,7 +365,10 @@ impl<V: Variant> Answered for InterviewPlan<V> {
     type Answer = Value<Plan<V::Question, V::Who>>;
     const ALONE: Alone = Alone::Fails;
 
-    fn says(input: &Input, _showing: &mut Showing<'_>) -> Result<Says> {
+    fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
+        showing.asks(&QUESTIONS, questions_asked(V::FULL_LOOP));
+        showing.asks(&PROBES, 1..);
+        showing.asks(&SIGNALS, 1..);
         let mut says = Says::new(instructions::<V>(), input.context.0.clone());
         says.output_tokens = OUTPUT_TOKENS;
         Ok(says)
@@ -382,7 +398,7 @@ fn kept<'a>(draft: &Draft<'a>, full_loop: bool) -> Result<Vec<&'a Drafted>> {
             present(value, label)?;
         }
     }
-    let count = if full_loop { 4..=6 } else { 3..=6 };
+    let count = questions_asked(full_loop);
     if draft.questions.len() > *count.end() {
         return Err(invalid(MISMATCH));
     }

@@ -689,13 +689,18 @@ fn request_of(says: Says, schema: Option<Schema>, call: &CallOptions) -> Grounde
     request
 }
 
-/// The schema with enumerated pointers where the backend enforces it, else with plain ones.
+/// The schema the backend holds the model to: with the lengths the request sets, else with enumerated
+/// pointers, else with plain ones.
 fn schema_for<C: Answered>(llm: &dyn LLMPort, showing: &Showing<'_>) -> Option<Schema> {
-    match <C::Answer as Shape>::schema(showing, Held::Enums) {
-        Some(schema) if llm.enforces(&schema) => Some(schema),
-        Some(_) => <C::Answer as Shape>::schema(showing, Held::Plain),
-        None => None,
+    let counts = <C::Answer as Shape>::schema(showing, Held::Counts)?;
+    let enums = <C::Answer as Shape>::schema(showing, Held::Enums)?;
+    if counts != enums && llm.enforces(&counts) {
+        return Some(counts);
     }
+    if llm.enforces(&enums) {
+        return Some(enums);
+    }
+    <C::Answer as Shape>::schema(showing, Held::Plain)
 }
 
 /// What `input` shows on a fresh request of `scope`, and the request that says it.

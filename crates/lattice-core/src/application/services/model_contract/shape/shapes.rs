@@ -10,7 +10,8 @@ use super::document::{self, Document};
 use super::fields::trace;
 use super::form::{Among, Field, Form};
 use super::{
-    Authored, Ended, Fields, Found, Held, Led, Rows, Schema, Settled, Vocabulary, Why, Written,
+    Authored, Count, Ended, Fields, Found, Held, Led, Rows, Schema, Settled, Vocabulary, Why,
+    Written, STATEMENTS,
 };
 
 // ---- schema ----
@@ -33,7 +34,27 @@ pub(super) fn pick_some_schema<K: Kind>(showing: &Showing<'_>, pointers: Held) -
 
 pub(super) fn new_schema<V: Authored>(showing: &Showing<'_>, pointers: Held) -> Option<Schema> {
     let items = array(form_object(&V::form(), showing, pointers));
+    let items = asked_length(items, &STATEMENTS, showing, pointers);
     Some(made(closed(vec![("items".to_owned(), items)])))
+}
+
+/// `list` with the length the request asks of `count`, for a backend that holds lists to it.
+fn asked_length(mut list: Value, count: &Count, showing: &Showing<'_>, held: Held) -> Value {
+    if held != Held::Counts {
+        return list;
+    }
+    let Some((least, most)) = showing.asked(count) else {
+        return list;
+    };
+    if let Some(fields) = list.as_object_mut() {
+        if least > 0 {
+            fields.insert("minItems".to_owned(), json!(least));
+        }
+        if let Some(most) = most {
+            fields.insert("maxItems".to_owned(), json!(most));
+        }
+    }
+    list
 }
 
 pub(super) fn each_schema<K: Kind, V: Authored>(
@@ -185,7 +206,13 @@ fn field_schema(field: &Field, showing: &Showing<'_>, pointers: Held) -> Value {
         }
         Field::Order { prefix } => handles_schema(prefix, showing, pointers),
         Field::Group(form) => form_object(form, showing, pointers),
-        Field::List { form, .. } => array(form_object(form, showing, pointers)),
+        Field::List { form, count } => {
+            let list = array(form_object(form, showing, pointers));
+            match count {
+                Some(count) => asked_length(list, count, showing, pointers),
+                None => list,
+            }
+        }
         Field::EachOwn { prefix, form } => {
             let mut properties = vec![(
                 "of".to_owned(),
