@@ -5291,7 +5291,12 @@ captured?: CapturedSourcesDto | null;
  * lines to resolve against while it streams. Merged by `ref`; the saved
  * message carries the attached ones in `metadata.images`.
  */
-images?: ChatImageDto[] | null }
+images?: ChatImageDto[] | null;
+/**
+ * One reference the reply made, in reply order between the text deltas of
+ * `content`: an event carries a text delta or one reference, never both.
+ */
+reference?: ReplyReferenceDto | null }
 export type CheckCodingExampleRequestDto = { operationId: string; programId: string; sessionId: string;
 /**
  * Some edits that example.
@@ -9309,6 +9314,10 @@ checkedStatementsAffected: number;
  * a lesson without a review.
  */
 revision: number | null }
+/**
+ * A line range a reference names inside what it points at.
+ */
+export type LinesDto = { first: number; last: number }
 export type ListBackupsResultDto = { backups: BackupInfoDto[] }
 /**
  * Request to list batch jobs (paginated).
@@ -9484,7 +9493,11 @@ metadata: string | null;
 /**
  * Message status (pending/completed/failed)
  */
-status: string }
+status: string;
+/**
+ * An assistant message as text between references; absent for any other message.
+ */
+reply?: ReplyPieceDto[] | null }
 /**
  * How many of the exercise's misreadings the learner's right cases catch.
  */
@@ -10208,6 +10221,30 @@ export type ReopenCauseDto = { cause: "sentence_changed" } | { cause: "source_de
 export type RepairAttemptDto = { attempt: number; escalated: boolean; before: string; after: string | null; outcome: RepairOutcomeDto; at: number }
 export type RepairLearningOutlineRequestDto = { programId: string; expectedRevision: number }
 export type RepairOutcomeDto = { outcome: "rewritten" } | { outcome: "removed" } | { outcome: "rejected"; reason: string } | { outcome: "superseded_by_user" }
+/**
+ * One piece of a reply, in order.
+ */
+export type ReplyPieceDto = { type: "text"; text: string } | { type: "reference"; reference: ReplyReferenceDto }
+/**
+ * A marker of a reply that resolved, as the frontend draws it.
+ */
+export type ReplyReferenceDto = {
+/**
+ * The handle as written, `[s12]` or `[f2:10-20]`.
+ */
+written: string;
+/**
+ * `source` or `file`.
+ */
+kind: string;
+/**
+ * The handle's own number.
+ */
+number: number; lines?: LinesDto | null;
+/**
+ * What a kind drawn by name shows: a file's path.
+ */
+name?: string | null }
 export type ReportLearningQuizItemRequestDto = { operationId: string; programId: string; formId: string; itemId: string; note: string }
 export type ReprofileLearningClaimRequestDto = { programId: string;
 /**
@@ -10925,7 +10962,11 @@ annotation: string }
  */
 export type SimilarDocumentDto = { documentId: string; title: string; filePath: string | null; score: number }
 export type SkipLearningDiagnosticRequestDto = { operationId: string; programId: string; expectedRevision: number }
-export type SnapshotMessageDto = { id: string; role: string; content: string; createdAt: string; metadata?: string | null }
+export type SnapshotMessageDto = { id: string; role: string; content: string; createdAt: string; metadata?: string | null;
+/**
+ * The message as text between references, when it was saved with them.
+ */
+reply?: ReplyPieceDto[] | null }
 /**
  * Where the frozen copy of an attached page stands.
  */

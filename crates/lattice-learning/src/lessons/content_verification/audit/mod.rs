@@ -9,6 +9,7 @@
 
 pub(crate) mod batches;
 mod calls;
+mod contract;
 mod ledger;
 pub mod lesson;
 pub mod material;
@@ -22,11 +23,16 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 
+use lattice_core::application::ports::llm_port::{
+    InferencePriority, SamplingOverride, ANSWER_EFFORT,
+};
 use lattice_core::application::ports::{ClaimReviewStore, LLMPort};
 use lattice_core::application::services::chat_model_resolution::cloud_provider_name;
-use lattice_core::application::services::model_contract::{
-    self, refusal, ContractCall, PromptInput,
-};
+use lattice_core::application::services::grounded_generation::CallOptions;
+use lattice_core::application::services::model_contract::ask::{ask_each, Answered};
+use lattice_core::application::services::model_contract::packed::Packed;
+use lattice_core::application::services::model_contract::shown::Scope;
+use lattice_core::application::services::model_contract::{refusal, ContractCall};
 use lattice_core::domain::learning::claim_review::{ClaimId, StopCode, StopReason};
 use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
 use lattice_core::shared::error::{smaller_parts_may_succeed, AppError, Result};
@@ -35,10 +41,11 @@ use lattice_core::shared::ErrorCode;
 use crate::model_call::ErrorClass;
 use batches::Item;
 use calls::{Audit, VerifierAudit, WindowSizer};
+use contract::{Claim, Evidence, Input, Passage};
 use ledger::LedgerWriter;
 use policy::{Consent, Judged, AUDIT_POLICY_ID};
 use runs::{AuditRunStore, BatchOutcome, BatchRecord, RunKey, RunState};
-use tools::VerifierWeb;
+use tools::{Research, VerifierWeb};
 
 /// One lesson unit as the audit sends it: a section, a question or an
 /// answer key, with the report's unit index.
@@ -489,48 +496,103 @@ impl<'a> Judge<'a> {
     /// leaves every item it covers "could not verify", with the cause.
     fn items(&'a self, items: &'a [Item]) -> Judging<'a> {
         Box::pin(async move {
-            let rendered = policy::render(self.claims, self.units, items);
-            let call = ContractCall::of::<VerifierAudit>(&PromptInput {
-                system: policy::SYSTEM_PROMPT.into(),
-                prompt: rendered.task.clone(),
-            })?
-            .splitting(items.len() > 1);
-            let transport = Audit::new(self.sizer.reserve(items.len()), self.web);
-            let read =
-                model_contract::answer(self.llm, &call, &transport, rendered.clone(), |text| {
-                    policy::verdicts(text, &rendered, &transport.fetched())
-                })
-                .await;
-            let spent = transport.into_spent();
+            let claims = items
+                .iter()
+                .map(|item| Claim::of(self.claims, self.units, item))
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| AppError::InternalError("The audit has no such claim.".into()))?;
+            let transport = Audit::default();
+            let mut scope = Scope::for_question();
+            let researched = match self.web {
+                Some(web) => {
+                    let input = self.sizer.input(items);
+                    let mut showing = scope.request();
+                    let task = VerifierAudit::says(&input, &mut showing)?.task;
+                    let contract = ContractCall::of::<VerifierAudit>(&input)?;
+                    let reserve = self.sizer.reserve(items.len());
+                    tools::research(
+                        self.llm,
+                        &mut scope,
+                        policy::SYSTEM_PROMPT,
+                        task,
+                        reserve,
+                        contract,
+                        web,
+                    )
+                    .await
+                }
+                None => Ok(Research::default()),
+            };
+            let research = match researched {
+                Ok(research) => research,
+                Err(error) if items.len() > 1 && smaller_parts_may_succeed(&error) => {
+                    return self.halves(items, BatchJudged::default()).await;
+                }
+                Err(error) => return Self::unusable(error, items.len(), BatchJudged::default()),
+            };
+            let pages: Vec<Passage> = research.fetched.iter().map(Passage::of).collect();
+            let fetched = Packed::new(pages.clone(), |page| {
+                self.llm.count_tokens(page.title()) + self.llm.count_tokens(page.text())
+            });
+            let call = CallOptions {
+                priority: InferencePriority::Verification,
+                sampling: Some(SamplingOverride::deterministic()),
+                no_time_limit: true,
+                reasoning_effort: Some(ANSWER_EFFORT.into()),
+                ..Default::default()
+            };
+            let read = ask_each::<VerifierAudit>(
+                self.llm,
+                &transport,
+                &mut scope,
+                &claims,
+                |open, _| {
+                    let open: Vec<Claim> = open.iter().map(|claim| (*claim).clone()).collect();
+                    let reserve = self.sizer.reserve(open.len());
+                    Input::of(open, self.units, fetched.clone(), reserve)
+                },
+                &call,
+            )
+            .await;
+            let (input_tokens, output_tokens) = transport.into_spent();
             let mut judged = BatchJudged {
-                input_tokens: spent.input_tokens,
-                output_tokens: spent.output_tokens,
-                web_note: spent.web_note,
+                input_tokens: input_tokens + research.input_tokens,
+                output_tokens: output_tokens + research.output_tokens,
+                web_note: research.web_note,
                 ..BatchJudged::default()
             };
             match read {
-                Ok(verdicts) => {
-                    judged.verdicts = verdicts;
+                Ok(settled) => {
+                    let evidence = Evidence::of(&claims, &pages);
+                    judged.verdicts = settled
+                        .iter()
+                        .map(|settled| evidence.judged(settled))
+                        .collect();
                     Ok(judged)
                 }
                 Err(error) if items.len() > 1 && smaller_parts_may_succeed(&error) => {
                     self.halves(items, judged).await
                 }
-                Err(error) => match ErrorClass::of(&error) {
-                    ErrorClass::Unusable | ErrorClass::DoesNotFit => {
-                        judged.verdicts = vec![
-                            Judged::could_not_verify(format!(
-                                "The Verifier's answer could not be used: {}.",
-                                refusal(&error)
-                            ));
-                            items.len()
-                        ];
-                        Ok(judged)
-                    }
-                    ErrorClass::Outage | ErrorClass::Unavailable | ErrorClass::Fault => Err(error),
-                },
+                Err(error) => Self::unusable(error, items.len(), judged),
             }
         })
+    }
+
+    /// What an error that halving cannot answer means for every item it covers.
+    fn unusable(error: AppError, items: usize, mut judged: BatchJudged) -> Result<BatchJudged> {
+        match ErrorClass::of(&error) {
+            ErrorClass::Unusable | ErrorClass::DoesNotFit => {
+                judged.verdicts = vec![
+                    Judged::could_not_verify(format!(
+                        "The Verifier's answer could not be used: {}.",
+                        refusal(&error)
+                    ));
+                    items
+                ];
+                Ok(judged)
+            }
+            ErrorClass::Outage | ErrorClass::Unavailable | ErrorClass::Fault => Err(error),
+        }
     }
 
     /// `items` sent as two halves.

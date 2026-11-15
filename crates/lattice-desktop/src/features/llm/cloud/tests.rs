@@ -3,6 +3,7 @@ use super::*;
 use lattice_core::application::contracts::settings::LLMProvider;
 use lattice_core::application::ports::llm_port::CompletionInput;
 use lattice_core::application::ports::llm_port::{ThinkingMode, ToolChoice};
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::domain::models::model_ref::CloudProvider;
 use serde_json::json;
 
@@ -25,7 +26,7 @@ impl UncutBody for CloudLlm {
 fn claude_thinks_unasked(model: &str) -> bool {
     protocols(CloudProvider::Anthropic)
         .completion
-        .thinking(model, &CompletionRequest::default())
+        .thinking(model, &legacy::completion(legacy::Completion::default()))
         .is_on()
 }
 
@@ -60,13 +61,13 @@ fn openai_reasoning_summary_is_kept_separate_from_answer_text() {
 #[test]
 fn provider_wire_formats_preserve_tool_results() {
     let mut settings = LLMSettingsDto::default();
-    let request = CompletionRequest {
+    let request = legacy::completion(legacy::Completion {
         input: vec![CompletionInput::ToolResult {
             id: "abc".into(),
             output: "found".into(),
         }],
         ..Default::default()
-    };
+    });
     settings.provider = LLMProvider::Openai;
     let openai = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
     assert_eq!(
@@ -103,10 +104,10 @@ fn each_provider_replays_its_own_turn_ahead_of_the_tool_results() {
             output: "found".into(),
         });
         llm.uncut_body(
-            &CompletionRequest {
+            &legacy::completion(legacy::Completion {
                 input,
                 ..Default::default()
-            },
+            }),
             false,
         )
         .unwrap()
@@ -185,10 +186,10 @@ fn anthropic_body(effort: &str) -> Value {
     let anthropic = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
     anthropic
         .uncut_body(
-            &CompletionRequest {
+            &legacy::completion(legacy::Completion {
                 reasoning_effort: Some(effort.into()),
                 ..Default::default()
-            },
+            }),
             false,
         )
         .unwrap()
@@ -220,11 +221,11 @@ fn anthropic_caches_the_system_prompt_and_a_continued_exchange_whole() {
     let body = |cache_key: Option<&str>, input: Vec<CompletionInput>| {
         anthropic
             .uncut_body(
-                &CompletionRequest {
+                &legacy::completion(legacy::Completion {
                     cache_key: cache_key.map(str::to_owned),
                     input,
                     ..Default::default()
-                },
+                }),
                 false,
             )
             .unwrap()
@@ -266,7 +267,7 @@ fn anthropic_caches_a_system_prompt_that_carries_a_schema_in_words() {
         .collect();
     let body = anthropic
         .uncut_body(
-            &CompletionRequest {
+            &legacy::completion(legacy::Completion {
                 input: vec![
                     CompletionInput::Message {
                         role: "system".into(),
@@ -280,7 +281,7 @@ fn anthropic_caches_a_system_prompt_that_carries_a_schema_in_words() {
                 json_schema: Some(json!({"type":"object","properties":properties})),
                 cache_key: Some("course-1".into()),
                 ..Default::default()
-            },
+            }),
             false,
         )
         .unwrap();
@@ -318,7 +319,7 @@ fn anthropic_never_sends_sampling_knobs() {
     let anthropic = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
     let body = anthropic
         .uncut_body(
-            &CompletionRequest {
+            &legacy::completion(legacy::Completion {
                 sampling: Some(
                     lattice_core::application::ports::llm_port::SamplingOverride {
                         temperature: Some(0.0),
@@ -328,7 +329,7 @@ fn anthropic_never_sends_sampling_knobs() {
                     },
                 ),
                 ..Default::default()
-            },
+            }),
             false,
         )
         .unwrap();
@@ -348,14 +349,14 @@ fn anthropic_moves_unsupported_schema_constraints_into_the_description() {
     let anthropic = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
     let body = anthropic
         .uncut_body(
-            &CompletionRequest {
+            &legacy::completion(legacy::Completion {
                 json_schema: Some(json!({"type":"object","required":["items","maximum"],"properties":{
                     "items":{"type":"array","minItems":2,"maxItems":6,"uniqueItems":true,
                         "items":{"type":"integer","minimum":1,"maximum":5}},
                     "maximum":{"type":"string","description":"A property, not a bound","minLength":1}
                 }})),
                 ..Default::default()
-            },
+            }),
             false,
         )
         .unwrap();
@@ -395,10 +396,10 @@ fn anthropic_asks_for_an_oversized_schema_in_words() {
         .collect();
     let body = anthropic
         .uncut_body(
-            &CompletionRequest {
+            &legacy::completion(legacy::Completion {
                 json_schema: Some(json!({"type":"object","properties":properties})),
                 ..Default::default()
-            },
+            }),
             false,
         )
         .unwrap();
@@ -406,6 +407,46 @@ fn anthropic_asks_for_an_oversized_schema_in_words() {
     let system = body["system"].as_str().unwrap();
     assert!(system.contains("JSON Schema"), "{system}");
     assert!(system.contains("field29"), "{system}");
+}
+
+/// Claude refuses a grammar that writes a large part out in every place it
+/// occurs, so a part that repeats is defined once and referred to.
+#[test]
+fn anthropic_defines_a_repeated_part_of_a_schema_once() {
+    let settings = LLMSettingsDto {
+        provider: LLMProvider::Anthropic,
+        ..Default::default()
+    };
+    let anthropic = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
+    let handles = json!({"type":"array","items":{"type":"string","enum":["q1","q2","q3"]}});
+    let part = json!({"type":"object","required":["text","citations"],"additionalProperties":false,
+    "properties":{
+        "text":{"type":"string"},
+        "citations":{"type":"array","items":{"type":"object","required":["sentence","cites"],
+            "additionalProperties":false,
+            "properties":{"sentence":{"type":"string"},"cites":handles}}}
+    }});
+    let body = anthropic
+        .uncut_body(
+            &legacy::completion(legacy::Completion {
+                json_schema: Some(
+                    json!({"type":"object","required":["recap","reflection","cites"],
+                    "additionalProperties":false,
+                    "properties":{"recap":part,"reflection":part,"cites":handles}}),
+                ),
+                ..Default::default()
+            }),
+            false,
+        )
+        .unwrap();
+    let schema = &body["output_config"]["format"]["schema"];
+    let sent = schema.to_string();
+    for once in [r#""enum":"#, r#""sentence":{"#, r#""citations":{"#] {
+        assert_eq!(sent.matches(once).count(), 1, "{once} in {schema}");
+    }
+    let recap = &schema["properties"]["recap"];
+    assert!(recap.get("$ref").is_some(), "{schema}");
+    assert_eq!(recap, &schema["properties"]["reflection"]);
 }
 
 /// Claude shows no thinking unless asked, so a caller that displays reasoning
@@ -420,11 +461,11 @@ fn anthropic_asks_for_thinking_summaries_only_when_reasoning_is_shown() {
     let body = |include_reasoning| {
         anthropic
             .uncut_body(
-                &CompletionRequest {
+                &legacy::completion(legacy::Completion {
                     thinking: ThinkingMode::On,
                     include_reasoning,
                     ..Default::default()
-                },
+                }),
                 false,
             )
             .unwrap()
@@ -455,12 +496,12 @@ fn anthropic_thinks_when_asked_and_maps_the_tool_choice() {
     let body = |thinking, choice| {
         anthropic
             .uncut_body(
-                &CompletionRequest {
+                &legacy::completion(legacy::Completion {
                     tools: vec![tool.clone()],
                     thinking,
                     tool_choice: Some(choice),
                     ..Default::default()
-                },
+                }),
                 false,
             )
             .unwrap()
@@ -491,7 +532,7 @@ fn openai_sends_the_tool_choice_with_tools() {
         ..Default::default()
     };
     let openai = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
-    let request = CompletionRequest {
+    let request = legacy::completion(legacy::Completion {
         tools: vec![lattice_core::application::ports::ToolDefinition {
             name: "search".into(),
             description: "Search".into(),
@@ -499,15 +540,13 @@ fn openai_sends_the_tool_choice_with_tools() {
         }],
         tool_choice: Some(ToolChoice::None),
         ..Default::default()
-    };
+    });
     assert_eq!(
         openai.uncut_body(&request, false).unwrap()["tool_choice"],
         "none"
     );
-    let bare = CompletionRequest {
-        tools: Vec::new(),
-        ..request
-    };
+    let mut bare = request;
+    *legacy::says(&mut bare).tools = Vec::new();
     assert!(openai
         .uncut_body(&bare, false)
         .unwrap()
@@ -524,10 +563,10 @@ fn openai_body(model: &str, effort: Option<&str>) -> Value {
     let openai = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
     openai
         .uncut_body(
-            &CompletionRequest {
+            &legacy::completion(legacy::Completion {
                 reasoning_effort: effort.map(str::to_owned),
                 ..Default::default()
-            },
+            }),
             false,
         )
         .unwrap()
@@ -574,10 +613,10 @@ fn openai_requests_a_displayable_summary_only_for_reasoning_models() {
         CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens))
             .unwrap()
             .uncut_body(
-                &CompletionRequest {
+                &legacy::completion(legacy::Completion {
                     include_reasoning: true,
                     ..Default::default()
-                },
+                }),
                 false,
             )
             .unwrap()
@@ -633,7 +672,7 @@ fn google_sends_the_tool_choice_with_tools() {
         ..Default::default()
     };
     let google = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
-    let request = CompletionRequest {
+    let request = legacy::completion(legacy::Completion {
         tools: vec![lattice_core::application::ports::ToolDefinition {
             name: "search".into(),
             description: "Search".into(),
@@ -641,15 +680,13 @@ fn google_sends_the_tool_choice_with_tools() {
         }],
         tool_choice: Some(ToolChoice::None),
         ..Default::default()
-    };
+    });
     assert_eq!(
         google.uncut_body(&request, false).unwrap()["tool_choice"],
         "none"
     );
-    let bare = CompletionRequest {
-        tools: Vec::new(),
-        ..request
-    };
+    let mut bare = request;
+    *legacy::says(&mut bare).tools = Vec::new();
     assert!(google
         .uncut_body(&bare, false)
         .unwrap()
@@ -659,18 +696,16 @@ fn google_sends_the_tool_choice_with_tools() {
 
 #[test]
 fn each_provider_that_takes_stop_sequences_is_sent_them() {
-    let request = CompletionRequest {
+    let request = legacy::completion(legacy::Completion {
         input: vec![CompletionInput::Message {
             role: "user".into(),
             content: "Read them.".into(),
         }],
         stop: vec!["[5]".into(), "\n5.".into()],
         ..Default::default()
-    };
-    let bare = CompletionRequest {
-        stop: Vec::new(),
-        ..request.clone()
-    };
+    });
+    let mut bare = request.clone();
+    *legacy::says(&mut bare).stop = Vec::new();
     for (provider, field) in [
         (LLMProvider::Anthropic, "stop_sequences"),
         (LLMProvider::Google, "stop"),
@@ -706,7 +741,7 @@ fn each_provider_that_takes_stop_sequences_is_sent_them() {
 
 fn picture_request() -> CompletionRequest {
     use lattice_core::application::ports::llm_port::{ContentPart, ImagePart};
-    CompletionRequest {
+    legacy::completion(legacy::Completion {
         input: vec![CompletionInput::Multimodal {
             role: "user".into(),
             parts: vec![
@@ -724,7 +759,7 @@ fn picture_request() -> CompletionRequest {
             ],
         }],
         ..Default::default()
-    }
+    })
 }
 
 fn seeing(provider: LLMProvider) -> CloudLlm {
@@ -1008,7 +1043,7 @@ fn each_provider_is_sent_no_more_than_the_window_has_left() {
         };
         let cloud = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
         let ceiling = |max_output_tokens, room: u32| {
-            let request = CompletionRequest {
+            let request = legacy::completion(legacy::Completion {
                 input: vec![CompletionInput::Message {
                     role: "user".into(),
                     content: "When did the bridge open?".into(),
@@ -1016,7 +1051,7 @@ fn each_provider_is_sent_no_more_than_the_window_has_left() {
                 max_output_tokens,
                 reasoning_effort: Some("none".into()),
                 ..Default::default()
-            };
+            });
             let prompt = PromptMeasure {
                 tokens: 16_000 - room as usize,
                 counted_exactly: false,
@@ -1054,14 +1089,14 @@ fn an_unknown_ceiling_is_never_made_up() {
         let cloud = CloudLlm::new(&settings, "test".into(), known).unwrap();
         let body = cloud
             .uncut_body(
-                &CompletionRequest {
+                &legacy::completion(legacy::Completion {
                     input: vec![CompletionInput::Message {
                         role: "user".into(),
                         content: "hi".into(),
                     }],
                     max_output_tokens: asked,
                     ..Default::default()
-                },
+                }),
                 false,
             )
             .unwrap();
@@ -1117,7 +1152,7 @@ fn claude_that_thinks_is_given_room_to_think_and_answer() {
         CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens))
             .unwrap()
             .uncut_body(
-                &CompletionRequest {
+                &legacy::completion(legacy::Completion {
                     input: vec![CompletionInput::Message {
                         role: "user".into(),
                         content: "When did the bridge open?".into(),
@@ -1125,7 +1160,7 @@ fn claude_that_thinks_is_given_room_to_think_and_answer() {
                     max_output_tokens: Some(512),
                     thinking,
                     ..Default::default()
-                },
+                }),
                 false,
             )
             .unwrap()
@@ -1158,7 +1193,7 @@ fn claude_turns_thinking_off_where_the_model_allows_it() {
         CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens))
             .unwrap()
             .uncut_body(
-                &CompletionRequest {
+                &legacy::completion(legacy::Completion {
                     input: vec![CompletionInput::Message {
                         role: "user".into(),
                         content: "Which passages bear on the question?".into(),
@@ -1166,7 +1201,7 @@ fn claude_turns_thinking_off_where_the_model_allows_it() {
                     max_output_tokens: Some(512),
                     reasoning_effort: effort.map(str::to_owned),
                     ..Default::default()
-                },
+                }),
                 false,
             )
             .unwrap()
@@ -1225,7 +1260,7 @@ fn claude_thinks_unasked_from_the_5_family_on() {
         let settings = settings(model);
         CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens))
             .unwrap()
-            .thinking(&CompletionRequest::default())
+            .thinking(&legacy::completion(legacy::Completion::default()))
             .is_on()
     };
     assert!(thinks("claude-opus-5-5"));

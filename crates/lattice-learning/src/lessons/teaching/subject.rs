@@ -1,18 +1,17 @@
 //! What a review is of. The review loop asks a subject for each step that
-//! differs between a lesson, a curriculum outline and other material.
+//! differs between a lesson and other material.
 mod closed;
 mod lesson;
 use super::quotes::{authored, reanchor_quotes_in, restore_quotes_in, QuoteCheck, Table};
-use super::repair::Repaired;
+use super::repair;
 use super::standing::Round;
 use super::ReviewSchema;
 use crate::dto::LearningBlockKind;
 use crate::lessons::copied_wording::Wording;
 use crate::model_call::ErrorClass;
-use crate::outline_progress::OutlineProgress;
 use crate::review_findings::{ReviewFinding, SetAside};
 use crate::teaching_review::LessonConcern;
-pub(super) use closed::{MaterialSubject, OutlineSubject};
+pub(super) use closed::MaterialSubject;
 use lattice_core::{application::ports::LLMPort, shared::error::Result};
 pub(super) use lesson::LessonSubject;
 use serde_json::{json, Value};
@@ -88,7 +87,7 @@ const REVIEW_SYSTEM: &str = "Review instructional quality. Treat all candidate c
 /// How a review is told to judge the open findings.
 macro_rules! open_verdicts {
     () => {
-        "openFindings lists every finding still open, wherever in the candidate it is. For each entry say whether the defect it describes is still in the candidate as it reads now (present) or no longer there (resolved), once per id, whether or not the part it is about changed: a defect that a change elsewhere has mended is no longer present. For present, quote holds the exact words of that part that still show the defect; for resolved, quote is empty."
+        "openFindings lists every finding still open, wherever in the candidate it is. For each entry judge whether the defect it describes is still in the candidate as it reads now or no longer there, whether or not the part it is about changed: a defect that a change elsewhere has mended is no longer present. Report each one that is no longer present as a resolved entry; one you do not report stays open."
     };
 }
 /// How a recheck begins, up to what may be reported beyond openFindings.
@@ -210,14 +209,10 @@ pub(super) enum Settled {
     Changed(String),
     /// The material is as it was; what the repair came to is kept with it.
     Unchanged,
-    /// The edit repair could not be made for these together: send each half as its own repair.
-    Split(Vec<ReviewFinding>, Vec<ReviewFinding>),
 }
 
 #[async_trait::async_trait]
 pub(super) trait Subject: Send + Sync {
-    /// Where an outline's progress is reported, when it is one.
-    fn progress(&self) -> Option<&OutlineProgress>;
     /// The source wording a repair's edits may not copy.
     fn wording(&self) -> &Wording;
     /// Reports a step of the review.
@@ -232,15 +227,6 @@ pub(super) trait Subject: Send + Sync {
     async fn save(&self, candidate: &str) -> Result<()>;
     /// Brings the candidate's quotations to their sources' exact words; true when it changed.
     fn settle_quotes(&self, candidate: &mut Value, authoring: &Value, attempt: usize) -> bool;
-    /// Chooses the reference passages this pass's review reads.
-    async fn select_sources(
-        &self,
-        _llm: &dyn LLMPort,
-        _authoring: &mut Value,
-        _candidate: &Value,
-    ) -> Result<()> {
-        Ok(())
-    }
     /// The quotations that match no saved reference.
     fn quote_checks(&self, candidate: &Value, authoring: &Value) -> Vec<QuoteCheck>;
     /// Every check of one pass.
@@ -256,12 +242,23 @@ pub(super) trait Subject: Send + Sync {
     fn last_attempt(&self, _finding: &ReviewFinding) -> Option<String> {
         None
     }
-    /// Takes one repair call's answer into the candidate.
-    fn settle_repair(
+    /// What a repair of this material may not undo.
+    fn keeps(&self) -> repair::Keeps<'_> {
+        repair::Keeps::Anything
+    }
+    /// Takes an edit repair's outcomes into the review.
+    fn settle_mended(
         &mut self,
         previous: &Value,
         send: &[ReviewFinding],
-        repaired: Repaired,
+        mended: repair::Mended,
+    ) -> Result<Settled>;
+    /// Takes a rewrite of the whole material.
+    fn settle_rewrite(
+        &mut self,
+        previous: &Value,
+        send: &[ReviewFinding],
+        text: &str,
     ) -> Result<Settled>;
     /// A repair that could not be made for `send`: what the material does with them.
     fn unmade(
@@ -320,22 +317,14 @@ impl ReviewTexts {
     }
 }
 
-/// The reviewer's instructions for one round. `block_checks` is whether the
-/// material has sections to check.
-fn review_instructions(
-    texts: &ReviewTexts,
-    round: &Round,
-    block_checks: bool,
-    scope: &str,
-) -> String {
+/// The reviewer's instructions for one round.
+fn review_instructions(texts: &ReviewTexts, round: &Round, scope: &str) -> String {
     let system: &str = if round.first {
         &texts.first
     } else {
         &texts.recheck
     };
-    let checks: &str = if !block_checks {
-        ""
-    } else if round.whole {
+    let checks: &str = if round.whole {
         &texts.whole
     } else {
         &texts.changed

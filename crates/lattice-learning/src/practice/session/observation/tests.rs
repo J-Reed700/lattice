@@ -308,36 +308,3 @@ fn a_part_the_kind_cannot_name_is_an_error_not_a_blank() {
     }];
     assert!(observation.render(&kind()).is_err());
 }
-
-#[test]
-fn the_internal_ids_are_the_session_turns_hints_check_and_cases_in_that_order() {
-    assert_eq!(
-        rich().internal_ids(),
-        [
-            "session-1",
-            "turn-1",
-            "turn-2",
-            "turn-3",
-            "check-1",
-            "check-1",
-            "open-1",
-            "closed-1",
-            "waiting-1",
-            "shown-1"
-        ]
-    );
-}
-
-#[test]
-fn a_plain_observation_has_only_the_session_and_the_shown_cases_as_ids() {
-    assert_eq!(plain().internal_ids(), ["session-1", "shown-1"]);
-}
-
-#[test]
-fn the_rendering_holds_no_internal_id() {
-    let observation = rich();
-    let text = observation.render(&kind_with_learner_cases()).unwrap();
-    for id in observation.internal_ids() {
-        assert!(!text.contains(&id), "the rendering holds the id {id}");
-    }
-}

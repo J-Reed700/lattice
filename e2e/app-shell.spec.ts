@@ -22,7 +22,11 @@ test('inline citations support keyboard passage navigation and clean reading', a
       category: 'Web Article', content: text, score: 1, fileSizeBytes: 0, modifiedAt: stamp, citationId: 1,
       webSnapshot: { url: 'https://example.org/field-guide', title: 'Field guide', text, fetchedAt: stamp, truncated: false },
     };
-    const message = { id: 'citations-answer', conversationId: conversation.id, role: 'assistant', content: 'Record the chosen measure [1]. Keep the observation period [1].', tokens: 20, status: 'completed', createdAt: stamp, metadata: JSON.stringify({ sources: [source] }) };
+    // An answer as the backend hands it over: its text, and the same text as pieces between resolved references.
+    const cited = { type: 'reference' as const, reference: { written: '[s1]', kind: 'source', number: 1 } };
+    const said = (text: string) => ({ type: 'text' as const, text });
+    const reply = [said('Record the chosen measure '), cited, said('. Keep the observation period '), cited, said('.')];
+    const message = { id: 'citations-answer', conversationId: conversation.id, role: 'assistant', content: 'Record the chosen measure [s1]. Keep the observation period [s1].', reply, tokens: 20, status: 'completed', createdAt: stamp, metadata: JSON.stringify({ sources: [source] }) };
     return {
       get_settings: () => settings,
       list_conversation_spaces: () => [{ id: 'space_general', name: 'General', isArchived: false }],

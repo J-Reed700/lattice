@@ -2,6 +2,7 @@ use lattice_core::application::contracts::search::SearchResultDto;
 use lattice_core::application::contracts::settings::LLMPromptSettingsDto;
 use lattice_core::application::ports::turn_source::TurnSourcePolicy;
 
+use super::retrieval::source_names::marker;
 use super::tool_loop::READING_INSTRUCTION;
 use super::SearchFlags;
 
@@ -537,11 +538,6 @@ pub(super) fn kb_passages(
 /// One retrieved passage under its citation number.
 pub(super) fn kb_passage(result: &SearchResultDto, citation: u32) -> String {
     let doc_name = document_name(result);
-    let doc_id_line = result
-        .document_id
-        .as_deref()
-        .map(|id| format!("\nDocument ID: {}", id))
-        .unwrap_or_default();
     let page = result
         .metadata
         .get("pageNumber")
@@ -559,8 +555,13 @@ pub(super) fn kb_passage(result: &SearchResultDto, citation: u32) -> String {
         _ => "",
     };
     format!(
-        "[{}] Document: {}{}{}{}{}\nContent: {}",
-        citation, doc_name, doc_id_line, page, section, ocr, result.content
+        "{} Document: {}{}{}{}\nContent: {}",
+        marker(citation),
+        doc_name,
+        page,
+        section,
+        ocr,
+        result.content
     )
 }
 
@@ -587,8 +588,8 @@ pub(super) fn render_prompt_template(template: &str, context: &str, question: &s
 /// at all is the turn's template to say: the document-answer template asks
 /// for the context alone, while an Explorer turn may explain from general
 /// knowledge without flagging each sentence.
-pub(super) fn enforce_numeric_citation_format(template: &str) -> String {
-    format!("{template}\n\nCitation rule: Use only the supplied numeric passage labels, such as [1], [2]. Each number identifies one passage, not an entire document. Place the citation immediately after the claim it supports. The cited passage must directly support that claim; a shared keyword is not evidence. If no passage supports a claim, give it no citation; never invent one. Do not output [#] or [^1].")
+pub(super) fn enforce_citation_format(template: &str) -> String {
+    format!("{template}\n\nCitation rule: Use only the supplied passage labels, such as [s1], [s2]. The reader sees a label such as [s12] as 12. Each label identifies one passage, not an entire document. Place the citation immediately after the claim it supports. The cited passage must directly support that claim; a shared keyword is not evidence. If no passage supports a claim, give it no citation; never invent one. Do not output [#] or [^1].")
 }
 
 #[cfg(test)]

@@ -82,11 +82,17 @@ impl LLMPort for Recorder {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &crate::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 fn plain() -> Plain {
     Plain {
-        request: CompletionRequest::default(),
+        request: legacy::completion(legacy::Completion::default()),
     }
 }
 
@@ -98,7 +104,7 @@ async fn ask(llm: &Recorder) -> Result<u32> {
 
 fn last_user_turn(request: &CompletionRequest) -> String {
     request
-        .input
+        .input()
         .iter()
         .rev()
         .find_map(|item| match item {
@@ -118,7 +124,7 @@ async fn every_send_through_the_driver_carries_its_contract() {
     let sent = llm.sent();
     assert_eq!(sent.len(), 2);
     for request in &sent {
-        assert_eq!(request.contract, Some(call()));
+        assert_eq!(request.contract(), Some(&call()));
     }
 }
 
@@ -195,7 +201,7 @@ async fn a_cut_off_reply_of_a_call_that_splits_is_not_sent_larger() {
         &llm,
         &call().splitting(true),
         &Growing,
-        CompletionRequest::default(),
+        legacy::completion(legacy::Completion::default()),
         TestContract::read,
     )
     .await
@@ -252,13 +258,12 @@ impl Transport for Growing {
         _llm: &dyn LLMPort,
         request: &CompletionRequest,
     ) -> CutOffRemedy<CompletionRequest> {
-        if request.max_output_tokens.is_some() {
+        if request.max_output_tokens().is_some() {
             return CutOffRemedy::Stop;
         }
-        CutOffRemedy::Larger(CompletionRequest {
-            max_output_tokens: Some(2048),
-            ..request.clone()
-        })
+        let mut next = request.clone();
+        *legacy::says(&mut next).max_output_tokens = Some(2048);
+        CutOffRemedy::Larger(next)
     }
 }
 
@@ -269,7 +274,7 @@ async fn a_cut_off_reply_is_sent_once_more_with_a_larger_allowance() {
         &llm,
         &call(),
         &Growing,
-        CompletionRequest::default(),
+        legacy::completion(legacy::Completion::default()),
         TestContract::read,
     )
     .await
@@ -277,7 +282,7 @@ async fn a_cut_off_reply_is_sent_once_more_with_a_larger_allowance() {
     assert_eq!(read, 9);
     let sent = llm.sent();
     assert_eq!(sent.len(), 2);
-    assert_eq!(sent[1].max_output_tokens, Some(2048));
+    assert_eq!(sent[1].max_output_tokens(), Some(2048));
 }
 
 #[tokio::test]
@@ -287,7 +292,7 @@ async fn a_reply_still_cut_off_after_the_larger_send_is_a_cut_off_answer() {
         &llm,
         &call(),
         &Growing,
-        CompletionRequest::default(),
+        legacy::completion(legacy::Completion::default()),
         TestContract::read,
     )
     .await

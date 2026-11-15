@@ -91,12 +91,6 @@ describe('finding the passage an answer sentence matches', () => {
     expect(findSourcedPassages(PAGE, [])).toEqual([]);
     expect(findSourcedPassages(PAGE, [''])).toEqual([]);
   });
-
-  it('does not let a citation marker count as a word the page shares', () => {
-    // `[4]` tokenizes to the number 4, which weighs as much as any other
-    // number; left in, a marker would prop up a sentence that matched nothing.
-    expect(findSourcedPassages('Chapter 4 of the report.', ['A different thing entirely [4].'])).toEqual([]);
-  });
 });
 
 describe('an answer sentence that condenses a whole section', () => {
@@ -152,7 +146,7 @@ describe('an answer sentence that condenses a whole section', () => {
 describe('an answer sentence that credits two sources', () => {
   // Each page backs one clause of it, and neither holds half of the whole.
   const CHIVES =
-    '- **Chives & mint** — tolerate lower light and irregular watering better than almost any other herb; chives from seed or transplant in a spot with 6–8 hours of bright light, growing within ~2 weeks [1][9].';
+    '- **Chives & mint** — tolerate lower light and irregular watering better than almost any other herb; chives from seed or transplant in a spot with 6–8 hours of bright light, growing within ~2 weeks.';
 
   const SECOND_PAGE = [
     'Basil grows in any south- or east-facing window.',
@@ -200,7 +194,7 @@ describe('a page that changes subject at a heading', () => {
 
   it('stops a passage at the heading below it', () => {
     const [passage, ...rest] = findSourcedPassages(SECTIONED, [
-      'Varieties like Red Oak Leaf and Buttercrunch work well [2][7].',
+      'Varieties like Red Oak Leaf and Buttercrunch work well.',
     ]);
 
     expect(rest).toEqual([]);
@@ -211,7 +205,7 @@ describe('a page that changes subject at a heading', () => {
 
   it('lets a passage begin at a heading, which is the section saying what it is about', () => {
     const [passage] = findSourcedPassages(SECTIONED, [
-      'Broccoli needs a long season and does not tolerate heat, so Illinois gardeners start it indoors [2].',
+      'Broccoli needs a long season and does not tolerate heat, so Illinois gardeners start it indoors.',
     ]);
 
     expect(SECTIONED.slice(passage!.start, passage!.end)).toContain('long growing season');
@@ -228,7 +222,7 @@ describe('a page that changes subject at a heading', () => {
     ].join('\n');
 
     const [passage] = findSourcedPassages(page, [
-      'Radishes — sow every 2 weeks for a continuous harvest; 24 to 30 days [1].',
+      'Radishes — sow every 2 weeks for a continuous harvest; 24 to 30 days.',
     ]);
     const text = page.slice(passage!.start, passage!.end);
 

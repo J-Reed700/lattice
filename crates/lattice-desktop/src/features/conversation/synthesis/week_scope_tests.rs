@@ -1,5 +1,6 @@
 use super::super::chat::ports::{StoredJournalPage, SynthesisEntries};
-use super::prompts::{format_synthesis_sources, rewrite_citation_ids};
+use super::notes::NoteSource;
+use super::prompts::rewrite_citation_ids;
 use super::week_scope::{
     is_week_synthesis_page, is_within_week, select_week_notes, sort_entries_by_recency,
 };
@@ -189,7 +190,7 @@ fn citations_map_kinds_correctly() {
     assert_eq!(citations[2].id, "note_1");
 }
 
-fn source(document: &str, chunk: &str, content: &str, citation_id: u32) -> SourceDto {
+pub(super) fn source(document: &str, chunk: &str, content: &str, citation_id: u32) -> SourceDto {
     serde_json::from_value(serde_json::json!({
         "documentId": document, "chunkId": chunk, "content": content,
         "score": 1.0, "path": null, "position": null,
@@ -339,7 +340,10 @@ fn same_url_with_different_snapshots_keeps_separate_citations() {
     assert!(entries[0].transcript.contains("Claim [1]"));
     assert!(entries[1].transcript.contains("Claim [2]"));
     // Saved page bodies are reader data, not extra synthesis prompt text.
-    assert!(!format_synthesis_sources(&sources).contains("captured article"));
+    let shown: Vec<NoteSource> = sources.iter().map(NoteSource::of).collect();
+    assert!(!serde_json::to_string(&shown)
+        .unwrap()
+        .contains("captured article"));
     let persisted = serde_json::to_string(&sources).unwrap();
     let restored: Vec<SourceDto> = serde_json::from_str(&persisted).unwrap();
     assert_eq!(source_key(&restored[1]), source_key(&sources[1]));
@@ -415,4 +419,35 @@ fn entries_sort_newest_first_and_tolerate_bad_timestamps() {
     sort_entries_by_recency(&mut entries);
     let ids: Vec<&str> = entries.iter().map(|e| e.source_id.as_str()).collect();
     assert_eq!(ids, vec!["conv_new", "note_old", "pref_bad"]);
+}
+
+#[test]
+fn a_synthesis_reads_an_answer_without_its_references_and_an_older_one_as_saved() {
+    use lattice_core::domain::conversation::{ConversationMessage, MessageRole};
+    let saved = |content: &str, metadata: Option<String>| ConversationMessage {
+        id: "message-1".into(),
+        conversation_id: Default::default(),
+        role: MessageRole::Assistant,
+        content: content.into(),
+        tokens: 1,
+        created_at: Utc::now(),
+        metadata,
+        status: "completed".into(),
+    };
+    let content = "The pass is open [s1] in May.";
+    let start = content.find("[s1]").unwrap();
+    let with_reference = saved(
+        content,
+        Some(serde_json::json!({"references": [{"start": start, "end": start + 4}]}).to_string()),
+    );
+    let older = saved("Open in May [1].", None);
+
+    let transcript = build_synthesis_transcript(&[with_reference.clone(), older.clone()]);
+    assert_eq!(
+        transcript,
+        "ASSISTANT: The pass is open in May.\nASSISTANT: Open in May [1]."
+    );
+    let (_, prompt) = source_keys_by_message(&[with_reference, older]);
+    assert_eq!(prompt[0].content, "The pass is open in May.");
+    assert_eq!(prompt[1].content, "Open in May [1].");
 }

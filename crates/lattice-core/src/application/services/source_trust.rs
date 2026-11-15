@@ -20,15 +20,15 @@ mod standing_judgement;
 mod tests;
 
 pub use claim_profile::{
-    claim_profile_key, profile_claims, profile_input, profile_schema, ClaimToProfile,
-    ProfileRequest, CLAIM_PROFILE_POLICY, CLAIM_PROFILE_SYSTEM,
+    claim_profile_key, profile_claims, ClaimToProfile, ProfileRequest, CLAIM_PROFILE_POLICY,
+    CLAIM_PROFILE_SYSTEM,
 };
 pub use ownership_judgement::{
     judge_ownership, ownership_input, ownership_key, ownership_schema, OwnershipRequest,
     OWNERSHIP_POLICY, OWNERSHIP_SYSTEM,
 };
 pub use standing_judgement::{
-    judge_standing, standing_input, standing_key, standing_schema, STANDING_POLICY, STANDING_SYSTEM,
+    judge_standing, standing_input, standing_key, STANDING_POLICY, STANDING_SYSTEM,
 };
 
 use std::sync::{Mutex, PoisonError};
@@ -39,8 +39,10 @@ use serde_json::Value;
 use crate::application::ports::llm_port::{CompletionResponse, ANSWER_EFFORT};
 use crate::application::ports::LLMPort;
 use crate::application::services::grounded_generation::{
-    self, CallOptions, GroundedGenerationError, GroundedRequest, HistoryItem,
+    self, CallOptions, GroundedRequest, HistoryItem,
 };
+use crate::application::services::model_contract::ask::send_error;
+use crate::application::services::model_contract::legacy;
 use crate::application::services::model_contract::{
     answer, refusal, ContractCall, CutOffRemedy, Transport, CORRECTION_LEAD,
 };
@@ -86,13 +88,9 @@ impl Transport for Planned {
         llm: &dyn LLMPort,
         request: &GroundedRequest,
     ) -> Result<CompletionResponse> {
-        let output = match grounded_generation::generate(llm, request.clone()).await {
-            Ok(output) => output,
-            Err(GroundedGenerationError::Budget(error)) => {
-                return Err(AppError::WindowTooSmall(error.to_string()))
-            }
-            Err(GroundedGenerationError::Model(error)) => return Err(error),
-        };
+        let output = grounded_generation::generate(llm, request.clone())
+            .await
+            .map_err(send_error)?;
         let mut tokens = self.tokens.lock().unwrap_or_else(PoisonError::into_inner);
         tokens.0 += output.input_tokens;
         tokens.1 += output.output_tokens;
@@ -113,15 +111,16 @@ impl Transport for Planned {
         refusal: &str,
     ) -> Result<GroundedRequest> {
         let mut next = request.clone();
-        next.history.push(HistoryItem {
+        let says = legacy::grounded_says(&mut next);
+        says.history.push(HistoryItem {
             role: "user".into(),
-            content: request.task.clone(),
+            content: request.task().to_string(),
         });
-        next.history.push(HistoryItem {
+        says.history.push(HistoryItem {
             role: "assistant".into(),
             content: previous.text.clone(),
         });
-        next.task = format!("{CORRECTION_LEAD} {refusal}");
+        *says.task = format!("{CORRECTION_LEAD} {refusal}");
         Ok(next)
     }
 
@@ -146,10 +145,11 @@ pub(crate) async fn judge<T>(
     schema: &Value,
     parse: impl Fn(&str) -> std::result::Result<T, String> + Send + Sync,
 ) -> Result<CallOutcome<T>> {
-    let mut request = GroundedRequest::new(system, prompt);
-    request.output_fills_window = true;
+    let mut request = legacy::grounded(system, prompt);
+    let says = legacy::grounded_says(&mut request);
+    *says.output_fills_window = true;
+    *says.schema = Some(legacy::schema(schema.clone()));
     request.call = CallOptions {
-        json_schema: Some(schema.clone()),
         reasoning_effort: Some(ANSWER_EFFORT.to_owned()),
         no_time_limit: true,
         ..CallOptions::default()

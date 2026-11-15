@@ -8,6 +8,7 @@ use super::clock::TurnClock;
 use super::final_round::{self, LastRound};
 use super::room::{self, Window};
 use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest};
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::shared::error::{AppError, Result};
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
@@ -53,7 +54,7 @@ pub(super) fn recover(
             } else {
                 sent_chars.saturating_sub(window.chars())
             };
-            shed(&mut request.input, loop_start, excess, calls).then_some(if out_of_time {
+            shed(legacy::says(request).input, loop_start, excess, calls).then_some(if out_of_time {
                 LastRound::OutOfTime
             } else {
                 LastRound::WindowFull

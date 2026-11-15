@@ -19,8 +19,7 @@ use lattice_core::domain::value_objects::source_context::{
 use std::collections::HashMap;
 use tokio_util::sync::CancellationToken;
 
-const PLAN: &str =
-    r#"{"queries":["garden leave notice"],"opening_document_ids":[],"start_at_beginning":false}"#;
+const PLAN: &str = r#"{"queries":[{"query":"garden leave notice"}],"opening_document_ids":[],"start_at_beginning":"false"}"#;
 
 /// What llama-server's tokenizer charges for catalog JSON: closer to three and
 /// a half characters a token than the four the estimate assumes.
@@ -84,7 +83,7 @@ impl LLMPort for UtilityStub {
         self.output_caps
             .lock()
             .unwrap()
-            .push(request.max_output_tokens);
+            .push(request.max_output_tokens());
         self.timeless.lock().unwrap().push(request.no_time_limit);
         let (delay, reply) = self
             .replies
@@ -119,6 +118,12 @@ impl LLMPort for UtilityStub {
 
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -239,6 +244,12 @@ impl LLMPort for OneTokenStub {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[tokio::test]
@@ -290,7 +301,7 @@ async fn the_plan_names_documents_by_handle_and_gets_their_real_ids_back() {
     let catalog = vault();
     let stub = UtilityStub::new(16_384, true).then(
         Duration::ZERO,
-        Ok(r#"{"queries":["spare key"],"opening_document_ids":["d2","D1","not-a-handle"],"start_at_beginning":false}"#
+        Ok(r#"{"queries":[{"query":"spare key"}],"opening_document_ids":["d2","d1","not-a-handle"],"start_at_beginning":"false"}"#
             .into()),
     );
     let plan = plan(
@@ -392,15 +403,15 @@ async fn a_learning_request_sees_its_books_front_matter_and_opens_it_in_order() 
         .await
         .unwrap();
     let chapter = built
-        .handles
+        .documents
         .iter()
-        .find(|(_, id)| id.as_str() == "book-10")
-        .map(|(handle, _)| handle.clone())
+        .position(|row| row.id == "book-10")
+        .map(|index| format!("d{}", index + 1))
         .expect("the hit is shown");
     let stub = UtilityStub::new(window, true).then(
         Duration::ZERO,
         Ok(format!(
-            r#"{{"queries":["examining manual introduction"],"opening_document_ids":["{chapter}"],"start_at_beginning":true}}"#
+            r#"{{"queries":[{{"query":"examining manual introduction"}}],"opening_document_ids":["{chapter}"],"start_at_beginning":"true"}}"#
         )),
     );
     let plan = plan(
@@ -499,7 +510,7 @@ async fn the_corrective_retry_replans_after_a_slow_first_pass() {
         .then(Duration::from_secs(60), Ok(PLAN.into()))
         .then(
             Duration::ZERO,
-            Ok(r#"{"queries":["spare key cabinet"],"opening_document_ids":[],"start_at_beginning":false}"#.into()),
+            Ok(r#"{"queries":[{"query":"spare key cabinet"}],"opening_document_ids":[],"start_at_beginning":"false"}"#.into()),
         );
     let correction = CorrectionRequest {
         queries_already_tried: vec!["spare key".into()],
@@ -560,6 +571,12 @@ async fn the_planners_request_carries_the_turns_stop() {
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
+        }
     }
     let health = PlannerHealth::default();
     let cancel = CancellationToken::new();
@@ -610,7 +627,9 @@ async fn a_window_refusal_halves_the_next_prompt() {
 async fn an_unusable_answer_still_falls_back_to_the_local_plan() {
     let health = PlannerHealth::default();
     let catalog = vault();
-    let stub = UtilityStub::new(16_384, true).then(Duration::ZERO, Ok("not json".into()));
+    let stub = UtilityStub::new(16_384, true)
+        .then(Duration::ZERO, Ok("not json".into()))
+        .then(Duration::ZERO, Ok("still not json".into()));
     let question = "Where is the spare key kept?";
     let planned = plan(
         &stub,

@@ -17,7 +17,7 @@
 //! gets when no model can be loaded; it needs no server.
 //!
 //! Each pair reaches the verifier the way a chat answer does: the claim as one
-//! answer paragraph closed by a `[1]` marker, the passage as source 1. Nothing
+//! answer paragraph closed by a `[s1]` marker, the passage as source 1. Nothing
 //! here re-implements a verdict rule. The only code that reads the judge's
 //! logprobs is the analysis below, which turns them into a continuous
 //! P(supported) for the threshold sweep; the verdict itself is whatever
@@ -30,12 +30,15 @@
 //! in the answer.
 
 use async_trait::async_trait;
+use lattice::features::conversation::chat::reply_text::{markers, ReplyText};
+use lattice::features::conversation::chat::retrieval::source_names::name_sources;
 use lattice::features::conversation::chat::verification::GroundingVerifier;
 use lattice::features::llm::llama_cpp::LlamaCppLlm;
 use lattice_core::application::contracts::settings::{LLMSettingsDto, LlamaCppSettingsDto};
 use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::kept::TurnNames;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
@@ -263,6 +266,13 @@ impl LLMPort for RecordingLlm {
     fn provider_name(&self) -> &str {
         self.inner.provider_name()
     }
+
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 
 /// The claim as a one-paragraph answer citing source 1.
@@ -275,10 +285,10 @@ fn as_cited_answer(claim: &str) -> String {
     let claim = claim.trim();
     for stop in ['.', '!'] {
         if let Some(body) = claim.strip_suffix(stop) {
-            return format!("{body} [1]{stop}");
+            return format!("{body} [s1]{stop}");
         }
     }
-    format!("{claim} [1]")
+    format!("{claim} [s1]")
 }
 
 fn source_for(pair: &Pair) -> SourceDto {
@@ -408,12 +418,12 @@ async fn main() -> Result<(), BoxError> {
     let mut reached_judge = 0usize;
     let started_all = Instant::now();
     for (position, pair) in pairs.iter().enumerate() {
-        let response = as_cited_answer(&pair.claim);
-        let source = source_for(pair);
+        let names = TurnNames::unstored();
+        let mut source = source_for(pair);
+        name_sources(&names, std::slice::from_mut(&mut source));
+        let reply = ReplyText::read(&names, markers(None), &as_cited_answer(&pair.claim));
         let started = Instant::now();
-        let report = verifier
-            .verify(&response, std::slice::from_ref(&source))
-            .await;
+        let report = verifier.verify(&reply, std::slice::from_ref(&source)).await;
         let latency_ms = started.elapsed().as_secs_f64() * 1000.0;
         let calls = recorder
             .as_ref()

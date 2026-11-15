@@ -125,6 +125,7 @@ use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, ToolDefinition,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::domain::conversation::memory::{
     parse_patch, EvidencePurpose, MemoryItem, MemoryKind, MemoryState, SourceMessage, SourceRole,
     MAX_ACTIVE_ITEMS, MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE, MAX_QUOTE_BYTES,
@@ -709,7 +710,7 @@ impl EvalLlm {
             "review"
         } else if system.contains(prompts::EXTRACTOR_SYSTEM) {
             "extract"
-        } else if system.contains(prompts::SUMMARIZER_SYSTEM) {
+        } else if system.contains(lattice::features::conversation::memory::summarize::FOLD_SYSTEM) {
             "summarize"
         } else {
             "other"
@@ -740,10 +741,10 @@ impl EvalLlm {
         let verdicts: Vec<serde_json::Value> = ids
             .into_iter()
             .map(|id| {
-                serde_json::json!({ "id": id, "verdict": "supported", "reason": "reviewer ablated" })
+                serde_json::json!({ "of": id, "reason": "reviewer ablated", "verdict": "supported" })
             })
             .collect();
-        serde_json::json!({ "verdicts": verdicts }).to_string()
+        serde_json::json!({ "entries": verdicts }).to_string()
     }
 
     async fn intercept(&self, kind: &'static str, prompt: &str) -> Option<Result<String>> {
@@ -782,7 +783,7 @@ impl EvalLlm {
 impl LLMPort for EvalLlm {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let system = request
-            .input
+            .input()
             .iter()
             .find_map(|input| match input {
                 CompletionInput::Message { role, content } if role == "system" => {
@@ -792,7 +793,7 @@ impl LLMPort for EvalLlm {
             })
             .unwrap_or_default();
         let user = request
-            .input
+            .input()
             .iter()
             .find_map(|input| match input {
                 CompletionInput::Message { role, content } if role == "user" => {
@@ -917,6 +918,13 @@ impl LLMPort for EvalLlm {
         self.inner.supports_tool_calling()
     }
 
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
+
     fn provider_name(&self) -> &str {
         self.inner.provider_name()
     }
@@ -988,6 +996,12 @@ impl LLMPort for TwoToolsThenAnswer {
     fn supports_tool_calling(&self) -> bool {
         true
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[async_trait]
@@ -1019,6 +1033,12 @@ impl LLMPort for EmptyThenAnswer {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[tokio::test]
@@ -1030,7 +1050,7 @@ async fn eval_adapter_retries_an_empty_completion_and_records_the_recovery() {
     let adapter = EvalLlm::new(inner.clone(), false, Duration::ZERO, 3, Duration::ZERO);
 
     let response = adapter
-        .complete(&CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .expect("the second attempt should recover");
     assert_eq!(response.text, "recovered");
@@ -1052,7 +1072,7 @@ async fn eval_adapter_reports_when_empty_completion_retries_are_exhausted() {
     let adapter = EvalLlm::new(inner.clone(), false, Duration::ZERO, 3, Duration::ZERO);
 
     let error = adapter
-        .complete(&CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .expect_err("three empty attempts must fail the logical request");
     assert!(error.to_string().contains("after 3 attempts"));
@@ -2892,12 +2912,12 @@ async fn answer_with_tools(
 ) -> String {
     const MAX_TOOL_ITERATIONS: usize = 5;
     for round in 0..MAX_TOOL_ITERATIONS {
-        let request = CompletionRequest {
+        let request = legacy::completion(legacy::Completion {
             input: input.clone(),
             tools: tools.to_vec(),
             time_budget: Some(request_timeout),
             ..Default::default()
-        };
+        });
         let Ok(response) = llm.complete(&request).await else {
             metrics.continuation_failures += 1;
             return String::new();

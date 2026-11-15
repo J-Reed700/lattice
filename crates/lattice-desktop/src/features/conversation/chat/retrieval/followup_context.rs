@@ -12,6 +12,7 @@ use lattice_core::domain::entities::document::Document;
 use lattice_core::shared::text::build_excerpt;
 
 use super::super::document_text::truncate_to_token_budget;
+use super::source_names::marker;
 use super::{infer_category, select_informative_terms, tokenize_keyword_terms};
 
 /// The document an earlier turn discussed, reopened for a follow-up.
@@ -31,13 +32,15 @@ impl FollowupDocument {
         &self,
         sources: &[SourceDto],
     ) -> Option<String> {
-        let label = sources
+        let number = sources
             .iter()
             .find(|source| source.document_id == self.document_id)?
             .citation_id?;
         Some(format!(
-            "[{label}] Document: {}\nDocument ID: {}\nContent: {}",
-            self.file_name, self.document_id, self.content
+            "{} Document: {}\nContent: {}",
+            marker(number),
+            self.file_name,
+            self.content
         ))
     }
 
@@ -45,8 +48,10 @@ impl FollowupDocument {
     /// what it takes of the prompt, counted before the sources are numbered.
     pub(in crate::features::conversation::chat) fn render_for_count(&self) -> String {
         format!(
-            "[0] Document: {}\nDocument ID: {}\nContent: {}",
-            self.file_name, self.document_id, self.content
+            "{} Document: {}\nContent: {}",
+            marker(0),
+            self.file_name,
+            self.content
         )
     }
 }
@@ -191,7 +196,7 @@ pub(super) async fn build_followup_context(
         );
         let shown_chars = shown.chars().count();
         format!(
-            "{shown}\n[The document continues: the first {shown_chars} of its {} characters are shown. Call get_document with document_id=\"{doc_id}\" and offset={shown_chars} to read on.]",
+            "{shown}\n[The document continues: the first {shown_chars} of its {} characters are shown. Call get_document with this document's number to read it.]",
             content.chars().count()
         )
     };
@@ -372,7 +377,9 @@ fn build_followup_sources(
 
 #[cfg(test)]
 mod followup_label_tests {
+    use super::super::source_names::name_sources;
     use super::*;
+    use lattice_core::application::services::model_contract::kept::TurnNames;
 
     fn source(document_id: &str) -> SourceDto {
         SourceDto {
@@ -406,7 +413,7 @@ mod followup_label_tests {
     #[test]
     fn a_followup_behind_an_attachment_is_labelled_two() {
         let mut sources = vec![source("attached"), source("earlier")];
-        super::super::assign_citation_ids(&mut sources);
+        name_sources(&TurnNames::unstored(), &mut sources);
         let document = FollowupDocument {
             document_id: "earlier".to_string(),
             file_name: "earlier.md".to_string(),
@@ -416,7 +423,7 @@ mod followup_label_tests {
         let rendered = document.render(&sources).unwrap_or_default();
 
         assert!(
-            rendered.starts_with("[2] Document: earlier.md\n"),
+            rendered.starts_with("[s2] Document: earlier.md\n"),
             "{rendered}"
         );
     }

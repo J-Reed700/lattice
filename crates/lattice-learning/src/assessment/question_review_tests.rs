@@ -38,23 +38,21 @@ impl LLMPort for Script {
         self.schemas
             .lock()
             .unwrap()
-            .extend(request.json_schema.clone());
+            .extend(request.schema().map(|schema| schema.as_json().clone()));
         let context: Value = serde_json::from_str(user).unwrap_or(Value::Null);
         let reply = match kind {
-            "solve" => {
-                json!({"answers": context["questions"].as_array().into_iter().flatten().map(|q| json!({
-                "index": q["index"],
-                "reason": "The case decides it.",
-                "correctIndices": [(self.solves)(q["index"].as_u64().unwrap_or(0) as usize)],
-                "answer": "", "blankAnswers": [], "matches": [], "orderedValues": []
-            })).collect::<Vec<_>>()})
-            }
-            "judge" => {
-                json!({"checks": context["items"].as_array().into_iter().flatten().map(|item| {
-                let (finding, repeats) = (self.judges)(item);
-                json!({"id": item["id"], "hasDefect": !finding.is_empty(), "finding": finding, "repeats": repeats})
-            }).collect::<Vec<_>>()})
-            }
+            "solve" => crate::key_review::scripted::solved(&context, |q| {
+                let at = q["id"]
+                    .as_str()
+                    .and_then(|id| id.get(1..))
+                    .and_then(|digits| digits.parse::<usize>().ok())
+                    .unwrap_or(1)
+                    - 1;
+                vec![(self.solves)(at)]
+            }),
+            "judge" => crate::assessment::item_review::scripted::judged(&context, |item| {
+                (self.judges)(item)
+            }),
             _ => return Err(AppError::InvalidInput("an unscripted request".into())),
         };
         Ok(CompletionResponse::from_text(reply.to_string()))
@@ -70,6 +68,12 @@ impl LLMPort for Script {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -157,7 +161,7 @@ async fn a_question_whose_key_stands_apart_is_a_finding_at_that_question() -> Re
     let llm = Script::new(
         Script::agreeing(),
         Box::new(|item| {
-            if item["id"] == "new-1" {
+            if item["id"] == "q2" {
                 (STANDS_APART.into(), vec![])
             } else {
                 (String::new(), vec![])
@@ -202,7 +206,7 @@ async fn a_question_that_repeats_an_earlier_one_is_a_finding_on_the_later_one() 
     let llm = Script::new(
         Script::agreeing(),
         Box::new(|item| {
-            if item["id"] == "new-2" {
+            if item["id"] == "q3" {
                 (String::new(), vec!["new-0".into()])
             } else {
                 (String::new(), vec![])
@@ -383,7 +387,7 @@ async fn a_faulted_question_keeps_its_finding_without_another_review() -> Result
     let llm = Script::new(
         Script::agreeing(),
         Box::new(|item| {
-            if item["id"] == "new-1" {
+            if item["id"] == "q2" {
                 (STANDS_APART.into(), vec![])
             } else {
                 (String::new(), vec![])
@@ -461,7 +465,7 @@ fn the_item_review_system_names_the_passage_quote() {
     assert!(!ITEM_REVIEW_SYSTEM.contains("referenceQuote"));
     assert!(ITEM_REVIEW_SYSTEM.contains("the lesson passage it rests on (quote)"));
     assert!(ITEM_REVIEW_SYSTEM.contains("never its quote and never independentSolution"));
-    assert!(ITEM_REVIEW_SYSTEM.contains("quote is one passage of what the learner was taught, not all of it: a statement is not untrue or unsupported because quote does not contain it."));
+    assert!(ITEM_REVIEW_SYSTEM.contains("quote is part of what the learner was taught, not all of it: a statement is not untrue or unsupported because quote does not contain it."));
 }
 
 #[test]

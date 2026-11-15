@@ -289,6 +289,12 @@ impl LLMPort for Recording {
     fn keeps_read_prompts(&self) -> bool {
         self.inner.keeps_read_prompts()
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 
 /// The app's runs: `CodingRuns::start` is `start_coding_run` with the lab's repository, its own run registry and

@@ -53,6 +53,7 @@ pub(super) async fn retrieve_evidence(
             &carried.attachments.sources(),
             evidence.allowance(EvidenceShare::PRIOR_EVIDENCE),
             &turn.llm,
+            &turn.names,
         )
         .await?
     };

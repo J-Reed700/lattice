@@ -232,7 +232,7 @@ fn a_new_finding_about_words_a_repair_worked_on_starts_at_that_repair_s_count() 
 }
 
 #[test]
-fn a_finding_about_words_a_reverted_repair_was_charged_for_starts_at_that_charge() {
+fn a_finding_about_words_a_refused_repair_was_charged_for_starts_at_that_charge() {
     let candidate = serde_json::json!({"blocks":[{"body":"A first sentence. A second sentence."}],"questions":[]});
     let about = |number| {
         ReviewFinding::reviewer(number, Some(FindingSite::Section(0)), "It is wrong.")
@@ -244,7 +244,7 @@ fn a_finding_about_words_a_reverted_repair_was_charged_for_starts_at_that_charge
         passes.next(&candidate, vec![first.clone()]),
         Next::Repair(_)
     ));
-    passes.charge(&first, Outcome::Reverted);
+    passes.charge(&first, refused());
     let again = about(2);
     assert!(matches!(
         passes.next(&candidate, vec![again.clone()]),
@@ -379,8 +379,8 @@ fn a_second_attempt_is_told_what_became_of_the_first() {
         "The last repair's edits for this finding could not be applied: edit 0 first. edit 1 second."
     );
     assert_eq!(
-        told(&mut passes, Outcome::Reverted),
-        "The last repair's edits for this finding changed a sentence that must stay as it is; they were put back."
+        told(&mut passes, refused()),
+        "The last repair's correction for this finding was refused, and none of its edits were applied: A sentence must stay as it is."
     );
     assert_eq!(
         told(&mut passes, Outcome::Unnamed),
@@ -392,15 +392,28 @@ fn a_second_attempt_is_told_what_became_of_the_first() {
     );
 }
 
+/// A correction refused whole for changing a sentence that must stay.
+fn refused() -> Outcome {
+    Outcome::Refused(vec!["A sentence must stay as it is.".into()])
+}
+
+#[test]
+fn an_outcome_saved_as_reverted_is_read_as_applied() {
+    assert_eq!(
+        serde_json::from_str::<Outcome>("\"Reverted\"").unwrap(),
+        Outcome::Applied
+    );
+}
+
 #[test]
 fn what_became_of_the_last_attempt_survives_a_saved_review() {
     let mut passes = Passes::default();
     let finding = section(0, "A");
-    passes.charge(&finding, Outcome::Reverted);
+    passes.charge(&finding, refused());
     let saved = passes.saved().unwrap().to_string();
     let mut resumed = Passes::default();
     resumed.resume(&saved);
-    assert_eq!(resumed.last.get(&finding.id()), Some(&Outcome::Reverted));
+    assert_eq!(resumed.last.get(&finding.id()), Some(&refused()));
     assert_eq!(resumed.spent.get(&finding.id()), Some(&1));
 }
 

@@ -13,6 +13,7 @@ import type {
   ConversationMessageBookmarkDto,
   CreateConversationRequestDto,
   ExplorerFocusDto,
+  ReplyPieceDto,
   SpaceDocumentDto,
   WebPageDto,
 } from '../lib/bindings';
@@ -278,6 +279,8 @@ export interface ConversationMessage {
   status: MessageStatus;
   metadata?: string | null;
   sources?: SourceWithMetadata[];
+  /** The reply as pieces, text and references in reply order. An assistant message has one. */
+  reply?: ReplyPieceDto[] | null;
 }
 
 /**
@@ -334,6 +337,8 @@ export interface OptimisticMessage {
   error?: string;
   /** Pictures found for this answer while it streams, merged by `ref`. */
   images?: ChatImage[];
+  /** The answer so far as pieces: streamed text and references, in reply order. */
+  reply?: ReplyPieceDto[];
   /** Original send options, retained when the unsaved question needs retrying. */
   retryContext?: {
     toolPreferences?: ToolPreferences;

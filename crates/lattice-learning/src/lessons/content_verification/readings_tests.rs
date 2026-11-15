@@ -44,6 +44,12 @@ impl LLMPort for Down {
     async fn is_ready(&self) -> Result<bool> {
         Ok(false)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// What the readers read: a lesson, the course it cites, its examples' runs
@@ -894,6 +900,12 @@ impl LLMPort for Windowed {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -1786,7 +1798,7 @@ struct HeldUntil {
 impl LLMPort for HeldUntil {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let prompt: String = request
-            .input
+            .input()
             .iter()
             .filter_map(|input| match input {
                 lattice_core::application::ports::llm_port::CompletionInput::Message {
@@ -1812,6 +1824,12 @@ impl LLMPort for HeldUntil {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -1901,6 +1919,12 @@ impl LLMPort for Overlap<'_> {
     }
     async fn is_ready(&self) -> Result<bool> {
         self.inner.is_ready().await
+    }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
     }
 }
 
@@ -2007,6 +2031,12 @@ impl LLMPort for Recording {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 

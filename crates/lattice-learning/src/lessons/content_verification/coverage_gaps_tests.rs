@@ -62,6 +62,12 @@ impl LLMPort for JudgingModel {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 
 impl JudgingModel {
@@ -92,7 +98,11 @@ impl JudgingModel {
                     .iter()
                     .any(|passage| passage_text(passage) == self.proposed_passage);
                 if exercise {
-                    response["units"][format!("unit-{}", unit["index"])] = json!({"claims":[],"nonFactualReason":"An exercise instruction: the lesson's own task."});
+                    for entry in response["entries"].as_array_mut().unwrap() {
+                        if entry["of"] == unit["id"] {
+                            *entry = json!({"of":unit["id"],"claims":[],"nonFactualReason":"An exercise instruction: the lesson's own task."});
+                        }
+                    }
                 }
             }
             return Ok(response.to_string());
@@ -113,23 +123,14 @@ impl JudgingModel {
             }
         }
         if prompt.starts_with("Audit claim coverage independently.") {
-            let mut response: Value = serde_json::from_str(&fixture_response(prompt).unwrap())?;
-            for unit in fixture_task(prompt).unwrap()["units"].as_array().unwrap() {
-                for passage in unit["passages"].as_array().unwrap() {
-                    if passage["text"] == self.proposed_passage {
-                        let id = passage["id"].as_str().unwrap();
-                        let entry = response["passages"]
-                            .as_array_mut()
-                            .unwrap()
-                            .iter_mut()
-                            .find(|entry| entry["passageId"] == id)
-                            .unwrap();
-                        entry["missingClaims"] =
-                            json!(["The passage's premise is not in the inventory."]);
-                    }
-                }
-            }
-            return Ok(response.to_string());
+            return Ok(coverage::scripted_decisions(prompt, |text, claims| {
+                let missing = if text == self.proposed_passage {
+                    json!([{"statement":"The passage's premise is not in the inventory."}])
+                } else {
+                    json!([])
+                };
+                json!({"claimIds":claims,"nonFactualReason":"","missingClaims":missing})
+            }));
         }
         if prompt.starts_with("Source passages:")
             && prompt.contains(&format!("\n\nClaim: {}", self.watched_claim))

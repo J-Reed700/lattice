@@ -44,7 +44,7 @@ use syn::{
     Attribute, ImplItem, Item, TraitItem, UseTree,
 };
 
-use crate::{feature_graph, item_attrs, test_only};
+use crate::{feature_graph, item_attrs, model_calls, test_only};
 
 pub const REGENERATE: &str = "bash scripts/check-rust-layer-boundaries.sh --write-baseline";
 
@@ -58,7 +58,9 @@ pub const RAW_PROCESS: &str = "raw-process";
 pub const GLOBAL_STATE: &str = "global-state";
 pub const FILE_LENGTH: &str = "file-length";
 pub const COMPOSITION_ROOT_IMPORT: &str = "composition-root-import";
-const RULES: [&str; 10] = [
+pub const OLD_MODEL_CALL: &str = "old-model-call";
+pub const LEGACY_ITEM_IMPORT: &str = "legacy-item-import";
+const RULES: [&str; 12] = [
     INFRASTRUCTURE_IMPORTS_FEATURE,
     FEATURE_EDGE,
     FEATURE_CYCLE,
@@ -69,10 +71,12 @@ const RULES: [&str; 10] = [
     RAW_PROCESS,
     GLOBAL_STATE,
     FILE_LENGTH,
+    OLD_MODEL_CALL,
+    LEGACY_ITEM_IMPORT,
 ];
 /// Rules held at zero. They never appear in the baseline, so any finding
 /// fails, even while the baseline is being written.
-const ZERO_RULES: [&str; 2] = [FEATURE_EDGE, RAW_PROCESS];
+const ZERO_RULES: [&str; 3] = [FEATURE_EDGE, RAW_PROCESS, LEGACY_ITEM_IMPORT];
 
 const RAW_SPAWNS: [&[&str]; 4] = [
     &["tokio", "spawn"],
@@ -173,6 +177,14 @@ const HEADER: &str = "\
 #                                                         built state, unless a derived constant
 #   file-length <file> max-1000-lines                     files over 1000 lines, except tests.rs,
 #                                                         *_tests.rs and files under tests/
+#   old-model-call <file> <legacy|answer>                 uses of model_contract::legacy (written
+#                                                         `legacy::...`) and calls of model_contract's
+#                                                         `answer`, outside test code; the legacy
+#                                                         module's own file is not counted
+#   legacy-item-import <file> legacy                      an item, glob or renamed import out of
+#                                                         model_contract::legacy; held at zero, so
+#                                                         never listed here. Import the module and
+#                                                         write `legacy::...`
 ";
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -463,7 +475,7 @@ pub fn length_findings(root: &Path, prefix: &str) -> Result<Vec<Finding>, Error>
 }
 
 /// Test-only by name: `tests.rs`, `*_tests.rs`, or a file under `tests/`.
-fn test_only_file(relative: &str) -> bool {
+pub(crate) fn test_only_file(relative: &str) -> bool {
     let mut parts = relative.rsplit('/');
     let name = parts.next().unwrap_or_default();
     name == "tests.rs" || name.ends_with("_tests.rs") || parts.any(|part| part == "tests")
@@ -582,6 +594,7 @@ pub fn file_findings(file: &SourceFile, modules: &HashSet<Vec<String>>) -> Vec<F
             location: at(line),
         });
     }
+    found.extend(model_calls::findings(file));
     found
 }
 
@@ -1443,12 +1456,20 @@ fn check_feature_graph(current: &Current, path: &Path, failures: &mut usize) {
 fn check_zero_rules(current: &Counts, found: &[Finding], failures: &mut usize) {
     for (key, count) in current.iter().filter(|(key, _)| held_at_zero(key)) {
         *failures += 1;
-        eprintln!(
-            "VIOLATION: {key}: {count} reference(s); {} is held at zero. Depend on a core \
-             port or move the code; only one feature built on a lower-level one may be \
-             allowed in feature-graph.txt",
-            key.rule
-        );
+        if key.rule == LEGACY_ITEM_IMPORT {
+            eprintln!(
+                "VIOLATION: {key}: {count} import(s); import the module \
+                 (`use ...::model_contract::legacy;`) and write `legacy::...` at every use, \
+                 never an item, a glob or `legacy as other`: those hide uses from old-model-call"
+            );
+        } else {
+            eprintln!(
+                "VIOLATION: {key}: {count} reference(s); {} is held at zero. Depend on a core \
+                 port or move the code; only one feature built on a lower-level one may be \
+                 allowed in feature-graph.txt",
+                key.rule
+            );
+        }
         for finding in found.iter().filter(|finding| finding.key == *key) {
             eprintln!("    at {}", finding.location);
         }

@@ -14,11 +14,14 @@ use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionRe
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::Result;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
+
+#[cfg(test)]
+mod tests;
 
 /// A finished generation and its step, still open so the caller can say what
 /// the round came to.
@@ -79,8 +82,12 @@ pub(super) async fn generate<'r>(
             }
             Ok(())
         };
-        // A provider-level retry is its own step, so the answer bubble keeps its text.
+        // A provider-level retry is its own step, so the answer bubble keeps its text;
+        // a half marker the failed attempt left is text, and the retry starts a new round.
         let on_retry = |attempt: usize| {
+            emitter.flush()?;
+            *filter.lock().unwrap_or_else(PoisonError::into_inner) =
+                LeakedCallFilter::new(written_calls);
             if let Ok(mut progress) = reasoning_progress.lock() {
                 progress.reset();
             }
@@ -148,6 +155,7 @@ pub(super) async fn generate<'r>(
         emitter.content(DECLINED_NOTE)?;
         response.text.push_str(DECLINED_NOTE);
     }
+    emitter.flush()?;
     Ok(Generation { response, step })
 }
 

@@ -1,72 +1,101 @@
-//! A citation marker means something only in the turn that wrote it: each turn
-//! numbers its passages afresh.
+//! The numbered form (`[n]`, `[n, m]`) of messages saved before handles existed,
+//! read where it stands outside code and formulas, and nothing else: each turn
+//! numbered its passages afresh, so a number means something only with the
+//! sources saved beside its message.
 
-use super::markdown_math::map_prose;
+use std::ops::Range;
+
+use super::markdown_math::split_at_formulas;
 use super::text::segmentation::{code_fences, CodeFence};
 
-/// `text` without its `[n]` and `[n, m]` markers and the spaces before them.
-/// Code is left as written, a formula's brackets are its own (`$a[1]$`), and
-/// `[1](url)` is a link.
-pub fn without_citation_markers(text: &str) -> String {
+/// One `[n]` or `[n, m]` marker of a message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OldMarker<'a> {
+    /// The marker's bytes in the text, brackets included.
+    pub range: Range<usize>,
+    /// Where the spaces and tabs just before the marker begin (the marker's own
+    /// start when there are none), never earlier than the text since the last
+    /// marker or code span.
+    pub spaces_from: usize,
+    /// The labels between the brackets, each digits only.
+    pub labels: Vec<&'a str>,
+}
+
+/// Every marker of `text`, in order. Code is left as written, a formula's
+/// brackets are its own (`$a[1]$`), and `[1](url)` is a link.
+pub fn old_markers(text: &str) -> Vec<OldMarker<'_>> {
     let fences: Vec<_> = code_fences(text).iter().map(CodeFence::whole).collect();
+    let mut found = Vec::new();
     let mut start = 0;
-    text.split_inclusive('\n')
-        .map(|line| {
-            let at = start;
-            start += line.len();
-            if fences.iter().any(|whole| whole.contains(&at)) {
-                line.to_owned()
-            } else {
-                map_prose(line, outside_inline_code)
+    for line in text.split_inclusive('\n') {
+        let at = start;
+        start += line.len();
+        if fences.iter().any(|whole| whole.contains(&at)) {
+            continue;
+        }
+        let mut offset = at;
+        for (piece, formula) in split_at_formulas(line) {
+            if !formula {
+                markers_outside_inline_code(piece, offset, &mut found);
             }
-        })
-        .collect()
-}
-
-fn outside_inline_code(text: &str) -> String {
-    text.split('`')
-        .enumerate()
-        .map(|(index, part)| {
-            if index % 2 == 0 {
-                stripped(part)
-            } else {
-                part.to_owned()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("`")
-}
-
-fn stripped(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(open) = rest.find('[') {
-        let before = rest.get(..open).unwrap_or_default();
-        let from = rest.get(open..).unwrap_or_default();
-        match marker_length(from) {
-            Some(length) => {
-                out.push_str(before.trim_end_matches([' ', '\t']));
-                rest = from.get(length..).unwrap_or_default();
-            }
-            None => {
-                out.push_str(before);
-                out.push('[');
-                rest = from.get(1..).unwrap_or_default();
-            }
+            offset += piece.len();
         }
     }
-    out.push_str(rest);
+    found
+}
+
+/// `text` without its markers and the spaces before them.
+pub fn without_citation_markers(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut at = 0;
+    for marker in old_markers(text) {
+        out.push_str(text.get(at..marker.spaces_from).unwrap_or_default());
+        at = marker.range.end;
+    }
+    out.push_str(text.get(at..).unwrap_or_default());
     out
 }
 
-/// How long the marker `text` opens with is, if it opens with one.
-fn marker_length(text: &str) -> Option<usize> {
+fn markers_outside_inline_code<'a>(piece: &'a str, offset: usize, found: &mut Vec<OldMarker<'a>>) {
+    let mut at = offset;
+    for (index, part) in piece.split('`').enumerate() {
+        if index % 2 == 0 {
+            markers_in(part, at, found);
+        }
+        at += part.len() + 1;
+    }
+}
+
+fn markers_in<'a>(part: &'a str, at: usize, found: &mut Vec<OldMarker<'a>>) {
+    let mut pos = 0;
+    let mut floor = 0;
+    while let Some(relative) = part.get(pos..).and_then(|rest| rest.find('[')) {
+        let open = pos + relative;
+        match part.get(open..).and_then(marker) {
+            Some((labels, length)) => {
+                let before = part.get(floor..open).unwrap_or_default();
+                let spaces = before.len() - before.trim_end_matches([' ', '\t']).len();
+                found.push(OldMarker {
+                    range: at + open..at + open + length,
+                    spaces_from: at + open - spaces,
+                    labels: labels.split(',').map(str::trim).collect(),
+                });
+                pos = open + length;
+                floor = pos;
+            }
+            None => pos = open + 1,
+        }
+    }
+}
+
+/// The labels of the marker `text` opens with and its length, if it opens with one.
+fn marker(text: &str) -> Option<(&str, usize)> {
     let (labels, after) = text.strip_prefix('[')?.split_once(']')?;
     let numbered = labels
         .split(',')
         .map(str::trim)
         .all(|label| !label.is_empty() && label.bytes().all(|byte| byte.is_ascii_digit()));
-    (numbered && !after.starts_with('(')).then_some(labels.len() + 2)
+    (numbered && !after.starts_with('(')).then_some((labels, labels.len() + 2))
 }
 
 #[cfg(test)]
@@ -118,5 +147,17 @@ mod tests {
     fn a_link_and_other_brackets_are_not_markers() {
         let answer = "See [1](https://example.com), [note], [] and [1a].";
         assert_eq!(without_citation_markers(answer), answer);
+    }
+
+    #[test]
+    fn each_marker_is_found_with_its_place_and_labels() {
+        let text = "A [2] and [1, 3]. `x[4]` $a[5]$ [6](u)";
+        let found = old_markers(text);
+        let places: Vec<(&str, Vec<&str>)> = found
+            .iter()
+            .map(|marker| (&text[marker.range.clone()], marker.labels.clone()))
+            .collect();
+        assert_eq!(places, vec![("[2]", vec!["2"]), ("[1, 3]", vec!["1", "3"])]);
+        assert_eq!(&text[found[0].spaces_from..found[0].range.end], " [2]");
     }
 }

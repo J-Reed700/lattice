@@ -187,7 +187,7 @@ fn prompts_outside_the_tutor_are_unchanged() {
     let digest = format!("{:x}", Sha256::digest(prompts.join("\u{0}")));
     assert_eq!(
         digest,
-        "446432fefdeb1630aca0419cb828bb57bbec79f51c9af127e698b4f2e97b9384"
+        "4a0559a7304d66293c7db4c7d3698225385d1d552a5469923ff0cfbd8b521ac3"
     );
 }
 

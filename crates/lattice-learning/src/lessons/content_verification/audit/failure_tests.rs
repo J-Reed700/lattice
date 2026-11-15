@@ -165,13 +165,12 @@ async fn a_claim_too_large_for_one_request_is_judged_in_parts_by_passage() {
         })
         .unwrap();
     assert!(!fits_at(&harness, window, &[part(vec![0, 1])]));
-    let llm = ScriptedVerifier::answering(window, |_, passages| {
-        let supporting = passages
+    let llm = ScriptedVerifier::answering(window, |_, sentences| {
+        let supporting = sentences
             .iter()
             .find(|(_, text)| text.starts_with("Water boils"));
         match supporting {
-            Some((label, _)) => json!({"verdict": "supported",
-                "passagesUsed": [{"passage": label, "quote": "Water boils at 100 °C at sea level."}]}),
+            Some((handle, _)) => json!({"verdict": "supported", "sentencesUsed": [handle]}),
             None => json!({"verdict": "unsupported"}),
         }
     });
@@ -462,7 +461,7 @@ async fn a_service_outage_during_an_audit_defers_instead_of_failing() {
 }
 
 #[tokio::test]
-async fn an_audit_item_correction_quotes_the_refusal() {
+async fn an_unreadable_audit_answer_is_told_so_when_asked_again() {
     let harness = Harness::new(vec![verified("a", BOILS)]);
     let llm = ScriptedVerifier::new(BIG, |request, call| {
         Ok(CompletionResponse::from_text(if call == 1 {
@@ -477,11 +476,7 @@ async fn an_audit_item_correction_quotes_the_refusal() {
     assert!(outcome.publishable());
     let second = llm.user_texts().remove(1);
     assert!(
-        second.contains("That answer could not be used:"),
-        "{second}"
-    );
-    assert!(
-        second.contains("the answer is not the audit's JSON"),
+        second.contains("Your answer could not be read."),
         "{second}"
     );
 }

@@ -20,6 +20,9 @@ pub mod reference_collection;
 pub(crate) mod repeats;
 pub mod review_evidence;
 pub mod review_findings;
+pub(crate) mod rows;
+#[cfg(test)]
+mod rows_tests;
 #[cfg(test)]
 mod sentence_identity_tests;
 pub(crate) mod shape;

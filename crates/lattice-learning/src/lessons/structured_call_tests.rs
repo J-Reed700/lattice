@@ -7,7 +7,16 @@ use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
 use lattice_core::application::services::grounded_generation;
-use lattice_core::application::services::model_contract::{Contract, ContractId, PromptInput};
+use lattice_core::application::services::model_contract::ask::{Alone, Answered, Says};
+use lattice_core::application::services::model_contract::shape::Value as One;
+use lattice_core::application::services::model_contract::shown::{Scope, Showing};
+use lattice_core::application::services::model_contract::test_support::samples::{
+    Input as NoteInput, Note, SampleValue,
+};
+use lattice_core::application::services::model_contract::test_support::taint::Marks;
+use lattice_core::application::services::model_contract::{
+    legacy, Contract, ContractId, PromptInput,
+};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -80,7 +89,7 @@ impl LLMPort for Recorder {
         if let Ok(mut sent) = self.sent.lock() {
             sent.push(request.clone());
         }
-        if request.json_schema.is_none() {
+        if request.schema().is_none() {
             return Ok(self.draft.clone());
         }
         if let Some(first) = self
@@ -120,6 +129,12 @@ impl LLMPort for Recorder {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -167,7 +182,7 @@ async fn call(llm: &Recorder, kind: CallKind) -> Result<String> {
 
 fn messages(request: &CompletionRequest) -> Vec<(&str, &str)> {
     request
-        .input
+        .input()
         .iter()
         .filter_map(|item| match item {
             CompletionInput::Message { role, content } => Some((role.as_str(), content.as_str())),
@@ -201,12 +216,12 @@ async fn the_draft_is_answered_from_under_the_schema_with_no_format_named() -> R
     let (draft, structured) = (&sent[0], &sent[1]);
     let system = two_step_system();
 
-    assert_eq!(draft.json_schema, None);
+    assert!(draft.schema().is_none());
     assert!(
         draft.sampling.is_none(),
         "the draft samples as the chat does"
     );
-    assert_eq!(draft.max_output_tokens, Some(1000));
+    assert_eq!(draft.max_output_tokens(), Some(1000));
     assert_eq!(
         messages(draft),
         vec![("system", system.as_str()), ("user", PROMPT)]
@@ -214,14 +229,18 @@ async fn the_draft_is_answered_from_under_the_schema_with_no_format_named() -> R
 
     // The answer step continues the draft's conversation, so it opens with
     // exactly the messages the server has just read.
-    assert_eq!(structured.json_schema, Some(schema()));
+    assert_eq!(
+        structured.schema().map(|schema| schema.as_json()),
+        Some(&schema())
+    );
+    let answer_step = answer_step_task();
     assert_eq!(
         messages(structured),
         vec![
             ("system", system.as_str()),
             ("user", PROMPT),
             ("assistant", DRAFT),
-            ("user", ANSWER_STEP),
+            ("user", answer_step.as_str()),
         ]
     );
     let sampling = structured.sampling.unwrap_or_default();
@@ -247,7 +266,10 @@ async fn a_window_without_room_for_a_draft_answers_in_one_step() -> Result<()> {
     assert_eq!(call(&llm, CallKind::Authoring).await?, ANSWER);
     let sent = llm.sent();
     assert_eq!(sent.len(), 1);
-    assert_eq!(sent[0].json_schema, Some(schema()));
+    assert_eq!(
+        sent[0].schema().map(|schema| schema.as_json()),
+        Some(&schema())
+    );
     assert_eq!(
         messages(&sent[0]),
         vec![("system", SYSTEM), ("user", PROMPT)]
@@ -265,8 +287,11 @@ async fn an_answer_step_only_the_exact_count_rejects_falls_back_to_one_step() ->
     assert_eq!(call(&llm, CallKind::Authoring).await?, ANSWER);
     let sent = llm.sent();
     assert_eq!(sent.len(), 2);
-    assert_eq!(sent[0].json_schema, None);
-    assert_eq!(sent[1].json_schema, Some(schema()));
+    assert_eq!(sent[0].schema().map(|schema| schema.as_json()), None);
+    assert_eq!(
+        sent[1].schema().map(|schema| schema.as_json()),
+        Some(&schema())
+    );
     assert_eq!(
         messages(&sent[1]),
         vec![("system", SYSTEM), ("user", PROMPT)]
@@ -297,7 +322,10 @@ async fn a_model_that_thinks_before_answering_is_asked_in_one_step() -> Result<(
     assert_eq!(call(&llm, CallKind::Authoring).await?, ANSWER);
     let sent = llm.sent();
     assert_eq!(sent.len(), 1);
-    assert_eq!(sent[0].json_schema, Some(schema()));
+    assert_eq!(
+        sent[0].schema().map(|schema| schema.as_json()),
+        Some(&schema())
+    );
     assert_eq!(
         messages(&sent[0]),
         vec![("system", SYSTEM), ("user", PROMPT)]
@@ -341,8 +369,8 @@ async fn a_draft_that_ran_out_of_room_falls_back_to_the_one_step_request() -> Re
         "the draft, the draft with twice the room, the answer"
     );
     assert_eq!(
-        sent[1].max_output_tokens,
-        sent[0].max_output_tokens.map(|tokens| tokens * 2)
+        sent[1].max_output_tokens(),
+        sent[0].max_output_tokens().map(|tokens| tokens * 2)
     );
     assert_eq!(
         messages(&sent[2]),
@@ -393,7 +421,10 @@ async fn a_lesson_job_interrupted_before_the_answer_resumes_from_its_saved_draft
     assert_eq!(answer, ANSWER);
     let sent = resumed.sent();
     assert_eq!(sent.len(), 1, "the saved draft is not written again");
-    assert_eq!(sent[0].json_schema, Some(schema()));
+    assert_eq!(
+        sent[0].schema().map(|schema| schema.as_json()),
+        Some(&schema())
+    );
     assert!(messages(&sent[0]).contains(&("assistant", DRAFT)));
     Ok(())
 }
@@ -419,28 +450,31 @@ async fn a_draft_whose_answer_cannot_be_read_is_written_again_on_retry() -> Resu
 
 #[test]
 fn the_fixture_view_of_an_answer_step_is_the_one_step_task() {
-    let input = |messages: &[(&str, &str)]| CompletionRequest {
-        input: messages
-            .iter()
-            .map(|(role, content)| CompletionInput::Message {
-                role: (*role).into(),
-                content: (*content).into(),
-            })
-            .collect(),
-        json_schema: Some(schema()),
-        ..Default::default()
+    let input = |messages: &[(&str, &str)]| {
+        legacy::completion(legacy::Completion {
+            input: messages
+                .iter()
+                .map(|(role, content)| CompletionInput::Message {
+                    role: (*role).into(),
+                    content: (*content).into(),
+                })
+                .collect(),
+            json_schema: Some(schema()),
+            ..Default::default()
+        })
     };
     let system = two_step_system();
+    let answer_step = answer_step_task();
     let answer = input(&[
         ("system", system.as_str()),
         ("user", PROMPT),
         ("assistant", DRAFT),
-        ("user", ANSWER_STEP),
+        ("user", answer_step.as_str()),
     ]);
     assert_eq!(task_messages(&answer), (SYSTEM, PROMPT));
     assert!(!is_draft_request(&answer));
     let mut draft = input(&[("system", system.as_str()), ("user", PROMPT)]);
-    draft.json_schema = None;
+    *legacy::says(&mut draft).schema = None;
     assert!(is_draft_request(&draft));
     let direct = input(&[("system", SYSTEM), ("user", PROMPT)]);
     assert_eq!(task_messages(&direct), (SYSTEM, PROMPT));
@@ -516,6 +550,12 @@ impl LLMPort for TruncatesOnce {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[tokio::test]
@@ -528,8 +568,8 @@ async fn an_answer_cut_at_its_output_limit_is_asked_for_once_more_with_twice_the
     assert_eq!(raw, ANSWER);
     let sent = llm.sent.lock().unwrap();
     assert_eq!(sent.len(), 2);
-    let first = sent[0].max_output_tokens.unwrap();
-    assert_eq!(sent[1].max_output_tokens.unwrap(), 2 * first);
+    let first = sent[0].max_output_tokens().unwrap();
+    assert_eq!(sent[1].max_output_tokens().unwrap(), 2 * first);
     Ok(())
 }
 
@@ -582,7 +622,10 @@ async fn a_refused_answer_is_asked_for_once_more_with_the_reason() -> Result<()>
     // The request asking again opens with every message of the first, so the
     // server reuses what it has just read.
     assert_eq!(messages(&sent[0]), messages(&sent[1])[..2].to_vec());
-    assert_eq!(sent[1].json_schema, Some(schema()));
+    assert_eq!(
+        sent[1].schema().map(|schema| schema.as_json()),
+        Some(&schema())
+    );
     assert_eq!(task_messages(&sent[1]), (SYSTEM, PROMPT));
     Ok(())
 }
@@ -744,6 +787,7 @@ async fn a_two_step_call_asks_again_for_its_answer_step_only() -> Result<()> {
         1
     );
     let system = two_step_system();
+    let answer_step = answer_step_task();
     let reason = reask("The answer {} explains nothing.");
     assert_eq!(
         messages(&sent[2]),
@@ -751,7 +795,7 @@ async fn a_two_step_call_asks_again_for_its_answer_step_only() -> Result<()> {
             ("system", system.as_str()),
             ("user", PROMPT),
             ("assistant", DRAFT),
-            ("user", ANSWER_STEP),
+            ("user", answer_step.as_str()),
             ("assistant", "{}"),
             ("user", reason.as_str()),
         ]
@@ -908,4 +952,232 @@ async fn a_correction_that_overflows_the_window_of_an_unpacked_call_is_an_unusab
         "{error:?}"
     );
     assert_eq!(llm.sent().len(), 1, "no correction was sent");
+}
+
+fn authoring() -> Option<ReasonFirst<'static>> {
+    Some(ReasonFirst {
+        kind: CallKind::Authoring,
+        subject: "the explanation",
+        brief: BRIEF,
+    })
+}
+
+fn asking(reasoning: Option<ReasonFirst<'static>>) -> Asking<'static> {
+    Asking {
+        progress: None,
+        reasoning,
+    }
+}
+
+fn draft_requests(sent: &[CompletionRequest]) -> usize {
+    sent.iter()
+        .filter(|request| is_draft_request(request))
+        .count()
+}
+
+#[tokio::test]
+async fn a_layer_request_is_drafted_then_answered_from_its_draft() -> Result<()> {
+    let llm = Recorder::new(32_000);
+    let sent = ask::Transport::send(&asking(authoring()), &llm, first_request()).await?;
+    assert_eq!(sent.text, ANSWER);
+
+    let requests = llm.sent();
+    assert_eq!(requests.len(), 2, "one prose step, one answer step");
+    assert!(is_draft_request(&requests[0]));
+    assert!(!is_draft_request(&requests[1]));
+    assert_eq!(sent.request.task(), answer_step_task());
+    assert!(sent
+        .request
+        .history()
+        .iter()
+        .any(|item| item.role == "assistant" && item.content == DRAFT));
+    assert!(messages(&requests[1]).contains(&("assistant", DRAFT)));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_layer_request_without_reasoning_is_sent_in_one_step() -> Result<()> {
+    let llm = Recorder::new(32_000);
+    let request = first_request();
+    let sent = ask::Transport::send(&asking(None), &llm, request.clone()).await?;
+    assert_eq!(sent.text, ANSWER);
+
+    let requests = llm.sent();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        messages(&requests[0]),
+        vec![("system", SYSTEM), ("user", PROMPT)]
+    );
+    assert_eq!(sent.request.instructions(), request.instructions());
+    assert_eq!(sent.request.task(), request.task());
+    assert_eq!(sent.request.history().len(), request.history().len());
+    assert_eq!(sent.request.output_tokens(), request.output_tokens());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_thinking_layer_request_is_asked_in_one_step() -> Result<()> {
+    let mut llm = Recorder::new(32_000);
+    llm.thinks = true;
+    ask::Transport::send(&asking(authoring()), &llm, first_request()).await?;
+    let requests = llm.sent();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        messages(&requests[0]),
+        vec![("system", SYSTEM), ("user", PROMPT)]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_declined_draft_is_answered_in_one_step() -> Result<()> {
+    let mut llm = Recorder::new(32_000);
+    llm.draft = CompletionResponse {
+        text: "Sunlight scatters".into(),
+        finish_reason: "refusal".into(),
+        ..Default::default()
+    };
+    let request = first_request();
+    let sent = ask::Transport::send(&asking(authoring()), &llm, request.clone()).await?;
+    assert_eq!(sent.text, ANSWER);
+
+    let requests = llm.sent();
+    assert_eq!(requests.len(), 2, "the draft, then the one-step request");
+    assert_eq!(
+        messages(&requests[1]),
+        vec![("system", SYSTEM), ("user", PROMPT)]
+    );
+    assert_eq!(sent.request.task(), request.task());
+    assert!(sent.request.history().is_empty());
+    Ok(())
+}
+
+/// Cuts its first prose step off at the output limit and completes the second.
+struct CutsDraftOnce {
+    sent: Mutex<Vec<CompletionRequest>>,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for CutsDraftOnce {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let mut sent = self.sent.lock().unwrap();
+        sent.push(request.clone());
+        if request.schema().is_some() {
+            return Ok(CompletionResponse::from_text(ANSWER));
+        }
+        if sent.len() == 1 {
+            return Ok(CompletionResponse {
+                text: "Sunlight scatters off air molecules, and".into(),
+                finish_reason: "length".into(),
+                ..Default::default()
+            });
+        }
+        Ok(CompletionResponse::from_text(DRAFT))
+    }
+    fn model_name(&self) -> &str {
+        "cuts-draft-once"
+    }
+    fn max_context_tokens(&self) -> usize {
+        128_000
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len() / 4
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
+}
+
+#[tokio::test]
+async fn a_cut_off_draft_is_asked_for_once_more_with_twice_the_room() -> Result<()> {
+    let llm = CutsDraftOnce {
+        sent: Mutex::new(Vec::new()),
+    };
+    let sent = ask::Transport::send(&asking(authoring()), &llm, first_request()).await?;
+    assert_eq!(sent.text, ANSWER);
+
+    let requests = llm.sent.lock().unwrap();
+    assert_eq!(
+        requests.len(),
+        3,
+        "the draft, the draft with twice the room, the answer"
+    );
+    assert!(is_draft_request(&requests[0]) && is_draft_request(&requests[1]));
+    assert_eq!(
+        requests[1].max_output_tokens(),
+        requests[0].max_output_tokens().map(|tokens| tokens * 2)
+    );
+    assert!(messages(&requests[2]).contains(&("assistant", DRAFT)));
+    Ok(())
+}
+
+/// A contract of the layer whose request carries no evidence, so it can be drafted.
+struct Brief;
+
+impl Contract for Brief {
+    const ID: ContractId = ContractId::new("structured-call-brief");
+    type Input = NoteInput;
+}
+
+impl Answered for Brief {
+    type Answer = One<Note>;
+    const ALONE: Alone = Alone::Pending;
+
+    fn says(_input: &NoteInput, _showing: &mut Showing<'_>) -> Result<Says> {
+        Ok(Says::new(SYSTEM, "Write one note about the tide tables."))
+    }
+}
+
+#[tokio::test]
+async fn a_follow_up_is_sent_as_the_one_step_it_is() -> Result<()> {
+    let llm = Recorder::answering_first(32_000, &["not an answer"]);
+    let input = SampleValue::fixture(&mut Marks::new());
+    ask::ask::<Brief>(
+        &llm,
+        &asking(authoring()),
+        &mut Scope::for_question(),
+        &input,
+        &model_call::answer_options(),
+    )
+    .await?;
+
+    let requests = llm.sent();
+    assert_eq!(requests.len(), 3, "the draft, the answer, the follow-up");
+    assert!(is_draft_request(&requests[0]));
+    assert!(!is_draft_request(&requests[1]));
+    assert!(!is_draft_request(&requests[2]));
+    let (answered, followed) = (messages(&requests[1]), messages(&requests[2]));
+    assert!(followed.len() > answered.len());
+    assert_eq!(answered, followed[..answered.len()].to_vec());
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_unanswered_request_lets_its_saved_draft_go() -> Result<()> {
+    for (unanswered, drafts) in [(false, 1), (true, 2)] {
+        let (database, jobs, job_id, lesson) = lesson_job().await?;
+        let llm = Recorder::new(32_000);
+        let transport = asking(authoring());
+        lesson_drafts::run(&database, &jobs, &job_id, &lesson, async {
+            let request = first_request();
+            ask::Transport::send(&transport, &llm, request.clone()).await?;
+            if unanswered {
+                ask::Transport::unanswered(&transport, &llm, &request).await?;
+            }
+            ask::Transport::send(&transport, &llm, request).await
+        })
+        .await?;
+        assert_eq!(
+            draft_requests(&llm.sent()),
+            drafts,
+            "unanswered: {unanswered}"
+        );
+    }
+    Ok(())
 }

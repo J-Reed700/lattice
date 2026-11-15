@@ -19,6 +19,7 @@ import { RetrievalTraceSchema, TurnModelSchema, TurnStepSchema } from '@/types/c
 import { ChatStreamStatus } from '@/types/events';
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
 import { createFrameBatcher } from '@/utils/frameBatcher';
+import { extendReply, textPiece, writtenOf, type ReplyPiece } from '@/utils/replyPieces';
 
 import {
   applyCapturedSources, applyVerificationPatch, type CapturedSourcesPatch, isCapturePending,
@@ -170,18 +171,19 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
     };
 
     let unlisten: (() => void) | undefined;
-    let pendingStreamContent = '';
+    let pendingStreamParts: ReplyPiece[] = [];
     const flushStreamContent = () => {
-      const content = pendingStreamContent;
-      pendingStreamContent = '';
-      if (!content || lifecycleCancelled) return;
+      const parts = pendingStreamParts;
+      pendingStreamParts = [];
+      if (parts.length === 0 || lifecycleCancelled) return;
       conversationUiStore.setState(current => {
         const optimisticMessages = new Map(current.optimisticMessages);
         const existing = optimisticMessages.get(assistantTempId);
         if (!existing) return current;
         optimisticMessages.set(assistantTempId, {
           ...existing,
-          content: existing.content + content,
+          content: existing.content + parts.map(writtenOf).join(''),
+          reply: extendReply(existing.reply ?? [], parts),
         });
         return { optimisticMessages };
       });
@@ -201,7 +203,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
     let unregisterLifecycle: (() => void) | undefined;
     const disposeResources = () => {
       disposed = true;
-      pendingStreamContent = '';
+      pendingStreamParts = [];
       streamBatcher.cancel();
       if (verificationTimer) clearTimeout(verificationTimer);
       unlisten?.();
@@ -316,8 +318,13 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
         // A retry is a step of its own now. It used to arrive as text and
         // overwrite the bubble, so a turn that recovered showed the retry
         // notice where its answer should have been.
+        if (payload.reference) {
+          pendingStreamParts.push({ type: 'reference', reference: payload.reference });
+          streamBatcher.schedule();
+          return;
+        }
         if (!payload.content) return;
-        pendingStreamContent += payload.content;
+        pendingStreamParts.push(textPiece(payload.content));
         streamBatcher.schedule();
       });
 

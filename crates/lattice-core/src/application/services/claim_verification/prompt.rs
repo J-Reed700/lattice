@@ -32,11 +32,7 @@ impl ClaimChecker<'_> {
             base.push_str(" End with a third line: Verdict: supported, contradicted, or unsupported. Choose this final label from the completed factual comparison, never before it. If the comparison identifies a missing fact or incompatible fact, the final label cannot be supported.");
         }
         let system = if self.policy.strict() {
-            let citation = if located {
-                "Select one supplied passage-N identifier after Source passage:; the application attaches its exact original text. A supported or contradicted verdict requires a valid identifier and explicit reason. Do not quote the passage yourself."
-            } else {
-                "A valid quotation and an explicit reason are required for any factual finding. Preserve whitespace inside code and data exactly."
-            };
+            let citation = "Select one supplied passage-N identifier after Source passage:; the application attaches its exact original text. A supported or contradicted verdict requires a valid identifier and explicit reason. Do not quote the passage yourself.";
             format!("{base} For this strict check, inspect every supplied passage for conflicting evidence. If sources conflict on the scoped claim and the conflict cannot be resolved from their text, answer unsupported and explain the conflict. For words such as always, never, all, ensures and guarantees, actively check documented exceptions and missing conditions. Do not turn a recommendation into a universal requirement, or a guarantee about one input/property into a guarantee about the overall outcome. A guarantee about one property does not establish every claimed consequence. If the passages leave the scope or a required condition ambiguous, answer unsupported. Compare the precise relationship asserted, not just the named things: establishing that something exists does not establish every claimed property or observation about it. For a list, check every item and the conditions under which that list applies. A general statement about a subject does not establish each claimed detail. Missing definitions, unstated properties and support for only part of a claim are unsupported, never contradicted: absence is not an opposing fact. If your reason says the source does not state or confirm a required fact, your label must be unsupported. {citation}")
         } else {
             base
@@ -61,7 +57,7 @@ impl ClaimChecker<'_> {
     /// The request that asks `system` and `prompt`. `reasoned`: the check
     /// reasons before it answers, so no first-token probabilities are asked.
     pub(super) fn request(&self, system: &str, prompt: &str, reasoned: bool) -> CompletionRequest {
-        CompletionRequest {
+        legacy::completion(legacy::Completion {
             input: vec![
                 CompletionInput::Message {
                     role: "system".into(),
@@ -97,7 +93,7 @@ impl ClaimChecker<'_> {
             // whoever is waiting on the model, ahead of upkeep.
             priority: InferencePriority::Verification,
             ..Default::default()
-        }
+        })
     }
 }
 

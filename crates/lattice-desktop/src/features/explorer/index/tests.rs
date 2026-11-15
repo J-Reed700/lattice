@@ -4,6 +4,7 @@ use super::run::{Indexer, Limits, Outcome, Pace, StatusCell};
 use super::search::FolderHit;
 use super::store;
 use super::tool;
+use crate::features::explorer::file_refs::FileNames;
 use crate::features::explorer::prompt::{self, ExplorerTurn, FolderPassages};
 use crate::features::explorer::scope::Scope;
 use crate::features::explorer::tools;
@@ -22,6 +23,7 @@ use lattice_core::application::ports::hybrid_search::{HybridSearchFactory, Hybri
 use lattice_core::application::ports::vector_search_port::VectorSearchPort;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::application::ports::TextSearchPort;
+use lattice_core::application::services::model_contract::kept::TurnNames;
 use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobRecord, JobRuntime, JobStatus};
 use lattice_core::shared::Result;
@@ -42,6 +44,14 @@ impl EmbedderSource for Source {
             .clone()
             .map(|embedder| embedder as Arc<dyn EmbeddingPort>)
     }
+}
+
+fn names() -> Arc<TurnNames> {
+    Arc::new(TurnNames::unstored())
+}
+
+fn file_names() -> FileNames {
+    FileNames::new(names())
 }
 
 fn write(root: &Path, relative: &str, contents: &str) {
@@ -830,10 +840,16 @@ mod search {
             Some("src/parser.rs")
         );
 
-        let out = tool::run(&search, &json!({"query": "parse tokens"}), 2_000)
-            .await
-            .unwrap();
-        assert!(out.contains("`src/parser.rs:1-"), "{out}");
+        let out = tool::run(
+            &search,
+            &file_names(),
+            &json!({"query": "parse tokens"}),
+            2_000,
+        )
+        .await
+        .unwrap();
+        assert!(out.contains("[f1:1-"), "{out}");
+        assert!(out.contains("] src/parser.rs\n"), "{out}");
         let recorded = calls.lock().clone();
         assert_eq!(recorded.len(), 2, "search_folder asked the hybrid search");
         assert_eq!(recorded[1].scope, None, "no path searches the whole folder");
@@ -1218,18 +1234,17 @@ mod model {
     }
 
     #[test]
-    fn passages_are_headed_by_line_references_and_fit_the_budget() {
+    fn passages_are_headed_by_the_files_name_with_its_lines_and_fit_the_budget() {
         let hits = vec![
             hit("src/a.rs", 3, &["fn a() {", "    b();", "}"]),
             hit("src/b.rs", 10, &["fn b() {}"]),
         ];
-        let out = tool::render_passages(&hits, 10_000);
+        let out = tool::render_passages(&hits, 10_000, &file_names()).unwrap();
         assert!(
-            out.starts_with("`src/a.rs:3-5`\n   3│ fn a() {\n   4│     b();\n   5│ }\n"),
+            out.starts_with("[f1:3-5] src/a.rs\n   3│ fn a() {\n   4│     b();\n   5│ }\n"),
             "{out}"
         );
-        assert!(out.contains("`src/b.rs:10-10`\n  10│ fn b() {}\n"), "{out}");
-        assert!(lattice_core::shared::text::contains_line_reference(&out));
+        assert!(out.contains("[f2:10] src/b.rs\n  10│ fn b() {}\n"), "{out}");
 
         let long: Vec<String> = (0..200).map(|n| format!("let line_{n} = {n};")).collect();
         let long_refs: Vec<&str> = long.iter().map(String::as_str).collect();
@@ -1237,7 +1252,7 @@ mod model {
             hit("src/long.rs", 1, &long_refs),
             hit("src/b.rs", 10, &["fn b() {}"]),
         ];
-        let cut = tool::render_passages(&many, 600);
+        let cut = tool::render_passages(&many, 600, &file_names()).unwrap();
         assert!(cut.len() <= 600, "{}", cut.len());
         assert!(cut.contains("passage cut for length"));
         assert!(cut.contains("1 more passage not shown"));
@@ -1263,23 +1278,31 @@ mod model {
         );
         open_settled(&manager, &root).await;
         let search = manager.search_for(&root).await.unwrap();
-        let out = tool::run(&search, &json!({"query": "retry loop"}), 1_000)
+        let file_names = file_names();
+        let out = tool::run(&search, &file_names, &json!({"query": "retry loop"}), 1_000)
             .await
             .unwrap();
         assert!(out.len() <= 1_000, "{}", out.len());
         assert!(out.contains("for \"retry loop\""), "{out}");
-        assert!(out.contains("`src/retry.rs:1-"), "{out}");
+        assert!(out.contains("[f1:1-"), "{out}");
         assert!(out.contains("   1│ pub fn retry_loop() {"), "{out}");
 
         // Dense search always has a nearest neighbour; an empty scope does not.
-        let none = tool::run(&search, &json!({"query": "retry", "path": "docs"}), 1_000)
-            .await
-            .unwrap();
+        let none = tool::run(
+            &search,
+            &file_names,
+            &json!({"query": "retry", "path": "docs"}),
+            1_000,
+        )
+        .await
+        .unwrap();
         assert!(
             none.starts_with("No passages for \"retry\" in docs"),
             "{none}"
         );
-        assert!(tool::run(&search, &json!({}), 1_000).await.is_err());
+        assert!(tool::run(&search, &file_names, &json!({}), 1_000)
+            .await
+            .is_err());
         assert_eq!(
             explorer_tools::activity_label("search_folder", &json!({"query": "retry"})),
             "Searched the folder for \"retry\""
@@ -1313,7 +1336,8 @@ mod model {
             open_path: Some("open.txt".into()),
             selection: None,
         };
-        let turn = ExplorerTurn::with_index(scope.clone(), Some(focus.clone()), Some(search));
+        let turn =
+            ExplorerTurn::with_index(scope.clone(), Some(focus.clone()), Some(search), names());
         assert!(turn.has_folder_index());
         let block = turn
             .context_block(4_000, true, Some("where is the retry backoff scheduled?"))
@@ -1322,13 +1346,13 @@ mod model {
         assert!(!closed_book.contains("Passages from the folder"));
         assert!(block.len() <= 4_000, "{}", block.len());
         assert!(block.contains("Passages from the folder"), "{block}");
-        assert!(block.contains("`src/retry.rs:1-3`"), "{block}");
+        assert!(block.contains("[f1:1-3] src/retry.rs"), "{block}");
         assert!(
             block.contains("search_folder"),
             "the rules mention the tool"
         );
         assert!(
-            block.contains("Open file: open.txt"),
+            block.contains("] open.txt ("),
             "the open file keeps its place"
         );
         let passages_at = block.find("Passages from the folder").unwrap();
@@ -1354,7 +1378,8 @@ mod model {
         assert_eq!(status.state, FolderIndexState::Ready);
         let search = manager.search_for(&root).await;
         assert!(search.is_none(), "nothing indexed, nothing to search");
-        let turn = ExplorerTurn::with_index(Scope::open(&text(&root)).unwrap(), None, search);
+        let turn =
+            ExplorerTurn::with_index(Scope::open(&text(&root)).unwrap(), None, search, names());
         let block = turn.context_block(4_000, true, Some("anything")).await;
         assert!(!block.contains("Passages from the folder"), "{block}");
         assert!(!block.contains("search_folder"));
@@ -1363,12 +1388,14 @@ mod model {
         assert!(tool_list.iter().all(|t| t.name != "search_folder"));
         let empty = prompt::render_context(
             &Scope::open(&text(&root)).unwrap(),
+            &file_names(),
             None,
             4_000,
             true,
             false,
             &FolderPassages::default(),
-        );
+        )
+        .unwrap();
         assert!(!empty.contains("Passages from the folder"));
         manager.close().await;
     }

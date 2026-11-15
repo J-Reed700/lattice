@@ -51,16 +51,19 @@ async fn a_turn_gets_the_course_or_folder_its_chat_is_bound_to() -> anyhow::Resu
     )
     .await?;
 
-    assert!(container.turn_source("plain", None).await.is_none());
+    assert!(container
+        .turn_source("plain", None, names())
+        .await
+        .is_none());
 
     let folder = container
-        .turn_source("folder", None)
+        .turn_source("folder", None, names())
         .await
         .ok_or_else(|| anyhow::anyhow!("a folder's thread reads its folder"))?;
     assert!(!folder.owns_tool("search_course"));
 
     let course = container
-        .turn_source("tutor", None)
+        .turn_source("tutor", None, names())
         .await
         .ok_or_else(|| anyhow::anyhow!("a tutor chat reads its course"))?;
     for tool in [
@@ -68,6 +71,7 @@ async fn a_turn_gets_the_course_or_folder_its_chat_is_bound_to() -> anyhow::Resu
         "read_course_source",
         "course_outline",
         "due_reviews",
+        "ask_card",
         "record_recall",
         "save_card",
         "save_note",
@@ -86,4 +90,10 @@ async fn a_turn_gets_the_course_or_folder_its_chat_is_bound_to() -> anyhow::Resu
         "it reads the course from the container's database"
     );
     Ok(())
+}
+
+fn names() -> std::sync::Arc<lattice_core::application::services::model_contract::kept::TurnNames> {
+    std::sync::Arc::new(
+        lattice_core::application::services::model_contract::kept::TurnNames::unstored(),
+    )
 }

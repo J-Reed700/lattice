@@ -70,10 +70,7 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
         )
         .await;
         assert!(result.is_err(), "Second batch was deliberately interrupted");
-        assert_eq!(
-            *model.audited_sections.lock().unwrap(),
-            vec![vec![0, 1, 2, 3]]
-        );
+        assert_eq!(model.audited(), vec![0, 1, 2, 3]);
         Ok(())
     })
     .await?;
@@ -103,9 +100,9 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
         .await?;
         assert!(resumed_model.extracted_sections.lock().unwrap().is_empty());
         assert_eq!(
-            *resumed_model.audited_sections.lock().unwrap(),
-            vec![vec![4]],
-            "The aggregate checkpoint predates the first completed audit batch"
+            resumed_model.audited(),
+            vec![4],
+            "The aggregate checkpoint predates the first completed audit"
         );
         Ok(())
     })
@@ -154,7 +151,7 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
             vec![vec![1]],
             "A changed section extracts only what was written in it"
         );
-        assert_eq!(*model.audited_sections.lock().unwrap(), vec![vec![1]]);
+        assert_eq!(model.audited(), vec![1]);
         assert_eq!(inventory.units.len(), 5);
         assert!(coverage.units.iter().all(|unit| unit.complete));
         let sources = vec![source()];
@@ -268,10 +265,7 @@ async fn interrupted_coverage_retains_omissions_without_reusing_them_after_corre
         assert!(coverage::audit(&model, &content, &inventory, None)
             .await
             .is_err());
-        assert_eq!(
-            *model.audited_sections.lock().unwrap(),
-            vec![vec![0, 1, 2, 3]]
-        );
+        assert_eq!(model.audited(), vec![0, 1, 2, 3]);
         Ok(())
     })
     .await?;
@@ -292,7 +286,7 @@ async fn interrupted_coverage_retains_omissions_without_reusing_them_after_corre
     lesson_drafts::run(&db, &repo, &job.id, lesson_id, async {
         let model = Model::new();
         let coverage = coverage::audit(&model, &content, &inventory, None).await?;
-        assert_eq!(*model.audited_sections.lock().unwrap(), vec![vec![4]]);
+        assert_eq!(model.audited(), vec![4]);
         assert_eq!(coverage.units.len(), 5);
         assert!(
             !coverage.units[1].complete,
@@ -310,23 +304,21 @@ async fn interrupted_coverage_retains_omissions_without_reusing_them_after_corre
             .push_str(" An additional extracted assertion.");
         let model = Model::new();
         let checked = coverage::audit(&model, &content, &corrected, None).await?;
-        assert_eq!(*model.audited_sections.lock().unwrap(), vec![vec![1]]);
+        assert_eq!(model.audited(), vec![1]);
         assert!(checked.units.iter().all(|unit| unit.complete));
 
         let mut changed = content.clone();
         changed[2]["body"] = json!(format!("{GOOD} Another original assertion."));
         let model = Model::new();
         coverage::audit(&model, &changed, &corrected, None).await?;
-        assert_eq!(*model.audited_sections.lock().unwrap(), vec![vec![2]]);
+        assert_eq!(model.audited(), vec![2]);
 
         let model = Model {
             name: "different-coverage-model",
             ..Model::new()
         };
         coverage::audit(&model, &changed, &corrected, None).await?;
-        let mut batches = model.audited_sections.lock().unwrap().clone();
-        batches.sort();
-        assert_eq!(batches, vec![vec![0, 1, 2, 3], vec![4]]);
+        assert_eq!(model.audited(), vec![0, 1, 2, 3, 4]);
         Ok(())
     })
     .await?;

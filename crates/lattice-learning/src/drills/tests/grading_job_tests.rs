@@ -2,9 +2,9 @@
 //! job, a grade asked for again, and the job on the job runtime with the judge that grades every review.
 
 use super::support::{
-    blind_assessment, extra_finding, files, fix_answer, grade_answer, last, operator_finding,
-    operator_fixed, proved, review_assessment, unchecked, FakeGrader, FakeRunner, ScriptedModel,
-    Waiting, LITERALS, MODEL, OPERATOR,
+    blind_assessment, extra_finding, files, fix_answer, grade_answer, grade_extras_answer, last,
+    operator_finding, operator_fixed, proved, review_assessment, unchecked, FakeGrader, FakeRunner,
+    ScriptedModel, Waiting, LITERALS, MODEL, OPERATOR,
 };
 use crate::drills::attempts::{self, AttemptStatus};
 use crate::drills::grader::{Review, ReviewGrader};
@@ -347,7 +347,7 @@ fn judged_findings() -> Vec<Finding> {
 #[tokio::test]
 async fn a_queued_job_runs_on_the_runtime_and_the_judge_grades_the_review() -> Result<()> {
     let waiting = Waiting::unclaimed(judged_findings(), None).await?;
-    let model = Arc::new(ScriptedModel::new([grade_answer()]));
+    let model = Arc::new(ScriptedModel::new([grade_answer(), grade_extras_answer()]));
     run_to_the_end(
         &waiting.db,
         worker(&waiting.db, model.clone()),
@@ -361,7 +361,11 @@ async fn a_queued_job_runs_on_the_runtime_and_the_judge_grades_the_review() -> R
     assert_eq!(attempt.status, AttemptStatus::Graded);
     assert_eq!(attempt.assessment, Some(blind_assessment()));
     assert_eq!(attempt.grader_model.as_deref(), Some(MODEL));
-    assert_eq!(model.purposes(), ["grade"], "one call grades the review");
+    assert_eq!(
+        model.purposes(),
+        ["grade", "grade extras"],
+        "one call grades the issues and one the findings no issue claims"
+    );
     let requests = model.requests();
     let task = last(&requests[0]);
     assert!(
@@ -626,7 +630,7 @@ async fn shutting_down_stops_the_grading_and_the_job_resumes_at_the_next_start()
     );
     assert_eq!(waiting.attempt().await?.status, AttemptStatus::Submitted);
 
-    let model = Arc::new(ScriptedModel::new([grade_answer()]));
+    let model = Arc::new(ScriptedModel::new([grade_answer(), grade_extras_answer()]));
     run_to_the_end(&waiting.db, worker(&waiting.db, model), &waiting.job).await?;
     assert_eq!(
         waiting.store.get(&waiting.job).await?.status,

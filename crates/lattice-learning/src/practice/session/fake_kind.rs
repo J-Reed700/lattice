@@ -5,10 +5,11 @@
 use crate::dto::LearningPracticeProfileDto;
 use crate::practice::practical_dto::{LearningSimulationSpeaker, LearningSimulationTurnDto};
 use crate::practice::session::author::{Author, Authored, Commission, Failed};
+use crate::practice::session::debrief::Names;
 use crate::practice::session::kind::{
     Account, Budget, Checker, Citation, Criterion, Diff, Established, Fit, Gaps, Hint, HintAsk,
-    Hinting, Kind, LearnerCases, MisreadingNeed, Order, Parts, ReplyGuard, Rubric, Screen, Showing,
-    Statement, Truth, Wording,
+    Hinting, Kind, Known, LearnerCases, MisreadingNeed, Order, Parts, ReplyGuard, Rubric, Screen,
+    Showing, Statement, Truth, Wording,
 };
 use crate::practice::session::observation::{ClockView, Coverage, Observation};
 use crate::practice::session::record::{Session, SessionCheck, SessionDebrief, SessionLearnerCase};
@@ -24,7 +25,7 @@ use lattice_core::domain::learning::practice::work::{
     Rung, Setting, Spacing, Stage,
 };
 use lattice_core::shared::error::{AppError, Result};
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
@@ -57,8 +58,10 @@ fn piece_of(slots: Vec<String>) -> Piece {
 /// What the fake's reply guard does, as plain configured values.
 #[derive(Default)]
 struct ReplyConfig {
-    /// The reply has a `slot` field: the indexes of the letters it points at.
-    slot: bool,
+    /// The questions the exercise already answers.
+    known: Vec<Known>,
+    /// The line the app adds to a reply that answers from none of them.
+    otherwise: Option<String>,
     /// A word the reply may not say.
     refused_word: Option<String>,
     /// A text that, in a reply, solves the exercise.
@@ -340,50 +343,15 @@ impl ReplyGuard for Letters {
         String::new()
     }
 
-    fn fields(&self, _brief: &Brief) -> Result<Vec<(String, Value)>> {
-        Ok(if self.reply.slot {
-            vec![(
-                "slot".to_owned(),
-                json!({"type": "array", "items": {"type": "integer"}}),
-            )]
-        } else {
-            Vec::new()
-        })
+    fn known(&self, _brief: &Brief) -> Result<Vec<Known>> {
+        Ok(self.reply.known.clone())
     }
 
-    fn parts(
-        &self,
-        _brief: &Brief,
-        piece: &Piece,
-        fields: &Map<String, Value>,
-    ) -> Result<Vec<PartRef>> {
-        let Some(slots) = fields.get("slot").and_then(Value::as_array) else {
-            return Ok(Vec::new());
-        };
-        let held = slots_of(piece)?.len();
-        slots
-            .iter()
-            .map(|slot| {
-                let index = slot
-                    .as_u64()
-                    .and_then(|index| usize::try_from(index).ok())
-                    .ok_or_else(|| AppError::InvalidInput("A slot is a whole number.".into()))?;
-                if index >= held {
-                    return Err(AppError::InvalidInput(format!(
-                        "Slot {index} is not in the piece. Name only a slot the piece has."
-                    )));
-                }
-                Ok(PartRef::new(&index.to_string()))
-            })
-            .collect()
+    fn otherwise(&self) -> Option<String> {
+        self.reply.otherwise.clone()
     }
 
-    fn check_words(
-        &self,
-        _exercise: &Exercise,
-        _fields: &Map<String, Value>,
-        content: &str,
-    ) -> Result<()> {
+    fn check_words(&self, _exercise: &Exercise, content: &str) -> Result<()> {
         match &self.reply.refused_word {
             Some(word) if content.contains(word.as_str()) => Err(AppError::InvalidInput(format!(
                 "The reply says \"{word}\". Never say it."
@@ -453,9 +421,9 @@ impl LearnerCases for Letters {
         "cases".to_owned()
     }
 
-    fn account(&self, _brief: &Brief, case: &SessionLearnerCase) -> Result<Value> {
+    fn account(&self, _brief: &Brief, case: &SessionLearnerCase, name: &str) -> Result<Value> {
         Ok(json!({
-            "ordinal": case.ordinal,
+            "case": name,
             "letter": case.body.get("letter"),
             "verdict": case.verdict.label().to_lowercase(),
         }))
@@ -463,8 +431,7 @@ impl LearnerCases for Letters {
 
     fn cited(&self) -> Citation {
         Citation {
-            tag: "case".to_owned(),
-            sentence: "A case: ref is the case's ordinal.".to_owned(),
+            sentence: "A case: cases holds the names of the cases it cites.".to_owned(),
         }
     }
 
@@ -524,20 +491,20 @@ impl Account for Letters {
         "checks".to_owned()
     }
 
-    fn check(
-        &self,
-        _exercise: &Exercise,
-        check: &SessionCheck,
-        before: Option<&SessionCheck>,
-    ) -> Result<Value> {
-        let slots = match before {
-            Some(before) if before.piece == check.piece => {
-                json!(format!("the same as check {}", before.id))
-            }
-            _ => json!(slots_of(&check.piece)?),
+    fn check(&self, _exercise: &Exercise, check: &SessionCheck, names: &Names) -> Result<Value> {
+        let slots = match names.same_as() {
+            Some(before) => json!(format!("the same as check {before}")),
+            None => json!(slots_of(&check.piece)?
+                .iter()
+                .enumerate()
+                .map(|(index, slot)| format!(
+                    "{} {slot}",
+                    names.part(&PartRef::new(&index.to_string()))
+                ))
+                .collect::<Vec<_>>()),
         };
         Ok(json!({
-            "id": check.id,
+            "id": names.check(),
             "scope": check.scope.label(),
             "passed": check.report.results.iter().filter(|result| result.status == CaseStatus::Passed).count(),
             "total": check.report.results.len(),
@@ -551,39 +518,14 @@ impl Account for Letters {
 
     fn cites_parts(&self) -> Citation {
         Citation {
-            tag: "slot".to_owned(),
-            sentence: "A slot: ref is a check id, index is a slot of that check, counted from 0."
-                .to_owned(),
+            sentence: "A slot: parts holds the names of the slots of a check it cites.".to_owned(),
         }
     }
 
     fn cites_check(&self) -> Citation {
         Citation {
-            tag: "check".to_owned(),
-            sentence: "A check: ref is a check id.".to_owned(),
+            sentence: "A check: checks holds the names of the checks it cites.".to_owned(),
         }
-    }
-
-    fn fields(&self) -> Vec<(String, Value)> {
-        vec![("index".to_owned(), json!({"type": "integer"}))]
-    }
-
-    fn leave_empty(&self) -> String {
-        "Leave index 0 when a slot is not cited.".to_owned()
-    }
-
-    /// The slot is not checked against the piece here: that is the engine's to require.
-    fn parts(
-        &self,
-        _exercise: &Exercise,
-        _check: &SessionCheck,
-        fields: &Map<String, Value>,
-    ) -> Result<Vec<PartRef>> {
-        let index = fields
-            .get("index")
-            .and_then(Value::as_u64)
-            .ok_or_else(|| AppError::InvalidInput("index is a whole number from 0.".into()))?;
-        Ok(vec![PartRef::new(&index.to_string())])
     }
 }
 
@@ -762,9 +704,18 @@ impl FakeKindBuilder {
         self
     }
 
-    /// Replies carry a `slot` field: the indexes of the letters they point at.
-    pub(crate) fn with_reply_slot(mut self) -> Self {
-        self.reply.slot = true;
+    /// The exercise already answers `question` with `answer`.
+    pub(crate) fn answering(mut self, question: &str, answer: &str) -> Self {
+        self.reply.known.push(Known {
+            question: question.to_owned(),
+            answer: answer.to_owned(),
+        });
+        self
+    }
+
+    /// A reply that answers from none of the known questions gets `line` from the app.
+    pub(crate) fn otherwise_adding(mut self, line: &str) -> Self {
+        self.reply.otherwise = Some(line.to_owned());
         self
     }
 
@@ -958,7 +909,7 @@ impl ScriptedModel {
             .iter()
             .map(|request| {
                 request
-                    .input
+                    .input()
                     .iter()
                     .filter_map(|input| match input {
                         CompletionInput::Message { content, .. } => Some(content.as_str()),
@@ -996,5 +947,11 @@ impl LLMPort for ScriptedModel {
 
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }

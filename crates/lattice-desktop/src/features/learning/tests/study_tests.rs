@@ -20,9 +20,10 @@ async fn generates_biology_cards_from_markdown_with_an_optional_learning_goal() 
     let id = uuid::Uuid::new_v4().to_string();
     let passage = "Photosynthesis converts light energy into chemical energy. Chlorophyll absorbs the light used in photosynthesis.";
     let library = FakeLibrary::default().with_document(&id, &[passage]);
-    let response = json!({"cards":[
-        {"question":"Which energy conversion occurs in photosynthesis?","options":["Light to chemical energy","Chemical to light energy","Heat to sound","Sound to light","Heat to motion"],"correctIndex":0,"explanation":"The first sentence names light as the input and chemical energy as the output.","sourceIndex":0,"quote":"Photosynthesis converts light energy into chemical energy.","topic":"Energy conversion"},
-        {"question":"What absorbs the light used in photosynthesis?","options":["Water","Chlorophyll","Oxygen","Glucose","Carbon dioxide"],"correctIndex":1,"explanation":"The second sentence identifies chlorophyll as the light absorber.","sourceIndex":0,"quote":"Chlorophyll absorbs the light used in photosynthesis.","topic":"Chlorophyll"}
+    let wrong = |texts: [&str; 4]| texts.map(|text| json!({ "text": text }));
+    let response = json!({"items":[
+        {"question":"Which energy conversion occurs in photosynthesis?","answer":"Light to chemical energy","distractors":wrong(["Chemical to light energy","Heat to sound","Sound to light","Heat to motion"]),"explanation":"The first sentence names light as the input and chemical energy as the output.","sourceIds":["u1"],"topic":"Energy conversion"},
+        {"question":"What absorbs the light used in photosynthesis?","answer":"Chlorophyll","distractors":wrong(["Water","Oxygen","Glucose","Carbon dioxide"]),"explanation":"The second sentence identifies chlorophyll as the light absorber.","sourceIds":["u2"],"topic":"Chlorophyll"}
     ]}).to_string();
     let server = MockServer::start().await;
     Mock::given(path("/v1/chat/completions"))
@@ -78,7 +79,10 @@ async fn generates_biology_cards_from_markdown_with_an_optional_learning_goal() 
     let prompt: serde_json::Value =
         serde_json::from_str(body["messages"][1]["content"].as_str().unwrap())?;
     assert_eq!(prompt["learningGoal"], "High school biology exam");
-    assert_eq!(prompt["passages"][0]["text"], passage);
+    assert_eq!(
+        prompt["passages"][0]["text"],
+        "[u1] Photosynthesis converts light energy into chemical energy.\n[u2] Chlorophyll absorbs the light used in photosynthesis."
+    );
     let system = body["messages"][0]["content"]
         .as_str()
         .unwrap()

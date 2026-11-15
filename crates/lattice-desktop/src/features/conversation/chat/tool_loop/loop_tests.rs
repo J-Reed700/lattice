@@ -2,7 +2,7 @@
 //! round's shape, calls run side by side, and condensing that lets a turn
 //! read past its window.
 use super::final_round::{OUT_OF_ROUNDS_INSTRUCTION, WINDOW_FULL_INSTRUCTION};
-use super::research_notes::{CONDENSE_INSTRUCTION, NOTES_HEADER};
+use super::research_notes::{scripted_answer, shown_in, CONDENSE_INSTRUCTION, NOTES_HEADER};
 use super::*;
 use crate::features::conversation::chat::cancellation;
 use crate::features::conversation::chat::focus::FocusScope;
@@ -39,11 +39,12 @@ impl From<CompletionResponse> for Scripted {
     }
 }
 
-/// Answers rounds from a script and condensing requests with fixed notes,
-/// keeping every request it was sent.
+/// Answers rounds from a script and condensing requests by keeping the
+/// sentences that carry a citation, or every sentence, keeping every request
+/// it was sent.
 struct Model {
     script: Mutex<VecDeque<Scripted>>,
-    notes: String,
+    keep_everything: bool,
     requests: Mutex<Vec<CompletionRequest>>,
     /// The context window it reports.
     window: AtomicUsize,
@@ -51,16 +52,20 @@ struct Model {
 
 impl Model {
     fn new<S: Into<Scripted>>(script: impl IntoIterator<Item = S>) -> Arc<Self> {
-        Self::with_notes(script, "- Page A: the bridge opened in 1932 [1].")
+        Self::keeping(script, false)
     }
 
-    fn with_notes<S: Into<Scripted>>(
+    fn keeping_everything<S: Into<Scripted>>(script: impl IntoIterator<Item = S>) -> Arc<Self> {
+        Self::keeping(script, true)
+    }
+
+    fn keeping<S: Into<Scripted>>(
         script: impl IntoIterator<Item = S>,
-        notes: &str,
+        keep_everything: bool,
     ) -> Arc<Self> {
         Arc::new(Self {
             script: Mutex::new(script.into_iter().map(Into::into).collect()),
-            notes: notes.to_string(),
+            keep_everything,
             requests: Mutex::default(),
             window: AtomicUsize::new(32_768),
         })
@@ -72,12 +77,15 @@ impl Model {
 }
 
 fn is_condense_request(request: &CompletionRequest) -> bool {
-    last_text(request).ends_with(CONDENSE_INSTRUCTION)
+    request.input().iter().any(|item| {
+        matches!(item, CompletionInput::Message { role, content }
+            if role == "system" && content.contains(CONDENSE_INSTRUCTION))
+    })
 }
 
 /// What the model reads last: the final message or tool result.
 fn last_text(request: &CompletionRequest) -> &str {
-    match request.input.last() {
+    match request.input().last() {
         Some(CompletionInput::Message { content, .. }) => content,
         Some(CompletionInput::ToolResult { output, .. }) => output,
         _ => "",
@@ -89,7 +97,12 @@ impl LLMPort for Model {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         self.requests.lock().unwrap().push(request.clone());
         if is_condense_request(request) {
-            return Ok(CompletionResponse::from_text(self.notes.clone()));
+            let keep_everything = self.keep_everything;
+            return Ok(CompletionResponse::from_text(scripted_answer(
+                &shown_in(request),
+                |_| true,
+                |sentence| keep_everything || sentence.contains('['),
+            )));
         }
         let reply = self.script.lock().unwrap().pop_front();
         match reply {
@@ -117,6 +130,12 @@ impl LLMPort for Model {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -328,6 +347,36 @@ struct Turn<'a> {
     source: Option<crate::features::conversation::chat::TurnSource>,
 }
 
+/// Gives the turn's scope the numbers its sources are labelled with, so a reply citing `[s7]` names one.
+fn number_as_labelled(
+    names: &lattice_core::application::services::model_contract::kept::TurnNames,
+    sources: &[SourceDto],
+) {
+    let Some(template) = sources.first() else {
+        return;
+    };
+    let top = sources
+        .iter()
+        .filter_map(|source| source.citation_id)
+        .max()
+        .unwrap_or(0);
+    let mut ordered: Vec<SourceDto> = (1..=top)
+        .map(|number| {
+            sources
+                .iter()
+                .find(|source| source.citation_id == Some(number))
+                .cloned()
+                .unwrap_or_else(|| {
+                    let mut filler = template.clone();
+                    filler.document_id = format!("filler-{number}");
+                    filler.chunk_id = format!("filler-{number}");
+                    filler
+                })
+        })
+        .collect();
+    crate::features::conversation::chat::retrieval::source_names::name_sources(names, &mut ordered);
+}
+
 /// Time enough that no test here meets the deadline unless it means to.
 const TURN_TIME: Duration = Duration::from_secs(60);
 
@@ -355,6 +404,9 @@ async fn run_turn(
         excerpt_chars: 300,
         ..ToolOutputSettingsDto::default()
     };
+    let names =
+        Arc::new(lattice_core::application::services::model_contract::kept::TurnNames::unstored());
+    number_as_labelled(&names, &turn.sources);
     let mut sources = turn.sources;
     let mut trace = None;
     let source = turn.source;
@@ -370,6 +422,7 @@ async fn run_turn(
             highlight_terms: &[],
             focus: &FocusScope::default(),
             recorder: &recorder,
+            names: &names,
         },
         &sink,
         LoopRequest {
@@ -415,7 +468,7 @@ fn json_of(value: &impl serde::Serialize) -> Value {
 
 fn result_ids(request: &CompletionRequest) -> Vec<&str> {
     request
-        .input
+        .input()
         .iter()
         .filter_map(|item| match item {
             CompletionInput::ToolResult { id, .. } => Some(id.as_str()),
@@ -426,7 +479,7 @@ fn result_ids(request: &CompletionRequest) -> Vec<&str> {
 
 fn results_mentioning<'r>(request: &'r CompletionRequest, text: &str) -> Vec<&'r str> {
     request
-        .input
+        .input()
         .iter()
         .filter_map(|item| match item {
             CompletionInput::ToolResult { output, .. } if output.contains(text) => {
@@ -501,7 +554,7 @@ async fn a_source_s_passages_take_the_turn_s_numbers() {
         calls(&[("first", "search_course", json!({ "chunk": "one" }))]),
         calls(&[("second", "search_course", json!({ "chunk": "two" }))]),
         calls(&[("third", "save_note", json!({}))]),
-        CompletionResponse::from_text("Fusion sums ranks [2]; k flattens them [4]."),
+        CompletionResponse::from_text("Fusion sums ranks [s2]; k flattens them [s4]."),
     ]);
     let library = serde_json::from_value::<SourceDto>(json!({
         "documentId": "doc-1",
@@ -553,17 +606,17 @@ async fn a_source_s_passages_take_the_turn_s_numbers() {
     let requests = model.requests();
     let first = last_text(&requests[1]);
     assert!(
-        first.contains("[2] Ranking › Fusion › Notes (known)\nFusion sums reciprocal ranks."),
+        first.contains("[s2] Ranking › Fusion › Notes (known)\nFusion sums reciprocal ranks."),
         "{first}"
     );
-    assert!(first.contains("[3] Ranking"), "{first}");
+    assert!(first.contains("[s3] Ranking"), "{first}");
     assert!(!first.contains("Citable passage"), "{first}");
     let second = last_text(&requests[2]);
     assert!(
-        second.contains("[2] Ranking"),
+        second.contains("[s2] Ranking"),
         "the repeat keeps it: {second}"
     );
-    assert!(second.contains("[4] Ranking"), "{second}");
+    assert!(second.contains("[s4] Ranking"), "{second}");
     assert!(last_text(&requests[3]).contains("Saved."));
 }
 
@@ -587,13 +640,13 @@ async fn the_last_round_keeps_the_tools_and_forbids_calling_them() {
     assert_eq!(run.outcome.unwrap().response, "It opened in 1932 [1].");
     let requests = model.requests();
     assert_eq!(requests.len(), 2);
-    assert_eq!(requests[0].tool_choice, None);
-    assert_eq!(requests[1].tool_choice, Some(ToolChoice::None));
+    assert_eq!(requests[0].tool_choice(), None);
+    assert_eq!(requests[1].tool_choice(), Some(ToolChoice::None));
     // The same tools, so the prompt the server has cached is still a prefix
     // of this one.
-    assert_eq!(json_of(&requests[1].tools), json_of(&requests[0].tools));
-    let earlier = json_of(&requests[0].input);
-    let later = json_of(&requests[1].input);
+    assert_eq!(json_of(&requests[1].tools()), json_of(&requests[0].tools()));
+    let earlier = json_of(&requests[0].input());
+    let later = json_of(&requests[1].input());
     assert_eq!(
         later.as_array().unwrap()[..earlier.as_array().unwrap().len()],
         earlier.as_array().unwrap()[..]
@@ -601,7 +654,7 @@ async fn the_last_round_keeps_the_tools_and_forbids_calling_them() {
     assert!(last_text(&requests[1]).ends_with(OUT_OF_ROUNDS_INSTRUCTION));
     // Said at the end of the last result, not as a message of its own.
     assert!(matches!(
-        requests[1].input.last(),
+        requests[1].input().last(),
         Some(CompletionInput::ToolResult { .. })
     ));
     // Thinking is off unless the user turns it on.
@@ -638,8 +691,8 @@ async fn a_thinking_answer_is_asked_for_without_tools() {
     let requests = model.requests();
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].thinking, ThinkingMode::Off, "a tool round");
-    assert!(requests[1].tools.is_empty());
-    assert_eq!(requests[1].tool_choice, None);
+    assert!(requests[1].tools().is_empty());
+    assert_eq!(requests[1].tool_choice(), None);
     assert_eq!(requests[1].thinking, ThinkingMode::On);
     assert!(last_text(&requests[1]).ends_with(OUT_OF_ROUNDS_INSTRUCTION));
 }
@@ -666,11 +719,11 @@ async fn a_last_round_of_calls_is_asked_again_without_tools() {
     let requests = model.requests();
     assert_eq!(requests.len(), 3);
     let retry = &requests[2];
-    assert!(retry.tools.is_empty(), "no tools at all on the retry");
-    assert_eq!(retry.tool_choice, None);
+    assert!(retry.tools().is_empty(), "no tools at all on the retry");
+    assert_eq!(retry.tool_choice(), None);
     // The calls it was not allowed to make are not replayed, and the firmer
     // instruction takes the first one's place.
-    assert_eq!(retry.input.len(), requests[1].input.len());
+    assert_eq!(retry.input().len(), requests[1].input().len());
     assert!(!last_text(retry).contains(OUT_OF_ROUNDS_INSTRUCTION));
     assert!(last_text(retry).contains("Do not call any tools"));
     assert_eq!(web.log().len(), 2, "the last round's call never ran");
@@ -703,7 +756,7 @@ async fn a_call_written_as_json_in_the_last_round_is_asked_again() {
 
     assert_eq!(run.outcome.unwrap().response, "It opened in 1932 [1].");
     assert_eq!(model.requests().len(), 3);
-    assert!(model.requests()[2].tools.is_empty());
+    assert!(model.requests()[2].tools().is_empty());
 }
 
 /// llama.cpp issue #30118: Qwen3.6 left out the `<tool_call>` opener, and
@@ -739,7 +792,7 @@ async fn a_call_written_as_text_in_a_round_that_may_call_is_run() {
     // the text the model wrote before it.
     let requests = model.requests();
     assert_eq!(requests.len(), 2);
-    let input = &requests[1].input;
+    let input = requests[1].input();
     let call_at = input
         .iter()
         .position(|item| {
@@ -836,7 +889,7 @@ async fn reads_in_one_round_run_together_and_come_back_in_call_order() {
     );
     for (index, page) in [PAGE_A, PAGE_B, PAGE_C].iter().enumerate() {
         let CompletionInput::ToolResult { output, .. } = answer_round
-            .input
+            .input()
             .iter()
             .filter(|item| matches!(item, CompletionInput::ToolResult { .. }))
             .nth(index)
@@ -993,16 +1046,11 @@ async fn a_turn_that_fills_its_window_condenses_and_keeps_reading() {
     // The round after condensing is an ordinary one: tools callable, no
     // instruction to stop, and the notes in place of page A's text.
     let after = &requests[3];
-    assert_eq!(after.tool_choice, None);
+    assert_eq!(after.tool_choice(), None);
     assert!(!last_text(after).contains(OUT_OF_ROUNDS_INSTRUCTION));
     assert!(!last_text(after).contains(WINDOW_FULL_INSTRUCTION));
     assert!(last_text(after).starts_with(NOTES_HEADER));
     assert!(results_mentioning(after, &format!("Text of {PAGE_A}")).is_empty());
-    // The condensing request is the round before it and an instruction: the
-    // cached prompt is a prefix of it, tools and all.
-    let condense = &requests[2];
-    assert_eq!(json_of(&condense.tools), json_of(&requests[1].tools));
-    assert_eq!(condense.tool_choice, Some(ToolChoice::None));
     assert!(run.steps.iter().any(
         |step| step.label == "Condensing what it has read" && step.state == TurnStepState::Done
     ));
@@ -1017,7 +1065,7 @@ async fn citations_from_before_condensing_still_resolve() {
     let model = Model::new([
         reads(&[PAGE_A]),
         reads(&[PAGE_B]),
-        CompletionResponse::from_text("It opened in 1932 [1]."),
+        CompletionResponse::from_text("It opened in 1932 [s1]."),
     ]);
     let run = run(
         &model,
@@ -1034,15 +1082,15 @@ async fn citations_from_before_condensing_still_resolve() {
         .sources
         .iter()
         .find(|source| source.citation_id == Some(1))
-        .expect("[1] still has a source");
+        .expect("[s1] still has a source");
     assert_eq!(cited.path.as_deref(), Some(PAGE_A));
-    // The model was shown the number it has to keep.
+    // The model was shown the name it has to keep.
     let requests = model.requests();
     let condense = requests
         .iter()
         .find(|request| is_condense_request(request))
         .expect("the window filled and was condensed");
-    assert!(!results_mentioning(condense, "Citable passage [1]").is_empty());
+    assert!(shown_in(condense).contains("Citable passage [s1]"));
     // The research deck's card for page A still links to it.
     assert!(run
         .steps
@@ -1087,18 +1135,15 @@ async fn a_page_condensed_away_is_read_again_when_asked_for() {
 #[tokio::test]
 async fn when_condensing_saves_nothing_a_full_window_still_ends_the_research() {
     let web = Web::with_pages_of(30_000);
-    let model = Model::with_notes(
-        [
-            // Each read takes half of what is left, at least the floor, so
-            // the window fills on the fourth.
-            reads(&[PAGE_A]),
-            reads(&[PAGE_B]),
-            reads(&[PAGE_C]),
-            reads(&[PAGE_D]),
-            CompletionResponse::from_text("It opened in 1932 [1]."),
-        ],
-        &"n".repeat(40_000),
-    );
+    let model = Model::keeping_everything([
+        // Each read takes half of what is left, at least the floor, so
+        // the window fills on the fourth.
+        reads(&[PAGE_A]),
+        reads(&[PAGE_B]),
+        reads(&[PAGE_C]),
+        reads(&[PAGE_D]),
+        CompletionResponse::from_text("It opened in 1932 [1]."),
+    ]);
     let run = run(
         &model,
         &web,
@@ -1124,18 +1169,15 @@ async fn when_condensing_saves_nothing_a_full_window_still_ends_the_research() {
 #[tokio::test]
 async fn an_answer_cut_short_by_a_full_window_names_the_window() {
     let web = Web::with_pages_of(30_000);
-    let model = Model::with_notes(
-        [
-            reads(&[PAGE_A]),
-            reads(&[PAGE_B]),
-            reads(&[PAGE_C]),
-            reads(&[PAGE_D]),
-            CompletionResponse::from_text(
-                "It opened in 1932 [1].\n<tool_call>\n<function=fetch_url_content>",
-            ),
-        ],
-        &"n".repeat(40_000),
-    );
+    let model = Model::keeping_everything([
+        reads(&[PAGE_A]),
+        reads(&[PAGE_B]),
+        reads(&[PAGE_C]),
+        reads(&[PAGE_D]),
+        CompletionResponse::from_text(
+            "It opened in 1932 [1].\n<tool_call>\n<function=fetch_url_content>",
+        ),
+    ]);
     let run = run(
         &model,
         &web,
@@ -1172,7 +1214,7 @@ async fn find_image_streams_its_pictures_and_cites_their_page() {
     };
     let model = Model::new([
         calls(&[("pic", "find_image", json!({ "query": "Saturn V launch" }))]),
-        CompletionResponse::from_text("It flew in 1969.\n\n![Saturn V lifting off](img-1)"),
+        CompletionResponse::from_text("It flew in 1969.\n\n[i1]"),
     ]);
     let run = run_on(runtime, &model, &[tool("find_image")], ROOMY, 3, "pictures").await;
 
@@ -1212,9 +1254,55 @@ async fn find_image_streams_its_pictures_and_cites_their_page() {
     assert!(page.citation_id.is_some());
 
     let answered = &model.requests()[1];
-    let result = results_mentioning(answered, "![Saturn V lifting off](img-1)");
+    let result = results_mentioning(answered, "[i1] Saturn V lifting off");
     assert_eq!(result.len(), 1);
     assert!(!result[0].contains("Citable passage"), "{}", result[0]);
+    assert!(!result[0].contains("img-"), "{}", result[0]);
+
+    let image_line = "![Saturn V lifting off](img-1)";
+    let response = &run.outcome.as_ref().unwrap().response;
+    assert_eq!(response, &format!("It flew in 1969.\n\n{image_line}"));
+    let streamed_text: String = run
+        .events
+        .iter()
+        .filter_map(|event| event.content.clone())
+        .collect();
+    assert!(streamed_text.contains(image_line), "{streamed_text}");
+    assert!(!streamed_text.contains("[i1]"), "{streamed_text}");
+    assert!(run.events.iter().all(|event| event.reference.is_none()));
+}
+
+async fn answer_after_a_picture(reply: &'static str) -> Run {
+    use crate::features::conversation::chat::test_runtime::{test_picture, FakeChatImages};
+
+    let runtime = FakeRuntime {
+        tools: Some(Web::with_delays(&[])),
+        images: FakeChatImages::with(vec![test_picture("img-1")]),
+        ..FakeRuntime::default()
+    };
+    let model = Model::new([
+        calls(&[("pic", "find_image", json!({ "query": "Saturn V launch" }))]),
+        CompletionResponse::from_text(reply),
+    ]);
+    run_on(runtime, &model, &[tool("find_image")], ROOMY, 3, "pictures").await
+}
+
+#[tokio::test]
+async fn a_picture_name_inside_a_sentence_stays_text() {
+    let run = answer_after_a_picture("See [i1] for the launch.").await;
+    assert_eq!(
+        run.outcome.as_ref().unwrap().response,
+        "See [i1] for the launch."
+    );
+}
+
+#[tokio::test]
+async fn a_picture_the_model_wrote_as_markdown_is_kept_as_written() {
+    let run = answer_after_a_picture("Launch.\n\n![x](img-1)").await;
+    assert_eq!(
+        run.outcome.as_ref().unwrap().response,
+        "Launch.\n\n![x](img-1)"
+    );
 }
 
 /// A call to a tool the turn does not offer is answered with the tools it

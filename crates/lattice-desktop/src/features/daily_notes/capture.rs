@@ -201,6 +201,7 @@ pub(super) fn apply_reference(
                     content: request.message_content.clone(),
                     created_at: request.captured_at.clone(),
                     metadata: None,
+                    reply: None,
                 }],
             },
         );

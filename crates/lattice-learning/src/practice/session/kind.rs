@@ -2,6 +2,7 @@
 
 use crate::dto::LearningPracticeProfileDto;
 use crate::practice::session::author::Author;
+use crate::practice::session::debrief::Names;
 use crate::practice::session::observation::Observation;
 use crate::practice::session::record::{Session, SessionCheck, SessionDebrief, SessionLearnerCase};
 use crate::practice::session::seen::Seen;
@@ -12,7 +13,7 @@ use lattice_core::domain::learning::practice::work::{
     PartRef, Piece, Rung, Spacing, Stage,
 };
 use lattice_core::shared::error::{AppError, Result};
-use serde_json::{Map, Value};
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -35,6 +36,10 @@ pub trait Parts: Send + Sync {
     fn holds(&self, brief: &Brief, piece: &Piece, part: &PartRef) -> Result<bool>;
     /// The part's display name.
     fn name(&self, brief: &Brief, piece: &Piece, part: &PartRef) -> Result<String>;
+    /// Whether `next` continues the range of parts that ends with `before`. A part continues nothing by default.
+    fn continues(&self, _before: &PartRef, _next: &PartRef) -> bool {
+        false
+    }
 }
 
 /// The changes between two drafts, in the kind's own units.
@@ -145,7 +150,14 @@ pub trait Wording: Send + Sync {
     fn stage_instruction(&self, brief: &Brief, form: Form, stage: Stage) -> String;
 }
 
-/// What a kind adds to a counterpart's reply: the fields that point at the work, and their rules. A refusal is an
+/// A question the work leaves open and the answer the exercise stores for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Known {
+    pub question: String,
+    pub answer: String,
+}
+
+/// What a kind adds to a counterpart's reply: what its reply may answer from, and its rules. A refusal is an
 /// `AppError::InvalidInput` worded for the model; any other error is a fault.
 #[async_trait]
 pub trait ReplyGuard: Send + Sync {
@@ -153,22 +165,12 @@ pub trait ReplyGuard: Send + Sync {
     fn rules(&self, brief: &Brief) -> String;
     /// What each of the kind's reply fields holds, as clauses of the format line. Empty when it has none.
     fn format(&self) -> String;
-    /// The kind's reply fields in order: name and JSON schema. Every one is required. Empty when it has none.
-    fn fields(&self, brief: &Brief) -> Result<Vec<(String, Value)>>;
-    /// The parts of `piece` the reply's fields point at. Refuses a part the piece does not hold.
-    fn parts(
-        &self,
-        brief: &Brief,
-        piece: &Piece,
-        fields: &Map<String, Value>,
-    ) -> Result<Vec<PartRef>>;
+    /// The questions a reply may answer from the exercise's own answers, in order. Empty when it has none.
+    fn known(&self, brief: &Brief) -> Result<Vec<Known>>;
+    /// What the app adds to a reply that answers from none of them, when the kind has such a line.
+    fn otherwise(&self) -> Option<String>;
     /// Refuses words that break one of the kind's rules.
-    fn check_words(
-        &self,
-        exercise: &Exercise,
-        fields: &Map<String, Value>,
-        content: &str,
-    ) -> Result<()>;
+    fn check_words(&self, exercise: &Exercise, content: &str) -> Result<()>;
     /// Refuses a reply that solves the exercise. May run the kind's checker.
     async fn check_unsolved(
         &self,
@@ -221,19 +223,19 @@ pub trait LearnerCases: Send + Sync {
     fn show(&self, brief: &Brief, body: &serde_json::Value) -> Result<String>;
     /// The key the debrief's list of the learner's cases sits under.
     fn key(&self) -> String;
-    /// One case the learner wrote, with the verdict it got, as the debrief's model reads it.
-    fn account(&self, brief: &Brief, case: &SessionLearnerCase) -> Result<Value>;
+    /// One case the learner wrote, with the verdict it got, as the debrief's model reads it. `name` is what the
+    /// model calls the case.
+    fn account(&self, brief: &Brief, case: &SessionLearnerCase, name: &str) -> Result<Value>;
     /// How the debrief's model cites one of them.
     fn cited(&self) -> Citation;
     /// One case the learner wrote, as a case a check runs.
     fn case(&self, exercise: &Exercise, case: &SessionLearnerCase) -> Result<Case>;
 }
 
-/// How the debrief's model cites one kind of evidence the kind names: the tag of its items and the sentence of the
-/// system text that says what the item's fields hold.
+/// How the debrief's model cites one kind of evidence the kind names: the sentence of the system text that says what
+/// the field of that evidence holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Citation {
-    pub tag: String,
     pub sentence: String,
 }
 
@@ -276,30 +278,14 @@ pub trait Account: Send + Sync {
     fn form(&self, form: Form) -> Result<Value>;
     /// The key the list of checks sits under.
     fn checks_key(&self) -> String;
-    /// One check, given the check made before it.
-    fn check(
-        &self,
-        exercise: &Exercise,
-        check: &SessionCheck,
-        before: Option<&SessionCheck>,
-    ) -> Result<Value>;
+    /// One check, with the names the model reads for it and for the parts of its piece.
+    fn check(&self, exercise: &Exercise, check: &SessionCheck, names: &Names) -> Result<Value>;
     /// A piece no check holds: the learner's final draft.
     fn piece(&self, exercise: &Exercise, piece: &Piece) -> Result<Value>;
     /// How the model cites parts of the piece of a check.
     fn cites_parts(&self) -> Citation;
     /// How the model cites a check.
     fn cites_check(&self) -> Citation;
-    /// The fields an evidence item has beyond `kind`, `ref` and `text`: name and JSON schema. Every one is required.
-    fn fields(&self) -> Vec<(String, Value)>;
-    /// The sentence that says to leave the fields an item does not use empty.
-    fn leave_empty(&self) -> String;
-    /// The parts of the piece of `check` that an item's fields name. Refuses a part the piece does not hold.
-    fn parts(
-        &self,
-        exercise: &Exercise,
-        check: &SessionCheck,
-        fields: &Map<String, Value>,
-    ) -> Result<Vec<PartRef>>;
 }
 
 /// The time a timed session gets.

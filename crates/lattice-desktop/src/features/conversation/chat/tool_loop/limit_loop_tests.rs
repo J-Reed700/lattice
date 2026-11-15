@@ -49,7 +49,7 @@ async fn a_turn_out_of_time_in_its_reads_answers_from_what_it_found() {
     let answer = &requests[1];
     assert!(answer.no_time_limit, "the answering round runs past it");
     assert_eq!(answer.time_budget, None);
-    assert_eq!(answer.tool_choice, Some(ToolChoice::None));
+    assert_eq!(answer.tool_choice(), Some(ToolChoice::None));
     assert!(
         last_text(answer).ends_with(OUT_OF_TIME_INSTRUCTION),
         "{}",

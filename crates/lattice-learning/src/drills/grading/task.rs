@@ -1,52 +1,74 @@
-//! The task the judge reads: the material as the reviewer saw it, the material before any issue was planted, the
-//! source passage of an explanation, the key and the review, numbered so that the answer can name them. Issues are
-//! numbered most severe first.
+//! What the judge reads: the material as the reviewer saw it, the material before any issue was planted, the source
+//! passage of an explanation, the key and the review, each issue and finding in the words it is shown with. Issues are
+//! shown most severe first.
 
+use lattice_core::application::services::model_contract::shown::{Internal, Told};
 use lattice_core::domain::learning::drills::{
     display_order, overlapping, pattern, DrillFile, Finding, KeyIssue, LineSpan, Severity,
 };
 
+use super::contract::{Context, FindingView, IssueView};
 use crate::drills::grader::Review;
 use crate::drills::material::JudgeWording;
 
-/// The user message of the judge's request.
-pub(super) fn task(review: &Review<'_>, wording: &JudgeWording) -> String {
+/// What every request of `review` shows besides the things it asks about, under `instructions`.
+pub(super) fn context(review: &Review<'_>, wording: &JudgeWording, instructions: &str) -> Context {
     let drill = review.drill;
-    let findings = review.findings;
-    let order = display_order(&drill.key);
-    let mut parts = vec![
-        format!("Drill: {} ({})", drill.title, wording.kind),
-        format!("{}\n\n{}", wording.reviewed, listing(&drill.files)),
-        format!("{}\n\n{}", wording.original, listing(review.clean)),
-    ];
-    if let (Some(heading), Some(source)) = (wording.source, review.source) {
-        parts.push(format!(
-            "{heading} {}:\n<passage>\n{}\n</passage>",
-            source.title, source.text
-        ));
+    Context {
+        instructions: Told(instructions.to_owned()),
+        drill: Told(format!("Drill: {} ({})", drill.title, wording.kind)),
+        reviewed: Told(format!("{}\n\n{}", wording.reviewed, listing(&drill.files))),
+        original: Told(format!("{}\n\n{}", wording.original, listing(review.clean))),
+        source: match (wording.source, review.source) {
+            (Some(heading), Some(source)) => Some(Told(format!(
+                "{heading} {}:\n<passage>\n{}\n</passage>",
+                source.title, source.text
+            ))),
+            _ => None,
+        },
     }
-    parts.push(format!("The key: {}.", counted(drill.key.len(), "issue")));
-    parts.extend(order.iter().enumerate().filter_map(|(index, &position)| {
-        let issue = drill.key.get(position)?;
-        Some(issue_block(index + 1, issue, &drill.files, wording))
-    }));
-    parts.push(format!(
-        "The review: {}, in the order they were made.",
-        counted(findings.len(), "finding")
-    ));
-    parts.extend(
-        findings
-            .iter()
-            .enumerate()
-            .map(|(index, finding)| finding_block(index + 1, finding, &drill.files, wording)),
-    );
-    parts.push(overlap_block(findings, &drill.key, &order, wording));
-    parts.push(format!(
-        "Give an entry for every issue ({}) and every finding ({}), the reason first.",
-        numbers(drill.key.len()),
-        numbers(findings.len())
-    ));
-    parts.join("\n\n")
+}
+
+/// The issues of the key, most severe first, as the model is shown them.
+pub(super) fn issue_views(review: &Review<'_>, wording: &JudgeWording) -> Vec<IssueView> {
+    let drill = review.drill;
+    display_order(&drill.key)
+        .into_iter()
+        .filter_map(|position| {
+            let issue = drill.key.get(position)?;
+            let (head, rest) = issue_parts(issue, &drill.files, wording);
+            Some(IssueView {
+                at: position,
+                head: Told(head),
+                rest: Told(rest),
+            })
+        })
+        .collect()
+}
+
+/// The findings of the review, in the order they were made, each with the issues whose lines its lines overlap.
+pub(super) fn finding_views(review: &Review<'_>, wording: &JudgeWording) -> Vec<FindingView> {
+    let overlaps = overlapping(review.findings, &review.drill.key);
+    review
+        .findings
+        .iter()
+        .enumerate()
+        .map(|(position, finding)| {
+            let (head, rest) = finding_parts(finding, &review.drill.files, wording);
+            FindingView {
+                at: position,
+                head: Told(head),
+                rest: Told(rest),
+                overlaps: Internal::of(
+                    overlaps
+                        .iter()
+                        .filter(|(found, _)| *found == position)
+                        .map(|(_, issue)| *issue)
+                        .collect(),
+                ),
+            }
+        })
+        .collect()
 }
 
 /// Each file under its path, a numbered line for every line of its text.
@@ -76,19 +98,16 @@ fn numbered(text: &str, first: usize, last: usize) -> Vec<String> {
         .collect()
 }
 
-fn issue_block(
-    number: usize,
-    issue: &KeyIssue,
-    files: &[DrillFile],
-    wording: &JudgeWording,
-) -> String {
+/// The first line of an issue's block after its label, and the lines that follow it.
+fn issue_parts(issue: &KeyIssue, files: &[DrillFile], wording: &JudgeWording) -> (String, String) {
     let known = pattern(&issue.pattern);
     let name = known.map_or(issue.pattern.as_str(), |known| known.name);
-    let mut lines = vec![format!(
-        "Issue {number}: {name} ({}), {}",
+    let head = format!(
+        "{name} ({}), {}",
         severity_word(issue.severity),
         place(&issue.span, wording)
-    )];
+    );
+    let mut lines = Vec::new();
     if let Some(known) = known {
         lines.push(format!("Pattern: {}", known.definition));
     }
@@ -108,61 +127,28 @@ fn issue_block(
     }
     lines.push(format!("Consequence: {}", issue.consequence));
     lines.push(quoted(&issue.span, files, wording));
-    lines.join("\n")
+    (head, lines.join("\n"))
 }
 
-fn finding_block(
-    number: usize,
+/// The first line of a finding's block after its label, and the lines that follow it.
+fn finding_parts(
     finding: &Finding,
     files: &[DrillFile],
     wording: &JudgeWording,
-) -> String {
-    let mut head = format!(
-        "Finding {number}: {}",
-        finding.span.as_ref().map_or_else(
-            || format!("no {} selected", wording.lines),
-            |span| place(span, wording)
-        )
+) -> (String, String) {
+    let mut head = finding.span.as_ref().map_or_else(
+        || format!("no {} selected", wording.lines),
+        |span| place(span, wording),
     );
     if let Some(severity) = finding.severity {
         head.push_str(&format!(", severity given: {}", severity_word(severity)));
     }
-    let mut lines = vec![head];
+    let mut lines = Vec::new();
     if let Some(span) = &finding.span {
         lines.push(quoted(span, files, wording));
     }
     lines.push(text_block(&finding.text));
-    lines.join("\n")
-}
-
-/// The pairs of a finding and an issue, the issue by its number in the task, whose lines overlap: the hint the judge
-/// is given.
-fn overlap_block(
-    findings: &[Finding],
-    key: &[KeyIssue],
-    order: &[usize],
-    wording: &JudgeWording,
-) -> String {
-    let mut pairs: Vec<(usize, usize)> = overlapping(findings, key)
-        .into_iter()
-        .filter_map(|(finding, issue)| {
-            let shown = order.iter().position(|&position| position == issue)?;
-            Some((finding, shown))
-        })
-        .collect();
-    let noun = wording.lines;
-    if pairs.is_empty() {
-        return format!("No finding's {noun} overlap an issue's {noun}.");
-    }
-    pairs.sort_unstable();
-    let lines: Vec<String> = pairs
-        .iter()
-        .map(|(finding, issue)| format!("finding {} and issue {}", finding + 1, issue + 1))
-        .collect();
-    format!(
-        "Findings and issues whose {noun} overlap, a hint and not a verdict:\n{}",
-        lines.join("\n")
-    )
+    (head, lines.join("\n"))
 }
 
 /// The lines a span covers, quoted from the drill's files.
@@ -215,23 +201,5 @@ fn severity_word(severity: Severity) -> &'static str {
         Severity::Major => "major",
         Severity::Minor => "minor",
         Severity::Nit => "nit",
-    }
-}
-
-/// "3 issues, numbered 1 to 3".
-fn counted(count: usize, noun: &str) -> String {
-    match count {
-        0 => format!("no {noun}s"),
-        1 => format!("1 {noun}, numbered 1"),
-        count => format!("{count} {noun}s, numbered 1 to {count}"),
-    }
-}
-
-/// "1 to 3".
-fn numbers(count: usize) -> String {
-    match count {
-        0 => "none".to_owned(),
-        1 => "1".to_owned(),
-        count => format!("1 to {count}"),
     }
 }

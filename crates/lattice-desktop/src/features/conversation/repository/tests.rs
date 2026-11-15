@@ -10,6 +10,7 @@ mod memory;
 mod memory_pools_migration;
 mod messages;
 mod model_choice;
+mod names;
 mod pruning;
 mod tangents;
 mod web_sources;

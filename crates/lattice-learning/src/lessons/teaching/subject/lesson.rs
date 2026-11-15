@@ -2,7 +2,7 @@
 use super::super::contract;
 use super::super::passes::{Next, Outcome, Passes};
 use super::super::quotes::{checked, numbered, quote_checks_in, QuoteCheck};
-use super::super::repair::{self, Repaired};
+use super::super::repair::{self, refusal};
 use super::super::standing::{versions, Standing};
 use super::super::{
     holds_up_review, quotation_findings, structural_findings, whole_repairs,
@@ -15,9 +15,7 @@ use super::{
 use crate::dto::LearningSourceDto;
 use crate::lessons::content_verification::Protected;
 use crate::lessons::copied_wording::Wording;
-use crate::lessons::text_edits::{self, AppliedFor, Named, Patch};
 use crate::model_call::ErrorClass;
-use crate::outline_progress::OutlineProgress;
 use crate::reference_collection::ReferenceCollection;
 use crate::review_evidence::Checked;
 use crate::review_findings::{
@@ -141,10 +139,6 @@ impl<'a> LessonSubject<'a> {
 
 #[async_trait::async_trait]
 impl Subject for LessonSubject<'_> {
-    fn progress(&self) -> Option<&OutlineProgress> {
-        None
-    }
-
     fn wording(&self) -> &Wording {
         &self.wording
     }
@@ -252,7 +246,6 @@ impl Subject for LessonSubject<'_> {
                     let instructions = review_instructions(
                         &ReviewTexts::lesson(),
                         round,
-                        true,
                         LESSON_REVIEW_EVIDENCE_SCOPE,
                     );
                     let review = crate::teaching_review::review(
@@ -262,7 +255,6 @@ impl Subject for LessonSubject<'_> {
                         pass.value,
                         round.scope(),
                         crate::teaching_review::Remit::Lesson,
-                        None,
                     );
                     let (judged, plan) = futures::try_join!(review, against_plan)?;
                     (Some(judged), plan.findings)
@@ -403,18 +395,49 @@ impl Subject for LessonSubject<'_> {
         }
     }
 
-    fn settle_repair(
+    fn keeps(&self) -> repair::Keeps<'_> {
+        repair::Keeps::Lesson {
+            protected: self.protected,
+        }
+    }
+
+    fn settle_mended(
         &mut self,
         previous: &Value,
         send: &[ReviewFinding],
-        repaired: Repaired,
+        mended: repair::Mended,
     ) -> Result<Settled> {
-        let made = match repaired {
-            Repaired::Patch { patch, plans } => self.settle_patch(previous, send, &patch, &plans),
-            Repaired::Declined { plans } => Ok(self.settle_declined(send, &plans)),
-            Repaired::Whole(text) => self.settle_whole(previous, send, &text),
-        }?;
-        Ok(match made {
+        for (finding, outcome) in send.iter().zip(&mended.outcomes) {
+            self.passes.charge(finding, outcome.clone());
+        }
+        for ((finding, outcome), written) in send.iter().zip(&mended.outcomes).zip(&mended.written)
+        {
+            if *outcome == Outcome::Applied {
+                let words: Vec<String> = written
+                    .iter()
+                    .cloned()
+                    .chain(sentences_of(previous, finding))
+                    .collect();
+                self.worked_on(finding, words);
+            }
+        }
+        if mended.changed {
+            return Ok(Settled::Changed(mended.candidate.to_string()));
+        }
+        tracing::warn!(
+            sent = send.len(),
+            "The teaching repair changed nothing that could stay"
+        );
+        Ok(Settled::Unchanged)
+    }
+
+    fn settle_rewrite(
+        &mut self,
+        previous: &Value,
+        send: &[ReviewFinding],
+        text: &str,
+    ) -> Result<Settled> {
+        Ok(match self.settle_whole(previous, send, text)? {
             Made::Changed(text) => Settled::Changed(text),
             Made::Nothing => {
                 tracing::warn!(
@@ -435,10 +458,9 @@ impl Subject for LessonSubject<'_> {
         match class {
             ErrorClass::DoesNotFit => {
                 tracing::warn!(%reason, "The teaching repair did not fit the window; its findings wait for the user");
-                self.passes.hold(
-                    send.iter().map(ReviewFinding::id),
-                    "its repair did not fit the window",
-                );
+                for finding in send {
+                    self.passes.charge(finding, Outcome::NoRoom);
+                }
             }
             _ => {
                 tracing::warn!(%reason, "The teaching repair could not be used");
@@ -476,85 +498,6 @@ enum Made {
 }
 
 impl LessonSubject<'_> {
-    /// A repair's edits: each finding is charged with what became of the
-    /// edits that named it.
-    fn settle_patch(
-        &mut self,
-        previous: &Value,
-        send: &[ReviewFinding],
-        patch: &str,
-        plans: &BTreeMap<String, String>,
-    ) -> Result<Made> {
-        let patch = text_edits::read_patch(patch)
-            .map_err(|error| AppError::ModelAnswerUnusable(error.to_string()))?;
-        // After a claim repair or a user edit, a finding's correction applies
-        // whole or not at all: it may change only the sentences it names.
-        let (applied, refused) = if self.protected.is_empty() {
-            let applied = text_edits::apply_patch_for(
-                previous,
-                patch,
-                &Value::Null,
-                &self.wording,
-                &repair::reach(send),
-            )
-            .map_err(|error| AppError::ModelAnswerUnusable(error.to_string()))?;
-            (applied, BTreeMap::new())
-        } else {
-            apply_protected(previous, send, patch, &self.wording, self.protected)?
-        };
-        let value = applied.value.clone();
-        reads_as_lesson_or_unusable(&value)?;
-        let outcomes: Vec<Outcome> = send
-            .iter()
-            .map(|finding| match refused.get(finding.id().as_str()) {
-                Some(reasons) => refusal(reasons),
-                None => outcome_of(finding, &applied.named, plans, previous, &value),
-            })
-            .collect();
-        for (finding, outcome) in send.iter().zip(&outcomes) {
-            self.passes.charge(finding, outcome.clone());
-        }
-        for (finding, outcome) in send.iter().zip(&outcomes) {
-            if *outcome == Outcome::Applied {
-                let id = finding.id();
-                let written = applied
-                    .written
-                    .iter()
-                    .filter(|(named, path, sentence)| {
-                        named == id.as_str()
-                            && value
-                                .pointer(path)
-                                .and_then(Value::as_str)
-                                .is_some_and(|text| text.contains(sentence.as_str()))
-                    })
-                    .map(|(_, _, sentence)| sentence.clone());
-                let words: Vec<String> = written.chain(sentences_of(previous, finding)).collect();
-                self.worked_on(finding, words);
-            }
-        }
-        Ok(if value == *previous {
-            Made::Nothing
-        } else {
-            Made::Changed(value.to_string())
-        })
-    }
-
-    /// A repair that gave a plan for each finding and no change: each is
-    /// charged as declined, with the plan it gave.
-    fn settle_declined(
-        &mut self,
-        send: &[ReviewFinding],
-        plans: &BTreeMap<String, String>,
-    ) -> Made {
-        for finding in send {
-            let outcome = plans
-                .get(finding.id().as_str())
-                .map_or(Outcome::Unnamed, |plan| Outcome::Declined(plan.clone()));
-            self.passes.charge(finding, outcome);
-        }
-        Made::Nothing
-    }
-
     /// A repair that rewrote the whole lesson names no finding: a finding is
     /// charged as applied when its part changed.
     fn settle_whole(
@@ -641,179 +584,6 @@ impl LessonSubject<'_> {
             }
         }
     }
-}
-
-/// What became of the edits that named `finding`, in the lesson `value` they
-/// made from `previous`; `plans` are the repair's plan for each finding it
-/// answered.
-fn outcome_of(
-    finding: &ReviewFinding,
-    named: &BTreeMap<String, Named>,
-    plans: &BTreeMap<String, String>,
-    previous: &Value,
-    value: &Value,
-) -> Outcome {
-    let id = finding.id();
-    let Some(named) = named.get(id.as_str()) else {
-        return plans
-            .get(id.as_str())
-            .map_or(Outcome::Unnamed, |plan| Outcome::Declined(plan.clone()));
-    };
-    if named.applied.is_empty() {
-        if named.deferred {
-            Outcome::Deferred
-        } else {
-            Outcome::NotApplied(named.problems.clone())
-        }
-    } else if named
-        .applied
-        .iter()
-        .all(|pointer| previous.pointer(pointer) == value.pointer(pointer))
-    {
-        Outcome::Reverted
-    } else {
-        Outcome::Applied
-    }
-}
-
-/// A finding whose correction was refused whole, charged with why.
-fn refusal(reasons: &[String]) -> Outcome {
-    Outcome::Refused(reasons.iter().map(|reason| format!("{reason}.")).collect())
-}
-
-/// `previous` as a repair that changed nothing leaves it.
-fn unchanged(previous: &Value) -> AppliedFor {
-    AppliedFor {
-        value: previous.clone(),
-        named: BTreeMap::new(),
-        written: Vec::new(),
-    }
-}
-
-/// Applies `patch` while sentences are protected: each finding's correction is
-/// judged alone and refused whole if it leaves what it may change, the rest
-/// apply together, and that result is confined once more, since what the
-/// corrections do together is not seen alone. Gives the application and the
-/// reasons for each refused finding.
-fn apply_protected(
-    previous: &Value,
-    send: &[ReviewFinding],
-    patch: Patch,
-    wording: &Wording,
-    protected: &[Protected],
-) -> Result<(AppliedFor, BTreeMap<String, Vec<String>>)> {
-    let apply = |patch: Patch| {
-        text_edits::apply_patch_for(previous, patch, &Value::Null, wording, &repair::reach(send))
-            .map_err(|error| AppError::ModelAnswerUnusable(error.to_string()))
-    };
-    let mut judged = judge_each(previous, send, &patch, wording, protected)?;
-    let applied = if judged.refused.is_empty() {
-        apply(patch)?
-    } else if judged.accepted.is_empty() {
-        unchanged(previous)
-    } else {
-        apply(patch.only(&judged.accepted))?
-    };
-    let together = super::super::protected::confine_review(
-        previous,
-        &applied.value,
-        &touched_by_edits(send, &applied.named),
-        protected,
-    )
-    .map_err(|error| AppError::ModelAnswerUnusable(error.to_string()))?;
-    let Err(reasons) = together else {
-        return Ok((applied, judged.refused));
-    };
-    for finding in send {
-        let id = finding.id();
-        let wrote = applied
-            .named
-            .get(id.as_str())
-            .is_some_and(|named| !named.applied.is_empty());
-        if wrote {
-            judged
-                .refused
-                .entry(id.as_str().to_owned())
-                .or_insert_with(|| reasons.clone());
-        }
-    }
-    Ok((unchanged(previous), judged.refused))
-}
-
-/// What each named finding's correction comes to when it is judged on its own.
-struct Judged {
-    /// The findings whose corrections stay inside what they may change.
-    accepted: Vec<String>,
-    /// The findings whose corrections do not, with why.
-    refused: BTreeMap<String, Vec<String>>,
-}
-
-/// Applies each named finding's changes alone to `previous` and confines the
-/// result to what that finding may change; a finding whose result is not
-/// wholly inside it is refused with its reasons.
-fn judge_each(
-    previous: &Value,
-    send: &[ReviewFinding],
-    patch: &Patch,
-    wording: &Wording,
-    protected: &[Protected],
-) -> Result<Judged> {
-    let reach = repair::reach(send);
-    let mut judged = Judged {
-        accepted: Vec::new(),
-        refused: BTreeMap::new(),
-    };
-    for id in patch.findings() {
-        let Some(finding) = send.iter().find(|finding| finding.id().as_str() == id) else {
-            continue;
-        };
-        let alone = patch.only(std::slice::from_ref(&id));
-        // A correction none of whose changes can be applied is for the
-        // final application to report.
-        let Ok(applied) =
-            text_edits::apply_patch_for(previous, alone, &Value::Null, wording, &reach)
-        else {
-            judged.accepted.push(id);
-            continue;
-        };
-        let confined = super::super::protected::confine_review(
-            previous,
-            &applied.value,
-            &touched_by_edits(std::slice::from_ref(finding), &applied.named),
-            protected,
-        )
-        .map_err(|error| AppError::ModelAnswerUnusable(error.to_string()))?;
-        match confined {
-            Ok(_) => judged.accepted.push(id),
-            Err(reasons) => {
-                judged.refused.insert(id, reasons);
-            }
-        }
-    }
-    Ok(judged)
-}
-
-/// For each part (`/blocks/N`, `/questions/N`), the findings whose applied
-/// changes touched it.
-fn touched_by_edits<'a>(
-    send: &'a [ReviewFinding],
-    named: &BTreeMap<String, Named>,
-) -> BTreeMap<String, Vec<&'a ReviewFinding>> {
-    let mut touched = BTreeMap::<String, Vec<&ReviewFinding>>::new();
-    for finding in send {
-        let Some(named) = named.get(finding.id().as_str()) else {
-            continue;
-        };
-        for pointer in &named.applied {
-            if let Some(part) = FindingSite::of_pointer(pointer).pointer() {
-                let here = touched.entry(part).or_default();
-                if !here.iter().any(|known| known.id() == finding.id()) {
-                    here.push(finding);
-                }
-            }
-        }
-    }
-    touched
 }
 
 /// For each part, the findings a rewrite of the whole lesson may touch it

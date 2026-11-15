@@ -241,6 +241,33 @@ fn neither_tool_schema_offers_a_conversation_argument() {
     }
 }
 
+#[test]
+fn no_history_tool_asks_the_model_for_an_id_a_sequence_a_cursor_or_an_offset() {
+    for definition in history_tool_definitions() {
+        let properties = definition.parameters["properties"]
+            .as_object()
+            .expect("an object schema");
+        for key in [
+            "message_ids",
+            "from_sequence",
+            "to_sequence",
+            "start_byte",
+            "offset",
+        ] {
+            assert!(
+                !properties.contains_key(key),
+                "{} asks for {key}",
+                definition.name
+            );
+        }
+    }
+    let read = history_tool_definitions()
+        .into_iter()
+        .find(|tool| tool.name == TOOL_READ_CONVERSATION_HISTORY)
+        .expect("the read tool is defined");
+    assert!(read.parameters["properties"]["message"].is_object());
+}
+
 // ---------------------------------------------------------------------------
 // The shared index
 // ---------------------------------------------------------------------------
@@ -1570,7 +1597,8 @@ fn closed_book_keeps_internal_history_access_while_dropping_external_tools() {
         [
             TOOL_SEARCH_SAVED_KNOWLEDGE,
             TOOL_SEARCH_CONVERSATION_HISTORY,
-            TOOL_READ_CONVERSATION_HISTORY
+            TOOL_READ_CONVERSATION_HISTORY,
+            "read_more"
         ]
     );
 
@@ -1584,12 +1612,13 @@ fn closed_book_keeps_internal_history_access_while_dropping_external_tools() {
             "web_search",
             TOOL_SEARCH_SAVED_KNOWLEDGE,
             TOOL_SEARCH_CONVERSATION_HISTORY,
-            TOOL_READ_CONVERSATION_HISTORY
+            TOOL_READ_CONVERSATION_HISTORY,
+            "read_more"
         ]
     );
 
     // A grounded branch that offers a single tool still gains them.
-    assert_eq!(tools_for_turn(&external[..1], false, true).len(), 4);
+    assert_eq!(tools_for_turn(&external[..1], false, true).len(), 5);
 
     // And when memory is unavailable, nothing is advertised that cannot answer:
     // §9.3 forbids telling a model to call a tool it was not given.

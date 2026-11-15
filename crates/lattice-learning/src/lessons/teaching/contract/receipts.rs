@@ -47,17 +47,19 @@ impl Receipts {
         self.sentences.contains_key(&item.id)
     }
 
-    /// Keep the sentences `hit` lies in as `item`'s receipt.
-    pub(super) fn record(&mut self, item: &Item, hit: &Hit) {
-        let Some(text) = hit.part.texts.get(hit.found.text) else {
-            return;
-        };
-        let lying_in: Vec<String> =
-            same_text::sentences_over(text, (hit.found.start, hit.found.end))
-                .into_iter()
-                .filter_map(|(start, end)| text.get(start..end))
-                .map(str::to_owned)
-                .collect();
+    /// Keep the sentences `hits` are as `item`'s receipt.
+    pub(super) fn record(&mut self, item: &Item, hits: &[Hit]) {
+        let lying_in: Vec<String> = hits
+            .iter()
+            .filter_map(|hit| {
+                let text = hit.part.texts.get(hit.found.text)?;
+                same_text::sentences_over(text, (hit.found.start, hit.found.end))
+                    .into_iter()
+                    .map(|(start, end)| text.get(start..end).map(str::to_owned))
+                    .collect::<Option<Vec<String>>>()
+            })
+            .flatten()
+            .collect();
         if !lying_in.is_empty() {
             self.sentences.insert(item.id.clone(), lying_in);
         }

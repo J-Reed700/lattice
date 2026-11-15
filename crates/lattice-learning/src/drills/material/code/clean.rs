@@ -13,7 +13,7 @@ use crate::generation::parse_json;
 use crate::lab_runtime::validate_lab_path;
 use crate::model_call;
 use crate::persistence::now;
-use lattice_core::application::services::grounded_generation::GroundedRequest;
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::domain::learning::drills::{DrillFile, Family, LessonBrief, Pattern};
 use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
@@ -182,9 +182,10 @@ impl CodeMaterial<'_> {
             brief: None,
         };
         let wording = self.code_plant_wording(language, &empty, targets, spec.lesson_issues());
-        let mut request = GroundedRequest::new(&wording.system, wording.prompt);
-        request.output_tokens = budget::code(spec.lines, self.runner.is_some())
-            .saturating_add(budget::mutations(targets.len()));
+        let mut request = legacy::grounded(&wording.system, wording.prompt);
+        *legacy::grounded_says(&mut request).output_tokens =
+            budget::code(spec.lines, self.runner.is_some())
+                .saturating_add(budget::mutations(targets.len()));
         model_call::source_room(ctx.llm, &request, usize::MAX)
     }
 }

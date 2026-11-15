@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test';
-import { ANSWER_CHUNKS, CONVERSATION, PASSAGES, QUESTION, installChatFixture } from './fixtures/chat';
+import { ANSWER_CHUNKS, CONVERSATION, PASSAGES, QUESTION, installChatFixture, streamAnswer } from './fixtures/chat';
 import { argsOf, journeyTest, type ShellBackend } from './fixtures/shell';
 
 const test = journeyTest(installChatFixture);
@@ -15,13 +15,6 @@ async function ask(page: Page, backend: ShellBackend) {
   return String(argsOf(backend, 'chat_with_conversation')[before].requestId);
 }
 
-/** Delivers one streamed piece of the answer, as the backend's llm-stream event does. */
-async function stream(page: Page, requestId: string, content: string) {
-  await page.evaluate(({ conversationId, requestId, content }) => {
-    window.__LATTICE_IPC__.emit('llm-stream', { conversationId, requestId, content, done: false });
-  }, { conversationId: CONVERSATION.id!, requestId, content });
-}
-
 test('a question streams its answer in, and each citation opens the passage it cites', async ({ page, backend }) => {
   await page.goto(`/chat?conversationId=${CONVERSATION.id}`);
   const requestId = await ask(page, backend);
@@ -30,11 +23,11 @@ test('a question streams its answer in, and each citation opens the passage it c
   await expect(page.getByText(QUESTION, { exact: true })).toBeVisible();
 
   // The answer appears as it is written, before the turn ends.
-  await stream(page, requestId, ANSWER_CHUNKS[0]);
+  await streamAnswer(page, requestId, ANSWER_CHUNKS[0]);
   await expect(page.getByText('It comes down to silica.')).toBeVisible();
-  await stream(page, requestId, ANSWER_CHUNKS[1]);
+  await streamAnswer(page, requestId, ANSWER_CHUNKS[1]);
   await expect(page.getByText(/Runny basaltic magma lets gas escape gently/)).toBeVisible();
-  await stream(page, requestId, ANSWER_CHUNKS[2]);
+  await streamAnswer(page, requestId, ANSWER_CHUNKS[2]);
   backend.state.finish.release();
 
   const answer = page.locator('#message-msg-answer');
@@ -75,7 +68,7 @@ test('stopping a question before the answer starts hands the question back to th
   // Asking again runs a fresh turn to the end.
   const retryId = await ask(page, backend);
   expect(retryId).not.toBe(requestId);
-  await stream(page, retryId, ANSWER_CHUNKS.join(''));
+  await streamAnswer(page, retryId, ANSWER_CHUNKS.flat());
   backend.state.finish.release();
   await expect(page.locator('#message-msg-answer')).toContainText('It comes down to silica.');
 });

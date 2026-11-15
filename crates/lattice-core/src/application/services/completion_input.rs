@@ -1,8 +1,9 @@
 //! Assemble role-bearing conversation context once for provider adapters.
 use crate::application::ports::llm_port::{
-    CompletionInput, CompletionRequest, ContentPart, ImagePart, InferencePriority,
+    CompletionInput, ContentPart, ImagePart, InferencePriority,
 };
 use crate::application::ports::LLMPort;
+use crate::application::services::model_contract::legacy;
 use crate::shared::error::{AppError, Result};
 use tokio_util::sync::CancellationToken;
 
@@ -36,14 +37,14 @@ pub async fn complete_text(
     call: TextCall,
 ) -> Result<String> {
     let response = llm
-        .complete(&CompletionRequest {
+        .complete(&legacy::completion(legacy::Completion {
             input: from_context("", context, prompt),
             priority: call.priority,
             cancel: call.cancel,
             cache_key: call.cache_key,
             no_time_limit: call.no_time_limit,
             ..Default::default()
-        })
+        }))
         .await?;
     if !response.tool_calls.is_empty() {
         return Err(AppError::InvalidState(
@@ -165,7 +166,7 @@ mod image_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::llm_port::CompletionResponse;
+    use crate::application::ports::llm_port::{CompletionRequest, CompletionResponse};
     use async_trait::async_trait;
 
     /// Records the typed request it was sent.
@@ -187,6 +188,12 @@ mod tests {
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+        fn enforces(
+            &self,
+            _schema: &crate::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
+        }
     }
 
     #[tokio::test]
@@ -204,7 +211,7 @@ mod tests {
         let sent = llm.0.lock().unwrap().clone().unwrap();
         assert_eq!(sent.priority, InferencePriority::Maintenance);
         assert_eq!(
-            messages(sent.input),
+            messages(sent.input().to_vec()),
             vec![
                 ("system".into(), "JSON only".into()),
                 ("user".into(), "Label this".into()),

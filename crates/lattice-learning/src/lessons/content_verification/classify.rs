@@ -5,19 +5,28 @@
 //! wording); for a figure in a part that states what is so it only refuses
 //! Internal. The model sorts the rest, twenty statements to a call.
 
-use super::{invalid, unit_fields};
+use super::unit_fields;
 use crate::dto::LearningBlockKind;
+use crate::lessons::structured_call::Asking;
 use crate::review_findings::FindingSite;
 use lattice_core::application::ports::LLMPort;
-use lattice_core::application::services::model_contract::{
-    Contract, ContractCall, ContractId, PromptInput,
+use lattice_core::application::services::model_contract::ask::{
+    ask_each, Alone, Answered, Says, Settled,
 };
+use lattice_core::application::services::model_contract::shape::{
+    Authored, Each, Fields, Form, Vocabulary,
+};
+use lattice_core::application::services::model_contract::shown::{
+    Drawn, Internal, Kind, Scope, Showing, Told,
+};
+use lattice_core::application::services::model_contract::{Contract, ContractId};
 use lattice_core::domain::learning::claim_review::{Class, ClassifiedBy};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{protocol, shared::protocol::Protocol};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 /// Statements sorted in one model call, as the replay measured it.
 const BATCH: usize = 20;
@@ -37,7 +46,7 @@ const SYSTEM: &str = concat!(
     "- internal: about this lesson's own scenario, exercise, rubric, answer options or learners; or about what this lesson's sources do or do not say; or an instruction or recommendation. Not a checkable fact about the world.\n",
     lattice_core::own_figures!(),
     " They are not specifics, and no source states them: a statement that calculates with them is reasoning, and one that only sets them is internal.\n",
-    "When a statement mixes kinds, answer sourced if any part needs a source. Answer with JSON: {\"<id>\": \"<class>\", ...}, one entry per id, nothing else."
+    "When a statement mixes kinds, answer sourced if any part needs a source. Answer with JSON: {\"entries\": [{\"of\": \"<id>\", \"class\": \"<class>\"}, ...]}, one entry per id, nothing else."
 );
 
 /// A statement to sort, the lesson field it was extracted from and the case
@@ -56,27 +65,76 @@ pub(crate) struct SortStatements;
 
 impl Contract for SortStatements {
     const ID: ContractId = ContractId::new("classify-statements");
-    type Input = PromptInput;
+    type Input = Input;
 }
 
-impl SortStatements {
-    fn read(raw: &str) -> Result<BTreeMap<String, String>> {
-        crate::generation::parse_json(raw)
+/// One statement to sort, as the model names it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct Statement {
+    at: Internal<usize>,
+    text: Told<String>,
+}
+
+impl Kind for Statement {
+    const PREFIX: &'static str = "s";
+    const DRAWN: Drawn = Drawn::Itself;
+    type Ref = usize;
+
+    fn reference(&self) -> usize {
+        *self.at.value()
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
-impl lattice_core::application::services::model_contract::test_support::RenderAnswer
-    for SortStatements
-{
-    type Answer = BTreeMap<String, String>;
+/// The statements still to be sorted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct Input {
+    statements: Vec<Statement>,
+}
 
-    fn render(answer: &Self::Answer) -> String {
-        json!(answer).to_string()
+/// The classes the model may give a statement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Sorted(Class);
+
+impl Vocabulary for Sorted {
+    const WORDS: &'static [(&'static str, Self)] = &[
+        ("sourced", Self(Class::Sourced)),
+        ("reasoning", Self(Class::Reasoning)),
+        ("common", Self(Class::Common)),
+        ("internal", Self(Class::Internal)),
+    ];
+}
+
+/// The class the model gave one statement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Sort {
+    class: Sorted,
+}
+
+impl Authored for Sort {
+    fn form() -> Form {
+        Form::new().word::<Sorted>("class")
     }
 
-    fn read(text: &str) -> Result<Self::Answer> {
-        Self::read(text)
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(Self {
+            class: fields.word::<Sorted>("class")?,
+        })
+    }
+}
+
+impl Answered for SortStatements {
+    type Answer = Each<Statement, Sort>;
+    const ALONE: Alone = Alone::Pending;
+
+    fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
+        let statements = showing.show(&input.statements)?;
+        let listed: Map<String, Value> = statements
+            .iter()
+            .map(|(handle, statement)| (handle.written(), json!(statement.text)))
+            .collect();
+        let mut says = Says::new(SYSTEM, Value::Object(listed).to_string());
+        says.output_tokens = OUTPUT_TOKENS;
+        Ok(says)
     }
 }
 
@@ -367,14 +425,13 @@ pub(super) async fn classify(
         .filter_map(|(index, slot)| slot.is_none().then_some(index))
         .collect();
     for batch in open.chunks(BATCH) {
-        let ids: Vec<String> = batch.iter().map(|index| format!("s{index}")).collect();
-        let shown: Map<String, Value> = batch
+        let items: Vec<Statement> = batch
             .iter()
-            .zip(&ids)
-            .filter_map(|(index, id)| {
-                statements
-                    .get(*index)
-                    .map(|to_sort| (id.clone(), json!(to_sort.statement)))
+            .filter_map(|index| {
+                statements.get(*index).map(|to_sort| Statement {
+                    at: Internal::of(*index),
+                    text: Told(to_sort.statement.to_owned()),
+                })
             })
             .collect();
         crate::lesson_progress::stage(format!(
@@ -382,82 +439,47 @@ pub(super) async fn classify(
             batch.len()
         ));
         let _model_call = crate::lesson_progress::model_call(crate::lesson_progress::Term::Sort);
-        let prompt = Value::Object(shown).to_string();
-        let call = ContractCall::of::<SortStatements>(&PromptInput {
-            system: SYSTEM.to_owned(),
-            prompt: prompt.clone(),
-        })?;
-        let classes = crate::generation::complete_checked(
+        let settled = ask_each::<SortStatements>(
             llm,
-            &call,
-            SYSTEM,
-            prompt,
-            schema(&ids),
-            OUTPUT_TOKENS,
-            None,
-            None,
-            |raw| classes_of(raw, &ids),
+            &Asking {
+                progress: None,
+                reasoning: None,
+            },
+            &mut Scope::for_question(),
+            &items,
+            |open, _| Input {
+                statements: open.iter().map(|statement| (*statement).clone()).collect(),
+            },
+            &crate::model_call::answer_options(),
         )
         .await?;
-        for (index, class) in batch.iter().zip(classes) {
+        let mut unsorted = 0_usize;
+        for (item, settled) in items.iter().zip(settled) {
+            let index = *item.at.value();
+            let Settled::Answered(sort) = settled else {
+                unsorted = unsorted.saturating_add(1);
+                continue;
+            };
             if let (Some(slot), Some(ruling), Some(to_sort)) = (
-                sorted.get_mut(*index),
-                rulings.get(*index),
-                statements.get(*index),
+                sorted.get_mut(index),
+                rulings.get(index),
+                statements.get(index),
             ) {
-                save_class(llm, to_sort.statement, class).await?;
-                *slot = Some((ruling.settle(class), ClassifiedBy::Model));
+                save_class(llm, to_sort.statement, sort.class.0).await?;
+                *slot = Some((ruling.settle(sort.class.0), ClassifiedBy::Model));
             }
+        }
+        if unsorted > 0 {
+            return Err(AppError::ModelAnswerUnusable(format!(
+                "The model gave {unsorted} of {} statements no class.",
+                items.len()
+            )));
         }
     }
     sorted
         .into_iter()
         .collect::<Option<Vec<_>>>()
         .ok_or_else(|| AppError::InternalError("A statement was left without a class".into()))
-}
-
-/// The answer's shape: one entry for each of `ids`, each one of the classes.
-fn schema(ids: &[String]) -> Value {
-    let class = json!({"type": "string", "enum": ["sourced", "reasoning", "common", "internal"]});
-    let properties: Map<String, Value> = ids.iter().map(|id| (id.clone(), class.clone())).collect();
-    json!({
-        "type": "object",
-        "properties": properties,
-        "required": ids,
-        "additionalProperties": false,
-    })
-}
-
-/// The classes the model gave `ids`, in order: each id once, each a class.
-fn classes_of(raw: &str, ids: &[String]) -> Result<Vec<Class>> {
-    let answer = SortStatements::read(raw)?;
-    if let Some(extra) = answer.keys().find(|id| !ids.contains(id)) {
-        return Err(invalid(format!(
-            "Sort only the statements supplied; {extra} is not one of them."
-        )));
-    }
-    ids.iter()
-        .map(|id| {
-            let name = answer
-                .get(id)
-                .ok_or_else(|| invalid(format!("Give {id} a class.")))?;
-            class_named(name).ok_or_else(|| {
-                invalid(format!(
-                    "{name} is not a class: give {id} sourced, reasoning, common or internal."
-                ))
-            })
-        })
-        .collect()
-}
-
-fn class_named(name: &str) -> Option<Class> {
-    match name.trim().to_ascii_lowercase().as_str() {
-        "sourced" => Some(Class::Sourced),
-        "reasoning" => Some(Class::Reasoning),
-        "common" => Some(Class::Common),
-        "internal" => Some(Class::Internal),
-        _ => None,
-    }
 }
 
 fn class_key(llm: &dyn LLMPort, statement: &str) -> String {

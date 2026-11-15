@@ -262,11 +262,11 @@ async fn a_research_turn_stopped_by_a_restart_resumes_from_its_last_round() {
     let requests = llm.requests();
     assert_eq!(requests.len(), 1, "the saved round is not searched again");
     assert_eq!(
-        requests[0].input.len(),
+        requests[0].input().len(),
         attempt.assembled.input.len() + attempt.round.transcript.len()
     );
     assert!(matches!(
-        requests[0].input.last(),
+        requests[0].input().last(),
         Some(CompletionInput::ToolResult { output, .. }) if output.contains("leached")
     ));
     let conversation = runtime
@@ -405,7 +405,7 @@ async fn a_research_turn_with_a_picture_saves_and_resumes_from_captions_only() {
     assert_eq!(requests.len(), 1, "the saved round is not searched again");
     assert!(!requests[0].has_images(), "a resumed turn replays captions");
     assert!(matches!(
-        requests[0].input.first(),
+        requests[0].input().first(),
         Some(CompletionInput::Message { content, .. })
             if content.starts_with(QUESTION)
                 && content.ends_with("[Picture: cell-teardown.jpg (896×672)]")
@@ -616,6 +616,12 @@ impl LLMPort for ChosenThenChanged {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
     }
 }
 

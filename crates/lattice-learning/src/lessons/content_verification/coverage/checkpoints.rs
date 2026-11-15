@@ -6,9 +6,10 @@ use super::*;
 use lattice_core::protocol;
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::protocol::Protocol;
+use std::collections::BTreeSet;
 
 const UNIT_KEYS: Protocol = protocol!("coverage-unit", 2);
-const MAPPING_KEYS: Protocol = protocol!("coverage-mapping", 2);
+const MAPPING_KEYS: Protocol = protocol!("coverage-mapping", 3);
 const FIDELITY_KEYS: Protocol = protocol!("coverage-fidelity", 2);
 
 fn key(llm: &dyn LLMPort, input: &Value) -> String {
@@ -23,8 +24,41 @@ fn key(llm: &dyn LLMPort, input: &Value) -> String {
     ))
 }
 
-pub(super) fn mapping_key(llm: &dyn LLMPort, inputs: &[Value]) -> String {
-    MAPPING_KEYS.key(key(llm, &json!(inputs)))
+pub(super) fn mapping_key(llm: &dyn LLMPort, unit: &Value) -> String {
+    MAPPING_KEYS.key(key(llm, unit))
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedMapping {
+    judged: Vec<String>,
+}
+
+/// The passages saved as judged for `unit`, when every one is a passage of it.
+pub(super) async fn load_mapping(
+    llm: &dyn LLMPort,
+    unit: &Value,
+) -> Result<Option<BTreeSet<String>>> {
+    let ids: BTreeSet<String> = mapping::passages_of(unit)
+        .into_iter()
+        .map(|passage| passage.id)
+        .collect();
+    Ok(crate::lesson_drafts::checkpoint(&mapping_key(llm, unit))
+        .await?
+        .and_then(|value| serde_json::from_value::<SavedMapping>(value).ok())
+        .map(|saved| saved.judged.into_iter().collect::<BTreeSet<_>>())
+        .filter(|judged| judged.iter().all(|id| ids.contains(id))))
+}
+
+pub(super) async fn save_mapping(
+    llm: &dyn LLMPort,
+    unit: &Value,
+    judged: &BTreeSet<String>,
+) -> Result<()> {
+    let saved = SavedMapping {
+        judged: judged.iter().cloned().collect(),
+    };
+    crate::lesson_drafts::record_checkpoint(&mapping_key(llm, unit), serde_json::to_value(saved)?)
+        .await
 }
 
 pub(super) fn fidelity_key(llm: &dyn LLMPort, unit: &Value, passage: &Value) -> String {

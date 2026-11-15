@@ -44,7 +44,7 @@ const PASSAGES: [(u32, &str); 4] = [(2, ROOF), (5, OPENING), (7, TOLL), (9, COOK
 fn message() -> String {
     let passages = PASSAGES
         .iter()
-        .map(|(label, content)| format!("[{label}] Document: d{label}.md\nContent: {content}"))
+        .map(|(label, content)| format!("[s{label}] Document: d{label}.md\nContent: {content}"))
         .collect::<Vec<_>>()
         .join("\n\n");
     format!("{passages}\n\nQuestion: Tell me about the bridge.\n\n{READING_INSTRUCTION}")
@@ -73,10 +73,17 @@ async fn grounded(model: &Arc<Model>) -> Run {
     .await
 }
 
+/// The reply as its events drew it: the text, and each reference as written.
 fn streamed(run: &Run) -> String {
     run.events
         .iter()
-        .filter_map(|event| event.content.clone())
+        .filter_map(|event| {
+            let reference = event.reference.as_ref();
+            event
+                .content
+                .clone()
+                .or_else(|| reference.map(|reference| reference.written.clone()))
+        })
         .collect()
 }
 
@@ -84,42 +91,39 @@ fn reply(text: &str) -> CompletionResponse {
     CompletionResponse::from_text(text)
 }
 
-const NOTES: &str = "[2] The roof was mended in 1851.\n[5] The bridge opened on 1932-05-01 to traffic.\n[7] A toll of two pence was charged from the start.\n[9] -";
-const ANSWER: &str = "The roof was mended in 1851 [2]. The bridge opened on 1932-05-01 [5].";
+const READING: &str = r#"{"entries":[{"of":"p1","keep":["u1"]},{"of":"p2","keep":["u1"]},{"of":"p3","keep":["u1"]},{"of":"p4","keep":[]}]}"#;
+const NOTES: &str = "[s2] The roof was mended in 1851.\n[s5] The bridge opened on 1932-05-01 to traffic.\n[s7] A toll of two pence was charged from the start.\n[s9] -";
+const ANSWER: &str = "The roof was mended in 1851 [s2]. The bridge opened on 1932-05-01 [s5].";
 
 #[tokio::test]
 async fn a_grounded_answer_reads_first_and_adds_the_passage_it_left_out() {
     let model = Model::new([
-        reply(NOTES),
+        reply(READING),
         reply(ANSWER),
-        reply("A toll of two pence was charged from the start [7]."),
+        reply("A toll of two pence was charged from the start [s7]."),
     ]);
     let run = grounded(&model).await;
     let outcome = run.outcome.as_ref().expect("an answer");
-    let added = "A toll of two pence was charged from the start [7].";
+    let added = "A toll of two pence was charged from the start [s7].";
     assert_eq!(outcome.response, format!("{ANSWER}\n\n{added}"));
     assert_eq!(streamed(&run), format!("{ANSWER}\n\n{added}"));
 
     let requests = model.requests();
-    assert_eq!(requests.len(), 3, "four passages are one group");
+    assert_eq!(requests.len(), 3, "four passages are one request");
     let (reading, writing, continuation) = (&requests[0], &requests[1], &requests[2]);
     assert_eq!(
-        reading.input.len(),
+        reading.input().len(),
         2,
-        "the planned prompt, its message closed by the group"
+        "the instruction, and the passages with the question"
     );
-    assert!(last_text(reading).contains(&format!("\n\n[9] {COOKING}\n\n")));
-    assert_eq!(reading.tool_choice, Some(ToolChoice::None));
-    assert_eq!(reading.thinking, ThinkingMode::Off);
-    assert_eq!(reading.max_output_tokens, Some(512));
+    assert!(last_text(reading).contains(&format!("[p4] Document: d9.md\n[u1] {COOKING}")));
 
-    assert_eq!(json_of(&writing.input[0]), json_of(&reading.input[0]));
     assert_eq!(
-        writing.input[1].text(),
+        writing.input()[1].text(),
         message(),
         "the answer is written on the planned message"
     );
-    assert_eq!(writing.input[2].text(), NOTES);
+    assert_eq!(writing.input()[2].text(), NOTES);
     assert_eq!(last_text(writing), SEARCH_OR_WRITE_INSTRUCTION);
     assert!(
         writing.may_call_tools(),
@@ -127,14 +131,17 @@ async fn a_grounded_answer_reads_first_and_adds_the_passage_it_left_out() {
     );
 
     let asked = last_text(continuation);
-    assert!(asked.contains(&format!("[7] \"{TOLL}\"")), "{asked}");
-    assert!(!asked.contains("[2]") && !asked.contains("[5]"), "{asked}");
+    assert!(asked.contains(&format!("[s7] \"{TOLL}\"")), "{asked}");
+    assert!(
+        !asked.contains("[s2]") && !asked.contains("[s5]"),
+        "{asked}"
+    );
     assert_eq!(
-        json_of(&continuation.input[..writing.input.len()].to_vec()),
-        json_of(&writing.input),
+        json_of(&continuation.input()[..writing.input().len()].to_vec()),
+        json_of(&writing.input()),
         "the continuation reads on from the writing round's prompt"
     );
-    assert_eq!(continuation.tool_choice, Some(ToolChoice::None));
+    assert_eq!(continuation.tool_choice(), Some(ToolChoice::None));
     assert_eq!(continuation.thinking, ThinkingMode::Off);
 
     let labels: Vec<&str> = run.steps.iter().map(|step| step.label.as_str()).collect();
@@ -147,74 +154,10 @@ async fn a_grounded_answer_reads_first_and_adds_the_passage_it_left_out() {
     }
 }
 
-/// The turn's request as planned, measured as the send-time gates measure it.
-async fn planned_tokens(model: &Model) -> usize {
-    let planned = CompletionRequest {
-        input: vec![
-            CompletionInput::Message {
-                role: "system".into(),
-                content: "Answer from sources.".into(),
-            },
-            CompletionInput::Message {
-                role: "user".into(),
-                content: message(),
-            },
-        ],
-        tools: vec![tool("search_documents")],
-        ..Default::default()
-    };
-    prompt_tokens(model, &planned).await
-}
-
-/// A window the planned prompt fills up to the answer's reservation, as the
-/// context assembler plans one.
-async fn planned_to_the_reservation(model: &Model) {
-    let window = planned_tokens(model).await + 512;
-    model.window.store(window, Ordering::Relaxed);
-}
-
-#[tokio::test]
-async fn the_answer_gets_what_the_window_has_left_after_the_notes() {
-    let answer = "The roof was mended in 1851 [2]. It opened on 1932-05-01 [5], with a toll [7].";
-    let model = Model::new([reply(NOTES), reply(answer)]);
-    planned_to_the_reservation(&model).await;
-    let run = grounded(&model).await;
-    assert_eq!(run.outcome.as_ref().expect("an answer").response, answer);
-    assert_eq!(streamed(&run), answer);
-    let requests = model.requests();
-    assert_eq!(requests.len(), 2);
-    let writing = &requests[1];
-    assert_eq!(writing.input[2].text(), NOTES);
-    let room = model.window.load(Ordering::Relaxed) - prompt_tokens(&*model, writing).await;
-    assert!(room < 512, "the notes took part of the reservation: {room}");
-    assert_eq!(
-        writing.max_output_tokens,
-        Some(u32::try_from(room).unwrap())
-    );
-}
-
-#[tokio::test]
-async fn notes_that_would_crowd_out_the_answer_are_taken_back() {
-    let long = format!("[2] {}\n[5] -\n[7] -\n[9] -", [ROOF; 20].join(" "));
-    let model = Model::new([reply(&long), reply(ANSWER)]);
-    planned_to_the_reservation(&model).await;
-    let run = grounded(&model).await;
-    let outcome = run.outcome.as_ref().expect("an answer");
-    assert_eq!(outcome.response, ANSWER);
-    assert_eq!(streamed(&run), outcome.response);
-    let requests = model.requests();
-    assert_eq!(requests.len(), 2, "without notes there is nothing to add");
-    let answering = &requests[1];
-    assert_eq!(answering.input.len(), 2, "no notes");
-    assert!(!last_text(answering).contains(READING_INSTRUCTION));
-    assert!(last_text(answering).ends_with("Question: Tell me about the bridge."));
-    assert_eq!(answering.max_output_tokens, Some(512));
-}
-
 #[tokio::test]
 async fn a_continuation_the_provider_fails_leaves_the_answer_as_it_was() {
     let model = Model::new([
-        Scripted::from(reply(NOTES)),
+        Scripted::from(reply(READING)),
         Scripted::from(reply(ANSWER)),
         Scripted::Fail("The provider is down".into()),
     ]);
@@ -227,10 +170,10 @@ async fn a_continuation_the_provider_fails_leaves_the_answer_as_it_was() {
 
 #[tokio::test]
 async fn a_call_a_continuation_writes_as_text_is_neither_shown_nor_kept() {
-    let added = "A toll of two pence was charged from the start [7].";
+    let added = "A toll of two pence was charged from the start [s7].";
     let call = "<tool_call>\n{\"name\": \"search_documents\", \"arguments\": {\"query\": \"toll\"}}\n</tool_call>";
     let model = Model::new([
-        reply(NOTES),
+        reply(READING),
         reply(ANSWER),
         reply(&format!("{added}\n{call}")),
     ]);
@@ -238,14 +181,19 @@ async fn a_call_a_continuation_writes_as_text_is_neither_shown_nor_kept() {
     let outcome = run.outcome.as_ref().expect("an answer");
     assert_eq!(outcome.response, format!("{ANSWER}\n\n{added}"));
     assert_eq!(streamed(&run), outcome.response);
-    assert_eq!(model.requests().len(), 3, "[7] added: nothing left out");
+    assert_eq!(model.requests().len(), 3, "[s7] added: nothing left out");
 }
 
 #[tokio::test]
 async fn a_window_with_no_room_left_adds_nothing_to_the_answer() {
-    let model = Model::new([reply(NOTES), reply(ANSWER)]);
+    // An answer that takes the room the window had left for it.
+    let answer = format!(
+        "{ANSWER}{}",
+        " The parish kept its accounts in order.".repeat(1_500)
+    );
+    let model = Model::new([reply(READING), reply(&answer)]);
     // The continuation's request, as the loop would send it, fills the window.
-    let continuation = CompletionRequest {
+    let continuation = legacy::completion(legacy::Completion {
         input: vec![
             CompletionInput::Message {
                 role: "system".into(),
@@ -265,26 +213,26 @@ async fn a_window_with_no_room_left_adds_nothing_to_the_answer() {
             },
             CompletionInput::Message {
                 role: "assistant".into(),
-                content: ANSWER.into(),
+                content: answer.clone(),
             },
             CompletionInput::Message {
                 role: "user".into(),
-                content: CONTINUE_INSTRUCTION.replace("{quotes}", &format!("[7] \"{TOLL}\"")),
+                content: CONTINUE_INSTRUCTION.replace("{quotes}", &format!("[s7] \"{TOLL}\"")),
             },
         ],
         tools: vec![tool("search_documents")],
         ..Default::default()
-    };
+    });
     let window = prompt_tokens(&*model, &continuation).await;
     model.window.store(window, Ordering::Relaxed);
     let run = grounded(&model).await;
     let outcome = run.outcome.as_ref().expect("an answer");
-    assert_eq!(outcome.response, ANSWER);
+    assert_eq!(outcome.response, answer);
     assert_eq!(streamed(&run), outcome.response);
     let requests = model.requests();
     assert_eq!(requests.len(), 2, "no continuation");
     assert_eq!(
-        requests[1].input[2].text(),
+        requests[1].input()[2].text(),
         NOTES,
         "the notes fit beside the answer"
     );
@@ -294,37 +242,20 @@ async fn a_window_with_no_room_left_adds_nothing_to_the_answer() {
         .any(|step| step.label == "Adding what was left out"));
 }
 
-#[tokio::test]
-async fn a_continuation_that_adds_no_passage_is_dropped_and_ends_the_check() {
-    for declined in ["-", "Those passages add nothing to the answer."] {
-        let model = Model::new([
-            reply(NOTES),
-            reply("The roof was mended in 1851 [2]."),
-            reply(declined),
-        ]);
-        let run = grounded(&model).await;
-        assert_eq!(
-            run.outcome.expect("an answer").response,
-            "The roof was mended in 1851 [2]."
-        );
-        assert_eq!(model.requests().len(), 3, "no second continuation");
-    }
-}
-
 /// Claude's classifiers can stop a reply after its thinking with no text at all.
 /// That is not the end of a turn whose notes are already written.
 #[tokio::test]
 async fn a_reply_with_nothing_in_it_is_asked_for_again() {
     let model = Model::new([
-        reply(NOTES),
+        reply(READING),
         reply(""),
-        reply("The roof was mended in 1851 [2]."),
+        reply("The roof was mended in 1851 [s2]."),
         reply("-"),
     ]);
     let run = grounded(&model).await;
     assert_eq!(
         run.outcome.expect("an answer").response,
-        "The roof was mended in 1851 [2]."
+        "The roof was mended in 1851 [s2]."
     );
     assert_eq!(model.requests().len(), 4);
 }
@@ -332,7 +263,7 @@ async fn a_reply_with_nothing_in_it_is_asked_for_again() {
 #[tokio::test]
 async fn a_second_reply_with_nothing_in_it_ends_the_turn() {
     let model = Model::new([
-        reply(NOTES),
+        reply(READING),
         reply(""),
         reply(""),
         reply("Never asked for."),
@@ -353,7 +284,7 @@ fn stopped(text: &str) -> CompletionResponse {
 /// the answer was "The Ren". It must not pass for the whole answer.
 #[tokio::test]
 async fn an_answer_a_safety_filter_stopped_says_so() {
-    let model = Model::new([reply(NOTES), stopped("The roof was")]);
+    let model = Model::new([reply(READING), stopped("The roof was")]);
     let run = grounded(&model).await;
     let answer = run.outcome.expect("what came before the stop").response;
     assert!(answer.starts_with("The roof was"), "{answer}");
@@ -363,67 +294,18 @@ async fn an_answer_a_safety_filter_stopped_says_so() {
 
 #[tokio::test]
 async fn a_safety_filter_that_stops_two_empty_replies_says_so() {
-    let model = Model::new([reply(NOTES), stopped(""), stopped("")]);
+    let model = Model::new([reply(READING), stopped(""), stopped("")]);
     let run = grounded(&model).await;
     let error = run.outcome.expect_err("no answer").to_string();
     assert!(error.contains("safety filter"), "{error}");
 }
 
 #[tokio::test]
-async fn a_note_that_is_not_a_copy_never_asks_for_more() {
-    let model = Model::new([
-        reply("[2] The roof was repaired in 1851.\n[5] -\n[7] none\n[9] -"),
-        reply("The bridge is old."),
-    ]);
-    let run = grounded(&model).await;
-    assert_eq!(
-        run.outcome.expect("an answer").response,
-        "The bridge is old."
-    );
-    assert_eq!(model.requests().len(), 2);
-}
-
-#[tokio::test]
-async fn a_reading_with_no_notes_is_taken_back_and_the_answer_asked_for_as_before() {
-    let model = Model::new([
-        reply("The bridge opened in 1932."),
-        reply("The bridge opened in 1932."),
-        reply(ANSWER),
-    ]);
-    let run = grounded(&model).await;
-    assert_eq!(run.outcome.expect("an answer").response, ANSWER);
-    let requests = model.requests();
-    assert_eq!(
-        requests.len(),
-        3,
-        "the reading, shown back once, then the answer"
-    );
-    let answering = &requests[2];
-    assert_eq!(answering.input.len(), 2);
-    assert!(last_text(answering).ends_with("Question: Tell me about the bridge."));
-    assert!(!last_text(answering).contains(READING_INSTRUCTION));
-}
-
-#[tokio::test]
-async fn a_reading_that_copies_no_passage_is_taken_back_and_the_answer_asked_for_as_before() {
-    let model = Model::new([
-        reply("[2] The bridge is very old.\n[5] -\n[7] -\n[9] -"),
-        reply(ANSWER),
-    ]);
-    let run = grounded(&model).await;
-    assert_eq!(run.outcome.expect("an answer").response, ANSWER);
-    let requests = model.requests();
-    assert_eq!(requests.len(), 2, "without notes there is nothing to add");
-    let answering = &requests[1];
-    assert_eq!(answering.input.len(), 2, "no notes");
-    assert!(last_text(answering).ends_with("Question: Tell me about the bridge."));
-    assert!(!last_text(answering).contains(READING_INSTRUCTION));
-}
-
-#[tokio::test]
 async fn a_reading_that_finds_nothing_asks_for_a_search_in_its_place() {
     let model = Model::new([
-        reply("1. [2] -\n2. [5] -\n3. [7] -\n4. [9] -"),
+        reply(
+            r#"{"entries":[{"of":"p1","keep":[]},{"of":"p2","keep":[]},{"of":"p3","keep":[]},{"of":"p4","keep":[]}]}"#,
+        ),
         reply(ANSWER),
     ]);
     let run = grounded(&model).await;
@@ -431,46 +313,12 @@ async fn a_reading_that_finds_nothing_asks_for_a_search_in_its_place() {
     let requests = model.requests();
     assert_eq!(requests.len(), 2);
     let answering = &requests[1];
-    assert_eq!(answering.input.len(), 2, "no notes");
+    assert_eq!(answering.input().len(), 2, "no notes");
     let message = last_text(answering);
     assert!(!message.contains(READING_INSTRUCTION));
     assert!(message.ends_with(&format!(
         "Question: Tell me about the bridge.\n\n{NOTHING_BEARS_INSTRUCTION}"
     )));
-}
-
-#[tokio::test]
-async fn the_writer_is_given_the_notes_as_kept_and_only_the_reading_stops_at_the_labels() {
-    let answer = "The bridge opened on 1932-05-01 [5]. A toll of two pence was charged [7].";
-    let model = Model::new([
-        reply(&format!(
-            "[2] {TOLL}\n[5] {OPENING}\n[7] -\n[9] -\n\nThe bridge opened in 1932 [5]."
-        )),
-        reply(answer),
-    ]);
-    let run = grounded(&model).await;
-    assert_eq!(run.outcome.as_ref().expect("an answer").response, answer);
-    let requests = model.requests();
-    assert_eq!(requests.len(), 2, "every passage the notes copy is cited");
-    let (reading, writing) = (&requests[0], &requests[1]);
-    assert_eq!(reading.stop, ["\n[10]", "\n10."]);
-    assert!(
-        writing.stop.is_empty(),
-        "the answer is not bound by the labels"
-    );
-    // [2]'s line copies [7]: it is [7]'s note, and not replayed under [2].
-    let kept = format!("[2] -\n[5] {OPENING}\n[7] {TOLL}\n[9] -");
-    assert_eq!(writing.input[2].text(), kept);
-    let step = run
-        .steps
-        .iter()
-        .find(|step| step.label == "Reading the passages")
-        .expect("a reading step");
-    assert_eq!(
-        step.reasoning.as_deref(),
-        Some(kept.as_str()),
-        "the turn record shows the notes the writer was given"
-    );
 }
 
 #[tokio::test]
@@ -496,4 +344,82 @@ async fn a_message_without_numbered_passages_reads_nothing() {
         .steps
         .iter()
         .any(|step| step.label == "Reading the passages"));
+}
+
+#[tokio::test]
+async fn a_continuation_that_says_nothing_is_needed_is_dropped_and_ends_the_check() {
+    let model = Model::new([
+        reply(READING),
+        reply("The roof was mended in 1851 [s2]."),
+        reply("-"),
+    ]);
+    let run = grounded(&model).await;
+    assert_eq!(
+        run.outcome.expect("an answer").response,
+        "The roof was mended in 1851 [s2]."
+    );
+    assert_eq!(model.requests().len(), 3, "no second continuation");
+}
+
+#[tokio::test]
+async fn whatever_the_one_continuation_writes_settles_the_check() {
+    let added = "Both passages still apply [s5].";
+    let model = Model::new([
+        reply(READING),
+        reply("The roof was mended in 1851 [s2]."),
+        reply(added),
+        reply("Never asked for."),
+    ]);
+    let run = grounded(&model).await;
+    assert_eq!(
+        run.outcome.expect("an answer").response,
+        format!("The roof was mended in 1851 [s2].\n\n{added}"),
+        "[s7] is still left out, and is not asked for again"
+    );
+    assert_eq!(model.requests().len(), 3);
+}
+
+#[tokio::test]
+async fn a_reading_the_provider_fails_is_taken_back_and_the_answer_asked_for_as_before() {
+    let model = Model::new([
+        Scripted::Fail("The provider is down".into()),
+        reply(ANSWER).into(),
+    ]);
+    let run = grounded(&model).await;
+    assert_eq!(run.outcome.expect("an answer").response, ANSWER);
+    let requests = model.requests();
+    assert_eq!(requests.len(), 2, "the reading, then the answer");
+    let answering = &requests[1];
+    assert_eq!(answering.input().len(), 2, "no notes");
+    assert!(last_text(answering).ends_with("Question: Tell me about the bridge."));
+    assert!(!last_text(answering).contains(READING_INSTRUCTION));
+}
+
+#[tokio::test]
+async fn the_writer_is_given_the_notes_as_kept_and_the_turn_record_shows_them() {
+    let answer = "The bridge opened on 1932-05-01 [s5]. The parish paid for the roof [s2].";
+    let model = Model::new([
+        reply(
+            r#"{"entries":[{"of":"p1","keep":["u2"]},{"of":"p2","keep":["u1"]},{"of":"p3","keep":[]},{"of":"p4","keep":[]}]}"#,
+        ),
+        reply(answer),
+    ]);
+    let run = grounded(&model).await;
+    assert_eq!(run.outcome.as_ref().expect("an answer").response, answer);
+    let requests = model.requests();
+    assert_eq!(requests.len(), 2, "every passage the notes quote is cited");
+    let writing = &requests[1];
+    assert!(writing.stop().is_empty());
+    let kept = format!("[s2] The parish paid for it.\n[s5] {OPENING}\n[s7] -\n[s9] -");
+    assert_eq!(writing.input()[2].text(), kept);
+    let step = run
+        .steps
+        .iter()
+        .find(|step| step.label == "Reading the passages")
+        .expect("a reading step");
+    assert_eq!(
+        step.reasoning.as_deref(),
+        Some(kept.as_str()),
+        "the turn record shows the notes the writer was given"
+    );
 }

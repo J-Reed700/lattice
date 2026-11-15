@@ -311,11 +311,28 @@ struct Unciting;
 #[async_trait::async_trait]
 impl LLMPort for Unciting {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        let (system, _) = crate::lessons::structured_call::task_messages(request);
+        let (system, user) = crate::lessons::structured_call::task_messages(request);
         let answer = if system.starts_with("Write quiz questions") {
-            "{\"items\":[{}]}"
+            let item = serde_json::json!({
+                "prompt": "Which tray cracks along its base?",
+                "options": [
+                    {"text": "One left inside past noon", "verdict": "right", "reason": ""},
+                    {"text": "One fired before dawn", "verdict": "wrong", "reason": "A tray fired before dawn is not left inside."},
+                    {"text": "One glazed at dusk", "verdict": "wrong", "reason": "Glazing does not crack the base."},
+                    {"text": "One stacked on the shelf", "verdict": "wrong", "reason": "Stacking does not crack the base."}
+                ],
+                "explanation": "A tray left inside past noon cracks along its base.",
+                "quote": [],
+                "difficulty": "2"
+            });
+            let context: serde_json::Value = serde_json::from_str(user).unwrap_or_default();
+            if context["repair"].is_null() {
+                serde_json::json!({ "items": [item] }).to_string()
+            } else {
+                item.to_string()
+            }
         } else {
-            "{\"issues\":[]}"
+            "{\"issues\":[]}".to_owned()
         };
         Ok(CompletionResponse::from_text(answer))
     }
@@ -330,6 +347,12 @@ impl LLMPort for Unciting {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 

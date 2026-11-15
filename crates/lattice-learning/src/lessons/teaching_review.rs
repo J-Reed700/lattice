@@ -1,51 +1,35 @@
 //! Bind review findings to app-owned passages, not model-transcribed quotations.
 use crate::dto::LearningBlockKind;
-use crate::lessons::structured_call::{CallKind, ReasonFirst};
+use crate::lessons::structured_call::{Asking, CallKind, ReasonFirst};
 use crate::lessons::trace::{self, Stage};
-use crate::lessons::writer_excerpts::{self, WriterExcerpts};
-use crate::review_findings::{part_quote, FindingId, FindingSite, ReviewFinding};
-use crate::{generation, outline_progress::OutlineProgress};
+use crate::lessons::writer_excerpts::WriterExcerpts;
+use crate::reference_collection::item_tokens;
+use crate::review_findings::{FindingId, FindingSite, ReviewFinding};
 use lattice_core::{
     application::ports::LLMPort,
-    application::services::model_contract::{Contract, ContractCall, ContractId, PromptInput},
+    application::services::model_contract::{
+        ask::{ask_new, Alone, Answered, Says},
+        packed::Packed,
+        shape::{Authored, Fields, Form, New, Union},
+        shown::{self, Drawn, Kind, Picked, Showing, Told},
+        Contract, ContractId,
+    },
     protocol,
     shared::error::{AppError, Result},
     shared::hash::sha256_hex,
     shared::protocol::Protocol,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use serde_json::{json, Map, Value};
+use std::marker::PhantomData;
 
 pub(crate) use concerns::LessonConcern;
+use concerns::{CheckConcern, IssueConcern};
 
-pub(super) const POLICY: Protocol = protocol!("section-review", 7);
+pub(super) const POLICY: Protocol = protocol!("section-review", 8);
 
 /// The saved answers of the section review, by what it was given.
-const FINDINGS_KEYS: Protocol = protocol!("teaching-review-findings", 7);
-
-/// The call that reviews a lesson's sections or an outline.
-pub(crate) struct TeachingReview;
-
-impl Contract for TeachingReview {
-    const ID: ContractId = ContractId::new("teaching-review");
-    type Input = PromptInput;
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl lattice_core::application::services::model_contract::test_support::RenderAnswer
-    for TeachingReview
-{
-    type Answer = Review;
-
-    fn render(answer: &Review) -> String {
-        json!(answer).to_string()
-    }
-
-    fn read(text: &str) -> Result<Review> {
-        read_review(text)
-    }
-}
+const FINDINGS_KEYS: Protocol = protocol!("teaching-review-findings", 8);
 
 /// The room the review's answer is given.
 const REVIEW_ANSWER_TOKENS: usize = 6000;
@@ -56,66 +40,276 @@ const REVIEW_ANSWER_TOKENS: usize = 6000;
 const REVIEW_DRAFT_BRIEF: &str = "Go through the candidate part by part: for a lesson, every section whose inReview is true and every question; for an outline, every module. Solve each exercise and question yourself and check each worked example against its stated premises and result. For each part say what you checked, what you found and whether it has a material defect.";
 
 /// The sentence the prose step is given when open findings are asked about.
-const OPEN_FINDINGS_BRIEF: &str = " For each entry of openFindings, read the part it names as the candidate now has it, whether or not that part is in review. Quote the exact words of that part that still show the defect, or, for something left out, the words it should follow. When no words of the part show it any more, leave the quote empty and answer resolved. An open finding's id is never used for a different defect: report that as a new issue.";
+const OPEN_FINDINGS_BRIEF: &str = " For each entry of openFindings, read the part it names as the candidate now has it, whether or not that part is in review. Find the words of that part that still show the defect, or, for something left out, the words it should follow. When no words of the part show it any more, the finding is resolved. An open finding's id is never used for a different defect: report that as a new issue.";
 
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct SectionDefect {
-    passage_id: String,
-    finding: String,
-    #[serde(default)]
-    concerns: Option<Vec<LessonConcern>>,
-}
+/// How the entries of an answer are written, in every review.
+const ANSWER_FORM: &str = "Answer with items. Each item holds one entry, and the entry's kind says what it is. An entry of kind issue is a defect of the whole material, as the issues described above: its note says what is wrong, and continues is the id of the open finding it continues, or none. An entry of kind sectionDefect is a defect in a section in review, as the sectionDefects described above: passageId is the passage where it shows, finding says what is wrong, and continues is as for an issue. An entry of kind resolved gives in openFinding the id of an open finding whose defect is no longer in the candidate; an open finding that no entry names stays open.";
 
-#[derive(Deserialize)]
-#[cfg_attr(
-    any(test, feature = "test-support"),
-    derive(Serialize, Debug, PartialEq)
-)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Review {
-    issues: Vec<Issue>,
-    #[serde(default, rename = "sectionDefects")]
-    section_defects: Vec<Value>,
-    #[serde(default, rename = "openFindings")]
-    open_findings: Vec<Value>,
-}
+/// What a lesson's review adds to how its entries are written.
+const CONCERN_FORM: &str = " An issue's concern is the one concern it fails. A sectionDefect's concerns is a list of objects, each with a concern: one for every concern the section fails.";
 
-/// An issue as the reviewer gave it: plain text, or, when open findings were
-/// asked about, text with the open finding it continues.
-#[derive(Deserialize)]
-#[cfg_attr(
-    any(test, feature = "test-support"),
-    derive(Serialize, Debug, PartialEq)
-)]
-#[serde(untagged)]
-enum Issue {
-    Plain(String),
-    Continuing {
-        note: String,
-        #[serde(default)]
-        continues: Option<String>,
-        #[serde(default)]
-        concern: Option<LessonConcern>,
-    },
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum Judgement {
-    Present,
-    Resolved,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct VerdictEntry {
+/// A part of a section the reviewer may point at: a passage of a section in review.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct Passage {
     id: String,
-    quote: String,
-    verdict: Judgement,
+    section: usize,
+    number: usize,
 }
 
-/// One open finding shown to the reviewer.
+impl Kind for Passage {
+    const PREFIX: &'static str = "p";
+    const DRAWN: Drawn = Drawn::Itself;
+    type Ref = String;
+
+    fn reference(&self) -> String {
+        self.id.clone()
+    }
+}
+
+/// A finding an earlier review recorded, still open.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct OpenFinding {
+    id: FindingId,
+    part: Told<String>,
+    /// The passage it is about now, when the reviewer may point at it.
+    passage: Option<String>,
+    note: Told<String>,
+}
+
+impl Kind for OpenFinding {
+    const PREFIX: &'static str = "f";
+    const DRAWN: Drawn = Drawn::Itself;
+    type Ref = FindingId;
+
+    fn reference(&self) -> FindingId {
+        self.id.clone()
+    }
+}
+
+/// What one review request says.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct Input {
+    system: Told<String>,
+    /// The caller's task, without its candidate and with its excerpts taken out.
+    prompt: Told<Value>,
+    /// The reviewed candidate: bodies as passages without names, `inReview` and `label` on each section.
+    candidate: Told<Value>,
+    passages: Vec<Passage>,
+    /// The writer's excerpts, the ones the lesson cites first.
+    sources: Packed<Told<Value>>,
+    open: Vec<OpenFinding>,
+    /// What an earlier part of a cut-off answer already holds.
+    reported: Told<Vec<String>>,
+}
+
+/// One entry of a review's answer.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Entry {
+    /// A defect that belongs to no section.
+    Issue {
+        note: String,
+        continues: Option<Picked<OpenFinding>>,
+    },
+    /// A defect in a passage of a section in review.
+    Defect {
+        at: Picked<Passage>,
+        finding: String,
+        concerns: Vec<LessonConcern>,
+        continues: Option<Picked<OpenFinding>>,
+    },
+    /// An open finding whose defect is gone.
+    Resolved(Picked<OpenFinding>),
+}
+
+/// The kind of review: which defects it reports.
+pub(crate) trait Lens: Send + Sync + 'static {
+    const ID: ContractId;
+    const REMIT: Remit;
+}
+
+/// A review of any material: any material defect.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Anything;
+
+/// A lesson's review: only the concerns it owns.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Concerns;
+
+impl Lens for Anything {
+    const ID: ContractId = ContractId::new("teaching-review");
+    const REMIT: Remit = Remit::Open;
+}
+
+impl Lens for Concerns {
+    const ID: ContractId = ContractId::new("lesson-teaching-review");
+    const REMIT: Remit = Remit::Lesson;
+}
+
+/// The call that reviews a lesson's sections or an outline.
+pub(crate) struct TeachingReview<L>(PhantomData<L>);
+
+impl<L: Lens> Contract for TeachingReview<L> {
+    const ID: ContractId = L::ID;
+    type Input = Input;
+}
+
+/// One concern of a section's defect, as a list entry.
+struct ConcernEntry(LessonConcern);
+
+impl Authored for ConcernEntry {
+    fn form() -> Form {
+        Form::new().word::<CheckConcern>("concern")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(Self(fields.word::<CheckConcern>("concern")?.0))
+    }
+}
+
+/// The kinds of entry, told apart by `kind`.
+pub(crate) struct Kinds<L>(Entry, PhantomData<L>);
+
+impl<L: Lens> Union for Kinds<L> {
+    fn forms() -> Vec<(&'static str, Form)> {
+        let lesson = L::REMIT == Remit::Lesson;
+        let mut issue = Form::new().text("note");
+        if lesson {
+            issue = issue.word::<IssueConcern>("concern");
+        }
+        let issue = issue.point_or_none::<OpenFinding>("continues");
+        let mut defect = Form::new().point::<Passage>("passageId").text("finding");
+        if lesson {
+            defect = defect.list::<ConcernEntry>("concerns");
+        }
+        let defect = defect.point_or_none::<OpenFinding>("continues");
+        vec![
+            ("issue", issue),
+            ("sectionDefect", defect),
+            ("resolved", Form::new().point::<OpenFinding>("openFinding")),
+        ]
+    }
+
+    fn read(kind: &str, fields: &mut Fields<'_, '_>) -> Option<Self> {
+        let lesson = L::REMIT == Remit::Lesson;
+        let entry = match kind {
+            "issue" => {
+                let note = fields.text("note")?;
+                if lesson {
+                    fields.word::<IssueConcern>("concern")?;
+                }
+                Entry::Issue {
+                    note,
+                    continues: fields.point_or_none::<OpenFinding>("continues")?,
+                }
+            }
+            "sectionDefect" => {
+                let at = fields.point::<Passage>("passageId")?;
+                let finding = fields.text("finding")?;
+                let concerns = if lesson {
+                    fields
+                        .list::<ConcernEntry>("concerns")?
+                        .into_iter()
+                        .map(|entry| entry.0)
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                Entry::Defect {
+                    at,
+                    finding,
+                    concerns,
+                    continues: fields.point_or_none::<OpenFinding>("continues")?,
+                }
+            }
+            "resolved" => Entry::Resolved(fields.point::<OpenFinding>("openFinding")?),
+            _ => return None,
+        };
+        Some(Self(entry, PhantomData))
+    }
+}
+
+/// One item of a review's answer.
+pub(crate) struct Item<L>(Entry, PhantomData<L>);
+
+impl<L: Lens> Authored for Item<L> {
+    fn form() -> Form {
+        Form::new().one_of::<Kinds<L>>("entry")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        let Kinds(entry, _) = fields.one_of::<Kinds<L>>("entry")?;
+        Some(Self(entry, PhantomData))
+    }
+}
+
+impl<L: Lens> Answered for TeachingReview<L> {
+    type Answer = New<Item<L>>;
+    const ALONE: Alone = Alone::Fails;
+
+    fn within(input: &Input, room: usize) -> Option<Input> {
+        Some(Input {
+            sources: input.sources.within(room),
+            ..input.clone()
+        })
+    }
+
+    fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
+        let passages = showing.show(&input.passages)?;
+        let open = showing.show(&input.open)?;
+        let mut candidate = input.candidate.0.clone();
+        for (handle, passage) in passages.iter() {
+            let place = format!(
+                "/blocks/{}/bodyPassages/{}",
+                passage.section, passage.number
+            );
+            if let Some(entry) = candidate.pointer_mut(&place).and_then(Value::as_object_mut) {
+                entry.insert("id".into(), json!(handle.written()));
+            }
+        }
+        let mut task = input.prompt.0.as_object().cloned().unwrap_or_default();
+        task.insert("candidate".into(), candidate);
+        if !input.sources.is_empty() {
+            if let Some(Value::Object(context)) = task.get_mut("authoringContext") {
+                let sources: Vec<&Value> = input.sources.iter().map(|source| &source.0).collect();
+                context.insert("sources".into(), json!(sources));
+            }
+        }
+        if !input.open.is_empty() {
+            let entries: Vec<Value> = open
+                .iter()
+                .map(|(handle, finding)| {
+                    let mut entry = Map::new();
+                    entry.insert("id".into(), json!(handle.written()));
+                    entry.insert("part".into(), json!(finding.part));
+                    let passage = finding.passage.as_ref().and_then(|id| {
+                        passages
+                            .iter()
+                            .find(|(_, passage)| &passage.id == id)
+                            .map(|(handle, _)| handle.written())
+                    });
+                    if let Some(passage) = passage {
+                        entry.insert("passageId".into(), json!(passage));
+                    }
+                    entry.insert("note".into(), json!(finding.note));
+                    Value::Object(entry)
+                })
+                .collect();
+            task.insert("openFindings".into(), json!(entries));
+        }
+        if !input.reported.0.is_empty() {
+            task.insert("alreadyReported".into(), json!(input.reported));
+        }
+        let mut instructions = format!("{}\n{ANSWER_FORM}", input.system.0);
+        if L::REMIT == Remit::Lesson {
+            instructions.push_str(CONCERN_FORM);
+        }
+        let mut says = Says::new(instructions, Value::Object(task).to_string());
+        says.output_tokens = REVIEW_ANSWER_TOKENS;
+        Ok(says)
+    }
+}
+
+/// An open finding shown to the reviewer.
 #[derive(Clone, Debug)]
 pub struct Asked {
     pub id: FindingId,
@@ -148,8 +342,6 @@ pub struct Scope<'a> {
 pub struct Verdict {
     pub id: FindingId,
     pub present: bool,
-    /// The words of its part that show the defect now; blank when resolved.
-    pub quote: String,
 }
 
 /// A defect the reviewer reported, before it has a number.
@@ -210,7 +402,7 @@ pub(crate) fn passages_of(candidate: &Value) -> Vec<Vec<(String, String)>> {
 
 // Preserve every byte, including code indentation, newlines and Unicode. IDs
 // belong only to this candidate; nothing is normalized or fuzzy-matched.
-fn review_candidate(candidate: &Value, sections: &[usize]) -> (Value, Vec<Vec<String>>) {
+fn review_candidate(candidate: &Value, sections: &[usize]) -> (Value, Vec<Passage>) {
     let all = passages_of(candidate);
     let mut candidate = candidate.clone();
     if let Some(blocks) = candidate.get_mut("blocks").and_then(Value::as_array_mut) {
@@ -219,7 +411,7 @@ fn review_candidate(candidate: &Value, sections: &[usize]) -> (Value, Vec<Vec<St
                 .get(index)
                 .into_iter()
                 .flatten()
-                .map(|(id, text)| json!({"id":id,"text":text}))
+                .map(|(_, text)| json!({"text":text}))
                 .collect();
             if let Some(block) = block.as_object_mut() {
                 block.remove("body");
@@ -236,102 +428,28 @@ fn review_candidate(candidate: &Value, sections: &[usize]) -> (Value, Vec<Vec<St
             }
         }
     }
-    let ids = all
+    let pointable = all
         .into_iter()
-        .map(|passages| passages.into_iter().map(|(id, _)| id).collect())
+        .enumerate()
+        .filter(|(section, _)| sections.contains(section))
+        .flat_map(|(section, passages)| {
+            passages
+                .into_iter()
+                .enumerate()
+                .map(move |(number, (id, _))| Passage {
+                    id,
+                    section,
+                    number,
+                })
+        })
         .collect();
-    (candidate, ids)
-}
-
-/// The text of passage `id` in section `index` of the reviewed candidate.
-fn passage_text(reviewed: &Value, index: usize, id: &str) -> Option<String> {
-    reviewed
-        .pointer(&FindingSite::Section(index).field_pointer("bodyPassages")?)?
-        .as_array()?
-        .iter()
-        .find(|passage| passage.get("id").and_then(Value::as_str) == Some(id))?
-        .get("text")
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-}
-
-fn schema(
-    indices: &[usize],
-    passages: &[Vec<String>],
-    verdict_ids: &[&str],
-    remit: Remit,
-) -> Value {
-    let mut required = Vec::new();
-    let mut properties = serde_json::Map::new();
-    if !verdict_ids.is_empty() {
-        let count = verdict_ids.len();
-        required.push("openFindings");
-        properties.insert("openFindings".into(), json!({"type":"array","minItems":count,"maxItems":count,"items":{"type":"object","additionalProperties":false,"required":["id","quote","verdict"],"properties":{"id":{"type":"string","enum":verdict_ids},"quote":{"type":"string"},"verdict":{"type":"string","enum":["present","resolved"]}}}}));
-    }
-    required.push("issues");
-    let continues = (!verdict_ids.is_empty()).then(|| {
-        let choices: Vec<&str> = verdict_ids
-            .iter()
-            .copied()
-            .chain(std::iter::once("none"))
-            .collect();
-        json!({"type":"string","enum":choices})
-    });
-    let issue = if remit == Remit::Lesson {
-        let mut required = vec!["note", "concern"];
-        let mut fields = json!({"note":{"type":"string","minLength":1},"concern":{"type":"string","enum":LessonConcern::ids_where(LessonConcern::in_issues)}});
-        if let (Some(continues), Some(fields)) = (&continues, fields.as_object_mut()) {
-            required.push("continues");
-            fields.insert("continues".into(), continues.clone());
-        }
-        json!({"type":"object","additionalProperties":false,"required":required,"properties":fields})
-    } else {
-        match &continues {
-            Some(continues) => {
-                json!({"type":"object","additionalProperties":false,"required":["note","continues"],"properties":{"note":{"type":"string","minLength":1},"continues":continues}})
-            }
-            None => json!({"type":"string","minLength":1}),
-        }
-    };
-    properties.insert("issues".into(), json!({"type":"array","items":issue}));
-    if !passages.is_empty() {
-        required.push("sectionDefects");
-        let cited: Vec<&str> = indices
-            .iter()
-            .filter_map(|index| passages.get(*index))
-            .flatten()
-            .map(String::as_str)
-            .collect();
-        let passage_id = if cited.is_empty() {
-            json!({"type":"string"})
-        } else {
-            json!({"type":"string","enum":cited})
-        };
-        let defects = if indices.is_empty() {
-            json!({"type":"array","maxItems":0,"items":{"type":"string"}})
-        } else {
-            let mut required = vec!["passageId", "finding"];
-            let mut fields =
-                json!({"passageId":passage_id,"finding":{"type":"string","minLength":1}});
-            if let (true, Some(fields)) = (remit == Remit::Lesson, fields.as_object_mut()) {
-                required.push("concerns");
-                fields.insert("concerns".into(), json!({"type":"array","items":{"type":"string","enum":LessonConcern::ids_where(LessonConcern::in_checks)}}));
-            }
-            if let (Some(continues), Some(fields)) = (&continues, fields.as_object_mut()) {
-                required.push("continues");
-                fields.insert("continues".into(), continues.clone());
-            }
-            json!({"type":"array","items":{"type":"object","additionalProperties":false,"required":required,"properties":fields}})
-        };
-        properties.insert("sectionDefects".into(), defects);
-    }
-    json!({"type":"object","additionalProperties":false,"required":required,"properties":properties})
+    (candidate, pointable)
 }
 
 /// What a review's verdicts stand under, besides its text: the policy, the
 /// model and its window.
-fn run_inputs(llm: &dyn LLMPort) -> serde_json::Map<String, Value> {
-    let mut inputs = serde_json::Map::new();
+fn run_inputs(llm: &dyn LLMPort) -> Map<String, Value> {
+    let mut inputs = Map::new();
     inputs.insert("policy".into(), json!(POLICY));
     inputs.insert("model".into(), json!(llm.model_name()));
     inputs.insert("context".into(), json!(llm.max_context_tokens()));
@@ -353,204 +471,6 @@ pub(crate) fn basis(llm: &dyn LLMPort, system: &str, scope: &str, inputs: &Value
     sha256_hex(Value::Object(given).to_string())
 }
 
-/// The entries of `openFindings`: the findings to be judged.
-fn open_entries<'a>(asked: impl IntoIterator<Item = &'a Asked>) -> Value {
-    let entries: Vec<Value> = asked
-        .into_iter()
-        .map(|finding| {
-            let mut entry = serde_json::Map::new();
-            entry.insert("id".into(), json!(finding.id.as_str()));
-            entry.insert("part".into(), json!(finding.site.label()));
-            if let Some(passage_id) = &finding.passage_id {
-                entry.insert("passageId".into(), json!(passage_id));
-            }
-            entry.insert("note".into(), json!(finding.note));
-            Value::Object(entry)
-        })
-        .collect();
-    json!(entries)
-}
-
-/// What a reply is read against: the reviewed candidate, the sections it
-/// must check and the open findings it must judge.
-struct Reading<'a> {
-    candidate: &'a Value,
-    shown: &'a Value,
-    passages: &'a [Vec<String>],
-    sections: &'a [usize],
-    asked: &'a [&'a Asked],
-    remit: Remit,
-    /// The reply after a correction: a blank issue or finding is dropped and
-    /// an open finding with no usable verdict stays as it stood, not refused.
-    settle: bool,
-}
-
-/// Records `message` once.
-fn note(problems: &mut Vec<String>, message: String) {
-    if !problems.contains(&message) {
-        problems.push(message);
-    }
-}
-
-fn continuing(reading: &Reading<'_>, id: &str) -> Option<FindingId> {
-    reading
-        .asked
-        .iter()
-        .find(|asked| asked.id.as_str() == id)
-        .map(|asked| asked.id.clone())
-}
-
-/// Refuses `message`: on the settled reply what it is about is dropped and traced.
-fn refuse(reading: &Reading<'_>, problems: &mut Vec<String>, subject: &str, message: String) {
-    if reading.settle {
-        trace::refused(Stage::TeachingReview, subject, &message, None);
-    } else {
-        note(problems, message);
-    }
-}
-
-/// Whether a lesson's issue may be raised: it holds a concern no section holds.
-fn issue_concern_allowed(
-    concern: Option<LessonConcern>,
-    reading: &Reading<'_>,
-    problems: &mut Vec<String>,
-) -> bool {
-    let allowed = LessonConcern::ids_where(LessonConcern::in_issues).join(", ");
-    match concern {
-        Some(concern) if concern.in_issues() => true,
-        Some(concern) => {
-            let message = format!("An issue's concern must be one of {allowed}; report {} in the sectionDefects entry of the section that holds it.", concern.id());
-            refuse(reading, problems, "an issue", message);
-            false
-        }
-        None => {
-            let message = format!("An issue needs a concern, one of {allowed}.");
-            refuse(reading, problems, "an issue", message);
-            false
-        }
-    }
-}
-
-fn read_issues(
-    issues: Vec<Issue>,
-    reading: &Reading<'_>,
-    reported: &mut Vec<Reported>,
-    problems: &mut Vec<String>,
-) {
-    for issue in issues {
-        let (issue, continued) = match (issue, reading.remit) {
-            (Issue::Plain(_), Remit::Lesson) => {
-                let message = "An issue is incorrectly typed: give it as an object with a note and a concern.".to_owned();
-                refuse(reading, problems, "an issue", message);
-                continue;
-            }
-            (Issue::Plain(note), Remit::Open) => (note, None),
-            (
-                Issue::Continuing {
-                    concern: Some(_), ..
-                },
-                Remit::Open,
-            ) => {
-                note(
-                    problems,
-                    "An issue has missing, unexpected or incorrectly typed fields.".into(),
-                );
-                continue;
-            }
-            (
-                Issue::Continuing {
-                    note,
-                    continues,
-                    concern,
-                },
-                remit,
-            ) => {
-                if remit == Remit::Lesson && !issue_concern_allowed(concern, reading, problems) {
-                    continue;
-                }
-                (note, continues)
-            }
-        };
-        if issue.trim().is_empty() {
-            if !reading.settle {
-                note(problems, "An issue must not be blank.".into());
-            }
-        } else if !reported.iter().any(|known| known.note == issue) {
-            let summary = issue.trim().to_owned();
-            reported.push(Reported {
-                site: None,
-                note: issue,
-                summary,
-                passage: None,
-                passage_id: None,
-                continues: continued.and_then(|id| continuing(reading, &id)),
-            });
-        }
-    }
-}
-
-fn read_verdicts(
-    entries: Vec<Value>,
-    reading: &Reading<'_>,
-    problems: &mut Vec<String>,
-) -> Vec<Verdict> {
-    let mut refuse = |message: String| {
-        if reading.settle {
-            tracing::warn!(%message, "A verdict that could not be used leaves its finding open as it stood");
-        } else {
-            note(problems, message);
-        }
-    };
-    let mut parsed = Vec::new();
-    for entry in entries {
-        match serde_json::from_value::<VerdictEntry>(entry) {
-            Ok(entry) => parsed.push(entry),
-            Err(_) => {
-                refuse("A verdict has missing, unexpected or incorrectly typed fields.".into())
-            }
-        }
-    }
-    for entry in &parsed {
-        if !reading
-            .asked
-            .iter()
-            .any(|finding| finding.id.as_str() == entry.id)
-        {
-            refuse(format!(
-                "{} was not asked about; give a verdict only for the ids in openFindings.",
-                entry.id
-            ));
-        }
-    }
-    let mut verdicts = Vec::new();
-    for finding in reading.asked {
-        let mut own = parsed
-            .iter()
-            .filter(|entry| entry.id == finding.id.as_str());
-        let (Some(entry), None) = (own.next(), own.next()) else {
-            refuse(format!("{} needs one verdict.", finding.id.as_str()));
-            continue;
-        };
-        let quote = entry.quote.trim();
-        if !matches!(entry.verdict, Judgement::Present) {
-            verdicts.push(Verdict {
-                id: finding.id.clone(),
-                present: false,
-                quote: quote.to_owned(),
-            });
-        } else if let Some(held) = part_quote(reading.candidate, finding.site, quote) {
-            verdicts.push(Verdict {
-                id: finding.id.clone(),
-                present: true,
-                quote: held.to_owned(),
-            });
-        } else {
-            refuse(format!("{}: the quote is not in {} as it now stands; quote the words there that still show the defect, or answer resolved.", finding.id.as_str(), finding.site.label()));
-        }
-    }
-    verdicts
-}
-
 /// The kind of section `index` of the candidate, when it can be read.
 fn section_kind(candidate: &Value, index: usize) -> Option<LearningBlockKind> {
     candidate
@@ -561,16 +481,11 @@ fn section_kind(candidate: &Value, index: usize) -> Option<LearningBlockKind> {
         .and_then(LearningBlockKind::parse)
 }
 
-/// Whether a lesson's defect in section `index` names a
-/// concern its kind takes. A reply that is not settled is refused instead if
-/// it names none, or one the kind does not take.
-fn raises(
-    named: &[LessonConcern],
-    index: usize,
-    reading: &Reading<'_>,
-) -> std::result::Result<bool, String> {
+/// Whether a lesson's defect in section `index` names a concern its kind
+/// takes; what it names beyond that, or does not name, is traced.
+fn names_a_concern_taken(named: &[LessonConcern], index: usize, candidate: &Value) -> bool {
     let site = FindingSite::Section(index).label();
-    let kind = section_kind(reading.candidate, index);
+    let kind = section_kind(candidate, index);
     let takes: Vec<LessonConcern> = LessonConcern::ALL
         .into_iter()
         .filter(|concern| concern.takes(kind.as_ref()))
@@ -604,157 +519,174 @@ fn raises(
             ));
         }
     }
-    if reading.settle {
-        for message in &messages {
-            trace::refused(
-                Stage::TeachingReview,
-                &format!("{site} defect"),
-                message,
-                None,
-            );
-        }
-        Ok(kept > 0)
-    } else if messages.is_empty() {
-        Ok(true)
-    } else {
-        Err(messages.join(" "))
-    }
-}
-
-/// The reviewed section whose passages include `passage_id`.
-fn section_of(reading: &Reading<'_>, passage_id: &str) -> Option<usize> {
-    reading.sections.iter().copied().find(|index| {
-        reading
-            .passages
-            .get(*index)
-            .is_some_and(|ids| ids.iter().any(|id| id == passage_id))
-    })
-}
-
-const WRONG_DEFECT_FIELDS: &str =
-    "A section defect has missing, unexpected or incorrectly typed fields.";
-
-/// The defect a section-defect entry reports, if it is usable.
-fn read_defect(
-    mut value: Value,
-    reading: &Reading<'_>,
-    problems: &mut Vec<String>,
-) -> Option<Reported> {
-    let continues = value
-        .as_object_mut()
-        .and_then(|fields| fields.remove("continues"))
-        .and_then(|id| id.as_str().and_then(|id| continuing(reading, id)));
-    let Ok(defect) = serde_json::from_value::<SectionDefect>(value) else {
-        refuse(
-            reading,
-            problems,
-            "a section defect",
-            WRONG_DEFECT_FIELDS.into(),
-        );
-        return None;
-    };
-    if reading.remit == Remit::Open && defect.concerns.is_some() {
-        refuse(
-            reading,
-            problems,
-            "a section defect",
-            WRONG_DEFECT_FIELDS.into(),
-        );
-        return None;
-    }
-    let Some(index) = section_of(reading, &defect.passage_id) else {
-        let message = format!(
-            "passageId {} is not a passage of a section in review.",
-            defect.passage_id
-        );
-        refuse(reading, problems, "a section defect", message);
-        return None;
-    };
-    let site = FindingSite::Section(index);
-    if defect.finding.trim().is_empty() {
-        let message = format!("{}: finding must not be blank.", site.label());
-        refuse(
-            reading,
-            problems,
-            &format!("{} defect", site.label()),
+    for message in &messages {
+        trace::refused(
+            Stage::TeachingReview,
+            &format!("{site} defect"),
             message,
+            None,
         );
-        return None;
     }
-    if reading.remit == Remit::Lesson {
-        let named = defect.concerns.clone().unwrap_or_default();
-        match raises(&named, index, reading) {
-            Ok(true) => {}
-            Ok(false) => return None,
-            Err(message) => {
-                note(problems, message);
-                return None;
+    kept > 0
+}
+
+/// What the answer's entries make of the review: the defects they report and
+/// a verdict on each open finding. An open finding no entry resolves is
+/// present only when the answer was read to its end.
+fn judged(
+    input: &Input,
+    candidate: &Value,
+    remit: Remit,
+    entries: Vec<Entry>,
+    complete: bool,
+) -> Judged {
+    let all = passages_of(candidate);
+    let mut reported: Vec<Reported> = Vec::new();
+    let mut resolved: Vec<FindingId> = Vec::new();
+    for entry in entries {
+        let found = match entry {
+            Entry::Resolved(finding) => {
+                if !resolved.contains(&finding.reference) {
+                    resolved.push(finding.reference);
+                }
+                continue;
             }
+            Entry::Issue { note, continues } => {
+                if note.trim().is_empty() {
+                    trace::refused(
+                        Stage::TeachingReview,
+                        "an issue",
+                        "An issue must not be blank.",
+                        None,
+                    );
+                    continue;
+                }
+                let summary = note.trim().to_owned();
+                Reported {
+                    site: None,
+                    note,
+                    summary,
+                    passage: None,
+                    passage_id: None,
+                    continues: continues.map(|picked| picked.reference),
+                }
+            }
+            Entry::Defect {
+                at,
+                finding,
+                concerns,
+                continues,
+            } => {
+                let Some(placed) = input
+                    .passages
+                    .iter()
+                    .find(|passage| passage.id == at.reference)
+                else {
+                    continue;
+                };
+                let site = FindingSite::Section(placed.section);
+                if finding.trim().is_empty() {
+                    trace::refused(
+                        Stage::TeachingReview,
+                        &format!("{} defect", site.label()),
+                        &format!("{}: finding must not be blank.", site.label()),
+                        None,
+                    );
+                    continue;
+                }
+                if remit == Remit::Lesson
+                    && !names_a_concern_taken(&concerns, placed.section, candidate)
+                {
+                    continue;
+                }
+                Reported {
+                    site: Some(site),
+                    note: format!("{}: {}", site.note_label(), finding),
+                    summary: finding.trim().to_owned(),
+                    passage: all
+                        .get(placed.section)
+                        .and_then(|passages| passages.get(placed.number))
+                        .map(|(_, text)| text.clone()),
+                    passage_id: Some(placed.id.clone()),
+                    continues: continues.map(|picked| picked.reference),
+                }
+            }
+        };
+        if !reported.iter().any(|known| known.note == found.note) {
+            reported.push(found);
         }
     }
-    Some(Reported {
-        site: Some(site),
-        note: format!("{}: {}", site.note_label(), defect.finding),
-        summary: defect.finding.trim().to_owned(),
-        passage: passage_text(reading.shown, index, &defect.passage_id),
-        passage_id: Some(defect.passage_id.clone()),
-        continues,
-    })
+    let verdicts = input
+        .open
+        .iter()
+        .filter_map(|finding| {
+            let present = if resolved.contains(&finding.id) {
+                Some(false)
+            } else {
+                complete.then_some(true)
+            };
+            present.map(|present| Verdict {
+                id: finding.id.clone(),
+                present,
+            })
+        })
+        .collect();
+    Judged { verdicts, reported }
 }
 
-fn read_defects(
-    defects: Vec<Value>,
-    reading: &Reading<'_>,
-    reported: &mut Vec<Reported>,
-    problems: &mut Vec<String>,
-) {
-    for value in defects {
-        if let Some(report) = read_defect(value, reading, problems) {
-            if !reported.iter().any(|known| known.note == report.note) {
-                reported.push(report);
-            }
-        }
-    }
+/// What a cut-off answer's standing entries already hold, in words.
+fn already_reported<L: Lens>(standing: &[Item<L>]) -> Vec<String> {
+    standing
+        .iter()
+        .filter_map(|item| match &item.0 {
+            Entry::Issue { note, .. } => Some(note.clone()),
+            Entry::Defect { finding, .. } => Some(finding.clone()),
+            Entry::Resolved(_) => None,
+        })
+        .collect()
 }
 
-/// The review a reply holds, before it is held to the sections asked about.
-fn read_review(raw: &str) -> Result<Review> {
-    generation::parse_json(raw).map_err(|_| {
-        AppError::InvalidInput(
-            "The review could not be read. Give issues and sectionDefects as the schema has them."
-                .into(),
-        )
-    })
-}
-
-/// The reviewer's reply as findings; every problem it has, in one error.
-fn read(raw: &str, reading: &Reading<'_>) -> Result<Judged> {
-    let review = read_review(raw)?;
-    let mut problems = Vec::new();
-    let mut reported = Vec::new();
-    read_issues(review.issues, reading, &mut reported, &mut problems);
-    let verdicts = read_verdicts(review.open_findings, reading, &mut problems);
-    read_defects(
-        review.section_defects,
-        reading,
-        &mut reported,
-        &mut problems,
-    );
-    if problems.is_empty() {
-        Ok(Judged { verdicts, reported })
+/// The entries the reviewer wrote, and whether its answer was read to its end.
+async fn ask_entries<L: Lens>(llm: &dyn LLMPort, input: &Input) -> Result<(Vec<Entry>, bool)> {
+    let brief = if input.open.is_empty() {
+        REVIEW_DRAFT_BRIEF.to_owned()
     } else {
-        Err(AppError::InvalidInput(problems.join(" ")))
-    }
+        format!("{REVIEW_DRAFT_BRIEF}{OPEN_FINDINGS_BRIEF}")
+    };
+    let found = ask_new::<TeachingReview<L>>(
+        llm,
+        &Asking {
+            progress: None,
+            reasoning: Some(ReasonFirst {
+                kind: CallKind::Authoring,
+                subject: "the teaching review",
+                brief: &brief,
+            }),
+        },
+        &mut shown::Scope::for_question(),
+        input.clone(),
+        |standing: &[Item<L>]| {
+            let mut next = input.clone();
+            next.reported.0.extend(already_reported(standing));
+            Some(next)
+        },
+        &crate::model_call::answer_options(),
+    )
+    .await?;
+    let complete = found.rest.is_none();
+    Ok((
+        found.items.into_iter().map(|item| item.0).collect(),
+        complete,
+    ))
 }
 
 /// What the reviewer found: its verdict on each finding in `scope.asked`,
 /// and the defects it reports beyond those. A section defect is placed in
 /// the section its passage is in, and a section with no entry has none; a
-/// reviewer's issue is placed later, by the evidence check. A reply with a
-/// problem is corrected once. In the second, an entry that cannot be used
-/// is dropped and traced, and a verdict that cannot be used leaves its
-/// finding as it stood, as an unjudged statement is left (claim classes
-/// design §3.2); a reply that cannot be read at all fails the review.
+/// reviewer's issue is placed later, by the evidence check. An open finding
+/// the reviewer does not resolve stays open, and is judged present only in
+/// an answer read to its end; an answer that cannot be read at all fails
+/// the review.
 pub async fn review(
     llm: &dyn LLMPort,
     system: &str,
@@ -762,28 +694,13 @@ pub async fn review(
     candidate: &Value,
     scope: Scope<'_>,
     remit: Remit,
-    progress: Option<&OutlineProgress>,
 ) -> Result<Judged> {
     let Value::Object(mut prompt) = prompt else {
         return Err(AppError::InternalError(
             "Teaching review requires an object context.".into(),
         ));
     };
-    if let Some(asked) = scope.asked {
-        prompt.insert("openFindings".into(), open_entries(asked));
-    }
-    // Save findings, including defects, before the later grounding/repair step.
-    // Reusing a completed review never approves the lesson or skips grounding.
-    let mut inputs = run_inputs(llm);
-    for (name, value) in [
-        ("system", json!(system)),
-        ("prompt", json!(prompt)),
-        ("candidate", json!(candidate)),
-        ("sections", json!(scope.sections)),
-    ] {
-        inputs.insert(name.into(), value);
-    }
-    let key = FINDINGS_KEYS.key(sha256_hex(Value::Object(inputs).to_string()));
+    prompt.shift_remove("candidate");
     let count = candidate
         .get("blocks")
         .and_then(Value::as_array)
@@ -799,74 +716,61 @@ pub async fn review(
         },
     );
     let (reviewed, passages) = review_candidate(candidate, &sections);
-    prompt.insert("candidate".into(), reviewed.clone());
     let excerpts = prompt
         .get_mut("authoringContext")
         .and_then(|context| WriterExcerpts::take(llm, context, candidate));
-    let asked: Vec<&Asked> = scope.asked.into_iter().flatten().collect();
-    let reading = |settle: bool| Reading {
-        candidate,
-        shown: &reviewed,
-        passages: &passages,
-        sections: &sections,
-        asked: &asked,
-        remit,
-        settle,
+    let sources = Packed::new(
+        excerpts
+            .map(|excerpts| excerpts.ranked())
+            .unwrap_or_default()
+            .into_iter()
+            .map(Told)
+            .collect(),
+        |source: &Told<Value>| item_tokens(llm, &source.0),
+    );
+    let open: Vec<OpenFinding> = scope
+        .asked
+        .into_iter()
+        .flatten()
+        .map(|asked| OpenFinding {
+            id: asked.id.clone(),
+            part: Told(asked.site.label()),
+            passage: asked
+                .passage_id
+                .clone()
+                .filter(|id| passages.iter().any(|passage| &passage.id == id)),
+            note: Told(asked.note.clone()),
+        })
+        .collect();
+    let input = Input {
+        system: Told(system.to_owned()),
+        prompt: Told(Value::Object(prompt)),
+        candidate: Told(reviewed),
+        passages,
+        sources,
+        open,
+        reported: Told(Vec::new()),
     };
-    if let Some(saved) = crate::lesson_drafts::saved::<String>(&key)
-        .await?
-        .and_then(|raw| read(&raw, &reading(true)).ok())
-    {
+    // Save findings, including defects, before the later grounding/repair step.
+    // Reusing a completed review never approves the lesson or skips grounding.
+    let mut inputs = run_inputs(llm);
+    inputs.insert("input".into(), json!(input));
+    let key = FINDINGS_KEYS.key(sha256_hex(Value::Object(inputs).to_string()));
+    if let Some(saved) = crate::lesson_drafts::saved::<Judged>(&key).await? {
         crate::lesson_progress::stage(
             "Reusing completed teaching review; continuing evidence checks",
         );
         return Ok(saved);
     }
-    let brief = if asked.is_empty() {
-        REVIEW_DRAFT_BRIEF.to_owned()
-    } else {
-        format!("{REVIEW_DRAFT_BRIEF}{OPEN_FINDINGS_BRIEF}")
+    let (entries, complete) = match remit {
+        Remit::Open => ask_entries::<Anything>(llm, &input).await?,
+        Remit::Lesson => ask_entries::<Concerns>(llm, &input).await?,
     };
-    let request = writer_excerpts::Request {
-        subject: "the teaching review",
-        system,
-        prompt: &prompt,
-        context: "authoringContext",
-        schema: schema(
-            &sections,
-            &passages,
-            &asked
-                .iter()
-                .map(|finding| finding.id.as_str())
-                .collect::<Vec<_>>(),
-            remit,
-        ),
-        output_tokens: REVIEW_ANSWER_TOKENS,
-    };
-    let call = ContractCall::of::<TeachingReview>(&PromptInput {
-        system: system.to_owned(),
-        prompt: Value::Object(prompt.clone()).to_string(),
-    })?;
-    let replies = AtomicUsize::new(0);
-    let (raw, judged) = writer_excerpts::complete(
-        llm,
-        &call,
-        &request,
-        excerpts.as_ref(),
-        progress,
-        Some(ReasonFirst {
-            kind: CallKind::Authoring,
-            subject: "the teaching review",
-            brief: &brief,
-        }),
-        |text| {
-            let settle = replies.fetch_add(1, Ordering::SeqCst) > 0;
-            read(text, &reading(settle)).map(|judged| (text.to_owned(), judged))
-        },
-    )
-    .await?;
-    crate::lesson_drafts::record_checkpoint(&key, json!(raw)).await?;
-    Ok(judged)
+    let found = judged(&input, candidate, remit, entries, complete);
+    if complete {
+        crate::lesson_drafts::record_checkpoint(&key, json!(found)).await?;
+    }
+    Ok(found)
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -878,8 +782,8 @@ mod concerns;
 #[cfg(test)]
 mod passage_tests;
 mod passages;
-#[cfg(test)]
-mod section_list_tests;
 
+#[cfg(test)]
+pub(crate) mod scripted;
 #[cfg(test)]
 mod tests;

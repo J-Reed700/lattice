@@ -1017,7 +1017,10 @@ async fn before_the_explanation_the_passage_is_asked_whether_it_teaches_the_less
         last(request),
         check_message(&facts, "Spacing and memory", &source.text)
     );
-    assert_eq!(request.json_schema, Some(check_schema()));
+    assert_eq!(
+        request.schema().map(|schema| schema.as_json()),
+        Some(&check_schema())
+    );
     assert!(
         system(request).starts_with("You decide whether a passage from a course's sources"),
         "{}",
@@ -1522,7 +1525,7 @@ fn the_planter_is_shown_the_source_and_the_numbered_sentences() {
     assert!(wording
         .system
         .starts_with("You prepare a review exercise on an explanation of a source passage."));
-    assert!(wording.system.contains("whole sentence lines"));
+    assert!(wording.system.contains("sentence lines of the explanation"));
     let prompt = &wording.prompt;
     let passage = spacing_passage();
     for shown in [
@@ -1860,22 +1863,22 @@ fn proved_figure() -> Proved {
 async fn the_blind_reviewer_reads_the_explanation_with_its_source_and_an_extra_it_finds_joins_the_key(
 ) -> Result<()> {
     let database = Database::new(pool().await?);
-    let blind = json!({"findings": [
-        {"path": "explanation.md", "quote": "improved recall by 40%", "comment": "The study found 14%, not 40%.", "severity": "major"},
-        {"path": "explanation.md", "quote": SECOND, "comment": "The source says the benefit held for adults in the laboratory only.", "severity": "minor"}
+    let blind = json!({"items": [
+        {"from": "u1", "to": "u1", "comment": "The study found 14%, not 40%.", "severity": "major"},
+        {"from": "u2", "to": "u2", "comment": "The source says the benefit held for adults in the laboratory only.", "severity": "minor"}
     ]})
     .to_string();
-    let entry = json!({
-        "pattern": "scope.shifted_population",
+    let entry = json!({"entry": {
+        "kind": "issue",
+        "pattern": super::support::pattern_handle(&Material::Passage, "scope.shifted_population"),
         "severity": "minor",
         "consequence": "A reader would expect the same benefit outside the laboratory.",
         "fix": {
-            "path": "explanation.md",
-            "before": format!("{SECOND}\n"),
-            "after": "The benefit held for adults in laboratory settings.\n"
+            "replace": [{"at": "u2", "with": "The benefit held for adults in laboratory settings."}],
+            "insert": [], "remove": [], "move": []
         },
         "explanation": "The source found the benefit in laboratory settings only."
-    })
+    }})
     .to_string();
     let model = ScriptedModel::new([blind, entry]);
     let check = spacing_check();
@@ -1928,11 +1931,11 @@ async fn the_blind_reviewer_reads_the_explanation_with_its_source_and_an_extra_i
         "{described}"
     );
     assert!(
-        described.contains("scope.shifted_population"),
+        described.contains("(Shifted population or condition):"),
         "the passage patterns: {described}"
     );
     assert!(
-        !described.contains("correctness.wrong_operator"),
+        !described.contains("(Wrong operator or comparison):"),
         "no code pattern: {described}"
     );
 
@@ -1969,8 +1972,8 @@ async fn a_passage_drill_builds_end_to_end_and_is_stored_with_its_source() -> Re
         Some(format!("drill:{program}:passage"))
     );
     let context = JobContext::detached(&store, &job).await?;
-    let blind = json!({"findings": [
-        {"path": "explanation.md", "quote": "improved recall by 40%", "comment": "The study found 14%, not 40%.", "severity": "major"}
+    let blind = json!({"items": [
+        {"from": "u1", "to": "u1", "comment": "The study found 14%, not 40%.", "severity": "major"}
     ]})
     .to_string();
     let model = ScriptedModel::new([
@@ -2065,15 +2068,16 @@ fn the_judge_of_a_passage_reads_an_explanation_in_sentences_with_its_source() ->
     assert!(wording
         .system
         .starts_with("You grade a review of an explanation against an answer key."));
-    assert!(wording
-        .system
-        .contains("Issues and findings are numbered from 1."));
-    assert!(wording.system.contains("valid_extra"));
+    assert!(wording.system.contains(
+        "Each issue and each finding is named by the handle in square brackets shown with it."
+    ));
+    assert!(wording.extras.contains("valid_extra"));
     assert_eq!(wording.line, "sentence");
     assert_eq!(wording.lines, "sentences");
     assert!(wording.source.is_some());
     assert!(!wording.system.contains("code"), "{}", wording.system);
     assert!(!wording.brief.contains("code"), "{}", wording.brief);
+    assert!(!wording.extras.contains("code"), "{}", wording.extras);
     Ok(())
 }
 
@@ -2383,6 +2387,12 @@ impl LLMPort for Down {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(false)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -3142,4 +3152,24 @@ fn a_passage_is_picked_from_a_large_fresh_course_within_the_deadline() {
 #[test]
 fn a_passage_is_picked_from_a_large_course_whose_every_place_was_drilled_within_the_deadline() {
     picks_within_the_deadline(true);
+}
+
+#[tokio::test]
+async fn prompt_snapshot_passage_fix_judgement() -> Result<()> {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let model = ScriptedModel::new([
+        json!({"reason": "The 40% is gone; 20% is a new figure.", "errorGone": true}).to_string(),
+    ]);
+    let check = fixing_check();
+    let drill = planted_drill("drill");
+    let learner = drill.files[0].text.replace(FIRST_PLANTED, ABOUT_TWENTY);
+
+    fix_of(&model, &check, &drill, &learner).await?;
+
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "passage-fix-judgement",
+        &model.requests(),
+    );
+    Ok(())
 }

@@ -181,6 +181,12 @@ impl LLMPort for PatientModel<'_> {
     fn keeps_read_prompts(&self) -> bool {
         self.inner.keeps_read_prompts()
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
     fn count_tokens(&self, text: &str) -> usize {
         self.inner.count_tokens(text)
     }

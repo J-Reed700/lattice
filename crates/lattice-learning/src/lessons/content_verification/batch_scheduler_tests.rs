@@ -42,7 +42,7 @@ impl LLMPort for BatchModel {
 
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let user = request
-            .input
+            .input()
             .iter()
             .find_map(|item| match item {
                 CompletionInput::Message { role, content } if role == "user" => Some(content),
@@ -83,12 +83,15 @@ impl LLMPort for BatchModel {
             if let Some(error) = &self.batch_error {
                 return Err(error.clone());
             }
-            // All ten fixture assertions use the same source: it is sent once.
-            assert_eq!(batch["sourcePassages"].as_array().unwrap().len(), 1);
-            let checks:Vec<_>=batch["claims"].as_array().unwrap().iter().map(|claim| {
-                json!({"id":claim["id"],"response":if self.malformed_first&&claim["id"]=="claim-0" {"incomplete response".into()}else{format!("Reason: The fixture passage states the claim.\nSource passage: {}\nVerdict: supported",claim["evidenceIds"][0].as_str().unwrap())}})
+            let entries:Vec<_>=batch["claims"].as_array().unwrap().iter().map(|claim| {
+                assert_eq!(claim["passages"].as_array().unwrap().len(), 1);
+                if self.malformed_first&&claim["id"]=="c1" {
+                    json!({"of":claim["id"],"reason":"incomplete response"})
+                } else {
+                    json!({"of":claim["id"],"reason":"The fixture passage states the claim.","source":claim["passages"][0]["id"],"verdict":"supported"})
+                }
             }).collect();
-            json!({"checks":checks}).to_string()
+            json!({"entries":entries}).to_string()
         } else {
             if self.block_individual {
                 std::future::pending::<()>().await;
@@ -124,6 +127,12 @@ impl LLMPort for BatchModel {
         let response = self.complete(request).await?;
         on_text(response.text.clone())?;
         Ok(response)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 

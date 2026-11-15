@@ -1,6 +1,6 @@
 use crate::{
     dto::*,
-    practice_generation::{grade, grade_schema, solution, tutor, validate_citations},
+    practice_generation::{grade, solution, tutor, validate_citations, NOT_JUDGED},
     practice_repository::{
         default_rubric, validate_tutor_bounds, LearningPracticeRepository, SubmissionWrite,
     },
@@ -385,36 +385,6 @@ fn citations_must_be_exact_quotes_from_the_frozen_owned_version() {
     assert_eq!(default_rubric().len(), 4);
 }
 
-/// A constrained decoder writes a reply in schema order. With the score first,
-/// the 27B answered a plainly wrong artifact with `uncertain` and no score, 9
-/// times in 9, against a prompt that says zero is an observed wrong attempt.
-#[test]
-fn the_grader_writes_its_grounds_before_it_scores() {
-    let schema = grade_schema(&default_rubric());
-    let keys = |pointer: &str| -> Vec<String> {
-        schema
-            .pointer(pointer)
-            .and_then(serde_json::Value::as_object)
-            .map(|object| object.keys().cloned().collect())
-            .unwrap_or_default()
-    };
-
-    assert_eq!(keys("/properties"), ["criteria", "status"]);
-    assert_eq!(
-        keys("/properties/criteria/items/properties"),
-        ["criterion_id", "evidence_quote", "observation", "score"]
-    );
-    assert_eq!(
-        schema.pointer("/properties/criteria/items/required"),
-        Some(&serde_json::json!([
-            "criterion_id",
-            "evidence_quote",
-            "observation",
-            "score"
-        ]))
-    );
-}
-
 /// Every `maxLength`, and every `minLength` above one, in a model-facing
 /// schema, each as its JSON pointer and value.
 pub(crate) fn text_length_rules(schema: &serde_json::Value) -> Vec<String> {
@@ -450,6 +420,7 @@ pub(crate) fn text_length_rules(schema: &serde_json::Value) -> Vec<String> {
 pub(crate) struct Reply {
     text: String,
     pub(crate) schemas: std::sync::Mutex<Vec<serde_json::Value>>,
+    pub(crate) requests: std::sync::Mutex<Vec<CompletionRequest>>,
 }
 
 impl Reply {
@@ -457,6 +428,7 @@ impl Reply {
         Self {
             text: text.into(),
             schemas: std::sync::Mutex::new(Vec::new()),
+            requests: std::sync::Mutex::new(Vec::new()),
         }
     }
 }
@@ -464,8 +436,11 @@ impl Reply {
 #[async_trait::async_trait]
 impl LLMPort for Reply {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        if let Ok(mut requests) = self.requests.lock() {
+            requests.push(request.clone());
+        }
         if let Ok(mut schemas) = self.schemas.lock() {
-            schemas.extend(request.json_schema.clone());
+            schemas.extend(request.schema().map(|schema| schema.as_json().clone()));
         }
         Ok(CompletionResponse::from_text(self.text.clone()))
     }
@@ -480,6 +455,12 @@ impl LLMPort for Reply {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -538,14 +519,30 @@ fn tutor_reply(
     json!({"response": response, "citations": citations, "proposals": proposals}).to_string()
 }
 
+/// A grade answering the first `count` criteria of the default rubric, `c1` onward, in the layer's form.
+fn grade_entries(
+    count: usize,
+    evidence: serde_json::Value,
+    observation: &str,
+    score: &str,
+) -> String {
+    let entries = (1..=count)
+        .map(|at| {
+            json!({"of": format!("c{at}"), "evidence": evidence, "observation": observation, "score": score})
+        })
+        .collect::<Vec<_>>();
+    json!({ "entries": entries }).to_string()
+}
+
 #[tokio::test]
 async fn a_tutor_reply_is_read_at_any_length() -> Result<()> {
     let evidence = "I tried the second approach first. ".repeat(18);
     let session = started_session(&evidence).await?;
     let passage = "The passage states one condition after another. ".repeat(20);
     let sources = [passage_source(&passage)];
-    let cited = json!([{"sourceId": "logical-source", "versionId": "version-1", "quote": passage}]);
-    let proposal = |text: &str, quote: Option<&str>| json!([{"kind": "misconception", "text": text, "evidenceQuote": quote}]);
+    let cited = json!(["q1", "q2", "q3"]);
+    let every_sentence: Vec<String> = (1..=18).map(|at| format!("u{at}")).collect();
+    let proposal = |text: &str, evidence: &[String]| json!([{"kind": "misconception", "text": text, "evidence": evidence}]);
     let short = "Which step carries the weight?";
     let small = tutor_reply(short, json!([]), json!([]));
     let padded = format!("{small}{}", " ".repeat(20_001));
@@ -557,14 +554,14 @@ async fn a_tutor_reply_is_read_at_any_length() -> Result<()> {
             "response",
             tutor_reply(&long_response, json!([]), json!([])),
         ),
-        ("citation quote", tutor_reply(short, cited, json!([]))),
+        ("citations", tutor_reply(short, cited, json!([]))),
         (
             "proposal text",
-            tutor_reply(short, json!([]), proposal(&wordy, None)),
+            tutor_reply(short, json!([]), proposal(&wordy, &[])),
         ),
         (
-            "proposal evidence quote",
-            tutor_reply(short, json!([]), proposal(short, Some(evidence.as_str()))),
+            "proposal evidence",
+            tutor_reply(short, json!([]), proposal(short, &every_sentence)),
         ),
         ("whitespace around the reply", padded),
     ] {
@@ -580,7 +577,6 @@ async fn a_reference_solution_is_read_at_any_length() -> Result<()> {
     let session = started_session("I can explain the idea.").await?;
     let passage = "The passage states one condition after another. ".repeat(20);
     let sources = [passage_source(&passage)];
-    let cited = json!([{"sourceId": "logical-source", "versionId": "version-1", "quote": passage}]);
     let reply = |text: &str, citations: serde_json::Value| {
         json!({"solution": text, "citations": citations}).to_string()
     };
@@ -590,7 +586,7 @@ async fn a_reference_solution_is_read_at_any_length() -> Result<()> {
     for (what, text) in [
         ("a short solution", reply(short, json!([]))),
         ("solution", reply(&long, json!([]))),
-        ("citation quote", reply(short, cited)),
+        ("citations", reply(short, json!(["q1", "q2", "q3"]))),
         ("whitespace around the reply", padded),
     ] {
         let llm = Reply::new(text);
@@ -601,34 +597,103 @@ async fn a_reference_solution_is_read_at_any_length() -> Result<()> {
 }
 
 #[tokio::test]
-async fn the_graders_observation_and_quote_are_read_at_any_length() -> Result<()> {
+async fn the_graders_observation_and_evidence_are_read_at_any_length() -> Result<()> {
     let artifact = "I tried the second approach first. ".repeat(18);
     let session = started_session(&artifact).await?;
-    let reply = |observation: &str, quote: &str| {
-        let criteria = session
-            .rubric
-            .iter()
-            .map(|c| {
-                json!({
-                    "criterion_id": c.id, "score": 2,
-                    "observation": observation, "evidence_quote": quote
-                })
-            })
-            .collect::<Vec<_>>();
-        json!({"status": "provisional", "criteria": criteria}).to_string()
-    };
     let short = "The artifact states the condition.";
-    let first = "I tried the second approach first.";
     let observation = "The artifact states the condition but never says why it holds. ".repeat(18);
-    for (what, text) in [
-        ("short feedback", reply(short, first)),
-        ("observation", reply(&observation, first)),
-        ("evidence quote", reply(short, artifact.trim())),
+    let first = json!(["u1"]);
+    let every_sentence: Vec<String> = (1..=18).map(|at| format!("u{at}")).collect();
+    for (what, text, quote) in [
+        (
+            "short feedback",
+            grade_entries(4, first.clone(), short, "l3"),
+            "I tried the second approach first.",
+        ),
+        (
+            "observation",
+            grade_entries(4, first, &observation, "l3"),
+            "I tried the second approach first.",
+        ),
+        (
+            "evidence",
+            grade_entries(4, json!(every_sentence), short, "l3"),
+            artifact.trim(),
+        ),
     ] {
         let llm = Reply::new(text);
-        let graded = grade(&llm, &session).await;
-        assert!(graded.is_ok(), "{what}: {:?}", graded.err());
+        let (_, graded) = grade(&llm, &session).await?;
+        assert!(
+            graded
+                .iter()
+                .all(|c| c.evidence_quote.as_deref() == Some(quote)),
+            "{what}"
+        );
     }
+    Ok(())
+}
+
+fn sent_by(llm: &Reply) -> Vec<CompletionRequest> {
+    llm.requests.lock().expect("requests").clone()
+}
+
+#[tokio::test]
+async fn prompt_snapshot_practice_tutor_reply() -> Result<()> {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let mut session = started_session("I tried the second approach first.").await?;
+    session.tutor_turns.push(LearningPracticeTutorTurnDto {
+        id: "turn-1".into(),
+        prompt: "Where do I start?".into(),
+        response: "What do you remember about the condition?".into(),
+        request_kind: LearningTutorRequestKind::Question,
+        hint_level: None,
+        citations: vec![],
+        proposal_ids: vec![],
+        model_name: "reply".into(),
+        created_at: 0,
+    });
+    let sources = [passage_source("The passage states one condition.")];
+    let llm = Reply::new(tutor_reply(
+        "Which step carries the weight?",
+        json!([]),
+        json!([]),
+    ));
+    tutor(&llm, &session, &tutor_request(), &sources).await?;
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "practice-tutor-reply",
+        &sent_by(&llm),
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_snapshot_practice_reference_solution() -> Result<()> {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let session = started_session("I can explain the idea.").await?;
+    let sources = [passage_source("The passage states one condition.")];
+    let llm = Reply::new(json!({"solution": "Apply the condition.", "citations": []}).to_string());
+    solution(&llm, &session, &sources).await?;
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "practice-reference-solution",
+        &sent_by(&llm),
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_snapshot_practice_grade() -> Result<()> {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let session = started_session("I tried the second approach first.").await?;
+    let llm = Reply::new(grade_entries(
+        4,
+        json!(["u1"]),
+        "The artifact states the condition.",
+        "l3",
+    ));
+    grade(&llm, &session).await?;
+    snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "practice-grade", &sent_by(&llm));
     Ok(())
 }
 
@@ -645,17 +710,7 @@ async fn the_practice_requests_ask_for_no_text_length() -> Result<()> {
     let solving =
         Reply::new(json!({"solution": "Apply the condition.", "citations": []}).to_string());
     solution(&solving, &session, &sources).await?;
-    let criteria = session
-        .rubric
-        .iter()
-        .map(|c| {
-            json!({
-                "criterion_id": c.id, "score": null,
-                "observation": "Not enough to judge.", "evidence_quote": null
-            })
-        })
-        .collect::<Vec<_>>();
-    let grading = Reply::new(json!({"status": "uncertain", "criteria": criteria}).to_string());
+    let grading = Reply::new(grade_entries(4, json!([]), "Not enough to judge.", "none"));
     grade(&grading, &session).await?;
     for llm in [&tutoring, &solving, &grading] {
         let schemas = llm.schemas.lock().expect("schemas").clone();
@@ -666,6 +721,473 @@ async fn the_practice_requests_ask_for_no_text_length() -> Result<()> {
         }
     }
     Ok(())
+}
+
+mod contracts {
+    use super::*;
+    use crate::practice_generation::{
+        Criterion, GradeInput, Passage, PracticeGrade, ReferenceSolution, SolutionInput, Turn,
+        TutorInput, TutorReply, Verdict,
+    };
+    use futures::future::BoxFuture;
+    use lattice_core::application::services::model_contract::packed::Packed;
+    use lattice_core::application::services::model_contract::shape::{Each, Pointers, Shape};
+    use lattice_core::application::services::model_contract::shown::{Scope, Told};
+    use lattice_core::application::services::model_contract::test_support::snapshot::rendered;
+    use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
+    use lattice_core::application::services::model_contract::test_support::{ScriptedModel, Sent};
+
+    const STEP: &str = "The first step is to hold the damper shut.";
+    const TIDE: &str = "The second step holds when the tide turns.";
+
+    fn reply(text: String) -> BoxFuture<'static, Result<CompletionResponse>> {
+        Box::pin(std::future::ready(Ok(CompletionResponse::from_text(text))))
+    }
+
+    /// Everything a request says.
+    fn prompt_of(sent: &Sent) -> String {
+        rendered(&sent.request)
+    }
+
+    /// The handle a request shows in front of `text`.
+    fn handle_before(prompt: &str, text: &str) -> String {
+        let at = prompt.find(text).expect("the text is shown");
+        let head = &prompt[..at];
+        let open = head.rfind('[').expect("a handle stands before the text");
+        head[open + 1..].trim_end().trim_end_matches(']').to_owned()
+    }
+
+    /// The task a request carries: the last user message, a JSON object.
+    fn task_of(sent: &Sent) -> serde_json::Value {
+        serde_json::from_str(sent.request.user_text()).expect("a task")
+    }
+
+    fn tutoring(answer: impl Fn(&str, usize) -> String + Send + Sync + 'static) -> ScriptedModel {
+        ScriptedModel::new()
+            .on_request::<TutorReply>(move |sent, nth| reply(answer(&prompt_of(sent), nth)))
+    }
+
+    fn grading(answer: impl Fn(&str, usize) -> String + Send + Sync + 'static) -> ScriptedModel {
+        ScriptedModel::new()
+            .on_request::<PracticeGrade>(move |sent, nth| reply(answer(&prompt_of(sent), nth)))
+    }
+
+    fn criterion(id: &str, max_points: i64) -> LearningPracticeCriterionDto {
+        LearningPracticeCriterionDto {
+            id: id.into(),
+            dimension: LearningPracticeEvidenceDimension::Recall,
+            title: format!("Criterion {id}"),
+            description: format!("What {id} asks of the learner."),
+            max_points,
+        }
+    }
+
+    fn entry(of: &str, evidence: serde_json::Value, score: &str) -> serde_json::Value {
+        json!({"of": of, "evidence": evidence, "observation": "The artifact shows the step.", "score": score})
+    }
+
+    #[test]
+    fn the_practice_requests_tell_what_they_should_and_hold_no_identity() {
+        let passages = |marks: &mut Marks| {
+            Packed::new(
+                vec![Passage {
+                    at: 0,
+                    source_id: marks.internal("source-id-sentinel-001".to_owned()),
+                    version_id: marks.internal("version-id-sentinel-002".to_owned()),
+                    title: marks.told("A harbour almanac".to_owned()),
+                    text: marks.told("The kiln is fired at dawn before the tide.".to_owned()),
+                }],
+                |_| 1,
+            )
+        };
+        let mut marks = Marks::new();
+        let turns = Packed::new(
+            vec![Turn {
+                entry: marks.told(json!({"request": "Where do I begin with the tide?", "response": "What do you remember about the tide?"})),
+                tokens: 3,
+            }],
+            |turn| turn.tokens,
+        );
+        let tutoring = TutorInput {
+            task_prompt: marks.told("Chart the harbour's tide tables.".to_owned()),
+            objective: marks.told("Read a tide table correctly.".to_owned()),
+            artifact: marks.told("I shut the damper before the tide turned.".to_owned()),
+            rubric: marks.told(json!([{"title": "Recall of the tide table"}])),
+            mode: marks.told(json!("practice")),
+            revision_context: marks.told(vec![
+                json!({"previousFeedback": "The earlier table was incomplete."}),
+            ]),
+            request_kind: marks.told(json!("question")),
+            hint_level: Told(json!(null)),
+            learner_request: marks.told("Why does this step hold?".to_owned()),
+            turns,
+            turns_held: 1,
+            passages: passages(&mut marks),
+        };
+        holds::<TutorReply>(&tutoring, &marks);
+        let mut marks = Marks::new();
+        let solving = SolutionInput {
+            task_prompt: marks.told("Chart the harbour's tide tables.".to_owned()),
+            objective: marks.told("Read a tide table correctly.".to_owned()),
+            passages: passages(&mut marks),
+        };
+        holds::<ReferenceSolution>(&solving, &marks);
+        let mut marks = Marks::new();
+        let grading = GradeInput {
+            task_prompt: marks.told("Chart the harbour's tide tables.".to_owned()),
+            artifact: marks.told("I shut the damper before the tide turned.".to_owned()),
+            criteria: vec![Criterion {
+                criterion: LearningPracticeCriterionDto {
+                    id: marks.reference("criterion-id-sentinel-003".to_owned()),
+                    dimension: LearningPracticeEvidenceDimension::Recall,
+                    title: marks.told("Recall of the tide table".to_owned()).0,
+                    description: marks.told("States the tide table correctly.".to_owned()).0,
+                    max_points: 2,
+                },
+            }],
+        };
+        holds::<PracticeGrade>(&grading, &marks);
+    }
+
+    #[tokio::test]
+    async fn a_tutor_citation_is_the_sentence_the_app_holds() -> Result<()> {
+        let session = started_session("I tried the second approach first.").await?;
+        let sources = [passage_source(&format!("{STEP} {TIDE}"))];
+        let model = tutoring(|prompt, _| {
+            tutor_reply(
+                "Which step carries the weight?",
+                json!([handle_before(prompt, TIDE)]),
+                json!([]),
+            )
+        });
+        let said = tutor(&model, &session, &tutor_request(), &sources).await?;
+        assert_eq!(
+            said.citations,
+            vec![LearningPracticeCitationDto {
+                source_id: "logical-source".into(),
+                version_id: "version-1".into(),
+                quote: TIDE.into(),
+            }]
+        );
+        let prompt = prompt_of(&model.sent()[0]);
+        assert!(!prompt.contains("logical-source") && !prompt.contains("version-1"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_citation_naming_nothing_shown_costs_only_that_cite() -> Result<()> {
+        let session = started_session("I tried the second approach first.").await?;
+        let sources = [passage_source(&format!("{STEP} {TIDE}"))];
+        let model = tutoring(|prompt, _| {
+            tutor_reply(
+                "Which step carries the weight?",
+                json!([handle_before(prompt, TIDE), "q99", "u1"]),
+                json!([]),
+            )
+        });
+        let said = tutor(&model, &session, &tutor_request(), &sources).await?;
+        assert_eq!(said.citations.len(), 1);
+        assert_eq!(said.citations[0].quote, TIDE);
+        assert_eq!(model.count::<TutorReply>(), 1);
+        Ok(())
+    }
+
+    fn handles_under(schema: &serde_json::Value, property: &str, found: &mut Vec<String>) {
+        match schema {
+            serde_json::Value::Object(map) => {
+                for (key, value) in map {
+                    if key == "properties" {
+                        if let Some(inner) = value.get(property) {
+                            strings_of(inner, found);
+                        }
+                    }
+                    handles_under(value, property, found);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    handles_under(item, property, found);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn strings_of(value: &serde_json::Value, found: &mut Vec<String>) {
+        match value {
+            serde_json::Value::String(text) => found.push(text.clone()),
+            serde_json::Value::Object(map) => map.values().for_each(|v| strings_of(v, found)),
+            serde_json::Value::Array(items) => items.iter().for_each(|v| strings_of(v, found)),
+            _ => {}
+        }
+    }
+
+    #[tokio::test]
+    async fn citations_name_only_passage_sentences_and_evidence_only_the_artifact() -> Result<()> {
+        let session = started_session("I tried the second approach first.").await?;
+        let sources = [passage_source(&format!("{STEP} {TIDE}"))];
+        let model =
+            tutoring(|_, _| tutor_reply("Which step carries the weight?", json!([]), json!([])))
+                .enforcing();
+        tutor(&model, &session, &tutor_request(), &sources).await?;
+        let sent = model.sent();
+        let schema = sent[0]
+            .request
+            .schema()
+            .expect("a schema")
+            .as_json()
+            .clone();
+        let (mut cited, mut resting) = (Vec::new(), Vec::new());
+        handles_under(&schema, "citations", &mut cited);
+        handles_under(&schema, "evidence", &mut resting);
+        let handles = |found: &[String], prefix: &str| {
+            found
+                .iter()
+                .filter(|text| text.len() > 1 && text[1..].chars().all(|c| c.is_ascii_digit()))
+                .all(|text| text.starts_with(prefix))
+        };
+        assert!(cited.iter().any(|text| text.starts_with('q')), "{cited:?}");
+        assert!(handles(&cited, "q"), "{cited:?}");
+        assert!(
+            resting.iter().any(|text| text.starts_with('u')),
+            "{resting:?}"
+        );
+        assert!(handles(&resting, "u"), "{resting:?}");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_proposal_rests_on_the_learners_own_sentences() -> Result<()> {
+        const NEVER: &str = "I never checked the tide table.";
+        let session = started_session(&format!("I shut the damper first. {NEVER}")).await?;
+        let model = tutoring(|prompt, _| {
+            tutor_reply(
+                "Which step carries the weight?",
+                json!([]),
+                json!([
+                    {"kind": "misconception", "text": "The table was skipped.", "evidence": [handle_before(prompt, NEVER)]},
+                    {"kind": "follow_up", "text": "Try the table next.", "evidence": []}
+                ]),
+            )
+        });
+        let said = tutor(&model, &session, &tutor_request(), &[]).await?;
+        assert_eq!(said.proposals[0].evidence_quote.as_deref(), Some(NEVER));
+        assert_eq!(said.proposals[1].evidence_quote, None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_blank_tutor_reply_is_corrected_with_the_reason_and_asked_for_again() -> Result<()> {
+        let session = started_session("I tried the second approach first.").await?;
+        let model = tutoring(|_, nth| {
+            tutor_reply(
+                if nth == 0 {
+                    "  "
+                } else {
+                    "Which step carries the weight?"
+                },
+                json!([]),
+                json!([]),
+            )
+        });
+        let said = tutor(&model, &session, &tutor_request(), &[]).await?;
+        assert_eq!(said.response, "Which step carries the weight?");
+        let sent = model.sent();
+        assert_eq!(sent.len(), 2);
+        assert!(prompt_of(&sent[1]).contains("Write the tutor's reply in response."));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_tutor_answer_fails_the_request_after_one_correction() -> Result<()> {
+        let session = started_session("I tried the second approach first.").await?;
+        let model = tutoring(|_, _| "The step holds.".to_owned());
+        let failed = tutor(&model, &session, &tutor_request(), &[]).await;
+        assert!(
+            matches!(failed, Err(AppError::ModelAnswerUnusable(_))),
+            "{failed:?}"
+        );
+        assert_eq!(model.count::<TutorReply>(), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn the_tutors_history_fills_half_the_room_and_the_older_turns_are_counted() -> Result<()>
+    {
+        let turn = |index: usize| LearningPracticeTutorTurnDto {
+            id: format!("turn-{index}"),
+            prompt: format!("Question {index}"),
+            response: "word ".repeat(200),
+            request_kind: LearningTutorRequestKind::Question,
+            hint_level: None,
+            citations: vec![],
+            proposal_ids: vec![],
+            model_name: "scripted".into(),
+            created_at: index as i64,
+        };
+        let model = || {
+            ScriptedModel::new()
+                .window(131_072)
+                .on_request::<TutorReply>(|_, _| {
+                    reply(tutor_reply(
+                        "Which step carries the weight?",
+                        json!([]),
+                        json!([]),
+                    ))
+                })
+        };
+        let mut session = started_session("I tried the second approach first.").await?;
+        session.tutor_turns = (0..6).map(turn).collect();
+        let few = model();
+        tutor(&few, &session, &tutor_request(), &[]).await?;
+        let shown = task_of(&few.sent()[0]);
+        assert_eq!(shown["recentTurns"].as_array().map(Vec::len), Some(6));
+        assert_eq!(shown["earlierTurns"], "");
+        session.tutor_turns = (0..1_000).map(turn).collect();
+        let many = model();
+        tutor(&many, &session, &tutor_request(), &[]).await?;
+        let shown = task_of(&many.sent()[0]);
+        let kept = shown["recentTurns"].as_array().expect("turns");
+        assert!(kept.len() > 6 && kept.len() < 1_000);
+        assert_eq!(kept[0]["request"], "Question 999");
+        assert_eq!(
+            shown["earlierTurns"],
+            format!("{} earlier turns not shown", 1_000 - kept.len())
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_solution_cites_sentences_and_a_blank_one_is_asked_for_again() -> Result<()> {
+        let session = started_session("I can explain the idea.").await?;
+        let sources = [passage_source(&format!("{STEP} {TIDE}"))];
+        let model = ScriptedModel::new().on_request::<ReferenceSolution>(|sent, nth| {
+            let solution = if nth == 0 {
+                " "
+            } else {
+                "Hold the damper, then wait."
+            };
+            reply(
+                json!({"solution": solution, "citations": [handle_before(&prompt_of(sent), STEP)]})
+                    .to_string(),
+            )
+        });
+        let said = solution(&model, &session, &sources).await?;
+        assert_eq!(said.solution, "Hold the damper, then wait.");
+        assert_eq!(said.citations.len(), 1);
+        assert_eq!(said.citations[0].quote, STEP);
+        assert_eq!(said.citations[0].version_id, "version-1");
+        assert_eq!(model.count::<ReferenceSolution>(), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_score_is_one_of_its_own_criterions_levels() -> Result<()> {
+        let mut session = started_session("I shut the damper first.").await?;
+        session.rubric = vec![criterion("recall", 2), criterion("reasoning", 4)];
+        let model = grading(|prompt, nth| {
+            let mut entries = vec![];
+            if nth == 0 {
+                entries.push(entry("c1", json!(["u1"]), "l3"));
+                entries.push(entry("c2", json!(["u1"]), "l9"));
+            } else if !prompt.contains("\"id\":\"c1\"") {
+                entries.push(entry("c2", json!(["u1"]), "l5"));
+            } else {
+                entries.push(entry("c1", json!(["u1"]), "l3"));
+            }
+            json!({ "entries": entries }).to_string()
+        });
+        let (status, graded) = grade(&model, &session).await?;
+        assert_eq!(status, LearningPracticeGradeStatus::Provisional);
+        assert_eq!(graded[0].score, Some(2));
+        assert_eq!(graded[0].max_points, 2);
+        assert_eq!(graded[1].score, Some(4));
+        let sent = model.sent();
+        assert_eq!(sent.len(), 2);
+        let rubric = task_of(&sent[0])["rubric"].clone();
+        assert_eq!(rubric[0]["scores"].as_array().map(Vec::len), Some(3));
+        assert_eq!(rubric[1]["scores"].as_array().map(Vec::len), Some(5));
+        assert!(!prompt_of(&sent[1]).contains("\"id\":\"c1\""));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn no_score_is_cannot_tell_and_a_grade_with_none_is_uncertain() -> Result<()> {
+        let session = started_session("I am not sure how to start.").await?;
+        let model = grading(|_, _| grade_entries(4, json!([]), "Not enough to judge.", "none"));
+        let (status, graded) = grade(&model, &session).await?;
+        assert_eq!(status, LearningPracticeGradeStatus::Uncertain);
+        assert!(graded
+            .iter()
+            .all(|c| c.score.is_none() && c.evidence_quote.is_none()));
+        assert_eq!(model.count::<PracticeGrade>(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_score_without_evidence_is_corrected_for_that_criterion_alone() -> Result<()> {
+        let mut session = started_session("I shut the damper first.").await?;
+        session.rubric = vec![criterion("recall", 2), criterion("reasoning", 2)];
+        let model = grading(|prompt, nth| {
+            let mut entries = vec![];
+            if nth == 0 {
+                entries.push(entry("c1", json!([]), "l2"));
+                entries.push(entry("c2", json!(["u1"]), "l1"));
+            } else if prompt.contains("\"id\":\"c1\"") {
+                entries.push(entry("c1", json!(["u1"]), "l2"));
+            }
+            json!({ "entries": entries }).to_string()
+        });
+        let (_, graded) = grade(&model, &session).await?;
+        assert_eq!(graded[0].score, Some(1));
+        assert_eq!(
+            graded[0].evidence_quote.as_deref(),
+            Some("I shut the damper first.")
+        );
+        assert_eq!(graded[1].score, Some(0));
+        let sent = model.sent();
+        assert_eq!(sent.len(), 2);
+        assert!(prompt_of(&sent[1]).contains("cites at least one sentence"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_criterion_the_grader_never_judges_is_not_judged_and_the_others_stand() -> Result<()>
+    {
+        let session = started_session("I shut the damper first.").await?;
+        let model =
+            grading(|_, _| json!({"entries": [entry("c1", json!(["u1"]), "l3")]}).to_string());
+        let (status, graded) = grade(&model, &session).await?;
+        assert_eq!(status, LearningPracticeGradeStatus::Provisional);
+        assert_eq!(graded[0].score, Some(2));
+        for result in &graded[1..] {
+            assert_eq!(result.score, None);
+            assert_eq!(result.observation, NOT_JUDGED);
+            assert_eq!(result.evidence_quote, None);
+        }
+        Ok(())
+    }
+
+    /// A constrained decoder writes a reply in schema order. With the score first,
+    /// the 27B answered a plainly wrong artifact with `uncertain` and no score, 9
+    /// times in 9, against a prompt that says zero is an observed wrong attempt.
+    #[test]
+    fn the_grader_writes_its_grounds_before_it_scores() {
+        let criteria = vec![Criterion {
+            criterion: criterion("recall", 2),
+        }];
+        let mut scope = Scope::for_question();
+        let mut showing = scope.request();
+        showing.show(&criteria).expect("the criteria are shown");
+        let schema = <Each<Criterion, Verdict> as Shape>::schema(&showing, Pointers::Plain)
+            .expect("a schema");
+        assert_eq!(
+            schema
+                .as_json()
+                .pointer("/properties/entries/items/required"),
+            Some(&json!(["of", "evidence", "observation", "score"]))
+        );
+    }
 }
 
 #[test]

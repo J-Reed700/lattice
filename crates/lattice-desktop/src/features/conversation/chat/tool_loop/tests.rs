@@ -1,6 +1,8 @@
+use super::super::reply_text;
 use super::room::{window_chars, MIN_TOOL_RESULT_CHARS};
 use super::*;
 use lattice_core::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN;
+use lattice_core::application::services::model_contract::kept::TurnNames;
 use std::sync::Arc;
 
 /// The input budget the context assembler plans for a model of this size.
@@ -25,7 +27,13 @@ fn stream_sink_keeps_turn_identity_and_emits_completion_once() {
         Ok(())
     });
     {
-        let mut stream = StreamEmitter::new(&sink, "conversation", "request");
+        let mut stream = StreamEmitter::new(
+            &sink,
+            "conversation",
+            "request",
+            Arc::new(TurnNames::unstored()),
+            reply_text::markers(None),
+        );
         stream.content("hello").unwrap();
         stream.done();
         stream.done();
@@ -47,7 +55,13 @@ fn stream_drop_reports_completion_after_early_return() {
         captured.lock().unwrap().push(event);
         Ok(())
     });
-    drop(StreamEmitter::new(&sink, "conversation", "request"));
+    drop(StreamEmitter::new(
+        &sink,
+        "conversation",
+        "request",
+        Arc::new(TurnNames::unstored()),
+        reply_text::markers(None),
+    ));
     let events = events.lock().unwrap();
     assert_eq!(events.len(), 1);
     assert!(events[0].done);
@@ -290,4 +304,41 @@ fn shedding_frees_the_newest_results_first_and_then_nothing() {
         item,
         CompletionInput::ToolResult { output, .. } if output == room::SHED_RESULT
     )));
+}
+
+mod pictures {
+    use super::*;
+    use lattice_core::application::services::tool_handles::ToolHandles;
+
+    const LINE: &str = "![A kiln](img-1)";
+
+    fn names_with_picture(request_id: &str) -> Arc<TurnNames> {
+        let names = Arc::new(TurnNames::unstored());
+        let handles = ToolHandles::in_turn(Arc::clone(&names)).in_request(request_id);
+        assert_eq!(handles.picture(LINE).as_deref(), Some("[i1]"));
+        names
+    }
+
+    #[test]
+    fn a_picture_name_alone_on_a_line_becomes_the_image_line() {
+        let names = names_with_picture("request-1");
+        assert_eq!(
+            with_pictures(&names, "request-1", "Fired clay.\n\n[i1]\n\nDone."),
+            format!("Fired clay.\n\n{LINE}\n\nDone.")
+        );
+    }
+
+    #[test]
+    fn a_name_inside_a_sentence_or_code_stays_text() {
+        let names = names_with_picture("request-1");
+        let text = "See [i1] here.\n\n`[i1]`\n\n```\n[i1]\n```";
+        assert_eq!(with_pictures(&names, "request-1", text), text);
+    }
+
+    #[test]
+    fn a_name_from_an_earlier_request_stays_text() {
+        let names = names_with_picture("request-1");
+        let text = "Before.\n\n[i1]\n\nAfter.";
+        assert_eq!(with_pictures(&names, "request-2", text), text);
+    }
 }

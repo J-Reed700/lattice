@@ -7,19 +7,13 @@ fn part(index: usize) -> Part {
     Part {
         id: format!("section-{index}"),
         site: FindingSite::Section(index),
+        fields: vec!["body".to_owned()],
         texts: vec!["Alpha holds the line.".to_owned()],
-        shown: Value::Null,
+        shown: json!({"body": "Alpha holds the line."}),
     }
 }
 
 fn missing_note(belongs: Option<&Part>) -> String {
-    let answer = Answer {
-        planned: Vec::new(),
-        used_before_taught: Vec::new(),
-        contradictions: Vec::new(),
-        unseen: Vec::new(),
-        reports: Vec::new(),
-    };
     let item = Item {
         id: "action-1".to_owned(),
         kind: "action",
@@ -31,7 +25,7 @@ fn missing_note(belongs: Option<&Part>) -> String {
         uses: Vec::new(),
         clashes: Vec::new(),
     };
-    let found = findings(&answer, &settled, &[], &Value::Null, &[]);
+    let found = findings(&[], &settled, &Value::Null, &[]);
     assert_eq!(found.len(), 1);
     found[0].note.clone()
 }
@@ -51,14 +45,13 @@ fn a_missing_item_with_no_part_is_not_told_one() {
 
 fn used_note(protected: &[Protected]) -> String {
     let parts = [part(0)];
-    let hit = first_hit(&parts, "Alpha holds the line.").unwrap();
-    let answer = Answer {
-        planned: Vec::new(),
-        used_before_taught: Vec::new(),
-        contradictions: Vec::new(),
-        unseen: Vec::new(),
-        reports: Vec::new(),
-    };
+    let texts = Lesson::of(&parts, 1, |_| false).texts();
+    let unit = texts
+        .iter()
+        .next()
+        .and_then(|(_, units)| units.spans().first().map(|(unit, _)| *unit))
+        .unwrap();
+    let hit = hit_at(&parts, &texts, unit).unwrap();
     let settled = Settled {
         taught: Vec::new(),
         missing: Vec::new(),
@@ -71,7 +64,7 @@ fn used_note(protected: &[Protected]) -> String {
         clashes: Vec::new(),
     };
     let candidate = json!({"blocks":[{"body":"Alpha holds the line."}],"questions":[]});
-    let found = findings(&answer, &settled, &parts, &candidate, protected);
+    let found = findings(&[], &settled, &candidate, protected);
     assert_eq!(found.len(), 1);
     found[0].note.clone()
 }
@@ -99,21 +92,4 @@ fn a_use_in_a_passage_nothing_protects_keeps_its_note() {
         note.ends_with(concat!("Teach it in this step, where it is first used (", each_shown!(), "), or change the step to use only what the lesson has taught (a record asked for in the learner's own notes needs nothing taught).")),
         "{note}"
     );
-}
-
-#[test]
-fn the_answer_names_each_thing_once_with_every_use_and_where_it_is_taught_later() {
-    let schema = schema(&[], 0);
-    let entry = &schema["properties"]["usedBeforeTaught"]["items"];
-    assert_eq!(entry["required"], json!(["what", "uses", "taughtLater"]));
-    assert_eq!(entry["additionalProperties"], json!(false));
-    assert_eq!(entry["properties"]["uses"]["type"], json!("array"));
-    assert_eq!(entry["properties"]["uses"]["minItems"], json!(1));
-    assert_eq!(entry["properties"]["uses"]["items"]["minLength"], json!(1));
-    assert_eq!(entry["properties"]["what"]["minLength"], json!(1));
-    assert_eq!(
-        entry["properties"]["taughtLater"],
-        json!({"type": "string"})
-    );
-    assert!(entry["properties"].get("quote").is_none());
 }

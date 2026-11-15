@@ -14,6 +14,7 @@ use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, InferencePriority, SamplingOverride,
 };
 use lattice_core::application::services::completion_input::attach_images_to_last_user;
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::domain::models::vision::VisionGeometry;
 use tracing::info;
 
@@ -161,7 +162,7 @@ fn pick_request(
         },
     ];
     attach_images_to_last_user(&mut input, parts);
-    CompletionRequest {
+    legacy::completion(legacy::Completion {
         input,
         json_schema: Some(serde_json::json!({
             "type": "object",
@@ -181,7 +182,7 @@ fn pick_request(
         no_time_limit: true,
         cache_key: Some(format!("{}:image-pick", scope.conv_id)),
         ..Default::default()
-    }
+    })
 }
 
 /// The `keep` list of a verdict, read leniently: the first JSON object in the

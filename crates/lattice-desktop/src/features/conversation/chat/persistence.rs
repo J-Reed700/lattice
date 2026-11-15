@@ -4,6 +4,7 @@ use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 use tracing::{debug, warn};
 
+use super::reply_text::ReplyText;
 use super::{ChatResponse, ChatTurn, ConversationMessage, RetrievalTraceDto, TurnRecordDto};
 
 #[derive(Debug, Clone)]
@@ -127,7 +128,7 @@ async fn claim_question_pictures(
 /// The answer as it is saved: its text, the sources it cites, and what the
 /// message's metadata carries beside them.
 pub(super) struct FinishedAnswer {
-    pub(super) response: String,
+    pub(super) reply: ReplyText,
     pub(super) sources: Vec<SourceDto>,
     pub(super) verification: Option<serde_json::Value>,
     pub(super) memory_usage: Option<serde_json::Value>,
@@ -167,7 +168,7 @@ pub(super) async fn finalize_successful_turn(
         ..
     } = turn;
     let FinishedAnswer {
-        response: assistant_response,
+        reply,
         mut sources,
         verification: verification_metadata,
         memory_usage,
@@ -181,13 +182,15 @@ pub(super) async fn finalize_successful_turn(
     let uncaptured = super::source_snapshots::attach_archived_snapshots(
         container,
         conversation_id,
-        &assistant_response,
+        &reply,
         &mut sources,
     )
     .await;
+    let assistant_response = reply.text.clone();
     let response_tokens = llm.count_tokens(&assistant_response);
 
     let mut metadata_payload = serde_json::Map::new();
+    metadata_payload.insert("references".to_string(), reply.metadata());
     if !sources.is_empty() {
         metadata_payload.insert("sources".to_string(), serde_json::json!(&sources));
     }
@@ -254,24 +257,18 @@ pub(super) async fn finalize_successful_turn(
             MemoryToIndex {
                 message_id: assistant_msg.id.clone(),
                 role: "assistant".to_string(),
-                content: assistant_response.clone(),
+                content: reply.without_references(),
             },
         ],
     );
 
     let messages = turn_transcript(
-        conv_service
-            .get_conversation(conversation_id)
-            .await
-            .and_then(|aggregate| {
-                aggregate.ok_or_else(|| {
-                    AppError::NotFound(format!("Conversation {conversation_id} not found"))
-                })
-            }),
+        super::transcript::shown_messages(container, conv_service, conversation_id).await,
         user_message_id,
         user_message,
         message_tokens,
         &assistant_msg,
+        &reply,
     );
 
     Ok(SavedAnswer {
@@ -310,40 +307,22 @@ async fn commit_turn(
     }
 }
 
-fn message_dto(
-    message: &lattice_core::domain::conversation::ConversationMessage,
-) -> ConversationMessage {
-    ConversationMessage {
-        id: message.id.clone(),
-        conversation_id: message.conversation_id.as_str().to_string(),
-        tokens: message.tokens,
-        role: match message.role {
-            lattice_core::domain::conversation::MessageRole::User => "user".to_string(),
-            lattice_core::domain::conversation::MessageRole::Assistant => "assistant".to_string(),
-            lattice_core::domain::conversation::MessageRole::System => "system".to_string(),
-        },
-        content: message.content.clone(),
-        status: message.status.clone(),
-        created_at: message.created_at.to_rfc3339(),
-        metadata: message.metadata.clone(),
-    }
-}
-
 /// The conversation as it stands after the commit. The answer is already
 /// saved, so a failed read returns what the turn itself wrote rather than
 /// failing the turn.
 fn turn_transcript(
-    read: Result<lattice_core::domain::conversation::ConversationAggregate>,
+    read: Result<Vec<ConversationMessage>>,
     user_message_id: &str,
     user_message: &str,
     message_tokens: usize,
     answer: &lattice_core::domain::conversation::ConversationMessage,
+    reply: &ReplyText,
 ) -> Vec<ConversationMessage> {
     match read {
-        Ok(aggregate) => aggregate.messages().iter().map(message_dto).collect(),
+        Ok(messages) => messages,
         Err(error) => {
             warn!(%error, "Answer saved but the conversation could not be re-read; returning this turn only");
-            let answer = message_dto(answer);
+            let answer = ConversationMessage::of(answer, Some(reply.pieces()));
             let question = ConversationMessage {
                 id: user_message_id.to_string(),
                 role: "user".to_string(),
@@ -351,6 +330,7 @@ fn turn_transcript(
                 tokens: message_tokens as i64,
                 status: "completed".to_string(),
                 metadata: None,
+                reply: None,
                 ..answer.clone()
             };
             vec![question, answer]

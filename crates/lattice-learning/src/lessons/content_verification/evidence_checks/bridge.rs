@@ -200,6 +200,12 @@ mod tests {
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
+        }
     }
 
     fn pending(statement: &str) -> PendingClaim {
@@ -226,19 +232,17 @@ mod tests {
     }
 
     fn stated(part: &str) -> Value {
-        json!({"part": part, "kind": "stated", "passage": "passage-0"})
+        json!({"part": part, "kind": "stated", "passages": ["p1"]})
     }
 
     fn unplaced(part: &str, kind: &str) -> Value {
-        json!({"part": part, "kind": kind, "passage": null})
+        json!({"part": part, "kind": kind, "passages": []})
     }
 
     /// The judgment and the recorded parts for `statement` when the judge
     /// answers with `parts`, whatever verdict it writes beside them.
     async fn weighed(statement: &str, parts: Value) -> (JudgeOutcome, Vec<CheckedPart>) {
-        let reply =
-            json!({"parts": parts, "verdict": "supported", "reason": "The judge's reason."})
-                .to_string();
+        let reply = json!({"parts": parts, "reason": "The judge's reason."}).to_string();
         let model = Said(Mutex::new(VecDeque::from([reply])));
         let texts = vec![CITED.to_owned()];
         let checker = ClaimChecker::for_policy(
@@ -269,7 +273,6 @@ mod tests {
                 stated("A rule set holds checks"),
                 unplaced("12 of 48 is 25%", "own"),
             ],
-            "verdict": "supported",
             "reason": "The judge's reason.",
         })
         .to_string();
@@ -315,7 +318,7 @@ mod tests {
         // An invented attribution a passage contradicts.
         let (judged, _) = weighed(
             "The survey reports that modular document parsing pipelines were introduced by Google in 2019.",
-            json!([{"part": "modular document parsing pipelines were introduced by Google in 2019", "kind": "contradicted", "passage": "passage-0"}]),
+            json!([{"part": "modular document parsing pipelines were introduced by Google in 2019", "kind": "contradicted", "passages": ["p1"]}]),
         )
         .await;
         assert_eq!(judged.verdict, ClaimVerdict::Contradicted);
@@ -338,8 +341,8 @@ mod tests {
             "Tesseract is an OCR engine written by Microsoft in 2019 that reads pixels into text.",
             json!([
                 stated("Tesseract is an OCR engine"),
-                {"part": "written by Microsoft", "kind": "contradicted", "passage": "passage-0"},
-                {"part": "in 2019", "kind": "contradicted", "passage": "passage-0"},
+                {"part": "written by Microsoft", "kind": "contradicted", "passages": ["p1"]},
+                {"part": "in 2019", "kind": "contradicted", "passages": ["p1"]},
                 unplaced("reads pixels into text", "common"),
             ]),
         )

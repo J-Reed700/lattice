@@ -2,6 +2,7 @@
 use super::*;
 use crate::lessons::course_generation_tests::length_bounds;
 use crate::review_findings::{FindingSite, Rule};
+use lattice_core::application::services::model_contract::Contract;
 use serde_json::{json, Value};
 
 const STEPS_IN_ORDER: &str = "The learner does the lesson's steps in order, with their own tools and materials, so each step starts from what the steps before it left: a later step uses what an earlier one made or set up, and never has the learner make or set it up again.";
@@ -530,7 +531,10 @@ fn writer_requirements() -> String {
 
 #[test]
 fn the_writer_writes_a_cases_own_values_plainly_and_is_not_asked_for_hypotheticals() {
-    for text in [writer_requirements(), lesson_system(true)] {
+    for text in [
+        writer_requirements(),
+        lesson_system_with(writer_grounding()),
+    ] {
         assert!(!text.contains("explicit hypotheticals"), "{text}");
         assert!(!text.contains("Suppose…"), "{text}");
         assert!(
@@ -717,6 +721,120 @@ fn the_writer_asks_questions_only_about_what_the_learner_was_taught() {
     );
 }
 
+#[tokio::test]
+async fn prompt_snapshot_lesson_writer() -> Result<()> {
+    use crate::curriculum::LearningGenerationJobKind;
+    use crate::curriculum_repository::LearningCurriculumRepository;
+    use crate::dto::{AcceptLearningProgramRequestDto, LearningCourseDepth};
+    use crate::lessons::course_generation_tests::{
+        lesson_response, outline, request, Model, RequestLog, REFERENCE,
+    };
+    use crate::plan_dto::StartLearningGenerationJobRequestDto;
+    use crate::repository::LearningRepository;
+    use lattice_core::shared::persistence::Database;
+    use lattice_core::shared::runtime::jobs::{JobContext, JobStore};
+    let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
+    let drafts = crate::outline_draft::DraftRunRegistry::new();
+    let draft = crate::service::generate(
+        &repo,
+        &drafts,
+        &outline(4, 3),
+        request(LearningCourseDepth::Course),
+        vec![],
+    )
+    .await?;
+    let accepted = crate::service::accept(
+        &repo,
+        &drafts,
+        AcceptLearningProgramRequestDto {
+            program_id: draft.summary.id.clone(),
+            expected_revision: draft.summary.revision,
+            title: "Experimental design".into(),
+        },
+    )
+    .await?;
+    crate::content_verification::tests::install_source_as(
+        &db,
+        &draft.summary.id,
+        REFERENCE,
+        (
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222",
+        ),
+    )
+    .await?;
+    let mut program = repo.get(&draft.summary.id).await?;
+    program.sources = repo.verification_sources(&draft.summary.id).await?;
+    // The prompt shows module ids, which are minted at random.
+    let minted: Vec<String> = program.modules.iter().map(|m| m.id.clone()).collect();
+    for module in &mut program.modules {
+        for id in &mut module.prerequisite_module_ids {
+            if let Some(position) = minted.iter().position(|known| known == id) {
+                *id = format!("module-{position}");
+            }
+        }
+    }
+    let lesson = &program.modules[0].lessons[0];
+    let mut candidate = lesson_response();
+    for field in ["blocks", "questions"] {
+        for item in candidate[field].as_array_mut().unwrap() {
+            item["sourceIndex"] = json!(0);
+            item["quote"] = json!("A randomized comparison isolates the intervention.");
+        }
+    }
+    let inner = Model(candidate.to_string());
+    let llm = RequestLog::new(&inner);
+    let jobs = LearningCurriculumRepository::new(db.clone());
+    jobs.plan(&program.summary.id).await?;
+    let job = jobs
+        .start_job(&StartLearningGenerationJobRequestDto {
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            program_id: program.summary.id.clone(),
+            expected_revision: accepted.summary.revision,
+            kind: LearningGenerationJobKind::LessonPreparation,
+            request_json: json!({"lessonIds":[lesson.id]}).to_string(),
+            progress_total: 1,
+        })
+        .await?;
+    JobStore::new(db.clone()).claim(&job.id).await?;
+    let runtimes = crate::embedded_runtime::BuiltinRuntimes::for_tests();
+    crate::lesson_progress::run(
+        &JobContext::detached(&JobStore::new(db.clone()), &job.id).await?,
+        crate::lesson_drafts::run(
+            &db,
+            &jobs,
+            &job.id,
+            &lesson.id,
+            prepare_lesson(
+                &llm,
+                &runtimes,
+                &program,
+                lesson,
+                &CoursePlan::blank(&program),
+            ),
+        ),
+    )
+    .await?;
+
+    // The slot-affinity key is the course's id, which is minted at random.
+    let mut sent = llm.sent_for::<LessonWriter>();
+    for request in &mut sent {
+        assert_eq!(
+            request.cache_key.as_deref(),
+            Some(program.summary.id.as_str())
+        );
+        request.cache_key = Some("course-0".into());
+    }
+    lattice_core::application::services::model_contract::test_support::snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        LessonWriter::ID.as_str(),
+        &sent,
+    );
+    Ok(())
+}
+
 #[test]
 fn the_writer_is_told_question_reasons_say_what_is_true() {
     let text = writer_requirements();
@@ -743,26 +861,9 @@ fn the_writer_is_asked_for_choices_alike_in_form() {
 }
 
 #[test]
-fn the_writer_and_both_repairs_are_told_a_step_starts_from_what_the_steps_before_it_left() {
-    for sources in [0, 2] {
-        let schema = lesson_schema(sources);
-        for (who, text) in [
-            ("writer", writer_requirements()),
-            (
-                "teaching repair",
-                crate::lessons::text_edits::instructions(&schema),
-            ),
-            (
-                "claim repair",
-                crate::lessons::text_edits::rewrite_instructions(&schema),
-            ),
-        ] {
-            assert!(
-                text.contains(STEPS_IN_ORDER),
-                "{who} with {sources} sources: {text}"
-            );
-        }
-    }
+fn the_writer_is_told_a_step_starts_from_what_the_steps_before_it_left() {
+    let text = writer_requirements();
+    assert!(text.contains(STEPS_IN_ORDER), "{text}");
 }
 
 #[test]
@@ -1164,29 +1265,8 @@ fn lesson_drafts_are_keyed_by_versioned_protocols() {
     );
     assert_eq!(
         json!({"policy": DRAFT_POLICY})["policy"],
-        json!("lesson-draft-v1")
+        json!("lesson-draft-v2")
     );
-}
-
-#[test]
-fn the_lesson_writer_contract_reads_what_it_renders() {
-    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
-        LessonWriter,
-    >(
-        &serde_json::from_value(json!({
-            "blocks": ([
-                "explanation", "worked_example", "contrast", "check", "guided_practice",
-                "independent_practice", "recap", "reflection"
-            ].map(|kind| block(kind, "A section", "Its body.", true))),
-            "questions": (["practice", "quiz", "test"].map(|kind| question(kind, "Which one?", true)))
-        }))
-        .unwrap(),
-    );
-}
-
-#[test]
-fn a_draft_without_sections_is_refused_by_the_lesson_reader() {
-    assert!(read_lesson(&json!({"blocks":[],"questions":[]}).to_string()).is_err());
 }
 
 #[test]
@@ -1223,7 +1303,7 @@ fn a_rendered_lesson_meets_the_writers_schema() {
         .collect();
     let lesson: GeneratedLesson =
         serde_json::from_value(json!({"blocks":blocks,"questions":questions})).unwrap();
-    let rendered: Value = serde_json::from_str(&<LessonWriter as lattice_core::application::services::model_contract::test_support::RenderAnswer>::render(&lesson)).unwrap();
+    let rendered = json!(lesson);
     let schema = lesson_schema_counting(1, (1, 20), (1, 20));
     let validator = jsonschema::JSONSchema::compile(&schema).unwrap();
     let errors: Vec<String> = validator

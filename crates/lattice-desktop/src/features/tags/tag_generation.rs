@@ -175,6 +175,12 @@ mod tests {
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
+        }
     }
 
     #[tokio::test]
@@ -188,7 +194,7 @@ mod tests {
         let sent = llm.0.lock().await;
         assert_eq!(sent[0].priority, InferencePriority::Maintenance);
         assert!(matches!(
-            sent[0].input.as_slice(),
+            sent[0].input(),
             [
                 CompletionInput::Message { role: system, content: instructions },
                 CompletionInput::Message { role: user, content: message },

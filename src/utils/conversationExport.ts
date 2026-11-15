@@ -11,6 +11,7 @@
  * and the toasts.
  */
 
+import type { ReplyPieceDto } from '@/lib/bindings';
 import { formatSourceLocation } from '@/shared/sources/passageLocator';
 import {
   MessageVerificationSummarySchema,
@@ -20,6 +21,7 @@ import {
   type SourceWithMetadata,
 } from '@/types/conversation';
 import { createCitationMap } from '@/utils/citations';
+import { drawReply, replyOf } from '@/utils/replyPieces';
 import { sanitizeFileName } from '@/utils/sanitize';
 import { isCourseSource } from '@/utils/sourcePreview';
 
@@ -45,6 +47,7 @@ export interface ExportableMessage {
   id?: string;
   role: string;
   content: string;
+  reply?: ReplyPieceDto[] | null;
   createdAt?: string;
   metadata?: string | null;
   sources?: SourceWithMetadata[] | null;
@@ -120,7 +123,7 @@ export function sourceLine(source: SourceWithMetadata): string {
   return location ? `${name} — ${location}` : name;
 }
 
-/** The numbered source list under an answer, keyed by the `[n]` the text uses. */
+/** The numbered source list under an answer, keyed by the number each source reference shows. */
 function sourcesBlock(sources: readonly SourceWithMetadata[]): string[] {
   if (sources.length === 0) return [];
   const numbered = Array.from(createCitationMap([...sources]).entries()).sort(
@@ -260,7 +263,9 @@ export function conversationToMarkdown(
 ): string {
   const now = options.now ?? new Date();
   const title = oneLine(conversation.title ?? '') || UNTITLED_CONVERSATION;
-  const spoken = messages.filter((message) => message.content.trim().length > 0);
+  const said = (message: ExportableMessage): string =>
+    message.role === 'user' ? message.content : drawReply(replyOf(message)).readable;
+  const spoken = messages.filter((message) => said(message).trim().length > 0);
 
   const meta = [
     options.spaceName ? oneLine(options.spaceName) : null,
@@ -271,7 +276,7 @@ export function conversationToMarkdown(
   const lines: string[] = [`# ${title}`, '', `_${meta.join(' · ')}_`, ''];
 
   for (const message of spoken) {
-    lines.push(`## ${roleHeading(message.role)}`, '', message.content.trim(), '');
+    lines.push(`## ${roleHeading(message.role)}`, '', said(message).trim(), '');
     if (message.role === 'user') continue;
     const { sources, verification, turn } = answerFacts(message, options);
     lines.push(...sourcesBlock(sources));
@@ -285,6 +290,7 @@ export function conversationToMarkdown(
 }
 
 export interface AnswerExportInput {
+  /** The answer as `drawReply` reads it: each source reference written as its number. */
   content: string;
   sources?: readonly SourceWithMetadata[];
   verification?: MessageVerificationSummary | null;

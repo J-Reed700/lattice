@@ -65,6 +65,12 @@ impl LLMPort for Reading {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// The one source the statement cites: nothing is left for a second page.
@@ -80,9 +86,33 @@ pub(super) fn citing(references: &ReferenceCollection<'_>) -> Result<Citations> 
     ))
 }
 
-pub(super) fn parts_reply(parts: Value, verdict: &str) -> String {
-    json!({"parts": parts, "verdict": verdict, "reason": "The passage says Quillet is a lexer."})
-        .to_string()
+/// The part-wise judge's reply for `parts`, each written with the `passage`
+/// (`passage-N` or null) of the script's place and given as the handle the
+/// judge is shown it under. The verdict a script names is not asked of the
+/// judge any more.
+pub(super) fn parts_json(parts: Value, reason: &str) -> String {
+    let parts: Vec<Value> = parts
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|part| {
+            let handle = part["passage"]
+                .as_str()
+                .and_then(|written| written.strip_prefix("passage-"))
+                .and_then(|place| place.parse::<usize>().ok())
+                .map(|place| format!("p{}", place + 1));
+            json!({
+                "part": part["part"],
+                "kind": part["kind"],
+                "passages": handle.into_iter().collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    json!({"parts": parts, "reason": reason}).to_string()
+}
+
+pub(super) fn parts_reply(parts: Value, _verdict: &str) -> String {
+    parts_json(parts, "The passage says Quillet is a lexer.")
 }
 
 pub(super) fn half_stated() -> String {

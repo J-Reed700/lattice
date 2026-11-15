@@ -1,5 +1,6 @@
 //! Conversation DTOs for creating, updating and managing conversations.
 
+use lattice_core::application::contracts::replies::ReplyPieceDto;
 use lattice_core::domain::conversation::ChatModelChoice;
 use serde::{Deserialize, Serialize};
 
@@ -117,6 +118,30 @@ pub struct MessageDto {
 
     /// Message status (pending/completed/failed)
     pub status: String,
+
+    /// An assistant message as text between references; absent for any other message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply: Option<Vec<ReplyPieceDto>>,
+}
+
+impl MessageDto {
+    /// A saved message, and for an assistant message the pieces it is drawn from.
+    pub fn of(
+        message: &lattice_core::domain::conversation::ConversationMessage,
+        reply: Option<Vec<ReplyPieceDto>>,
+    ) -> Self {
+        Self {
+            id: message.id.to_string(),
+            conversation_id: message.conversation_id.to_string(),
+            role: message.role.to_string(),
+            content: message.content.clone(),
+            tokens: message.tokens,
+            created_at: message.created_at.to_rfc3339(),
+            metadata: message.metadata.clone(),
+            status: message.status.clone(),
+            reply,
+        }
+    }
 }
 
 /// Request to create a new conversation.
@@ -358,6 +383,7 @@ mod tests {
             tokens: 5,
             created_at: "2025-01-01T00:00:00Z".to_string(),
             metadata: None,
+            reply: None,
             status: "completed".to_string(),
         };
 

@@ -8,6 +8,7 @@
 //! Results are plain text, cut to the size the tool loop allows this call, and
 //! each one says how to get the rest when it is cut.
 
+use super::file_refs::FileNames;
 use super::fs::{self, SearchRequest};
 use super::index::tool as folder_index_tool;
 use super::scope::Scope;
@@ -57,8 +58,9 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             name: TOOL_READ_FILE.to_string(),
             description: "Read a text file from the user's folder, with line numbers. Returns as \
-                 many lines as this turn has room for and says where to start the next read. \
-                 Use these line numbers when you point at lines in your answer."
+                 many lines as this turn has room for; a read that stopped names the point to \
+                 read on from for read_more. Point at lines in your answer with the bracketed \
+                 name the result gives the file and these line numbers."
                 .to_string(),
             parameters: serde_json::json!({
                 "type": "object",
@@ -136,7 +138,10 @@ pub fn definitions() -> Vec<ToolDefinition> {
 /// only when the folder's index has something in it.
 pub fn add_to_turn(tools: &mut Vec<ToolDefinition>, folder_index: bool) {
     let index_tool = folder_index.then(folder_index_tool::definition);
-    for definition in definitions().into_iter().chain(index_tool) {
+    let read_more = lattice_core::application::services::tool_handles::read_more_definition()
+        .ok()
+        .map(ToolDefinition::from);
+    for definition in definitions().into_iter().chain(index_tool).chain(read_more) {
         if !tools.iter().any(|tool| tool.name == definition.name) {
             tools.push(definition);
         }
@@ -155,13 +160,16 @@ fn arg_bool(arguments: &Value, key: &str) -> bool {
 /// the model reads and can act on, not an error that ends the turn.
 pub async fn execute(
     scope: &Scope,
+    names: &FileNames,
     call: FunctionCall,
     max_chars: usize,
 ) -> Result<FunctionResult> {
     let scope = scope.clone();
+    let names = names.clone();
     let outcome = tokio::task::spawn_blocking(move || {
-        run(
+        reply(
             &scope,
+            &names,
             &call.name,
             &call.arguments,
             max_chars.max(FRAMING_CHARS * 2),
@@ -169,7 +177,14 @@ pub async fn execute(
     })
     .await;
     Ok(match outcome {
-        Ok(Ok(text)) => FunctionResult::success(Value::String(text)),
+        Ok(Ok(Reply {
+            text,
+            read_on: None,
+        })) => FunctionResult::success(Value::String(text)),
+        Ok(Ok(Reply {
+            text,
+            read_on: Some(read_on),
+        })) => FunctionResult::success(serde_json::json!({"text": text, "read_on": read_on})),
         Ok(Err(error)) => FunctionResult::error("explorer_error", describe(&error)),
         Err(error) => {
             FunctionResult::error("explorer_error", format!("The folder tool failed: {error}"))
@@ -189,30 +204,81 @@ pub(super) fn describe(error: &AppError) -> String {
 
 /// The text one call returns. Public for tests and for callers that already
 /// run on a blocking thread.
-pub fn run(scope: &Scope, tool: &str, arguments: &Value, max_chars: usize) -> Result<String> {
+pub fn run(
+    scope: &Scope,
+    names: &FileNames,
+    tool: &str,
+    arguments: &Value,
+    max_chars: usize,
+) -> Result<String> {
+    reply(scope, names, tool, arguments, max_chars).map(|reply| reply.text)
+}
+
+/// A call's text, and the call that carries on from where it stopped.
+struct Reply {
+    text: String,
+    read_on: Option<Value>,
+}
+
+impl From<String> for Reply {
+    fn from(text: String) -> Self {
+        Self {
+            text,
+            read_on: None,
+        }
+    }
+}
+
+fn reply(
+    scope: &Scope,
+    names: &FileNames,
+    tool: &str,
+    arguments: &Value,
+    max_chars: usize,
+) -> Result<Reply> {
     match tool {
-        TOOL_LIST_DIRECTORY => list_directory(scope, &folder_path(arguments, "path"), max_chars),
+        TOOL_LIST_DIRECTORY => {
+            list_directory(scope, &folder_path(arguments, "path"), max_chars).map(Reply::from)
+        }
         TOOL_READ_FILE => {
             let path = arg_str(arguments, "path")
                 .ok_or_else(|| AppError::InvalidInput("read_file needs a path.".to_string()))?;
-            read_window(
+            let end_line = arg_u32(arguments, "end_line");
+            let (text, next_line) = read_window(
                 scope,
+                names,
                 path,
                 arg_u32(arguments, "start_line"),
-                arg_u32(arguments, "end_line"),
+                end_line,
                 max_chars,
-            )
+            )?;
+            let read_on = next_line.map(|line| {
+                let mut next = serde_json::json!({"path": path, "start_line": line});
+                if let (Some(end), Some(object)) = (end_line, next.as_object_mut()) {
+                    object.insert("end_line".into(), serde_json::json!(end));
+                }
+                serde_json::json!({"tool": TOOL_READ_FILE, "arguments": next})
+            });
+            Ok(Reply { text, read_on })
         }
         TOOL_SEARCH_FILES => {
             let query = arg_str(arguments, "query")
                 .ok_or_else(|| AppError::InvalidInput("search_files needs a query.".to_string()))?;
             let path = folder_path(arguments, "path");
-            search_files(scope, query, arg_bool(arguments, "regex"), &path, max_chars)
+            search_files(
+                scope,
+                names,
+                query,
+                arg_bool(arguments, "regex"),
+                &path,
+                max_chars,
+            )
+            .map(Reply::from)
         }
         TOOL_FIND_FILES => {
             let pattern = arg_str(arguments, "pattern")
                 .ok_or_else(|| AppError::InvalidInput("find_files needs a pattern.".to_string()))?;
-            find_files(scope, pattern, max_chars)
+            find_files(scope, names, pattern, max_chars).map(Reply::from)
         }
         other => Err(AppError::InvalidInput(format!(
             "Unknown folder tool: {other}"
@@ -222,9 +288,15 @@ pub fn run(scope: &Scope, tool: &str, arguments: &Value, max_chars: usize) -> Re
 
 /// Appends lines until the next would pass `budget`, and says how many did
 /// not fit.
-fn push_lines(out: &mut String, lines: impl Iterator<Item = String>, total: usize, budget: usize) {
+fn push_lines(
+    out: &mut String,
+    lines: impl Iterator<Item = Result<String>>,
+    total: usize,
+    budget: usize,
+) -> Result<()> {
     let mut shown = 0usize;
     for line in lines {
+        let line = line?;
         if shown > 0 && out.len() + line.len() + 1 > budget {
             break;
         }
@@ -235,6 +307,7 @@ fn push_lines(out: &mut String, lines: impl Iterator<Item = String>, total: usiz
     if shown < total {
         out.push_str(&format!("[{} more not shown.]\n", total - shown));
     }
+    Ok(())
 }
 
 fn human_size(bytes: u64) -> String {
@@ -273,10 +346,10 @@ pub(super) fn list_directory(scope: &Scope, path: &str, max_chars: usize) -> Res
     let total = visible.len();
     push_lines(
         &mut out,
-        visible.into_iter(),
+        visible.into_iter().map(Ok),
         total,
         max_chars.saturating_sub(FRAMING_CHARS),
-    );
+    )?;
     if ignored > 0 {
         out.push_str(&format!(
             "[{ignored} entries ignored by .gitignore left out.]\n"
@@ -298,11 +371,12 @@ pub(super) fn number_width(last_line: u32) -> usize {
 
 pub(super) fn read_window(
     scope: &Scope,
+    names: &FileNames,
     path: &str,
     start_line: Option<u32>,
     end_line: Option<u32>,
     max_chars: usize,
-) -> Result<String> {
+) -> Result<(String, Option<u32>)> {
     let file = fs::read_file(scope, path)?;
     if file.binary {
         return Err(AppError::InvalidInput(format!(
@@ -365,7 +439,10 @@ pub(super) fn read_window(
         None => fs::scan_lines(scope, &file.path, &mut select)?,
     };
     if total == 0 {
-        return Ok(format!("{} is empty.", file.path));
+        return Ok((
+            format!("{} {} is empty.", names.name(&file.path)?, file.path),
+            None,
+        ));
     }
     if start > total {
         return Err(AppError::InvalidInput(format!(
@@ -402,22 +479,23 @@ pub(super) fn read_window(
         body.push('\n');
     }
 
-    let mut out = format!("{} · lines {start}–{last} of {total}\n{body}", file.path);
+    let mut out = format!(
+        "{} {} · lines {start}–{last} of {total}\n{body}",
+        names.name(&file.path)?,
+        file.path
+    );
+    let more = end_line.is_none_or(|end| last < end) && last < total;
     if last < total {
-        out.push_str(&format!(
-            "[Lines {}–{total} not shown. To read on, call read_file with path \"{}\" and start_line {}.]",
-            last + 1,
-            file.path,
-            last + 1
-        ));
+        out.push_str(&format!("[Lines {}–{total} not shown.]", last + 1));
     } else {
         out.push_str("[End of file.]");
     }
-    Ok(out)
+    Ok((out, more.then_some(last + 1)))
 }
 
 fn search_files(
     scope: &Scope,
+    names: &FileNames,
     query: &str,
     regex: bool,
     path: &str,
@@ -455,16 +533,21 @@ fn search_files(
         "{count} match{} for \"{query}\"{place}:\n",
         if count == 1 { "" } else { "es" }
     );
-    let lines = result
-        .matches
-        .iter()
-        .map(|found| format!("{}:{}: {}", found.path, found.line, found.preview));
+    let lines = result.matches.iter().map(|found| {
+        Ok(format!(
+            "{} {}:{}: {}",
+            names.name(&found.path)?,
+            found.path,
+            found.line,
+            found.preview
+        ))
+    });
     push_lines(
         &mut out,
         lines,
         count,
         max_chars.saturating_sub(FRAMING_CHARS),
-    );
+    )?;
     if result.truncated {
         out.push_str(&format!(
             "[The search stopped at its time or file limit after {} files, so files past them were not searched. Narrow it with path or a more specific query.]\n",
@@ -474,7 +557,7 @@ fn search_files(
     Ok(out)
 }
 
-fn find_files(scope: &Scope, pattern: &str, max_chars: usize) -> Result<String> {
+fn find_files(scope: &Scope, names: &FileNames, pattern: &str, max_chars: usize) -> Result<String> {
     let found = fs::find_files(scope, pattern, listable(max_chars))?;
     if found.paths.is_empty() {
         return Ok(format!(
@@ -488,10 +571,13 @@ fn find_files(scope: &Scope, pattern: &str, max_chars: usize) -> Result<String> 
     );
     push_lines(
         &mut out,
-        found.paths.into_iter(),
+        found
+            .paths
+            .into_iter()
+            .map(|path| Ok(format!("{} {path}", names.name(&path)?))),
         count,
         max_chars.saturating_sub(FRAMING_CHARS),
-    );
+    )?;
     if found.truncated {
         out.push_str("[The walk stopped at its time or file limit before covering every file, so there may be more. Use a more specific pattern.]\n");
     }

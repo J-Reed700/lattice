@@ -5,6 +5,7 @@ use crate::features::llm::engine::vision::not_set_up_to_see;
 use crate::features::llm::fitting::{Fitted, OutputLimits, Thinking};
 use crate::features::llm::scheduler::{InferenceScheduler, SchedulerRegistry};
 use async_trait::async_trait;
+use lattice_core::application::services::model_contract::shape::Schema;
 use lattice_core::application::{
     contracts::settings::LLMSettingsDto,
     ports::llm_port::{CompletionRequest, CompletionResponse, LLMPort},
@@ -19,7 +20,7 @@ use std::time::{Duration, Instant};
 
 pub mod catalog;
 pub(crate) mod limits;
-mod protocol;
+pub(in crate::features::llm) mod protocol;
 mod reply;
 mod streaming;
 mod timing;
@@ -323,6 +324,9 @@ impl ModelBackend for CloudLlm {
     }
     fn keeps_read_prompts(&self) -> bool {
         false
+    }
+    fn enforces(&self, schema: &Schema) -> bool {
+        self.protocol.enforces(schema.as_json())
     }
     fn is_alive(&self) -> bool {
         true

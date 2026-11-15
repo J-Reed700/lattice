@@ -45,12 +45,12 @@ pub(in crate::lessons::teaching) const REPAIRS_PER_FINDING: u8 = 2;
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(super) enum Outcome {
     /// A change naming it was applied and stands.
+    #[serde(alias = "Reverted")]
     Applied,
     /// It was named, and none of its changes could be applied.
     NotApplied(Vec<String>),
-    /// Its changes were applied and put back: they touched a sentence that must stay.
-    Reverted,
-    /// Its correction as a whole was refused: it changed what must stay or what it was not asked to change.
+    /// Its correction was refused: asked again in the same repair it stayed refused, or it
+    /// changed what must stay.
     Refused(Vec<String>),
     /// No change named it.
     Unnamed,
@@ -60,6 +60,8 @@ pub(super) enum Outcome {
     Unusable(String),
     /// Its edit overlapped another finding's and was left out: not an attempt.
     Deferred,
+    /// Its repair does not fit the model's window: not an attempt, it waits for the user.
+    NoRoom,
 }
 
 impl Outcome {
@@ -72,14 +74,11 @@ impl Outcome {
     }
 
     /// What became of the attempt, for the user's log.
-    fn in_words(&self) -> String {
+    pub(super) fn in_words(&self) -> String {
         match self {
             Self::Applied => "its edits were applied and the defect was still found".to_owned(),
             Self::NotApplied(reasons) => {
                 format!("its edits could not be applied: {}", reasons.join(" "))
-            }
-            Self::Reverted => {
-                "its edits were put back: they touched a sentence that must stay".to_owned()
             }
             Self::Refused(reasons) => {
                 format!("its correction was refused: {}", reasons.join(" "))
@@ -90,9 +89,12 @@ impl Outcome {
             }
             Self::Unusable(reason) => format!("the repair's answer could not be used: {reason}"),
             Self::Deferred => "its edit overlapped another finding's and was left out".to_owned(),
+            Self::NoRoom => NO_ROOM.to_owned(),
         }
     }
 }
+
+const NO_ROOM: &str = "its repair did not fit the window";
 
 /// What a finding's repairs came to, for the log of one the user is left with.
 pub(super) struct Account {
@@ -328,7 +330,8 @@ impl Passes {
     /// repair is charged to it, unless its edit was only left out for
     /// overlapping another finding's, or the attempt was a miss and the one
     /// before it (not counting those left out) was not. Of two attempts in a
-    /// row one is charged, so the review still ends.
+    /// row one is charged, so the review still ends. A finding whose repair
+    /// does not fit is not charged: it waits for the user.
     pub fn charge(&mut self, finding: &ReviewFinding, outcome: Outcome) {
         trace::decided_finding(
             Stage::TeachingRepair,
@@ -337,6 +340,10 @@ impl Passes {
             &format!("{outcome:?}"),
         );
         let id = finding.id();
+        if outcome == Outcome::NoRoom {
+            self.hold([id], NO_ROOM);
+            return;
+        }
         let attempts = self.attempts.entry(id.clone()).or_default();
         let missed_before = attempts
             .iter()
@@ -372,7 +379,6 @@ impl Passes {
                 "The last repair's edits for this finding could not be applied: {}",
                 reasons.join(" ")
             ),
-            Outcome::Reverted => "The last repair's edits for this finding changed a sentence that must stay as it is; they were put back.".to_owned(),
             Outcome::Refused(reasons) => format!(
                 "The last repair's correction for this finding was refused, and none of its edits were applied: {}",
                 reasons.join(" ")
@@ -383,6 +389,7 @@ impl Passes {
                 format!("The last repair's answer could not be used: {reason}")
             }
             Outcome::Deferred => "The last repair's edit for this finding overlapped an edit for another finding and was left out; give it again.".to_owned(),
+            Outcome::NoRoom => "The last repair for this finding did not fit the window.".to_owned(),
         })
     }
 

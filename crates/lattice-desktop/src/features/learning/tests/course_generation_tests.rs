@@ -74,7 +74,7 @@ async fn live_outline_generation_and_save() -> Result<()> {
                 std::fs::write(
                     std::path::Path::new(&directory).join(format!("call-{call}.json")),
                     serde_json::to_vec_pretty(&json!({
-                        "input":request.input,"answer":response.text,"finishReason":response.finish_reason,
+                        "input":request.input(),"answer":response.text,"finishReason":response.finish_reason,
                         "inputTokens":response.input_tokens,"outputTokens":response.output_tokens,"replayed":replayed
                     }))?,
                 )?;
@@ -93,6 +93,12 @@ async fn live_outline_generation_and_save() -> Result<()> {
         }
         async fn is_ready(&self) -> Result<bool> {
             self.inner.is_ready().await
+        }
+        fn enforces(
+            &self,
+            schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            self.inner.enforces(schema)
         }
     }
     let client = ObservedModel {

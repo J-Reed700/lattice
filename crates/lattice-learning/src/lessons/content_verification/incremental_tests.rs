@@ -31,6 +31,12 @@ impl LLMPort for IncrementalModel {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 impl IncrementalModel {
     async fn respond(&self, prompt: &str) -> Result<String> {
@@ -108,10 +114,10 @@ async fn one_fact_edit_in_175_claims_rechecks_only_that_fact_and_resume_reuses_a
         assert_eq!(model.calls.lock().unwrap().len(), 175);
         let before: Vec<_> = inventory.units.iter().map(|u|json!({"kind":"teaching","body":u.claims.iter().map(|claim| claim.quote.as_str()).collect::<Vec<_>>().join(" ")})).collect();
         for unit in &inventory.units { inventory::revisions::save(&model, &before, unit).await?; }
-        // A real scalar-text patch, not a replacement section.
-        let document = json!({"blocks":before,"questions":[]});
-        let revised = crate::lessons::text_edits::apply(&document,
-            &json!({"edits":[{"path":"/blocks/0/body","before":sentence(0),"after":"Mineral 0 is catalogued."}]}).to_string())?;
+        // One sentence rewritten in place, not a replacement section.
+        let mut revised = json!({"blocks":before,"questions":[]});
+        let body = revised["blocks"][0]["body"].as_str().unwrap().replacen(&sentence(0), "Mineral 0 is catalogued.", 1);
+        revised["blocks"][0]["body"] = json!(body);
         let content: Vec<Value> = serde_json::from_value(revised["blocks"].clone())?;
         struct DeltaModel;
         #[async_trait::async_trait]
@@ -127,13 +133,16 @@ async fn one_fact_edit_in_175_claims_rechecks_only_that_fact_and_resume_reuses_a
             fn max_context_tokens(&self) -> usize { 128000 }
             fn count_tokens(&self, text: &str) -> usize { text.len()/4 }
             async fn is_ready(&self) -> Result<bool> { Ok(true) }
+            fn enforces(&self, _schema: &lattice_core::application::services::model_contract::shape::Schema) -> bool {
+                false
+            }
         }
         impl DeltaModel {
             async fn respond(&self, prompt: &str) -> Result<String> {
                 assert!(prompt.starts_with("Extract lesson claims."));
                 let data = fixture_task(prompt).unwrap();
                 let passage = &data["units"][0]["passages"][0];
-                Ok(inventory::fixture_response(vec![json!({"index":0,"claims":[{"sentenceId":sentence_id(passage, "mineral0"),"statement":"mineral0"}],"nonFactualReason":""})]).to_string())
+                Ok(inventory::fixture_response(vec![json!({"of":data["units"][0]["id"],"claims":[{"sentenceId":sentence_id(passage, "mineral0"),"statement":"mineral0"}],"nonFactualReason":""})]).to_string())
             }
         }
 
@@ -549,6 +558,12 @@ async fn teaching_review_survives_added_sources_but_not_changed_content_or_sourc
             }
             async fn is_ready(&self) -> Result<bool> {
                 Ok(true)
+            }
+            fn enforces(
+                &self,
+                _schema: &lattice_core::application::services::model_contract::shape::Schema,
+            ) -> bool {
+                false
             }
         }
         impl NoRequests {

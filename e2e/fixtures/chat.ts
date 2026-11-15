@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import type { ConversationDto, MessageDto } from '../../src/lib/bindings';
+import type { ConversationDto, MessageDto, ReplyPieceDto } from '../../src/lib/bindings';
 import { makeAppSettings } from '../../src/tests/fixtures/appSettings';
 import { gate, installShell, type ShellBackend } from './shell';
 import { serveCommands, type Fixture, type MockArgs } from './tauri';
@@ -22,9 +22,28 @@ export const PASSAGES = [
 ];
 const VOLCANO_FILE = `${FILES}/doc-volcanoes/Volcanoes and magma.md`;
 
-/** The answer as it streams in, then as it is saved with its sources. */
-export const ANSWER_CHUNKS = ['It comes down to silica. ', 'Runny basaltic magma lets gas escape gently [1]. ', 'Sticky, silica-rich magma traps gas until it bursts out [2].'];
-const ANSWER = ANSWER_CHUNKS.join('');
+const said = (text: string): ReplyPieceDto => ({ type: 'text', text });
+/** A reference to one of the passages, as the backend resolves the handle the model wrote. */
+const cited = (number: number): ReplyPieceDto => ({ type: 'reference', reference: { written: `[s${number}]`, kind: 'source', number } });
+
+/** The answer as it streams in, a sentence at a time, then as it is saved with its sources. */
+export const ANSWER_CHUNKS: ReplyPieceDto[][] = [
+  [said('It comes down to silica. ')],
+  [said('Runny basaltic magma lets gas escape gently '), cited(1), said('. ')],
+  [said('Sticky, silica-rich magma traps gas until it bursts out '), cited(2), said('.')],
+];
+const REPLY = ANSWER_CHUNKS.flat();
+const ANSWER = REPLY.map(piece => (piece.type === 'text' ? piece.text : piece.reference.written)).join('');
+
+/** Delivers streamed pieces of the answer as the backend's llm-stream events do: each a text delta or one reference. */
+export async function streamAnswer(page: Page, requestId: string, pieces: ReplyPieceDto[]) {
+  await page.evaluate(({ conversationId, requestId, pieces }) => {
+    for (const piece of pieces) {
+      const part = piece.type === 'text' ? { content: piece.text } : { reference: piece.reference };
+      window.__LATTICE_IPC__.emit('llm-stream', { conversationId, requestId, done: false, ...part });
+    }
+  }, { conversationId: CONVERSATION.id!, requestId, pieces });
+}
 
 const sources = PASSAGES.map(passage => ({
   documentId: passage.documentId, chunkId: passage.chunkId, citationId: passage.citationId,
@@ -92,7 +111,7 @@ export async function installChatFixture(page: Page) {
       }
       state.messages = [
         { id: 'msg-question', conversationId: CONVERSATION.id, role: 'user', content: String(args.message), tokens: 14, status: 'completed', createdAt: STAMP, metadata: null },
-        { id: 'msg-answer', conversationId: CONVERSATION.id, role: 'assistant', content: ANSWER, tokens: 40, status: 'completed', createdAt: STAMP, metadata: JSON.stringify({ sources }) },
+        { id: 'msg-answer', conversationId: CONVERSATION.id, role: 'assistant', content: ANSWER, reply: REPLY, tokens: 40, status: 'completed', createdAt: STAMP, metadata: JSON.stringify({ sources }) },
       ];
       return { conversationId: CONVERSATION.id, message: ANSWER, messages: state.messages, contextUsed: 2, sources: [], timingMetrics: null };
     },

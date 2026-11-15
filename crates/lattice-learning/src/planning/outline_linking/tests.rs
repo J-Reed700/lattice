@@ -2,8 +2,11 @@ use super::spans::{last_sentence_end, sentence_ends};
 use super::*;
 use crate::dto::{GenerateLearningProgramRequestDto, LearningCourseDepth};
 use crate::lessons::content_verification::tests::fixture_task;
+use crate::lessons::content_verification::tests::{fixture_completion, fixture_prompts};
 use crate::lessons::course_generation_tests::ScriptedModel;
 use crate::reference_collection::ReferencePassage;
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use lattice_core::shared::error::AppError;
 
 const ASSIGNMENT: &str = "Random assignment limits confounding when treatment groups are compared.";
@@ -65,15 +68,92 @@ fn model(outputs: Vec<Value>) -> ScriptedModel {
     }
 }
 
+/// An answer in the layer's form: `(item handle, passage handle or none, reason)`.
+fn entries(picks: &[(&str, &str, &str)]) -> Value {
+    json!({"entries": picks.iter().map(|(of, candidate, reason)| json!({"of": of, "candidate": candidate, "reason": reason})).collect::<Vec<_>>()})
+}
+
+/// The items a request shows, by the handle each is shown under.
+fn shown_items(task: &Value) -> Vec<String> {
+    task["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item["id"].as_str().map(str::to_owned))
+        .collect()
+}
+
+type Reply = Box<dyn Fn(&Value, usize) -> Value + Send + Sync>;
+
+/// Answers each request with `reply(task, nth)`, and keeps the prompts.
+struct Answering {
+    reply: Reply,
+    prompts: std::sync::Mutex<Vec<String>>,
+}
+
+fn answering(reply: impl Fn(&Value, usize) -> Value + Send + Sync + 'static) -> Answering {
+    Answering {
+        reply: Box::new(reply),
+        prompts: std::sync::Mutex::new(vec![]),
+    }
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Answering {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let mut replies = Vec::new();
+        for prompt in fixture_prompts(request) {
+            let nth = {
+                let mut prompts = self.prompts.lock().unwrap();
+                prompts.push(prompt.clone());
+                prompts.len() - 1
+            };
+            let task = fixture_task(&prompt).unwrap_or(Value::Null);
+            replies.push((self.reply)(&task, nth).to_string());
+        }
+        Ok(fixture_completion(request, replies))
+    }
+    fn model_name(&self) -> &str {
+        "scripted-review"
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len() / 4
+    }
+    fn max_context_tokens(&self) -> usize {
+        128_000
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
+}
+
 #[tokio::test]
 async fn the_chooser_links_items_to_the_apps_own_passage_text() {
     let mut draft = draft(candidate());
-    let llm = model(vec![json!({"links":[
-        {"id":"/modules/0/summary","candidate":"p2","reason":"The passage addresses interpreting observed differences."},
-        {"id":"/modules/0/outcomes/0","candidate":"p1","reason":"The passage explains random assignment and confounding."},
-        {"id":"/modules/0/outcomes/1","candidate":"p2","reason":"The passage is about uncertainty estimates, not assignment."},
-        {"id":"/modules/0/lessons/0","candidate":"none","reason":"Neither passage plans treatment groups."}
-    ]})]);
+    let llm = model(vec![entries(&[
+        (
+            "i1",
+            "p2",
+            "The passage addresses interpreting observed differences.",
+        ),
+        (
+            "i2",
+            "p1",
+            "The passage explains random assignment and confounding.",
+        ),
+        (
+            "i3",
+            "p2",
+            "The passage is about uncertainty estimates, not assignment.",
+        ),
+        ("i4", "none", "Neither passage plans treatment groups."),
+    ])]);
     let log = link(
         &llm,
         &mut draft,
@@ -132,12 +212,12 @@ async fn the_chooser_links_items_to_the_apps_own_passage_text() {
 #[tokio::test]
 async fn receipts_make_a_second_run_free_and_only_changed_items_are_asked_again() {
     let mut draft = draft(candidate());
-    let llm = model(vec![json!({"links":[
-        {"id":"/modules/0/summary","candidate":"p2","reason":"ok"},
-        {"id":"/modules/0/outcomes/0","candidate":"p1","reason":"ok"},
-        {"id":"/modules/0/outcomes/1","candidate":"none","reason":"ok"},
-        {"id":"/modules/0/lessons/0","candidate":"none","reason":"ok"}
-    ]})]);
+    let llm = model(vec![entries(&[
+        ("i1", "p2", "ok"),
+        ("i2", "p1", "ok"),
+        ("i3", "none", "ok"),
+        ("i4", "none", "ok"),
+    ])]);
     link(
         &llm,
         &mut draft,
@@ -201,9 +281,11 @@ async fn receipts_make_a_second_run_free_and_only_changed_items_are_asked_again(
     // candidate (two matching terms) is the uncertainty passage, p1.
     draft.candidate["modules"][0]["lessons"][0]["objective"] =
         json!("Estimate the uncertainty of a difference between groups.");
-    let again = model(vec![json!({"links":[
-        {"id":"/modules/0/lessons/0","candidate":"p1","reason":"The passage addresses uncertainty estimates."}
-    ]})]);
+    let again = model(vec![entries(&[(
+        "i1",
+        "p1",
+        "The passage addresses uncertainty estimates.",
+    )])]);
     let log = link(
         &again,
         &mut draft,
@@ -231,14 +313,19 @@ async fn receipts_make_a_second_run_free_and_only_changed_items_are_asked_again(
 
 #[tokio::test]
 async fn an_unusable_decision_leaves_only_that_item_unlinked_and_never_fails() {
-    // A repeated id (first counts) and a missing id (outcomes/0) in one answer.
+    // Two differing entries for one item, and none for another that is never answered.
     let mut draft = draft(candidate());
-    let llm = model(vec![json!({"links":[
-        {"id":"/modules/0/summary","candidate":"p1","reason":"ok"},
-        {"id":"/modules/0/summary","candidate":"p2","reason":"ok"},
-        {"id":"/modules/0/outcomes/1","candidate":"p2","reason":"ok"},
-        {"id":"/modules/0/lessons/0","candidate":"none","reason":"ok"}
-    ]})]);
+    let llm = answering(|task, nth| {
+        if nth == 0 {
+            return entries(&[
+                ("i1", "p1", "ok"),
+                ("i1", "p2", "ok"),
+                ("i3", "p2", "ok"),
+                ("i4", "none", "ok"),
+            ]);
+        }
+        json!({"entries": shown_items(task).iter().filter(|id| *id != "i2").map(|id| json!({"of": id, "candidate": "p1", "reason": "ok"})).collect::<Vec<_>>()})
+    });
     link(
         &llm,
         &mut draft,
@@ -253,18 +340,16 @@ async fn an_unusable_decision_leaves_only_that_item_unlinked_and_never_fails() {
     assert_eq!(module["outcomes"][0]["sourceIndex"], Value::Null);
     assert_eq!(module["outcomes"][1]["quote"], UNCERTAINTY);
     assert_eq!(module["lessons"][0]["sourceIndex"], Value::Null);
-    // Two positive receipts and one declined set; the undecided item has
+    // Two positive receipts and one declined set; the unanswered item has
     // none, so the next linking run asks about it again.
     assert_eq!(draft.citation_receipts.len(), 3);
     // One source only: the summary's one candidate is p1; p2 names no
-    // listed passage, so the summary stays unlinked without a receipt.
+    // passage shown, so the summary stays unlinked without a receipt.
     let mut draft = draft_with(
         json!({"modules":[{"title":"Comparisons","prerequisiteIndices":[],
         "summary":{"text":"Compare treatment groups.","sourceIndex":null,"quote":""},"outcomes":[],"lessons":[]}]}),
     );
-    let llm = model(vec![json!({"links":[
-        {"id":"/modules/0/summary","candidate":"p2","reason":"ok"}
-    ]})]);
+    let llm = answering(|_, _| entries(&[("i1", "p2", "ok")]));
     link(
         &llm,
         &mut draft,
@@ -281,7 +366,7 @@ async fn an_unusable_decision_leaves_only_that_item_unlinked_and_never_fails() {
     assert!(draft.citation_receipts.is_empty());
     // An unreadable answer is the same: nothing linked, nothing failed.
     let mut unreadable = super::tests::draft(candidate());
-    let llm = model(vec![json!({"unexpected":true})]);
+    let llm = answering(|_, _| json!({"unexpected":true}));
     link(
         &llm,
         &mut unreadable,
@@ -295,15 +380,285 @@ async fn an_unusable_decision_leaves_only_that_item_unlinked_and_never_fails() {
 }
 
 #[tokio::test]
+async fn an_item_no_decision_reaches_loses_its_author_citation_and_gets_no_receipt() {
+    let mut draft = draft(candidate());
+    let llm = answering(
+        |task, _| json!({"entries": shown_items(task).iter().filter(|id| *id != "i3").map(|id| json!({"of": id, "candidate": "none", "reason": "ok"})).collect::<Vec<_>>()}),
+    );
+    let log = link(
+        &llm,
+        &mut draft,
+        &sources(),
+        None,
+        &OutlineProgress::default(),
+    )
+    .await
+    .unwrap();
+    let kept = &draft.candidate["modules"][0]["outcomes"][1];
+    assert_eq!(kept["sourceIndex"], Value::Null);
+    assert_eq!(kept["quote"], "");
+    assert_eq!(log.removed_unchosen, 1);
+    // The three answered items are declined; the unanswered one has no receipt.
+    assert_eq!(draft.citation_receipts.len(), 3);
+}
+
+#[tokio::test]
+async fn an_entry_missing_from_an_answer_is_asked_for_again_alone_and_the_others_stand() {
+    let mut draft = draft(candidate());
+    let llm = answering(|_, nth| {
+        if nth == 0 {
+            return entries(&[("i1", "p2", "ok"), ("i2", "p1", "ok"), ("i3", "none", "ok")]);
+        }
+        entries(&[("i4", "none", "ok")])
+    });
+    link(
+        &llm,
+        &mut draft,
+        &sources(),
+        None,
+        &OutlineProgress::default(),
+    )
+    .await
+    .unwrap();
+    let prompts = llm.prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 2);
+    assert_eq!(
+        shown_items(&fixture_task(&prompts[1]).unwrap()),
+        ["i4".to_owned()]
+    );
+    assert_eq!(draft.citation_receipts.len(), 4);
+    assert_eq!(
+        draft.candidate["modules"][0]["summary"]["quote"],
+        UNCERTAINTY
+    );
+}
+
+#[tokio::test]
+async fn a_choice_without_a_reason_is_corrected_alone() {
+    let mut draft = draft(
+        json!({"modules":[{"title":"Comparisons","prerequisiteIndices":[],
+        "summary":{"text":"Explain why random assignment limits confounding.","sourceIndex":null,"quote":""},
+        "outcomes":[],"lessons":[]}]}),
+    );
+    let llm = answering(|_, nth| {
+        entries(&[(
+            "i1",
+            "p1",
+            if nth == 0 {
+                " "
+            } else {
+                "It explains assignment."
+            },
+        )])
+    });
+    link(
+        &llm,
+        &mut draft,
+        &sources()[..1],
+        None,
+        &OutlineProgress::default(),
+    )
+    .await
+    .unwrap();
+    let prompts = llm.prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 2);
+    assert!(prompts[1].contains("Give the reason for this choice in reason."));
+    assert_eq!(
+        draft.candidate["modules"][0]["summary"]["quote"],
+        ASSIGNMENT
+    );
+}
+
+#[test]
+fn a_room_that_holds_no_passage_of_an_item_leaves_the_item_out() {
+    let told = |text: &str| Told(text.to_owned());
+    let item = |at: usize, candidates: Vec<usize>| Item {
+        at,
+        kind: told("module summary"),
+        module_title: told("Harbour"),
+        text: told("Read the tide tables."),
+        lesson_title: None,
+        candidates: Internal::of(candidates),
+    };
+    let passage = |at: usize| Passage {
+        at,
+        title: told("Almanac"),
+        quote: told("Tide tables are revised each spring."),
+    };
+    let input = Input {
+        items: vec![item(0, vec![0]), item(1, vec![1])],
+        passages: Packed::new(vec![passage(0), passage(1)], |_| 10),
+    };
+    let cut = OutlineLinking::within(&input, 10).unwrap();
+    assert_eq!(cut.items.len(), 1);
+    assert_eq!(cut.items[0].at, 0);
+    assert_eq!(cut.passages.len(), 1);
+}
+
+fn plain_item(at: usize, candidates: Vec<usize>) -> Item {
+    let told = |text: &str| Told(text.to_owned());
+    Item {
+        at,
+        kind: told("module summary"),
+        module_title: told("Harbour"),
+        text: told("Read the tide tables."),
+        lesson_title: None,
+        candidates: Internal::of(candidates),
+    }
+}
+
+fn plain_passages(count: usize) -> Vec<Passage> {
+    (0..count)
+        .map(|at| Passage {
+            at,
+            title: Told("Almanac".to_owned()),
+            quote: Told(format!("Tide table {at} is revised each spring.")),
+        })
+        .collect()
+}
+
+#[test]
+fn a_room_holding_two_of_five_items_shows_those_with_all_their_candidates() {
+    let passages = plain_passages(10);
+    let costs = vec![10; 10];
+    let items: Vec<Item> = (0..5)
+        .map(|at| plain_item(at, vec![at * 2, at * 2 + 1]))
+        .collect();
+    let open: Vec<&Item> = items.iter().collect();
+    let first = OutlineLinking::within(&input_for(&open, &passages, &costs), 40).unwrap();
+    assert_eq!(first.items.iter().map(|i| i.at).collect::<Vec<_>>(), [0, 1]);
+    assert_eq!(
+        first.passages.iter().map(|p| p.at).collect::<Vec<_>>(),
+        [0, 1, 2, 3]
+    );
+    assert!(first
+        .items
+        .iter()
+        .all(|item| item.candidates.value().len() == 2));
+    let rest: Vec<&Item> = items.iter().skip(2).collect();
+    let later = OutlineLinking::within(&input_for(&rest, &passages, &costs), 1_000).unwrap();
+    assert_eq!(later.items.len(), 3);
+    assert_eq!(later.passages.len(), 6);
+}
+
+#[test]
+fn one_item_whose_candidates_outgrow_the_room_is_offered_the_best_that_fit() {
+    let passages = plain_passages(4);
+    let costs = vec![10; 4];
+    let items = [plain_item(0, vec![0, 1, 2, 3])];
+    let open: Vec<&Item> = items.iter().collect();
+    let cut = OutlineLinking::within(&input_for(&open, &passages, &costs), 25).unwrap();
+    assert_eq!(cut.items.len(), 1);
+    assert_eq!(cut.items[0].candidates.value(), &vec![0, 1]);
+    assert_eq!(cut.passages.len(), 2);
+    assert!(
+        OutlineLinking::within(&input_for(&open, &passages, &costs), 0)
+            .unwrap()
+            .items
+            .is_empty()
+    );
+}
+
+#[test]
+fn an_item_that_does_not_fit_is_passed_over_and_a_later_one_is_still_shown() {
+    let passages = plain_passages(4);
+    let costs = vec![10, 50, 10, 10];
+    let items = [
+        plain_item(0, vec![0]),
+        plain_item(1, vec![1]),
+        plain_item(2, vec![2]),
+    ];
+    let open: Vec<&Item> = items.iter().collect();
+    let cut = OutlineLinking::within(&input_for(&open, &passages, &costs), 25).unwrap();
+    assert_eq!(cut.items.iter().map(|i| i.at).collect::<Vec<_>>(), [0, 2]);
+    assert_eq!(
+        cut.passages.iter().map(|p| p.at).collect::<Vec<_>>(),
+        [0, 2]
+    );
+}
+
+#[test]
+fn a_passage_two_items_share_is_counted_once() {
+    let passages = plain_passages(3);
+    let costs = vec![10; 3];
+    let items = [
+        plain_item(0, vec![0, 1]),
+        plain_item(1, vec![1, 2]),
+        plain_item(2, vec![0, 2]),
+    ];
+    let open: Vec<&Item> = items.iter().collect();
+    let cut = OutlineLinking::within(&input_for(&open, &passages, &costs), 30).unwrap();
+    assert_eq!(cut.items.len(), 3);
+    assert_eq!(cut.passages.len(), 3);
+}
+
+#[tokio::test]
+async fn an_items_candidates_do_not_shrink_as_the_outline_grows() {
+    let outline = |count: usize| {
+        let outcomes: Vec<Value> = (1..count)
+            .map(|_| json!({"text":"Explain iron oxide reduction and its equilibrium.","sourceIndex":null,"quote":""}))
+            .collect();
+        draft(json!({"modules":[{"title":"Iron","prerequisiteIndices":[],
+            "summary":{"text":"Explain iron oxide reduction and its equilibrium.","sourceIndex":null,"quote":""},
+            "outcomes":outcomes,"lessons":[]}]}))
+    };
+    let mut offered = Vec::new();
+    for count in [9, 30] {
+        let llm = notation_model(8_192, |text| text.chars().count() / 4, json!({}));
+        let mut draft = outline(count);
+        link(
+            &llm,
+            &mut draft,
+            &reaction_sources(),
+            None,
+            &OutlineProgress::default(),
+        )
+        .await
+        .unwrap();
+        let prompts = llm.inner.prompts.lock().unwrap();
+        let task = fixture_task(&prompts[0]).unwrap();
+        offered.push(task["items"][0]["candidates"].as_array().unwrap().len());
+    }
+    assert!(offered[0] > 0);
+    assert_eq!(offered[0], offered[1]);
+}
+
+#[test]
+fn the_prompt_names_nothing_the_app_owns() {
+    let mut marks = Marks::new();
+    let input = Input {
+        items: vec![Item {
+            at: marks.reference(100_001_usize),
+            kind: marks.told("module summary".to_owned()),
+            module_title: marks.told("Harbour tides".to_owned()),
+            text: marks.told("Explain how the tide tables are read.".to_owned()),
+            lesson_title: None,
+            candidates: marks.internal(vec![100_002_usize]),
+        }],
+        passages: Packed::new(
+            vec![Passage {
+                at: marks.reference(100_002_usize),
+                title: marks.told("Harbour almanac".to_owned()),
+                quote: marks.told("Tide tables are revised each spring.".to_owned()),
+            }],
+            |_| 10,
+        ),
+    };
+    holds::<OutlineLinking>(&input, &marks);
+}
+
+#[tokio::test]
 async fn an_author_fragment_is_not_offered_and_the_whole_sentence_replaces_it() {
     let mut draft = draft(
         json!({"modules":[{"title":"Comparisons","prerequisiteIndices":[],
         "summary":{"text":"Explain why random assignment limits confounding.","sourceIndex":0,"quote":"Random assignment limits confounding when treatment groups"},
         "outcomes":[],"lessons":[]}]}),
     );
-    let llm = model(vec![json!({"links":[
-        {"id":"/modules/0/summary","candidate":"p1","reason":"The passage explains random assignment and confounding."}
-    ]})]);
+    let llm = model(vec![entries(&[(
+        "i1",
+        "p1",
+        "The passage explains random assignment and confounding.",
+    )])]);
     let log = link(
         &llm,
         &mut draft,
@@ -439,7 +794,7 @@ fn quotes_are_prose_and_never_headings_navigation_tables_or_link_lists() {
 }
 
 #[tokio::test]
-async fn sixty_four_items_are_linked_in_eight_calls_that_each_fit() {
+async fn sixty_four_items_are_all_decided_in_requests_that_each_show_candidates() {
     use crate::lessons::course_generation_tests::LINKS_SENTINEL;
     let item = |i: usize| json!({"text":format!("Explain random assignment and uncertainty in comparison {i}."),"sourceIndex":null,"quote":""});
     let modules: Vec<Value> = (0..8)
@@ -466,16 +821,16 @@ async fn sixty_four_items_are_linked_in_eight_calls_that_each_fit() {
     .unwrap();
     assert_eq!(log.items, 64);
     let prompts = llm.prompts.lock().unwrap().clone();
-    assert_eq!(prompts.len(), 8, "batches of eight, not one call for all");
     for prompt in prompts.iter() {
         let request = fixture_task(prompt).unwrap();
-        let items = request["items"].as_array().unwrap();
-        assert_eq!(items.len(), 8);
-        assert!(items
+        assert!(request["items"]
+            .as_array()
+            .unwrap()
             .iter()
             .all(|i| !i["candidates"].as_array().unwrap().is_empty()));
-        assert!(fits(&llm, &request.to_string(), 200 + 120 * items.len()).await);
     }
+    // Every item was decided: each has its own declined receipt.
+    assert_eq!(draft.citation_receipts.len(), 64);
 }
 
 /// Counts exactly with `exact` where the estimate assumes four characters a
@@ -509,7 +864,7 @@ impl LLMPort for Notation {
     ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
         use lattice_core::application::ports::llm_port::CompletionInput;
         let rendered = request
-            .input
+            .input()
             .iter()
             .flat_map(|item| match item {
                 CompletionInput::Message { role, content } => vec![role.clone(), content.clone()],
@@ -548,6 +903,12 @@ impl LLMPort for Notation {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 
 /// A paragraph of about 1,100 characters of reaction notation, prose by the
@@ -578,7 +939,7 @@ async fn one_item_on_notation_twice_as_dense_as_estimated_is_offered_the_candida
     let llm = notation_model(
         8_192,
         |text| text.chars().count() / 2,
-        json!({"/modules/0/summary":"iron oxide reduction"}),
+        json!({"Explain iron oxide reduction and its equilibrium.":"iron oxide reduction"}),
     );
     let log = link(
         &llm,
@@ -602,13 +963,13 @@ async fn one_item_on_notation_twice_as_dense_as_estimated_is_offered_the_candida
 }
 
 #[tokio::test]
-async fn one_item_whose_every_candidate_overflows_the_window_stays_unlinked_without_a_call() {
+async fn one_item_whose_every_candidate_overflows_the_window_stays_unlinked_without_a_receipt() {
     let sources = reaction_sources();
     let mut draft = reaction_draft();
     let llm = notation_model(
         4_096,
         |text| text.chars().count() * 2,
-        json!({"/modules/0/summary":"iron oxide reduction"}),
+        json!({"Explain iron oxide reduction and its equilibrium.":"iron oxide reduction"}),
     );
     let log = link(
         &llm,
@@ -619,7 +980,6 @@ async fn one_item_whose_every_candidate_overflows_the_window_stays_unlinked_with
     )
     .await
     .unwrap();
-    assert!(llm.inner.prompts.lock().unwrap().is_empty());
     assert_eq!(llm.refusals.load(std::sync::atomic::Ordering::SeqCst), 0);
     assert_eq!((log.linked, log.items), (0, 1));
     assert_eq!(
@@ -629,23 +989,16 @@ async fn one_item_whose_every_candidate_overflows_the_window_stays_unlinked_with
     assert!(draft.citation_receipts.is_empty());
 }
 
-#[test]
-fn the_chooser_schema_bounds_no_text_but_a_blank_one() {
-    let (_, schema, _, _) = request(&[], &sources());
-    let caps = crate::content_caps_tests::text_caps(&schema);
-    assert!(caps.is_empty(), "{caps:?}");
-}
-
 #[tokio::test]
 async fn a_chooser_reason_is_kept_whole() {
     let reason = "The passage explains random assignment and confounding. ".repeat(10);
     let mut draft = draft(candidate());
-    let llm = model(vec![json!({"links":[
-        {"id":"/modules/0/summary","candidate":"p2","reason":reason},
-        {"id":"/modules/0/outcomes/0","candidate":"p1","reason":reason},
-        {"id":"/modules/0/outcomes/1","candidate":"p2","reason":reason},
-        {"id":"/modules/0/lessons/0","candidate":"none","reason":reason}
-    ]})]);
+    let llm = model(vec![entries(&[
+        ("i1", "p2", reason.as_str()),
+        ("i2", "p1", reason.as_str()),
+        ("i3", "p2", reason.as_str()),
+        ("i4", "none", reason.as_str()),
+    ])]);
     link(
         &llm,
         &mut draft,
@@ -695,6 +1048,12 @@ impl LLMPort for Watching<'_> {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 
 fn two_modules() -> OutlineDraft {
@@ -708,11 +1067,11 @@ fn two_modules() -> OutlineDraft {
     ]}))
 }
 
-fn watching<'a>(progress: &'a OutlineProgress, link_id: &str) -> Watching<'a> {
+fn watching(progress: &OutlineProgress) -> Watching<'_> {
     Watching {
-        inner: model(vec![json!({"links":[
-            {"id":link_id,"candidate":"p1","reason":"The passage explains random assignment."}
-        ]})]),
+        inner: model(vec![json!({"@links":{
+            "Explain how random assignment limits confounding when groups are compared.":"Random assignment"
+        }})]),
         progress,
         seen: std::sync::Mutex::new(vec![]),
     }
@@ -722,7 +1081,7 @@ fn watching<'a>(progress: &'a OutlineProgress, link_id: &str) -> Watching<'a> {
 async fn linking_one_module_leaves_the_stage_the_revision_is_in() {
     let progress = OutlineProgress::default();
     progress.stage(OutlineStage::Repairing);
-    let llm = watching(&progress, "/modules/1/summary");
+    let llm = watching(&progress);
     link(&llm, &mut two_modules(), &sources(), Some(1), &progress)
         .await
         .unwrap();
@@ -734,7 +1093,7 @@ async fn linking_one_module_leaves_the_stage_the_revision_is_in() {
 async fn linking_the_whole_outline_is_the_citation_stage() {
     let progress = OutlineProgress::default();
     progress.stage(OutlineStage::Repairing);
-    let llm = watching(&progress, "/modules/1/summary");
+    let llm = watching(&progress);
     link(&llm, &mut two_modules(), &sources(), None, &progress)
         .await
         .unwrap();
@@ -748,7 +1107,7 @@ async fn linking_the_whole_outline_is_the_citation_stage() {
 #[tokio::test]
 async fn linking_one_module_names_the_module_and_says_one_item() {
     let progress = OutlineProgress::default();
-    let llm = watching(&progress, "/modules/1/summary");
+    let llm = watching(&progress);
     link(&llm, &mut two_modules(), &sources(), Some(1), &progress)
         .await
         .unwrap();
@@ -765,7 +1124,7 @@ async fn linking_one_module_names_the_module_and_says_one_item() {
 #[tokio::test]
 async fn linking_the_whole_outline_says_one_outline_item() {
     let progress = OutlineProgress::default();
-    let llm = watching(&progress, "/modules/0/summary");
+    let llm = watching(&progress);
     let mut one = draft(json!({"modules":[
         {"title":"Assignment","prerequisiteIndices":[],
          "summary":{"text":"Explain how random assignment limits confounding when groups are compared.","sourceIndex":null,"quote":""},
@@ -781,6 +1140,48 @@ async fn linking_the_whole_outline_says_one_outline_item() {
     assert_eq!(
         progress.snapshot().detail.as_deref(),
         Some("Linked 1 outline item; 1 of 1 decided")
+    );
+}
+
+#[tokio::test]
+async fn prompt_snapshot_outline_linking() {
+    use crate::planning::outline_reference_tests::Capture;
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let mut draft = draft(candidate());
+    let llm = model(vec![entries(&[
+        (
+            "i1",
+            "p2",
+            "The passage addresses interpreting observed differences.",
+        ),
+        (
+            "i2",
+            "p1",
+            "The passage explains random assignment and confounding.",
+        ),
+        (
+            "i3",
+            "p2",
+            "The passage is about uncertainty estimates, not assignment.",
+        ),
+        ("i4", "none", "Neither passage plans treatment groups."),
+    ])]);
+    let capture = Capture::of::<OutlineLinking>(&llm);
+
+    link(
+        &capture,
+        &mut draft,
+        &sources(),
+        None,
+        &OutlineProgress::default(),
+    )
+    .await
+    .unwrap();
+
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "outline-linking",
+        &capture.requests(),
     );
 }
 
@@ -810,6 +1211,12 @@ impl LLMPort for Measuring {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
     }
 }
 

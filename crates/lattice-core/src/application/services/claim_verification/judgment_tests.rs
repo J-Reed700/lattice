@@ -29,6 +29,12 @@ impl LLMPort for Failing {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &crate::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[tokio::test]
@@ -59,27 +65,31 @@ async fn a_misconfigured_judge_call_fails_the_check() {
 }
 
 #[tokio::test]
-async fn an_unreadable_batch_reply_is_corrected_once() {
+async fn an_unreadable_batch_reply_is_asked_again_for_each_claim_alone() {
     let claims = vec![
         LocatedClaim {
-            claim: "A is 12.".into(),
-            passages: vec!["A is 12.".into()],
+            claim: "The harbour bell rings twice at noon.".into(),
+            passages: vec!["The bell rings twice at noon.".into()],
         },
         LocatedClaim {
-            claim: "B is 20.".into(),
-            passages: vec!["B is measured.".into()],
+            claim: "The kiln is fired at dawn.".into(),
+            passages: vec!["The kiln hours are not listed.".into()],
         },
     ];
-    let supported =
-        "Reason: The passage states this.\nSource passage: passage-0\nVerdict: supported";
-    let unsupported =
-        "Reason: The passage gives no figure.\nSource passage: none\nVerdict: unsupported";
-    let valid = serde_json::json!({"checks": [
-        {"id": "claim-0", "response": supported},
-        {"id": "claim-1", "response": unsupported},
-    ]})
-    .to_string();
-    let llm = Scripted::new(vec![Reply::Text("not json".into()), Reply::Text(valid)]);
+    let entry = |of: &str, source: &str, verdict: &str| {
+        serde_json::json!({"entries": [{
+            "of": of,
+            "reason": "The passage decides this.",
+            "source": source,
+            "verdict": verdict,
+        }]})
+        .to_string()
+    };
+    let llm = Scripted::new(vec![
+        Reply::Text("not json".into()),
+        Reply::Text(entry("c1", "p1", "supported")),
+        Reply::Text(entry("c2", "none", "unsupported")),
+    ]);
     let answered = checker(&llm, CheckPolicy::Strict)
         .check_batch_without_deadline(&claims, &|_| Ok(()), &|_| Ok(()))
         .await
@@ -92,7 +102,7 @@ async fn an_unreadable_batch_reply_is_corrected_once() {
         "{:?}",
         answered.judgments
     );
-    assert_eq!(llm.sent().len(), 2);
+    assert_eq!(llm.sent().len(), 3);
 }
 
 #[tokio::test]

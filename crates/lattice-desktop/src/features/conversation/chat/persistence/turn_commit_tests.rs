@@ -2,6 +2,7 @@ use super::*;
 use crate::features::conversation::{
     repository::ConversationRepository, service::ConversationService, ConversationServiceTrait,
 };
+use lattice_core::application::contracts::replies::ReplyPieceDto;
 use lattice_core::domain::conversation::MessageRole;
 use lattice_core::shared::persistence::Database;
 
@@ -96,7 +97,8 @@ async fn a_commit_that_fails_leaves_the_question_failed_not_pending() {
 #[tokio::test]
 async fn a_committed_turn_is_not_undone_by_a_failed_re_read() {
     let (service, pool, id, user_id) = service_with_pending_question().await;
-    let answer = commit_turn(&service, &id, &user_id, "answer".into(), 3, None)
+    let references = Some(r#"{"references":[]}"#.to_owned());
+    let answer = commit_turn(&service, &id, &user_id, "answer".into(), 3, references)
         .await
         .unwrap();
 
@@ -106,6 +108,10 @@ async fn a_committed_turn_is_not_undone_by_a_failed_re_read() {
         "question",
         2,
         &answer,
+        &ReplyText {
+            text: "answer".into(),
+            ..Default::default()
+        },
     );
 
     assert_eq!(status_of(&pool, &user_id).await, "completed");
@@ -114,6 +120,124 @@ async fn a_committed_turn_is_not_undone_by_a_failed_re_read() {
     assert_eq!(messages[1].id, answer.id);
     assert_eq!(messages[1].content, "answer");
     assert_eq!(messages[0].status, "completed");
+    assert_eq!(messages[0].reply, None);
+    assert_eq!(
+        messages[1].reply,
+        Some(vec![ReplyPieceDto::Text {
+            text: "answer".into()
+        }])
+    );
+}
+
+/// The turn's response replaces the messages the frontend holds, so an earlier
+/// answer saved before references comes back in it as reading it gives it.
+#[tokio::test]
+async fn a_finished_turn_hands_back_an_earlier_answer_saved_before_references_with_its_references()
+{
+    use crate::features::conversation::chat::focus::FocusScope;
+    use crate::features::conversation::chat::test_runtime::FakeRuntime;
+    use crate::features::conversation::chat::turn_record::TurnRecorder;
+
+    let (service, _pool, _, _) = service_with_pending_question().await;
+    let id = service
+        .create_conversation("Earlier".into(), None)
+        .await
+        .unwrap()
+        .id
+        .to_string();
+    service
+        .add_message_with_status(
+            &id,
+            MessageRole::User,
+            "Why is the valley colder?".into(),
+            2,
+            "completed".into(),
+        )
+        .await
+        .unwrap();
+    let sources = serde_json::json!({ "sources": [{
+        "documentId": "doc-weather", "chunkId": "doc-weather-chunk", "content": "Cold air sinks.",
+        "score": 0.5, "fileName": "weather.txt", "filePath": "/notes/weather.txt",
+        "mimeType": "text/plain", "category": "Text File", "fileSizeBytes": 10,
+        "modifiedAt": "2025-01-01T00:00:00Z", "citationId": 1,
+    }] });
+    let earlier = service
+        .add_message_with_metadata(
+            &id,
+            MessageRole::Assistant,
+            "Cold air sinks [1].".into(),
+            4,
+            "completed".into(),
+            Some(sources.to_string()),
+        )
+        .await
+        .unwrap();
+    let question = service
+        .add_message_with_status(
+            &id,
+            MessageRole::User,
+            "And at noon?".into(),
+            2,
+            "pending".into(),
+        )
+        .await
+        .unwrap();
+
+    let runtime = FakeRuntime::default();
+    let llm: Arc<dyn lattice_core::application::ports::LLMPort> =
+        Arc::new(crate::features::llm::engine::factory::MockLLMPort::new());
+    let focus = FocusScope::default();
+    let recorder = TurnRecorder::silent(&id, "request-noon");
+    let saved = finalize_successful_turn(
+        &runtime,
+        ChatTurn {
+            conv_service: &service,
+            conversation_id: &id,
+            request_id: "request-noon",
+            message: "And at noon?",
+            standalone_question: None,
+            llm: &llm,
+            highlight_terms: &[],
+            focus: &focus,
+            recorder: &recorder,
+            names: &std::sync::Arc::new(
+                lattice_core::application::services::model_contract::kept::TurnNames::unstored(),
+            ),
+        },
+        &question.id,
+        2,
+        0,
+        FinishedAnswer {
+            reply: ReplyText {
+                text: "It warms.".into(),
+                ..Default::default()
+            },
+            sources: Vec::new(),
+            verification: None,
+            memory_usage: None,
+            retrieval_trace: None,
+            turn_record: None,
+            summary_refold: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let handed_back = saved
+        .response
+        .messages
+        .iter()
+        .find(|message| message.id == earlier.id)
+        .expect("the earlier answer is in the transcript");
+    let Some(
+        [ReplyPieceDto::Text { text }, ReplyPieceDto::Reference { reference }, ReplyPieceDto::Text { text: end }],
+    ) = handed_back.reply.as_deref()
+    else {
+        panic!("the earlier answer's pieces: {:?}", handed_back.reply);
+    };
+    assert_eq!(text, "Cold air sinks ");
+    assert_eq!(reference.kind, "source");
+    assert_eq!(end, ".");
 }
 
 /// The pictures the answer shows are attached to its message and written to
@@ -162,12 +286,18 @@ async fn the_pictures_an_answer_shows_are_attached_and_recorded() {
             highlight_terms: &[],
             focus: &focus,
             recorder: &recorder,
+            names: &std::sync::Arc::new(
+                lattice_core::application::services::model_contract::kept::TurnNames::unstored(),
+            ),
         },
         &user_id,
         2,
         0,
         FinishedAnswer {
-            response: "It launched in 1969.\n\n![Saturn V lifting off](img-1)".into(),
+            reply: ReplyText {
+                text: "It launched in 1969.\n\n![Saturn V lifting off](img-1)".into(),
+                ..Default::default()
+            },
             sources: Vec::new(),
             verification: None,
             memory_usage: None,

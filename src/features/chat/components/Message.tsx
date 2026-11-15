@@ -27,8 +27,8 @@ import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
+import { useDrawnReply } from '@/shared/conversations/useDrawnReply';
 import type { DisplayMessage, SourceWithMetadata } from '@/types/conversation';
-import { normalizeAssistantMarkdown } from '@/utils/assistantMarkdown';
 
 /** The answer as the reader sees it, each formula as its source. */
 function readAnswer(answer: HTMLElement | null): string {
@@ -154,11 +154,9 @@ export const Message = memo(({
     verificationBadge,
   } = verification;
 
-  const normalizedMarkdownContent = useMemo(
-    () => (isUser ? message.content : normalizeAssistantMarkdown(message.content)),
-    [isUser, message.content]
-  );
-  useRevealStreamingRef(normalizedMarkdownContent, showsCodeRefs && isPending);
+  const drawn = useDrawnReply(message, !isUser, showsCodeRefs);
+  const normalizedMarkdownContent = drawn ? drawn.readable : message.content;
+  useRevealStreamingRef(drawn?.files, showsCodeRefs && isPending);
 
   const {
     isEditing,
@@ -297,11 +295,13 @@ export const Message = memo(({
         >
           <TangentSelection conversationId={conversationId} messageId={messageId} enabled={!isUser && !isPending && !isFailed && message.status !== 'processing'}>
           <TiptapViewer
-            content={normalizedMarkdownContent}
+            content={drawn ? drawn.markdown : message.content}
             citationNumbers={citationNumbers}
+            marks={drawn?.numbers}
             claims={isUser ? undefined : claimVerdicts}
             showEvidence={showCitations}
             codeRefs={showsCodeRefs}
+            files={drawn?.files}
             streaming={isPending}
             images={figures}
           />

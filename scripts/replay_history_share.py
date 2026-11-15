@@ -6,8 +6,16 @@ fixed costs. Nothing measured that, and the fifty questions in desktop-path-v1 r
 at most three turns, so they never reach the limit. This builds long conversations
 from the synthetic library, plants facts at known depths, and asks about them with
 the history cut at each share, rendered the way the app renders a turn: the older
-part folded by the app's own summary prompt, then the recent turns whole, then a
-final message of recalled passages, evidence and the question.
+part folded into a summary, then the recent turns whole, then a final message of
+recalled passages, evidence and the question.
+
+The app folds a summary by asking the model for an edit of the summary's labelled
+lines (`memory/summarize.rs`: `FOLD_SYSTEM`, the edit instructions of
+`editor_system`, the `update_working_summary` payload, and an answer read and
+applied by the answer layer). This script cannot build that request: it has no
+schema for the edit, no reading of the answer and no application of it to lines.
+`summarise` therefore stops with a message rather than replaying the old form,
+which the app no longer sends. The rest of the replay is unchanged.
 
 A summary keeps what stands out, so a fact the user stated tells these shares apart
 less than a detail buried in something the assistant said. Both are asked.
@@ -35,7 +43,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from replay_model import served_model  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-PROMPTS = ROOT / "crates/lattice-desktop/src/features/conversation/memory/prompts.rs"
+SUMMARIZE = ROOT / "crates/lattice-desktop/src/features/conversation/memory/summarize.rs"
 
 CONTEXT_TOKENS = 196_608
 OUTPUT_RESERVED = 32_768
@@ -57,14 +65,6 @@ STOPWORDS = frozenset(
     "will should could mentioned being held someone".split()
 )
 REFUSAL = re.compile(r"(don['’]t|do not|didn['’]t|did not|haven['’]t|have not|not (?:been )?(?:given|mentioned|stated|provided|shared)|no record|cannot|can['’]t|couldn['’]t|isn['’]t)", re.I)
-
-
-def rust_string(source, name):
-    """A string constant from the Rust source, so the replay cannot drift from it."""
-    match = re.search(name + r'''"?\s*(?::\s*&str\s*=|:)\s*"((?:[^"\\]|\\.)*)"''', source)
-    if not match:
-        raise SystemExit(f"{name} not found in {PROMPTS}")
-    return match.group(1).replace('\\"', '"').replace("\\n", "\n")
 
 
 class Server:
@@ -156,15 +156,12 @@ def split_at(messages, budget_tokens, chars_per_token):
     return messages[:keep], messages[keep:]
 
 
-def summarise(server, older, pool, system, instructions):
-    payload = json.dumps({
-        "task": "update_working_summary", "previous_summary": None,
-        "new_passages": [{"sequence": i + 1, "role": m["role"], "text": m["content"]} for i, m in enumerate(older)],
-        "active_requirement_labels_supplied_separately": [], "budget_tokens": pool,
-        "more_passages_follow": False, "instructions": instructions,
-    }, ensure_ascii=False)
-    messages = [{"role": "system", "content": system}, {"role": "user", "content": payload}]
-    return server.chat(messages, min(pool, 8192), temperature=0, top_k=1)
+def summarise(server, older, pool):
+    raise SystemExit(
+        f"the replay cannot fold a summary: {SUMMARIZE.name} asks for an edit of the summary's labelled "
+        "lines (FOLD_SYSTEM + editor_system, payload update_working_summary) and the answer layer's "
+        "schema, reading and application of that edit are not in this script"
+    )
 
 
 def recalled(question, older):
@@ -257,9 +254,6 @@ def main():
     server = Server(os.environ["LLAMA_REPLAY_URL"])
     model = served_model(os.environ["LLAMA_REPLAY_URL"])
     system = pathlib.Path(args.system).read_text(encoding="utf-8")
-    source = PROMPTS.read_text(encoding="utf-8")
-    summary_system = rust_string(source, "SUMMARIZER_SYSTEM")
-    instructions = rust_string(source[source.index("pub fn render_summary_prompt"):], '"instructions')
     corpus = json.loads((ROOT / "evals/retrieval/synthetic-library-v3.json").read_text(encoding="utf-8"))
     documents = [d for d in corpus["documents"] if len(d["text"]) >= 400]
     items = json.loads((ROOT / "evals/retrieval/desktop-path-v1.json").read_text(encoding="utf-8"))["items"]
@@ -293,7 +287,7 @@ def main():
             if all((index, share, kind) in done for kind in kinds):
                 continue
             older, recent = split_at(history, int(share * room), chars_per_token)
-            summary, _, summary_seconds = summarise(server, older, int(SUMMARY_SHARE * room), summary_system, instructions)
+            summary, _, summary_seconds = summarise(server, older, int(SUMMARY_SHARE * room))
             prefix = [{"role": "system", "content": system}]
             if summary.strip():
                 prefix.append({"role": "assistant", "content": SUMMARY_FRAME + summary.strip()})

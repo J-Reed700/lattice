@@ -19,6 +19,7 @@ use lattice_core::domain::conversation::memory::{MemorySnapshot, SourceMessage};
 use lattice_core::shared::error::{AppError, Result};
 
 use super::history_tools::{self, HistoryToolBudget, HistoryToolScope, RecallRequest};
+use super::replay::Replay;
 
 /// Framing the assembler adds to every recent message beyond its words; a
 /// candidate's cost is never below it, so it also bounds how many candidates
@@ -114,6 +115,7 @@ pub async fn build_memory_plan(
             inline_evidence: None,
             tool_schema_tokens,
             document_evidence,
+            replay: None,
         },
         enabled,
         current_input,
@@ -133,6 +135,9 @@ pub struct TurnPrompt<'a> {
     /// The room the tool schemas take, which ride along with every round.
     pub tool_schema_tokens: usize,
     pub document_evidence: Vec<RankedEvidence>,
+    /// Reads the old `[n]` of past answers saved before references; `None` when
+    /// the conversation has none to read.
+    pub replay: Option<Replay<'a>>,
 }
 
 /// [`build_memory_plan`] for a message that may carry its evidence inline.
@@ -156,6 +161,7 @@ pub async fn build_memory_plan_for_query(
         inline_evidence,
         tool_schema_tokens,
         document_evidence,
+        replay,
     } = prompt;
 
     let snapshot = memory.load_snapshot(conversation_id).await?;
@@ -217,6 +223,9 @@ pub async fn build_memory_plan_for_query(
         .iter()
         .map(|message| message.content.clone())
         .collect();
+    if let Some(replay) = &replay {
+        replay.apply(conversation_id, &mut recent).await?;
+    }
     let active_text: Vec<String> = snapshot
         .mandatory_items()
         .iter()

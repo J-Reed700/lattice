@@ -13,6 +13,7 @@ struct ConversationStateRow {
     pinned_at: Option<String>,
     archived_at: Option<String>,
     last_message_preview: Option<String>,
+    last_message_metadata: Option<String>,
     forked_from_conversation_id: Option<String>,
     forked_from_message_id: Option<String>,
     explorer_root: Option<String>,
@@ -49,7 +50,14 @@ async fn fetch_conversation_state(
                 WHERE m.conversation_id = c.id
                 ORDER BY m.created_at DESC
                 LIMIT 1
-            ) AS last_message_preview
+            ) AS last_message_preview,
+            (
+                SELECT m.metadata
+                FROM conversation_messages m
+                WHERE m.conversation_id = c.id
+                ORDER BY m.created_at DESC
+                LIMIT 1
+            ) AS last_message_metadata
         FROM conversations c
         WHERE c.id = ?
         "#,
@@ -96,7 +104,13 @@ fn to_conversation_dto(
             s.bookmarked_at,
             s.pinned_at,
             s.archived_at,
-            s.last_message_preview,
+            s.last_message_preview.map(|content| {
+                lattice_core::shared::stored_references::text_without_references(
+                    &content,
+                    s.last_message_metadata.as_deref(),
+                )
+                .into_owned()
+            }),
             s.forked_from_conversation_id,
             s.forked_from_message_id,
             s.explorer_root,

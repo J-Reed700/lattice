@@ -10,13 +10,13 @@ use serde_json::{json, Value};
 use crate::model_call::ErrorClass;
 use crate::outline_progress::OutlineProgress;
 use crate::{lesson_drafts, lesson_progress, model_call};
-use lattice_core::application::ports::llm_port::{CompletionResponse, SamplingOverride};
+use lattice_core::application::ports::llm_port::{CompletionResponse, Finish};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::{
-    self, GroundedOutput, GroundedRequest, HistoryItem, Streaming,
+    self, GroundedOutput, GroundedRequest, Streaming,
 };
 use lattice_core::application::services::model_contract::{
-    answer, ContractCall, CutOffRemedy, Transport, CORRECTION_LEAD,
+    answer, ask, tagged, ContractCall, CutOffRemedy, Transport, CORRECTION_LEAD,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::protocol::Protocol;
@@ -39,12 +39,24 @@ const TWO_STEPS: &str = "Answer in two steps. Step 1, now: work through the task
 /// Closes that paragraph, after the call's own brief.
 const DRAFT_CLOSE: &str = "Write out everything the final answer needs, in full. Step 2 is requested separately and turns this draft into the final answer.";
 
-/// The answer step's request. It names no format: the schema travels with the
-/// request and the server holds the answer to it.
-const ANSWER_STEP: &str = "Step 2: give the final answer from your draft. Keep its content, wording, numbers, citations and answers. Copy quotations and identifiers exactly as the task supplies them. Where the draft left something out or stopped early, complete it from the task.";
+/// Opens the answer step's request. It names no format: the schema travels
+/// with the request and the server holds the answer to it.
+const ANSWER_STEP_LEAD: &str = "Step 2: give the final answer from your draft. Keep its content, wording, numbers, citations and answers.";
+
+/// The sentence only the `answer()` path adds to the answer step.
+const COPY_EXACTLY: &str = "Copy quotations and identifiers exactly as the task supplies them.";
+
+/// Closes the answer step's request.
+const ANSWER_STEP_CLOSE: &str =
+    "Where the draft left something out or stopped early, complete it from the task.";
+
+/// The answer step's request as the `answer()` path sends it.
+fn answer_step_task() -> String {
+    format!("{ANSWER_STEP_LEAD} {COPY_EXACTLY} {ANSWER_STEP_CLOSE}")
+}
 
 /// Closes a task sent again without the answer it refused, for a window too
-/// full to carry that answer. Like [`ANSWER_STEP`] it names no format.
+/// full to carry that answer. Like [`ANSWER_STEP_LEAD`] it names no format.
 const RESTATE: &str = "An earlier answer to this task could not be used, so avoid this:";
 
 /// What a learning call's window refusal says does not fit.
@@ -87,6 +99,8 @@ enum Step {
     Draft,
     /// The schema-constrained step that answers from the draft.
     Answer,
+    /// A request the driver derived from a reply: more room, or a correction.
+    Followup,
 }
 
 impl Step {
@@ -95,6 +109,7 @@ impl Step {
             Self::Direct => "direct",
             Self::Draft => "draft",
             Self::Answer => "answer",
+            Self::Followup => "follow-up",
         }
     }
 }
@@ -139,6 +154,7 @@ pub(crate) async fn complete_json_with_progress(
 ///
 /// Inside a lesson job the draft is checkpointed, so a job interrupted
 /// between the steps resumes at the answer.
+#[cfg(test)]
 pub(crate) async fn complete_reasoned_json(
     llm: &dyn LLMPort,
     call: &ContractCall,
@@ -206,7 +222,6 @@ pub(crate) async fn complete_checked_request<T>(
     reasoning: Option<ReasonFirst<'_>>,
     accept: impl Fn(&str) -> Result<T> + Send + Sync,
 ) -> Result<T> {
-    let output_tokens = request.output_tokens;
     let one_step = || async {
         let direct = Learning {
             call,
@@ -215,37 +230,73 @@ pub(crate) async fn complete_checked_request<T>(
         };
         answer(llm, call, &direct, request.clone(), &accept).await
     };
+    let drafted = match drafted(llm, &request, progress, reasoning, DraftBy::Call(call)).await? {
+        Some(drafted) => drafted,
+        None => return one_step().await,
+    };
+    lesson_progress::stage(structuring(drafted.subject, drafted.tokens));
+    let answering = Learning {
+        call,
+        progress,
+        step: Step::Answer,
+    };
+    let value = match answer(llm, call, &answering, drafted.answer_step, &accept).await {
+        Ok(value) => value,
+        Err(error) => {
+            // The answer step is deterministic, so a retry on this draft fails the same way.
+            if ErrorClass::of(&error) == ErrorClass::Unusable {
+                lesson_drafts::record_checkpoint(&drafted.key, Value::Null).await?;
+            }
+            return Err(error);
+        }
+    };
+    two_step_completed(drafted.subject, drafted.reused, drafted.tokens);
+    Ok(value)
+}
+
+/// Who sends a draft: the old driver under a contract's call, or the layer's transport as plain steps.
+enum DraftBy<'a> {
+    Call(&'a ContractCall),
+    Steps,
+}
+
+/// What a request drafts with, when it is answered in two steps.
+struct DraftPlan<'a> {
+    subject: &'a str,
+    paragraph: String,
+    /// The draft step.
+    request: GroundedRequest,
+    /// The user message the draft reads, as the request renders it.
+    prompt: String,
+    key: String,
+}
+
+/// The plan to draft `request`, or `None` when it is answered in one step.
+fn draft_plan<'a>(
+    llm: &dyn LLMPort,
+    request: &GroundedRequest,
+    reasoning: Option<ReasonFirst<'a>>,
+) -> Option<DraftPlan<'a>> {
     // A model that thinks before every answer reasons first already, and
     // Claude's reasoning-extraction classifier refuses the prose draft as a
     // request for its chain of thought: every draft came back empty, each
     // billed for its whole prompt.
-    let Some(reasoning) = reasoning
+    let reasoning = reasoning
         .filter(|reasoning| reasoning.kind.reasons_first())
-        .filter(|_| request.evidence.is_empty())
-        .filter(|_| !llm.thinks_before_answering())
-    else {
-        return one_step().await;
-    };
+        .filter(|_| request.evidence().is_empty())
+        .filter(|_| !llm.thinks_before_answering())?;
     let subject = reasoning.subject;
-    let two_step_system = format!(
-        "{}\n\n{TWO_STEPS} {} {DRAFT_CLOSE}",
-        request.instructions, reasoning.brief
-    );
-    // The user message the draft reads, as the request renders it.
-    let prompt = [request.task.as_str(), request.closing.as_str()]
+    let paragraph = format!("{TWO_STEPS} {} {DRAFT_CLOSE}", reasoning.brief);
+    let draft_request = request.draft_step(&paragraph);
+    let prompt = [request.task(), request.closing()]
         .into_iter()
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join("\n\n");
-    let draft_step = || {
-        let mut draft = request.clone();
-        draft.instructions = two_step_system.clone();
-        draft.call.json_schema = None;
-        draft
-    };
     // A draft cut to fit a small window helps less than it costs, so such a
     // window gets the one-step call instead.
-    let room = model_call::source_room(llm, &draft_step(), usize::MAX);
+    let room = model_call::source_room(llm, &draft_request, usize::MAX);
+    let output_tokens = request.output_tokens();
     if room < output_tokens + ANSWER_STEP_OVERHEAD_TOKENS {
         tracing::info!(
             subject,
@@ -253,19 +304,51 @@ pub(crate) async fn complete_checked_request<T>(
             output_tokens,
             "Window cannot hold a draft beside the answer; answering in one step"
         );
-        return one_step().await;
+        return None;
     }
-
     let key = DRAFT_CHECKPOINT_POLICY.key(sha256_hex(
-        json!({"model":llm.model_name(),"system":two_step_system,"prompt":prompt}).to_string(),
+        json!({"model":llm.model_name(),"system":draft_request.instructions(),"prompt":prompt})
+            .to_string(),
     ));
-    let saved = lesson_drafts::checkpoint(&key).await?.and_then(|value| {
-        value
-            .get("draft")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-    });
-    let draft_reused = saved.is_some();
+    Some(DraftPlan {
+        subject,
+        paragraph,
+        request: draft_request,
+        prompt,
+        key,
+    })
+}
+
+/// A draft and the step that answers from it.
+struct Drafted<'a> {
+    subject: &'a str,
+    answer_step: GroundedRequest,
+    key: String,
+    tokens: usize,
+    reused: bool,
+}
+
+/// The draft of `request`, saved or written now; `None` when the request is answered in one step.
+async fn drafted<'a>(
+    llm: &dyn LLMPort,
+    request: &GroundedRequest,
+    progress: Option<&OutlineProgress>,
+    reasoning: Option<ReasonFirst<'a>>,
+    by: DraftBy<'_>,
+) -> Result<Option<Drafted<'a>>> {
+    let Some(plan) = draft_plan(llm, request, reasoning) else {
+        return Ok(None);
+    };
+    let subject = plan.subject;
+    let saved = lesson_drafts::checkpoint(&plan.key)
+        .await?
+        .and_then(|value| {
+            value
+                .get("draft")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
+    let reused = saved.is_some();
     let draft = match saved {
         Some(draft) => {
             lesson_progress::stage(format!(
@@ -275,97 +358,166 @@ pub(crate) async fn complete_checked_request<T>(
         }
         None => {
             lesson_progress::stage(format!("Working through {subject} in prose (step 1 of 2)"));
-            let draft_call = call.draft();
-            let writing = Learning {
-                call: &draft_call,
-                progress,
-                step: Step::Draft,
+            let Some(text) = write_draft(llm, &plan, progress, by).await? else {
+                return Ok(None);
             };
-            let drafted = answer(llm, &draft_call, &writing, draft_step(), |text| {
-                Ok(text.to_owned())
-            })
-            .await;
-            // A declined or cut-off draft is no draft: the one-step request
-            // asks for no prose of its own and may still be answered.
-            match drafted {
-                Ok(text) if !text.trim().is_empty() => {
-                    lesson_drafts::record_checkpoint(&key, json!({ "draft": text })).await?;
-                    text
-                }
-                Ok(_) => {
-                    tracing::warn!(
-                        subject,
-                        "Draft step returned no text; answering in one step"
-                    );
-                    return one_step().await;
-                }
-                Err(error) if ErrorClass::of(&error) == ErrorClass::Unusable => {
-                    tracing::warn!(subject, %error, "Draft step was unusable; answering in one step");
-                    return one_step().await;
-                }
-                Err(error) => return Err(error),
-            }
+            lesson_drafts::record_checkpoint(&plan.key, json!({ "draft": text })).await?;
+            text
         }
     };
 
-    let draft_tokens = llm.count_tokens(&draft);
-    let answer_step = || {
-        let mut request = request.clone();
-        request.instructions = two_step_system.clone();
-        request.task = ANSWER_STEP.to_owned();
-        request.closing.clear();
-        request.history.extend([
-            HistoryItem {
-                role: "user".into(),
-                content: prompt.clone(),
-            },
-            HistoryItem {
-                role: "assistant".into(),
-                content: draft.clone(),
-            },
-        ]);
-        // The answer transcribes a draft; sampling it at the chat temperature
-        // would only add variation the draft does not contain.
-        request.call.sampling = Some(SamplingOverride::deterministic());
-        request
-    };
-    if !model_call::fits(llm, &answer_step()).await {
+    let tokens = llm.count_tokens(&draft);
+    let answer_step =
+        request.answer_step(&plan.paragraph, &answer_step_task(), &plan.prompt, &draft);
+    if !model_call::fits(llm, &answer_step).await {
         // The draft was capped in the model's own tokens, but it can still
         // measure over beside the task, by the backend's count or, where it
         // cannot count, by an estimate that can come out larger. The one-step
         // call needs no room for a draft.
         tracing::warn!(
             subject,
-            draft_tokens,
+            draft_tokens = tokens,
             "Draft does not fit beside the answer; answering in one step"
         );
-        return one_step().await;
+        return Ok(None);
     }
-    lesson_progress::stage(format!(
-        "Structuring {subject} from a {draft_tokens}-token draft (step 2 of 2)"
-    ));
-    let answering = Learning {
-        call,
-        progress,
-        step: Step::Answer,
-    };
-    let value = match answer(llm, call, &answering, answer_step(), &accept).await {
-        Ok(value) => value,
-        Err(error) => {
-            // The answer step is deterministic, so a retry on this draft fails the same way.
-            if ErrorClass::of(&error) == ErrorClass::Unusable {
-                lesson_drafts::record_checkpoint(&key, Value::Null).await?;
-            }
-            return Err(error);
+    Ok(Some(Drafted {
+        subject,
+        answer_step,
+        key: plan.key,
+        tokens,
+        reused,
+    }))
+}
+
+/// The prose of a draft written now, or `None` when the model gave no usable draft.
+async fn write_draft(
+    llm: &dyn LLMPort,
+    plan: &DraftPlan<'_>,
+    progress: Option<&OutlineProgress>,
+    by: DraftBy<'_>,
+) -> Result<Option<String>> {
+    let subject = plan.subject;
+    // A declined or cut-off draft is no draft: the one-step request
+    // asks for no prose of its own and may still be answered.
+    let written = match by {
+        DraftBy::Call(call) => {
+            let draft_call = call.draft();
+            let writing = Learning {
+                call: &draft_call,
+                progress,
+                step: Step::Draft,
+            };
+            answer(llm, &draft_call, &writing, plan.request.clone(), |text| {
+                Ok(text.to_owned())
+            })
+            .await
         }
+        DraftBy::Steps => written_in_steps(llm, plan, progress).await,
     };
+    match written {
+        Ok(text) if !text.trim().is_empty() => Ok(Some(text)),
+        Ok(_) => {
+            tracing::warn!(
+                subject,
+                "Draft step returned no text; answering in one step"
+            );
+            Ok(None)
+        }
+        Err(error) if ErrorClass::of(&error) == ErrorClass::Unusable => {
+            tracing::warn!(subject, %error, "Draft step was unusable; answering in one step");
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// A draft sent as plain steps, once more with twice the room after a cut-off; blank unless it ended complete.
+async fn written_in_steps(
+    llm: &dyn LLMPort,
+    plan: &DraftPlan<'_>,
+    progress: Option<&OutlineProgress>,
+) -> Result<String> {
+    let request = plan
+        .request
+        .filling_window(fills_window(progress, Step::Draft));
+    let mut output = send_step(llm, request.clone(), progress, Step::Draft).await?;
+    if matches!(output.finish(), Finish::CutOff) {
+        let larger = request.larger(2);
+        if model_call::fits(llm, &larger).await {
+            output = send_step(llm, larger, progress, Step::Draft).await?;
+        }
+    }
+    Ok(if matches!(output.finish(), Finish::Complete) {
+        output.text
+    } else {
+        String::new()
+    })
+}
+
+/// What the learner is told while the answer step turns a draft into the answer.
+fn structuring(subject: &str, draft_tokens: usize) -> String {
+    format!("Structuring {subject} from a {draft_tokens}-token draft (step 2 of 2)")
+}
+
+/// The log line of a two-step call that has been answered.
+fn two_step_completed(subject: &str, draft_reused: bool, draft_tokens: usize) {
     tracing::info!(
         subject,
         draft_reused,
         draft_tokens,
         "Learning two-step call completed"
     );
-    Ok(value)
+}
+
+/// How learning sends a request of the answer layer: drafted first when `reasoning` says so, streamed to
+/// the running progress.
+pub(crate) struct Asking<'a> {
+    pub progress: Option<&'a OutlineProgress>,
+    pub reasoning: Option<ReasonFirst<'a>>,
+}
+
+impl Asking<'_> {
+    /// `request` sent as `step`, given the room the step's answer may take.
+    async fn step(
+        &self,
+        llm: &dyn LLMPort,
+        request: GroundedRequest,
+        step: Step,
+    ) -> Result<ask::Sent> {
+        let request = request.filling_window(fills_window(self.progress, step));
+        let output = send_step(llm, request.clone(), self.progress, step).await?;
+        Ok(ask::Sent::of(request, output))
+    }
+}
+
+#[async_trait::async_trait]
+impl ask::Transport for Asking<'_> {
+    async fn send(&self, llm: &dyn LLMPort, request: GroundedRequest) -> Result<ask::Sent> {
+        let Some(drafted) =
+            drafted(llm, &request, self.progress, self.reasoning, DraftBy::Steps).await?
+        else {
+            return self.step(llm, request, Step::Direct).await;
+        };
+        lesson_progress::stage(structuring(drafted.subject, drafted.tokens));
+        let sent = self.step(llm, drafted.answer_step, Step::Answer).await?;
+        two_step_completed(drafted.subject, drafted.reused, drafted.tokens);
+        Ok(sent)
+    }
+
+    async fn follow(&self, llm: &dyn LLMPort, step: ask::Followup) -> Result<ask::Sent> {
+        lesson_progress::stage("The model's answer left something open; asking once more.");
+        let request = step.into_request();
+        let output = send_step(llm, request.clone(), self.progress, Step::Followup).await?;
+        Ok(ask::Sent::of(request, output))
+    }
+
+    async fn unanswered(&self, llm: &dyn LLMPort, request: &GroundedRequest) -> Result<()> {
+        if let Some(plan) = draft_plan(llm, request, self.reasoning) {
+            lesson_drafts::record_checkpoint(&plan.key, Value::Null).await?;
+        }
+        Ok(())
+    }
 }
 
 /// The learning side of one model call: sends a grounded request, streams its
@@ -428,7 +580,8 @@ impl Transport for Learning<'_> {
         llm: &dyn LLMPort,
         request: &GroundedRequest,
     ) -> Result<CompletionResponse> {
-        let output = send(llm, self.call, request.clone(), self.progress, self.step).await?;
+        let request = request.filling_window(fills_window(self.progress, self.step));
+        let output = send_step(&tagged(llm, self.call), request, self.progress, self.step).await?;
         Ok(CompletionResponse {
             text: output.text,
             input_tokens: output.input_tokens,
@@ -477,14 +630,13 @@ impl Transport for Learning<'_> {
         if fills_window(self.progress, self.step) {
             return CutOffRemedy::Stop;
         }
-        let mut larger = request.clone();
-        larger.output_tokens = request.output_tokens.saturating_mul(2);
+        let larger = request.larger(2);
         if !model_call::fits(llm, &larger).await {
             return CutOffRemedy::Stop;
         }
         tracing::warn!(
             step = self.step.name(),
-            output_tokens = request.output_tokens,
+            output_tokens = request.output_tokens(),
             "An answer reached its output limit; asking once more with twice the room"
         );
         CutOffRemedy::Larger(larger)
@@ -494,29 +646,17 @@ impl Transport for Learning<'_> {
 /// `request` continued with the answer it drew and a request to answer again.
 /// Learning requests carry their whole user message in `task`, so moving it
 /// into the history keeps every message the first request sent.
-pub(crate) fn reask(mut request: GroundedRequest, rejected: &str, reason: &str) -> GroundedRequest {
-    let task = std::mem::replace(
-        &mut request.task,
-        format!("{CORRECTION_LEAD} {reason} Answer the same task again, fixing that."),
-    );
-    request.history.extend([
-        HistoryItem {
-            role: "user".into(),
-            content: task,
-        },
-        HistoryItem {
-            role: "assistant".into(),
-            content: rejected.to_owned(),
-        },
-    ]);
-    request
+pub(crate) fn reask(request: GroundedRequest, rejected: &str, reason: &str) -> GroundedRequest {
+    request.corrected(
+        rejected,
+        &format!("{CORRECTION_LEAD} {reason} Answer the same task again, fixing that."),
+    )
 }
 
 /// `request` sent again with `reason` added to its task, for a window too
 /// full to carry the refused answer as well.
-fn restate(mut request: GroundedRequest, reason: &str) -> GroundedRequest {
-    request.task = format!("{}\n\n{RESTATE} {reason}", request.task);
-    request
+fn restate(request: GroundedRequest, reason: &str) -> GroundedRequest {
+    request.restated(&format!("{RESTATE} {reason}"))
 }
 
 /// Whether a step's answer may take the whole window the prompt leaves: a
@@ -527,9 +667,8 @@ fn fills_window(progress: Option<&OutlineProgress>, step: Step) -> bool {
 
 /// Send one learning request, streaming its text to whichever progress the
 /// call runs under.
-async fn send(
+async fn send_step(
     llm: &dyn LLMPort,
-    call: &ContractCall,
     mut request: GroundedRequest,
     progress: Option<&OutlineProgress>,
     step: Step,
@@ -542,7 +681,6 @@ async fn send(
     // that the answer step carrying it still fits.
     let lesson_progress = lesson_progress::active();
     let unbounded = progress.is_some() || lesson_progress;
-    request.output_fills_window = fills_window(progress, step);
     request.call.cache_key = lesson_progress::cache_key();
     let _model_call = lesson_progress.then(lesson_progress::request);
     let receive = |text: String| {
@@ -567,9 +705,8 @@ async fn send(
     };
     // A slow model is not a failed model: no learning call has an
     // elapsed-time deadline (see `model_call`).
-    let response = model_call::send(
+    let response = model_call::send_tagged(
         llm,
-        call,
         request,
         unbounded.then_some(&streaming),
         model_call::TooLarge::Window(MATERIAL_DOES_NOT_FIT),
@@ -593,11 +730,11 @@ async fn send(
 pub(crate) const FIXTURE_DRAFT: &str = "Fixture draft: the task worked through in prose.";
 
 /// Whether `request` is the prose step of a two-step call.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn is_draft_request(
     request: &lattice_core::application::ports::llm_port::CompletionRequest,
 ) -> bool {
-    request.json_schema.is_none()
+    request.schema().is_none()
         && messages(request, "system").any(|content| content.contains(TWO_STEPS))
 }
 
@@ -613,19 +750,32 @@ pub(crate) fn task_messages(
     let system = system
         .split_once(&format!("\n\n{TWO_STEPS}"))
         .map_or(system, |(task, _)| task);
+    let answer_step = answer_step_task();
     let user = messages(request, "user")
-        .find(|content| *content != ANSWER_STEP && !content.starts_with(CORRECTION_LEAD));
+        .filter(|content| *content != answer_step && !content.starts_with(CORRECTION_LEAD))
+        .last();
     (system, user.unwrap_or(""))
 }
 
-/// Contents of `role`'s messages, last first.
+/// The latest thing `request` asks: its task, or what a request asking again says after it.
 #[cfg(test)]
+pub(crate) fn latest_ask(
+    request: &lattice_core::application::ports::llm_port::CompletionRequest,
+) -> &str {
+    let answer_step = answer_step_task();
+    messages(request, "user")
+        .find(|content| *content != answer_step && !content.starts_with(CORRECTION_LEAD))
+        .unwrap_or("")
+}
+
+/// Contents of `role`'s messages, last first.
+#[cfg(any(test, feature = "test-support"))]
 fn messages<'a>(
     request: &'a lattice_core::application::ports::llm_port::CompletionRequest,
     role: &'a str,
 ) -> impl Iterator<Item = &'a str> + 'a {
     request
-        .input
+        .input()
         .iter()
         .rev()
         .filter_map(move |item| match item {

@@ -2,7 +2,10 @@
 use super::*;
 use crate::lessons::course_generation_tests::{clean_review, verdict, ScriptedModel};
 use crate::lessons::shape;
-use lattice_core::application::services::model_contract::CORRECTION_LEAD;
+use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};
+use lattice_core::application::services::model_contract::test_support::{
+    ScriptedModel as Scripted, Sent as Asked,
+};
 use lattice_core::domain::learning::claim_review::{
     Actor, Check, CheckResult, Checker, ClaimEvent, ClaimLocation, ClaimState, EvidenceFingerprint,
     UnitKind,
@@ -654,16 +657,83 @@ fn mended_section() -> (Value, Taken, Vec<Protected>) {
     (section, taken, protected)
 }
 
-async fn mend(
-    llm: &ScriptedModel,
-    taken: &Taken,
-    protected: &[Protected],
-) -> Result<Option<Value>> {
-    mend_in(llm, taken, protected, &json!({})).await
+fn no_edits() -> Value {
+    json!({
+        "sentences": {"replace": [], "insert": [], "remove": [], "move": []},
+        "cite": [], "recite": [], "uncite": [], "keys": []
+    })
 }
 
+fn replacing(at: &str, text: &str) -> Value {
+    let mut edits = no_edits();
+    edits["sentences"]["replace"] = json!([{"at": at, "with": {"text": text, "from": []}}]);
+    edits
+}
+
+fn entry(of: &str, edits: Value) -> Value {
+    json!({"of": of, "edits": edits})
+}
+
+/// The answer that finds the flow of gap `of` fine as it is.
+fn nothing_for(of: &str) -> Value {
+    json!({"entries": [entry(of, no_edits())]})
+}
+
+fn flow_reply(text: String) -> futures::future::BoxFuture<'static, Result<CompletionResponse>> {
+    Box::pin(std::future::ready(Ok(CompletionResponse::from_text(text))))
+}
+
+fn flow_prompt(sent: &Asked) -> String {
+    sent.request
+        .input()
+        .iter()
+        .filter_map(|item| match item {
+            CompletionInput::Message { content, .. } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// The task a flow-repair request carries.
+fn flow_task(sent: &Asked) -> Value {
+    flow_prompt(sent)
+        .rsplit("\n\n")
+        .find_map(|chunk| {
+            serde_json::from_str::<Value>(chunk)
+                .ok()
+                .filter(|task| task.get("gaps").is_some())
+        })
+        .unwrap()
+}
+
+/// The label before `sentence` in the text at `pointer` of the task's section.
+fn label(task: &Value, pointer: &str, sentence: &str) -> String {
+    let marked = task["section"].pointer(pointer).unwrap().as_str().unwrap();
+    let close = marked.find(&format!("] {sentence}")).unwrap();
+    let open = marked[..close].rfind('[').unwrap();
+    marked[open + 1..close].to_owned()
+}
+
+/// A model that answers each ask with the entries `answer(task, number of earlier asks)` gives.
+fn flow_model(answer: impl Fn(&Value, usize) -> Vec<Value> + Send + Sync + 'static) -> Scripted {
+    let asked = std::sync::atomic::AtomicUsize::new(0);
+    Scripted::new().on_request::<FlowRepair>(move |sent, _| {
+        let earlier = asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let task = flow_task(sent);
+        flow_reply(json!({"entries": answer(&task, earlier)}).to_string())
+    })
+}
+
+async fn mend(llm: &dyn LLMPort, taken: &Taken, protected: &[Protected]) -> Result<Option<Value>> {
+    let (section, _, _) = mended_section();
+    let lesson = json!({"blocks":[section],"questions":[]});
+    mend_in(llm, taken, protected, &lesson).await
+}
+
+/// `lesson`'s first section is the one mended.
 async fn mend_in(
-    llm: &ScriptedModel,
+    llm: &dyn LLMPort,
     taken: &Taken,
     protected: &[Protected],
     lesson: &Value,
@@ -679,59 +749,102 @@ async fn mend_in(
     .await
 }
 
+const BODY: &str = "/body";
+
 #[tokio::test]
 async fn a_flow_repair_that_inserts_a_sentence_the_lesson_already_has_is_asked_once_more(
 ) -> Result<()> {
     let (section, taken, protected) = mended_section();
-    let nothing = json!({"edits":[]});
-    let own = json!({"edits":[
-        {"path":"/blocks/0/body","before":"This follows from it.","after":"An intro to the whole idea."}
-    ]});
-    let llm = model(&[own, nothing.clone()]);
+    let llm = flow_model(|task, earlier| {
+        let at = label(task, BODY, "This follows from it.");
+        let gap = task["gaps"][0]["gap"].as_str().unwrap().to_owned();
+        match earlier {
+            0 => vec![entry(&gap, replacing(&at, "An intro to the whole idea."))],
+            _ => vec![entry(&gap, no_edits())],
+        }
+    });
     assert_eq!(
         mend(&llm, &taken, &protected).await?,
         None,
         "the section already has An intro to the whole idea."
     );
-    let prompts = llm.prompts.lock().unwrap().clone();
-    assert_eq!(prompts.len(), 2);
-    assert!(prompts[1].contains(CORRECTION_LEAD), "{}", prompts[1]);
+    let sent = llm.sent();
+    assert_eq!(sent.len(), 2);
+    assert!(flow_prompt(&sent[1]).contains("Answer again."));
 
     let elsewhere = "Another section says exactly this.";
     let lesson = json!({"blocks":[section, block("explanation","Other",elsewhere)],"questions":[]});
-    let other = json!({"edits":[
-        {"path":"/blocks/0/body","before":"This follows from it.","after":elsewhere}
-    ]});
-    let llm = model(&[other, nothing]);
+    let llm = flow_model(move |task, earlier| {
+        let at = label(task, BODY, "This follows from it.");
+        let gap = task["gaps"][0]["gap"].as_str().unwrap().to_owned();
+        match earlier {
+            0 => vec![entry(&gap, replacing(&at, elsewhere))],
+            _ => vec![entry(&gap, no_edits())],
+        }
+    });
     assert_eq!(
         mend_in(&llm, &taken, &protected, &lesson).await?,
         None,
         "another section already has the sentence"
     );
-    assert_eq!(llm.prompts.lock().unwrap().len(), 2);
+    assert_eq!(llm.sent().len(), 2);
     Ok(())
 }
 
 #[tokio::test]
 async fn a_flow_repair_changes_the_sentences_beside_a_gap_and_nothing_else() -> Result<()> {
     let (_, taken, protected) = mended_section();
-    let llm = model(&[json!({"edits":[
-        {"path":"/blocks/0/body","before":"This follows from it.","after":"That follows from the setup."},
-        {"path":"/blocks/0/body","before":"Closing note.","after":"Closing remark."}
-    ]})]);
+    let llm = flow_model(|task, earlier| {
+        let gap = task["gaps"][0]["gap"].as_str().unwrap().to_owned();
+        let beside = label(task, BODY, "This follows from it.");
+        let mut edits = replacing(&beside, "That follows from the setup.");
+        if earlier == 0 {
+            let outside = label(task, BODY, "Closing note.");
+            edits["sentences"]["replace"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"at": outside, "with": {"text": "Closing remark.", "from": []}}));
+        }
+        vec![entry(&gap, edits)]
+    });
 
     let repaired = mend(&llm, &taken, &protected).await?.unwrap();
 
-    // The edit beside the gap stands; the one outside it is taken back.
     assert_eq!(
         repaired["body"],
         "An intro to the whole idea. That follows from the setup. Kept claim. Closing note."
     );
-    let prompts = llm.prompts.lock().unwrap();
-    assert_eq!(prompts.len(), 1);
-    assert!(prompts[0].contains("verifiedSentences"));
-    assert!(prompts[0].contains("Kept claim."));
-    assert!(prompts[0].contains("Add no statement of fact"));
+    let sent = llm.sent();
+    assert_eq!(sent.len(), 2, "the entry outside the gap is asked again");
+    assert!(flow_prompt(&sent[1]).contains("outside the two sentences beside this gap"));
+    let prompt = flow_prompt(&sent[0]);
+    assert!(prompt.contains("verifiedSentences"));
+    assert!(prompt.contains("Add no statement of fact"));
+    let task = flow_task(&sent[0]);
+    assert_eq!(
+        task["verifiedSentences"],
+        json!([label(&task, BODY, "Kept claim.")])
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_snapshot_flow_repair() -> Result<()> {
+    let (section, taken, protected) = mended_section();
+    let inner = model(&[nothing_for("g1")]);
+    let llm = crate::lessons::course_generation_tests::RequestLog::new(&inner);
+    let lesson = json!({"blocks":[section.clone()],"questions":[]});
+
+    mend_section(
+        &llm,
+        (&json!({"type":"object"}), 4_000),
+        (0, true, &section),
+        (&taken, protected.as_slice()),
+        (&lesson, &Default::default()),
+    )
+    .await?;
+
+    llm.assert_snapshot::<FlowRepair>();
     Ok(())
 }
 
@@ -739,13 +852,16 @@ async fn a_flow_repair_changes_the_sentences_beside_a_gap_and_nothing_else() -> 
 async fn a_flow_repair_that_rewrites_a_sentence_a_claim_stands_on_is_no_repair() -> Result<()> {
     let (_, mut taken, protected) = mended_section();
     taken.gaps = vec![gap(Some("This follows from it."), Some("Kept claim."))];
-    let llm = model(&[json!({"edits":[
-        {"path":"/blocks/0/body","before":"Kept claim.","after":"Changed claim."}
-    ]})]);
+    let llm = flow_model(|task, _| {
+        let claim = label(task, BODY, "Kept claim.");
+        let gap = task["gaps"][0]["gap"].as_str().unwrap().to_owned();
+        vec![entry(&gap, replacing(&claim, "Changed claim."))]
+    });
 
-    // The change is put back, and nothing is recorded for it: the section
-    // keeps the text as cut.
     assert_eq!(mend(&llm, &taken, &protected).await?, None);
+    let sent = llm.sent();
+    assert_eq!(sent.len(), 2);
+    assert!(flow_prompt(&sent[1]).contains("states a checked claim"));
     Ok(())
 }
 
@@ -761,30 +877,35 @@ async fn a_flow_repair_that_leaves_the_section_no_lesson_leaves_it_as_cut() -> R
         }],
         answer_lost: false,
     };
-    let llm = model(&[json!({"edits":[
-        {"path":"/blocks/0/rubric/0/dimension","before":"recall","after":"mastery"}
-    ]})]);
+    let llm = flow_model(|task, _| {
+        let at = label(task, "/rubric/0/dimension", "recall");
+        let gap = task["gaps"][0]["gap"].as_str().unwrap().to_owned();
+        vec![entry(&gap, replacing(&at, "mastery"))]
+    });
+    let lesson = json!({"blocks":[section.clone()],"questions":[]});
 
     let repaired = mend_section(
         &llm,
         (&json!({"type":"object"}), 4_000),
         (0, true, &section),
         (&taken, &[]),
-        (&json!({}), &Default::default()),
+        (&lesson, &Default::default()),
     )
     .await?;
 
     assert_eq!(repaired, None);
-    assert_eq!(llm.prompts.lock().unwrap().len(), 1);
+    assert_eq!(llm.sent().len(), 1);
     Ok(())
 }
 
 #[tokio::test]
 async fn a_flow_repair_that_asks_for_nothing_changes_nothing() -> Result<()> {
     let (_, taken, protected) = mended_section();
-    let llm = model(&[json!({"edits":[],"citations":[]})]);
+    let llm =
+        flow_model(|task, _| vec![entry(task["gaps"][0]["gap"].as_str().unwrap(), no_edits())]);
 
     assert_eq!(mend(&llm, &taken, &protected).await?, None);
+    assert_eq!(llm.sent().len(), 1);
     Ok(())
 }
 
@@ -792,16 +913,122 @@ async fn a_flow_repair_that_asks_for_nothing_changes_nothing() -> Result<()> {
 async fn a_gap_whose_neighbours_are_gone_is_no_call() -> Result<()> {
     let (_, mut taken, protected) = mended_section();
     taken.gaps = vec![gap(Some("A sentence since rewritten."), None)];
-    let llm = model(&[]);
+    let llm = flow_model(|_, _| Vec::new());
 
     assert_eq!(mend(&llm, &taken, &protected).await?, None);
-    assert!(llm.prompts.lock().unwrap().is_empty());
+    assert!(llm.sent().is_empty());
+    Ok(())
+}
+
+/// A section with two gaps: after "Intro one." and after "Intro two.".
+const TWO_GAPS: &str = "Intro one. Link one. Middle claim. Intro two. Link two. Tail.";
+
+fn two_gaps() -> (Value, Taken) {
+    let section = block("explanation", "Idea", TWO_GAPS);
+    let taken = Taken {
+        label: "Idea".into(),
+        gaps: vec![
+            gap(Some("Intro one."), Some("Link one.")),
+            gap(Some("Intro two."), Some("Link two.")),
+        ],
+        answer_lost: false,
+    };
+    (section, taken)
+}
+
+async fn mend_two(llm: &dyn LLMPort) -> Result<Option<Value>> {
+    let (section, taken) = two_gaps();
+    let lesson = json!({"blocks":[section.clone()],"questions":[]});
+    mend_section(
+        llm,
+        (&json!({"type":"object"}), 4_000),
+        (0, true, &section),
+        (&taken, &[]),
+        (&lesson, &Default::default()),
+    )
+    .await
+}
+
+/// The entry that rewrites `sentence`, the sentence kept after the gap `of` names.
+fn rewriting(task: &Value, of: &str, sentence: &str, text: &str) -> Value {
+    entry(of, replacing(&label(task, BODY, sentence), text))
+}
+
+fn shown_gaps(task: &Value) -> Vec<String> {
+    task["gaps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|gap| gap["gap"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_gap_the_answer_leaves_out_is_asked_again_alone() -> Result<()> {
+    let llm = flow_model(|task, earlier| {
+        let gaps = shown_gaps(task);
+        match earlier {
+            0 => vec![rewriting(task, &gaps[0], "Link one.", "So one follows.")],
+            _ => vec![rewriting(task, &gaps[0], "Link two.", "So two follows.")],
+        }
+    });
+
+    let repaired = mend_two(&llm).await?.unwrap();
+
+    assert_eq!(
+        repaired["body"],
+        "Intro one. So one follows. Middle claim. Intro two. So two follows. Tail."
+    );
+    let sent = llm.sent();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(shown_gaps(&flow_task(&sent[0])).len(), 2);
+    assert_eq!(shown_gaps(&flow_task(&sent[1])).len(), 1);
     Ok(())
 }
 
 #[tokio::test]
+async fn a_gap_that_stays_unanswered_is_left_as_it_is_and_the_others_are_mended() -> Result<()> {
+    let llm = flow_model(|task, _| {
+        let gaps = shown_gaps(task);
+        if gaps.first().map(String::as_str) == Some("g1") {
+            vec![rewriting(task, "g1", "Link one.", "So one follows.")]
+        } else {
+            Vec::new()
+        }
+    });
+
+    let repaired = mend_two(&llm).await?.unwrap();
+
+    assert_eq!(
+        repaired["body"],
+        "Intro one. So one follows. Middle claim. Intro two. Link two. Tail."
+    );
+    Ok(())
+}
+
+#[test]
+fn the_flow_repair_tells_the_model_only_what_it_may_read() {
+    use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
+    let mut marks = Marks::new();
+    let input = FlowInput {
+        lesson: marks.internal(json!({"blocks":[{"title":"Kiln firing schedule","body":"The kiln needs dry wood."}],"questions":[]})),
+        part: marks.internal("/blocks/0".to_owned()),
+        section: marks.told(json!({"kind":"explanation","title":"Harbour tide tables","body":"Tides rise twice daily.","rubric":[]})),
+        gaps: vec![Place {
+            at: marks.reference(100_001_usize),
+            gap: Internal::of(gap(Some("Tides rise twice daily."), None)),
+        }],
+        verified: Internal::of(Vec::new()),
+        wording: Internal::of(Default::default()),
+        output_tokens: 4_000,
+    };
+
+    holds::<FlowRepair>(&input, &marks);
+}
+
+#[tokio::test]
 async fn each_section_that_took_a_cut_gets_one_flow_repair_and_never_a_second() -> Result<()> {
-    let llm = model(&[json!({"edits":[],"citations":[]})]);
+    let llm = model(&[nothing_for("g1")]);
     let mut ledger = ClaimLedger::open(&llm, "{}").await?;
     let mut lesson = lesson();
     lesson["blocks"][2]["body"] = json!(AFTER_CUT);
@@ -843,9 +1070,8 @@ async fn each_section_that_took_a_cut_gets_one_flow_repair_and_never_a_second() 
 
 #[tokio::test]
 async fn a_flow_repair_that_cannot_stand_leaves_the_section_as_cut() -> Result<()> {
-    let llm = model(&[json!({"edits":[
-        {"path":"/blocks/0/body","before":"Kept claim.","after":"Changed claim."}
-    ]})]);
+    let changed = json!({"entries": [entry("g1", replacing("u4", "Changed claim."))]});
+    let llm = model(&[changed.clone(), changed]);
     let mut ledger = ClaimLedger::open(&llm, "{}").await?;
     let mut lesson = lesson();
     lesson["blocks"][0]["body"] = json!(AFTER_CUT);
@@ -969,14 +1195,15 @@ async fn settle_does_not_rerun_teaching_review_on_cut_lesson_when_surviving_sect
     })
     .to_string();
 
-    let actionable_evidence = json!({"decisions": [
+    let actionable_evidence = json!({"entries": [
         {
-            "issueId": "issue-0",
+            "of": "i1",
             "verdict": "actionable",
             "basis": "internal_conflict",
-            "evidenceIds": ["blocks-0"],
-            "partId": "blocks-0",
-            "requirementId": null,
+            "candidateIds": ["p1"],
+            "referenceIds": [],
+            "partId": "p1",
+            "leftTo": "none",
             "reason": "Section 0 defect."
         }
     ]})
@@ -1112,8 +1339,8 @@ async fn the_review_after_cuts_with_no_claim_left_asks_for_no_count_the_cuts_spe
     lesson["questions"].as_array_mut().unwrap().pop();
     let without = Going::new([2]).out_of(&lesson);
     let questions = without["questions"].as_array().unwrap().len();
-    let solved = json!({"answers":(0..questions).map(|index| json!({"index":index,"reason":"The fixture's key.","correctIndices":[0],"answer":"","blankAnswers":[],"matches":[],"orderedValues":[]})).collect::<Vec<_>>()});
-    let judged = json!({"checks":(0..questions).map(|index| json!({"id":format!("new-{index}"),"finding":"","hasDefect":false,"repeats":[]})).collect::<Vec<_>>()});
+    let solved = crate::key_review::scripted::solved_static(questions, 4, 0);
+    let judged = crate::assessment::item_review::scripted::sound_static(questions);
     let review = json!({"issues":[],"sectionDefects":[]});
     let llm = model(&[solved, judged, review]);
     let sources = sources();
@@ -1161,6 +1388,12 @@ impl LLMPort for TinyWindow {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[tokio::test]
@@ -1196,60 +1429,4 @@ async fn a_flow_repair_that_does_not_fit_keeps_the_cut_text() -> Result<()> {
     assert!(matches!(settled, Ok(Settled::Done)), "{:?}", settled.err());
     assert!(ledger.cuts.mended[&0].checked);
     Ok(())
-}
-
-#[tokio::test]
-async fn a_flow_repair_whose_edits_do_not_apply_is_asked_again() -> Result<()> {
-    let (_, taken, protected) = mended_section();
-    let absent = json!({"edits":[
-        {"path":"/blocks/0/body","before":"Words the section never had.","after":"Anything."}
-    ]});
-    let applies = json!({"edits":[
-        {"path":"/blocks/0/body","before":"This follows from it.","after":"That follows from the setup."}
-    ]});
-    let llm = model(&[absent, applies]);
-
-    let repaired = mend(&llm, &taken, &protected).await;
-
-    assert_eq!(
-        repaired
-            .ok()
-            .flatten()
-            .map(|section| section["body"].clone()),
-        Some(json!(
-            "An intro to the whole idea. That follows from the setup. Kept claim. Closing note."
-        ))
-    );
-    Ok(())
-}
-
-#[test]
-fn the_flow_repair_contract_reads_what_it_renders() {
-    use crate::lessons::text_edits::{Cite, Edit, NamedUncite, Patch, Uncite};
-    let edit = |finding: Option<&str>| Edit {
-        finding: finding.map(str::to_owned),
-        path: "/blocks/0/body".into(),
-        before: json!("Old sentence."),
-        after: json!("New sentence."),
-    };
-    let cite = |finding: Option<&str>, source_index: Option<u64>| Cite {
-        finding: finding.map(str::to_owned),
-        path: "/blocks/0/citations".into(),
-        sentence: "New sentence.".into(),
-        source_index,
-        quote: "A quoted span.".into(),
-    };
-    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
-        FlowRepair,
-    >(&Patch {
-        edits: vec![edit(None), edit(Some("issue-0"))],
-        citations: vec![cite(None, Some(0)), cite(Some("issue-0"), None)],
-        uncite: vec![
-            Uncite::Path("/blocks/0/citations/0".into()),
-            Uncite::Named(NamedUncite {
-                finding: "issue-0".into(),
-                path: "/blocks/0/citations/1".into(),
-            }),
-        ],
-    });
 }

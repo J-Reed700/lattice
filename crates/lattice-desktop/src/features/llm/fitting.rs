@@ -76,7 +76,7 @@ impl OutputLimits {
     /// cap within the model's ceiling; the model's ceiling alone when it
     /// thinks, since thinking counts toward it; `None` when neither is known.
     pub(crate) fn wanted(self, request: &CompletionRequest, thinking: Thinking) -> Option<u32> {
-        let own = request.max_output_tokens.filter(|cap| *cap > 0);
+        let own = request.max_output_tokens().filter(|cap| *cap > 0);
         match (own, self.ceiling) {
             _ if thinking.counts_toward_the_ceiling() => self.ceiling,
             (Some(own), Some(model)) => Some(own.min(model)),
@@ -182,7 +182,7 @@ pub(crate) async fn fit<'r>(
         ratio,
     );
     let fixed = TEMPLATE_TOKENS_PER_MESSAGE
-        .saturating_mul(request.input.len())
+        .saturating_mul(request.input().len())
         .saturating_add(TEMPLATE_TOKENS_FOR_ANSWER)
         .saturating_add(image_tokens);
     let plain = PromptMeasure {
@@ -239,7 +239,7 @@ pub(crate) fn prompt_chars(request: &CompletionRequest) -> usize {
 /// Characters of opaque provider state in a request, which are not prompt text.
 fn native_chars(request: &CompletionRequest) -> usize {
     request
-        .input
+        .input()
         .iter()
         .map(|item| match item {
             CompletionInput::Native { value } => value.to_string().chars().count(),
@@ -253,7 +253,7 @@ fn native_chars(request: &CompletionRequest) -> usize {
 /// (signed reasoning) and pictures' bytes are not text and are left out; a
 /// picture's alt stands in for it.
 fn prompt_texts(request: &CompletionRequest) -> impl Iterator<Item = Cow<'_, str>> {
-    let input = request.input.iter().flat_map(|item| match item {
+    let input = request.input().iter().flat_map(|item| match item {
         CompletionInput::Message { role, content } => {
             vec![
                 Cow::Borrowed(role.as_str()),
@@ -270,7 +270,7 @@ fn prompt_texts(request: &CompletionRequest) -> impl Iterator<Item = Cow<'_, str
         CompletionInput::ToolResult { output, .. } => vec![Cow::Borrowed(output.as_str())],
         CompletionInput::Native { .. } => Vec::new(),
     });
-    let tools = request.tools.iter().flat_map(|tool| {
+    let tools = request.tools().iter().flat_map(|tool| {
         [
             Cow::Borrowed(tool.name.as_str()),
             Cow::Borrowed(tool.description.as_str()),
@@ -296,6 +296,7 @@ mod support {
     use lattice_core::application::ports::llm_port::{
         CompletionRequest, CompletionResponse, LLMPort, RequestSize,
     };
+    use lattice_core::application::services::model_contract::shape::Schema;
     use lattice_core::domain::models::vision::VisionGeometry;
     use lattice_core::shared::error::Result;
 
@@ -454,6 +455,10 @@ mod support {
 
         fn keeps_read_prompts(&self) -> bool {
             self.0.keeps_read_prompts()
+        }
+
+        fn enforces(&self, schema: &Schema) -> bool {
+            self.0.enforces(schema)
         }
 
         fn is_alive(&self) -> bool {

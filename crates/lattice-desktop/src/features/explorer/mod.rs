@@ -19,6 +19,7 @@
 //! - `plugin::init()` — the `explorer` Tauri plugin
 
 pub mod dto;
+pub mod file_refs;
 pub mod folders;
 pub mod fs;
 pub mod index;

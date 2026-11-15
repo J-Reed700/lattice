@@ -1,0 +1,64 @@
+######## request 1 of 1 ########
+=== input 1: message (system) ===
+Evaluate the learner artifact against each visible criterion. Scores are limited, provisional evidence, not mastery claims. For each criterion, identify what the learner did, the specific gap if any, and one actionable next revision. Each evidence cites the sentences of the submitted artifact that show what you observed, by the ids in square brackets before them; cite only sentences shown. Do not reward length or confident wording. A correct answer with flawed reasoning must lose reasoning credit. Give an observation tied to artifact text. Use none, never a score of zero, when there is no assessable work for a criterion. Zero means an observed incorrect attempt. Use none for every criterion when the artifact lacks enough evidence to judge. Return an entries array with one entry for each criterion in rubric, and set each entry's of to that criterion's id. In each entry write evidence, then observation, then score: the id of one of that criterion's scores, or none.
+
+=== input 2: message (user) ===
+{"taskPrompt":"Explain the central idea\n\nCreate a short written artifact that demonstrates your reasoning. State what you would do and why; use a new example where useful.","artifact":"[u1] I tried the second approach first.","rubric":[{"id":"c1","dimension":"recall","title":"Recall","description":"Accurately retrieves the relevant idea or facts.","maxPoints":3,"scores":[{"id":"l1","points":0},{"id":"l2","points":1},{"id":"l3","points":2},{"id":"l4","points":3}]},{"id":"c2","dimension":"explanation","title":"Explanation","description":"Explains the reasoning in the learner's own words.","maxPoints":3,"scores":[{"id":"l1","points":0},{"id":"l2","points":1},{"id":"l3","points":2},{"id":"l4","points":3}]},{"id":"c3","dimension":"application","title":"Application","description":"Applies the idea to the stated task.","maxPoints":3,"scores":[{"id":"l1","points":0},{"id":"l2","points":1},{"id":"l3","points":2},{"id":"l4","points":3}]},{"id":"c4","dimension":"transfer","title":"Transfer","description":"Connects the idea to a changed or new context.","maxPoints":3,"scores":[{"id":"l1","points":0},{"id":"l2","points":1},{"id":"l3","points":2},{"id":"l4","points":3}]}]}
+
+=== schema ===
+{
+  "type": "object",
+  "properties": {
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "of": {
+            "type": "string",
+            "description": "One of the names the request shows, such as c1."
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "One of the names the request shows, such as u1."
+            }
+          },
+          "observation": {
+            "type": "string"
+          },
+          "score": {
+            "type": "string",
+            "description": "One of the names the request shows, such as l1, or the word none."
+          }
+        },
+        "required": [
+          "of",
+          "evidence",
+          "observation",
+          "score"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "entries"
+  ],
+  "additionalProperties": false
+}
+
+=== sent with ===
+{
+  "reasoning_effort": "low",
+  "tool_choice": null,
+  "include_reasoning": false,
+  "sampling": null,
+  "thinking": "off",
+  "max_output_tokens": 2800,
+  "stop": [],
+  "want_logprobs": false,
+  "priority": "background",
+  "cache_key": null
+}
