@@ -109,7 +109,7 @@ pub(super) fn lesson_of(lesson: &LearningLessonDto, detailed: bool) -> Lesson {
         id: lesson.id.clone(),
         title: Told(lesson.title.clone()),
         objective: Told(lesson.objective.clone()),
-        minutes: detailed.then(|| Told(lesson.estimated_minutes)),
+        minutes: detailed.then_some(Told(lesson.estimated_minutes)),
         taught,
     }
 }

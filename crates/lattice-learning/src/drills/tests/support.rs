@@ -735,6 +735,7 @@ pub(super) fn line_handle(files: &[DrillFile], path: &str, line: usize) -> Strin
 }
 
 /// The name the describer is shown for the pattern `id` among the patterns of `material`.
+#[cfg(test)]
 pub(super) fn pattern_handle(material: &Material, id: &str) -> String {
     let at = patterns_for(material)
         .position(|pattern| pattern.id == id)
@@ -820,6 +821,7 @@ pub(super) fn grade_extras_answer() -> String {
 
 /// An entry of the key as the model writes it: an instance of the pattern `pattern` that the one line `line` of
 /// src/limiter.py becomes `with` repairs.
+#[cfg(test)]
 pub(super) fn entry_for(pattern_id: &str, line: usize, with: &str) -> String {
     let at = line_handle(&proved().files, "src/limiter.py", line);
     json!({"entry": {

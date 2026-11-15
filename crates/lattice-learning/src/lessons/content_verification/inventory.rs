@@ -86,9 +86,16 @@ impl Section {
             .enumerate()
             .flat_map(|(place, passage)| {
                 let listed = claim_sentences::listed(passage);
-                let field = Told(listed["field"].as_str().unwrap_or_default().to_owned());
-                listed["sentences"]
-                    .as_array()
+                let field = Told(
+                    listed
+                        .get("field")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                );
+                listed
+                    .get("sentences")
+                    .and_then(Value::as_array)
                     .into_iter()
                     .flatten()
                     .filter_map(|sentence| {
@@ -514,7 +521,10 @@ mod tests {
                             .collect::<Vec<_>>()
                     })
                     .collect();
-                (unit["id"].as_str().unwrap_or_default().to_owned(), sentences)
+                (
+                    unit["id"].as_str().unwrap_or_default().to_owned(),
+                    sentences,
+                )
             })
             .collect()
     }
@@ -575,8 +585,14 @@ mod tests {
             context_role: None,
             sentences: sentences(
                 &mut marks,
-                ["unit-7340219-passage-0-sentence-0", "unit-7340219-passage-0-sentence-1"],
-                ["The harbour kiln heats before a firing.", "Tide tables list high water."],
+                [
+                    "unit-7340219-passage-0-sentence-0",
+                    "unit-7340219-passage-0-sentence-1",
+                ],
+                [
+                    "The harbour kiln heats before a firing.",
+                    "Tide tables list high water.",
+                ],
             ),
         };
         let second = Section {
@@ -591,7 +607,10 @@ mod tests {
             context_role: Some(marks.told("The question and its options.".to_owned())),
             sentences: sentences(
                 &mut marks,
-                ["unit-7340220-passage-0-sentence-0", "unit-7340220-passage-0-sentence-1"],
+                [
+                    "unit-7340220-passage-0-sentence-0",
+                    "unit-7340220-passage-0-sentence-1",
+                ],
                 ["The glaze kiln is the fastest.", "The salt kiln is slower."],
             ),
         };
@@ -630,7 +649,11 @@ mod tests {
         ];
         let llm = model(vec![fixture_response(vec![
             json!({"of":"s1","claims":[],"nonFactualReason":"lesson-internal"}),
-            answer_with("s2", "u1", "SaveChangesAsync writes tracked changes to the database."),
+            answer_with(
+                "s2",
+                "u1",
+                "SaveChangesAsync writes tracked changes to the database.",
+            ),
         ])]);
 
         let inventory = extract_remaining(&llm, &content, vec![]).await?;
@@ -735,11 +758,18 @@ mod tests {
         let content = vec![json!({"body":body})];
         let llm = Layered::new().on_request::<InventoryExtraction>(|sent, _| {
             reply(answering(sent, |sentences| {
-                Some(vec![claim_at(sentences, "Bravo", "Bravo stands firm today.")])
+                Some(vec![claim_at(
+                    sentences,
+                    "Bravo",
+                    "Bravo stands firm today.",
+                )])
             }))
         });
         let inventory = extract_remaining(&llm, &content, vec![]).await?;
-        assert_eq!(inventory.units[0].claims[0].quote, "Bravo stands firm today.");
+        assert_eq!(
+            inventory.units[0].claims[0].quote,
+            "Bravo stands firm today."
+        );
         validate_inventory(&inventory, &content).unwrap();
 
         let history = "The Peace of Westphalia was signed in 1648 in the cities of Osnabr\u{fc}ck and M\u{fc}nster. It ended the Thirty Years' War in the Holy Roman Empire. It also closed the Eighty Years' War between Spain and the Dutch Republic. Historians often date the modern order of sovereign states from these treaties.";
@@ -775,9 +805,8 @@ mod tests {
             .map(|p| p["text"].as_str().unwrap())
             .collect();
         assert_eq!(reconstructed, body);
-        let llm = Layered::new().on_request::<InventoryExtraction>(|sent, _| {
-            reply(answering(sent, at_the_first))
-        });
+        let llm = Layered::new()
+            .on_request::<InventoryExtraction>(|sent, _| reply(answering(sent, at_the_first)));
         let inventory = extract_remaining(&llm, &content, vec![]).await?;
         assert!(claim_ledger::stands_in_part(
             &content[0],
@@ -922,7 +951,9 @@ mod tests {
     async fn a_section_left_out_is_asked_for_again_alone_and_the_others_stand() -> Result<()> {
         let llm = Layered::new().on_request::<InventoryExtraction>(|sent, nth| {
             reply(answering(sent, |sentences| {
-                let first = sentences.first().is_some_and(|(_, text)| text.starts_with("First"));
+                let first = sentences
+                    .first()
+                    .is_some_and(|(_, text)| text.starts_with("First"));
                 if nth == 0 && first {
                     None
                 } else {
@@ -945,7 +976,9 @@ mod tests {
     async fn an_unusable_entry_is_corrected_for_that_section_alone() -> Result<()> {
         let llm = Layered::new().on_request::<InventoryExtraction>(|sent, nth| {
             reply(answering(sent, |sentences| {
-                let first = sentences.first().is_some_and(|(_, text)| text.starts_with("First"));
+                let first = sentences
+                    .first()
+                    .is_some_and(|(_, text)| text.starts_with("First"));
                 if nth == 0 && first {
                     Some(Vec::new())
                 } else {
@@ -966,7 +999,9 @@ mod tests {
     async fn a_section_that_stays_unanswered_fails_the_extraction_and_the_others_are_kept() {
         let llm = Layered::new().on_request::<InventoryExtraction>(|sent, _| {
             reply(answering(sent, |sentences| {
-                let first = sentences.first().is_some_and(|(_, text)| text.starts_with("First"));
+                let first = sentences
+                    .first()
+                    .is_some_and(|(_, text)| text.starts_with("First"));
                 if first {
                     None
                 } else {
@@ -989,9 +1024,7 @@ mod tests {
             fixture_response(vec![answer("s1", "u9")]),
             fixture_response(vec![answer("s1", "invented")]),
             fixture_response(vec![two_for_one, other]),
-            fixture_response(vec![
-                json!({"of":"s1","claims":[],"nonFactualReason":""}),
-            ]),
+            fixture_response(vec![json!({"of":"s1","claims":[],"nonFactualReason":""})]),
         ] {
             assert!(extract(
                 &model(vec![response.clone(), response]),

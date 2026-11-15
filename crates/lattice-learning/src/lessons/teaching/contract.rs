@@ -104,6 +104,7 @@ pub(super) use receipts::Receipts;
 pub(crate) const DECIDES: &str = "whether the lesson teaches each item of its plan; whether something is used before it is taught; whether two statements contradict each other; whether words point at something the learner cannot see";
 
 /// The words every ask of the check begins with.
+#[cfg(test)]
 pub(crate) const INTRO: &str = intro!();
 
 pub(crate) const CHECK_TASK: &str = "Check the lesson against its course plan";

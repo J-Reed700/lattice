@@ -83,9 +83,11 @@ fn shown_items(task: &Value) -> Vec<String> {
         .collect()
 }
 
+type Reply = Box<dyn Fn(&Value, usize) -> Value + Send + Sync>;
+
 /// Answers each request with `reply(task, nth)`, and keeps the prompts.
 struct Answering {
-    reply: Box<dyn Fn(&Value, usize) -> Value + Send + Sync>,
+    reply: Reply,
     prompts: std::sync::Mutex<Vec<String>>,
 }
 
@@ -517,7 +519,7 @@ fn a_room_holding_two_of_five_items_shows_those_with_all_their_candidates() {
 fn one_item_whose_candidates_outgrow_the_room_is_offered_the_best_that_fit() {
     let passages = plain_passages(4);
     let costs = vec![10; 4];
-    let items = vec![plain_item(0, vec![0, 1, 2, 3])];
+    let items = [plain_item(0, vec![0, 1, 2, 3])];
     let open: Vec<&Item> = items.iter().collect();
     let cut = OutlineLinking::within(&input_for(&open, &passages, &costs), 25).unwrap();
     assert_eq!(cut.items.len(), 1);

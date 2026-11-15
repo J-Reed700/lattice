@@ -766,6 +766,7 @@ impl ClosingEvidence {
         Ok(SimulationJson {
             content: rows.join("\n\n"),
             citations,
+            #[cfg(test)]
             evaluated_question_ids: Some(
                 named.iter().map(|question| question.id.clone()).collect(),
             ),

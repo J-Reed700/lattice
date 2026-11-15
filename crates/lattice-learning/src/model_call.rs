@@ -79,18 +79,6 @@ impl<'a> From<&'a str> for TooLarge<'a> {
     }
 }
 
-/// Send `request` with no elapsed-time limit, tagged with `call`. A request
-/// the model's window cannot hold fails as `too_large` says and is never sent.
-pub(crate) async fn send<'a>(
-    llm: &dyn LLMPort,
-    call: &ContractCall,
-    request: GroundedRequest,
-    streaming: Option<&Streaming<'_>>,
-    too_large: impl Into<TooLarge<'a>>,
-) -> Result<GroundedOutput> {
-    send_tagged(&tagged(llm, call), request, streaming, too_large).await
-}
-
 /// Send `request` with no elapsed-time limit through `llm` as it is, already tagged by its caller.
 pub(crate) async fn send_tagged<'a>(
     llm: &dyn LLMPort,

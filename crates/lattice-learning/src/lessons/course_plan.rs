@@ -295,7 +295,9 @@ impl Answered for PlanCourse {
             "modules": outline.modules(&input.modules)
         });
         if !input.planned.is_empty() {
-            task["planned"] = json!(outline.held(&input.planned));
+            if let Some(fields) = task.as_object_mut() {
+                fields.insert("planned".into(), json!(outline.held(&input.planned)));
+            }
         }
         let mut instructions = PLAN_SYSTEM.to_owned();
         if !input.others.is_empty() {

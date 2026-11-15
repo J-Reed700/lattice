@@ -193,7 +193,7 @@ enum Described {
         pattern: Picked<Candidate>,
         severity: Weight,
         consequence: String,
-        fix: Consistent<Unit, String>,
+        fix: Box<Consistent<Unit, String>>,
         explanation: String,
     },
 }
@@ -221,7 +221,7 @@ impl Union for Described {
                 pattern: fields.point::<Candidate>("pattern")?,
                 severity: fields.word::<Weight>("severity")?,
                 consequence: fields.text("consequence")?,
-                fix: fields.change::<Unit, String>("fix")?,
+                fix: Box::new(fields.change::<Unit, String>("fix")?),
                 explanation: fields.text("explanation")?,
             }),
             _ => None,
@@ -253,9 +253,7 @@ fn fix_of(
     if units.changes_nothing(fix.change()) {
         return Err(Refusal("The fix changes nothing.".into()));
     }
-    if let Settled::Unanswered(Why::Contradicted(told)) =
-        CodeUnits::of(files).apply(fix.clone())
-    {
+    if let Settled::Unanswered(Why::Contradicted(told)) = CodeUnits::of(files).apply(fix.clone()) {
         return Err(Refusal(told));
     }
     let Some(rewrite) = CodeUnits::of(files).rewrite(fix.clone()) else {

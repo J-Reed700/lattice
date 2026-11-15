@@ -833,24 +833,6 @@ async fn a_rewrite_that_repeats_a_rewrite_dropped_as_a_repeat_is_not_written_aga
 
 use lattice_core::application::services::model_contract::test_support::{snapshot, ScriptedModel};
 
-/// Answers every call of `C` with the JSON `reply` makes of the call's prompt.
-pub(super) fn replying<C: Contract<Input = PromptInput>>(
-    model: ScriptedModel,
-    reply: impl Fn(&Value) -> Value + Send + Sync + 'static,
-) -> ScriptedModel {
-    model.on_request::<C>(move |sent, _| {
-        let context = sent
-            .call
-            .input_as::<C>()
-            .and_then(|input| serde_json::from_str::<Value>(&input.prompt).ok())
-            .unwrap_or(Value::Null);
-        let text = reply(&context).to_string();
-        Box::pin(std::future::ready(Ok::<_, AppError>(
-            CompletionResponse::from_text(text),
-        )))
-    })
-}
-
 /// Answers every call of `C` with the JSON `reply` makes of the request's task.
 fn writing<C: Contract>(
     model: ScriptedModel,
