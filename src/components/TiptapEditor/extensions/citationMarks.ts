@@ -44,9 +44,7 @@ export const CitationMarks = Extension.create<CitationMarksOptions>({
         key: citationMarksKey,
         props: {
           clipboardTextSerializer(slice) {
-            const text = slice.content.textBetween(0, slice.content.size, '
-
-');
+            const text = slice.content.textBetween(0, slice.content.size, '\n\n');
             return copyText ? copyText(text) : text;
           },
           handleDOMEvents: {
