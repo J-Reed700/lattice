@@ -44,7 +44,13 @@ impl ConversationRepository {
         .map_err(|e| AppError::Database(format!("Failed to page source messages: {}", e)))?;
         read.commit().await?;
 
-        Self::assemble_page(rows, after_sequence, through_sequence, limits)
+        let mut page = Self::assemble_page(rows, after_sequence, through_sequence, limits)?;
+        page.messages = page
+            .messages
+            .iter()
+            .map(SourceMessage::memory_view)
+            .collect();
+        Ok(page)
     }
 
     /// The newest messages in `(after_sequence, through_sequence]`, read from
@@ -161,9 +167,12 @@ impl ConversationRepository {
             .map(|span| span.message_id.clone())
             .take(limits.max_messages)
             .collect();
-        let messages = self
+        let messages: Vec<SourceMessage> = self
             .read_memory_messages(conversation_id, &ids, limits)
-            .await?;
+            .await?
+            .iter()
+            .map(SourceMessage::memory_view)
+            .collect();
         let by_id: std::collections::HashMap<&str, &SourceMessage> = messages
             .iter()
             .map(|message| (message.id.as_str(), message))

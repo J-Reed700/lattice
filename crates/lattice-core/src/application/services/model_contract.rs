@@ -17,6 +17,7 @@ use sha2::{Digest, Sha256};
 
 pub mod ask;
 pub mod edit;
+pub mod kept;
 pub mod legacy;
 pub mod packed;
 pub mod reply;

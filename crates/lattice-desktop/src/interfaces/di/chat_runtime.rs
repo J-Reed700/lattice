@@ -12,6 +12,7 @@ use lattice_core::application::ports::llm_port::{
     ModelRequirements, OptionalLlmLoader, PinnedModel,
 };
 use lattice_core::application::ports::{EmbeddingPort, LLMPort};
+use lattice_core::application::services::model_contract::kept::{KeptNames, TurnNames};
 use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::Result;
 use std::sync::Arc;
@@ -114,10 +115,14 @@ impl ChatStorage for Container {
             ),
         )
     }
+    fn kept_names(&self) -> Arc<KeptNames> {
+        Container::kept_names(self)
+    }
     async fn turn_source(
         &self,
         conversation_id: &str,
         focus: Option<&ExplorerFocusDto>,
+        names: Arc<TurnNames>,
     ) -> Option<TurnSource> {
         let folder = FolderTurn::resolve(
             self.database(),
@@ -135,6 +140,7 @@ impl ChatStorage for Container {
             self.course_indexes().cloned(),
             conversation_id,
             Arc::new(move || container.sync_workspace_notes_to_vault()),
+            names,
         )
         .await
         .map(|turn| Arc::new(turn) as TurnSource)

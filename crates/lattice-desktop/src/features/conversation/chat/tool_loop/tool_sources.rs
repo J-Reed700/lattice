@@ -3,7 +3,9 @@
 //! answer can point at.
 
 use super::ToolOutputSettingsDto;
+use crate::features::function_calling::handles::{Resume, ToolHandles, READ_MORE};
 use crate::features::conversation::chat::dto::SourceDto;
+use crate::features::conversation::chat::retrieval::source_names::marker;
 use crate::features::conversation::chat::retrieval::{
     build_document_part_citation, build_library_source_citations, build_web_source_citations,
 };
@@ -29,6 +31,7 @@ pub(super) fn citable_passages(
     citable: &[(u32, &SourceDto)],
     shown: &str,
     allowance: usize,
+    handles: &ToolHandles,
 ) -> (String, usize) {
     if citable.is_empty() {
         return (String::new(), allowance);
@@ -43,12 +46,18 @@ pub(super) fn citable_passages(
         let content = source.content.trim();
         if is_shown(shown, content) {
             text.push_str(&format!(
-                "\n\nCitable passage [{number}] — {} ({}): its text is in this result above.",
-                source.file_name, source.file_path
+                "\n\nCitable passage {} — {} ({}): its text is in this result above.",
+                marker(*number),
+                source.file_name,
+                source.file_path
             ));
             continue;
         }
-        let header = format!("\n\nCitable passage [{number}] — {}\n", source.file_name);
+        let header = format!(
+            "\n\nCitable passage {} — {}\n",
+            marker(*number),
+            source.file_name
+        );
         let room = share.saturating_sub(header.chars().count());
         text.push_str(&header);
         let total = content.chars().count();
@@ -58,32 +67,44 @@ pub(super) fn citable_passages(
             // Where the passage stops and how to read on, so the rest is a
             // call away rather than gone: the note is sized with a worst-case
             // offset before the cut is made.
-            let mark = |at: usize| continues_note(source, at, total);
+            let sized = continues_note(total, total, SIZING_NAME);
             let part = lattice_core::shared::text::split_into_parts(
                 content,
-                room.saturating_sub(mark(total).chars().count()).max(1),
+                room.saturating_sub(sized.chars().count()).max(1),
             );
             let part = part.first().copied().unwrap_or_default();
+            let at = part.chars().count();
             text.push_str(part);
-            text.push_str(&mark(part.chars().count()));
+            let name = handles.more(read_on(source, at)).unwrap_or_default();
+            text.push_str(&continues_note(at, total, &name));
         }
     }
     let used = text.chars().count();
     (text, allowance.saturating_sub(used))
 }
 
-/// The note a cut passage ends with: the character it stops at, and the call
-/// that reads on from there.
-fn continues_note(source: &SourceDto, at: usize, total: usize) -> String {
+/// A bracketed name as long as the longest one the note may carry, for sizing the note before its name exists.
+const SIZING_NAME: &str = "[m99999]";
+
+/// The call that reads on from character `at` of the source's document or page.
+fn read_on(source: &SourceDto, at: usize) -> Resume {
     use crate::features::conversation::chat::retrieval::WEB_SOURCE_PREFIX;
-    let how = match source.document_id.strip_prefix(WEB_SOURCE_PREFIX) {
-        Some(url) => format!("fetch_url_content with url \"{url}\" and offset {at} reads on"),
-        None => format!(
-            "get_document with document_id \"{}\" reads the document",
-            source.document_id
-        ),
-    };
-    format!(" […passage continues at character {at} of {total}; {how}]")
+    match source.document_id.strip_prefix(WEB_SOURCE_PREFIX) {
+        Some(url) => Resume {
+            tool: "fetch_url_content".to_owned(),
+            arguments: serde_json::json!({"url": url, "offset": at}),
+        },
+        None => Resume {
+            tool: "get_document".to_owned(),
+            arguments: serde_json::json!({"document_id": source.document_id, "offset": at}),
+        },
+    }
+}
+
+/// The note a cut passage ends with: the character it stops at, and the name
+/// of the point to read on from.
+fn continues_note(at: usize, total: usize, name: &str) -> String {
+    format!(" […passage continues at character {at} of {total}; call {READ_MORE} with {name} to read on]")
 }
 
 /// A tool result and its citation lines, together within `allowance`, with the
@@ -93,12 +114,13 @@ fn continues_note(source: &SourceDto, at: usize, total: usize) -> String {
 pub(super) fn render_with_citations(
     citable: &[(u32, &SourceDto)],
     allowance: usize,
+    handles: &ToolHandles,
     render: impl Fn(usize) -> String,
 ) -> String {
     let mut room = allowance;
     loop {
         let rendered = render(room);
-        let (citations, left) = citable_passages(citable, &rendered, allowance);
+        let (citations, left) = citable_passages(citable, &rendered, allowance, handles);
         if room <= left || room == 0 {
             return rendered + &citations;
         }
@@ -392,14 +414,19 @@ mod citable_tests {
     fn citable_passages_are_charged_to_the_allowance_and_not_repeated() {
         let page = "The station opened in 1932 and was rebuilt after the fire. ".repeat(20);
         let shown = source(&page);
-        let (text, left) = citable_passages(&[(1, &shown)], &format!("Page A\n{page}"), 10_000);
-        assert!(text.contains("Citable passage [1] — Page A (https://example.com/a)"));
+        let (text, left) = citable_passages(
+            &[(1, &shown)],
+            &format!("Page A\n{page}"),
+            10_000,
+            &ToolHandles::new(),
+        );
+        assert!(text.contains("Citable passage [s1] — Page A (https://example.com/a)"));
         assert!(!text.contains("rebuilt after the fire"));
         assert_eq!(left, 10_000 - text.chars().count());
 
         let unshown = source(&page);
-        let (text, left) = citable_passages(&[(1, &unshown)], "something else", 600);
-        assert!(text.contains("Citable passage [1] — Page A\n"));
+        let (text, left) = citable_passages(&[(1, &unshown)], "something else", 600, &ToolHandles::new());
+        assert!(text.contains("Citable passage [s1] — Page A\n"));
         assert!(
             text.contains("fetch_url_content with url \"https://example.com/a\" and offset "),
             "{text}"
@@ -449,15 +476,16 @@ mod citable_tests {
         assert!(wiki[0].excerpt.as_ref().unwrap().chars().count() < 2_000);
     }
 
-    /// A cut passage says where it stops and how to read on from there, and
-    /// the offset it names is where its shown text ends.
+    /// A cut passage says where it stops and names the point to read on from,
+    /// and that point is where its shown text ends.
     #[test]
-    fn a_cut_passage_names_the_offset_to_read_on_from() {
+    fn a_cut_passage_names_the_point_to_read_on_from() {
+        let handles = ToolHandles::new();
         let page = "word ".repeat(400);
         let cut = source(&page);
-        let (text, _) = citable_passages(&[(1, &cut)], "something else", 600);
+        let (text, _) = citable_passages(&[(1, &cut)], "something else", 600, &handles);
         let shown = text
-            .split("Citable passage [1] — Page A\n")
+            .split("Citable passage [s1] — Page A\n")
             .nth(1)
             .and_then(|rest| rest.split(" […passage continues at character ").next())
             .unwrap();
@@ -467,7 +495,14 @@ mod citable_tests {
             text.contains(&format!("continues at character {offset} of {total};")),
             "{text}"
         );
-        assert!(text.contains(&format!("and offset {offset} reads on]")));
+        assert!(!text.contains("offset"), "{text}");
+        let name = handles
+            .more(read_on(&cut, offset))
+            .expect("the point to read on from has a name");
+        assert!(
+            text.contains(&format!("call read_more with {name} to read on]")),
+            "{text}"
+        );
     }
 
     /// Whether a source is already in the result is decided against the render
@@ -484,10 +519,10 @@ mod citable_tests {
             "the whole allowance shows it"
         );
 
-        let text = render_with_citations(&[(1, &cited)], 150, render);
+        let text = render_with_citations(&[(1, &cited)], 150, &ToolHandles::new(), render);
         assert!(text.chars().count() <= 150, "{}", text.chars().count());
         assert!(!text.contains("its text is in this result above"), "{text}");
-        assert!(text.contains("Citable passage [1] — Page A\n"), "{text}");
+        assert!(text.contains("Citable passage [s1] — Page A\n"), "{text}");
     }
 
     /// Each picture's page becomes one web source, so its caption can cite it;
@@ -589,25 +624,28 @@ mod citable_tests {
 
     /// A fact a follow-up search finds is cited as one the turn opened with:
     /// the passage it already showed keeps its number, and the new one takes
-    /// the next, so no number ever means two things.
+    /// another, so no number ever means two things.
     #[test]
     fn a_library_search_adds_new_passages_and_keeps_the_numbers_of_known_ones() {
+        use crate::features::conversation::chat::retrieval::source_names::name_sources;
         use crate::features::conversation::chat::retrieval::{
-            assign_citation_ids, citation_ids_by_chunk, deduplicate_sources, merge_tool_sources,
+            citation_ids_by_chunk, deduplicate_sources, merge_tool_sources,
         };
+        use lattice_core::application::services::model_contract::kept::TurnNames;
+        let names = TurnNames::unstored();
         let mut sources = collected("semantic_search", &library_search(&["known"]));
-        assign_citation_ids(&mut sources);
-        sources[0].citation_id = Some(40);
+        name_sources(&names, &mut sources);
+        let known = sources[0].citation_id.unwrap();
 
         let found = collected("semantic_search", &library_search(&["known", "new"]));
         merge_tool_sources(&mut sources, found);
         let mut sources = deduplicate_sources(sources);
-        assign_citation_ids(&mut sources);
+        name_sources(&names, &mut sources);
 
         let numbers = citation_ids_by_chunk(&sources);
         assert_eq!(sources.len(), 2);
-        assert_eq!(numbers["known"], 40);
-        assert_eq!(numbers["new"], 41);
+        assert_eq!(numbers["known"], known);
+        assert_ne!(numbers["new"], known);
         assert_eq!(sources[1].document_id, "doc-1");
         assert_eq!(sources[1].content, "The text of new.");
         assert_eq!(sources[1].category, "Markdown");

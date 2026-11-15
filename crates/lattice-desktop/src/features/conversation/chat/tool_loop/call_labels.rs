@@ -3,6 +3,7 @@
 
 use crate::features::conversation::chat::fetch_memory::{self, Recall};
 use crate::features::conversation::chat::turn_record::TurnStepKind;
+use crate::features::function_calling::handles::CallView;
 use lattice_core::application::ports::ToolDefinition;
 use lattice_core::shared::http::host_of;
 use std::collections::HashSet;
@@ -87,7 +88,9 @@ pub(super) fn tool_argument_summary(arguments: &serde_json::Value) -> String {
 
 /// What the model is told when it asks for a page this turn already read. It
 /// says where the text is, since "already fetched" alone makes models ask again.
-pub(super) fn recalled_page_notice(url: &str, recall: &Recall) -> String {
+pub(super) fn recalled_page_notice(url: &str, recall: &Recall, call: &CallView<'_>) -> String {
+    let read_on =
+        |at: usize| call.read_on_line(&call.read_on(&[("offset", serde_json::json!(at))]));
     match recall {
         Recall::AlreadyWhole { word_count } => format!(
             "Not fetched again: {url} was already read in full this turn ({word_count} words) and its complete text is in your context above. There is nothing more on that page. Answer from it, or choose a different source.",
@@ -106,7 +109,8 @@ pub(super) fn recalled_page_notice(url: &str, recall: &Recall) -> String {
             next: None,
             unread: Some(unread),
         } => format!(
-            "Part of {url} from character {shown_chars} to the end of the page. The part starting at character {unread} has not been given to you yet: call fetch_url_content with this url and offset={unread} to read it.\n\n{text}",
+            "Part of {url} from character {shown_chars} to the end of the page. The part starting at character {unread} has not been given to you yet: {}\n\n{text}",
+            read_on(*unread)
         ),
         Recall::Remainder {
             text,
@@ -114,7 +118,8 @@ pub(super) fn recalled_page_notice(url: &str, recall: &Recall) -> String {
             next: Some(next),
             ..
         } => format!(
-            "Continuation of {url}: characters {shown_chars} to {next}, as much as this result has room for. The page goes on: call fetch_url_content with this url and offset={next} for the next part.\n\n{text}",
+            "Continuation of {url}: characters {shown_chars} to {next}, as much as this result has room for. The page goes on: {}\n\n{text}",
+            read_on(*next)
         ),
         Recall::PastTheEnd {
             offset,
@@ -124,7 +129,10 @@ pub(super) fn recalled_page_notice(url: &str, recall: &Recall) -> String {
             let unread = unread.map_or_else(
                 || " Every part of it has been given to you.".to_string(),
                 |unread| {
-                    format!(" The part starting at character {unread} has not been given to you yet: call fetch_url_content with this url and offset={unread} to read it.")
+                    format!(
+                        " The part starting at character {unread} has not been given to you yet: {}",
+                        read_on(unread)
+                    )
                 },
             );
             format!(
@@ -134,7 +142,8 @@ pub(super) fn recalled_page_notice(url: &str, recall: &Recall) -> String {
         }
         // Never answered from memory: the call runs and reads the archive.
         Recall::Reread { offset } => format!(
-            "Read {url} again from character {offset}: call fetch_url_content with this url and offset={offset}."
+            "Read {url} again from character {offset}: {}",
+            read_on(*offset)
         ),
     }
 }
@@ -177,21 +186,34 @@ pub(super) fn tool_activity_label(tool: &str, arguments: &serde_json::Value) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::function_calling::handles::ToolHandles;
 
     /// "Already fetched" alone invites the model to think the text was lost.
     #[test]
     fn a_page_already_read_in_full_is_pointed_back_to_the_context() {
+        let handles = ToolHandles::new();
+        let arguments = serde_json::json!({});
         let notice = recalled_page_notice(
             "https://example.test/recap",
             &Recall::AlreadyWhole { word_count: 3521 },
+            &page_call(&handles, &arguments),
         );
         assert!(notice.contains("https://example.test/recap"), "{notice}");
         assert!(notice.contains("3521 words"), "{notice}");
         assert!(notice.contains("in your context above"), "{notice}");
     }
 
+    fn page_call<'a>(
+        handles: &'a ToolHandles,
+        arguments: &'a serde_json::Value,
+    ) -> CallView<'a> {
+        CallView::new("fetch_url_content", arguments, handles)
+    }
+
     #[test]
     fn a_part_of_a_long_page_says_where_the_next_part_starts() {
+        let handles = ToolHandles::new();
+        let arguments = serde_json::json!({"url": "https://example.test/book"});
         let notice = recalled_page_notice(
             "https://example.test/book",
             &Recall::Remainder {
@@ -200,13 +222,22 @@ mod tests {
                 next: Some(24_000),
                 unread: Some(24_000),
             },
+            &page_call(&handles, &arguments),
         );
-        assert!(notice.contains("offset=24000"), "{notice}");
+        assert!(notice.contains("call read_more with [m1]"), "{notice}");
+        assert!(!notice.contains("offset"), "{notice}");
         assert!(notice.ends_with("chapter two"), "{notice}");
+        let resumed = handles
+            .read_call("read_more", &serde_json::json!({"handle": "[m1]"}))
+            .unwrap();
+        assert_eq!(resumed.arguments["offset"], 24_000);
+        assert_eq!(resumed.arguments["url"], "https://example.test/book");
     }
 
     #[test]
     fn the_rest_of_a_clipped_page_says_where_the_first_part_is() {
+        let handles = ToolHandles::new();
+        let arguments = serde_json::json!({});
         let notice = recalled_page_notice(
             "https://example.test/recap",
             &Recall::Remainder {
@@ -215,6 +246,7 @@ mod tests {
                 next: None,
                 unread: None,
             },
+            &page_call(&handles, &arguments),
         );
         assert!(notice.contains("from character 12000"), "{notice}");
         assert!(notice.contains("whole page"), "{notice}");
@@ -228,6 +260,8 @@ mod tests {
     /// says where that stretch starts, instead of calling the page whole.
     #[test]
     fn a_last_part_with_a_gap_before_it_names_the_gap() {
+        let handles = ToolHandles::new();
+        let arguments = serde_json::json!({"url": "https://example.test/recap"});
         let notice = recalled_page_notice(
             "https://example.test/recap",
             &Recall::Remainder {
@@ -236,8 +270,13 @@ mod tests {
                 next: None,
                 unread: Some(8_000),
             },
+            &page_call(&handles, &arguments),
         );
-        assert!(notice.contains("offset=8000"), "{notice}");
+        let resumed = handles
+            .read_call("read_more", &serde_json::json!({"handle": "m1"}))
+            .unwrap();
+        assert_eq!(resumed.arguments["offset"], 8_000);
+        assert!(!notice.contains("offset"), "{notice}");
         assert!(!notice.contains("whole page"), "{notice}");
     }
 

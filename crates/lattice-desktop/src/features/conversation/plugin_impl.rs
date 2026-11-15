@@ -140,7 +140,12 @@ pub async fn get_conversation_messages_impl(
     request: GetConversationMessagesRequestDto,
     container: &Container,
 ) -> Result<GetConversationMessagesResponseDto, ApiError> {
-    let messages = conversation::get_conversation_messages_impl(container, request.conversation_id)
+    let messages =
+        conversation::get_conversation_messages_impl(container, request.conversation_id.clone())
+            .await
+            .map_err(ApiError::from)?;
+
+    let mut replies = conversation::replies_of(container, &request.conversation_id, &messages)
         .await
         .map_err(ApiError::from)?;
 
@@ -148,14 +153,8 @@ pub async fn get_conversation_messages_impl(
         messages: messages
             .iter()
             .map(|m| crate::features::conversation::dto::MessageDto {
-                id: m.id.to_string(),
-                conversation_id: m.conversation_id.to_string(),
-                role: m.role.to_string(),
-                content: m.content.clone(),
-                tokens: m.tokens,
-                created_at: m.created_at.to_rfc3339(),
-                metadata: m.metadata.clone(),
-                status: m.status.clone(),
+                reply: replies.remove(&m.id),
+                ..crate::features::conversation::dto::MessageDto::of(m)
             })
             .collect(),
         total: messages.len(),

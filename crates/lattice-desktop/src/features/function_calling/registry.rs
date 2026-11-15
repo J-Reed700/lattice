@@ -8,6 +8,7 @@
 //! - **Validation**: Validates tool definitions on registration
 //! - **Statistics**: Tracks usage metrics
 
+use crate::features::function_calling::handles;
 use crate::features::function_calling::FunctionRegistryTrait;
 use lattice_core::application::contracts::tools::{RegistryStats, ToolDefinition};
 use lattice_core::domain::sourcing::Ecosystem;
@@ -122,6 +123,7 @@ impl FunctionRegistryTrait for FunctionRegistry {
 /// - find_image
 /// - wiki_search
 /// - wiki_summary
+/// - read_more
 pub fn init_function_registry() -> Result<FunctionRegistry> {
     use serde_json::json;
 
@@ -143,12 +145,6 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
                     "default": 10,
                     "minimum": 1,
                     "maximum": 50
-                },
-                "offset": {
-                    "type": "integer",
-                    "description": "Results to skip: 0, or the next_offset a previous search named, to read past the first page",
-                    "default": 0,
-                    "minimum": 0
                 },
                 "threshold": {
                     "type": "number",
@@ -185,27 +181,18 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
 
     registry.register(ToolDefinition::new(
         "get_document",
-        "Retrieve content from a specific document by ID. Use this after semantic_search to inspect document text. A long document is read in parts: each result says which characters it holds and the offset the next part starts at. Offsets count characters of extracted text, not the original PDF's pages or printed page numbers.",
+        "Retrieve content from a specific document. Use this after semantic_search to inspect document text. A long document is read in parts: each result says which characters it holds and, when the document goes on, names the point to read on from. Positions count characters of extracted text, not the original PDF's pages or printed page numbers.",
         json!({
             "type": "object",
             "properties": {
-                "document_id": {
-                    "type": "string",
-                    "description": "Document ID from search results"
-                },
+                "document": handles::document_property(),
                 "max_content_length": {
                     "type": "integer",
-                    "description": "Characters to return from offset; the app fits this to the room the result has",
+                    "description": "Characters to return; the app fits this to the room the result has",
                     "minimum": 1
-                },
-                "offset": {
-                    "type": "integer",
-                    "description": "Character to start reading at: 0, or the next_offset a previous result named",
-                    "default": 0,
-                    "minimum": 0
                 }
             },
-            "required": ["document_id"]
+            "required": []
         })
     )?)?;
 
@@ -248,12 +235,6 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
                     "minimum": 1,
                     "maximum": 500
                 },
-                "offset": {
-                    "type": "integer",
-                    "description": "Number of documents to skip (for pagination)",
-                    "default": 0,
-                    "minimum": 0
-                },
                 "sort_by": {
                     "type": "string",
                     "enum": ["modified", "created", "name", "size"],
@@ -277,7 +258,7 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
     // model has no way to ask "what did they attach?" several turns later.
     registry.register(ToolDefinition::new(
         "list_attachments",
-        "List the files the reader attached to this conversation. These belong to this chat only — they are not in the library and list_documents will not show them. Use this when the reader refers to a file they attached earlier, then pass the document_id to get_document to read it.",
+        "List the files the reader attached to this conversation. These belong to this chat only — they are not in the library and list_documents will not show them. Use this when the reader refers to a file they attached earlier, then pass its name to get_document to read it.",
         json!({
             "type": "object",
             "properties": {},
@@ -314,18 +295,6 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
                     "default": 5,
                     "minimum": 1,
                     "maximum": 50
-                },
-                "page": {
-                    "type": "integer",
-                    "description": "1-based page number for paginated search",
-                    "default": 1,
-                    "minimum": 1
-                },
-                "offset": {
-                    "type": "integer",
-                    "description": "Absolute result offset before pagination",
-                    "default": 0,
-                    "minimum": 0
                 },
                 "providers": {
                     "type": "array",
@@ -372,11 +341,6 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
                     "type": "string",
                     "description": "URL to fetch and extract content from"
                 },
-                "offset": {
-                    "type": "integer",
-                    "description": "Character to start reading from. A page longer than one result names the offset its next part starts at; pass it to read on.",
-                    "minimum": 0
-                },
                 "as_of": {
                     "type": "string",
                     "description": "Read the archived copy nearest this ISO date (YYYY-MM-DD) instead of the live page"
@@ -422,11 +386,6 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
                     "default": 5,
                     "minimum": 1,
                     "maximum": 50
-                },
-                "page": {
-                    "type": "integer",
-                    "default": 1,
-                    "minimum": 1
                 }
             },
             "required": ["kind", "query"]
@@ -435,17 +394,13 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
 
     registry.register(ToolDefinition::new(
         "follow_links",
-        "List the links a page you have read makes, with the sentence each sits in, so you can open the page it cites instead of trusting the page that cites it. Give near_text to get only the links around a passage.",
+        "List the links a page you have read makes, with the sentence each sits in, so you can open the page it cites instead of trusting the page that cites it.",
         json!({
             "type": "object",
             "properties": {
                 "url": {
                     "type": "string",
                     "description": "URL of the page whose outbound links to list"
-                },
-                "near_text": {
-                    "type": "string",
-                    "description": "A short quote from the page; links in and around its paragraph are returned first"
                 }
             },
             "required": ["url"]
@@ -513,6 +468,8 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
             "required": ["title"]
         })
     )?)?;
+
+    registry.register(handles::read_more_definition()?)?;
 
     Ok(registry)
 }
@@ -612,7 +569,7 @@ mod tests {
         let registry = init_function_registry().unwrap();
         let tools = registry.list_tools();
 
-        assert_eq!(tools.len(), 11);
+        assert_eq!(tools.len(), 12);
 
         assert!(registry.get_tool("semantic_search").is_some());
         assert!(registry.get_tool("get_document").is_some());
@@ -625,6 +582,22 @@ mod tests {
         assert!(registry.get_tool("find_image").is_some());
         assert!(registry.get_tool("wiki_search").is_some());
         assert!(registry.get_tool("wiki_summary").is_some());
+        assert!(registry.get_tool("read_more").is_some());
+    }
+
+    #[test]
+    fn no_tool_schema_asks_the_model_for_an_id_an_offset_or_a_page() {
+        let registry = init_function_registry().unwrap();
+        for tool in registry.list_tools() {
+            let properties = tool.input_schema["properties"].as_object().unwrap();
+            for name in ["document_id", "offset", "page", "start_line", "near_text"] {
+                assert!(
+                    !properties.contains_key(name),
+                    "{} still takes {name}",
+                    tool.name
+                );
+            }
+        }
     }
 
     #[test]

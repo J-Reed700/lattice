@@ -2,13 +2,17 @@ import { Extension } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 
-const CITATION_PATTERN = /\[(\d{1,5})\]/g;
+import type { FoundMark } from '@/utils/foundMark';
 
 export const citationMarksKey = new PluginKey('citationMarks');
 
 export interface CitationMarksOptions {
-  /** Decides, at draw time, whether `[n]` refers to a real source. */
+  /** Decides, at draw time, whether source number `n` is one this answer has. */
   isCitation: (number: number) => boolean;
+  /** Finds the citation marks in a run of document text; the host chooses where marks come from. */
+  findMarks: (text: string) => FoundMark[];
+  /** Turns copied document text into the text that reaches the clipboard, when marks need writing out. */
+  copyText?: (text: string) => string;
   /** Hides valid markers without changing the document or copied markdown. */
   isVisible: () => boolean;
   /** Called when an editable or read-only citation chip is activated. */
@@ -16,28 +20,35 @@ export interface CitationMarksOptions {
 }
 
 /**
- * Draws `[n]` markers in a read-only answer as citation chips.
- *
- * Decorations rather than nodes: the document keeps the literal `[n]`, so copy,
- * export and the markdown round-trip are untouched. The chip carries
- * `data-cite="n"` and `data-cite-at="k"` — this is the k-th mark of source n,
- * counted from zero in reading order — because an answer cites one source from
- * several sentences and each mark means its own sentence. Whoever hosts the
- * viewer handles clicks and hover. `sentencesByOccurrence` counts the same way.
+ * Draws citation marks as chips. Where the marks come from is the host's
+ * `findMarks`: a reply's references (`findReplyMarks`) or a note's `[n]`
+ * markers (`findNoteMarks`). Decorations rather than nodes, so the markdown
+ * round-trip is untouched. The
+ * chip carries `data-cite="n"` and `data-cite-at="k"` — this is the k-th mark
+ * of source n, counted from zero in reading order — because an answer cites
+ * one source from several sentences and each mark means its own sentence.
+ * Whoever hosts the viewer handles clicks and hover. `sentencesByOccurrence`
+ * counts the same way, from the same list of references.
  */
 export const CitationMarks = Extension.create<CitationMarksOptions>({
   name: 'citationMarks',
 
   addOptions() {
-    return { isCitation: () => false, isVisible: () => true, onCitationClick: undefined };
+    return { isCitation: () => false, findMarks: () => [], isVisible: () => true, onCitationClick: undefined };
   },
 
   addProseMirrorPlugins() {
-    const { isCitation, isVisible, onCitationClick } = this.options;
+    const { isCitation, findMarks, copyText, isVisible, onCitationClick } = this.options;
     return [
       new Plugin({
         key: citationMarksKey,
         props: {
+          clipboardTextSerializer(slice) {
+            const text = slice.content.textBetween(0, slice.content.size, '
+
+');
+            return copyText ? copyText(text) : text;
+          },
           handleDOMEvents: {
             keydown(_view, event) {
               if (!isVisible() || event.isComposing || event.altKey || event.ctrlKey || event.metaKey
@@ -72,16 +83,31 @@ export const CitationMarks = Extension.create<CitationMarksOptions>({
               if (!node.isText || !node.text) return;
               if (parent?.type.spec.code) return;
               if (node.marks.some((mark) => mark.type.spec.code)) return;
-              for (const match of node.text.matchAll(CITATION_PATTERN)) {
-                const number = Number(match[1]);
-                if (!isCitation(number)) continue;
-                const from = pos + (match.index ?? 0);
+              for (const found of findMarks(node.text)) {
+                const { number } = found;
+                const from = pos + found.index;
+                if (!isCitation(number)) {
+                  if (!found.glyph) continue;
+                  decorations.push(
+                    Decoration.inline(from, from + found.length, { class: 'citation-hidden', 'aria-hidden': 'true' }),
+                    Decoration.widget(
+                      from,
+                      () => {
+                        const written = document.createElement('span');
+                        written.textContent = `[${number}]`;
+                        return written;
+                      },
+                      { side: -1, key: `unlinked-${number}` },
+                    ),
+                  );
+                  continue;
+                }
                 const at = seen.get(number) ?? 0;
                 seen.set(number, at + 1);
                 decorations.push(
                   Decoration.inline(
                     from,
-                    from + match[0].length,
+                    from + found.length,
                     visible
                       ? {
                           class: 'cite-chip',

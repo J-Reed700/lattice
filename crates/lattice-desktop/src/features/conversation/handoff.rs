@@ -44,7 +44,9 @@ fn transcript_passages(messages: &[ConversationMessage]) -> Vec<EvidencePassage>
 
 /// A message as the summary model reads it: pictures as captions.
 fn replayed_text(message: &ConversationMessage) -> String {
-    let text = lattice_core::shared::markdown_media::images_to_captions(&message.content);
+    let text = lattice_core::shared::markdown_media::images_to_captions(
+        &message.text_without_references(),
+    );
     let pictures = if message.role == MessageRole::User {
         lattice_core::shared::markdown_media::attached_picture_names(message.metadata.as_deref())
     } else {
@@ -213,10 +215,20 @@ impl Forgotten {
     fn redact(&self, mut messages: Vec<ConversationMessage>) -> Vec<ConversationMessage> {
         let forgotten = SuppressionsByMessage::new(&self.spans);
         for message in &mut messages {
-            if let std::borrow::Cow::Owned(redacted) =
-                forgotten.redact(&message.id, &message.content)
-            {
-                message.content = redacted;
+            let text = {
+                let clean = message.text_without_references();
+                let redacted = forgotten.redact(&message.id, &clean);
+                (matches!(clean, std::borrow::Cow::Owned(_))
+                    || matches!(redacted, std::borrow::Cow::Owned(_)))
+                .then(|| redacted.into_owned())
+            };
+            if let Some(text) = text {
+                message.content = text;
+                message.metadata =
+                    lattice_core::shared::stored_references::metadata_without_references(
+                        message.metadata.as_deref(),
+                    )
+                    .or(message.metadata.take());
             }
         }
         messages
@@ -578,6 +590,46 @@ mod tests {
                 "a part overran its room: {cost}"
             );
         }
+    }
+
+    #[test]
+    fn the_summary_reads_an_answer_without_its_references() {
+        use lattice_core::domain::conversation::MessageRole;
+        use lattice_core::shared::types::ConversationId;
+        let content = "The pass is open [s1] in May.";
+        let start = content.find("[s1]").unwrap();
+        let message = |content: &str, metadata: Option<String>| ConversationMessage {
+            id: "a1".into(),
+            conversation_id: ConversationId::new(),
+            role: MessageRole::Assistant,
+            content: content.into(),
+            tokens: 0,
+            created_at: chrono::Utc::now(),
+            metadata,
+            status: "completed".into(),
+        };
+        let saved = serde_json::json!({"references": [{"start": start, "end": start + 4}]});
+        let cleaned = transcript_passages(&[
+            message(content, Some(saved.to_string())),
+            message("Open in May [1].", None),
+        ]);
+        assert_eq!(cleaned[0].text, "The pass is open in May.");
+        assert_eq!(cleaned[1].text, "Open in May [1].");
+
+        let forgotten = Forgotten {
+            spans: vec![SuppressedSpan {
+                message_id: "a1".into(),
+                start_byte: 12,
+                end_byte: 16,
+                content_digest: compute_digest("The pass is open in May."),
+            }],
+            labels: vec!["The pass is open".into()],
+        };
+        let redacted = transcript_passages(&forgotten.redact(vec![message(
+            content,
+            Some(saved.to_string()),
+        )]));
+        assert_eq!(redacted[0].text, "The pass is [forgotten] in May.");
     }
 
     #[test]

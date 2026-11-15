@@ -2,14 +2,12 @@
 //!
 //! A synthesis is a job (`journal.synthesis`) whose subject is its
 //! destination. It gathers its entries once and saves the plan, writes each
-//! part's notes in a scratch conversation and saves them as they come, then
-//! merges them into its staged result. A synthesis stopped by a restart
+//! part's notes and saves them as they come, then merges them into its staged
+//! result. A synthesis stopped by a restart
 //! resumes at the first part it had not saved; one that finished while the
 //! app was closed waits, staged, until the renderer saves it.
-use super::chat::ports::{ChatPolicy, ChatRuntime};
-use super::chat::{run_unwatched_turn, ChatResponse, ToolPreferences};
+use super::chat::ports::ChatRuntime;
 use super::commands as conversation;
-use super::dto::CreateConversationRequestDto;
 use super::workspace_dto::*;
 use async_trait::async_trait;
 use lattice_core::application::contracts::sources::SourceDto;
@@ -24,13 +22,14 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::warn;
 
+mod notes;
 mod prompts;
 mod week_scope;
 
+use notes::{merge_notes, write_brief, write_notes, EntryPart, Note};
 use prompts::{
-    assign_synthesis_source_ids, build_journal_merge_prompt, build_journal_reduce_prompt,
-    build_synthesis_citations, build_synthesis_transcript, extract_latest_assistant_message,
-    group_for_merge, normalize_synthesis_scope, plan_journal_map_prompts, source_keys_by_message,
+    assign_synthesis_source_ids, build_synthesis_citations, build_synthesis_transcript,
+    group_for_merge, normalize_synthesis_scope, plan_journal_map_chunks, source_keys_by_message,
 };
 use week_scope::select_week_entries;
 
@@ -67,10 +66,7 @@ const WEEK_SYNTHESIS_DAYS: i64 = 7;
 const WEEK_SYNTHESIS_CONVERSATION_PAGE: i64 = 200;
 const WEEK_SYNTHESIS_PAGE_TITLE_PREFIX: &str = "Week of ";
 
-/// Characters one synthesis prompt may hold on `llm`. Each part is a chat turn
-/// in a scratch conversation, whose system prompt and tool schemas share the
-/// turn's input budget with it, so a part takes half of that budget and
-/// leaves the other half to them.
+/// Characters one synthesis request may hold on `llm`: half of its input budget.
 fn synthesis_part_chars(llm: &dyn lattice_core::application::ports::LLMPort) -> usize {
     use lattice_core::application::services::context_assembler::{
         BudgetAllocation, BudgetRequest, ModelCapacity,
@@ -119,7 +115,6 @@ struct JournalSynthesisEntry {
 /// The job kind of a journal synthesis; its subject is the destination.
 pub const JOURNAL_SYNTHESIS: &str = "journal.synthesis";
 const PLAN: &str = "plan";
-const SCRATCH: &str = "scratch";
 /// Progress is told in hundredths: the number of parts is known only once the
 /// entries are gathered.
 const PROGRESS_TOTAL: u32 = 100;
@@ -157,33 +152,35 @@ impl SynthesisDestinationDto {
     }
 }
 
-/// What the gathered entries came to: one prompt per part, and what the
-/// finished synthesis cites. Saved once, so a resumed synthesis reads the same
-/// entries it started with.
+/// What the gathered entries came to: the entries each part reads, and what
+/// the finished synthesis cites. Saved once, so a resumed synthesis reads the
+/// same entries it started with.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct SynthesisPlan {
     scope: String,
     entry_count: usize,
-    prompts: Vec<String>,
+    chunks: Vec<Vec<EntryPart>>,
     conversation_ids: Vec<String>,
     citations: Vec<SynthesisCitationDto>,
     sources: Vec<SourceDto>,
-    /// What one prompt may hold, so the merge of the parts' notes is split
+    /// What one request may hold, so the merge of the parts' notes is split
     /// the same way the entries were.
     part_chars: usize,
+}
+
+impl SynthesisPlan {
+    fn titles(&self) -> Vec<String> {
+        self.citations
+            .iter()
+            .map(|citation| citation.title.clone())
+            .collect()
+    }
 }
 
 /// One part's notes, saved as soon as the model writes them.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct StepOutput {
-    output: String,
-}
-
-/// The conversation a part is being written in, so a restart can remove it.
-#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Scratch {
-    conversation_id: Option<String>,
+    notes: Vec<Note>,
 }
 
 /// Gathers the entries a synthesis reads and plans its parts.
@@ -261,16 +258,16 @@ async fn plan_synthesis(
 
     let mut entries = entries;
     let sources = assign_synthesis_source_ids(&mut entries);
-    // Each part runs as a turn in a scratch chat, which follows the Settings
-    // default; the parts are sized for that model.
+    // Each part is a request to the Settings default chat model; the parts
+    // are sized for it.
     let llm = runtime.default_chat_llm().await?;
     let part_chars = synthesis_part_chars(llm.as_ref());
-    let prompts = plan_journal_map_prompts(&entries, part_chars);
+    let chunks = plan_journal_map_chunks(&entries, part_chars)?;
     Ok(SynthesisPlan {
         part_chars,
         scope: normalized_scope,
         entry_count: entries.len(),
-        prompts,
+        chunks,
         conversation_ids: entries
             .iter()
             .filter(|entry| entry.kind == SynthesisEntryKind::Conversation)
@@ -281,31 +278,27 @@ async fn plan_synthesis(
     })
 }
 
-/// The prompts say "use only the provided entry transcripts", and each part
-/// runs in a scratch conversation that belongs to no space the entries came
-/// from: anything retrieved for it is by definition from the wrong place.
-fn closed_book() -> ToolPreferences {
-    ToolPreferences {
-        followup_mode: true,
-        turn_mode: Some("followup".to_string()),
-        closed_book: true,
-        ..ToolPreferences::default()
-    }
-}
-
-/// What a synthesis needs from the app: its entries, and model turns in
-/// scratch conversations of their own.
+/// What a synthesis needs from the app: its entries, and the model's notes,
+/// merges and brief.
 #[async_trait]
 pub(crate) trait SynthesisWork: Send + Sync {
     async fn plan(&self, selection: &SynthesizeJournalEntriesRequestDto) -> Result<SynthesisPlan>;
-    /// A conversation for one part, removed once the part is written.
-    async fn open_scratch(&self) -> Result<String>;
-    async fn answer(&self, conversation_id: &str, prompt: &str) -> Result<ChatResponse>;
-    /// Removes it; a conversation already gone counts as removed.
-    async fn remove_scratch(&self, conversation_id: String) -> Result<()>;
+    /// The notes of the plan's part `index`.
+    async fn notes(&self, plan: &SynthesisPlan, index: usize) -> Result<Vec<Note>>;
+    /// `chunks` merged into one part's notes: group `group` of `groups`.
+    async fn merge(
+        &self,
+        plan: &SynthesisPlan,
+        chunks: &[Vec<Note>],
+        group: usize,
+        groups: usize,
+    ) -> Result<Vec<Note>>;
+    /// The final brief over `chunks`.
+    async fn brief(&self, plan: &SynthesisPlan, chunks: &[Vec<Note>]) -> Result<String>;
 }
 
-/// The app's entries and models.
+/// The app's entries and models. Every request goes to the Settings default
+/// chat model, the model the plan was sized for.
 struct AppSynthesis {
     runtime: Arc<dyn ChatRuntime>,
 }
@@ -316,36 +309,29 @@ impl SynthesisWork for AppSynthesis {
         plan_synthesis(&*self.runtime, selection).await
     }
 
-    /// A scratch chat follows the Settings default, the model the plan was
-    /// sized for.
-    async fn open_scratch(&self) -> Result<String> {
-        Ok(ChatPolicy::create_conversation(
-            &*self.runtime,
-            CreateConversationRequestDto {
-                title: "Journal synthesis".to_string(),
-                system_prompt: None,
-            },
-        )
-        .await?
-        .conversation
-        .id)
+    async fn notes(&self, plan: &SynthesisPlan, index: usize) -> Result<Vec<Note>> {
+        let chunk = plan
+            .chunks
+            .get(index)
+            .ok_or_else(|| AppError::InvalidState("This synthesis has no such part.".into()))?;
+        let llm = self.runtime.default_chat_llm().await?;
+        write_notes(llm.as_ref(), chunk, index, plan.chunks.len()).await
     }
 
-    async fn answer(&self, conversation_id: &str, prompt: &str) -> Result<ChatResponse> {
-        run_unwatched_turn(
-            &*self.runtime,
-            conversation_id.to_string(),
-            prompt.to_string(),
-            closed_book(),
-        )
-        .await
+    async fn merge(
+        &self,
+        plan: &SynthesisPlan,
+        chunks: &[Vec<Note>],
+        group: usize,
+        groups: usize,
+    ) -> Result<Vec<Note>> {
+        let llm = self.runtime.default_chat_llm().await?;
+        merge_notes(llm.as_ref(), chunks, &plan.titles(), group, groups).await
     }
 
-    async fn remove_scratch(&self, conversation_id: String) -> Result<()> {
-        match self.runtime.delete_conversation(&conversation_id).await {
-            Ok(()) | Err(AppError::NotFound(_)) => Ok(()),
-            Err(error) => Err(error),
-        }
+    async fn brief(&self, plan: &SynthesisPlan, chunks: &[Vec<Note>]) -> Result<String> {
+        let llm = self.runtime.default_chat_llm().await?;
+        write_brief(llm.as_ref(), chunks, &plan.titles()).await
     }
 }
 
@@ -384,61 +370,12 @@ impl JournalSynthesisJob {
             warn!(job_id = context.id(), %error, "Could not save synthesis progress");
         }
     }
-
-    /// Removes the scratch conversation an earlier attempt left behind.
-    async fn discard_scratch(&self, context: &JobContext) -> Result<()> {
-        let scratch: Scratch = context
-            .checkpoint(SCRATCH)
-            .await?
-            .map(decode)
-            .transpose()?
-            .unwrap_or_default();
-        if let Some(id) = scratch.conversation_id {
-            self.work.remove_scratch(id).await?;
-            context
-                .put_checkpoint(SCRATCH, &encode(&Scratch::default())?)
-                .await?;
-        }
-        Ok(())
-    }
-
-    /// One model turn in a scratch conversation of its own. `None` when the
-    /// job stopped first.
-    async fn write(&self, context: &JobContext, prompt: &str) -> Result<Option<String>> {
-        let scratch = self.work.open_scratch().await?;
-        let tracked = match encode(&Scratch {
-            conversation_id: Some(scratch.clone()),
-        }) {
-            Ok(saved) => context.put_checkpoint(SCRATCH, &saved).await,
-            Err(error) => Err(error),
-        };
-        if let Err(error) = tracked {
-            if let Err(removal) = self.work.remove_scratch(scratch).await {
-                warn!(%removal, "Could not remove an untracked synthesis scratch conversation");
-            }
-            return Err(error);
-        }
-        let answered = context
-            .until_cancelled(self.work.answer(&scratch, prompt))
-            .await;
-        self.work.remove_scratch(scratch).await?;
-        context
-            .put_checkpoint(SCRATCH, &encode(&Scratch::default())?)
-            .await?;
-        match answered {
-            None => Ok(None),
-            Some(answered) => extract_latest_assistant_message(&answered?)
-                .map(Some)
-                .ok_or_else(|| AppError::Other("The model wrote nothing for this part.".into())),
-        }
-    }
 }
 
 #[async_trait]
 impl JobHandler for JournalSynthesisJob {
     async fn run(&self, context: &JobContext) -> Result<JobOutcome> {
         let request: SynthesisRequest = decode(context.job().requested.clone())?;
-        self.discard_scratch(context).await?;
         let plan: SynthesisPlan = match context.checkpoint(PLAN).await? {
             Some(saved) => decode(saved)?,
             None => {
@@ -467,11 +404,12 @@ impl JobHandler for JournalSynthesisJob {
             }
         };
 
-        let parts = plan.prompts.len();
-        let mut outputs = Vec::with_capacity(parts);
-        for (index, prompt) in plan.prompts.iter().enumerate() {
+        let parts = plan.chunks.len();
+        let titles = plan.titles();
+        let mut outputs: Vec<Vec<Note>> = Vec::with_capacity(parts);
+        for index in 0..parts {
             if let Some(saved) = context.checkpoint(&step_key(index)).await? {
-                outputs.push(decode::<StepOutput>(saved)?.output);
+                outputs.push(decode::<StepOutput>(saved)?.notes);
                 continue;
             }
             let share = (WRITING - GATHERED) * u32::try_from(index).unwrap_or(u32::MAX)
@@ -487,21 +425,25 @@ impl JobHandler for JournalSynthesisJob {
                 },
             )
             .await;
-            let Some(output) = self.write(context, prompt).await? else {
+            let Some(notes) = context
+                .until_cancelled(self.work.notes(&plan, index))
+                .await
+                .transpose()?
+            else {
                 return Ok(JobOutcome::Stopped);
             };
             if !context
                 .put_checkpoint(
                     &step_key(index),
                     &encode(&StepOutput {
-                        output: output.clone(),
+                        notes: notes.clone(),
                     })?,
                 )
                 .await?
             {
                 return Ok(JobOutcome::Stopped);
             }
-            outputs.push(output);
+            outputs.push(notes);
         }
 
         self.report(
@@ -519,7 +461,7 @@ impl JobHandler for JournalSynthesisJob {
         // saved like a part, until one prompt holds them all.
         let mut level = 0usize;
         loop {
-            let groups = group_for_merge(&outputs, plan.part_chars);
+            let groups = group_for_merge(&outputs, &titles, plan.part_chars)?;
             if groups.len() <= 1 {
                 break;
             }
@@ -531,32 +473,36 @@ impl JobHandler for JournalSynthesisJob {
                 }
                 let key = format!("merge:{level}:{index}");
                 if let Some(saved) = context.checkpoint(&key).await? {
-                    merged.push(decode::<StepOutput>(saved)?.output);
+                    merged.push(decode::<StepOutput>(saved)?.notes);
                     continue;
                 }
-                let prompt = build_journal_merge_prompt(group, index + 1, groups.len());
-                let Some(output) = self.write(context, &prompt).await? else {
+                let Some(notes) = context
+                    .until_cancelled(self.work.merge(&plan, group, index + 1, groups.len()))
+                    .await
+                    .transpose()?
+                else {
                     return Ok(JobOutcome::Stopped);
                 };
                 if !context
                     .put_checkpoint(
                         &key,
                         &encode(&StepOutput {
-                            output: output.clone(),
+                            notes: notes.clone(),
                         })?,
                     )
                     .await?
                 {
                     return Ok(JobOutcome::Stopped);
                 }
-                merged.push(output);
+                merged.push(notes);
             }
             outputs = merged;
             level += 1;
         }
-        let Some(synthesis) = self
-            .write(context, &build_journal_reduce_prompt(&outputs))
-            .await?
+        let Some(synthesis) = context
+            .until_cancelled(self.work.brief(&plan, &outputs))
+            .await
+            .transpose()?
         else {
             return Ok(JobOutcome::Stopped);
         };
@@ -699,7 +645,7 @@ pub async fn retry_journal_synthesis_impl(
 #[cfg(test)]
 mod job_tests;
 #[cfg(test)]
-mod scratch_tests;
+mod notes_tests;
 
 #[cfg(test)]
 mod week_scope_tests;

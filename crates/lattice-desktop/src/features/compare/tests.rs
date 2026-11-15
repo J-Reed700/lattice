@@ -1,193 +1,23 @@
-//! Parser and citation-mapping tests, pure, plus one retrieval test over an
-//! in-memory container. No LLM.
+//! Retrieval tests over an in-memory container, and the row contract driven by
+//! a scripted model.
 
 #![cfg(test)]
 
 use super::di::CompareDeps;
-use super::parser::parse_compare_response;
-use super::retrieval::RetrievedChunk;
-use super::use_case::{assemble_cells, fill_row, map_quote_to_chunk};
-use lattice_core::application::ports::llm_port::{
-    CompletionInput, CompletionRequest, CompletionResponse, InferencePriority,
-};
+use super::dto::CompareRowDto;
+use super::prompt::{Column, CompareRow, Input, Passage, Sentence};
+use super::use_case::{build_row, ResolvedDocument};
+use futures::future::BoxFuture;
+use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
-use lattice_core::shared::error::Result;
+use lattice_core::application::services::model_contract::packed::Packed;
+use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
+use lattice_core::application::services::model_contract::test_support::{ScriptedModel, Sent};
+use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 
 fn columns() -> Vec<String> {
     vec!["method".to_string(), "sample size".to_string()]
-}
-
-fn chunk(id: &str, content: &str, index: usize) -> RetrievedChunk {
-    RetrievedChunk {
-        chunk_id: id.to_string(),
-        content: content.to_string(),
-        section: None,
-        index,
-    }
-}
-
-fn sample_chunks() -> Vec<RetrievedChunk> {
-    vec![
-        chunk(
-            "chunk_1",
-            "This paper reviews prior literature on sleep.",
-            0,
-        ),
-        chunk(
-            "chunk_2",
-            "We conducted a randomised controlled trial across four sites.",
-            1,
-        ),
-        chunk(
-            "chunk_3",
-            "Funding was provided by the national council.",
-            2,
-        ),
-    ]
-}
-
-#[test]
-fn parses_strict_json() {
-    let raw = r#"{"method": {"value": "randomised controlled trial", "quote": "We conducted a randomised controlled trial across four sites."}, "sample size": {"value": "412", "quote": "412 adults enrolled."}}"#;
-    let parsed = parse_compare_response(raw, &columns());
-    assert_eq!(
-        parsed["method"].0.as_deref(),
-        Some("randomised controlled trial")
-    );
-    assert_eq!(parsed["sample size"].0.as_deref(), Some("412"));
-}
-
-#[test]
-fn parses_json_inside_markdown_fence() {
-    let raw = "```json\n{\"method\": {\"value\": \"survey\", \"quote\": null}, \"sample size\": {\"value\": null, \"quote\": null}}\n```";
-    let parsed = parse_compare_response(raw, &columns());
-    assert_eq!(parsed["method"].0.as_deref(), Some("survey"));
-    assert_eq!(parsed["sample size"].0, None);
-}
-
-#[test]
-fn parses_json_after_preamble() {
-    let raw = "Sure! Here you go: {\"method\": {\"value\": \"case study\", \"quote\": null}, \"sample size\": {\"value\": null, \"quote\": null}}";
-    let parsed = parse_compare_response(raw, &columns());
-    assert_eq!(parsed["method"].0.as_deref(), Some("case study"));
-}
-
-#[test]
-fn parses_column_names_case_insensitively() {
-    let raw = r#"{"Method": {"value": "cohort", "quote": null}, "Sample  Size": {"value": "80", "quote": null}}"#;
-    let parsed = parse_compare_response(raw, &columns());
-    assert_eq!(parsed["method"].0.as_deref(), Some("cohort"));
-    assert_eq!(parsed["sample size"].0.as_deref(), Some("80"));
-}
-
-#[test]
-fn treats_null_like_strings_as_null() {
-    let raw = r#"{"method": {"value": "n/a", "quote": ""}, "sample size": {"value": "Not Stated", "quote": "unknown"}}"#;
-    let parsed = parse_compare_response(raw, &columns());
-    assert_eq!(parsed["method"].0, None);
-    assert_eq!(parsed["method"].1, None);
-    assert_eq!(parsed["sample size"].0, None);
-    assert_eq!(parsed["sample size"].1, None);
-}
-
-#[test]
-fn malformed_response_yields_empty_map() {
-    let parsed = parse_compare_response("I'm sorry, I can't help with that.", &columns());
-    assert!(parsed.is_empty());
-
-    let cells = assemble_cells(&parsed, &columns(), &sample_chunks());
-    assert_eq!(cells.len(), 2);
-    assert!(cells.iter().all(|cell| cell.value.is_none()));
-}
-
-#[test]
-fn truncated_json_salvages_what_it_can() {
-    let raw = r#"{"method": {"value": "randomised controlled trial", "quote": "We conducted a randomised controlled trial across four sites."}, "sample siz"#;
-    let parsed = parse_compare_response(raw, &columns());
-    assert_eq!(
-        parsed["method"].0.as_deref(),
-        Some("randomised controlled trial")
-    );
-    assert!(!parsed.contains_key("sample size"));
-}
-
-#[test]
-fn map_quote_to_chunk_exact_match() {
-    let chunks = sample_chunks();
-    let found = map_quote_to_chunk(
-        "We conducted a randomised controlled trial across four sites.",
-        &chunks,
-    )
-    .unwrap();
-    assert_eq!(found.chunk_id, "chunk_2");
-}
-
-#[test]
-fn map_quote_to_chunk_ignores_whitespace_and_case() {
-    let chunks = sample_chunks();
-    let found = map_quote_to_chunk(
-        "  WE   CONDUCTED a randomised\ncontrolled trial across four sites  ",
-        &chunks,
-    )
-    .unwrap();
-    assert_eq!(found.chunk_id, "chunk_2");
-}
-
-#[test]
-fn map_quote_to_chunk_token_overlap_above_threshold() {
-    let chunks = sample_chunks();
-    let found = map_quote_to_chunk(
-        "We performed a randomised controlled trial across four sites.",
-        &chunks,
-    )
-    .unwrap();
-    assert_eq!(found.chunk_id, "chunk_2");
-}
-
-#[test]
-fn map_quote_to_chunk_returns_none_for_invented_quote() {
-    let chunks = sample_chunks();
-    assert!(map_quote_to_chunk(
-        "Participants received weekly vitamin supplements throughout winter.",
-        &chunks
-    )
-    .is_none());
-}
-
-#[test]
-fn cells_are_ordered_and_complete() {
-    let raw = r#"{"sample size": {"value": "412", "quote": "Funding was provided by the national council."}}"#;
-    let cols = columns();
-    let parsed = parse_compare_response(raw, &cols);
-    let cells = assemble_cells(&parsed, &cols, &sample_chunks());
-
-    assert_eq!(cells.len(), cols.len());
-    // Column order is the request's order, not the model's.
-    assert_eq!(cells[0].value, None);
-    assert_eq!(cells[1].value.as_deref(), Some("412"));
-    assert_eq!(
-        cells[1].citation.as_ref().unwrap().chunk_id.as_str(),
-        "chunk_3"
-    );
-}
-
-#[test]
-fn salvage_does_not_panic_on_non_ascii_text() {
-    // `İ` lowercases to two chars under Unicode rules; the salvage pass must
-    // stay on char boundaries whatever the model emits.
-    let raw = "İ method—\"value\": \"survey\", \"quote\": \"Bir çalışma—yöntem.\"";
-    let parsed = parse_compare_response(raw, &columns());
-    assert_eq!(parsed["method"].0.as_deref(), Some("survey"));
-}
-
-#[test]
-fn parses_nothing_from_prose_with_multibyte_characters() {
-    let raw = "Üzgünüm — bu belgede yöntem belirtilmemiş. İşte bu kadar.";
-    let parsed = parse_compare_response(raw, &columns());
-    let cells = assemble_cells(&parsed, &columns(), &sample_chunks());
-    assert_eq!(cells.len(), 2);
-    assert!(cells.iter().all(|cell| cell.value.is_none()));
 }
 
 async fn container_with_chunks(contents: &[String]) -> crate::interfaces::di::Container {
@@ -277,90 +107,6 @@ async fn a_document_the_search_finds_nothing_in_falls_back_to_its_opening_chunks
     assert_eq!(retrieved.chunks[0].chunk_id, "c0");
 }
 
-#[derive(Default)]
-struct Recorder(std::sync::Mutex<Vec<CompletionRequest>>);
-
-#[async_trait::async_trait]
-impl LLMPort for Recorder {
-    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        self.0.lock().unwrap().push(request.clone());
-        Ok(CompletionResponse::from_text("{}"))
-    }
-    fn model_name(&self) -> &str {
-        "recorder"
-    }
-    fn max_context_tokens(&self) -> usize {
-        8192
-    }
-    async fn is_ready(&self) -> Result<bool> {
-        Ok(true)
-    }
-}
-
-/// The passages are in the prompt; sending them again as context paid for
-/// every one twice.
-#[tokio::test]
-async fn a_row_sends_its_passages_once_at_interactive_priority() {
-    let llm = Recorder::default();
-    let (_, carried) = fill_row(&llm, "Sleep study", &columns(), &sample_chunks())
-        .await
-        .unwrap();
-    assert_eq!(carried.len(), 3, "an 8k window carries every passage");
-    let sent = llm.0.lock().unwrap();
-    assert_eq!(sent[0].priority, InferencePriority::Interactive);
-    let [CompletionInput::Message { role, content }] = sent[0].input() else {
-        panic!("one user message, got {:?}", sent[0].input());
-    };
-    assert_eq!(role, "user");
-    assert_eq!(
-        content
-            .matches("This paper reviews prior literature on sleep.")
-            .count(),
-        1
-    );
-}
-
-/// A model with a small window that records what it was sent.
-struct SmallWindow(std::sync::Mutex<Vec<CompletionRequest>>);
-
-#[async_trait::async_trait]
-impl LLMPort for SmallWindow {
-    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        self.0.lock().unwrap().push(request.clone());
-        Ok(CompletionResponse::from_text("{}"))
-    }
-    fn model_name(&self) -> &str {
-        "small-window"
-    }
-    fn max_context_tokens(&self) -> usize {
-        1_500
-    }
-    async fn is_ready(&self) -> Result<bool> {
-        Ok(true)
-    }
-}
-
-/// The window, not a character cap, decides how much of a document a row
-/// reads: the best-ranked passages that fit go in, and a citation can only
-/// point at a passage the model was shown.
-#[tokio::test]
-async fn a_small_window_carries_the_best_passages_that_fit_and_reports_them() {
-    let llm = SmallWindow(std::sync::Mutex::new(Vec::new()));
-    let mut chunks = sample_chunks();
-    chunks.insert(1, chunk("chunk_long", &"filler sentence. ".repeat(400), 3));
-
-    let (_, carried) = fill_row(&llm, "Sleep study", &columns(), &chunks)
-        .await
-        .unwrap();
-
-    let carried_ids: Vec<&str> = carried.iter().map(|c| c.chunk_id.as_str()).collect();
-    assert_eq!(carried_ids, vec!["chunk_1", "chunk_2", "chunk_3"]);
-    let sent = llm.0.lock().unwrap();
-    let prompt = sent[0].user_text();
-    assert!(!prompt.contains("filler sentence."));
-    assert!(prompt.contains("Passages:\n[1] This paper reviews prior literature on sleep."));
-}
-
 /// The table kept six columns and cut each name at 80 characters. Every
 /// column named is kept, whole.
 #[test]
@@ -374,119 +120,261 @@ fn every_named_column_is_kept_whole() {
     assert!(columns.contains(&long.trim().to_string()));
 }
 
-/// Says which columns each call asked for, on a window whose answer room
-/// holds four cells.
-#[derive(Default)]
-struct FourCellsPerCall(std::sync::Mutex<Vec<String>>);
 
-#[async_trait::async_trait]
-impl LLMPort for FourCellsPerCall {
-    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        self.0.lock().unwrap().push(request.user_text().to_string());
-        Ok(CompletionResponse::from_text("{}"))
-    }
-    fn model_name(&self) -> &str {
-        "four-cells"
-    }
-    fn max_context_tokens(&self) -> usize {
-        2_048
-    }
-    async fn is_ready(&self) -> Result<bool> {
-        Ok(true)
-    }
-}
+const KILN: &str = "The kiln is fired at dawn.";
+const CRANES: &str = "The quay holds two cranes.";
 
-/// A row with more columns than one answer holds is filled in several calls,
-/// every column in exactly one of them, and the row has a cell for each.
-#[tokio::test]
-async fn a_row_of_many_columns_is_filled_across_calls() {
-    let contents: Vec<String> = (0..6).map(|index| format!("passage {index}")).collect();
-    let container = container_with_chunks(&contents).await;
-    let llm = Arc::new(FourCellsPerCall::default());
-    let model: Arc<dyn LLMPort> = llm.clone();
-    let deps = retrieval_deps(&container);
-    let columns: Vec<String> = (0..9).map(|n| format!("column {n}")).collect();
-    let document = super::use_case::ResolvedDocument {
+fn document() -> ResolvedDocument {
+    ResolvedDocument {
         id: "doc".to_string(),
         title: "doc.md".to_string(),
         file_path: "/lib/doc.md".to_string(),
         error: None,
+    }
+}
+
+fn row_columns() -> Vec<String> {
+    vec!["kiln firing".to_string(), "crane count".to_string()]
+}
+
+/// Everything a request shows the model, as one text.
+fn shown(sent: &Sent) -> String {
+    sent.request
+        .input()
+        .iter()
+        .filter_map(|item| match item {
+            CompletionInput::Message { content, .. } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The handle written in `[…]` at the start of the line that holds `text`.
+fn handle_of(prompt: &str, text: &str) -> String {
+    let line = prompt
+        .lines()
+        .find(|line| line.starts_with('[') && line.contains(text))
+        .unwrap_or_else(|| panic!("no handle for {text} in:\n{prompt}"));
+    let end = line.find(']').expect("a closing bracket");
+    line[1..end].to_string()
+}
+
+fn column_handles(prompt: &str) -> Vec<String> {
+    prompt
+        .lines()
+        .filter(|line| line.starts_with("[f"))
+        .filter_map(|line| Some(line.get(1..line.find(']')?)?.to_string()))
+        .collect()
+}
+
+fn stated(of: &str, value: &str, support: &[&str]) -> serde_json::Value {
+    serde_json::json!({
+        "of": of,
+        "answer": {"kind": "stated", "value": value, "support": support}
+    })
+}
+
+fn not_stated(of: &str) -> serde_json::Value {
+    serde_json::json!({"of": of, "answer": {"kind": "not-stated"}})
+}
+
+fn entries(list: Vec<serde_json::Value>) -> String {
+    serde_json::json!({ "entries": list }).to_string()
+}
+
+fn reply(text: String) -> BoxFuture<'static, Result<CompletionResponse>> {
+    Box::pin(std::future::ready(Ok(CompletionResponse::from_text(text))))
+}
+
+async fn row_of(model: &Arc<ScriptedModel>, columns: &[String]) -> Result<CompareRowDto> {
+    let container = container_with_chunks(&[format!("{KILN} {CRANES}")]).await;
+    let llm: Arc<dyn LLMPort> = model.clone();
+    build_row(&retrieval_deps(&container), &llm, &document(), columns).await
+}
+
+#[test]
+fn the_request_tells_what_it_must_and_hides_the_identities() {
+    let mut marks = Marks::new();
+    let input = Input {
+        title: marks.told("Harbour kiln log".to_string()),
+        columns: vec![
+            Column {
+                index: marks.reference(100_001_usize),
+                name: marks.told("firing temperature".to_string()),
+            },
+            Column {
+                index: marks.reference(100_002_usize),
+                name: marks.told("number of cranes".to_string()),
+            },
+        ],
+        passages: Packed::new(
+            vec![Passage {
+                sentences: vec![
+                    Sentence {
+                        chunk_id: marks.reference("chunk-id-7a31c9".to_string()),
+                        at: marks.reference(100_003_usize),
+                        text: marks.told(KILN.to_string()),
+                    },
+                    Sentence {
+                        chunk_id: marks.reference("chunk-id-7a31c9".to_string()),
+                        at: marks.reference(100_004_usize),
+                        text: marks.told(CRANES.to_string()),
+                    },
+                ],
+            }],
+            |_| 10,
+        ),
     };
-    let row = super::use_case::build_row(&deps, &model, &document, &columns)
-        .await
-        .unwrap();
+    holds::<CompareRow>(&input, &marks);
+}
+
+/// A cell cites by pointing at a sentence the passages showed; the table's
+/// citation holds the app's own copy of it and the chunk it is of.
+#[tokio::test]
+async fn a_cell_cites_the_sentence_the_model_pointed_at() {
+    let model = Arc::new(ScriptedModel::new().on_request::<CompareRow>(|sent, _| {
+        let prompt = shown(sent);
+        reply(entries(vec![
+            stated(
+                &handle_of(&prompt, "kiln firing"),
+                "at dawn",
+                &[&handle_of(&prompt, KILN)],
+            ),
+            not_stated(&handle_of(&prompt, "crane count")),
+        ]))
+    }));
+    let row = row_of(&model, &row_columns()).await.unwrap();
+
+    assert_eq!(row.cells.len(), 2);
+    assert_eq!(row.cells[0].value.as_deref(), Some("at dawn"));
+    let citation = row.cells[0].citation.as_ref().expect("a citation");
+    assert_eq!(citation.chunk_id, "c0");
+    assert_eq!(citation.excerpt, KILN);
+    assert_eq!(row.cells[1].value, None);
+    assert!(row.cells[1].citation.is_none());
+    assert!(row.error.is_none(), "{:?}", row.error);
+    let sent = model.sent();
+    assert_eq!(sent.len(), 1);
+    let prompt = shown(&sent[0]);
+    assert!(prompt.contains("] kiln firing\n"), "{prompt}");
+    assert!(!prompt.contains("spelled exactly"), "{prompt}");
+}
+
+/// A pointer at a sentence that is not shown costs only the citation.
+#[tokio::test]
+async fn a_pointer_at_nothing_shown_costs_only_the_citation() {
+    let model = Arc::new(ScriptedModel::new().on_request::<CompareRow>(|sent, _| {
+        let prompt = shown(sent);
+        reply(entries(vec![
+            stated(&handle_of(&prompt, "kiln firing"), "at dawn", &["s99"]),
+            not_stated(&handle_of(&prompt, "crane count")),
+        ]))
+    }));
+    let row = row_of(&model, &row_columns()).await.unwrap();
+
+    assert_eq!(row.cells[0].value.as_deref(), Some("at dawn"));
+    assert!(row.cells[0].citation.is_none());
+    assert_eq!(model.sent().len(), 1);
+}
+
+/// A column the answer left out is asked for again alone; the other stands.
+#[tokio::test]
+async fn a_column_left_out_is_asked_for_again_alone() {
+    let model = Arc::new(ScriptedModel::new().on_request::<CompareRow>(|sent, nth| {
+        let prompt = shown(sent);
+        if nth == 0 {
+            reply(entries(vec![stated(
+                &handle_of(&prompt, "kiln firing"),
+                "at dawn",
+                &[],
+            )]))
+        } else {
+            reply(entries(vec![stated(
+                &handle_of(&prompt, "crane count"),
+                "two",
+                &[],
+            )]))
+        }
+    }));
+    let row = row_of(&model, &row_columns()).await.unwrap();
+
+    assert_eq!(row.cells[0].value.as_deref(), Some("at dawn"));
+    assert_eq!(row.cells[1].value.as_deref(), Some("two"));
+    assert!(row.error.is_none(), "{:?}", row.error);
+    let sent = model.sent();
+    assert_eq!(sent.len(), 2);
+    let second = shown(&sent[1]);
+    assert!(second.contains("] crane count"), "{second}");
+    assert!(!second.contains("] kiln firing"), "{second}");
+}
+
+/// A stated value with nothing in it is refused and corrected for that
+/// column alone.
+#[tokio::test]
+async fn a_blank_value_is_corrected_alone() {
+    let model = Arc::new(ScriptedModel::new().on_request::<CompareRow>(|sent, nth| {
+        let prompt = shown(sent);
+        let value = if nth == 0 { "  " } else { "at dawn" };
+        reply(entries(vec![
+            stated(&handle_of(&prompt, "kiln firing"), value, &[]),
+            not_stated(&handle_of(&prompt, "crane count")),
+        ]))
+    }));
+    let row = row_of(&model, &row_columns()).await.unwrap();
+
+    assert_eq!(row.cells[0].value.as_deref(), Some("at dawn"));
+    let sent = model.sent();
+    assert_eq!(sent.len(), 2);
+    assert!(shown(&sent[1]).contains("The value is empty."));
+}
+
+/// A column the model never answers is an empty cell the row says it could
+/// not fill; the row is not an error.
+#[tokio::test]
+async fn a_column_that_stays_unanswered_is_named_on_the_row() {
+    let model = Arc::new(
+        ScriptedModel::new().on_request::<CompareRow>(|_, _| reply(entries(Vec::new()))),
+    );
+    let row = row_of(&model, &row_columns()).await.unwrap();
+
+    assert_eq!(row.cells.len(), 2);
+    assert!(row.cells.iter().all(|cell| cell.value.is_none()));
+    let error = row.error.expect("the row says what is missing");
+    assert!(
+        error.contains("no usable answer for: kiln firing, crane count"),
+        "{error}"
+    );
+}
+
+/// The driver, not a count of columns, decides how a row is split: columns
+/// that fit are asked in one request.
+#[tokio::test]
+async fn a_row_of_many_columns_is_asked_in_one_request_when_it_fits() {
+    let model = Arc::new(ScriptedModel::new().on_request::<CompareRow>(|sent, _| {
+        let prompt = shown(sent);
+        reply(entries(
+            column_handles(&prompt)
+                .iter()
+                .map(|handle| not_stated(handle))
+                .collect(),
+        ))
+    }));
+    let columns: Vec<String> = (0..9).map(|n| format!("column {n}")).collect();
+    let row = row_of(&model, &columns).await.unwrap();
 
     assert_eq!(row.cells.len(), 9);
     assert!(row.error.is_none(), "{:?}", row.error);
-    let prompts = llm.0.lock().unwrap();
-    assert_eq!(prompts.len(), 3, "nine columns at four a call");
-    for column in &columns {
-        let asked = prompts
-            .iter()
-            .filter(|prompt| prompt.contains(&format!("- {column}\n")))
-            .count();
-        assert_eq!(asked, 1, "{column} asked {asked} times");
-    }
+    assert_eq!(model.sent().len(), 1);
 }
 
-/// Answers the first call with a value for every column it asks about and
-/// fails every call after it.
-#[derive(Default)]
-struct FailsAfterFirstCall(std::sync::Mutex<usize>);
-
-#[async_trait::async_trait]
-impl LLMPort for FailsAfterFirstCall {
-    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        let mut calls = self.0.lock().unwrap();
-        *calls += 1;
-        if *calls > 1 {
-            return Err(lattice_core::shared::error::AppError::Network(
-                "server went away".into(),
-            ));
-        }
-        let answer: serde_json::Map<String, serde_json::Value> = (0..9)
-            .map(|n| format!("column {n}"))
-            .filter(|column| request.user_text().contains(&format!("- {column}\n")))
-            .map(|column| (column, serde_json::json!({"value": "found", "quote": null})))
-            .collect();
-        Ok(CompletionResponse::from_text(
-            serde_json::Value::Object(answer).to_string(),
-        ))
-    }
-    fn model_name(&self) -> &str {
-        "fails-after-first"
-    }
-    fn max_context_tokens(&self) -> usize {
-        2_048
-    }
-    async fn is_ready(&self) -> Result<bool> {
-        Ok(true)
-    }
-}
-
-/// A row split across calls keeps the cells the first call filled when the
-/// second fails; the columns not reached are left empty and named.
+/// A fault of sending is the row's error, not an empty table.
 #[tokio::test]
-async fn a_failed_later_call_keeps_the_cells_earlier_calls_filled() {
-    let contents: Vec<String> = (0..6).map(|index| format!("passage {index}")).collect();
-    let container = container_with_chunks(&contents).await;
-    let model: Arc<dyn LLMPort> = Arc::new(FailsAfterFirstCall::default());
-    let deps = retrieval_deps(&container);
-    let columns: Vec<String> = (0..9).map(|n| format!("column {n}")).collect();
-    let document = super::use_case::ResolvedDocument {
-        id: "doc".to_string(),
-        title: "doc.md".to_string(),
-        file_path: "/lib/doc.md".to_string(),
-        error: None,
-    };
-    let row = super::use_case::build_row(&deps, &model, &document, &columns)
-        .await
-        .unwrap();
-
-    assert_eq!(row.cells.len(), 9);
-    let filled = row.cells.iter().filter(|cell| cell.value.is_some()).count();
-    assert_eq!(filled, 4, "the first call's four cells are kept");
-    let error = row.error.expect("the row says what is missing");
-    assert!(error.contains("Not filled: column 4"), "{error}");
-    assert!(error.contains("column 8"), "{error}");
+async fn a_send_fault_is_an_error() {
+    let model = Arc::new(
+        ScriptedModel::new()
+            .on_request::<CompareRow>(|_, _| reply(String::new()))
+            .failing_every_request(|_| AppError::Network("server went away".into())),
+    );
+    assert!(row_of(&model, &row_columns()).await.is_err());
 }

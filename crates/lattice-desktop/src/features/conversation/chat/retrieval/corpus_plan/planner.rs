@@ -7,14 +7,14 @@ use tracing::warn;
 
 use lattice_core::application::contracts::search::CorpusDocument;
 use lattice_core::application::ports::hybrid_search::HybridSearchTrait;
-use lattice_core::application::ports::llm_port::CompletionInput;
 use lattice_core::application::ports::LLMPort;
-use lattice_core::application::services::model_contract::legacy;
+use lattice_core::application::services::grounded_generation::CallOptions;
+use lattice_core::application::services::model_contract::ask::{ask, Plain, Settled};
+use lattice_core::application::services::model_contract::shown::{Scope, Told};
 use lattice_core::shared::error::{AppError, Result};
 
-use super::{
-    ordered_learning_plan, prompt, shortlist, CorpusSearchPlan, PlannerTurn, PLANNER_SYSTEM,
-};
+use super::answer::{Correction, Plan, PlanContract, PlanInput};
+use super::{ordered_learning_plan, prompt, shortlist, CorpusSearchPlan, PlannerTurn};
 
 /// What the first retrieval pass already tried. Serialized into the planner's
 /// user turn so a correction can ask for different queries without a second
@@ -203,8 +203,9 @@ async fn plan_with(
     let ranked = shortlist::shortlist(catalog, turn.candidate_ids(), question);
     // The first pass's titles, best first, as many as the history's share of
     // the prompt holds, and the rest counted.
-    let correction =
-        correction.map(|correction| correction.fitted(llm, prompt::history_tokens(target)));
+    let correction = correction.map(|correction| {
+        Correction::of(&correction.fitted(llm, prompt::history_tokens(target)))
+    });
     let parts = prompt::PromptParts {
         question,
         history: &history,
@@ -226,35 +227,26 @@ async fn plan_with(
     // No timeout: a slow planner is not a failed one. The user's Stop
     // cancels the call, and the adapter's stall detection ends one whose
     // server has gone quiet. Any error falls back to the local plan.
-    let response = llm
-        .complete(&legacy::completion(legacy::Completion {
-            input: vec![
-                CompletionInput::Message {
-                    role: "system".into(),
-                    content: PLANNER_SYSTEM.into(),
-                },
-                CompletionInput::Message {
-                    role: "user".into(),
-                    content: prompt.user.clone(),
-                },
-            ],
-            json_schema: Some(serde_json::json!({
-                "type":"object", "additionalProperties":false,
-                "properties":{
-                    "queries":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":3},
-                    "opening_document_ids":{"type":"array","items":{"type":"string"}},
-                    "start_at_beginning":{"type":"boolean"}
-                }, "required":["queries","opening_document_ids","start_at_beginning"]
-            })),
-            max_output_tokens: Some(prompt::PLANNER_OUTPUT_TOKENS),
-            priority: lattice_core::application::ports::llm_port::InferencePriority::Interactive,
-            // A stop press takes the plan out of the backend's queue.
-            cancel: Some(cancel.clone()),
-            no_time_limit: true,
-            ..Default::default()
-        }))
-        .await;
-    let response = match response {
+    let input = PlanInput {
+        question: Told(question.to_owned()),
+        history: Told(history),
+        catalog_total: Told(catalog.len()),
+        correction: correction.map(Told),
+        documents: prompt.documents,
+    };
+    let call = CallOptions {
+        priority: lattice_core::application::ports::llm_port::InferencePriority::Interactive,
+        // A stop press takes the plan out of the backend's queue.
+        cancel: Some(cancel.clone()),
+        no_time_limit: true,
+        ..Default::default()
+    };
+    let settled = ask::<PlanContract>(llm, &Plain, &mut Scope::for_question(), &input, &call).await;
+    match settled {
+        Ok(Settled::Answered(plan)) => plan_from(plan, catalog),
+        Ok(Settled::Unanswered(_)) => Err(AppError::ModelAnswerUnusable(
+            "The retrieval planner's answer could not be used".into(),
+        )),
         Err(error) => {
             if is_window_overflow(&error) {
                 turn.health.overflowed(llm.model_name(), prompt.tokens);
@@ -262,49 +254,33 @@ async fn plan_with(
                     prompt_tokens = prompt.tokens,
                     exact_count = prompt.exact,
                     window = llm.max_context_tokens(),
-                    "The server refused the planner prompt as too large for its window; \
-                     the reported window is larger than the real one"
+                    "The server refused the planner prompt as too large for its window;                      the reported window is larger than the real one"
                 );
             }
-            return Err(error);
+            Err(error)
         }
-        Ok(response) => response.text,
-    };
-    parse_plan(&response, &prompt.handles, catalog)
+    }
 }
 
-/// The planner's reply as a plan over `catalog`. Its `start_at_beginning` is
-/// the planner's call, kept as given: whether a request asks to read from the
-/// beginning is a judgement about intent the model makes in any language.
-fn parse_plan(
-    response: &str,
-    handles: &HashMap<String, String>,
-    catalog: &[CorpusDocument],
-) -> Result<CorpusSearchPlan> {
-    let response = response
-        .trim()
-        .trim_start_matches("```json")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim();
-    let mut plan = serde_json::from_str::<CorpusSearchPlan>(response)?;
-    // The planner names documents by the handles it was shown. Anything else
-    // passes through, and validation drops what is not in the catalog.
-    plan.opening_document_ids = plan
-        .opening_document_ids
-        .into_iter()
-        .map(|id| {
-            handles
-                .get(id.trim().to_lowercase().as_str())
-                .cloned()
-                .unwrap_or(id)
-        })
-        .collect();
-    plan.validate(catalog)
+/// The planner's statement as a plan over `catalog`. Its `start_at_beginning`
+/// is the planner's call, kept as given: whether a request asks to read from
+/// the beginning is a judgement about intent the model makes in any language.
+fn plan_from(plan: Plan, catalog: &[CorpusDocument]) -> Result<CorpusSearchPlan> {
+    CorpusSearchPlan {
+        queries: plan.queries.into_iter().map(|query| query.0).collect(),
+        opening_document_ids: plan
+            .opening
+            .into_iter()
+            .map(|picked| picked.reference)
+            .collect(),
+        start_at_beginning: plan.start_at_beginning,
+    }
+    .validate(catalog)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::answer::Query;
     use super::*;
 
     fn document(id: &str, name: &str) -> CorpusDocument {
@@ -326,15 +302,15 @@ mod tests {
             document("doc-zellen", "Leitfaden Zellbiologie"),
             document("doc-genetik", "Leitfaden Genetik"),
         ];
-        let handles = HashMap::from([("d1".to_string(), "doc-zellen".to_string())]);
-        let reply = r#"```json
-{"queries":["Einführung Zellbiologie"],"opening_document_ids":["D1"],"start_at_beginning":true}
-```"#;
+        let statement = Plan {
+            queries: vec![Query("Einführung Zellbiologie".into())],
+            opening: Vec::new(),
+            start_at_beginning: true,
+        };
 
-        let plan = parse_plan(reply, &handles, &catalog).expect("plan");
+        let plan = plan_from(statement, &catalog).expect("plan");
 
         assert!(plan.start_at_beginning);
-        assert_eq!(plan.opening_document_ids, ["doc-zellen"]);
         assert_eq!(plan.queries, ["Einführung Zellbiologie"]);
     }
 }

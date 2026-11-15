@@ -1,9 +1,14 @@
 //! Reading a conversation's messages.
 
 use crate::features::conversation::chat::ports::ChatRuntime;
+use crate::features::conversation::chat::reply_text::ReplyText;
+use crate::features::conversation::chat::ReplyPieceDto;
 use crate::interfaces::di::container::Container;
+use lattice_core::application::contracts::sources::SourceDto;
+use lattice_core::domain::conversation::MessageRole;
 use lattice_core::domain::ConversationMessage;
 use lattice_core::shared::error::{AppError, Result};
+use std::collections::HashMap;
 use tauri::State;
 
 /// All messages of a conversation, oldest first.
@@ -36,6 +41,39 @@ pub async fn get_conversation_messages_impl(
             .await;
     }
     Ok(messages)
+}
+
+/// What each assistant message is as the frontend draws it, by message id: its
+/// saved references, or for a message saved before them its old `[n]` read once
+/// against that message's own sources, which are named in the conversation's
+/// scope in the order the messages come. Nothing is written back to a message.
+pub async fn replies_of(
+    runtime: &dyn ChatRuntime,
+    conversation_id: &str,
+    messages: &[ConversationMessage],
+) -> Result<HashMap<String, Vec<ReplyPieceDto>>> {
+    let names = runtime.kept_names().open(conversation_id).await?;
+    let mut replies = HashMap::new();
+    for message in messages
+        .iter()
+        .filter(|message| matches!(message.role, MessageRole::Assistant))
+    {
+        let metadata: serde_json::Value = message
+            .metadata
+            .as_deref()
+            .and_then(|metadata| serde_json::from_str(metadata).ok())
+            .unwrap_or(serde_json::Value::Null);
+        let reply = ReplyText::stored(&message.content, &metadata).unwrap_or_else(|| {
+            let sources: Vec<SourceDto> = metadata
+                .get("sources")
+                .and_then(|sources| serde_json::from_value(sources.clone()).ok())
+                .unwrap_or_default();
+            ReplyText::legacy(&names, &message.content, &sources)
+        });
+        replies.insert(message.id.clone(), reply.pieces());
+    }
+    names.save().await?;
+    Ok(replies)
 }
 
 /// Tauri command wrapper

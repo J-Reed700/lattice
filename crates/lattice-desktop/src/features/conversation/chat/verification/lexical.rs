@@ -4,6 +4,8 @@
 //! read meaning, so it never settles a cited claim alone: only a near-verbatim
 //! copy that carries and cuts no number, date, negation or name skips the judge.
 
+use super::marked;
+use crate::features::conversation::chat::reply_text::ReplyText;
 use lattice_core::application::contracts::sources::SourceDto;
 pub(super) use lattice_core::application::services::evidence_retrieval::{
     best_windows, ScoredWindow,
@@ -12,13 +14,13 @@ use lattice_core::application::services::evidence_retrieval::{
     extract_normalized_tokens, passage_windows,
 };
 use lattice_core::shared::markdown_math::{
-    formulas_as_words, inline_math_spans, map_prose, split_at_formulas,
+    formulas_as_words, inline_math_spans, map_prose,
 };
 use lattice_core::shared::text::{
     capitalised_words, has_digit, normalize_whitespace, padded_lowercase, MONTH_MARKERS,
     NEGATION_MARKERS,
 };
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 const MIN_CLAIM_CHARS: usize = 24;
 pub(super) const MIN_CLAIM_TOKENS: usize = 5;
@@ -39,11 +41,9 @@ const COPIED_RUN_WORDS: usize = 4;
 /// One sentence the lexical pass considered a claim.
 #[derive(Debug, Clone)]
 pub(super) struct LexicalClaim {
-    /// Sentence as written, citation markers included.
-    pub(super) sentence: String,
-    /// Sentence with `[n]` markers removed — the text the judge reads.
+    /// The sentence without its references: the text the judge reads.
     pub(super) claim_text: String,
-    /// Citation numbers exactly as the model wrote them (1-based).
+    /// The numbers of the sources the sentence cites, each once.
     pub(super) citation_ids: Vec<u32>,
     /// Zero-based source indices those citation numbers resolve to.
     pub(super) cited_source_indices: Vec<usize>,
@@ -63,15 +63,16 @@ pub(super) struct LexicalClaim {
     pub(super) contradiction_prone: bool,
 }
 
-/// Score every claim sentence in `response` against `sources`.
+/// Score every claim sentence in `reply` against `sources`.
 ///
 /// Returns one entry per sentence that cleared the claim filters; sentences
 /// that are too short, are questions, or are boilerplate never appear.
-pub(super) fn lexical_pass(response: &str, sources: &[SourceDto]) -> Vec<LexicalClaim> {
+pub(super) fn lexical_pass(reply: &ReplyText, sources: &[SourceDto]) -> Vec<LexicalClaim> {
+    let written = marked::marked(reply);
     // A diagram's labels and a picture's caption are not claims about the
     // sources: the check, and the judge reading what it escalates, see the
     // answer without its fenced blocks and pictures.
-    let response = lattice_core::shared::markdown_media::strip_fences_and_images(response);
+    let response = lattice_core::shared::markdown_media::strip_fences_and_images(&written);
     let response = response.as_str();
     if response.trim().is_empty() || sources.is_empty() {
         return Vec::new();
@@ -94,7 +95,7 @@ pub(super) fn lexical_pass(response: &str, sources: &[SourceDto]) -> Vec<Lexical
             .iter()
             .filter_map(|id| source_index(*id, sources))
             .collect();
-        let claim_text = strip_citation_markers(&sentence);
+        let claim_text = marked::without(&sentence);
         // A formula's names count, its TeX does not: `\frac` is no word of
         // the claim for a passage to miss.
         let claim_tokens = extract_normalized_tokens(&formulas_as_words(&claim_text));
@@ -129,7 +130,6 @@ pub(super) fn lexical_pass(response: &str, sources: &[SourceDto]) -> Vec<Lexical
         };
 
         claims.push(LexicalClaim {
-            sentence: claim_for_note(&sentence),
             contradiction_prone: is_contradiction_prone(&claim_text) || copying.drops_marker,
             claim_text: claim_for_note(&claim_text),
             citation_ids,
@@ -388,7 +388,7 @@ fn sentences_with_citations(response: &str) -> Vec<(String, Vec<u32>)> {
         let sentences = split_sentences(&block);
         let own: Vec<Vec<u32>> = sentences
             .iter()
-            .map(|sentence| extract_sentence_citation_ids(sentence))
+            .map(|sentence| marked::numbers(sentence))
             .collect();
         for (index, sentence) in sentences.into_iter().enumerate() {
             let citations = own
@@ -406,7 +406,7 @@ fn sentences_with_citations(response: &str) -> Vec<(String, Vec<u32>)> {
                 });
             out.push((sentence, citations));
         }
-        if !in_list && strip_citation_markers(&block).trim_end().ends_with(':') {
+        if !in_list && marked::without(&block).trim_end().ends_with(':') {
             let mut seen = HashSet::new();
             introduced = own
                 .into_iter()
@@ -514,7 +514,7 @@ pub(super) fn split_sentences(text: &str) -> Vec<String> {
 
 fn is_claim_candidate(sentence: &str) -> bool {
     let s = sentence.trim();
-    if s.len() < MIN_CLAIM_CHARS && extract_sentence_citation_ids(s).is_empty() {
+    if s.len() < MIN_CLAIM_CHARS && marked::numbers(s).is_empty() {
         return false;
     }
     if s.ends_with('?') {
@@ -559,110 +559,6 @@ fn is_claim_candidate(sentence: &str) -> bool {
 
 fn claim_for_note(claim: &str) -> String {
     normalize_whitespace(claim).trim().to_string()
-}
-
-/// A formula's brackets (`$a[1]$`) are its own, not a citation.
-fn strip_citation_markers(sentence: &str) -> String {
-    map_prose(sentence, strip_prose_citation_markers)
-}
-
-fn strip_prose_citation_markers(sentence: &str) -> String {
-    let mut out = String::with_capacity(sentence.len());
-    let chars: Vec<char> = sentence.chars().collect();
-    let mut idx = 0usize;
-
-    while idx < chars.len() {
-        let Some(&current) = chars.get(idx) else {
-            break;
-        };
-        if current == '[' {
-            let mut j = idx + 1;
-            let mut saw_digit = false;
-            while chars.get(j).is_some_and(|ch| ch.is_ascii_digit()) {
-                saw_digit = true;
-                j += 1;
-            }
-            if saw_digit && chars.get(j) == Some(&']') {
-                idx = j + 1;
-                continue;
-            }
-        }
-
-        out.push(current);
-        idx += 1;
-    }
-
-    out
-}
-
-/// Preserve invalid numbers: silently dropping them would turn a fabricated
-/// citation into an uncited claim and let it borrow evidence from other sources.
-/// A formula's brackets (`$a[1]$`) are not markers.
-fn extract_sentence_citation_ids(sentence: &str) -> Vec<u32> {
-    let prose: String = split_at_formulas(sentence)
-        .into_iter()
-        .map(|(piece, formula)| if formula { " " } else { piece })
-        .collect();
-    let chars: Vec<char> = prose.chars().collect();
-    let mut idx = 0usize;
-    let mut seen = HashSet::new();
-    let mut out = Vec::new();
-
-    while idx < chars.len() {
-        if chars.get(idx) != Some(&'[') {
-            idx += 1;
-            continue;
-        }
-
-        let mut j = idx + 1;
-        let mut digits = String::new();
-        while let Some(ch) = chars.get(j).filter(|ch| ch.is_ascii_digit()) {
-            digits.push(*ch);
-            j += 1;
-        }
-
-        if digits.is_empty() || chars.get(j) != Some(&']') {
-            idx += 1;
-            continue;
-        }
-
-        let raw_index = digits.parse::<u32>().unwrap_or(0);
-        if seen.insert(raw_index) {
-            out.push(raw_index);
-        }
-
-        idx = j + 1;
-    }
-
-    out
-}
-
-/// Every passage label a text cites, read as the claim checker reads them —
-/// a formula's brackets are not labels — and also in the grouped form
-/// `[2, 3]`, which the claim checker leaves as no citation. Asking whether a
-/// passage was used at all, a grouped label is a use.
-pub(in crate::features::conversation::chat) fn cited_labels(text: &str) -> BTreeSet<u32> {
-    let prose: String = split_at_formulas(text)
-        .into_iter()
-        .map(|(piece, formula)| if formula { " " } else { piece })
-        .collect();
-    prose
-        .split('[')
-        .skip(1)
-        .filter_map(|opened| opened.split_once(']'))
-        .filter_map(|(inside, _)| {
-            inside
-                .split(',')
-                .map(|label| {
-                    let label = label.trim();
-                    (!label.is_empty() && label.bytes().all(|byte| byte.is_ascii_digit()))
-                        .then(|| label.parse::<u32>().ok())
-                        .flatten()
-                })
-                .collect::<Option<Vec<u32>>>()
-        })
-        .flatten()
-        .collect()
 }
 
 /// The sentence of `text` that shares the most vocabulary with `claim`, shown

@@ -56,6 +56,8 @@ fn message(id: &str, sequence: i64, role: SourceRole, content: &str) -> SourceMe
         content_digest: compute_digest(content),
         status: "completed".to_string(),
         pictures: Vec::new(),
+        references: Vec::new(),
+        replayed: None,
     }
 }
 

@@ -14,6 +14,7 @@ use lattice_core::application::ports::llm_port::{
 };
 use lattice_core::application::ports::{ChatImagesPort, ImageTurnScope};
 use lattice_core::application::ports::{EmbeddingPort, LLMPort};
+use lattice_core::application::services::model_contract::kept::{KeptNames, MemoryNames, TurnNames};
 use lattice_core::application::services::chat_model_resolution::{
     resolve, resolve_learning, DefaultChatModel,
 };
@@ -79,6 +80,7 @@ pub(in crate::features::conversation) struct FakeRuntime {
     /// One picture store per test, so what a turn stored, attached and
     /// released can be read back.
     pub(in crate::features::conversation) images: Arc<FakeChatImages>,
+    pub(in crate::features::conversation) names: Arc<KeptNames>,
 }
 
 impl Default for FakeRuntime {
@@ -101,6 +103,7 @@ impl Default for FakeRuntime {
             page_reader: None,
             records: None,
             images: Arc::default(),
+            names: Arc::new(KeptNames::new(Arc::new(MemoryNames::new()))),
         }
     }
 }
@@ -521,8 +524,12 @@ impl ChatStorage for FakeRuntime {
         &self,
         _conversation_id: &str,
         _focus: Option<&lattice_core::application::contracts::explorer::ExplorerFocusDto>,
+        _names: Arc<TurnNames>,
     ) -> Option<TurnSource> {
         None
+    }
+    fn kept_names(&self) -> Arc<KeptNames> {
+        self.names.clone()
     }
 }
 

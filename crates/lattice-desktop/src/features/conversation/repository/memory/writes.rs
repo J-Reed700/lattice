@@ -11,6 +11,7 @@ use lattice_core::domain::conversation::memory::{
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::WriteTx;
+use lattice_core::shared::stored_references::text_without_references;
 use std::str::FromStr;
 
 impl ConversationRepository {
@@ -189,9 +190,10 @@ impl ConversationRepository {
                 struct Row {
                     content: String,
                     content_digest: String,
+                    metadata: Option<String>,
                 }
                 let row = sqlx::query_as::<_, Row>(
-                    "SELECT content, content_digest FROM conversation_messages \
+                    "SELECT content, content_digest, metadata FROM conversation_messages \
                      WHERE id = ? AND conversation_id = ?",
                 )
                 .bind(&span.message_id)
@@ -202,12 +204,15 @@ impl ConversationRepository {
                 .ok_or_else(|| MemoryCommitError::UnresolvableEvidence(item.id.to_string()))?;
                 // Ownership is enforced by the `WHERE` above: a span naming
                 // another conversation's message resolves to no row at all.
-                let live_digest = if row.content_digest.is_empty() {
-                    compute_digest(&row.content)
+                let text = text_without_references(&row.content, row.metadata.as_deref());
+                let live_digest = if matches!(text, std::borrow::Cow::Owned(_))
+                    || row.content_digest.is_empty()
+                {
+                    compute_digest(&text)
                 } else {
                     row.content_digest
                 };
-                if live_digest != span.content_digest || span.resolve(&row.content).is_none() {
+                if live_digest != span.content_digest || span.resolve(&text).is_none() {
                     return Err(MemoryCommitError::UnresolvableEvidence(item.id.to_string()));
                 }
             }

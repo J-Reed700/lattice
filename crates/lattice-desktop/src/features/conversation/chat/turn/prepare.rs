@@ -6,6 +6,7 @@ use crate::features::conversation::ConversationServiceTrait;
 use lattice_core::application::contracts::images::ChatImageDto;
 use lattice_core::application::ports::llm_port::{ModelRequirements, PinnedModel, ToolSupport};
 use lattice_core::application::ports::{LLMPort, ToolDefinition};
+use lattice_core::application::services::model_contract::kept::TurnNames;
 use lattice_core::domain::conversation::DocumentReference;
 use lattice_core::domain::models::model_ref::ModelRef;
 use tokio_util::sync::CancellationToken;
@@ -26,6 +27,8 @@ pub(super) struct PreparedTurn {
     pub(super) recorder: TurnRecorder,
     pub(super) focus: FocusScope,
     pub(super) source: Option<TurnSource>,
+    /// The conversation's scope for this turn; the turn keeps what it mints.
+    pub(super) names: Arc<TurnNames>,
     pub(super) conv_service: Arc<dyn ConversationServiceTrait>,
     pub(super) settings: SettingsDto,
     pub(super) prompt_settings: LLMPromptSettingsDto,
@@ -64,6 +67,7 @@ impl PreparedTurn {
             highlight_terms: &self.highlight_terms,
             focus: &self.focus,
             recorder: &self.recorder,
+            names: &self.names,
         }
     }
 
@@ -86,6 +90,11 @@ impl PreparedTurn {
         }
         Ok(())
     }
+}
+
+/// The conversation's names as the turn opens them.
+async fn open_names(container: &dyn ChatRuntime, conv_id: &str) -> Result<Arc<TurnNames>> {
+    container.kept_names().open(conv_id).await
 }
 
 pub(super) fn cancelled() -> AppError {
@@ -207,6 +216,7 @@ pub(super) async fn prepare_turn(
         force_kb_search: search_flags.force_kb_search || focus.is_requested(),
         ..search_flags
     };
+    let names = open_names(container, &conv_id).await?;
     // An Explorer conversation reads a folder beside the chat. The stored root
     // is the boundary for every folder tool, and the open file the request
     // names is checked against it here, once.
@@ -214,6 +224,7 @@ pub(super) async fn prepare_turn(
         .turn_source(
             &conv_id,
             tool_preferences.and_then(|preferences| preferences.explorer_focus.as_ref()),
+            Arc::clone(&names),
         )
         .await;
 
@@ -289,6 +300,7 @@ pub(super) async fn prepare_turn(
         recorder,
         focus,
         source,
+        names,
         conv_service,
         settings,
         prompt_settings,
@@ -377,10 +389,12 @@ pub(super) async fn resume_turn(
         flags.closed_book,
     )
     .await;
+    let names = open_names(container, &conv_id).await?;
     let source = container
         .turn_source(
             &conv_id,
             preferences.and_then(|preferences| preferences.explorer_focus.as_ref()),
+            Arc::clone(&names),
         )
         .await;
     let settings = container.settings().await.unwrap_or_default();
@@ -411,6 +425,7 @@ pub(super) async fn resume_turn(
         recorder,
         focus,
         source,
+        names,
         conv_service: container.conversation_service(),
         settings,
         prompt_settings,
@@ -509,6 +524,7 @@ impl PreparedTurn {
             recorder: TurnRecorder::silent(conv_id, turn_id),
             focus: FocusScope::default(),
             source: None,
+            names: Arc::new(TurnNames::unstored()),
             conv_service,
             prompt_settings: normalize_prompt_settings(settings.llm.prompts.clone()),
             settings,

@@ -16,6 +16,7 @@ pub mod content_extraction_port;
 pub mod conversation_context;
 pub mod conversation_history_port;
 pub mod conversation_memory;
+pub mod conversation_names;
 pub mod conversation_repository;
 pub mod corpus_listeners;
 pub mod credentials_port;

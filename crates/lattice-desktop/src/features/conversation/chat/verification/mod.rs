@@ -14,16 +14,18 @@ use lattice_core::application::contracts::settings::LLMVerificationSettingsDto;
 use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::application::ports::LLMPort;
 
+use super::reply_text::ReplyText;
+
 mod background;
 #[cfg(test)]
 mod gate_tests;
 mod judge;
 mod lexical;
+mod marked;
 mod quotes;
 
 pub use self::background::VerificationReadyDto;
 pub(super) use self::background::{pending_metadata, BackgroundVerification};
-pub(super) use self::lexical::cited_labels;
 
 use self::judge::{evidence_for, ClaimJudge, ClaimJudgment, Evidence, MIN_VERDICT_CONFIDENCE};
 use self::lexical::LexicalClaim;
@@ -94,7 +96,7 @@ pub(super) struct ClaimAssessment {
 impl ClaimAssessment {
     fn from_lexical(claim: &LexicalClaim) -> Self {
         Self {
-            sentence: claim.sentence.clone(),
+            sentence: claim.claim_text.clone(),
             citation_ids: claim.citation_ids.clone(),
             verdict: if claim.supported {
                 ClaimVerdict::Supported
@@ -151,14 +153,14 @@ impl GroundingReport {
             match claim.verdict {
                 ClaimVerdict::Supported => {
                     report.supported_claims += 1;
-                    report.supported_claim_notes.push(claim.sentence.clone());
+                    report.supported_claim_notes.push(claim.claim_text.clone());
                 }
                 ClaimVerdict::Contradicted => {
-                    report.contradicted_claims.push(claim.sentence.clone());
-                    report.unsupported_claims.push(claim.sentence.clone());
+                    report.contradicted_claims.push(claim.claim_text.clone());
+                    report.unsupported_claims.push(claim.claim_text.clone());
                 }
                 ClaimVerdict::Unsupported => {
-                    report.unsupported_claims.push(claim.sentence.clone());
+                    report.unsupported_claims.push(claim.claim_text.clone());
                 }
                 ClaimVerdict::Unverified => report.unverified_claims += 1,
             }
@@ -228,7 +230,7 @@ impl GroundingReport {
                     .filter(|id| *id >= 1)
                     .collect();
                 serde_json::json!({
-                    "sentence": claim.sentence,
+                    "sentence": claim.claim_text,
                     "citationIds": citation_ids,
                     "verdict": claim.verdict.as_str(),
                     "evidenceQuote": claim.evidence_quote.as_deref(),
@@ -359,8 +361,8 @@ impl GroundingVerifier {
         });
     }
 
-    pub async fn verify(&self, response: &str, sources: &[SourceDto]) -> GroundingReport {
-        let mut claims = lexical::lexical_pass(response, sources);
+    pub async fn verify(&self, reply: &ReplyText, sources: &[SourceDto]) -> GroundingReport {
+        let mut claims = lexical::lexical_pass(reply, sources);
         if self.cited_only {
             claims.retain(|claim| !claim.citation_ids.is_empty());
         }
@@ -373,7 +375,7 @@ impl GroundingVerifier {
 
         let mut assessments: Vec<ClaimAssessment> =
             claims.iter().map(ClaimAssessment::from_lexical).collect();
-        let misquoted = quotes::misquoted_claims(response, sources, &claims);
+        let misquoted = quotes::misquoted_claims(reply, sources, &claims);
         for assessment in assessments
             .iter_mut()
             .enumerate()
@@ -462,11 +464,11 @@ impl GroundingVerifier {
 /// Lexical-only grounding summary, the synchronous path for tests.
 #[cfg(test)]
 pub(super) fn verify_response_grounding_summary(
-    response: &str,
+    reply: &ReplyText,
     sources: &[SourceDto],
 ) -> GroundingReport {
     GroundingReport::from_assessments(
-        lexical::lexical_pass(response, sources)
+        lexical::lexical_pass(reply, sources)
             .iter()
             .map(ClaimAssessment::from_lexical)
             .collect(),
@@ -499,6 +501,26 @@ impl GroundingVerifier {
 #[cfg(test)]
 pub(super) mod test_support {
     use lattice_core::application::contracts::sources::SourceDto;
+    use lattice_core::application::services::model_contract::kept::TurnNames;
+
+    use crate::features::conversation::chat::reply_text::{markers, ReplyText};
+    use crate::features::conversation::chat::retrieval::source_names::name_sources;
+
+    /// `text` read against a scope in which `sources` are named in order, so
+    /// the first is `[s1]`, the second `[s2]`, and so on.
+    pub(in crate::features::conversation::chat) fn reply(
+        text: &str,
+        sources: &[SourceDto],
+    ) -> ReplyText {
+        let names = TurnNames::unstored();
+        let mut named = sources.to_vec();
+        for (index, source) in named.iter_mut().enumerate() {
+            source.chunk_id = format!("passage-{index}");
+            source.citation_id = None;
+        }
+        name_sources(&names, &mut named);
+        ReplyText::read(&names, markers(false), text)
+    }
 
     pub(in crate::features::conversation::chat::verification) fn source(
         content: &str,

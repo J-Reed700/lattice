@@ -57,8 +57,9 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             name: TOOL_READ_FILE.to_string(),
             description: "Read a text file from the user's folder, with line numbers. Returns as \
-                 many lines as this turn has room for and says where to start the next read. \
-                 Use these line numbers when you point at lines in your answer."
+                 many lines as this turn has room for; a read that stopped names the point to \
+                 read on from for read_more. Use these line numbers when you point at lines \
+                 in your answer."
                 .to_string(),
             parameters: serde_json::json!({
                 "type": "object",
@@ -136,7 +137,12 @@ pub fn definitions() -> Vec<ToolDefinition> {
 /// only when the folder's index has something in it.
 pub fn add_to_turn(tools: &mut Vec<ToolDefinition>, folder_index: bool) {
     let index_tool = folder_index.then(folder_index_tool::definition);
-    for definition in definitions().into_iter().chain(index_tool) {
+    let read_more = crate::features::function_calling::handles::read_more_definition().ok();
+    for definition in definitions()
+        .into_iter()
+        .chain(index_tool)
+        .chain(read_more)
+    {
         if !tools.iter().any(|tool| tool.name == definition.name) {
             tools.push(definition);
         }
@@ -160,7 +166,7 @@ pub async fn execute(
 ) -> Result<FunctionResult> {
     let scope = scope.clone();
     let outcome = tokio::task::spawn_blocking(move || {
-        run(
+        reply(
             &scope,
             &call.name,
             &call.arguments,
@@ -169,7 +175,14 @@ pub async fn execute(
     })
     .await;
     Ok(match outcome {
-        Ok(Ok(text)) => FunctionResult::success(Value::String(text)),
+        Ok(Ok(Reply {
+            text,
+            read_on: None,
+        })) => FunctionResult::success(Value::String(text)),
+        Ok(Ok(Reply {
+            text,
+            read_on: Some(read_on),
+        })) => FunctionResult::success(serde_json::json!({"text": text, "read_on": read_on})),
         Ok(Err(error)) => FunctionResult::error("explorer_error", describe(&error)),
         Err(error) => {
             FunctionResult::error("explorer_error", format!("The folder tool failed: {error}"))
@@ -190,29 +203,60 @@ pub(super) fn describe(error: &AppError) -> String {
 /// The text one call returns. Public for tests and for callers that already
 /// run on a blocking thread.
 pub fn run(scope: &Scope, tool: &str, arguments: &Value, max_chars: usize) -> Result<String> {
+    reply(scope, tool, arguments, max_chars).map(|reply| reply.text)
+}
+
+/// A call's text, and the call that carries on from where it stopped.
+struct Reply {
+    text: String,
+    read_on: Option<Value>,
+}
+
+impl From<String> for Reply {
+    fn from(text: String) -> Self {
+        Self {
+            text,
+            read_on: None,
+        }
+    }
+}
+
+fn reply(scope: &Scope, tool: &str, arguments: &Value, max_chars: usize) -> Result<Reply> {
     match tool {
-        TOOL_LIST_DIRECTORY => list_directory(scope, &folder_path(arguments, "path"), max_chars),
+        TOOL_LIST_DIRECTORY => {
+            list_directory(scope, &folder_path(arguments, "path"), max_chars).map(Reply::from)
+        }
         TOOL_READ_FILE => {
             let path = arg_str(arguments, "path")
                 .ok_or_else(|| AppError::InvalidInput("read_file needs a path.".to_string()))?;
-            read_window(
+            let end_line = arg_u32(arguments, "end_line");
+            let (text, next_line) = read_window(
                 scope,
                 path,
                 arg_u32(arguments, "start_line"),
-                arg_u32(arguments, "end_line"),
+                end_line,
                 max_chars,
-            )
+            )?;
+            let read_on = next_line.map(|line| {
+                let mut next = serde_json::json!({"path": path, "start_line": line});
+                if let (Some(end), Some(object)) = (end_line, next.as_object_mut()) {
+                    object.insert("end_line".into(), serde_json::json!(end));
+                }
+                serde_json::json!({"tool": TOOL_READ_FILE, "arguments": next})
+            });
+            Ok(Reply { text, read_on })
         }
         TOOL_SEARCH_FILES => {
             let query = arg_str(arguments, "query")
                 .ok_or_else(|| AppError::InvalidInput("search_files needs a query.".to_string()))?;
             let path = folder_path(arguments, "path");
             search_files(scope, query, arg_bool(arguments, "regex"), &path, max_chars)
+                .map(Reply::from)
         }
         TOOL_FIND_FILES => {
             let pattern = arg_str(arguments, "pattern")
                 .ok_or_else(|| AppError::InvalidInput("find_files needs a pattern.".to_string()))?;
-            find_files(scope, pattern, max_chars)
+            find_files(scope, pattern, max_chars).map(Reply::from)
         }
         other => Err(AppError::InvalidInput(format!(
             "Unknown folder tool: {other}"
@@ -302,7 +346,7 @@ pub(super) fn read_window(
     start_line: Option<u32>,
     end_line: Option<u32>,
     max_chars: usize,
-) -> Result<String> {
+) -> Result<(String, Option<u32>)> {
     let file = fs::read_file(scope, path)?;
     if file.binary {
         return Err(AppError::InvalidInput(format!(
@@ -365,7 +409,7 @@ pub(super) fn read_window(
         None => fs::scan_lines(scope, &file.path, &mut select)?,
     };
     if total == 0 {
-        return Ok(format!("{} is empty.", file.path));
+        return Ok((format!("{} is empty.", file.path), None));
     }
     if start > total {
         return Err(AppError::InvalidInput(format!(
@@ -403,17 +447,13 @@ pub(super) fn read_window(
     }
 
     let mut out = format!("{} · lines {start}–{last} of {total}\n{body}", file.path);
+    let more = end_line.is_none_or(|end| last < end) && last < total;
     if last < total {
-        out.push_str(&format!(
-            "[Lines {}–{total} not shown. To read on, call read_file with path \"{}\" and start_line {}.]",
-            last + 1,
-            file.path,
-            last + 1
-        ));
+        out.push_str(&format!("[Lines {}–{total} not shown.]", last + 1));
     } else {
         out.push_str("[End of file.]");
     }
-    Ok(out)
+    Ok((out, more.then_some(last + 1)))
 }
 
 fn search_files(

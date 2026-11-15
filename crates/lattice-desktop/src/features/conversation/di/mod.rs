@@ -32,6 +32,8 @@ pub struct ConversationDi {
         Arc<dyn lattice_core::application::ports::conversation_memory::ConversationMemoryPort>,
     /// Conversations a continue-in-new-chat handoff is summarizing.
     pub handoffs_in_flight: Arc<HandoffsInFlight>,
+    /// Every conversation's one live scope of names.
+    pub kept_names: Arc<lattice_core::application::services::model_contract::kept::KeptNames>,
     /// What the corpus planner's servers have shown about their real
     /// windows, shared by every chat turn so a refusal on one turn shrinks
     /// the next turn's prompt.
@@ -42,6 +44,11 @@ pub fn build(database: Database) -> ConversationDi {
     let document_scope = Arc::new(SqliteDocumentScope::new(database.clone()));
     let conversation_context = Arc::new(SqliteConversationContext::new(database.clone()));
     let repository = Arc::new(ConversationRepository::new(database));
+    let kept_names = Arc::new(
+        lattice_core::application::services::model_contract::kept::KeptNames::new(
+            repository.clone(),
+        ),
+    );
     let conversation_memory = repository.clone()
         as Arc<dyn lattice_core::application::ports::conversation_memory::ConversationMemoryPort>;
     let conversation_service = Arc::new(ConversationService::new(repository));
@@ -52,6 +59,7 @@ pub fn build(database: Database) -> ConversationDi {
         compaction_slots: Arc::new(CompactionSlots::default()),
         conversation_memory,
         handoffs_in_flight: Arc::new(HandoffsInFlight::default()),
+        kept_names,
         planner_health: Arc::default(),
         conversation_history: conversation_service.clone(),
         create_conversation_use_case: Arc::new(CreateConversationUseCase::new(
@@ -98,6 +106,12 @@ impl Container {
 
     pub(crate) fn handoffs_in_flight(&self) -> Arc<HandoffsInFlight> {
         Arc::clone(self.ai.handoffs_in_flight())
+    }
+
+    pub(crate) fn kept_names(
+        &self,
+    ) -> Arc<lattice_core::application::services::model_contract::kept::KeptNames> {
+        Arc::clone(self.ai.kept_names())
     }
 
     /// The conversation-memory ledger port.

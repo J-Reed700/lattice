@@ -16,6 +16,7 @@ mod memory_recall;
 mod memory_semantic;
 mod memory_vectors;
 mod messages;
+mod names;
 mod port;
 mod pruning;
 pub(crate) mod space_rows;

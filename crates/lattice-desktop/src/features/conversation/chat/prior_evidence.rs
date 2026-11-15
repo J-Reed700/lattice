@@ -1,14 +1,16 @@
 //! Restore original source passages from completed turns, not the assistant's
-//! prose. Citation numbers belong to an answer, so recalled sources receive
-//! fresh numbers alongside this turn's new evidence.
+//! prose. A recalled source keeps the name and number it had in the answer
+//! that cited it.
 
 use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::features::conversation::chat::ports::ChatStorage;
-use crate::features::conversation::chat::verification::cited_labels;
+use crate::features::conversation::chat::reply_text::ReplyText;
+use crate::features::conversation::chat::retrieval::source_names::{label, name_sources};
 use lattice_core::application::contracts::sources::{SourceDto, COURSE_SOURCE_PREFIX};
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::kept::TurnNames;
 use lattice_core::domain::conversation::{ConversationMessage, MessageRole};
 use lattice_core::shared::error::Result;
 use lattice_core::shared::text::select_informative_terms;
@@ -43,6 +45,7 @@ pub(super) async fn recall(
     existing: &[SourceDto],
     token_budget: usize,
     llm: &Arc<dyn LLMPort>,
+    names: &TurnNames,
 ) -> Result<Recalled> {
     let Some(aggregate) = container
         .conversation_history()
@@ -62,7 +65,13 @@ pub(super) async fn recall(
             terms.extend(query_terms(&previous.content));
         }
     }
-    let candidates = rank_sources(aggregate.messages(), &terms, allowed_documents, existing);
+    let candidates = rank_sources(
+        aggregate.messages(),
+        &terms,
+        allowed_documents,
+        existing,
+        names,
+    );
     let matched = candidates.len();
     if token_budget == 0 {
         return Ok(Recalled {
@@ -182,6 +191,7 @@ fn rank_sources(
     terms: &[String],
     allowed_documents: &HashSet<String>,
     existing: &[SourceDto],
+    names: &TurnNames,
 ) -> Vec<SourceDto> {
     let seen: HashSet<String> = existing.iter().map(source_key).collect();
     let mut positions = std::collections::HashMap::<String, usize>::new();
@@ -198,17 +208,24 @@ fn rank_sources(
         else {
             continue;
         };
-        let Some(sources) = metadata
+        let Some(values) = metadata
             .get("sources")
             .and_then(serde_json::Value::as_array)
         else {
             continue;
         };
-        let cited = cited_labels(&message.content);
-        for value in sources {
-            let Ok(mut source) = serde_json::from_value::<SourceDto>(value.clone()) else {
-                continue;
-            };
+        let mut sources: Vec<SourceDto> = values
+            .iter()
+            .filter_map(|value| serde_json::from_value(value.clone()).ok())
+            .collect();
+        let reply = ReplyText::stored(&message.content, &metadata)
+            .unwrap_or_else(|| ReplyText::legacy(names, &message.content, &sources));
+        let cited = reply.cited();
+        if cited.is_empty() {
+            continue;
+        }
+        name_sources(names, &mut sources);
+        for mut source in sources {
             if !source.citation_id.is_some_and(|id| cited.contains(&id)) {
                 continue;
             }
@@ -232,9 +249,9 @@ fn rank_sources(
             if score == 0 || seen.contains(&key) {
                 continue;
             }
-            source.citation_id = None;
             // Old web-result-N ids are reused by every search. Give recalled
-            // passages a distinct identity before the shared citation map runs.
+            // passages a distinct chunk id before the chunk-keyed maps run; a
+            // source's name is read through `Source::of`, which undoes this.
             if !source.chunk_id.starts_with("recalled:") {
                 source.chunk_id = format!("recalled:{}:{}", source.document_id, source.chunk_id);
             }
@@ -281,10 +298,9 @@ pub(super) fn source_key(source: &SourceDto) -> String {
 
 fn render_source(source: &SourceDto) -> String {
     format!(
-        "[{}] {}\nDocument ID: {}\nLocation: {}\nPreviously read source passage: {}",
-        source.citation_id.unwrap_or(9999),
+        "{} {}\nLocation: {}\nPreviously read source passage: {}",
+        label(source),
         source.file_name,
-        source.document_id,
         source.path.as_deref().unwrap_or(&source.file_path),
         source.content
     )
@@ -296,9 +312,9 @@ pub(super) fn render(sources: &[SourceDto], left_out: usize) -> Option<String> {
     }
     let mut rendered = format!(
         "Evidence retained from earlier in this conversation. These are original source passages, \
-         citable with the numbers below. They were found for earlier questions: use them only where \
+         citable with the labels below. They were found for earlier questions: use them only where \
          they bear on the latest one. Combine them with new evidence; a new search does not \
-         by itself invalidate prior findings. Apply later corrections and reconcile conflicting evidence. Do not reuse citation numbers from earlier assistant messages.\n\n{}",
+         by itself invalidate prior findings. Apply later corrections and reconcile conflicting evidence.\n\n{}",
         sources.iter().map(render_source).collect::<Vec<_>>().join("\n\n")
     );
     if left_out > 0 {
@@ -361,6 +377,7 @@ mod tests {
             &["blueberry".to_string()],
             &HashSet::new(),
             &[],
+            &TurnNames::unstored(),
         );
         assert_eq!(recalled.len(), 1);
         assert_eq!(recalled[0].document_id, "course:version-1");
@@ -374,6 +391,7 @@ mod tests {
             &["blueberry".to_string()],
             &HashSet::new(),
             &[],
+            &TurnNames::unstored(),
         );
         assert!(
             scoped_out.is_empty(),
@@ -382,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    fn recalls_old_original_evidence_past_ten_newer_searches_with_new_citation_ids() {
+    fn recalls_old_original_evidence_past_ten_newer_searches_under_the_number_it_had() {
         let old = source(
             "web:https://example.com/grow-lights",
             "Blueberry grow light requirements: original evidence.",
@@ -395,22 +413,29 @@ mod tests {
             )));
         }
         let current = source("web:https://example.com/current", "new source");
+        let names = TurnNames::unstored();
         let recalled = rank_sources(
             &messages,
             &query_terms("blueberry grow lights"),
             &HashSet::new(),
             std::slice::from_ref(&current),
+            &names,
         );
         assert_eq!(recalled.len(), 1);
         assert_eq!(recalled[0].content, old.content);
-        assert_eq!(recalled[0].citation_id, None);
         assert_ne!(recalled[0].chunk_id, current.chunk_id);
+        let mut named_before = vec![old.clone()];
+        name_sources(&names, &mut named_before);
+        assert!(recalled[0].citation_id.is_some());
+        assert_eq!(recalled[0].citation_id, named_before[0].citation_id);
+        let kept_number = recalled[0].citation_id;
         let mut combined = vec![current];
         combined.extend(recalled);
-        super::super::retrieval::assign_citation_ids(&mut combined);
-        assert_eq!(combined[1].citation_id, Some(2));
+        name_sources(&names, &mut combined);
+        assert_eq!(combined[1].citation_id, kept_number);
+        assert_ne!(combined[0].citation_id, kept_number);
         let prompt = render(&combined[1..], 0).unwrap();
-        assert!(prompt.contains("[2]"));
+        assert!(prompt.contains(&label(&combined[1])));
         assert!(prompt.contains("original evidence"));
         assert!(!prompt.contains("An earlier answer"));
     }
@@ -429,15 +454,17 @@ mod tests {
         failed.status = "failed".into();
         let messages = vec![message(web.clone()), message(doc), failed];
         let terms = query_terms("blueberry light");
+        let names = TurnNames::unstored();
         assert!(rank_sources(
             &messages,
             &terms,
             &HashSet::new(),
-            std::slice::from_ref(&web)
+            std::slice::from_ref(&web),
+            &names,
         )
         .is_empty());
         let allowed = ["private-doc".to_string()].into_iter().collect();
-        let recalled = rank_sources(&messages, &terms, &allowed, &[web]);
+        let recalled = rank_sources(&messages, &terms, &allowed, &[web], &names);
         assert_eq!(recalled.len(), 1);
         assert_eq!(recalled[0].document_id, "private-doc");
     }
@@ -456,6 +483,7 @@ mod tests {
             &query_terms("blueberry evidence"),
             &HashSet::new(),
             &[],
+            &TurnNames::unstored(),
         );
         assert_eq!(recalled.len(), 1);
         assert_eq!(recalled[0].content, "Blueberry evidence cited");
@@ -472,9 +500,49 @@ mod tests {
         clipped.chunk_id = format!("recalled:{}:{}", original.document_id, original.chunk_id);
         let messages = vec![message(original.clone()), message(clipped)];
         let allowed = ["doc".to_string()].into_iter().collect();
-        let recalled = rank_sources(&messages, &query_terms("blueberry light"), &allowed, &[]);
+        let recalled = rank_sources(
+            &messages,
+            &query_terms("blueberry light"),
+            &allowed,
+            &[],
+            &TurnNames::unstored(),
+        );
         assert_eq!(recalled.len(), 1);
         assert_eq!(recalled[0].content, original.content);
+    }
+
+    /// An answer saved with its references names its sources by the numbers
+    /// they were shown under: the recalled source keeps that number.
+    #[test]
+    fn a_source_cited_in_a_saved_answer_is_recalled_under_its_saved_number() {
+        let names = TurnNames::unstored();
+        let mut shown = vec![SourceDto {
+            chunk_id: "c1".into(),
+            ..source("doc-a", "Blueberry evidence cited")
+        }];
+        name_sources(&names, &mut shown);
+        let number = shown[0].citation_id.unwrap();
+        let mut answer = message(shown[0].clone());
+        answer.content = format!("An earlier answer [s{number}]");
+        answer.metadata = Some(
+            serde_json::json!({
+                "sources": [shown[0]],
+                "references": [{
+                    "start": 18, "end": answer.content.len(), "prefix": "s", "number": number,
+                    "lines": null, "reference": ["doc-a", "c1"]
+                }]
+            })
+            .to_string(),
+        );
+        let recalled = rank_sources(
+            &[answer],
+            &query_terms("blueberry evidence"),
+            &["doc-a".to_string()].into_iter().collect(),
+            &[],
+            &names,
+        );
+        assert_eq!(recalled.len(), 1);
+        assert_eq!(recalled[0].citation_id, Some(number));
     }
 
     #[test]

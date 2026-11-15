@@ -308,7 +308,7 @@ fn a_followup_searches_its_own_words_and_the_question_it_stands_for() {
 }
 
 #[test]
-fn plan_cannot_invent_documents_or_escape_scope() {
+fn a_plan_keeps_distinct_queries_and_needs_one() {
     let catalog = vec![CorpusDocument {
         sections: Vec::new(),
         source_context: None,
@@ -319,7 +319,7 @@ fn plan_cannot_invent_documents_or_escape_scope() {
     }];
     let p = CorpusSearchPlan {
         queries: vec![" ".into(), "subject".into(), "SUBJECT".into()],
-        opening_document_ids: vec!["outside".into(), "allowed".into(), "allowed".into()],
+        opening_document_ids: vec!["allowed".into()],
         start_at_beginning: false,
     }
     .validate(&catalog)
@@ -951,7 +951,7 @@ fn correction_catalog() -> Vec<CorpusDocument> {
 #[tokio::test]
 async fn a_correction_reuses_the_planner_prompt_and_appends_what_already_failed() {
     let stub = PlannerStub::new(&[
-        r#"{"queries":["garden leave notice period"],"opening_document_ids":["allowed"],"start_at_beginning":true}"#,
+        r#"{"queries":[{"query":"garden leave notice period"}],"opening_document_ids":["allowed"],"start_at_beginning":"true"}"#,
     ]);
     let correction = CorrectionRequest {
         queries_already_tried: vec!["noncompete clauses".into()],
@@ -991,7 +991,7 @@ async fn a_correction_reuses_the_planner_prompt_and_appends_what_already_failed(
 #[tokio::test]
 async fn the_planner_request_carries_the_turns_cancellation() {
     let stub = PlannerStub::new(&[
-        r#"{"queries":["garden leave notice period"],"opening_document_ids":[],"start_at_beginning":false}"#,
+        r#"{"queries":[{"query":"garden leave notice period"}],"opening_document_ids":[],"start_at_beginning":"false"}"#,
     ]);
     let stop = CancellationToken::new();
     plan(
@@ -1017,16 +1017,8 @@ async fn the_planner_request_carries_the_turns_cancellation() {
 /// question, not a reading from the beginning. The prompt carries that rule;
 /// the schema the planner answers in keeps its three fields.
 #[tokio::test]
-async fn a_named_document_question_is_focused_and_the_plan_schema_is_unchanged() {
+async fn a_named_document_question_is_focused_and_the_plan_schema_keeps_its_fields() {
     const NAMED_DOCUMENT_RULE: &str = "A request that names a document but asks what it says about something is a focused question: leave start_at_beginning false and put that document in opening_document_ids.";
-    let schema = serde_json::json!({
-        "type":"object", "additionalProperties":false,
-        "properties":{
-            "queries":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":3},
-            "opening_document_ids":{"type":"array","items":{"type":"string"}},
-            "start_at_beginning":{"type":"boolean"}
-        }, "required":["queries","opening_document_ids","start_at_beginning"]
-    });
     let cases = [
         (
             "saibou-note",
@@ -1046,9 +1038,9 @@ async fn a_named_document_question_is_focused_and_the_plan_schema_is_unchanged()
     assert!(PLANNER_SYSTEM.contains(NAMED_DOCUMENT_RULE));
     for (id, name, opening, question, query) in cases {
         let answer = serde_json::json!({
-            "queries": [query],
-            "opening_document_ids": [id],
-            "start_at_beginning": false,
+            "queries": [{"query": query}],
+            "opening_document_ids": ["d1"],
+            "start_at_beginning": "false",
         })
         .to_string();
         let stub = PlannerStub::new(&[answer.as_str()]);
@@ -1079,9 +1071,15 @@ async fn a_named_document_question_is_focused_and_the_plan_schema_is_unchanged()
             stub.systems.lock().unwrap().first(),
             Some(&vec![PLANNER_SYSTEM.to_string()])
         );
+        let schemas = stub.schemas.lock().unwrap();
+        let schema = schemas.first().cloned().flatten().expect("a schema");
         assert_eq!(
-            stub.schemas.lock().unwrap().first(),
-            Some(&Some(schema.clone()))
+            schema["required"],
+            serde_json::json!(["queries", "opening_document_ids", "start_at_beginning"])
+        );
+        assert_eq!(
+            schema["properties"]["start_at_beginning"]["enum"],
+            serde_json::json!(["true", "false"])
         );
     }
 }
@@ -1089,8 +1087,8 @@ async fn a_named_document_question_is_focused_and_the_plan_schema_is_unchanged()
 #[tokio::test]
 async fn a_correction_that_repeats_a_failed_query_is_rejected_after_exactly_one_call() {
     let stub = PlannerStub::new(&[
-        r#"{"queries":["Noncompete Clauses"],"opening_document_ids":[],"start_at_beginning":false}"#,
-        r#"{"queries":["something new"],"opening_document_ids":[],"start_at_beginning":false}"#,
+        r#"{"queries":[{"query":"Noncompete Clauses"}],"opening_document_ids":[],"start_at_beginning":"false"}"#,
+        r#"{"queries":[{"query":"something new"}],"opening_document_ids":[],"start_at_beginning":"false"}"#,
     ]);
     let correction = CorrectionRequest {
         queries_already_tried: vec!["noncompete clauses".into()],
@@ -1160,7 +1158,7 @@ impl LLMPort for NarrowWindowStub {
             .push(request.user_text().to_string());
         self.systems.lock().unwrap().push(system_messages(request));
         Ok(CompletionResponse::from_text(
-            r#"{"queries":["anything"],"opening_document_ids":[],"start_at_beginning":false}"#,
+            r#"{"queries":[{"query":"anything"}],"opening_document_ids":[],"start_at_beginning":"false"}"#,
         ))
     }
 

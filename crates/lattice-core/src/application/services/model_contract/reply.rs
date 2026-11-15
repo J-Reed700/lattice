@@ -96,8 +96,7 @@ impl Markers {
 
 /// Splits a reply as it streams. A marker may arrive in parts: text that could
 /// still become one is held back until it resolves or cannot.
-pub struct Splitter<'s> {
-    scope: &'s Scope,
+pub struct Splitter {
     markers: Markers,
     /// Input not yet decided: it starts at the first character whose reading needs what follows.
     held: String,
@@ -143,10 +142,9 @@ enum Ranged {
     Bad,
 }
 
-impl<'s> Splitter<'s> {
-    pub fn new(scope: &'s Scope, markers: Markers) -> Self {
+impl Splitter {
+    pub fn new(markers: Markers) -> Self {
         Self {
-            scope,
             markers,
             held: String::new(),
             fence: None,
@@ -156,25 +154,25 @@ impl<'s> Splitter<'s> {
         }
     }
 
-    /// The pieces `chunk` completes.
-    pub fn push(&mut self, chunk: &str) -> Vec<Piece> {
+    /// The pieces `chunk` completes, with markers resolved in `scope` as it stands now.
+    pub fn push(&mut self, scope: &Scope, chunk: &str) -> Vec<Piece> {
         self.held.push_str(chunk);
-        self.advance(false)
+        self.advance(scope, false)
     }
 
     /// The pieces still held when the reply ends.
-    pub fn finish(mut self) -> Vec<Piece> {
-        self.advance(true)
+    pub fn finish(mut self, scope: &Scope) -> Vec<Piece> {
+        self.advance(scope, true)
     }
 
     /// Decides as much of the held input as it can; at the end of the reply, all of it.
-    fn advance(&mut self, last: bool) -> Vec<Piece> {
+    fn advance(&mut self, scope: &Scope, last: bool) -> Vec<Piece> {
         let buffer = std::mem::take(&mut self.held);
         let mut pieces = Vec::new();
         let mut text = String::new();
         let mut at = 0;
         while let Some(rest) = buffer.get(at..).filter(|rest| !rest.is_empty()) {
-            match self.next(rest, last) {
+            match self.next(scope, rest, last) {
                 Step::Wait => break,
                 Step::Text(len) => {
                     let Some(taken) = rest.get(..len) else { break };
@@ -228,7 +226,7 @@ impl<'s> Splitter<'s> {
         }
     }
 
-    fn next(&mut self, rest: &str, last: bool) -> Step {
+    fn next(&mut self, scope: &Scope, rest: &str, last: bool) -> Step {
         let Some(ch) = rest.chars().next() else {
             return Step::Wait;
         };
@@ -268,7 +266,7 @@ impl<'s> Splitter<'s> {
                 }
                 Step::Text(len)
             }
-            '[' if self.span.is_none() => match self.candidate(rest, last) {
+            '[' if self.span.is_none() => match self.candidate(scope, rest, last) {
                 Candidate::NeedMore => Step::Wait,
                 Candidate::Text => one,
                 Candidate::Marker(len, reference) => Step::Marker(len, reference),
@@ -279,7 +277,7 @@ impl<'s> Splitter<'s> {
 
     /// Reads a marker at the `[` that starts `rest`. Each character either continues
     /// the one form a marker can have or ends the candidate, so no more than that form is ever held.
-    fn candidate(&self, rest: &str, last: bool) -> Candidate {
+    fn candidate(&self, scope: &Scope, rest: &str, last: bool) -> Candidate {
         let bytes = rest.as_bytes();
         let byte = |index: usize| bytes.get(index).copied();
         let unfinished = || {
@@ -328,7 +326,7 @@ impl<'s> Splitter<'s> {
             Some(_) => return Candidate::Text,
         };
         let handle = rest.get(1..handle_end).unwrap_or_default();
-        let Some((_, number, reference)) = self.scope.resolve_any(handle) else {
+        let Some((_, number, reference)) = scope.resolve_any(handle) else {
             return Candidate::Text;
         };
         let len = close.saturating_add(1);
@@ -419,9 +417,9 @@ fn read_range(bytes: &[u8], from: usize) -> Ranged {
 
 /// A whole reply split at once.
 pub fn split(scope: &Scope, markers: Markers, reply: &str) -> Vec<Piece> {
-    let mut splitter = Splitter::new(scope, markers);
-    let mut pieces = splitter.push(reply);
-    pieces.extend(splitter.finish());
+    let mut splitter = Splitter::new(markers);
+    let mut pieces = splitter.push(scope, reply);
+    pieces.extend(splitter.finish(scope));
     pieces
 }
 

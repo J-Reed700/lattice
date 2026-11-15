@@ -34,7 +34,7 @@ pub(crate) const FOLDER_TEMPLATE: &str = "Answer the user's question about the f
      what its code does, how it fits together, and the ideas behind it. Explain from the folder and \
      from what you know; teaching how the code works, or a concept it uses, needs no source and no \
      citation. Point at the folder's code with line references, as the folder's rules below describe. \
-     Bracket numbers like [1] belong only to the numbered library or web passages in this message: put \
+     Bracketed labels like [s1] belong only to the labelled library or web passages in this message: put \
      one after a claim such a passage supports, and never on the folder, on these instructions or on \
      your own explanation.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
 
@@ -270,7 +270,7 @@ fn rules(tools_offered: bool, folder_search: bool) -> String {
         "How to answer about the folder:\n\
          - {reading}\n\
          - Point at lines with a line reference written as inline code: the whole path from the folder root (never the file name alone), a colon, and 1-based line numbers, like `src/main.rs:10-24`, or `src/main.rs:12` for one line. The user sees each one as a link that opens the file at those lines. Only reference lines you have actually seen.\n\
-         - The folder is what the user is looking at. Their library and the web are outside knowledge: cite those with bracket numbers like [1] only when numbered passages from them appear in this message, and never use bracket numbers for the folder."
+         - The folder is what the user is looking at. Their library and the web are outside knowledge: cite those with bracketed labels like [s1] only when labelled passages from them appear in this message, and never use bracketed labels for the folder."
     )
 }
 

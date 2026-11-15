@@ -2,6 +2,9 @@ import { Editor } from '@tiptap/core';
 import { Markdown } from 'tiptap-markdown';
 import { describe, expect, it } from 'vitest';
 
+import { reply } from '@/tests/replyFixtures';
+import { drawReply, findReplyMarks } from '@/utils/replyPieces';
+
 import { createExtensions } from '../extensions';
 import { CitationMarks, citationMarksKey } from '../extensions/citationMarks';
 import { ClaimMarks, claimMarksKey } from '../extensions/claimMarks';
@@ -12,32 +15,28 @@ import type { DecorationSet } from '@tiptap/pm/view';
 
 // A diagram's labels look like citations (`A[1]`), file references and
 // sentences; none of them may be drawn over.
-const ANSWER = [
-  'Requests go through the gateway [1]. See src/main.rs:12 for the entry point.',
-  '',
-  '```mermaid',
-  'flowchart LR',
-  '  A[1] --> B[2]',
-  '  B --> C["see src/main.rs:12"]',
-  '  C --> D[Requests go through the gateway.]',
-  '```',
-  '',
-  'Then the worker answers [2].',
-].join('\n');
+const ANSWER = drawReply(reply(
+  'Requests go through the gateway ', 1, '. See src/main.rs:12 for the entry point.\n\n',
+  '```mermaid\nflowchart LR\n  A', 7, ' --> B[2]\n',
+  '  B --> C["see src/main.rs:12"]\n',
+  '  C --> D[Requests go through the gateway.]\n',
+  '```\n\n',
+  'Then the worker answers ', 2, '.',
+));
 
 describe('marks skip code blocks', () => {
   it('draws no citation, claim or file-reference mark inside a fence', () => {
     const editor = new Editor({
       extensions: [
         ...createExtensions(),
-        CitationMarks.configure({ isCitation: () => true, isVisible: () => true }),
+        CitationMarks.configure({ isCitation: () => true, findMarks: (text) => findReplyMarks(text, ANSWER.numbers), isVisible: () => true }),
         ClaimMarks.configure({
           getClaims: () => [{ sentence: 'Requests go through the gateway.', verdict: 'supported' }],
         }),
         CodeRefMarks.configure({ isEnabled: () => true }),
         Markdown.configure({ html: false }),
       ],
-      content: ANSWER,
+      content: ANSWER.markdown,
       editable: false,
     });
 

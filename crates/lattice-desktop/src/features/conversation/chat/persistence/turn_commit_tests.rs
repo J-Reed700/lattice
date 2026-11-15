@@ -161,12 +161,16 @@ async fn the_pictures_an_answer_shows_are_attached_and_recorded() {
             highlight_terms: &[],
             focus: &focus,
             recorder: &recorder,
+            names: &std::sync::Arc::new(lattice_core::application::services::model_contract::kept::TurnNames::unstored()),
         },
         &user_id,
         2,
         0,
         FinishedAnswer {
-            response: "It launched in 1969.\n\n![Saturn V lifting off](img-1)".into(),
+            reply: ReplyText {
+                text: "It launched in 1969.\n\n![Saturn V lifting off](img-1)".into(),
+                ..Default::default()
+            },
             sources: Vec::new(),
             verification: None,
             memory_usage: None,

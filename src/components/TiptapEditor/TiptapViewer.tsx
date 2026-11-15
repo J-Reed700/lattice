@@ -5,6 +5,7 @@ import { Markdown } from 'tiptap-markdown';
 
 import { MediaLightbox } from '@/components/MediaLightbox';
 import { hasUnclosedFence } from '@/utils/assistantMarkdown';
+import { findReplyMarks, writeMarksAsNumbers } from '@/utils/replyPieces';
 
 import { createExtensions } from './extensions';
 import { chatImagesKey, figureCredit, type ChatFigure, type ChatImageHost } from './extensions/chatImage';
@@ -21,8 +22,10 @@ export interface TiptapViewerProps {
   content: string;
   className?: string;
   onWikilinkClick?: (title: string) => void;
-  /** Source numbers that `[n]` may refer to. When given, they render as citation chips. */
+  /** Source numbers the answer has. A source reference to one of them renders as a citation chip. */
   citationNumbers?: readonly number[];
+  /** The source number of each reference mark in `content` (see `drawReply`), by the index the mark carries. */
+  marks?: readonly number[];
   /** Checked sentences of this answer. When given, each is drawn with its verdict. */
   claims?: readonly ClaimMark[];
   /** Presentation-only clean reading mode. The markdown and evidence remain intact. */
@@ -42,6 +45,7 @@ export interface TiptapViewerProps {
 }
 
 const NO_CLAIMS: readonly ClaimMark[] = [];
+const NO_MARKS: readonly number[] = [];
 const NO_FIGURES: readonly ChatFigure[] = [];
 
 /**
@@ -54,6 +58,7 @@ export function TiptapViewer({
   className = '',
   onWikilinkClick,
   citationNumbers,
+  marks,
   claims,
   showEvidence = true,
   codeRefs = false,
@@ -63,6 +68,7 @@ export function TiptapViewer({
 }: TiptapViewerProps) {
   // Read through a ref so sources that arrive after the text still light up.
   const citationNumbersRef = useRef<readonly number[]>(citationNumbers ?? []);
+  const marksRef = useRef<readonly number[]>(marks ?? NO_MARKS);
   const evidenceVisibleRef = useRef(showEvidence);
   const citationSignature = `${showEvidence ? 'visible' : 'hidden'}:${(citationNumbers ?? []).join(',')}`;
   const claimsRef = useRef<readonly ClaimMark[]>(showEvidence ? claims ?? NO_CLAIMS : NO_CLAIMS);
@@ -87,6 +93,8 @@ export function TiptapViewer({
       ...ViewerMath,
       CitationMarks.configure({
         isCitation: (number) => citationNumbersRef.current.includes(number),
+        findMarks: (text) => findReplyMarks(text, marksRef.current),
+        copyText: (text) => writeMarksAsNumbers(text, marksRef.current),
         isVisible: () => evidenceVisibleRef.current,
       }),
       ClaimMarks.configure({ getClaims: () => claimsRef.current }),
@@ -138,13 +146,14 @@ export function TiptapViewer({
 
   useEffect(() => {
     citationNumbersRef.current = citationNumbers ?? [];
+    marksRef.current = marks ?? NO_MARKS;
     evidenceVisibleRef.current = showEvidence;
     if (!editor || editor.isDestroyed) return;
     // An empty transaction: nothing changes but the decorations are redrawn.
     // Pictures' caption chips follow the same switch.
     const tr = editor.state.tr.setMeta(citationMarksKey, citationSignature);
     editor.view.dispatch(chatImages ? tr.setMeta(chatImagesKey, true) : tr);
-  }, [editor, chatImages, citationNumbers, citationSignature, showEvidence]);
+  }, [editor, chatImages, citationNumbers, citationSignature, marks, showEvidence]);
 
   useEffect(() => {
     const previous = claimsRef.current;

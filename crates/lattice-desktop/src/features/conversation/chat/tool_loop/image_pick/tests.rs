@@ -133,6 +133,9 @@ async fn find_herons(llm: Arc<dyn LLMPort>) -> Called {
         tool_schema_chars: 0,
         llm: &llm,
         question: "What does a grey heron look like?",
+        names: &std::sync::Arc::new(
+            lattice_core::application::services::model_contract::kept::TurnNames::unstored(),
+        ),
     };
     let result = images::execute(
         &scope,

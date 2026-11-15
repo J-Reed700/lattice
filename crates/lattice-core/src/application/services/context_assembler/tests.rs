@@ -25,6 +25,8 @@ fn message(sequence: i64, role: SourceRole, content: &str) -> SourceMessage {
         content_digest: compute_digest(content),
         status: "completed".into(),
         pictures: Vec::new(),
+        references: Vec::new(),
+        replayed: None,
     }
 }
 
@@ -771,4 +773,69 @@ fn optional_memories_use_the_room_the_history_pools_left() {
         allocation.evidence
     );
     assert!(plan.accounting.document_evidence >= 5_000);
+}
+
+#[test]
+fn a_memory_item_quotes_an_answer_without_its_references_while_the_replay_keeps_them() {
+    let content = "The limit is 40 units [s1] per day.";
+    let marker = content.find("[s1]").expect("marker");
+    let mut stored = message(1, SourceRole::Assistant, content);
+    stored.references = vec![marker..marker + 4];
+    let memory = snapshot(
+        vec![item(
+            "i1",
+            MemoryKind::Constraint,
+            1,
+            &stored.memory_view(),
+            "Daily limit",
+        )],
+        None,
+        1,
+    );
+    let recent = vec![stored];
+
+    let plan = assembler()
+        .assemble(&request(Some(&memory), &recent, 32_768))
+        .expect("plan");
+    let rendered = text_of(&plan);
+
+    let (_, last) = rendered.last().expect("a final message");
+    let requirement = last.find("[recorded requirements").expect("the item");
+    assert!(last[requirement..].contains("The limit is 40 units per day."));
+    assert!(!last[requirement..].contains("[s1]"));
+    assert!(rendered
+        .iter()
+        .any(|(role, text)| role == "assistant" && text == content));
+    assert_eq!(plan.accounting.active_mandatory_count, 1);
+}
+
+#[test]
+fn an_item_from_a_message_saved_before_references_resolves_while_its_replay_is_rewritten() {
+    let content = "Per the notes [1], keep the code private.";
+    let mut stored = message(1, SourceRole::Assistant, content);
+    let memory = snapshot(
+        vec![item(
+            "i1",
+            MemoryKind::Constraint,
+            1,
+            &stored,
+            "Keep it private",
+        )],
+        None,
+        1,
+    );
+    stored.replayed = Some("Per the notes [s4], keep the code private.".into());
+    let recent = vec![stored];
+
+    let plan = assembler()
+        .assemble(&request(Some(&memory), &recent, 32_768))
+        .expect("plan");
+    let rendered = text_of(&plan);
+
+    assert_eq!(plan.accounting.active_mandatory_count, 1);
+    let (_, last) = rendered.last().expect("a final message");
+    assert!(last.contains("Per the notes [1], keep the code private."));
+    assert!(rendered
+        .iter()
+        .any(|(role, text)| role == "assistant" && text.contains("[s4]")));
 }

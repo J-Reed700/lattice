@@ -267,6 +267,7 @@ async fn run_turn(
             highlight_terms: &[],
             focus: &crate::features::conversation::chat::focus::FocusScope::default(),
             recorder: &recorder,
+            names: &std::sync::Arc::new(lattice_core::application::services::model_contract::kept::TurnNames::unstored()),
         },
         &SettingsDto::default(),
         &decision,

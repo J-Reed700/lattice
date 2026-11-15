@@ -83,7 +83,7 @@ async fn save_answer_citing_an_unread_page(
         )
         .await
         .unwrap();
-    let source: SourceDto = serde_json::from_value(serde_json::json!({
+    let mut source: SourceDto = serde_json::from_value(serde_json::json!({
         "documentId": format!("web:{PAGE}"),
         "chunkId": "web-1",
         "content": "A search snippet.",
@@ -99,6 +99,13 @@ async fn save_answer_citing_an_unread_page(
         "citationId": 1
     }))
     .unwrap();
+    let names = Arc::new(lattice_core::application::services::model_contract::kept::TurnNames::unstored());
+    super::super::retrieval::source_names::name_sources(&names, std::slice::from_mut(&mut source));
+    let reply = crate::features::conversation::chat::reply_text::ReplyText::read(
+        &names,
+        crate::features::conversation::chat::reply_text::markers(false),
+        "The page says so [s1].",
+    );
     let llm: Arc<dyn LLMPort> = Arc::new(crate::features::llm::engine::factory::MockLLMPort::new());
     let focus = FocusScope::default();
     let recorder = TurnRecorder::silent(&conversation_id, "request-1");
@@ -112,6 +119,7 @@ async fn save_answer_citing_an_unread_page(
         highlight_terms: &[],
         focus: &focus,
         recorder: &recorder,
+        names: &names,
     };
     let answer = tokio::time::timeout(
         std::time::Duration::from_secs(5),
@@ -122,7 +130,7 @@ async fn save_answer_citing_an_unread_page(
             2,
             0,
             FinishedAnswer {
-                response: "The page says so [1].".into(),
+                reply,
                 sources: vec![source],
                 verification: None,
                 memory_usage: None,

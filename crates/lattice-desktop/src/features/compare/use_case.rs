@@ -1,6 +1,5 @@
 //! The compare pipeline: validate → resolve → retrieve → one grounded call per
-//! document → tolerant parse → map quotes back to the chunks it carried →
-//! assemble.
+//! document → map the cited sentences back to their chunks → assemble.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -12,38 +11,22 @@ use tracing::debug;
 use crate::features::compare::di::CompareDeps;
 use lattice_core::application::ports::llm_port::InferencePriority;
 use lattice_core::application::ports::LLMPort;
-use lattice_core::application::services::grounded_generation::{
-    self, CallOptions, EvidencePassage, EvidenceSelection,
-};
-use lattice_core::application::services::model_contract::legacy;
+use lattice_core::application::services::grounded_generation::{self, CallOptions};
+use lattice_core::application::services::model_contract::ask::{ask_each, room, Plain, Settled};
+use lattice_core::application::services::model_contract::packed::Packed;
+use lattice_core::application::services::model_contract::shown::{Kind, Scope, Told};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::timestamps::now_db_timestamp;
 
 use super::dto::{
     CompareCellDto, CompareCitationDto, CompareDocumentsRequestDto, CompareRowDto, CompareTableDto,
 };
-use super::parser::parse_compare_response;
-use super::prompt::{build_compare_task, PASSAGES_HEADING};
-use super::retrieval::{retrieve_for_document, RetrievedChunk};
+use super::prompt::{Answer, Cell, Column, CompareRow, Input, Sentence};
+use super::retrieval::retrieve_for_document;
 
 pub const DOCUMENT_CONCURRENCY: usize = 2;
-/// How long one row call may take; a row of many columns is several calls.
+/// How long one row call may take.
 pub const PER_CALL_TIMEOUT_SECS: u64 = 120;
-
-/// Answer room one cell takes: a short value, the sentence quoted for it and
-/// the JSON around them.
-const CELL_OUTPUT_TOKENS: usize = 128;
-
-/// Columns one row call fills: as many as a quarter of the model's window
-/// holds as answer. A row with more columns than that is filled in several
-/// calls, so no column is dropped and no answer is cut off.
-fn columns_per_call(llm: &dyn LLMPort) -> usize {
-    (llm.max_context_tokens() / 4 / CELL_OUTPUT_TOKENS).max(1)
-}
-
-/// Minimum share of a quote's words that must appear in a chunk before the
-/// citation is trusted. Catches a model that dropped a comma.
-const TOKEN_OVERLAP_THRESHOLD: f32 = 0.6;
 
 #[derive(Debug, Clone)]
 pub(super) struct ResolvedDocument {
@@ -51,63 +34,6 @@ pub(super) struct ResolvedDocument {
     pub(super) title: String,
     pub(super) file_path: String,
     pub(super) error: Option<String>,
-}
-
-/// Lowercase, collapse whitespace runs, strip leading/trailing punctuation.
-fn normalize_for_match(text: &str) -> String {
-    let collapsed = text
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase();
-    collapsed
-        .trim_matches(|c: char| !c.is_alphanumeric())
-        .to_string()
-}
-
-fn significant_tokens(text: &str) -> HashSet<String> {
-    normalize_for_match(text)
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|token| token.chars().count() >= 3)
-        .map(|token| token.to_string())
-        .collect()
-}
-
-/// Finds the chunk a model quote came from: verbatim containment first, then
-/// token overlap. `None` when the quote cannot be placed.
-pub(super) fn map_quote_to_chunk<'a>(
-    quote: &str,
-    chunks: &'a [RetrievedChunk],
-) -> Option<&'a RetrievedChunk> {
-    let needle = normalize_for_match(quote);
-    if needle.is_empty() {
-        return None;
-    }
-
-    for chunk in chunks {
-        if normalize_for_match(&chunk.content).contains(&needle) {
-            return Some(chunk);
-        }
-    }
-
-    let quote_tokens = significant_tokens(quote);
-    if quote_tokens.is_empty() {
-        return None;
-    }
-
-    let mut best: Option<(&RetrievedChunk, f32)> = None;
-    for chunk in chunks {
-        let chunk_tokens = significant_tokens(&chunk.content);
-        let shared = quote_tokens
-            .iter()
-            .filter(|token| chunk_tokens.contains(*token))
-            .count();
-        let score = shared as f32 / quote_tokens.len() as f32;
-        if score >= TOKEN_OVERLAP_THRESHOLD && best.map(|(_, b)| score > b).unwrap_or(true) {
-            best = Some((chunk, score));
-        }
-    }
-    best.map(|(chunk, _)| chunk)
 }
 
 /// Trims, drops empties and dedupes case-insensitively, keeping the first
@@ -162,174 +88,155 @@ fn empty_row(document: &ResolvedDocument, columns: &[String], error: String) -> 
     }
 }
 
-/// Assembles cells in `columns` order, so `cells.len() == columns.len()`
-/// always — the invariant the table renderer relies on.
-pub(super) fn assemble_cells(
-    parsed: &super::parser::ParsedRow,
-    columns: &[String],
-    chunks: &[RetrievedChunk],
-) -> Vec<CompareCellDto> {
-    columns
-        .iter()
-        .map(|column| {
-            let Some((value, quote)) = parsed.get(column) else {
-                return CompareCellDto {
-                    value: None,
-                    citation: None,
-                };
-            };
-            let citation = match (value.as_ref(), quote.as_ref()) {
-                // A quote we cannot place is weak evidence, not proof of a
-                // hallucination: keep the value, drop only the link.
-                (Some(_), Some(quote)) => {
-                    map_quote_to_chunk(quote, chunks).map(|chunk| CompareCitationDto {
-                        chunk_id: chunk.chunk_id.clone(),
-                        excerpt: quote.clone(),
+/// The cell the model's answer for one column makes: its value, and the
+/// first sentence it cites, with the chunk that sentence is of.
+fn cell_of(cell: &Cell, held: &[Sentence]) -> CompareCellDto {
+    match &cell.answer {
+        Answer::Stated { value, support } => CompareCellDto {
+            value: Some(value.trim().to_string()),
+            citation: support.iter().find_map(|picked| {
+                held.iter()
+                    .find(|sentence| sentence.reference() == picked.reference)
+                    .map(|sentence| CompareCitationDto {
+                        chunk_id: sentence.chunk_id.clone(),
+                        excerpt: sentence.text.0.clone(),
                     })
-                }
-                _ => None,
-            };
-            CompareCellDto {
-                value: value.clone(),
-                citation,
-            }
-        })
-        .collect()
+            }),
+        },
+        Answer::NotStated => CompareCellDto {
+            value: None,
+            citation: None,
+        },
+    }
 }
 
-/// The model's answer for one row, and the chunks its prompt carried.
-///
-/// The prompt carries each passage once, the best ranked first when the
-/// window cannot hold them all; someone is waiting on the table.
-pub(super) async fn fill_row(
-    llm: &dyn LLMPort,
-    title: &str,
-    columns: &[String],
-    chunks: &[RetrievedChunk],
-) -> Result<(String, Vec<RetrievedChunk>)> {
-    let mut request = legacy::grounded("", build_compare_task(title, columns));
-    let says = legacy::grounded_says(&mut request);
-    *says.output_tokens = columns.len().saturating_mul(CELL_OUTPUT_TOKENS);
-    *says.evidence_heading = PASSAGES_HEADING.to_string();
-    *says.evidence = chunks
-        .iter()
-        .enumerate()
-        .map(|(index, chunk)| EvidencePassage {
-            id: chunk.chunk_id.clone(),
-            label: format!("[{}]", index + 1),
-            text: chunk.content.clone(),
-            // Retrieval order is relevance order.
-            rank: 1.0 / (index + 1) as f32,
-        })
-        .collect();
-    *says.selection = EvidenceSelection::BestFirst;
-    request.call = CallOptions {
-        priority: InferencePriority::Interactive,
-        ..Default::default()
-    };
-    let output = grounded_generation::generate(llm, request).await?;
-    debug!(
-        carried = output.used_evidence_ids.len(),
-        left_out = output.accounting.evicted.len(),
-        input_tokens = output.accounting.total_input,
-        "compare: row request planned"
-    );
-    let carried = chunks
-        .iter()
-        .filter(|chunk| output.used_evidence_ids.contains(&chunk.chunk_id))
-        .cloned()
-        .collect();
-    Ok((output.text, carried))
-}
-
-/// One row: its columns filled a call at a time, as many per call as the
-/// model's answer room holds.
+/// One row: its columns filled by one asking, which the driver halves as the
+/// model's window needs.
 pub(super) async fn build_row(
     deps: &CompareDeps,
     llm: &Arc<dyn LLMPort>,
     document: &ResolvedDocument,
     columns: &[String],
 ) -> Result<CompareRowDto> {
-    let mut cells = Vec::with_capacity(columns.len());
-    let mut degraded = None;
-    let mut error = None;
-    for group in columns.chunks(columns_per_call(llm.as_ref())) {
-        let filled = tokio::time::timeout(
-            Duration::from_secs(PER_CALL_TIMEOUT_SECS),
-            fill_columns(deps, llm, document, group),
+    let filled = tokio::time::timeout(
+        Duration::from_secs(PER_CALL_TIMEOUT_SECS),
+        fill_columns(deps, llm, document, columns),
+    )
+    .await;
+    let filled = match filled {
+        Ok(Ok(Some(filled))) => filled,
+        Ok(Ok(None)) => {
+            return Ok(empty_row(
+                document,
+                columns,
+                "No indexed text for this document.".to_string(),
+            ))
+        }
+        Ok(Err(error)) => return Err(error),
+        Err(_) => return Ok(empty_row(document, columns, "Timed out.".to_string())),
+    };
+    let error = (!filled.unanswered.is_empty()).then(|| {
+        format!(
+            "The model gave no usable answer for: {}.",
+            filled.unanswered.join(", ")
         )
-        .await;
-        let failure = match filled {
-            Ok(Ok(Some((group_cells, group_degraded)))) => {
-                cells.extend(group_cells);
-                degraded = degraded.or(group_degraded);
-                continue;
-            }
-            Ok(Ok(None)) => {
-                return Ok(empty_row(
-                    document,
-                    columns,
-                    "No indexed text for this document.".to_string(),
-                ))
-            }
-            Ok(Err(error)) if cells.is_empty() => return Err(error),
-            Ok(Err(error)) => error.to_string(),
-            Err(_) => "Timed out.".to_string(),
-        };
-        // The cells earlier calls filled are kept; the columns not reached
-        // are left empty and named, rather than the whole row thrown away.
-        let missing = columns.get(cells.len()..).unwrap_or_default();
-        error = Some(if cells.is_empty() {
-            failure
-        } else {
-            format!("{failure} Not filled: {}.", missing.join(", "))
-        });
-        cells.extend(empty_cells(missing));
-        break;
-    }
+    });
     Ok(CompareRowDto {
         document_id: document.id.clone(),
         title: document.title.clone(),
         file_path: document.file_path.clone(),
-        cells,
+        cells: filled.cells,
         error,
-        degraded,
+        degraded: filled.degraded,
     })
 }
 
-/// The cells of `columns` for one document from one call, or `None` when the
-/// document has no indexed text.
+/// The cells of one document's row, the columns the model gave no usable
+/// answer for, and the note of a degraded search.
+struct Filled {
+    cells: Vec<CompareCellDto>,
+    unanswered: Vec<String>,
+    degraded: Option<String>,
+}
+
+/// The cells of `columns` for one document, or `None` when the document has
+/// no indexed text.
 async fn fill_columns(
     deps: &CompareDeps,
     llm: &Arc<dyn LLMPort>,
     document: &ResolvedDocument,
     columns: &[String],
-) -> Result<Option<(Vec<CompareCellDto>, Option<String>)>> {
+) -> Result<Option<Filled>> {
+    let call = CallOptions {
+        priority: InferencePriority::Interactive,
+        ..Default::default()
+    };
+    let title = Told(document.title.clone());
+    let items: Vec<Column> = columns
+        .iter()
+        .enumerate()
+        .map(|(index, name)| Column {
+            index,
+            name: Told(name.clone()),
+        })
+        .collect();
+
     // Each column reads as deep as its share of the call's evidence room
     // holds, at the chunker's passage size.
-    let mut task = legacy::grounded("", build_compare_task(&document.title, columns));
-    *legacy::grounded_says(&mut task).output_tokens =
-        columns.len().saturating_mul(CELL_OUTPUT_TOKENS);
-    let room = grounded_generation::evidence_room(llm.as_ref(), &task).map_err(AppError::from)?;
-    let per_column = grounded_generation::retrieval_depth(room, None, llm.chars_per_token())
-        .div_ceil(columns.len().max(1));
+    let bare = Input {
+        title: title.clone(),
+        columns: items.clone(),
+        passages: Packed::default(),
+    };
+    let evidence_room = room::<CompareRow>(llm.as_ref(), &bare, &call)?;
+    let per_column =
+        grounded_generation::retrieval_depth(evidence_room, None, llm.chars_per_token())
+            .div_ceil(columns.len().max(1));
     let super::retrieval::DocumentChunks { chunks, degraded } =
         retrieve_for_document(deps, &document.id, columns, per_column).await?;
     if chunks.is_empty() {
         return Ok(None);
     }
 
-    // A quote is only mapped to a chunk the model was actually shown.
-    let (raw, chunks) = fill_row(llm.as_ref(), &document.title, columns, &chunks).await?;
+    let passages = Input::passages_of(&chunks, llm.chars_per_token());
+    let held: Vec<Sentence> = passages
+        .iter()
+        .flat_map(|passage| passage.sentences.iter().cloned())
+        .collect();
+    let mut scope = Scope::for_question();
+    let settled = ask_each::<CompareRow>(
+        llm.as_ref(),
+        &Plain,
+        &mut scope,
+        &items,
+        |open, _| Input {
+            title: title.clone(),
+            columns: open.iter().map(|column| (*column).clone()).collect(),
+            passages: passages.clone(),
+        },
+        &call,
+    )
+    .await?;
 
-    let parsed = parse_compare_response(&raw, columns);
-    if parsed.is_empty() {
-        debug!(
-            document_id = document.id.as_str(),
-            "compare: no column could be read from the model response"
-        );
+    let mut cells = Vec::with_capacity(columns.len());
+    let mut unanswered = Vec::new();
+    for (column, settled) in columns.iter().zip(settled) {
+        match settled {
+            Settled::Answered(cell) => cells.push(cell_of(&cell, &held)),
+            Settled::Unanswered(_) => {
+                unanswered.push(column.clone());
+                cells.push(CompareCellDto {
+                    value: None,
+                    citation: None,
+                });
+            }
+        }
     }
-    Ok(Some((assemble_cells(&parsed, columns, &chunks), degraded)))
+    Ok(Some(Filled {
+        cells,
+        unanswered,
+        degraded,
+    }))
 }
 
 pub async fn compare_documents_impl(

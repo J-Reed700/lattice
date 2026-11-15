@@ -348,6 +348,8 @@ mod tests {
             content_digest: String::new(),
             status: "completed".to_string(),
             pictures: Vec::new(),
+            references: Vec::new(),
+            replayed: None,
         }
     }
 

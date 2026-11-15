@@ -8,6 +8,7 @@ use crate::features::conversation::memory_dto::MemoryEvidenceDto;
 use lattice_core::application::ports::conversation_memory::SHARED_RELEVANCE_FLOOR;
 use lattice_core::domain::conversation::memory::compute_digest;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::stored_references::text_without_references;
 use lattice_core::shared::text::informative_terms;
 use sqlx::SqliteConnection;
 use std::collections::HashMap;
@@ -108,20 +109,21 @@ impl ConversationRepository {
         // evidence span would multiply both I/O and memory for shared sources.
         let message_ids: std::collections::HashSet<_> =
             evidence.iter().map(|e| &e.message_id).collect();
-        let messages: Vec<(String, String)> = if message_ids.is_empty() {
+        let messages: Vec<(String, String, Option<String>)> = if message_ids.is_empty() {
             Vec::new()
         } else {
             sqlx::query_as(
-            "SELECT id,content FROM conversation_messages WHERE id IN (SELECT value FROM json_each(?))",
+            "SELECT id,content,metadata FROM conversation_messages WHERE id IN (SELECT value FROM json_each(?))",
         )
         .bind(serde_json::to_string(&message_ids)?)
         .fetch_all(&mut *conn).await?
         };
         let messages: HashMap<_, _> = messages
             .into_iter()
-            .map(|(id, content)| {
-                let digest = compute_digest(&content);
-                (id, (content, digest))
+            .map(|(id, content, metadata)| {
+                let text = text_without_references(&content, metadata.as_deref()).into_owned();
+                let digest = compute_digest(&text);
+                (id, (text, digest))
             })
             .collect();
         let mut evidence_by_item: HashMap<String, Vec<MemoryEvidenceDto>> = HashMap::new();

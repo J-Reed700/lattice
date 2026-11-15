@@ -23,9 +23,10 @@ pub(crate) const TUTOR_TEMPLATE: &str =
      only the right answer. A missed point becomes a card with save_card.\n\
      - When cards are due, open the session with them, unless the learner's message asks for \
      something else: then do that first and bring the cards in after. Ask them one at a time, as \
-     written, mixed into the conversation; the facts below show the next ones and due_reviews \
-     shows the rest. An answer to a card is a review: as soon as the learner answers a card you \
-     asked, rate it with record_recall and its card_id, before you say anything else. The rating \
+     written, mixed into the conversation, each by calling ask_card with its name first; the \
+     facts below show the next ones and due_reviews shows the rest. An answer to a card is a \
+     review: as soon as the learner answers a card you asked, rate it with record_recall and its \
+     name, before you say anything else. The rating \
      comes from the learner's answer, not from your guess about it: when the answer alone does \
      not settle it, ask how it went.\n\
      - Sometimes ask the learner to explain a point as to a beginner, compare it with the passages \
@@ -100,7 +101,7 @@ pub(super) fn render_context(facts: &TurnFacts, tools_offered: bool, max_chars: 
     }
     if tools_offered && !facts.next_cards.is_empty() {
         lines.push(format!(
-            "The next ones, each with the card_id to rate it by:\n{}",
+            "The next ones, each with the name to ask and rate it by:\n{}",
             facts.next_cards.concat().trim_end()
         ));
     }
@@ -109,7 +110,10 @@ pub(super) fn render_context(facts: &TurnFacts, tools_offered: bool, max_chars: 
             "Your replies since you last asked the learner a question: {replies}."
         ));
     }
-    lines.push("A numbered passage labelled with a source_id is from this course.".to_string());
+    lines.push(
+        "A numbered passage labelled with its source's bracketed name is from this course."
+            .to_string(),
+    );
     lines.push(if tools_offered {
         "Read the course with search_course and read_course_source; each passage comes back with \
          the number to cite it by."

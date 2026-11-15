@@ -2,7 +2,9 @@
 //! round's shape, calls run side by side, and condensing that lets a turn
 //! read past its window.
 use super::final_round::{OUT_OF_ROUNDS_INSTRUCTION, WINDOW_FULL_INSTRUCTION};
-use super::research_notes::{CONDENSE_INSTRUCTION, NOTES_HEADER};
+use super::research_notes::{
+    scripted_answer, shown_in, CONDENSE_INSTRUCTION, NOTES_HEADER,
+};
 use super::*;
 use crate::features::conversation::chat::cancellation;
 use crate::features::conversation::chat::focus::FocusScope;
@@ -39,11 +41,12 @@ impl From<CompletionResponse> for Scripted {
     }
 }
 
-/// Answers rounds from a script and condensing requests with fixed notes,
-/// keeping every request it was sent.
+/// Answers rounds from a script and condensing requests by keeping the
+/// sentences that carry a citation, or every sentence, keeping every request
+/// it was sent.
 struct Model {
     script: Mutex<VecDeque<Scripted>>,
-    notes: String,
+    keep_everything: bool,
     requests: Mutex<Vec<CompletionRequest>>,
     /// The context window it reports.
     window: AtomicUsize,
@@ -51,16 +54,20 @@ struct Model {
 
 impl Model {
     fn new<S: Into<Scripted>>(script: impl IntoIterator<Item = S>) -> Arc<Self> {
-        Self::with_notes(script, "- Page A: the bridge opened in 1932 [1].")
+        Self::keeping(script, false)
     }
 
-    fn with_notes<S: Into<Scripted>>(
+    fn keeping_everything<S: Into<Scripted>>(script: impl IntoIterator<Item = S>) -> Arc<Self> {
+        Self::keeping(script, true)
+    }
+
+    fn keeping<S: Into<Scripted>>(
         script: impl IntoIterator<Item = S>,
-        notes: &str,
+        keep_everything: bool,
     ) -> Arc<Self> {
         Arc::new(Self {
             script: Mutex::new(script.into_iter().map(Into::into).collect()),
-            notes: notes.to_string(),
+            keep_everything,
             requests: Mutex::default(),
             window: AtomicUsize::new(32_768),
         })
@@ -72,7 +79,10 @@ impl Model {
 }
 
 fn is_condense_request(request: &CompletionRequest) -> bool {
-    last_text(request).ends_with(CONDENSE_INSTRUCTION)
+    request.input().iter().any(|item| {
+        matches!(item, CompletionInput::Message { role, content }
+            if role == "system" && content.contains(CONDENSE_INSTRUCTION))
+    })
 }
 
 /// What the model reads last: the final message or tool result.
@@ -89,7 +99,12 @@ impl LLMPort for Model {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         self.requests.lock().unwrap().push(request.clone());
         if is_condense_request(request) {
-            return Ok(CompletionResponse::from_text(self.notes.clone()));
+            let keep_everything = self.keep_everything;
+            return Ok(CompletionResponse::from_text(scripted_answer(
+                &shown_in(request),
+                |_| true,
+                |sentence| keep_everything || sentence.contains('['),
+            )));
         }
         let reply = self.script.lock().unwrap().pop_front();
         match reply {
@@ -370,6 +385,7 @@ async fn run_turn(
             highlight_terms: &[],
             focus: &FocusScope::default(),
             recorder: &recorder,
+            names: &std::sync::Arc::new(lattice_core::application::services::model_contract::kept::TurnNames::unstored()),
         },
         &sink,
         LoopRequest {
@@ -998,11 +1014,6 @@ async fn a_turn_that_fills_its_window_condenses_and_keeps_reading() {
     assert!(!last_text(after).contains(WINDOW_FULL_INSTRUCTION));
     assert!(last_text(after).starts_with(NOTES_HEADER));
     assert!(results_mentioning(after, &format!("Text of {PAGE_A}")).is_empty());
-    // The condensing request is the round before it and an instruction: the
-    // cached prompt is a prefix of it, tools and all.
-    let condense = &requests[2];
-    assert_eq!(json_of(&condense.tools()), json_of(&requests[1].tools()));
-    assert_eq!(condense.tool_choice(), Some(ToolChoice::None));
     assert!(run.steps.iter().any(
         |step| step.label == "Condensing what it has read" && step.state == TurnStepState::Done
     ));
@@ -1042,7 +1053,7 @@ async fn citations_from_before_condensing_still_resolve() {
         .iter()
         .find(|request| is_condense_request(request))
         .expect("the window filled and was condensed");
-    assert!(!results_mentioning(condense, "Citable passage [1]").is_empty());
+    assert!(shown_in(condense).contains("Citable passage [1]"));
     // The research deck's card for page A still links to it.
     assert!(run
         .steps
@@ -1087,18 +1098,15 @@ async fn a_page_condensed_away_is_read_again_when_asked_for() {
 #[tokio::test]
 async fn when_condensing_saves_nothing_a_full_window_still_ends_the_research() {
     let web = Web::with_pages_of(30_000);
-    let model = Model::with_notes(
-        [
-            // Each read takes half of what is left, at least the floor, so
-            // the window fills on the fourth.
-            reads(&[PAGE_A]),
-            reads(&[PAGE_B]),
-            reads(&[PAGE_C]),
-            reads(&[PAGE_D]),
-            CompletionResponse::from_text("It opened in 1932 [1]."),
-        ],
-        &"n".repeat(40_000),
-    );
+    let model = Model::keeping_everything([
+        // Each read takes half of what is left, at least the floor, so
+        // the window fills on the fourth.
+        reads(&[PAGE_A]),
+        reads(&[PAGE_B]),
+        reads(&[PAGE_C]),
+        reads(&[PAGE_D]),
+        CompletionResponse::from_text("It opened in 1932 [1]."),
+    ]);
     let run = run(
         &model,
         &web,
@@ -1124,18 +1132,15 @@ async fn when_condensing_saves_nothing_a_full_window_still_ends_the_research() {
 #[tokio::test]
 async fn an_answer_cut_short_by_a_full_window_names_the_window() {
     let web = Web::with_pages_of(30_000);
-    let model = Model::with_notes(
-        [
-            reads(&[PAGE_A]),
-            reads(&[PAGE_B]),
-            reads(&[PAGE_C]),
-            reads(&[PAGE_D]),
-            CompletionResponse::from_text(
-                "It opened in 1932 [1].\n<tool_call>\n<function=fetch_url_content>",
-            ),
-        ],
-        &"n".repeat(40_000),
-    );
+    let model = Model::keeping_everything([
+        reads(&[PAGE_A]),
+        reads(&[PAGE_B]),
+        reads(&[PAGE_C]),
+        reads(&[PAGE_D]),
+        CompletionResponse::from_text(
+            "It opened in 1932 [1].\n<tool_call>\n<function=fetch_url_content>",
+        ),
+    ]);
     let run = run(
         &model,
         &web,

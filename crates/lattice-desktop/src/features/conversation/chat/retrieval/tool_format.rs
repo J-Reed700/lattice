@@ -10,6 +10,11 @@ use lattice_core::shared::text::safe_truncate;
 use std::collections::HashMap;
 
 use super::source_citations::library_chunk_id;
+use super::source_names::marker;
+use crate::features::conversation::chat::history_tools::view as history_view;
+use crate::features::function_calling::handles::{CallView, Resume};
+use crate::features::function_calling::views as tool_views;
+use serde_json::json;
 
 /// Room kept at the end of a result for the line saying what had to be left
 /// out of it, so that line always fits.
@@ -24,7 +29,8 @@ const MIN_RESULT_CHARS: usize = 2 * OMISSION_NOTE_CHARS;
 /// fit, it says what was left out and how to reach it. `page_offset` is where
 /// a fetched page's text starts. `citations` holds the turn's numbers by chunk:
 /// a library result is shown under its own, since a list numbered from one
-/// would read as the passages the turn already holds.
+/// would read as the passages the turn already holds. `call` names what the
+/// result shows and where it stopped, so the model never reads an id or an offset.
 pub(super) fn format_tool_result(
     tool_name: &str,
     result: &FunctionResult,
@@ -33,6 +39,7 @@ pub(super) fn format_tool_result(
     page_offset: usize,
     source_text: bool,
     citations: &HashMap<String, u32>,
+    call: &CallView<'_>,
 ) -> String {
     let allowance = allowance.max(MIN_RESULT_CHARS);
     if !result.success {
@@ -54,7 +61,30 @@ pub(super) fn format_tool_result(
         if let Some(text) = data.as_str() {
             return safe_truncate(text, allowance);
         }
-        if let Ok(output) = serde_json::from_value::<SourcePassages>(data.clone()) {
+        if let Some(text) = data.get("text").and_then(serde_json::Value::as_str) {
+            let resume = data
+                .get("read_on")
+                .and_then(|next| serde_json::from_value::<Resume>(next.clone()).ok());
+            let Some(name) = resume.and_then(|resume| call.handles().more(resume)) else {
+                return safe_truncate(text, allowance);
+            };
+            let line = call.read_on_line(&name);
+            let room = allowance.saturating_sub(line.chars().count() + 1);
+            return format!("{}
+{line}", safe_truncate(text, room));
+        }
+        if let Ok(mut output) = serde_json::from_value::<SourcePassages>(data.clone()) {
+            let read_on = data
+                .get("read_on")
+                .and_then(|next| serde_json::from_value::<Resume>(next.clone()).ok())
+                .and_then(|resume| call.handles().more(resume))
+                .map(|name| call.read_on_line(&name));
+            if let Some(line) = read_on {
+                output.note = Some(match output.note {
+                    Some(note) => format!("{note} {line}"),
+                    None => line,
+                });
+            }
             return render_source_passages(&output, allowance, citations);
         }
     }
@@ -78,6 +108,10 @@ pub(super) fn format_tool_result(
                     ""
                 };
                 let shown_end = doc.offset + doc.content.chars().count();
+                let name = call.handles().document(&doc.document_id).unwrap_or_default();
+                let read_on_from = |at: usize| {
+                    call.read_on(&[("offset", json!(at)), ("max_content_length", json!(null))])
+                };
                 let mut pagination_line = String::new();
                 if doc.offset > 0 || doc.next_offset.is_some() {
                     pagination_line = format!(
@@ -86,15 +120,15 @@ pub(super) fn format_tool_result(
                     );
                     if let Some(next_offset) = doc.next_offset {
                         pagination_line.push_str(&format!(
-                            "\nTo continue, call get_document with document_id=\"{}\" and offset={next_offset}.",
-                            doc.document_id
+                            "\n{}",
+                            call.read_on_line(&read_on_from(next_offset))
                         ));
                     }
                 }
                 let render = |excerpt: &str| {
                     let mut rendered = templates
                         .get_document_template
-                        .replace("{document_id}", &doc.document_id)
+                        .replace("{document_id}", &name)
                         .replace("{title}", title)
                         .replace("{chunk_count}", &chunk_count.to_string())
                         .replace("{excerpt}", excerpt)
@@ -115,8 +149,9 @@ pub(super) fn format_tool_result(
                 let next = doc.offset + shown.chars().count();
                 let mut rendered = render(&shown);
                 rendered.push_str(&format!(
-                    "\n[Only characters {} to {next} of this part fit this result. Call get_document with document_id=\"{}\" and offset={next} to read on.]",
-                    doc.offset, doc.document_id
+                    "\n[Only characters {} to {next} of this part fit this result. {}]",
+                    doc.offset,
+                    call.read_on_line(&read_on_from(next))
                 ));
                 return keep_note(&rendered, allowance);
             }
@@ -129,11 +164,14 @@ pub(super) fn format_tool_result(
                     .map(|hit| {
                         let label = citations
                             .get(&library_chunk_id(hit))
-                            .map_or_else(|| "-".to_owned(), |number| format!("[{number}]"));
+                            .map_or_else(|| "-".to_owned(), |number| marker(*number));
+                        let name = call
+                            .handles()
+                            .document(&hit.document_id)
+                            .unwrap_or_default();
                         format!(
-                            "{label} {} (doc_id: {}, score: {:.3})\nExcerpt: {}",
+                            "{label} {} {name} (score: {:.3})\nExcerpt: {}",
                             hit.filename,
-                            hit.document_id,
                             hit.score,
                             hit.snippet.trim()
                         )
@@ -154,13 +192,14 @@ pub(super) fn format_tool_result(
                 // which: without an offset, the 51st hit could never be read.
                 let more = output.next_offset.map_or_else(String::new, |next| {
                     format!(
-                        "\n[More results may follow: call semantic_search with the same query and offset={next}.]"
+                        "\n[More results may follow. {}]",
+                        call.read_on_line(&call.read_on(&[("offset", json!(next))]))
                     )
                 });
                 let (results_text, shown) = fit_blocks(
                     &blocks,
                     allowance.saturating_sub(framing + more.chars().count()),
-                    "Call get_document with a doc_id above to read a document, or search again more narrowly.",
+                    "Call get_document with a name above to read a document, or search again more narrowly.",
                 );
                 return keep_note(
                     &format!("{}{more}", template(&results_text, shown)),
@@ -206,7 +245,7 @@ pub(super) fn format_tool_result(
         }
         "fetch_url_content" => {
             if let Ok(page) = serde_json::from_value::<FetchUrlContentOutput>(data.clone()) {
-                return render_fetched_page(&page, allowance, page_offset);
+                return render_fetched_page(&page, allowance, page_offset, call);
             }
         }
         "web_search" => {
@@ -230,15 +269,22 @@ pub(super) fn format_tool_result(
                         )
                     })
                     .collect();
+                let more = more_results_note(&output, call);
                 let (text, _) = fit_blocks(
                     &blocks,
-                    allowance.saturating_sub(heading.chars().count() + 2),
+                    allowance.saturating_sub(heading.chars().count() + 2 + more.chars().count()),
                     "Search again more narrowly to see them.",
                 );
-                return keep_note(&format!("{heading}\n\n{text}"), allowance);
+                return keep_note(&format!("{heading}\n\n{text}{more}"), allowance);
             }
         }
         _ => {}
+    }
+
+    if let Some(text) = history_view::render(tool_name, &data, call)
+        .or_else(|| tool_views::render(tool_name, &data, call))
+    {
+        return fit_text(&text, allowance);
     }
 
     if let Ok(output) = serde_json::from_value::<CustomQueryToolOutput>(data.clone()) {
@@ -253,7 +299,22 @@ pub(super) fn format_tool_result(
 
     let fallback = serde_json::to_string(&data).unwrap_or_else(|_| "null".to_string());
     let rendered = templates.default_template.replace("{json}", &fallback);
-    fit_text(&rendered, allowance)
+    let more = match (tool_name, serde_json::from_value::<WebSearchOutput>(data)) {
+        ("find_sources", Ok(output)) => more_results_note(&output, call),
+        _ => String::new(),
+    };
+    let body = fit_text(&rendered, allowance.saturating_sub(more.chars().count()));
+    format!("{body}{more}")
+}
+
+/// The line that names how to read the next page of a web search's results,
+/// when there is one.
+fn more_results_note(output: &WebSearchOutput, call: &CallView<'_>) -> String {
+    if !output.has_more {
+        return String::new();
+    }
+    let next = call.read_on(&[("page", json!(output.page + 1))]);
+    format!("\n[More results are available. {}]", call.read_on_line(&next))
 }
 
 /// A turn source's passages, each under the turn's number for it as a library
@@ -273,7 +334,7 @@ fn render_source_passages(
         .map(|passage| {
             let number = citations
                 .get(&passage.source.chunk_id)
-                .map_or_else(|| "-".to_owned(), |number| format!("[{number}]"));
+                .map_or_else(|| "-".to_owned(), |number| marker(*number));
             format!(
                 "{number} {}\n{}",
                 passage.label,
@@ -387,7 +448,12 @@ pub(in crate::features::conversation::chat) fn document_page_room(allowance: usi
 /// A fetched page as prose rather than escaped JSON, from character `offset`
 /// on, as much as a result of `max_chars` holds. A longer page names the
 /// offset the next part starts at.
-fn render_fetched_page(page: &FetchUrlContentOutput, max_chars: usize, offset: usize) -> String {
+fn render_fetched_page(
+    page: &FetchUrlContentOutput,
+    max_chars: usize,
+    offset: usize,
+    call: &CallView<'_>,
+) -> String {
     let content = page.content.trim();
     let room = fetched_page_text_room(max_chars);
     let total = content.chars().count();
@@ -396,8 +462,9 @@ fn render_fetched_page(page: &FetchUrlContentOutput, max_chars: usize, offset: u
     let end = start + shown.chars().count();
     let extent = if end == start && start < total {
         format!(
-            "{} words, {total} characters; the model's context has no room left for this page's text — characters {start} to {total} are unread; call fetch_url_content with this url and offset={start} once there is room",
-            page.word_count
+            "{} words, {total} characters; the model's context has no room left for this page's text — characters {start} to {total} are unread. {}",
+            page.word_count,
+            call.read_on_line(&call.read_on(&[("offset", json!(start))]))
         )
     } else if start == 0 && end >= total {
         format!(
@@ -411,13 +478,15 @@ fn render_fetched_page(page: &FetchUrlContentOutput, max_chars: usize, offset: u
         )
     } else if start == 0 {
         format!(
-            "{} words, {total} characters; the first {end} characters are shown, as much as this result has room for — call fetch_url_content with this url and offset={end} for the next part",
-            page.word_count
+            "{} words, {total} characters; the first {end} characters are shown, as much as this result has room for. {}",
+            page.word_count,
+            call.read_on_line(&call.read_on(&[("offset", json!(end))]))
         )
     } else {
         format!(
-            "{} words, {total} characters; characters {start} to {end} are shown, as much as this result has room for — call fetch_url_content with this url and offset={end} for the next part",
-            page.word_count
+            "{} words, {total} characters; characters {start} to {end} are shown, as much as this result has room for. {}",
+            page.word_count,
+            call.read_on_line(&call.read_on(&[("offset", json!(end))]))
         )
     };
     format!(
@@ -431,6 +500,7 @@ fn render_fetched_page(page: &FetchUrlContentOutput, max_chars: usize, offset: u
 #[cfg(test)]
 mod fetched_page_tests {
     use super::*;
+    use crate::features::function_calling::handles::ToolHandles;
     use lattice_core::application::contracts::tools::FunctionResult;
     use lattice_core::application::ports::turn_source::SourcePassage;
 
@@ -452,6 +522,8 @@ mod fetched_page_tests {
     }
 
     fn render(result: &FunctionResult, tool: &str, allowance: usize, offset: usize) -> String {
+        let handles = ToolHandles::new();
+        let arguments = json!({});
         format_tool_result(
             tool,
             result,
@@ -460,6 +532,7 @@ mod fetched_page_tests {
             offset,
             false,
             &HashMap::new(),
+            &CallView::new(tool, &arguments, &handles),
         )
     }
 
@@ -502,7 +575,11 @@ mod fetched_page_tests {
             rendered.contains(&format!("the first {room} characters")),
             "{rendered}"
         );
-        assert!(rendered.contains(&format!("offset={room}")), "{rendered}");
+        assert!(
+            rendered.contains("To read on, call read_more with [m1]."),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("offset"), "{rendered}");
         assert!(!rendered.contains("complete"), "{rendered}");
         assert!(
             rendered.chars().count() <= 3_000,
@@ -597,6 +674,8 @@ mod fetched_page_tests {
         allowance: usize,
         citations: &HashMap<String, u32>,
     ) -> String {
+        let handles = ToolHandles::new();
+        let arguments = json!({});
         format_tool_result(
             "search_course",
             result,
@@ -605,6 +684,7 @@ mod fetched_page_tests {
             0,
             true,
             citations,
+            &CallView::new("search_course", &arguments, &handles),
         )
     }
 
@@ -625,11 +705,11 @@ mod fetched_page_tests {
 
         assert!(
             rendered.contains(
-                "[7] Ranking › Fusion › Search notes (source_id: a)\nFusion sums reciprocal ranks."
+                "[s7] Ranking › Fusion › Search notes (source_id: a)\nFusion sums reciprocal ranks."
             ),
             "{rendered}"
         );
-        assert!(rendered.contains("[8] Ranking"), "{rendered}");
+        assert!(rendered.contains("[s8] Ranking"), "{rendered}");
         assert!(
             rendered.ends_with("\n[Call read_course_source to read on.]"),
             "{rendered}"
@@ -682,6 +762,8 @@ mod fetched_page_tests {
     fn a_library_result_is_shown_under_the_turn_s_number_for_it() {
         let citations = HashMap::from([("chunk-0-0".to_owned(), 41), ("chunk-1-0".to_owned(), 7)]);
 
+        let handles = ToolHandles::new();
+        let arguments = json!({"query": "q"});
         let rendered = format_tool_result(
             "semantic_search",
             &search_output(2, 1, "text"),
@@ -690,27 +772,95 @@ mod fetched_page_tests {
             0,
             false,
             &citations,
+            &CallView::new("semantic_search", &arguments, &handles),
         );
 
-        assert!(rendered.contains("[41] file-0.pdf"), "{rendered}");
-        assert!(rendered.contains("[7] file-1.pdf"), "{rendered}");
-        assert!(!rendered.contains("[1]"), "{rendered}");
+        assert!(rendered.contains("[s41] file-0.pdf"), "{rendered}");
+        assert!(rendered.contains("[s7] file-1.pdf"), "{rendered}");
+        assert!(!rendered.contains("[s1]"), "{rendered}");
     }
 
-    /// A search page that may have more says the offset the next starts at.
+    /// A search page that may have more names the point the next starts at,
+    /// and that name runs the same search from the next result.
     #[test]
-    fn a_full_search_page_names_the_offset_of_the_next() {
+    fn a_full_search_page_names_the_point_of_the_next() {
         let mut result = search_output(2, 1, "text");
         if let Some(data) = result.data.as_mut() {
             data["next_offset"] = serde_json::json!(20);
         }
-        let rendered = render(&result, "semantic_search", 4_000, 0);
-        assert!(
-            rendered.contains("call semantic_search with the same query and offset=20"),
-            "{rendered}"
+        let handles = ToolHandles::new();
+        let arguments = json!({"query": "q"});
+        let rendered = format_tool_result(
+            "semantic_search",
+            &result,
+            &ToolOutputSettingsDto::default(),
+            4_000,
+            0,
+            false,
+            &HashMap::new(),
+            &CallView::new("semantic_search", &arguments, &handles),
         );
         assert!(
-            !render(&search_output(2, 1, "text"), "semantic_search", 4_000, 0).contains("offset=")
+            rendered.contains("To read on, call read_more with [m1]."),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("offset"), "{rendered}");
+        let resumed = handles
+            .read_call("read_more", &json!({"handle": "[m1]"}))
+            .unwrap();
+        assert_eq!(resumed.tool, "semantic_search");
+        assert_eq!(resumed.arguments, json!({"query": "q", "offset": 20}));
+        assert!(
+            !render(&search_output(2, 1, "text"), "semantic_search", 4_000, 0)
+                .contains("read_more")
+        );
+    }
+
+    /// A search result names each document by a handle and shows no id.
+    #[test]
+    fn a_search_result_shows_documents_by_name_and_never_by_id() {
+        let rendered = render(&search_output(2, 1, "text"), "semantic_search", 4_000, 0);
+        assert!(rendered.contains("file-0.pdf [d1] (score"), "{rendered}");
+        assert!(rendered.contains("file-1.pdf [d2] (score"), "{rendered}");
+        assert!(!rendered.contains("doc-0"), "{rendered}");
+        assert!(!rendered.contains("doc_id"), "{rendered}");
+    }
+
+    /// A web search with more results says how to read them, once.
+    #[test]
+    fn a_web_search_with_more_results_names_the_next_page() {
+        let output = lattice_core::application::contracts::web::WebSearchOutput {
+            results: Vec::new(),
+            query: "tide tables".to_owned(),
+            result_count: 0,
+            page: 2,
+            offset: 0,
+            total_results: 30,
+            has_more: true,
+            ..serde_json::from_value(json!({
+                "results": [], "query": "tide tables", "result_count": 0
+            }))
+            .unwrap()
+        };
+        let handles = ToolHandles::new();
+        let arguments = json!({"query": "tide tables"});
+        let rendered = format_tool_result(
+            "web_search",
+            &FunctionResult::success(serde_json::to_value(output).unwrap()),
+            &ToolOutputSettingsDto::default(),
+            4_000,
+            0,
+            false,
+            &HashMap::new(),
+            &CallView::new("web_search", &arguments, &handles),
+        );
+        assert!(rendered.contains("call read_more with [m1]"), "{rendered}");
+        let resumed = handles
+            .read_call("read_more", &json!({"handle": "m1"}))
+            .unwrap();
+        assert_eq!(
+            resumed.arguments,
+            json!({"query": "tide tables", "page": 3})
         );
     }
 
@@ -748,7 +898,7 @@ mod fetched_page_tests {
     fn a_result_in_a_full_window_still_says_what_was_left_out() {
         let page_note = render(&page(&"word ".repeat(5_000)), "fetch_url_content", 0, 120);
         assert!(page_note.contains("characters 120 to"), "{page_note}");
-        assert!(page_note.contains("offset="), "{page_note}");
+        assert!(page_note.contains("call read_more with"), "{page_note}");
 
         let document = FunctionResult::success(serde_json::json!({
             "document_id": "doc-7", "content": "x".repeat(5_000),
@@ -756,8 +906,12 @@ mod fetched_page_tests {
             "total_chars": 9_000
         }));
         let document_note = render(&document, "get_document", 0, 0);
-        assert!(document_note.contains("doc-7"), "{document_note}");
-        assert!(document_note.contains("offset="), "{document_note}");
+        assert!(document_note.contains("[d1]"), "{document_note}");
+        assert!(!document_note.contains("doc-7"), "{document_note}");
+        assert!(
+            document_note.contains("call read_more with"),
+            "{document_note}"
+        );
         assert!(document_note.chars().count() <= MIN_RESULT_CHARS);
 
         let search = render(
@@ -773,19 +927,31 @@ mod fetched_page_tests {
         assert!(fallback_note.contains("[Cut to fit"), "{fallback_note}");
     }
 
-    /// A part larger than the result's room names the offset the rest starts at.
+    /// A part larger than the result's room names the point the rest starts at.
     #[test]
-    fn an_oversized_document_part_names_the_offset_to_read_on_from() {
+    fn an_oversized_document_part_names_the_point_to_read_on_from() {
         let document = FunctionResult::success(serde_json::json!({
             "document_id": "doc-7", "content": "§".repeat(5_000),
             "content_truncated": false, "offset": 1_000, "total_chars": 6_000
         }));
-        let rendered = render(&document, "get_document", 2_000, 0);
+        let handles = ToolHandles::new();
+        let arguments = json!({"document_id": "doc-7"});
+        let rendered = format_tool_result(
+            "get_document",
+            &document,
+            &ToolOutputSettingsDto::default(),
+            2_000,
+            0,
+            false,
+            &HashMap::new(),
+            &CallView::new("get_document", &arguments, &handles),
+        );
         assert!(rendered.chars().count() <= 2_000);
         let shown = rendered.matches('§').count();
-        assert!(
-            rendered.contains(&format!("offset={}", 1_000 + shown)),
-            "{rendered}"
-        );
+        let resumed = handles
+            .read_call("read_more", &json!({"handle": "[m1]"}))
+            .unwrap();
+        assert_eq!(resumed.arguments["offset"], json!(1_000 + shown));
+        assert!(!rendered.contains("offset"), "{rendered}");
     }
 }

@@ -47,7 +47,6 @@ pub struct RouterInput {
     pub query: String,
     pub has_recent_document: bool,
     pub recent_document_title: Option<String>,
-    pub recent_document_id: Option<String>,
 }
 
 pub struct RouterService {
@@ -148,6 +147,7 @@ impl RouterService {
 }
 
 fn render_router_prompt(template: &str, input: &RouterInput) -> String {
+    let title = input.recent_document_title.as_deref().unwrap_or("");
     template
         .replace("{query}", input.query.trim())
         .replace(
@@ -158,14 +158,8 @@ fn render_router_prompt(template: &str, input: &RouterInput) -> String {
                 "false"
             },
         )
-        .replace(
-            "{recent_document_title}",
-            input.recent_document_title.as_deref().unwrap_or(""),
-        )
-        .replace(
-            "{recent_document_id}",
-            input.recent_document_id.as_deref().unwrap_or(""),
-        )
+        .replace("{recent_document_title}", title)
+        .replace("{recent_document_id}", title)
 }
 
 fn render_clarify_prompt(settings: &RouterSettingsDto, input: &RouterInput) -> String {
@@ -207,7 +201,6 @@ mod tests {
             query: "help".to_string(),
             has_recent_document: false,
             recent_document_title: None,
-            recent_document_id: None,
         };
 
         let prompt = render_clarify_prompt(&settings, &input);
@@ -222,7 +215,6 @@ mod tests {
             query: "help".to_string(),
             has_recent_document: true,
             recent_document_title: Some("NDA.pdf".to_string()),
-            recent_document_id: Some("doc-1".to_string()),
         };
 
         let prompt = render_clarify_prompt(&settings, &input);
@@ -239,5 +231,27 @@ mod tests {
             decision.clarify_question.as_deref(),
             Some("Do you mean the NDA you opened?")
         );
+    }
+
+    fn tide_input() -> RouterInput {
+        RouterInput {
+            query: "what next".to_string(),
+            has_recent_document: true,
+            recent_document_title: Some("Tide tables".to_string()),
+        }
+    }
+
+    #[test]
+    fn the_default_template_does_not_show_a_document_id() {
+        let template = RouterSettingsDto::default().prompt_template;
+        let prompt = render_router_prompt(&template, &tide_input());
+        assert!(prompt.contains("Recent document title: Tide tables"));
+        assert!(!prompt.contains("Recent document id"));
+    }
+
+    #[test]
+    fn a_saved_template_with_the_id_placeholder_shows_the_title() {
+        let prompt = render_router_prompt("Document: {recent_document_id}", &tide_input());
+        assert_eq!(prompt, "Document: Tide tables");
     }
 }

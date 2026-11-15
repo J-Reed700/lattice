@@ -14,6 +14,8 @@ export interface BookmarkPayload {
    * when the resolved message carried no structured sources.
    */
   sources: SourceWithMetadata[];
+  /** The message's reply as pieces, when it was resolved from a loaded message. */
+  reply?: ConversationMessage['reply'];
 }
 
 const extractFullSources = (value: unknown): SourceWithMetadata[] =>
@@ -77,6 +79,7 @@ export async function resolveBookmarkPayload(
         loadedMessage.sources
       ),
       sources: extractFullSources(loadedMessage.sources),
+      reply: loadedMessage.reply,
     };
   }
 
@@ -99,5 +102,6 @@ export async function resolveBookmarkPayload(
     content: matched.content,
     sourceReferences: parseBookmarkSourceReferences(matched.metadata, matched.sources),
     sources: extractFullSources((matched as { sources?: unknown }).sources),
+    reply: matched.reply,
   };
 }

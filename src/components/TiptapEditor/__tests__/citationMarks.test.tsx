@@ -1,14 +1,15 @@
-import { fireEvent, render, waitFor } from '@testing-library/react';
+import { render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Editor } from '@tiptap/core';
-import { MemoryRouter } from 'react-router';
 import { Markdown } from 'tiptap-markdown';
 import { describe, expect, it, vi } from 'vitest';
 
+import { reply } from '@/tests/replyFixtures';
+import { drawReply, findReplyMarks, markFor, writeMarksAsNumbers, type ReplyPiece } from '@/utils/replyPieces';
+
 import { createExtensions } from '../extensions';
 import { CitationMarks, citationMarksKey } from '../extensions/citationMarks';
-import { TiptapEditor } from '../TiptapEditor';
-import { TiptapViewer } from '../TiptapViewer';
+import { TiptapViewer, type TiptapViewerProps } from '../TiptapViewer';
 
 import type { DecorationSet } from '@tiptap/pm/view';
 
@@ -21,20 +22,38 @@ interface DrawnChip {
 
 const lettersOnly = (text: string): string => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
 
-/** Every chip a rendered answer draws, in reading order. */
-function drawnChips(markdown: string): DrawnChip[] {
-  const editor = new Editor({
+function Answer({ parts, ...props }: { parts: ReplyPiece[] } & Omit<TiptapViewerProps, 'content' | 'marks'>) {
+  const drawn = drawReply(parts);
+  return <TiptapViewer content={drawn.markdown} marks={drawn.numbers} {...props} />;
+}
+
+function answerEditor(parts: ReplyPiece[], options: { isVisible?: () => boolean } = {}): Editor {
+  const drawn = drawReply(parts);
+  return new Editor({
     extensions: [
       ...createExtensions(),
-      CitationMarks.configure({ isCitation: () => true }),
+      CitationMarks.configure({
+        isCitation: () => true,
+        findMarks: (text) => findReplyMarks(text, drawn.numbers),
+        copyText: (text) => writeMarksAsNumbers(text, drawn.numbers),
+        ...options,
+      }),
       Markdown.configure({ html: false }),
     ],
-    content: markdown,
+    content: drawn.markdown,
     editable: false,
   });
+}
+
+function citationDecorations(editor: Editor): DecorationSet {
   const plugin = editor.state.plugins.find((candidate) => candidate.spec.key === citationMarksKey);
-  const set = plugin?.props.decorations?.call(plugin, editor.state) as DecorationSet;
-  const chips = set
+  return plugin?.props.decorations?.call(plugin, editor.state) as DecorationSet;
+}
+
+/** Every chip a rendered answer draws, in reading order. */
+function drawnChips(parts: ReplyPiece[]): DrawnChip[] {
+  const editor = answerEditor(parts);
+  const chips = citationDecorations(editor)
     .find()
     .sort((a, b) => a.from - b.from)
     .map((decoration) => {
@@ -49,17 +68,12 @@ function drawnChips(markdown: string): DrawnChip[] {
   return chips;
 }
 
-const ANSWER = [
-  'Potatoes give the most calories per square foot indoors [6].',
-  '',
-  '- Microgreens are ready in ten days [2][6]. They need no deep soil.',
-  '',
-  '```',
-  'yield[6] = 4',
-  '```',
-  '',
-  'Skip `grid[6]` lookups; dwarf tomatoes want a **five-gallon** pot [6].',
-].join('\n');
+const ANSWER = reply(
+  'Potatoes give the most calories per square foot indoors ', 6, '.\n\n',
+  '- Microgreens are ready in ten days ', 2, 6, '. They need no deep soil.\n\n',
+  '```\nyield[6] = 4\n```\n\n',
+  'Skip `grid[6]` lookups; dwarf tomatoes want a **five-gallon** pot ', 6, '.',
+);
 
 describe('CitationMarks', () => {
   it('tabs through read-only markers and delegates Enter/Space to the same occurrence as a click', async () => {
@@ -70,7 +84,7 @@ describe('CitationMarks', () => {
       if (chip) activate(Number(chip.dataset.cite), Number(chip.dataset.citeAt));
     }}>
       <button type="button">Before citations</button>
-      <TiptapViewer content="First claim [4]. Second claim [4]." citationNumbers={[4]} />
+      <Answer parts={reply('First claim ', 4, '. Second claim ', 4, '.')} citationNumbers={[4]} />
     </div>);
     const chips = await waitFor(() => {
       const found = view.container.querySelectorAll<HTMLElement>('[data-cite="4"]');
@@ -87,14 +101,15 @@ describe('CitationMarks', () => {
     await user.keyboard(' ');
     expect(activate).toHaveBeenLastCalledWith(4, 1);
     expect(activate).toHaveBeenCalledTimes(2);
-    expect(view.container).toHaveTextContent('First claim [4]. Second claim [4].');
+    expect(view.container).toHaveTextContent('First claim');
+    expect(view.container).not.toHaveTextContent('[s4]');
   });
 
   it('removes hidden citations from keyboard navigation', async () => {
     const user = userEvent.setup();
     const view = render(<>
       <button type="button">Before citations</button>
-      <TiptapViewer content="A claim [4]." citationNumbers={[4]} showEvidence={false} />
+      <Answer parts={reply('A claim ', 4, '.')} citationNumbers={[4]} showEvidence={false} />
       <button type="button">After citations</button>
     </>);
     await waitFor(() => expect(view.container.querySelector('.citation-hidden')).not.toBeNull());
@@ -104,45 +119,40 @@ describe('CitationMarks', () => {
     await user.tab();
     expect(view.getByRole('button', { name: 'After citations' })).toHaveFocus();
   });
-  it('toggles real viewer citations and highlights without changing prose, code or unknown markers', async () => {
-    const content = 'A careful comparison records the measure [4]. Leave [99] and `grid[4]` alone.';
-    const props = { content, citationNumbers: [4], claims: [{ sentence: 'A careful comparison records the measure [4].', verdict: 'supported' as const }] };
-    const view = render(<TiptapViewer {...props} />);
+
+  it('toggles real viewer citations and highlights without changing prose, code or unknown references', async () => {
+    const props = {
+      parts: reply('A careful comparison records the measure ', 4, '. Leave ', 99, ' and `grid[4]` alone.'),
+      citationNumbers: [4],
+      claims: [{ sentence: 'A careful comparison records the measure.', verdict: 'supported' as const }],
+    };
+    const view = render(<Answer {...props} />);
     await waitFor(() => expect(view.container.querySelector('[data-cite="4"]')).not.toBeNull());
     expect(view.container.querySelector('.claim-supported')).not.toBeNull();
+    expect(view.container).toHaveTextContent('Leave [99]');
 
-    view.rerender(<TiptapViewer {...props} showEvidence={false} />);
+    view.rerender(<Answer {...props} showEvidence={false} />);
     await waitFor(() => expect(view.container.querySelector('[data-cite]')).toBeNull());
     expect(view.container.querySelector('.claim')).toBeNull();
-    expect(view.container.querySelectorAll('.citation-hidden')).toHaveLength(1);
-    expect(view.container.querySelector('.citation-hidden')).toHaveTextContent('[4]');
+    expect(view.container.querySelectorAll('.citation-hidden')).toHaveLength(2);
     expect(view.container).toHaveTextContent('Leave [99]');
     expect(view.container.querySelector('code')).toHaveTextContent('grid[4]');
 
-    view.rerender(<TiptapViewer {...props} />);
+    view.rerender(<Answer {...props} />);
     await waitFor(() => expect(view.container.querySelector('[data-cite="4"]')).not.toBeNull());
     expect(view.container.querySelector('.claim-supported')).not.toBeNull();
-    expect(view.container.querySelector('.citation-hidden')).toBeNull();
-    expect(view.container).toHaveTextContent('A careful comparison records the measure [4].');
+    expect(view.container.querySelectorAll('.citation-hidden')).toHaveLength(1);
+    expect(view.container).toHaveTextContent('Leave [99]');
   });
 
   it('can hide a valid marker without removing it from the document', () => {
-    const editor = new Editor({
-      extensions: [
-        ...createExtensions(),
-        CitationMarks.configure({ isCitation: () => true, isVisible: () => false }),
-        Markdown.configure({ html: false }),
-      ],
-      content: 'A sourced sentence [3].',
-      editable: false,
-    });
-    const plugin = editor.state.plugins.find((candidate) => candidate.spec.key === citationMarksKey);
-    const set = plugin?.props.decorations?.call(plugin, editor.state) as DecorationSet;
-    const attrs = (set.find()[0] as unknown as { type: { attrs: Record<string, string> } }).type.attrs;
+    const editor = answerEditor(reply('A sourced sentence ', 3, '.'), { isVisible: () => false });
+    const attrs = (citationDecorations(editor).find()[0] as unknown as { type: { attrs: Record<string, string> } })
+      .type.attrs;
 
     expect(attrs.class).toBe('citation-hidden');
     expect(attrs['data-cite']).toBeUndefined();
-    expect(editor.state.doc.textContent).toContain('[3]');
+    expect(editor.state.doc.textContent).toContain(markFor(0));
     editor.destroy();
   });
 
@@ -153,38 +163,37 @@ describe('CitationMarks', () => {
   });
 
   it('counts each source on its own', () => {
-    const chips = drawnChips('Kale bolts in heat [1]. Chard does not [2]. Both want nitrogen [1].');
+    const chips = drawnChips(reply('Kale bolts in heat ', 1, '. Chard does not ', 2, '. Both want nitrogen ', 1, '.'));
 
     expect(chips.map((chip) => `${chip.number}@${chip.at}`)).toEqual(['1@0', '2@0', '1@1']);
   });
 
-  it('opens the mapped citation with the occurrence of the clicked inline mark', async () => {
-    const onCitationClick = vi.fn();
-    const { container } = render(
-      <MemoryRouter>
-        <TiptapEditor
-          value="First claim [4]. Second claim [4]."
-          onChange={vi.fn()}
-          citationNumbers={[4]}
-          onCitationClick={onCitationClick}
-        />
-      </MemoryRouter>,
-    );
-    const chips = await waitFor(() => {
-      const found = container.querySelectorAll('[data-cite="4"]');
-      expect(found).toHaveLength(2);
-      return found;
+  it('draws a reference as a chip at its place in the text', async () => {
+    const view = render(<Answer parts={reply('Kale bolts ', 3, ' in heat.')} citationNumbers={[3]} />);
+    const chip = await waitFor(() => {
+      const found = view.container.querySelector<HTMLElement>('[data-cite="3"]');
+      expect(found).not.toBeNull();
+      return found!;
     });
 
-    fireEvent.click(chips[1]!);
-    expect(onCitationClick).toHaveBeenCalledWith(4, 1);
-    fireEvent.keyDown(chips[0]!, { key: 'Enter' });
-    expect(onCitationClick).toHaveBeenLastCalledWith(4, 0);
-    fireEvent.keyDown(chips[1]!, { key: ' ' });
-    expect(onCitationClick).toHaveBeenLastCalledWith(4, 1);
-    fireEvent.keyDown(chips[1]!, { key: ' ', repeat: true });
-    fireEvent.keyDown(chips[1]!, { key: 'Enter', ctrlKey: true });
-    expect(onCitationClick).toHaveBeenCalledTimes(3);
-    expect(container).toHaveTextContent('First claim [4]. Second claim [4].');
+    expect(chip.previousSibling).toHaveTextContent('Kale bolts');
+    expect(chip.nextSibling).toHaveTextContent('in heat.');
+  });
+
+  it('leaves text that looks like a marker as plain text', async () => {
+    const view = render(<TiptapViewer content="A note says [3] here." citationNumbers={[3]} marks={[]} />);
+    await waitFor(() => expect(view.container).toHaveTextContent('A note says [3] here.'));
+
+    expect(view.container.querySelector('[data-cite]')).toBeNull();
+    expect(view.container.querySelector('.citation-hidden')).toBeNull();
+  });
+
+  it('copies a chip as its number', () => {
+    const editor = answerEditor(reply('Kale bolts ', 3, ' in heat.'));
+    const plugin = editor.state.plugins.find((candidate) => candidate.spec.key === citationMarksKey);
+    const slice = editor.state.doc.slice(0, editor.state.doc.content.size);
+
+    expect(plugin?.props.clipboardTextSerializer?.call(plugin, slice, editor.view)).toBe('Kale bolts [3] in heat.');
+    editor.destroy();
   });
 });

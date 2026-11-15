@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import { Markdown } from 'tiptap-markdown';
 
+import { findNoteMarks } from '@/utils/noteCitations';
+
 import { createExtensions } from './extensions';
 import { CitationMarks, citationMarksKey } from './extensions/citationMarks';
 import { getMarkdownFromEditor } from './markdownStorage';
@@ -77,6 +79,7 @@ export function TiptapEditor({
       }),
       CitationMarks.configure({
         isCitation: (number) => citationNumbersRef.current.includes(number),
+        findMarks: findNoteMarks,
         onCitationClick: (number, occurrence) => onCitationClickRef.current?.(number, occurrence),
       }),
       Markdown.configure({

@@ -3,12 +3,28 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
-use super::test_support::source;
+use super::test_support::{reply, source};
 use super::*;
 use lattice_core::application::ports::llm_port::CompletionInput;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::services::model_contract::CORRECTION_LEAD;
 use lattice_core::shared::error::Result;
+
+fn verify_response_grounding_summary(text: &str, sources: &[SourceDto]) -> GroundingReport {
+    super::verify_response_grounding_summary(&reply(text, sources), sources)
+}
+
+#[async_trait]
+trait VerifyText {
+    async fn verify_text(&self, text: &str, sources: &[SourceDto]) -> GroundingReport;
+}
+
+#[async_trait]
+impl VerifyText for GroundingVerifier {
+    async fn verify_text(&self, text: &str, sources: &[SourceDto]) -> GroundingReport {
+        self.verify(&reply(text, sources), sources).await
+    }
+}
 
 /// Replies with a scripted body, after an optional delay, counting calls.
 struct ScriptedLlm {
@@ -105,12 +121,12 @@ const EXPLAINED_CONTRADICTION: &str =
 /// Lexically indistinguishable from the source: same vocabulary, opposite claim.
 const CONTRADICTING_RESPONSE: &str =
     "Salicylic acid treatment improved measured cold tolerance in blueberry plants by 12 \
-         percent relative to untreated controls [1].";
+         percent relative to untreated controls [s1].";
 
 #[test]
 fn lexical_only_summary_keeps_the_legacy_shape() {
     let report = verify_response_grounding_summary(
-        "Blueberry plants showed improved cold tolerance after salicylic acid treatment [1].",
+        "Blueberry plants showed improved cold tolerance after salicylic acid treatment [s1].",
         &[source(
             "Salicylic acid treatment improved cold tolerance in blueberry plants during low temperature stress.",
         )],
@@ -127,7 +143,7 @@ fn lexical_only_summary_keeps_the_legacy_shape() {
 #[test]
 fn unsupported_claim_is_still_reported_without_a_judge() {
     let report = verify_response_grounding_summary(
-        "Blueberry plants tripled yield after lunar-cycle irrigation [1].",
+        "Blueberry plants tripled yield after lunar-cycle irrigation [s1].",
         &[source(
             "The study measured antioxidant enzyme response under low-temperature stress.",
         )],
@@ -141,7 +157,7 @@ fn unsupported_claim_is_still_reported_without_a_judge() {
 #[test]
 fn unsupported_claim_note_keeps_full_sentence() {
     let report = verify_response_grounding_summary(
-        "The same epigenetic shifts are linked to altered expression of genes that control meristem activity, suggesting a mechanistic link between methylation dynamics and developmental transitions [1][2].",
+        "The same epigenetic shifts are linked to altered expression of genes that control meristem activity, suggesting a mechanistic link between methylation dynamics and developmental transitions [s1][s2].",
         &[source("The study discusses WOX family structure and stress response without this meristem claim.")],
     );
 
@@ -164,7 +180,7 @@ async fn judge_overturns_a_lexically_supported_contradiction() {
 
     let llm = Arc::new(ScriptedLlm::new(vec![EXPLAINED_CONTRADICTION]));
     let report = GroundingVerifier::new(Some(llm))
-        .verify(CONTRADICTING_RESPONSE, &sources)
+        .verify_text(CONTRADICTING_RESPONSE, &sources)
         .await;
 
     assert_eq!(report.claims_evaluated, 1);
@@ -191,16 +207,15 @@ async fn live_grounding_adversarial_regressions() {
     let header = crate::tests::live_llama_cpp::header(&config.llama_cpp.auth_header_name).unwrap();
     let llm = LlamaCppLlm::new(&config, header).unwrap().into_port().await;
     let verifier = GroundingVerifier::new(Some(llm));
-    let mut evidence =
+    let evidence =
         source("The design workspace retains hourly file versions for 14 days before expiration.");
-    evidence.citation_id = Some(7);
     for (name, answer, expected, judged) in [
-        ("supported", "The design workspace retains hourly file versions for 14 days before expiration [7].", ClaimVerdict::Supported, true),
-        ("wrong_number", "The design workspace retains hourly file versions for 30 days before expiration [7].", ClaimVerdict::Contradicted, true),
-        ("negation", "The design workspace does not retain hourly file versions for 14 days before expiration [7].", ClaimVerdict::Contradicted, true),
-        ("invented_citation", "The design workspace retains hourly file versions for 14 days before expiration [99].", ClaimVerdict::Unsupported, false),
+        ("supported", "The design workspace retains hourly file versions for 14 days before expiration [s1].", ClaimVerdict::Supported, true),
+        ("wrong_number", "The design workspace retains hourly file versions for 30 days before expiration [s1].", ClaimVerdict::Contradicted, true),
+        ("negation", "The design workspace does not retain hourly file versions for 14 days before expiration [s1].", ClaimVerdict::Contradicted, true),
+        ("invented_citation", "The design workspace retains hourly file versions for 14 days before expiration [s99].", ClaimVerdict::Unsupported, false),
     ] {
-        let report = verifier.verify(answer, &[evidence.clone()]).await;
+        let report = verifier.verify_text(answer, &[evidence.clone()]).await;
         println!("{name}: {}", report.metadata_json());
         assert_eq!(report.claims_evaluated, 1, "{name}");
         assert_eq!(report.claims[0].verdict, expected, "{name}");
@@ -211,9 +226,9 @@ async fn live_grounding_adversarial_regressions() {
 #[tokio::test]
 async fn invalid_citation_is_not_rescued_by_the_judge() {
     let llm = Arc::new(ScriptedLlm::new(vec!["supported"]));
-    let response = CONTRADICTING_RESPONSE.replace("[1]", "[99]");
+    let response = CONTRADICTING_RESPONSE.replace("[s1]", "[s99]");
     let report = GroundingVerifier::new(Some(Arc::clone(&llm) as Arc<dyn LLMPort>))
-        .verify(&response, &[source(CONTRADICTION_SOURCE)])
+        .verify_text(&response, &[source(CONTRADICTION_SOURCE)])
         .await;
     assert_eq!(report.supported_claims, 0);
     assert_eq!(llm.call_count(), 0);
@@ -225,7 +240,7 @@ async fn garbage_judge_output_does_not_certify_an_unresolved_claim() {
     let llm = Arc::new(ScriptedLlm::new(vec!["I cannot judge these claims."]));
 
     let report = GroundingVerifier::new(Some(Arc::clone(&llm) as Arc<dyn LLMPort>))
-        .verify(CONTRADICTING_RESPONSE, &sources)
+        .verify_text(CONTRADICTING_RESPONSE, &sources)
         .await;
 
     // The reply holds no verdict: refused once, asked again once.
@@ -257,7 +272,7 @@ async fn a_low_confidence_negative_is_not_presented_as_a_contradiction() {
         ]),
     );
     let report = GroundingVerifier::new(Some(Arc::clone(&llm) as Arc<dyn LLMPort>))
-        .verify(CONTRADICTING_RESPONSE, &[source(CONTRADICTION_SOURCE)])
+        .verify_text(CONTRADICTING_RESPONSE, &[source(CONTRADICTION_SOURCE)])
         .await;
 
     assert_eq!(report.claims[0].verdict, ClaimVerdict::Unverified);
@@ -280,12 +295,12 @@ async fn a_contradiction_quoting_none_of_the_claims_words_is_not_shown_as_one() 
                    OCR-derived word-token sequences, (ii) layout embeddings encoding the 2D \
                    bounding-box positions of these tokens, and (iii)";
     let answer = "LayoutLMv3 fuses three input modalities: OCR-derived word tokens, 2D \
-                  bounding-box positions, and the image itself [1].";
+                  bounding-box positions, and the image itself [s1].";
     let llm = Arc::new(ScriptedLlm::new(vec![
         "contradicted\nReason: The source lists the third modality as layout embeddings, not the image.\nSource quote: (iii)",
     ]));
     let report = GroundingVerifier::new(Some(llm))
-        .verify(answer, &[source(passage)])
+        .verify_text(answer, &[source(passage)])
         .await;
 
     assert_eq!(report.contradicted_count(), 0);
@@ -300,14 +315,14 @@ async fn a_contradiction_quoting_none_of_the_claims_words_is_not_shown_as_one() 
 #[tokio::test]
 async fn a_plain_near_verbatim_claim_never_reaches_the_judge() {
     // No digits, no negation, and the passage's own sentence word for word.
-    let response = "Salicylic acid treatment improved cold tolerance in blueberry plants during low temperature stress [1].";
+    let response = "Salicylic acid treatment improved cold tolerance in blueberry plants during low temperature stress [s1].";
     let sources = vec![source(
         "Salicylic acid treatment improved cold tolerance in blueberry plants during low temperature stress.",
     )];
     let llm = Arc::new(ScriptedLlm::new(vec!["unsupported"]));
 
     let report = GroundingVerifier::new(Some(Arc::clone(&llm) as Arc<dyn LLMPort>))
-        .verify(response, &sources)
+        .verify_text(response, &sources)
         .await;
 
     assert_eq!(llm.call_count(), 0, "the judge must not be called");
@@ -325,7 +340,7 @@ async fn a_claim_that_keeps_the_passage_words_and_drops_its_negation_reaches_the
     ]));
 
     let report = GroundingVerifier::new(Some(Arc::clone(&llm) as Arc<dyn LLMPort>))
-        .verify(
+        .verify_text(
             &super::gate_tests::cited_answer(&pair.claim),
             &[source(&pair.passage)],
         )
@@ -347,8 +362,8 @@ async fn an_unreached_copy_that_cut_a_negation_is_not_checked_rather_than_suppor
     let llm = Arc::new(ScriptedLlm::new(vec!["I cannot judge this."]));
 
     let report = GroundingVerifier::new(Some(Arc::clone(&llm) as Arc<dyn LLMPort>))
-        .verify(
-            "Widen the pool on Garnetline to work around a stale lease takeover [1].",
+        .verify_text(
+            "Widen the pool on Garnetline to work around a stale lease takeover [s1].",
             &[source(&pair.passage)],
         )
         .await;
@@ -385,9 +400,9 @@ fn scheduled_judge(llm: Arc<ScriptedLlm>, slots: usize) -> ClaimJudge {
 /// judged, and none is left unverified for want of time.
 #[tokio::test(start_paused = true)]
 async fn a_slow_judge_still_judges_every_claim() {
-    let response = "Yields rose by 42 percent in treated plots [1].\n\
-                        Frost damage fell by 18 percent in treated plots [1].\n\
-                        Harvest weight increased by 7 percent in treated plots [1].";
+    let response = "Yields rose by 42 percent in treated plots [s1].\n\
+                        Frost damage fell by 18 percent in treated plots [s1].\n\
+                        Harvest weight increased by 7 percent in treated plots [s1].";
     let sources = vec![source(
         "Treated plots recorded changes in yields, frost damage, and harvest weight across the trial.",
     )];
@@ -402,7 +417,7 @@ async fn a_slow_judge_still_judges_every_claim() {
     };
 
     let started = tokio::time::Instant::now();
-    let report = verifier.verify(response, &sources).await;
+    let report = verifier.verify_text(response, &sources).await;
 
     assert!(
         started.elapsed() >= Duration::from_secs(360),
@@ -422,9 +437,9 @@ async fn a_slow_judge_still_judges_every_claim() {
 /// side rather than in a row.
 #[tokio::test]
 async fn concurrent_calls_judge_claims_side_by_side() {
-    let response = "Yields rose by 42 percent in treated plots [1].\n\
-                        Frost damage fell by 18 percent in treated plots [1].\n\
-                        Harvest weight increased by 7 percent in treated plots [1].";
+    let response = "Yields rose by 42 percent in treated plots [s1].\n\
+                        Frost damage fell by 18 percent in treated plots [s1].\n\
+                        Harvest weight increased by 7 percent in treated plots [s1].";
     let sources = vec![source(
         "Treated plots recorded changes in yields, frost damage, and harvest weight across the trial.",
     )];
@@ -440,7 +455,7 @@ async fn concurrent_calls_judge_claims_side_by_side() {
     };
 
     let started = std::time::Instant::now();
-    let report = verifier.verify(response, &sources).await;
+    let report = verifier.verify_text(response, &sources).await;
 
     assert_eq!(llm.call_count(), 3);
     assert!(
@@ -461,7 +476,7 @@ async fn concurrent_calls_judge_claims_side_by_side() {
 async fn without_an_llm_handle_the_verifier_stays_lexical() {
     let sources = vec![source(CONTRADICTION_SOURCE)];
     let report = GroundingVerifier::new(None)
-        .verify(CONTRADICTING_RESPONSE, &sources)
+        .verify_text(CONTRADICTING_RESPONSE, &sources)
         .await;
 
     assert_eq!(report.supported_claims, 1);
@@ -475,7 +490,7 @@ async fn the_judge_can_be_turned_off_explicitly() {
 
     let report = GroundingVerifier::new(Some(Arc::clone(&llm) as Arc<dyn LLMPort>))
         .with_judge_enabled(false)
-        .verify(CONTRADICTING_RESPONSE, &sources)
+        .verify_text(CONTRADICTING_RESPONSE, &sources)
         .await;
 
     assert_eq!(llm.call_count(), 0);
@@ -488,7 +503,7 @@ async fn metadata_keeps_the_existing_keys_and_adds_the_new_ones() {
     let llm = Arc::new(ScriptedLlm::new(vec![EXPLAINED_CONTRADICTION]));
 
     let metadata = GroundingVerifier::new(Some(llm))
-        .verify(CONTRADICTING_RESPONSE, &sources)
+        .verify_text(CONTRADICTING_RESPONSE, &sources)
         .await
         .metadata_json();
 
@@ -582,13 +597,13 @@ fn metadata_keeps_a_reason_past_1000_utf16_units_whole() {
 #[tokio::test]
 async fn an_unreached_plain_claim_is_not_checked() {
     // Supported on overlap, but not strongly enough to skip the judge.
-    let response = "Blueberry growers noticed hardier bushes, better cold tolerance and sturdier stems after salicylic acid treatment [1].";
+    let response = "Blueberry growers noticed hardier bushes, better cold tolerance and sturdier stems after salicylic acid treatment [s1].";
     let sources = vec![source(
         "Salicylic acid treatment improved cold tolerance in blueberry plants during low temperature stress.",
     )];
     let llm = Arc::new(ScriptedLlm::new(vec!["I cannot say."]));
     let report = GroundingVerifier::new(Some(Arc::clone(&llm) as Arc<dyn LLMPort>))
-        .verify(response, &sources)
+        .verify_text(response, &sources)
         .await;
 
     assert_eq!(
@@ -609,7 +624,7 @@ async fn an_unreached_plain_claim_is_not_checked() {
 async fn a_cited_page_with_no_archived_text_is_not_checked_rather_than_missing() {
     let llm = Arc::new(ScriptedLlm::new(vec!["supported"]));
     let report = GroundingVerifier::new(Some(Arc::clone(&llm) as Arc<dyn LLMPort>))
-        .verify(CONTRADICTING_RESPONSE, &[source("")])
+        .verify_text(CONTRADICTING_RESPONSE, &[source("")])
         .await;
 
     assert_eq!(llm.call_count(), 0);
@@ -669,15 +684,15 @@ async fn an_explorer_answer_is_checked_on_its_cited_sentences_only() {
         "Reciprocal rank fusion adds one over sixty plus the rank from each list.",
     )];
     let response =
-        "Reciprocal rank fusion adds one over sixty plus the rank from each list [1].\n\n\
+        "Reciprocal rank fusion adds one over sixty plus the rank from each list [s1].\n\n\
                     The loop in this function walks both ranked lists before sorting the scores.";
 
     let every_sentence = GroundingVerifier::new(None)
-        .verify(response, &sources)
+        .verify_text(response, &sources)
         .await;
     let cited_only = GroundingVerifier::new(None)
         .cited_only(true)
-        .verify(response, &sources)
+        .verify_text(response, &sources)
         .await;
 
     assert_eq!(every_sentence.claims_evaluated, 2);
@@ -688,7 +703,7 @@ async fn an_explorer_answer_is_checked_on_its_cited_sentences_only() {
 const LEASE_PASSAGE: &str = "A worker holds a lease on the job the broker handed it.";
 
 const SESSION_REPLY: &str = "Good work, you have named that part exactly as the handbook does.\n\n\
-     A worker holds a lease on the job the broker handed it [1].\n\n\
+     A worker holds a lease on the job the broker handed it [s1].\n\n\
      Let's move on to the next card in your deck, one at a time.\n\n\
      The backoff ladder has six rungs in total, each one longer than the last.";
 
@@ -696,10 +711,10 @@ const SESSION_REPLY: &str = "Good work, you have named that part exactly as the 
 /// sentence beside it still is.
 #[tokio::test]
 async fn a_sentence_that_only_runs_a_session_is_no_claim() {
-    let llm = Arc::new(ScriptedLlm::new(vec!["[3]"]));
+    let llm = Arc::new(ScriptedLlm::new(vec![r#"{"marks":[{"at":"s1"},{"at":"s2"}]}"#]));
     let report = GroundingVerifier::new(Some(llm.clone()))
         .without_session_talk(true)
-        .verify(SESSION_REPLY, &[source(LEASE_PASSAGE)])
+        .verify_text(SESSION_REPLY, &[source(LEASE_PASSAGE)])
         .await;
 
     assert_eq!(
@@ -724,7 +739,7 @@ async fn every_uncited_sentence_stays_a_claim_when_the_judge_cannot_say() {
     let llm = Arc::new(ScriptedLlm::new(vec!["I could not tell which are which."]));
     let report = GroundingVerifier::new(Some(llm))
         .without_session_talk(true)
-        .verify(SESSION_REPLY, &[source(LEASE_PASSAGE)])
+        .verify_text(SESSION_REPLY, &[source(LEASE_PASSAGE)])
         .await;
 
     assert_eq!(report.claims_evaluated, 4);
@@ -740,7 +755,7 @@ async fn numbers_inside_prose_are_not_taken_as_the_judges_answer() {
     ]));
     let report = GroundingVerifier::new(Some(llm))
         .without_session_talk(true)
-        .verify(SESSION_REPLY, &[source(LEASE_PASSAGE)])
+        .verify_text(SESSION_REPLY, &[source(LEASE_PASSAGE)])
         .await;
 
     assert_eq!(report.claims_evaluated, 4);
@@ -751,7 +766,7 @@ async fn numbers_inside_prose_are_not_taken_as_the_judges_answer() {
 async fn a_lexical_check_keeps_every_uncited_sentence() {
     let report = GroundingVerifier::new(None)
         .without_session_talk(true)
-        .verify(SESSION_REPLY, &[source(LEASE_PASSAGE)])
+        .verify_text(SESSION_REPLY, &[source(LEASE_PASSAGE)])
         .await;
 
     assert_eq!(report.claims_evaluated, 4);
@@ -760,9 +775,9 @@ async fn a_lexical_check_keeps_every_uncited_sentence() {
 /// An ordinary chat's check costs no extra call.
 #[tokio::test]
 async fn a_chat_turn_never_asks_which_sentences_run_a_session() {
-    let llm = Arc::new(ScriptedLlm::new(vec!["[3]"]));
+    let llm = Arc::new(ScriptedLlm::new(vec![r#"{"marks":[{"at":"s1"},{"at":"s2"}]}"#]));
     let report = GroundingVerifier::new(Some(llm.clone()))
-        .verify(SESSION_REPLY, &[source(LEASE_PASSAGE)])
+        .verify_text(SESSION_REPLY, &[source(LEASE_PASSAGE)])
         .await;
 
     assert_eq!(report.claims_evaluated, 4);
@@ -779,9 +794,9 @@ async fn a_made_up_quotation_is_a_finding_no_model_is_asked_about() {
         "Once the hold expires with the band still broken, page Marisol Quenby and quote TCK-1836.",
     );
     passage.citation_id = Some(1);
-    let answer = "The next step is to \"page Anneke Voskuil and quote TCK-1836\" [1].";
+    let answer = "The next step is to \"page Anneke Voskuil and quote TCK-1836\" [s1].";
 
-    let report = verifier.verify(answer, &[passage]).await;
+    let report = verifier.verify_text(answer, &[passage]).await;
 
     assert_eq!(llm.call_count(), 0);
     assert_eq!(report.unsupported_count(), 1);

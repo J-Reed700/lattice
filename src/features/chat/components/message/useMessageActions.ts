@@ -15,6 +15,7 @@ import {
   sameModelRef,
 } from '@/utils/chatModelSelection';
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
+import { plainTextOf } from '@/utils/replyPieces';
 
 /**
  * What to say about a regenerate that failed.
@@ -81,7 +82,7 @@ export function useMessageActions({
       return;
     }
 
-    const compact = message.content.replace(/\s+/g, ' ').trim();
+    const compact = plainTextOf(message).replace(/\s+/g, ' ').trim();
     const title = compact.length > 80 ? `${compact.slice(0, 80)}...` : compact;
     if (!(await bookmarkMessage(activeConversationId, messageId, title || null, null))) return;
     // Say where it went and what it is for; a silent save teaches nothing.

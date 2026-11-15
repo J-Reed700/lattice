@@ -4,13 +4,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TooltipProvider } from '@/components/ui';
 import { WebArticleView } from '@/features/reading/components/WebArticleView';
+import { reply } from '@/tests/replyFixtures';
 import type { SourceWithMetadata } from '@/types/conversation';
+import type { ReplyPiece } from '@/utils/replyPieces';
 
 
 const mocks = vi.hoisted(() => ({ readWebPage: vi.fn() }));
 vi.mock('@/lib/api', () => ({ default: { readWebPage: mocks.readWebPage } }));
 
-let answer = '';
 // Stable between renders: the reader memoises on these.
 const messageVerification = new Map();
 let conversations: unknown[] = [];
@@ -19,21 +20,25 @@ vi.mock('@/shared/conversations/conversationsStore', () => ({
     selector({ messageVerification, conversations }),
 }));
 
-function setAnswer(content: string) {
-  answer = content;
-  conversations = [{ id: 'conversation', messages: [{ id: 'answer', role: 'assistant', content: answer }] }];
+function setAnswer(parts: ReplyPiece[]) {
+  conversations = [{ id: 'conversation', messages: [{ id: 'answer', role: 'assistant', content: '', reply: parts }] }];
 }
 
 const URL = 'https://example.org/indoor-vegetables';
 
 // One page, cited from two sentences a long way apart in the answer.
-const ANSWER = [
+const ANSWER = reply(
+  'Potatoes grown in deep fabric bags give the most calories for the floor space they take ', 6, '.\n\n',
+  'Leafy greens should stay a small share of the shelf ', 2, '.\n\n',
+  'Dwarf tomato varieties need at least eight hours of strong light every day to set fruit ', 6, '.',
+);
+
+// The same answer as a note holds it: the notes format's own `[n]` markers.
+const NOTE = [
   'Potatoes grown in deep fabric bags give the most calories for the floor space they take [6].',
-  '',
   'Leafy greens should stay a small share of the shelf [2].',
-  '',
   'Dwarf tomato varieties need at least eight hours of strong light every day to set fruit [6].',
-].join('\n');
+].join('\n\n');
 
 const PAGE = [
   'Growing food indoors is mostly a question of light and containers.',
@@ -93,7 +98,7 @@ describe('a page the answer cites from more than one sentence', () => {
     render(
       <QueryClientProvider client={client}>
         <TooltipProvider>
-          <WebArticleView url={URL} source={source} citationContent={ANSWER} occurrence={1} />
+          <WebArticleView url={URL} source={source} citationContent={NOTE} occurrence={1} />
         </TooltipProvider>
       </QueryClientProvider>,
     );
@@ -109,7 +114,7 @@ describe('a page the answer cites from more than one sentence', () => {
     expect(mocks.readWebPage).not.toHaveBeenCalled();
     first.unmount();
 
-    // The same [6], further down the answer: the same page, a different passage.
+    // The same source, further down the answer: the same page, a different passage.
     renderReader(1);
     expect(await litPassage()).toContain('eight hours of strong light');
     expect(await litPassage()).not.toContain('potatoes');
@@ -131,9 +136,7 @@ describe('a page the answer cites from more than one sentence', () => {
   });
 
   it('leaves the last passage behind when the next mark has none of its own', async () => {
-    setAnswer(
-      `${ANSWER}\n\nA quarterly budget of forty dollars covers seed, compost and replacement bulbs [6].`
-    );
+    setAnswer([...ANSWER, ...reply('\n\nA quarterly budget of forty dollars covers seed, compost and replacement bulbs ', 6, '.')]);
 
     const reader = renderReader(1);
     expect(await litPassage()).toContain('omato');
@@ -160,9 +163,10 @@ describe('a page the answer cites from more than one sentence', () => {
       ...source,
       webSnapshot: { ...source.webSnapshot!, text: page },
     };
-    setAnswer(
-      `${ANSWER}\n\nHerbs grow on almost any windowsill, and dwarf tomato varieties set fruit indoors given at least eight hours of strong light [6].`
-    );
+    setAnswer([
+      ...ANSWER,
+      ...reply('\n\nHerbs grow on almost any windowsill, and dwarf tomato varieties set fruit indoors given at least eight hours of strong light ', 6, '.'),
+    ]);
 
     const reader = renderReader(0, pageSource);
     await litPassage();
@@ -189,9 +193,7 @@ describe('a page the answer cites from more than one sentence', () => {
   });
 
   it('lights nothing, and says so, when the page has nothing like the clicked sentence', async () => {
-    setAnswer(
-      `${ANSWER}\n\nA quarterly budget of forty dollars covers seed, compost and replacement bulbs [6].`
-    );
+    setAnswer([...ANSWER, ...reply('\n\nA quarterly budget of forty dollars covers seed, compost and replacement bulbs ', 6, '.')]);
 
     renderReader(2);
     await waitFor(() => expect(document.querySelector('.source-reader-passage')).not.toBeNull());

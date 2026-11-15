@@ -2050,3 +2050,114 @@ async fn a_busy_store_makes_a_memory_commit_a_busy_error() {
         "a pool admission timeout must stay a busy error"
     );
 }
+
+/// An answer saved with two references: memory reads it, cuts spans on it and
+/// commits evidence over it without the handles, while the stored text keeps them.
+async fn seed_answer_with_references(pool: &SqlitePool) -> (String, String) {
+    let content = "Deploys need approval [s1] from the lead [s2].";
+    seed_message(
+        pool,
+        "conv-mem",
+        "mm5",
+        "assistant",
+        content,
+        10,
+        "2026-09-01T10:00:00Z",
+    )
+    .await;
+    let first = content.find("[s1]").unwrap();
+    let second = content.find("[s2]").unwrap();
+    let metadata = serde_json::json!({"references": [
+        {"start": first, "end": first + 4, "prefix": "s", "number": 1},
+        {"start": second, "end": second + 4, "prefix": "s", "number": 2},
+    ]});
+    sqlx::query("UPDATE conversation_messages SET metadata = ? WHERE id = 'mm5'")
+        .bind(metadata.to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+    (
+        content.to_string(),
+        "Deploys need approval from the lead.".to_string(),
+    )
+}
+
+#[tokio::test]
+async fn memory_reads_an_answer_without_its_references_and_a_legacy_message_as_saved() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let conversation_id = seed_memory_thread(&pool).await;
+    let (stored, clean) = seed_answer_with_references(&pool).await;
+    let repo = ConversationRepository::new(Database::new(pool.clone()));
+
+    let page = repo
+        .page_memory_source_messages(&conversation_id, 0, 100, SourceReadLimits::DEFAULT)
+        .await
+        .unwrap();
+    let answer = page.messages.iter().find(|m| m.id == "mm5").unwrap();
+    assert_eq!(answer.content, clean);
+    assert_eq!(answer.content_digest, compute_digest(&clean));
+    let legacy = page.messages.iter().find(|m| m.id == "mm2").unwrap();
+    assert_eq!(legacy.content, "Understood, I will wait.");
+    assert_eq!(
+        legacy.content_digest,
+        compute_digest("Understood, I will wait.")
+    );
+
+    let ids = vec!["mm5".to_string()];
+    let raw = repo
+        .read_memory_messages(&conversation_id, &ids, SourceReadLimits::DEFAULT)
+        .await
+        .unwrap();
+    assert_eq!(raw[0].content, stored, "the turn's own readers keep the handles");
+    assert_eq!(raw[0].references.len(), 2);
+
+    let spans = [SourceSpanRef {
+        message_id: "mm5".into(),
+        start_byte: 0,
+        end_byte: "Deploys need approval from".len() as u32,
+    }];
+    let resolved = repo
+        .read_memory_source_spans(&conversation_id, &spans, SourceReadLimits::DEFAULT)
+        .await
+        .unwrap();
+    assert_eq!(resolved[0].text.as_deref(), Some("Deploys need approval from"));
+}
+
+#[tokio::test]
+async fn a_commit_accepts_evidence_cut_on_an_answer_without_its_references() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let conversation_id = seed_memory_thread(&pool).await;
+    let (_, clean) = seed_answer_with_references(&pool).await;
+    let repo = ConversationRepository::new(Database::new(pool.clone()));
+    let before = repo.load_memory_snapshot(&conversation_id).await.unwrap();
+
+    let span = EvidenceSpan {
+        message_id: "mm5".into(),
+        sequence: 5,
+        role: SourceRole::Assistant,
+        start_byte: 0,
+        end_byte: clean.len() as u32,
+        content_digest: compute_digest(&clean),
+        purpose: EvidencePurpose::Assertion,
+    };
+    let id = MemoryId::new();
+    let commit = MemoryCommit {
+        inserts: vec![item(&id, &conversation_id, MemoryKind::Constraint, span)],
+        updates: Vec::new(),
+        summary: None,
+        processed_through_sequence: 5,
+    };
+    repo.commit_memory(
+        &MemoryCommitPreconditions {
+            conversation_id: conversation_id.clone(),
+            expected_transcript_revision: before.transcript_revision,
+            expected_memory_revision: 0,
+            operation_id: "op-clean".into(),
+        },
+        &candidate(commit, before.transcript_revision, None),
+    )
+    .await
+    .expect("evidence on the text memory reads commits");
+}

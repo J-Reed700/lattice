@@ -115,6 +115,7 @@ pub(super) async fn run_agentic_tool_loop(
         highlight_terms,
         focus,
         recorder,
+        names,
         ..
     } = turn;
     let LoopRequest {
@@ -169,7 +170,13 @@ pub(super) async fn run_agentic_tool_loop(
 
     // Owns the terminal `done` event via Drop, so no error path can leave the
     // UI generating forever.
-    let mut emitter = StreamEmitter::new(sink, conv_id, request_id);
+    let mut emitter = StreamEmitter::new(
+        sink,
+        conv_id,
+        request_id,
+        std::sync::Arc::clone(names),
+        super::reply_text::markers(source.is_some()),
+    );
 
     // The stop button as a token: every round's request carries it, so Stop
     // dequeues or aborts a request at once rather than at the next poll.
@@ -228,6 +235,7 @@ pub(super) async fn run_agentic_tool_loop(
             tool_schema_chars,
             llm,
             question,
+            names,
         },
         // Pages are remembered for the whole turn, which started before this loop:
         // retrieval has usually opened the top results already.
@@ -679,6 +687,7 @@ pub(super) async fn run_agentic_tool_loop(
             );
             forced = Some(LastRound::OutOfTime);
         }
+        names.save().await?;
         if let Some(journal) = journal {
             journal
                 .round(&ResearchRound {

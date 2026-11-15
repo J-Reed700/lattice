@@ -82,8 +82,11 @@ fn query_planning_context(
     let terms = super::select_informative_terms(super::tokenize_keyword_terms(&cleaned), 16);
     let eligible: Vec<_> = messages
         .iter()
-        .filter(|message| message.is_completed() && !message.content.trim().is_empty())
-        .map(|message| format!("{}: {}", message.role, message.content.trim()))
+        .filter_map(|message| {
+            let text = message.text_without_references();
+            (message.is_completed() && !text.trim().is_empty())
+                .then(|| format!("{}: {}", message.role, text.trim()))
+        })
         .collect();
     let cost = |text: &String| count_tokens(text).saturating_add(1);
 
@@ -347,6 +350,42 @@ mod planning_context_tests {
                 || context.ends_with(&format!("turn {index}")))
         );
         assert!(!context.contains("not shown"));
+    }
+
+    fn saved_message(
+        role: MessageRole,
+        content: &str,
+        metadata: Option<String>,
+    ) -> lattice_core::domain::conversation::ConversationMessage {
+        lattice_core::domain::conversation::ConversationMessage {
+            id: "m1".into(),
+            conversation_id: Default::default(),
+            role,
+            content: content.into(),
+            tokens: 1,
+            created_at: chrono::Utc::now(),
+            metadata,
+            status: "completed".into(),
+        }
+    }
+
+    #[test]
+    fn planning_reads_an_answer_without_its_references_and_an_older_one_as_saved() {
+        let content = "The pass is open [s1] in May.";
+        let start = content.find("[s1]").unwrap();
+        let saved = saved_message(
+            MessageRole::Assistant,
+            content,
+            Some(
+                serde_json::json!({"references": [{"start": start, "end": start + 4}]}).to_string(),
+            ),
+        );
+        let older = saved_message(MessageRole::Assistant, "Open in May [1].", None);
+        let count = |text: &str| text.chars().count() / 4 + 1;
+        let context = query_planning_context(&[older, saved], "pass", 100_000, &count).unwrap();
+        assert!(context.contains("assistant: The pass is open in May."), "{context}");
+        assert!(!context.contains("[s1]"));
+        assert!(context.contains("assistant: Open in May [1]."));
     }
 }
 

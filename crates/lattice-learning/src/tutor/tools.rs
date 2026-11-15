@@ -7,14 +7,16 @@
 
 use super::cards::NewCard;
 use super::course_turn::CourseTurn;
+use super::names::{Card, Choice, Lesson, Source};
 use crate::assessment_repository::LearningAssessmentRepository;
 use crate::dto::{LearningQuizStatusDto, LearningQuizVerdict};
 use crate::recall::study_dto::StudyRating;
 use crate::source_library::LearningSourceLibraryRepository;
-use lattice_core::application::contracts::sources::COURSE_SOURCE_PREFIX;
 use lattice_core::application::contracts::tools::explorer::{arg_str, arg_u32};
 use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
 use lattice_core::application::ports::ToolDefinition;
+use lattice_core::application::services::model_contract::shape::Vocabulary;
+use lattice_core::application::services::model_contract::tools::Parameters;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::text::safe_truncate;
 use serde_json::{json, Value};
@@ -26,6 +28,7 @@ const TOOL_SEARCH_COURSE: &str = "search_course";
 const TOOL_READ_COURSE_SOURCE: &str = "read_course_source";
 const TOOL_COURSE_OUTLINE: &str = "course_outline";
 const TOOL_DUE_REVIEWS: &str = "due_reviews";
+const TOOL_ASK_CARD: &str = "ask_card";
 const TOOL_RECORD_RECALL: &str = "record_recall";
 const TOOL_SAVE_CARD: &str = "save_card";
 const TOOL_SAVE_NOTE: &str = "save_note";
@@ -37,6 +40,7 @@ pub(super) fn is_course_tool(name: &str) -> bool {
             | TOOL_READ_COURSE_SOURCE
             | TOOL_COURSE_OUTLINE
             | TOOL_DUE_REVIEWS
+            | TOOL_ASK_CARD
             | TOOL_RECORD_RECALL
             | TOOL_SAVE_CARD
             | TOOL_SAVE_NOTE
@@ -60,6 +64,7 @@ pub(super) fn activity_label(tool: &str, arguments: &Value) -> String {
         TOOL_READ_COURSE_SOURCE => "Read a course source".to_string(),
         TOOL_COURSE_OUTLINE => "Read the course outline".to_string(),
         TOOL_DUE_REVIEWS => "Checked the cards due".to_string(),
+        TOOL_ASK_CARD => "Asked a recall card".to_string(),
         TOOL_RECORD_RECALL => "Rated a recall card".to_string(),
         TOOL_SAVE_CARD => "Saved a recall card".to_string(),
         TOOL_SAVE_NOTE => "Saved a note to the Notebook".to_string(),
@@ -67,37 +72,92 @@ pub(super) fn activity_label(tool: &str, arguments: &Value) -> String {
     }
 }
 
+impl Vocabulary for StudyRating {
+    const WORDS: &'static [(&'static str, Self)] = &[
+        ("again", StudyRating::Again),
+        ("hard", StudyRating::Hard),
+        ("good", StudyRating::Good),
+        ("easy", StudyRating::Easy),
+    ];
+}
+
+fn search_parameters() -> Parameters {
+    Parameters::new().text("query", "What to find, in plain words.")
+}
+
+fn read_source_parameters() -> Parameters {
+    Parameters::new().handle::<Source>(
+        "source",
+        "The bracketed name of a source, such as [r2], from a passage's label or the outline.",
+    )
+}
+
+fn card_parameters() -> Parameters {
+    Parameters::new().handle::<Card>(
+        "card",
+        "The bracketed name of a card, such as [c1], from the turn's facts or due_reviews.",
+    )
+}
+
+fn record_parameters() -> Parameters {
+    card_parameters()
+        .optional_choice::<StudyRating>(
+            "rating",
+            "How the learner's answer went. Not for a multiple-choice card: its option decides.",
+        )
+        .optional_handle::<Choice>(
+            "option",
+            "For a multiple-choice card: the bracketed name of the option the learner chose, such as [o3], which decides the rating.",
+        )
+}
+
+fn save_card_parameters() -> Parameters {
+    Parameters::new()
+        .text("question", "The front of the card: the question to ask.")
+        .text("answer", "The back of the card: the answer.")
+        .optional_text("explanation", "Why the answer holds. Optional.")
+}
+
+fn save_note_parameters() -> Parameters {
+    Parameters::new()
+        .text("summary", "The learner's own words.")
+        .optional_handle::<Lesson>(
+            "lesson",
+            "The lesson the outline names, by its bracketed name such as [l2]. Omit for the lesson this chat is on.",
+        )
+}
+
+/// `save_card`'s schema: its parameters, and the list of sources a card cites.
+fn save_card_schema() -> Value {
+    let mut schema = save_card_parameters().schema().as_json().clone();
+    if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
+        properties.insert(
+            "sources".to_string(),
+            json!({ "type": "array", "items": { "type": "string" }, "description": "The bracketed name of each source the card was taught from, such as [r2]." }),
+        );
+    }
+    if let Some(required) = schema.get_mut("required").and_then(Value::as_array_mut) {
+        required.push(Value::from("sources"));
+    }
+    schema
+}
+
 pub(super) fn definitions() -> Vec<ToolDefinition> {
     vec![
         ToolDefinition {
             name: TOOL_SEARCH_COURSE.to_string(),
             description: "Search the course's sources. Returns passages labelled module › lesson \
-                 › source, each under the number to cite it by, with the source_id to read it \
-                 further."
+                 › source, each under the number to cite it by, with the name of its source to \
+                 read it further."
                 .to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "query": { "type": "string", "description": "What to find, in plain words." }
-                },
-                "required": ["query"],
-                "additionalProperties": false
-            }),
+            parameters: search_parameters().schema().as_json().clone(),
         },
         ToolDefinition {
             name: TOOL_READ_COURSE_SOURCE.to_string(),
             description: "Read a section of one of the course's sources, as much as this turn \
                  has room for, under the number to cite it by. Says where to read on."
                 .to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "source_id": { "type": "string", "description": "The source_id a passage or the outline names." },
-                    "offset": { "type": "integer", "description": "The character to start from. Omit to start at the beginning." }
-                },
-                "required": ["source_id"],
-                "additionalProperties": false
-            }),
+            parameters: read_source_parameters().schema().as_json().clone(),
         },
         ToolDefinition {
             name: TOOL_COURSE_OUTLINE.to_string(),
@@ -109,84 +169,45 @@ pub(super) fn definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             name: TOOL_DUE_REVIEWS.to_string(),
             description: "This course's recall cards that are due, mixed across its modules. \
-                 Fronts only: ask the learner, then rate their answer with record_recall."
+                 Fronts only: ask the learner with ask_card, then rate their answer with \
+                 record_recall."
                 .to_string(),
             parameters: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
         },
         ToolDefinition {
+            name: TOOL_ASK_CARD.to_string(),
+            description: "Ask the learner one of the course's due cards: records that you asked \
+                 it and gives the card to put to them as written. Rate their answer with \
+                 record_recall afterwards."
+                .to_string(),
+            parameters: card_parameters().schema().as_json().clone(),
+        },
+        ToolDefinition {
             name: TOOL_RECORD_RECALL.to_string(),
             description: "Rate the learner's answer to a card into its review schedule, the same \
-                 schedule the Recall tab uses. Only for a card you asked: the turn's facts and \
-                 due_reviews give its card_id. The rating comes from the learner's answer: again \
-                 if they missed it, hard if they got it with difficulty, good if they recalled \
-                 it, easy if it was effortless. When the answer alone does not settle it, ask \
-                 them how it went first."
+                 schedule the Recall tab uses. Only for a card you asked with ask_card: the \
+                 turn's facts and due_reviews give its card name. The rating comes from the \
+                 learner's answer: again if they missed it, hard if they got it with difficulty, \
+                 good if they recalled it, easy if it was effortless. When the answer alone does \
+                 not settle it, ask them how it went first."
                 .to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "card_id": { "type": "string" },
-                    "rating": { "type": "string", "enum": ["again", "hard", "good", "easy"] },
-                    "selected_option": { "type": "integer", "description": "For a multiple-choice card: the number of the option the learner chose, which decides the rating." }
-                },
-                "required": ["card_id", "rating"],
-                "additionalProperties": false
-            }),
+            parameters: record_parameters().schema().as_json().clone(),
         },
         ToolDefinition {
             name: TOOL_SAVE_CARD.to_string(),
             description: "Add a recall card to the course's deck, citing where it comes from. \
                  The card is due at once and shows in the Recall tab."
                 .to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "question": { "type": "string" },
-                    "answer": { "type": "string" },
-                    "explanation": { "type": "string", "description": "Why the answer holds. Optional." },
-                    "source_ids": { "type": "array", "items": { "type": "string" }, "description": "The source_id of each passage the card was taught from." }
-                },
-                "required": ["question", "answer", "source_ids"],
-                "additionalProperties": false
-            }),
+            parameters: save_card_schema(),
         },
         ToolDefinition {
             name: TOOL_SAVE_NOTE.to_string(),
             description: "Save the learner's summary, in their words, to the course Notebook on \
                  a lesson's note."
                 .to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "summary": { "type": "string", "description": "The learner's own words." },
-                    "lesson_id": { "type": "string", "description": "The lesson the outline names. Omit for the lesson this chat is on." }
-                },
-                "required": ["summary"],
-                "additionalProperties": false
-            }),
+            parameters: save_note_parameters().schema().as_json().clone(),
         },
     ]
-}
-
-fn required<'a>(arguments: &'a Value, key: &str) -> Result<&'a str> {
-    arg_str(arguments, key)
-        .ok_or_else(|| AppError::InvalidInput(format!("Pass {key}: it is required.")))
-}
-
-fn version_id(text: &str) -> &str {
-    text.strip_prefix(COURSE_SOURCE_PREFIX).unwrap_or(text)
-}
-
-fn rating(arguments: &Value) -> Result<StudyRating> {
-    match required(arguments, "rating")?.to_lowercase().as_str() {
-        "again" => Ok(StudyRating::Again),
-        "hard" => Ok(StudyRating::Hard),
-        "good" => Ok(StudyRating::Good),
-        "easy" => Ok(StudyRating::Easy),
-        _ => Err(AppError::InvalidInput(
-            "rating is one of again, hard, good or easy.".into(),
-        )),
-    }
 }
 
 fn text_result(text: String, max_chars: usize) -> Value {
@@ -217,64 +238,89 @@ impl CourseTurn {
         let arguments = &call.arguments;
         match call.name.as_str() {
             TOOL_SEARCH_COURSE => {
-                let found = self
-                    .search_course(required(arguments, "query")?, max_chars)
-                    .await?;
+                let query =
+                    self.read_arguments(&search_parameters(), arguments, |args| args.text("query"))?;
+                let found = self.search_course(&query, max_chars).await?;
                 serde_json::to_value(found)
                     .map_err(|error| AppError::InternalError(error.to_string()))
             }
             TOOL_READ_COURSE_SOURCE => {
-                let source = required(arguments, "source_id")?;
+                let source = self.read_arguments(&read_source_parameters(), arguments, |args| {
+                    args.handle::<Source>("source")
+                })?;
                 let offset = arg_u32(arguments, "offset").unwrap_or(0) as usize;
                 let read = self
-                    .read_source(version_id(source), offset, max_chars)
+                    .read_source(&source.reference, offset, max_chars)
                     .await?
                     .ok_or_else(|| {
-                        AppError::NotFound(format!("The course has no source {source}."))
+                        AppError::NotFound(format!(
+                            "The course has no source {}.",
+                            source.handle.bracketed()
+                        ))
                     })?;
-                serde_json::to_value(read)
-                    .map_err(|error| AppError::InternalError(error.to_string()))
+                let mut data = serde_json::to_value(read.passages)
+                    .map_err(|error| AppError::InternalError(error.to_string()))?;
+                if let (Some(next), Some(object)) = (read.next, data.as_object_mut()) {
+                    object.insert(
+                        "read_on".to_string(),
+                        json!({
+                            "tool": TOOL_READ_COURSE_SOURCE,
+                            "arguments": { "source": source.handle.bracketed(), "offset": next }
+                        }),
+                    );
+                }
+                Ok(data)
             }
             TOOL_COURSE_OUTLINE => Ok(text_result(self.outline().await?, max_chars)),
             TOOL_DUE_REVIEWS => Ok(text_result(self.due_reviews(max_chars).await?, max_chars)),
+            TOOL_ASK_CARD => {
+                let card = self.read_arguments(&card_parameters(), arguments, |args| {
+                    args.handle::<Card>("card")
+                })?;
+                Ok(Value::String(self.ask_card(&card.reference).await?))
+            }
             TOOL_RECORD_RECALL => {
-                let selected = arg_u32(arguments, "selected_option").map(|index| index as usize);
+                let (card, rating, option) =
+                    self.read_arguments(&record_parameters(), arguments, |args| {
+                        let card = args.handle::<Card>("card")?;
+                        let rating = args.optional_choice::<StudyRating>("rating")?;
+                        let option = args.optional_handle::<Choice>("option")?;
+                        Ok((card, rating, option))
+                    })?;
                 let recorded = self
-                    .rate_card(
-                        required(arguments, "card_id")?,
-                        rating(arguments)?,
-                        selected,
-                    )
+                    .rate_card(&card.reference, rating, option.map(|option| option.reference))
                     .await?;
                 Ok(Value::String(recorded))
             }
             TOOL_SAVE_CARD => {
-                let source_ids = arguments
-                    .get("source_ids")
-                    .and_then(Value::as_array)
-                    .map(|ids| {
-                        ids.iter()
-                            .filter_map(Value::as_str)
-                            .map(|id| version_id(id.trim()).to_string())
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                let (question, answer, explanation) =
+                    self.read_arguments(&save_card_parameters(), arguments, |args| {
+                        Ok((
+                            args.text("question")?,
+                            args.text("answer")?,
+                            args.optional_text("explanation"),
+                        ))
+                    })?;
                 let saved = self
                     .save_card(NewCard {
-                        question: required(arguments, "question")?,
-                        answer: required(arguments, "answer")?,
-                        explanation: arg_str(arguments, "explanation").unwrap_or_default(),
-                        source_ids,
+                        question: &question,
+                        answer: &answer,
+                        explanation: explanation.as_deref().unwrap_or_default(),
+                        source_ids: self.read_sources(arguments)?,
                     })
                     .await?;
                 Ok(Value::String(saved))
             }
             TOOL_SAVE_NOTE => {
+                let (summary, lesson) =
+                    self.read_arguments(&save_note_parameters(), arguments, |args| {
+                        Ok((
+                            args.text("summary")?,
+                            args.optional_handle::<Lesson>("lesson")?,
+                        ))
+                    })?;
                 let saved = self
-                    .save_note(
-                        arg_str(arguments, "lesson_id"),
-                        required(arguments, "summary")?,
-                    )
+                    .save_note(lesson.as_ref().map(|lesson| lesson.reference.as_str()), &summary)
                     .await?;
                 Ok(Value::String(saved))
             }
@@ -282,6 +328,26 @@ impl CourseTurn {
                 "There is no course tool named {other}."
             ))),
         }
+    }
+
+    /// The source versions a card cites, from the names the model wrote.
+    fn read_sources(&self, arguments: &Value) -> Result<Vec<String>> {
+        let written = match arguments.get("sources") {
+            Some(Value::Array(items)) => items.clone(),
+            Some(one @ Value::String(_)) => vec![one.clone()],
+            _ => Vec::new(),
+        };
+        let parameters = read_source_parameters();
+        written
+            .iter()
+            .filter_map(Value::as_str)
+            .map(|name| {
+                self.read_arguments(&parameters, &json!({ "source": name }), |args| {
+                    args.handle::<Source>("source")
+                })
+                .map(|source| source.reference)
+            })
+            .collect()
     }
 
     async fn outline(&self) -> Result<String> {
@@ -320,11 +386,11 @@ impl CourseTurn {
                 };
                 let _ = writeln!(
                     out,
-                    "  {}.{} {}{state} (lesson_id: {})",
+                    "  {}.{} {}{state} {}",
                     number + 1,
                     index + 1,
                     lesson.title,
-                    lesson.id
+                    self.name(Lesson(lesson.id.clone()))?
                 );
             }
         }
@@ -334,7 +400,12 @@ impl CourseTurn {
         if !sources.is_empty() {
             out.push_str("\nSources:\n");
             for source in sources {
-                let _ = writeln!(out, "  {} (source_id: {})", source.title, source.id);
+                let _ = writeln!(
+                    out,
+                    "  {} {}",
+                    source.title,
+                    self.name(Source(source.id.clone()))?
+                );
             }
         }
         Ok(out)
@@ -351,7 +422,7 @@ impl CourseTurn {
         let closing = 120;
         let mut shown = 0;
         for card in &cards {
-            let entry = card.entry();
+            let entry = self.card_entry(&card.id, &card.front, &card.options)?;
             if out.chars().count() + entry.chars().count() + closing > max_chars {
                 break;
             }

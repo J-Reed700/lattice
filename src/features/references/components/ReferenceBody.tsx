@@ -4,9 +4,9 @@ import { TiptapViewer } from '@/components/TiptapEditor';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import type { ConversationMessageBookmarkDto } from '@/types';
 import type { SourceWithMetadata } from '@/types/conversation';
-import { normalizeAssistantMarkdown } from '@/utils/assistantMarkdown';
 import type { BookmarkPayload } from '@/utils/chatBookmarks';
 import { createCitationMap } from '@/utils/citations';
+import { drawReply, replyOf } from '@/utils/replyPieces';
 
 interface ReferenceBodyProps {
   bookmark: ConversationMessageBookmarkDto;
@@ -27,12 +27,12 @@ export function ReferenceBody({ bookmark, payload, resolutionFailed, onViewSourc
   const citationMap = useMemo(() => createCitationMap(sources ?? []), [sources]);
   const citationNumbers = useMemo(() => [...citationMap.keys()], [citationMap]);
   const rawContent = payload?.content ?? bookmark.messagePreview ?? '';
-  const content = useMemo(() => {
-    if (bookmark.messageRole === 'assistant') {
-      return normalizeAssistantMarkdown(rawContent);
-    }
-    return rawContent;
-  }, [bookmark.messageRole, rawContent]);
+  const reply = payload?.reply;
+  const drawn = useMemo(
+    () => (bookmark.messageRole === 'assistant' ? drawReply(replyOf({ content: rawContent, reply })) : null),
+    [bookmark.messageRole, rawContent, reply]
+  );
+  const content = drawn ? drawn.markdown : rawContent;
 
   const handleSourceClick = (event: MouseEvent<HTMLElement>) => {
     if (!showCitations || !(event.target instanceof Element)) return;
@@ -47,7 +47,7 @@ export function ReferenceBody({ bookmark, payload, resolutionFailed, onViewSourc
     return (
       <div className="border-l-2 border-[hsl(var(--border-default))] pl-4">
         <div className="max-w-none wrap-break-word text-sm text-[hsl(var(--text-secondary))] wrap-anywhere" onClick={handleSourceClick}>
-          <TiptapViewer content={content} citationNumbers={citationNumbers} showEvidence={showCitations} />
+          <TiptapViewer content={content} citationNumbers={citationNumbers} marks={drawn?.numbers} showEvidence={showCitations} />
         </div>
         {resolutionFailed && (
           <p className="mt-3 text-xs text-[hsl(var(--text-muted))]">
@@ -69,7 +69,7 @@ export function ReferenceBody({ bookmark, payload, resolutionFailed, onViewSourc
             : 'max-w-none wrap-break-word text-base leading-normal text-[hsl(var(--text-primary))] wrap-anywhere'
         }
       >
-        <TiptapViewer content={content} citationNumbers={citationNumbers} showEvidence={showCitations} />
+        <TiptapViewer content={content} citationNumbers={citationNumbers} marks={drawn?.numbers} showEvidence={showCitations} />
       </div>
       {resolutionFailed && (
         <p className="mt-3 text-xs text-[hsl(var(--text-muted))]">

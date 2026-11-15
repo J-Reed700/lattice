@@ -133,16 +133,7 @@ pub async fn promote_conversation_tangent_impl(
 fn to_message_dto(
     message: &lattice_core::domain::conversation::ConversationMessage,
 ) -> crate::features::conversation::dto::MessageDto {
-    crate::features::conversation::dto::MessageDto {
-        id: message.id.to_string(),
-        conversation_id: message.conversation_id.to_string(),
-        role: message.role.to_string(),
-        content: message.content.clone(),
-        tokens: message.tokens,
-        created_at: message.created_at.to_rfc3339(),
-        metadata: message.metadata.clone(),
-        status: message.status.clone(),
-    }
+    crate::features::conversation::dto::MessageDto::of(message)
 }
 
 /// Free the picture files of messages a truncate or regenerate deleted.

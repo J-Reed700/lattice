@@ -101,14 +101,14 @@ fn whole(scope: &Scope, input: &str) -> Vec<Piece> {
 /// The pieces of `chunks` pushed one after another, adjacent text merged. Within one push
 /// no text is empty and no two text pieces are adjacent.
 fn chunked(scope: &Scope, chunks: &[&str]) -> Vec<Piece> {
-    let mut splitter = Splitter::new(scope, markers());
+    let mut splitter = Splitter::new(markers());
     let mut all = Vec::new();
     for chunk in chunks {
-        let pieces = splitter.push(chunk);
+        let pieces = splitter.push(scope, chunk);
         assert_well_formed(&pieces);
         all.extend(pieces);
     }
-    let rest = splitter.finish();
+    let rest = splitter.finish(scope);
     assert_well_formed(&rest);
     all.extend(rest);
     merge(all)
@@ -451,33 +451,47 @@ fn an_empty_reply_has_no_pieces() {
 #[test]
 fn text_that_cannot_be_a_marker_is_released_at_once() {
     let scope = scope();
-    let mut splitter = Splitter::new(&scope, markers());
-    assert_eq!(splitter.push("hello world "), vec![text("hello world ")]);
-    assert_eq!(splitter.push("[s"), vec![]);
-    assert_eq!(splitter.push("x"), vec![text("[sx")]);
-    assert_eq!(splitter.push("[s1]"), vec![source(1)]);
-    assert_eq!(splitter.push("[s"), vec![]);
-    assert_eq!(splitter.finish(), vec![text("[s")]);
+    let mut splitter = Splitter::new(markers());
+    assert_eq!(
+        splitter.push(&scope, "hello world "),
+        vec![text("hello world ")]
+    );
+    assert_eq!(splitter.push(&scope, "[s"), vec![]);
+    assert_eq!(splitter.push(&scope, "x"), vec![text("[sx")]);
+    assert_eq!(splitter.push(&scope, "[s1]"), vec![source(1)]);
+    assert_eq!(splitter.push(&scope, "[s"), vec![]);
+    assert_eq!(splitter.finish(&scope), vec![text("[s")]);
 }
 
 #[test]
 fn an_own_line_candidate_is_held_until_its_line_ends() {
     let scope = scope();
-    let mut splitter = Splitter::new(&scope, markers());
-    assert_eq!(splitter.push("[i1]"), vec![]);
-    assert_eq!(splitter.push("  "), vec![]);
-    assert_eq!(splitter.push("\nnext"), vec![picture(1), text("  \nnext")]);
-    assert_eq!(splitter.finish(), vec![]);
+    let mut splitter = Splitter::new(markers());
+    assert_eq!(splitter.push(&scope, "[i1]"), vec![]);
+    assert_eq!(splitter.push(&scope, "  "), vec![]);
+    assert_eq!(splitter.push(&scope, "\nnext"), vec![picture(1), text("  \nnext")]);
+    assert_eq!(splitter.finish(&scope), vec![]);
+}
+
+#[test]
+fn a_marker_is_read_against_the_scope_of_the_push_that_completes_it() {
+    let mut splitter = Splitter::new(markers());
+    assert_eq!(
+        splitter.push(&Scope::for_question(), "[s1]"),
+        vec![text("[s1]")]
+    );
+    assert_eq!(splitter.push(&scope(), "[s1]"), vec![source(1)]);
+    assert_eq!(splitter.finish(&scope()), vec![]);
 }
 
 #[test]
 fn a_run_of_backticks_is_held_until_its_length_is_known() {
     let scope = scope();
-    let mut splitter = Splitter::new(&scope, markers());
-    assert_eq!(splitter.push("a `"), vec![text("a ")]);
-    assert_eq!(splitter.push("`"), vec![]);
-    assert_eq!(splitter.push("b [s1]"), vec![text("``b [s1]")]);
-    assert_eq!(splitter.finish(), vec![]);
+    let mut splitter = Splitter::new(markers());
+    assert_eq!(splitter.push(&scope, "a `"), vec![text("a ")]);
+    assert_eq!(splitter.push(&scope, "`"), vec![]);
+    assert_eq!(splitter.push(&scope, "b [s1]"), vec![text("``b [s1]")]);
+    assert_eq!(splitter.finish(&scope), vec![]);
 }
 
 const TOKENS: &[&str] = &[

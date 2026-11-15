@@ -1,6 +1,8 @@
 use super::room::{window_chars, MIN_TOOL_RESULT_CHARS};
 use super::*;
 use lattice_core::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN;
+use super::super::reply_text;
+use lattice_core::application::services::model_contract::kept::TurnNames;
 use std::sync::Arc;
 
 /// The input budget the context assembler plans for a model of this size.
@@ -25,7 +27,13 @@ fn stream_sink_keeps_turn_identity_and_emits_completion_once() {
         Ok(())
     });
     {
-        let mut stream = StreamEmitter::new(&sink, "conversation", "request");
+        let mut stream = StreamEmitter::new(
+            &sink,
+            "conversation",
+            "request",
+            Arc::new(TurnNames::unstored()),
+            reply_text::markers(false),
+        );
         stream.content("hello").unwrap();
         stream.done();
         stream.done();
@@ -47,7 +55,13 @@ fn stream_drop_reports_completion_after_early_return() {
         captured.lock().unwrap().push(event);
         Ok(())
     });
-    drop(StreamEmitter::new(&sink, "conversation", "request"));
+    drop(StreamEmitter::new(
+        &sink,
+        "conversation",
+        "request",
+        Arc::new(TurnNames::unstored()),
+        reply_text::markers(false),
+    ));
     let events = events.lock().unwrap();
     assert_eq!(events.len(), 1);
     assert!(events[0].done);

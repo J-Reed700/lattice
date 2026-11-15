@@ -1,6 +1,5 @@
 //! The course a tutor chat is bound to, opened for one turn.
 
-use super::cards::DueCard;
 use super::facts::replies_since_check;
 use super::prompt::{self, TurnFacts, TUTOR_POLICY};
 use super::repository::conversation_course;
@@ -14,6 +13,7 @@ use lattice_core::application::ports::turn_source::{
     SourcePassage, TurnSourcePolicy, TurnSourcePort,
 };
 use lattice_core::application::ports::ToolDefinition;
+use lattice_core::application::services::model_contract::kept::TurnNames;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::Database;
 use serde_json::Value;
@@ -23,7 +23,7 @@ use tracing::warn;
 
 /// The due cards a turn's facts show; `due_reviews` lists the rest. A card
 /// asked on one turn is rated on the next, when the tool result that gave its
-/// id is gone, and a session works through them one at a time.
+/// name is gone, and a session works through them one at a time.
 const CARDS_SHOWN: usize = 5;
 
 /// Called after the tutor writes to a note, so the vault's mirror picks it up.
@@ -36,6 +36,7 @@ pub struct CourseTurn {
     pub(super) program_id: String,
     pub(super) lesson_id: Option<String>,
     pub(super) note_written: NoteWritten,
+    pub(super) names: Arc<TurnNames>,
     program: OnceCell<LearningProgramDto>,
 }
 
@@ -57,6 +58,7 @@ impl CourseTurn {
         courses: Option<Arc<CourseIndexes>>,
         conversation_id: &str,
         note_written: NoteWritten,
+        names: Arc<TurnNames>,
     ) -> Option<Self> {
         let binding = match conversation_course(database, conversation_id).await {
             Ok(binding) => binding?,
@@ -72,6 +74,7 @@ impl CourseTurn {
             program_id: binding.program_id,
             lesson_id: binding.lesson_id,
             note_written,
+            names,
             program: OnceCell::new(),
         })
     }
@@ -132,7 +135,11 @@ impl CourseTurn {
                 .iter()
                 .flatten()
                 .take(CARDS_SHOWN)
-                .map(DueCard::entry)
+                .filter_map(|card| {
+                    self.card_entry(&card.id, &card.front, &card.options)
+                        .inspect_err(|error| warn!(%error, "Could not name a due card"))
+                        .ok()
+                })
                 .collect(),
             replies_since_check,
         }
@@ -191,19 +198,26 @@ impl TurnSourcePort for CourseTurn {
         tools_offered: bool,
         _question: Option<&str>,
     ) -> String {
-        prompt::render_context(&self.facts().await, tools_offered, max_chars)
+        let block = prompt::render_context(&self.facts().await, tools_offered, max_chars);
+        self.keep_names().await;
+        block
     }
 
     async fn passages(&self, question: &str, max_chars: usize) -> Vec<SourcePassage> {
-        self.first_passages(question, max_chars)
+        let passages = self
+            .first_passages(question, max_chars)
             .await
             .unwrap_or_else(|error| {
                 warn!(%error, "Course search failed; the turn runs without passages");
                 Vec::new()
-            })
+            });
+        self.keep_names().await;
+        passages
     }
 
     async fn execute_tool(&self, call: FunctionCall, max_chars: usize) -> Result<FunctionResult> {
-        Ok(self.run_tool(call, max_chars).await)
+        let result = self.run_tool(call, max_chars).await;
+        self.keep_names().await;
+        Ok(result)
     }
 }

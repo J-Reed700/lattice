@@ -2,23 +2,18 @@
  * The sentences of an answer that cite a particular source.
  *
  * Used when a turn was never verified: with no claim verdicts to read, the only
- * record of which sentences leaned on source `n` is the `[n]` markers in the
- * answer text itself.
+ * record of which sentences leaned on source `n` is the references the answer
+ * made, in its pieces.
  */
 
-import { sentenceSpans, stripCitationMarkers } from '@/features/reading/model/sourcedPassages';
-
-/** `[3]`, `[1][3]` and `[1, 3]`. The chips only draw `[n]`; answers write both. */
-const CITATION_MARKER = /\[(\d{1,4}(?:\s*,\s*\d{1,4})*)\]/g;
+import { sentenceSpans } from '@/features/reading/model/sourcedPassages';
+import { MARK, markIndex, markReply, type ReplyPiece } from '@/utils/replyPieces';
 
 /** Markdown that carries no words: list bullets, headings, quotes, table pipes. */
 const BLOCK_PREFIX = /^\s*(?:[-*+]\s+|\d{1,3}[.)]\s+|#{1,6}\s+|>\s*|\|\s*)/;
 
 /** The opening or closing line of a fenced code block. */
 const FENCE = /^\s*(?:```|~~~)/;
-
-/** Inline code, whose `[n]` the chips leave as text. */
-const INLINE_CODE = /`[^`\n]*`/g;
 
 /** Emphasis markers, which are punctuation to a reader and noise to a matcher. */
 const EMPHASIS = /(\*\*|__|\*|_|`)/g;
@@ -42,7 +37,7 @@ export function splitAnswerSentences(text: string): string[] {
   const sentences: string[] = [];
   let fenced = false;
   for (const line of text.split('\n')) {
-    // Code is not something the answer said, and the chips skip it too.
+    // Code is not something the answer said.
     if (FENCE.test(line)) {
       fenced = !fenced;
       continue;
@@ -58,64 +53,80 @@ export function splitAnswerSentences(text: string): string[] {
   return sentences;
 }
 
-/** The citation numbers a sentence carries, in the order they are written. */
-export function citationsIn(sentence: string): number[] {
-  const numbers: number[] = [];
-  for (const match of sentence.matchAll(CITATION_MARKER)) {
-    for (const part of match[1]!.split(',')) {
-      const number = Number(part.trim());
-      if (Number.isInteger(number) && number > 0) numbers.push(number);
-    }
-  }
-  return numbers;
+/** One sentence of an answer: its words, and the source numbers its references cite in the order made. */
+interface AnswerSentence {
+  text: string;
+  numbers: number[];
 }
 
-/** A cited sentence as a matcher and a tooltip want it: no markers, no gaps. */
-function withoutMarkers(sentence: string): string {
+/** How one format of references is found in a sentence and taken out of it. */
+export interface ReferenceReader {
+  numbersIn: (sentence: string) => number[];
+  /** The sentence with the references removed, for a matcher or a tooltip. */
+  withoutReferences: (sentence: string) => string;
+}
+
+/** A cited sentence as a matcher and a tooltip want it: no marks, no gaps. */
+export function closeGaps(sentence: string): string {
   return (
-    stripCitationMarkers(sentence)
+    sentence
       .replace(/\s+/g, ' ')
-      // The marker sat before the full stop; the gap it leaves would otherwise
+      // The reference sat before the full stop; the gap it leaves would otherwise
       // show up in the tooltip that names the sentence.
       .replace(/\s+([.,;:!?])/g, '$1')
       .trim()
   );
 }
 
-/**
- * The sentences of `text` that cite source `citationNumber`, with the markers
- * taken out — a matcher should not be given `[4]` to look for.
- */
-export function sentencesCiting(text: string, citationNumber: number): string[] {
-  const sentences: string[] = [];
-  for (const sentence of splitAnswerSentences(text)) {
-    if (!citationsIn(sentence).includes(citationNumber)) continue;
-    const stripped = withoutMarkers(sentence);
-    if (stripped) sentences.push(stripped);
-  }
-  return sentences;
+export function sentencesOf(raw: string, reader: ReferenceReader): AnswerSentence[] {
+  return splitAnswerSentences(raw).map((sentence) => ({
+    text: reader.withoutReferences(sentence),
+    numbers: reader.numbersIn(sentence),
+  }));
+}
+
+function replyReader(numbers: readonly number[]): ReferenceReader {
+  return {
+    numbersIn: (sentence) =>
+      Array.from(sentence.matchAll(MARK), (match) => numbers[markIndex(match[1])]).filter(
+        (number): number is number => number !== undefined
+      ),
+    withoutReferences: (sentence) => closeGaps(sentence.replace(MARK, ' ')),
+  };
+}
+
+function answerSentences(reply: readonly ReplyPiece[]): AnswerSentence[] {
+  const { raw, numbers } = markReply(reply);
+  return sentencesOf(raw, replyReader(numbers));
+}
+
+export function citing(sentences: readonly AnswerSentence[], citationNumber: number): string[] {
+  return sentences
+    .filter((sentence) => sentence.text && sentence.numbers.includes(citationNumber))
+    .map((sentence) => sentence.text);
+}
+
+export function byOccurrence(sentences: readonly AnswerSentence[], citationNumber: number): string[] {
+  return sentences.flatMap((sentence) =>
+    sentence.numbers.filter((number) => number === citationNumber).map(() => sentence.text)
+  );
 }
 
 /**
- * The sentence each `[n]` chip of one source sits in, one entry per chip in
- * reading order — entry `k` answers the chip stamped `data-cite-at="k"`.
- *
- * Counted the way `CitationMarks` draws: a bare `[n]` outside code. `[1, 3]` is
- * a citation but never a chip, so it is not counted here.
+ * The sentences of the answer that cite source `citationNumber`, with the
+ * references taken out — a matcher should not be given a number to look for.
  */
-export function sentencesByOccurrence(text: string, citationNumber: number): string[] {
-  const chip = new RegExp(`\\[${citationNumber}\\]`, 'g');
-  // Inline code goes before the lines are cleaned: cleaning drops the backticks.
-  // A fence line is left alone so the splitter still sees the block open.
-  const prose = text
-    .split('\n')
-    .map((line) => (FENCE.test(line) ? line : line.replace(INLINE_CODE, ' ')))
-    .join('\n');
-  const sentences: string[] = [];
-  for (const sentence of splitAnswerSentences(prose)) {
-    const chips = sentence.match(chip)?.length ?? 0;
-    const stripped = withoutMarkers(sentence);
-    for (let i = 0; i < chips; i += 1) sentences.push(stripped);
-  }
-  return sentences;
+export function sentencesCiting(reply: readonly ReplyPiece[], citationNumber: number): string[] {
+  return citing(answerSentences(reply), citationNumber);
+}
+
+/**
+ * The sentence each chip of one source sits in, one entry per chip in reading
+ * order — entry `k` answers the chip stamped `data-cite-at="k"`.
+ *
+ * `CitationMarks` draws the same references in the same order, so the two
+ * count alike.
+ */
+export function sentencesByOccurrence(reply: readonly ReplyPiece[], citationNumber: number): string[] {
+  return byOccurrence(answerSentences(reply), citationNumber);
 }

@@ -33,6 +33,8 @@ mod focus;
 // Public so the shipped-path evaluation can drive the desktop's own turn.
 pub mod headless;
 mod prior_evidence;
+pub(crate) mod replay;
+pub(crate) mod reply_text;
 // Public so the no-tools retrieval path and the turn's tool-selection wiring can
 // reach it without this module re-exporting its whole surface.
 pub mod history_tools;
@@ -75,7 +77,7 @@ use self::persistence::{
 use self::prompting::PromptMessageBuilder;
 pub use self::retrieval::RetrievalSubTimingMetrics;
 use self::retrieval::{
-    assign_citation_ids, citation_ids_by_chunk, confine_document_context, deduplicate_sources,
+    citation_ids_by_chunk, confine_document_context, deduplicate_sources,
     load_recent_document_metadata, run_retrieval_pipeline, RouterDecisionOutcome,
 };
 pub use self::source_snapshots::CapturedSourcesDto;
@@ -149,6 +151,8 @@ struct ChatTurn<'a> {
     highlight_terms: &'a [String],
     focus: &'a FocusScope,
     recorder: &'a TurnRecorder,
+    /// The conversation's scope for this turn: everything the turn shows or reads is named in it.
+    names: &'a Arc<lattice_core::application::services::model_contract::kept::TurnNames>,
 }
 
 mod dto;
@@ -160,7 +164,7 @@ mod turn;
 use dto::{trace_counts, TraceCounts};
 pub use dto::{
     ChatResponse, ChatStreamEventDto, ConversationFlowTimingMetrics, ConversationMessage,
-    RetrievalTraceDto, ToolPreferences,
+    LinesDto, ReplyPieceDto, ReplyReferenceDto, RetrievalTraceDto, ToolPreferences,
 };
 use prompt_settings::*;
 use routing::*;

@@ -405,6 +405,7 @@ mod model_tools {
     use crate::features::explorer::{prompt, tools};
     use lattice_core::application::contracts::explorer::{ExplorerFocusDto, ExplorerLineRangeDto};
     use lattice_core::application::contracts::tools::explorer as explorer_tools;
+    use lattice_core::application::contracts::tools::FunctionCall;
     use serde_json::json;
 
     fn numbered_file(scope: &Scope, relative: &str, lines: u32) {
@@ -477,7 +478,38 @@ mod model_tools {
         assert!(cut.chars().count() <= 900, "{}", cut.chars().count());
         let shown = cut.lines().filter(|line| line.contains('│')).count() as u32;
         assert!(shown > 0 && shown < 300);
-        assert!(cut.contains(&format!("start_line {}", shown + 1)), "{cut}");
+        assert!(
+            cut.contains(&format!("[Lines {}–300 not shown.]", shown + 1)),
+            "{cut}"
+        );
+        assert!(!cut.contains("start_line"), "{cut}");
+    }
+
+    /// A read that stopped carries the call that reads on as data, and its
+    /// text asks the model for no line number.
+    #[tokio::test]
+    async fn a_cut_read_carries_the_call_that_reads_on() {
+        let (_dir, scope) = fixture();
+        numbered_file(&scope, "notes.txt", 300);
+        let call = FunctionCall::new(
+            "c1".to_string(),
+            "read_file",
+            json!({"path": "notes.txt", "end_line": 250}),
+        );
+        let result = tools::execute(&scope, call, 900).await.unwrap();
+        let data = result.data.unwrap();
+        let text = data["text"].as_str().unwrap();
+        let shown = text.lines().filter(|line| line.contains('│')).count() as u64;
+        assert_eq!(data["read_on"]["tool"], "read_file");
+        assert_eq!(
+            data["read_on"]["arguments"],
+            json!({"path": "notes.txt", "start_line": shown + 1, "end_line": 250})
+        );
+        assert!(!text.contains("start_line"), "{text}");
+
+        let whole = FunctionCall::new("c2".to_string(), "read_file", json!({"path": "notes.txt"}));
+        let rest = tools::execute(&scope, whole, 1_000_000).await.unwrap();
+        assert!(rest.data.unwrap().is_string());
     }
 
     #[test]
@@ -876,8 +908,8 @@ fn search_in_a_very_long_line_reports_the_true_column() {
 }
 
 /// Explaining the folder draws on what no passage holds, so its template does
-/// not ask for a citation on every statement; bracket numbers stay for the
-/// numbered library and web passages.
+/// not ask for a citation on every statement; bracketed labels stay for the
+/// labelled library and web passages.
 #[test]
 fn the_folder_template_cites_only_numbered_passages() {
     use super::prompt::{FOLDER_POLICY, FOLDER_TEMPLATE};
@@ -885,13 +917,13 @@ fn the_folder_template_cites_only_numbered_passages() {
     assert!(!FOLDER_TEMPLATE.contains("Cite every factual statement"));
     assert!(!FOLDER_TEMPLATE.contains("using only the provided context"));
     assert!(FOLDER_TEMPLATE
-        .contains("Bracket numbers like [1] belong only to the numbered library or web passages"));
+        .contains("Bracketed labels like [s1] belong only to the labelled library or web passages"));
     assert!(FOLDER_TEMPLATE.contains("{context}") && FOLDER_TEMPLATE.contains("{question}"));
     use sha2::{Digest, Sha256};
     assert_eq!(
         format!("{:x}", Sha256::digest(FOLDER_TEMPLATE)),
-        "6ce3edf0508f98fe598f5ca5ed82681ec6e70010114fea969e4157a10f2fbc70",
-        "the folder's template is as it was before the tutor"
+        "5e7d373f236b08e444b79c131faa23cf8dfb8ab2ec2af20f347b1aa24d0c73ec",
+        "the folder's template is as it was before the tutor, but for its citation labels"
     );
 }
 
