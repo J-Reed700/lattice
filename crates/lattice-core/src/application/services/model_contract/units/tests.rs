@@ -657,3 +657,55 @@ fn a_rewrite_makes_the_text_whole_over_earlier_changes() {
     empty.rewrite("Dee sang.");
     assert_eq!(empty.text(), "Dee sang.");
 }
+
+#[test]
+fn a_unit_is_found_in_the_text_that_holds_it_with_what_the_text_is_a_text_of() {
+    let mut texts = Texts::new();
+    texts.push("first", "/a", "Ann ran. Bob sat.", Grain::Sentence);
+    texts.push("second", "/b", "Cy hid. Dee sang.", Grain::Sentence);
+    let unit = texts
+        .iter()
+        .nth(1)
+        .and_then(|(_, units)| units.units().get(1))
+        .map(|unit| unit.at)
+        .expect("the second text has two units");
+    assert_eq!(texts.found(unit), Some((&"second", "Dee sang.")));
+}
+
+#[test]
+fn two_equal_texts_at_two_places_are_two_things() {
+    let mut texts = Texts::new();
+    texts.push("one", "/a", "Ann ran.", Grain::Sentence);
+    texts.push("two", "/b", "Ann ran.", Grain::Sentence);
+    let refs: Vec<UnitRef> = texts
+        .iter()
+        .filter_map(|(_, units)| units.units().first().map(|unit| unit.at))
+        .collect();
+    assert_eq!(refs.len(), 2);
+    assert_ne!(refs.first(), refs.get(1));
+    let found: Vec<Option<(&&str, &str)>> = refs.iter().map(|at| texts.found(*at)).collect();
+    assert_eq!(
+        found,
+        vec![Some((&"one", "Ann ran.")), Some((&"two", "Ann ran."))]
+    );
+}
+
+#[test]
+fn a_unit_of_a_text_that_was_not_pushed_is_not_found() {
+    let mut texts = Texts::new();
+    texts.push("one", "/a", "Ann ran.", Grain::Sentence);
+    let other = Units::of_at("Bob sat.", Grain::Sentence, "/b");
+    let unit = other.units().first().map(|unit| unit.at).expect("a unit");
+    assert_eq!(texts.found(unit), None);
+    assert_eq!(Texts::<&str>::default().found(unit), None);
+}
+
+#[test]
+fn iter_keeps_the_order_the_texts_were_pushed() {
+    let mut texts = Texts::new();
+    texts.push(3, "/c", "Cy hid.", Grain::Sentence);
+    texts.push(1, "/a", "Ann ran.", Grain::Sentence);
+    texts.push(2, "/b", "Bob sat.", Grain::Sentence);
+    let order: Vec<i32> = texts.iter().map(|(of, _)| *of).collect();
+    assert_eq!(order, vec![3, 1, 2]);
+}
