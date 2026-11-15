@@ -467,3 +467,193 @@ fn changes_applied_one_after_another_read_as_one() {
     applied(&mut units, second);
     assert_eq!(units.text(), "Ann ran. Cy hid. Di swam. Bob sat.");
 }
+
+#[test]
+fn units_of_equal_texts_in_two_places_are_not_one_thing() {
+    let first = Units::of_at("Ann ran. Bob sat.", Grain::Sentence, "/a");
+    let second = Units::of_at("Ann ran. Bob sat.", Grain::Sentence, "/b");
+    let bare = Units::of("Ann ran. Bob sat.", Grain::Sentence);
+    assert_ne!(first.shown[0].at, second.shown[0].at);
+    assert_ne!(first.shown[0].at, bare.shown[0].at);
+    assert_eq!(first.text(), second.text());
+    assert!(first.holds(first.shown[1].at));
+    assert!(!first.holds(second.shown[1].at));
+    assert!(!first.holds(bare.shown[1].at));
+}
+
+#[test]
+fn units_of_one_place_keep_their_identity_when_the_text_is_cut_again() {
+    let once = Units::of_at("Ann ran. Bob sat.", Grain::Sentence, "/a");
+    let again = Units::of_at("Ann ran. Bob sat.", Grain::Sentence, "/a");
+    assert_eq!(once.shown[0].at, again.shown[0].at);
+}
+
+#[test]
+fn spans_are_the_bytes_of_each_unit_in_the_text_as_shown() {
+    let text = "  Ann ran. Bob sat.\n\nCy hid.  ";
+    let units = Units::of(text, Grain::Sentence);
+    let spans = units.spans();
+    let cut: Vec<&str> = spans
+        .iter()
+        .map(|(_, range)| &text[range.clone()])
+        .collect();
+    assert_eq!(cut, ["Ann ran.", "Bob sat.", "Cy hid."]);
+    assert_eq!(spans[1].0, units.shown[1].at);
+
+    let text = "a\r\n  b\n\nc";
+    let units = Units::of(text, Grain::Line);
+    let cut: Vec<&str> = units
+        .spans()
+        .iter()
+        .map(|(_, range)| &text[range.clone()])
+        .collect();
+    assert_eq!(cut, ["a", "  b", "", "c"]);
+    assert!(Units::of("", Grain::Sentence).spans().is_empty());
+}
+
+#[test]
+fn marked_writes_each_handle_before_its_unit_and_keeps_everything_between() {
+    let mut scope = Scope::for_question();
+    let mut showing = scope.request();
+    let other = Units::of("Di swam. Ed hid. Flo sat.", Grain::Sentence);
+    other.shown(&mut showing).expect("shown");
+    let text = "Ann ran. Bob sat.\n\nCy hid.";
+    let units = Units::of(text, Grain::Sentence);
+    let shown = units.shown(&mut showing).expect("shown");
+    assert_eq!(
+        units.marked(&shown),
+        "[u4] Ann ran. [u5] Bob sat.\n\n[u6] Cy hid."
+    );
+    let others = other.shown(&mut showing).expect("shown");
+    assert_eq!(units.marked(&others), text);
+}
+
+#[test]
+fn marked_shows_the_text_as_it_was_shown_after_a_change() {
+    let mut units = Units::of("Ann ran. Bob sat.", Grain::Sentence);
+    let mut scope = Scope::for_question();
+    let mut showing = scope.request();
+    let shown = units.shown(&mut showing).expect("shown");
+    let before = units.marked(&shown);
+    let u: Vec<Picked<Unit>> = vec![
+        showing.resolve::<Unit>("u1").expect("resolves"),
+        showing.resolve::<Unit>("u2").expect("resolves"),
+    ];
+    let mut change = nothing();
+    change.remove.push(u[0].clone());
+    applied(&mut units, change);
+    assert_eq!(before, "[u1] Ann ran. [u2] Bob sat.");
+    assert_eq!(units.text(), "Bob sat.");
+}
+
+#[test]
+fn a_change_touches_what_it_replaced_removed_moved_or_anchored_after() {
+    let mut units = Units::of(
+        "Ann ran. Bob sat. Cy hid. Di swam. Ed won.",
+        Grain::Sentence,
+    );
+    let (_, u) = shown_rows(&units);
+    let refs: Vec<UnitRef> = u.iter().map(|unit| unit.reference).collect();
+    assert!(!units.touched(&refs));
+    let mut change = nothing();
+    change.replace.push((u[1].clone(), "Bob stood.".to_owned()));
+    change.insert.push((after(&u[2]), "Cy ran.".to_owned()));
+    applied(&mut units, change);
+    assert!(units.touched(&[refs[1]]));
+    assert!(units.touched(&[refs[2]]));
+    assert!(units.touched(&[refs[0], refs[1]]));
+    assert!(!units.touched(&[refs[0]]));
+    assert!(!units.touched(&[refs[3], refs[4]]));
+    assert!(!units.touched(&[]));
+}
+
+#[test]
+fn stands_is_the_text_now_where_the_units_were() {
+    let mut units = Units::of("Ann ran. Bob sat. Cy hid. Di swam.", Grain::Sentence);
+    let (_, u) = shown_rows(&units);
+    let refs: Vec<UnitRef> = u.iter().map(|unit| unit.reference).collect();
+    assert_eq!(
+        units.stands(&[refs[1], refs[2]]).as_deref(),
+        Some("Bob sat. Cy hid.")
+    );
+    let mut change = nothing();
+    change.replace.push((u[1].clone(), "Bob stood.".to_owned()));
+    change.insert.push((after(&u[1]), "Between.".to_owned()));
+    change.remove.push(u[3].clone());
+    applied(&mut units, change);
+    assert_eq!(
+        units.stands(&[refs[1], refs[2]]).as_deref(),
+        Some("Bob stood. Between. Cy hid.")
+    );
+    assert_eq!(units.stands(&[refs[2]]).as_deref(), Some("Cy hid."));
+    assert_eq!(units.stands(&[refs[0]]).as_deref(), Some("Ann ran."));
+    assert_eq!(units.stands(&[refs[3]]), None);
+    assert_eq!(units.stands(&[]), None);
+}
+
+#[test]
+fn stands_follows_a_moved_unit_to_where_it_now_is() {
+    let mut units = Units::of("Ann ran. Bob sat. Cy hid.", Grain::Sentence);
+    let (_, u) = shown_rows(&units);
+    let mut change = nothing();
+    change.moved.push((u[0].clone(), after(&u[2])));
+    applied(&mut units, change);
+    assert_eq!(units.text(), "Bob sat. Cy hid. Ann ran.");
+    assert_eq!(units.stands(&[u[0].reference]).as_deref(), Some("Ann ran."));
+}
+
+#[test]
+fn new_content_that_begins_with_a_line_break_starts_a_paragraph() {
+    let text = "Ann ran. Bob sat.";
+    let inserted = edited(text, Grain::Sentence, |u, change| {
+        change
+            .insert
+            .push((after(&u[0]), "\n\nNew paragraph.".to_owned()));
+    });
+    assert_eq!(inserted, "Ann ran.\n\nNew paragraph. Bob sat.");
+    let crlf = edited(text, Grain::Sentence, |u, change| {
+        change
+            .insert
+            .push((after(&u[0]), "\r\nNew line.".to_owned()));
+    });
+    assert_eq!(crlf, "Ann ran.\r\nNew line. Bob sat.");
+}
+
+#[test]
+fn new_content_that_ends_with_a_line_break_is_followed_by_no_other_break() {
+    let inserted = edited("Ann ran. Bob sat.", Grain::Sentence, |u, change| {
+        change.insert.push((after(&u[0]), "Cy hid.\n".to_owned()));
+    });
+    assert_eq!(inserted, "Ann ran. Cy hid.\nBob sat.");
+}
+
+#[test]
+fn a_replacement_that_begins_with_a_blank_line_does_not_double_the_break_before_it() {
+    let replaced = edited("Ann ran.\n\nBob sat.", Grain::Sentence, |u, change| {
+        change
+            .replace
+            .push((u[1].clone(), "\n\nCy hid.".to_owned()));
+    });
+    assert_eq!(replaced, "Ann ran.\n\nCy hid.");
+}
+
+#[test]
+fn new_content_without_line_breaks_joins_as_before() {
+    let inserted = edited("Ann ran.\n\nBob sat.", Grain::Sentence, |u, change| {
+        change.insert.push((after(&u[0]), "Cy hid.".to_owned()));
+    });
+    assert_eq!(inserted, "Ann ran. Cy hid.\n\nBob sat.");
+}
+
+#[test]
+fn a_rewrite_makes_the_text_whole_over_earlier_changes() {
+    let mut units = Units::of("Ann ran. Bob sat. Cy hid.", Grain::Sentence);
+    units.rewrite("Dee sang.");
+    assert_eq!(units.text(), "Dee sang.");
+    assert!(units.changed());
+    units.rewrite("");
+    assert_eq!(units.text(), "");
+    let mut empty = Units::of("", Grain::Sentence);
+    empty.rewrite("Dee sang.");
+    assert_eq!(empty.text(), "Dee sang.");
+}

@@ -1633,3 +1633,86 @@ proptest! {
         });
     }
 }
+
+// ---- a change that never anchors at the start ----
+
+/// A statement of one change whose places always follow a shown sheet.
+#[derive(Debug, PartialEq)]
+struct After {
+    edit: Consistent<Sheet, String>,
+}
+
+impl Authored for After {
+    fn form() -> Form {
+        Form::new().change_after::<Sheet, String>("edit")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(After {
+            edit: fields.change_after("edit")?,
+        })
+    }
+}
+
+fn via_after(text: &str, showing: &Showing<'_>) -> Settled<After> {
+    <Whole<After> as Single>::read(&written(text, Ended::Complete), showing)
+}
+
+#[test]
+fn a_change_after_has_no_start_in_either_anchor() {
+    with_showing(3, 0, |showing| {
+        for pointers in [Pointers::Enum, Pointers::Plain] {
+            let schema = schema_of::<Whole<After>>(showing, pointers);
+            let edit = &schema["properties"]["edit"]["properties"];
+            let anchors = [
+                &edit["insert"]["items"]["properties"]["after"],
+                &edit["move"]["items"]["properties"]["after"],
+            ];
+            for anchor in anchors {
+                match pointers {
+                    Pointers::Enum => assert_eq!(anchor["enum"], json!(["s1", "s2", "s3"])),
+                    Pointers::Plain => assert_eq!(anchor, &json!({"type": "string"})),
+                }
+            }
+            assert_dialect(&schema);
+        }
+    });
+}
+
+#[test]
+fn a_change_still_offers_start() {
+    with_showing(3, 0, |showing| {
+        let schema = schema_of::<Change<Sheet, String>>(showing, Pointers::Enum);
+        let edit = &schema["properties"];
+        assert_eq!(
+            edit["insert"]["items"]["properties"]["after"]["enum"],
+            json!(["s1", "s2", "s3", "start"])
+        );
+        assert_eq!(
+            edit["move"]["items"]["properties"]["after"]["enum"],
+            json!(["s1", "s2", "s3", "start"])
+        );
+    });
+}
+
+#[test]
+fn an_answer_anchoring_a_change_after_at_the_start_is_unanswered() {
+    with_showing(3, 0, |showing| {
+        for text in [
+            r#"{"edit":{"replace":[],"insert":[{"after":"start","with":"x"}],"remove":[],"move":[]}}"#,
+            r#"{"edit":{"replace":[],"insert":[],"remove":[],"move":[{"at":"s2","after":"start"}]}}"#,
+        ] {
+            assert_eq!(
+                via_after(text, showing),
+                Settled::Unanswered(Why::Unplaced),
+                "{text}"
+            );
+        }
+        let placed = r#"{"edit":{"replace":[],"insert":[{"after":"s1","with":"x"}],"remove":[],"move":[{"at":"s2","after":"s3"}]}}"#;
+        let Settled::Answered(read) = via_after(placed, showing) else {
+            panic!("an answer that follows shown sheets is read");
+        };
+        assert_eq!(read.edit.change().insert.len(), 1);
+        assert_eq!(read.edit.change().moved.len(), 1);
+    });
+}

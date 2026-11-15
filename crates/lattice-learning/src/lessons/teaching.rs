@@ -14,12 +14,13 @@ use lattice_core::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-mod answers;
 pub(crate) mod contract;
 mod passes;
 mod protected;
 pub(crate) mod quotes;
-mod repair;
+pub(in crate::lessons) mod repair;
+#[cfg(test)]
+pub(crate) mod repair_script;
 mod review_loop;
 mod standing;
 mod subject;
@@ -458,8 +459,6 @@ pub async fn review_and_repair_with_progress(
     .map(|reviewed| reviewed.candidate)
 }
 
-#[cfg(test)]
-mod answers_tests;
 #[cfg(test)]
 mod citation_tests;
 #[cfg(test)]

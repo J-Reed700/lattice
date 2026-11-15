@@ -23,22 +23,79 @@ fn used_at_section_1() -> ReviewFinding {
     )
 }
 
+fn parts(of: &[&str]) -> BTreeSet<String> {
+    of.iter().map(|part| (*part).to_owned()).collect()
+}
+
+fn refuses(reach: &Reach, part: &str) -> Option<String> {
+    reach.refuses(&parts(&[part]))
+}
+
 #[test]
 fn a_planned_item_may_be_added_in_another_part() {
-    let finding = planned_at_section_1();
-    let may = reach([&finding]);
-    assert_eq!(may(Some(PLANNED), "/blocks/3"), Ok(()));
-    assert_eq!(may(Some(PLANNED), "/blocks/1"), Ok(()));
-    assert_eq!(may(Some(PLANNED), "/questions/0"), Ok(()));
+    let reach = Reach::of(&[&planned_at_section_1()]);
+    assert_eq!(reach, Reach::Anywhere);
+    for part in ["/blocks/3", "/blocks/1", "/questions/0"] {
+        assert_eq!(refuses(&reach, part), None, "{part}");
+    }
 }
 
 #[test]
 fn a_use_before_teaching_is_still_mended_in_its_own_part_only() {
-    let finding = used_at_section_1();
-    let id = finding.id();
-    let may = reach([&finding]);
-    assert_eq!(may(Some(id.as_str()), "/blocks/1"), Ok(()));
-    assert!(may(Some(id.as_str()), "/blocks/3").is_err());
+    let reach = Reach::of(&[&used_at_section_1()]);
+    assert_eq!(reach, Reach::Parts(vec!["/blocks/1".into()]));
+    assert_eq!(refuses(&reach, "/blocks/1"), None);
+    assert!(refuses(&reach, "/blocks/3").is_some());
+}
+
+#[test]
+fn a_change_may_touch_its_findings_part_and_its_second_part_only() {
+    let finding = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "n")
+        .with_also(FindingSite::Section(2));
+    let reach = Reach::of(&[&finding]);
+    assert_eq!(refuses(&reach, "/blocks/0"), None);
+    assert_eq!(refuses(&reach, "/blocks/2"), None);
+    let refused = refuses(&reach, "/blocks/1").unwrap();
+    assert!(
+        refused.contains("/blocks/1") && refused.contains("(/blocks/0 and /blocks/2)"),
+        "{refused}"
+    );
+    let outside = refuses(&reach, "").unwrap();
+    assert!(
+        outside.contains("a text outside every block and question"),
+        "{outside}"
+    );
+}
+
+#[test]
+fn a_finding_with_one_part_names_only_that_part_when_it_refuses() {
+    let finding = ReviewFinding::reviewer(3, Some(FindingSite::Section(1)), "n");
+    let refused = refuses(&Reach::of(&[&finding]), "/blocks/0").unwrap();
+    assert!(refused.contains("(/blocks/1)"), "{refused}");
+    assert!(!refused.contains('`'), "{refused}");
+}
+
+#[test]
+fn a_finding_about_the_whole_material_may_change_any_part() {
+    let finding = ReviewFinding::reviewer(0, None, "n");
+    let reach = Reach::of(&[&finding]);
+    for part in ["/blocks/0", "/questions/1", ""] {
+        assert_eq!(refuses(&reach, part), None, "{part}");
+    }
+}
+
+#[test]
+fn findings_that_share_an_id_each_open_their_own_part() {
+    let first = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "one");
+    let second = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "two");
+    let reach = Reach::of(&[&first, &second]);
+    assert_eq!(refuses(&reach, "/blocks/0"), None);
+    assert!(refuses(&reach, "/blocks/1").is_some());
+    let sibling = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "three")
+        .with_also(FindingSite::Section(1));
+    let reach = Reach::of(&[&first, &sibling]);
+    assert_eq!(refuses(&reach, "/blocks/1"), None);
+    assert!(refuses(&reach, "/blocks/2").is_some());
 }
 
 #[test]
@@ -79,12 +136,12 @@ fn only_a_finding_about_the_whole_material_or_a_missing_item_mends_anywhere() {
     );
 }
 
-const KEPT_TO_THE_CONTRACT: [&str; 2] = [
+const KEPT: [&str; 2] = [
     "Added or changed text uses a term, or asks the learner to do or use something, only where the lesson has taught it by that point; otherwise it says there what the term means or how to do it.",
     "It never says again what the sentence before or after it already says.",
 ];
 
-fn asked<'a>(edits: bool, schema: &'a Value, wording: &'a Wording) -> Request<'a> {
+fn asked<'a>(schema: &'a Value, wording: &'a Wording) -> Request<'a> {
     Request {
         system: "",
         schema,
@@ -92,54 +149,98 @@ fn asked<'a>(edits: bool, schema: &'a Value, wording: &'a Wording) -> Request<'a
         candidate: schema,
         quote_checks: &[],
         issues: Vec::new(),
-        edits,
         wording,
+        keeps: Keeps::Anything,
         output_tokens: 0,
     }
 }
 
 #[test]
-fn the_edits_form_holds_what_a_repair_adds_to_what_the_lesson_is_held_to() {
-    let (schema, wording) = (Value::Null, Wording::default());
-    let system = Edits.system(&asked(true, &schema, &wording));
-    for sentence in KEPT_TO_THE_CONTRACT {
-        assert!(system.contains(sentence), "{sentence}");
+fn the_edit_instructions_hold_what_a_repair_adds_to_what_the_lesson_is_held_to() {
+    for cites in [true, false] {
+        let system = system(cites);
+        for sentence in KEPT {
+            assert!(system.contains(sentence), "{sentence}");
+        }
     }
 }
 
 #[test]
-fn the_edits_form_asks_for_an_answer_to_every_entry() {
-    let (schema, wording) = (Value::Null, Wording::default());
-    let system = Edits.system(&asked(true, &schema, &wording));
-    let told = "Answer every entry once in answers: its id (finding), what you will change for it and where (plan), then the edits, citations and uncite that make that change. These change only that entry's part or its also part; those for an entry whose part is null may change any part.";
-    assert!(system.contains(told), "{system}");
-    assert!(
-        !system.contains("Each edit, citation and uncite names in finding the id of the entry"),
-        "{system}"
-    );
+fn the_edit_instructions_ask_for_an_entry_for_every_finding() {
+    let told = "Answer every finding once in entries: the finding (of), what you will change for it and where (plan), then the edits that make that change (edits). An entry's edits change only sentences and citations of its finding's part or its also part; those of a finding whose part is null may change any part.";
+    assert!(system(false).contains(told));
 }
 
 #[test]
-fn the_rewrite_form_holds_what_a_repair_adds_to_what_the_lesson_is_held_to() {
+fn the_rewrite_holds_what_a_repair_adds_to_what_the_lesson_is_held_to() {
     let (schema, wording) = (Value::Null, Wording::default());
-    let prompt = Rewrite.prompt(&asked(false, &schema, &wording), Value::Null);
+    let prompt = rewrite_prompt(&asked(&schema, &wording), Value::Null);
     let instruction = prompt["instruction"].as_str().unwrap();
-    for sentence in KEPT_TO_THE_CONTRACT {
+    for sentence in KEPT {
         assert!(instruction.contains(sentence), "{sentence}");
     }
 }
 
 #[test]
-fn the_repair_forms_keep_their_own_words_sentence_and_their_instructions() {
+fn the_rewrite_keeps_its_prompt_keys_and_its_instructions() {
     let (schema, wording) = (Value::Null, Wording::default());
-    let system = Edits.system(&asked(true, &schema, &wording));
-    let own_words = "added or changed text teaches in the lesson's own words and never mentions the course plan, the review, the sources' excerpts or these instructions. ";
-    assert!(system.contains(own_words), "{system}");
-    assert!(
-        system.ends_with(&text_edits::instructions(&schema)),
-        "{system}"
+    let sent = asked(&schema, &wording);
+    let prompt = rewrite_prompt(&sent, Value::Null);
+    let keys: Vec<&String> = prompt.keys().collect();
+    assert_eq!(
+        keys,
+        [
+            "task",
+            "originalRequirements",
+            "candidate",
+            "sourceQuoteChecks",
+            "issuesToFix",
+            "instruction"
+        ]
     );
-    let prompt = Rewrite.prompt(&asked(false, &schema, &wording), Value::Null);
     let instruction = prompt["instruction"].as_str().unwrap();
     assert!(instruction.starts_with("Give the complete corrected material. Change every defective passage, exercise, key or explanation identified above. An unchanged draft is not a repair. Preserve valid content. Do not mention this internal review, the course plan or the sources' excerpts in the learner-facing material."));
+    assert!(rewrite_system(&sent).ends_with(
+        "\nYou are editing a rejected draft. Apply every listed correction to the actual content. Do not reproduce the draft unchanged."
+    ));
+}
+
+#[test]
+fn the_rewrite_lists_one_entry_for_each_finding_sent() {
+    let named = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "note one")
+        .with_passage("Passage one.");
+    let mut sentenced = ReviewFinding::reviewer(4, Some(FindingSite::Question(1)), "note two");
+    sentenced.sentence = Some("Whole sentence.".to_owned());
+    let both = ReviewFinding::reviewer(3, Some(FindingSite::Section(1)), "note three")
+        .with_also(FindingSite::Section(3));
+    let whole = ReviewFinding::reviewer(0, None, "note four");
+    let (schema, wording) = (Value::Null, Wording::default());
+    let mut sent = asked(&schema, &wording);
+    sent.issues = vec![
+        Issue {
+            finding: &named,
+            last_attempt: Some("it named no finding".to_owned()),
+        },
+        Issue {
+            finding: &sentenced,
+            last_attempt: None,
+        },
+        Issue {
+            finding: &both,
+            last_attempt: None,
+        },
+        Issue {
+            finding: &whole,
+            last_attempt: None,
+        },
+    ];
+    assert_eq!(
+        rewrite_prompt(&sent, Value::Null)["issuesToFix"],
+        json!([
+            {"id":"reviewer/1","part":"/blocks/0","also":null,"passage":"Passage one.","note":"note one","lastAttempt":"it named no finding"},
+            {"id":"reviewer/4","part":"/questions/1","also":null,"passage":"Whole sentence.","note":"note two","lastAttempt":null},
+            {"id":"reviewer/3","part":"/blocks/1","also":"/blocks/3","passage":null,"note":"note three","lastAttempt":null},
+            {"id":"reviewer/0","part":null,"also":null,"passage":null,"note":"note four","lastAttempt":null}
+        ])
+    );
 }

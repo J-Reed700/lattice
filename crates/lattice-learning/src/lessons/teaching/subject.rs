@@ -3,7 +3,7 @@
 mod closed;
 mod lesson;
 use super::quotes::{authored, reanchor_quotes_in, restore_quotes_in, QuoteCheck, Table};
-use super::repair::Repaired;
+use super::repair;
 use super::standing::Round;
 use super::ReviewSchema;
 use crate::dto::LearningBlockKind;
@@ -210,8 +210,6 @@ pub(super) enum Settled {
     Changed(String),
     /// The material is as it was; what the repair came to is kept with it.
     Unchanged,
-    /// The edit repair could not be made for these together: send each half as its own repair.
-    Split(Vec<ReviewFinding>, Vec<ReviewFinding>),
 }
 
 #[async_trait::async_trait]
@@ -256,12 +254,23 @@ pub(super) trait Subject: Send + Sync {
     fn last_attempt(&self, _finding: &ReviewFinding) -> Option<String> {
         None
     }
-    /// Takes one repair call's answer into the candidate.
-    fn settle_repair(
+    /// What a repair of this material may not undo.
+    fn keeps(&self) -> repair::Keeps<'_> {
+        repair::Keeps::Anything
+    }
+    /// Takes an edit repair's outcomes into the review.
+    fn settle_mended(
         &mut self,
         previous: &Value,
         send: &[ReviewFinding],
-        repaired: Repaired,
+        mended: repair::Mended,
+    ) -> Result<Settled>;
+    /// Takes a rewrite of the whole material.
+    fn settle_rewrite(
+        &mut self,
+        previous: &Value,
+        send: &[ReviewFinding],
+        text: &str,
     ) -> Result<Settled>;
     /// A repair that could not be made for `send`: what the material does with them.
     fn unmade(

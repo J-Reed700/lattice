@@ -26,54 +26,6 @@ impl Patch {
     pub(crate) fn asks_nothing(&self) -> bool {
         self.edits.is_empty() && self.citations.is_empty() && self.uncite.is_empty()
     }
-
-    /// The findings its changes name, each once, in the order first named:
-    /// edits, then citations, then uncites.
-    pub(crate) fn findings(&self) -> Vec<String> {
-        let named = self
-            .edits
-            .iter()
-            .filter_map(|edit| edit.finding.as_deref())
-            .chain(
-                self.citations
-                    .iter()
-                    .filter_map(|cite| cite.finding.as_deref()),
-            )
-            .chain(self.uncite.iter().filter_map(Uncite::finding));
-        let mut ids: Vec<String> = Vec::new();
-        for id in named {
-            if !ids.iter().any(|known| known == id) {
-                ids.push(id.to_owned());
-            }
-        }
-        ids
-    }
-
-    /// The patch with only the changes that name one of `ids`: unnamed edits
-    /// and citations and path-only uncites are left out.
-    pub(crate) fn only(&self, ids: &[String]) -> Self {
-        let wanted = |id: Option<&str>| id.is_some_and(|id| ids.iter().any(|known| known == id));
-        Self {
-            edits: self
-                .edits
-                .iter()
-                .filter(|edit| wanted(edit.finding.as_deref()))
-                .cloned()
-                .collect(),
-            citations: self
-                .citations
-                .iter()
-                .filter(|cite| wanted(cite.finding.as_deref()))
-                .cloned()
-                .collect(),
-            uncite: self
-                .uncite
-                .iter()
-                .filter(|uncite| wanted(uncite.finding()))
-                .cloned()
-                .collect(),
-        }
-    }
 }
 
 /// A citation to take back, as a path alone or with the finding it is for.
@@ -142,16 +94,54 @@ const TAUGHT: (&[&str], &[&str]) = (&["body"], &["explanation", "rationales"]);
 /// The texts of a block or question a cited sentence may stand in: a block's
 /// body, a question's explanation or any of its choice reasons.
 pub(in crate::lessons) fn citable_texts(part: &Value, question: bool) -> Vec<&str> {
-    let fields = if question { TAUGHT.1 } else { TAUGHT.0 };
-    fields
-        .iter()
-        .filter_map(|field| part.get(*field))
-        .flat_map(|value| leaves(value).into_iter().map(|(_, text)| text))
+    citable_leaves(part, question)
+        .into_iter()
+        .map(|(_, text)| text)
         .collect()
 }
 
+/// [`citable_texts`] with the path of each text relative to `part` (`body`, `rationales/0`).
+fn citable_leaves(part: &Value, question: bool) -> Vec<(String, &str)> {
+    let fields = if question { TAUGHT.1 } else { TAUGHT.0 };
+    fields
+        .iter()
+        .filter_map(|field| part.get(*field).map(|value| (*field, value)))
+        .flat_map(|(field, value)| {
+            leaves(value).into_iter().map(move |(rest, text)| {
+                let path = if rest.is_empty() {
+                    field.to_owned()
+                } else {
+                    format!("{field}/{rest}")
+                };
+                (path, text)
+            })
+        })
+        .collect()
+}
+
+/// Where `sentence` stands in the citable texts of `part`: the path of the text relative to `part`, the
+/// text, and the bytes of its whole sentence(s) that `sentence` stands for. None for a blank sentence.
+pub(in crate::lessons) fn cited_sentence<'a>(
+    part: &'a Value,
+    question: bool,
+    sentence: &str,
+) -> Option<(String, &'a str, (usize, usize))> {
+    if sentence.trim().is_empty() {
+        return None;
+    }
+    citable_leaves(part, question)
+        .into_iter()
+        .find_map(|(path, held)| {
+            let span = same_text::find(held, sentence)?;
+            let lying = same_text::sentences_over(held, span);
+            let start = lying.first()?.0;
+            let end = lying.last()?.1;
+            Some((path, held, (start, end)))
+        })
+}
+
 /// Whether `path` names a text that teaches in a block or question.
-pub(super) fn taught_at(path: &str) -> bool {
+pub(in crate::lessons) fn taught_at(path: &str) -> bool {
     let mut segments = path.split('/').skip(1);
     let (Some(list), Some(index), Some(field)) =
         (segments.next(), segments.next(), segments.next())
@@ -176,13 +166,8 @@ pub(in crate::lessons) fn citation_entry(
     source_index: Value,
     quote: &str,
 ) -> Option<Value> {
-    if sentence.trim().is_empty() {
-        return None;
-    }
-    let exact = citable_texts(part, question).into_iter().find_map(|held| {
-        let span = same_text::find(held, sentence)?;
-        same_text::exact_sentences(held, span)
-    })?;
+    let (_, held, (from, to)) = cited_sentence(part, question, sentence)?;
+    let exact = held.get(from..to)?;
     Some(json!({"sentence":exact,"sourceIndex":source_index,"quote":quote}))
 }
 

@@ -8,7 +8,7 @@ use contract::scripted::{self, ask_of, Ask, Script};
 use crate::lessons::content_verification::Protected;
 use crate::lessons::course_generation_tests::{clean_review, verdict, ScriptedModel};
 use crate::reference_collection::ReferenceCollection;
-use crate::review_findings::{subject_of, Held, PlanCheck};
+use crate::review_findings::Held;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
@@ -755,13 +755,8 @@ async fn two_defects_in_one_section_are_two_entries_for_the_repair() -> Result<(
         .iter()
         .find(|prompt| prompt.contains("issuesToFix"))
         .unwrap();
-    let key = "\"issuesToFix\":";
-    let start = repair.find(key).unwrap() + key.len();
-    let issues: Value = serde_json::Deserializer::from_str(&repair[start..])
-        .into_iter::<Value>()
-        .next()
-        .unwrap()
-        .unwrap();
+    let issues =
+        crate::lessons::teaching::repair_script::task_of(repair).unwrap()["issuesToFix"].clone();
     assert_eq!(issues.as_array().unwrap().len(), 2, "{issues}");
     Ok(())
 }
@@ -808,10 +803,9 @@ async fn one_fixed_defect_does_not_charge_the_other_in_its_section() -> Result<(
     Ok(())
 }
 
-/// A repair of the second section's body for `finding`.
-fn replace_for(finding: &ReviewFinding, before: &str, after: &str) -> String {
+/// A repair of the second section's body.
+fn replace_for(before: &str, after: &str) -> String {
     edits(json!([{
-        "finding": finding.id().as_str(),
         "path": "/blocks/1/body",
         "before": before,
         "after": after
@@ -828,29 +822,13 @@ async fn a_defect_in_words_a_repair_wrote_continues_the_count_of_its_own_kind_of
     let first = "Sorting the list with the second tool leaves names unchanged.";
     let second = "Sorting the list with the third tool leaves names unchanged.";
     let third = "Sorting the list with the third tool always leaves names unchanged.";
-    let mut digests = [subject_of(one), subject_of(other)];
-    digests.sort();
-    let clash = ReviewFinding::plan(
-        PlanCheck::Contradiction,
-        digests.join("-"),
-        FindingSite::Section(0),
-        "",
-    );
-    let use_of = |tool: &str| {
-        ReviewFinding::plan(
-            PlanCheck::Used,
-            subject_of(tool),
-            FindingSite::Section(1),
-            "",
-        )
-    };
     let scripted = scripted(vec![
         reviewed(),
-        replace_for(&clash, other, first),
+        replace_for(other, first),
         reviewed_of(&[]),
-        replace_for(&use_of("the second tool"), first, second),
+        replace_for(first, second),
         reviewed_of(&[]),
-        replace_for(&use_of("the third tool"), second, third),
+        replace_for(second, third),
         reviewed_of(&[]),
     ]);
     let contradiction = answer(

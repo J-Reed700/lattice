@@ -130,16 +130,17 @@ fn a_draft_without_citations_offers_no_uncite() {
 
 #[test]
 fn the_citing_instructions_tell_a_repair_to_take_back_a_citation() {
-    let lesson = crate::generation::lesson_schema(2);
-
-    assert!(instructions(&lesson).contains("uncite"));
+    assert!(crate::lessons::teaching::repair::system(true).contains("uncite"));
 }
 
 #[test]
 fn both_repairs_are_told_a_section_never_says_the_same_thing_twice() {
     let lesson = crate::generation::lesson_schema(2);
 
-    for told in [instructions(&lesson), rewrite_instructions(&lesson)] {
+    for told in [
+        crate::lessons::teaching::repair::system(true),
+        rewrite_instructions(&lesson),
+    ] {
         assert!(told.contains("never says the same thing twice"), "{told}");
     }
 }

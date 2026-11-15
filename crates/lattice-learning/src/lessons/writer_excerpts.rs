@@ -88,7 +88,7 @@ impl WriterExcerpts {
 }
 
 /// The sources the candidate's blocks and questions cite, by index.
-fn cited_sources(candidate: &Value) -> BTreeSet<u64> {
+pub(in crate::lessons) fn cited_sources(candidate: &Value) -> BTreeSet<u64> {
     let mut cited = BTreeSet::new();
     for field in ["blocks", "questions"] {
         for item in candidate

@@ -76,6 +76,7 @@ pub(super) fn change_schema<K: Kind, W: Content>(
     let field = Field::Change {
         prefix: K::PREFIX,
         with: Box::new(W::field()),
+        start: true,
     };
     Some(made(field_schema(&field, showing, pointers)))
 }
@@ -184,9 +185,14 @@ fn field_schema(field: &Field, showing: &Showing<'_>, pointers: Pointers) -> Val
             properties.extend(form_properties(form, showing, pointers));
             array(closed(properties))
         }
-        Field::Change { prefix, with } => {
+        Field::Change {
+            prefix,
+            with,
+            start,
+        } => {
             let at = point_schema(prefix, Among::Shown, &[], showing, pointers);
-            let anchor = point_schema(prefix, Among::Shown, &["start"], showing, pointers);
+            let begin: &[&str] = if *start { &["start"] } else { &[] };
+            let anchor = point_schema(prefix, Among::Shown, begin, showing, pointers);
             let with = field_schema(with, showing, pointers);
             closed(vec![
                 (
@@ -574,7 +580,7 @@ pub(super) fn read_change<K: Kind, W: Content>(
         Err(why) => return Settled::Unanswered(why),
     };
     let mut fields = Fields::of(&document.fields, showing, None);
-    match fields.change_object::<K, W>(&document.fields) {
+    match fields.change_object::<K, W>(&document.fields, true) {
         Some(change) => Settled::Answered(change),
         None => Settled::Unanswered(fields.why()),
     }

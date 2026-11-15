@@ -575,14 +575,10 @@ fn the_writer_is_told_never_to_name_a_source_in_the_text() {
 }
 
 #[test]
-fn the_writer_and_the_repairs_are_told_quoted_wording_takes_double_quotation_marks() {
+fn the_writer_and_the_claim_repair_are_told_quoted_wording_takes_double_quotation_marks() {
     let schema = lesson_schema(2);
     for (who, text) in [
         ("writer", citation_instructions(true)),
-        (
-            "teaching repair",
-            crate::lessons::text_edits::instructions(&schema),
-        ),
         (
             "claim repair",
             crate::lessons::text_edits::rewrite_instructions(&schema),
@@ -624,20 +620,12 @@ fn the_writer_is_told_to_name_no_source_by_name_either() {
 }
 
 #[test]
-fn the_writer_and_the_teaching_repair_are_told_what_the_lesson_s_own_figures_are() {
-    let schema = lesson_schema(2);
-    for (who, text) in [
-        ("writer", citation_instructions(true)),
-        (
-            "teaching repair",
-            crate::lessons::text_edits::instructions(&schema),
-        ),
-    ] {
-        assert!(
-            text.contains("The lesson's own figures are the quantities its own example, scenario or exercise sets, and the results calculated from them."),
-            "{who}: {text}"
-        );
-    }
+fn the_writer_is_told_what_the_lesson_s_own_figures_are() {
+    let text = citation_instructions(true);
+    assert!(
+        text.contains("The lesson's own figures are the quantities its own example, scenario or exercise sets, and the results calculated from them."),
+        "{text}"
+    );
 }
 
 #[test]
