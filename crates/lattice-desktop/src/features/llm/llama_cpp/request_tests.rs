@@ -501,3 +501,24 @@ fn the_ceiling_sent_is_the_one_the_shared_rule_settles_on() {
         (8_000, true, 100)
     );
 }
+
+#[test]
+fn a_schema_of_handles_is_enforced_and_sent_as_written() {
+    let client = client();
+    let schema = legacy::schema(json!({
+        "type": "object",
+        "properties": {"pick": {"type": "string", "enum": ["h1", "h2", "h3"]}},
+        "required": ["pick"]
+    }));
+    assert!(ModelBackend::enforces(&client, &schema));
+    let request = legacy::completion(legacy::Completion {
+        input: user("Pick one"),
+        json_schema: Some(schema.as_json().clone()),
+        ..Default::default()
+    });
+    let body = body_of(&client, &request).unwrap();
+    assert_eq!(
+        body["response_format"]["json_schema"]["schema"],
+        *schema.as_json()
+    );
+}

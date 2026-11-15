@@ -122,14 +122,28 @@ fn anthropic_sends_every_schema_with_the_meaning_it_was_written_with() {
     for (name, schema) in samples::schemas() {
         let written = schema.as_json();
         let sent = shared(written);
-        assert_eq!(&written_out(&sent), written, "{name}");
+        assert_eq!(
+            written_out(&sent).to_string(),
+            written.to_string(),
+            "{name}"
+        );
         if sent.get("$defs").is_some() {
             defining += 1;
-        } else {
-            assert_eq!(&sent, written, "{name}");
         }
     }
     assert!(defining > 0, "no sample repeats a part");
+}
+
+#[test]
+fn parts_whose_fields_are_in_another_order_stay_apart() {
+    let reason_first = serde_json::json!({"type":"object","properties":{
+        "reason":{"type":"string"},"verdict":{"type":"string"}}});
+    let verdict_first = serde_json::json!({"type":"object","properties":{
+        "verdict":{"type":"string"},"reason":{"type":"string"}}});
+    assert_eq!(reason_first, verdict_first, "equal as JSON values");
+    let written = serde_json::json!({"type":"object",
+        "properties":{"first":reason_first,"second":verdict_first}});
+    assert_eq!(shared(&written).to_string(), written.to_string());
 }
 
 #[test]

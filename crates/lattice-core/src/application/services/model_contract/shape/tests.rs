@@ -374,7 +374,7 @@ fn via_lead(text: &str, ended: Ended, showing: &Showing<'_>) -> Settled<Led<Verd
 
 // ---- the dialect and a structural validator for its subset ----
 
-const ALLOWED: [&str; 7] = [
+const ALLOWED: [&str; 8] = [
     "type",
     "properties",
     "required",
@@ -382,6 +382,7 @@ const ALLOWED: [&str; 7] = [
     "items",
     "enum",
     "anyOf",
+    "description",
 ];
 
 /// Every object closed, every property required, nothing outside the dialect.
@@ -403,7 +404,9 @@ fn assert_dialect(schema: &Value) {
     }
     match object["type"].as_str().unwrap() {
         "string" => {
-            assert!(object.keys().all(|key| key == "type" || key == "enum"));
+            assert!(object
+                .keys()
+                .all(|key| key == "type" || key == "enum" || key == "description"));
             if let Some(members) = object.get("enum") {
                 let members = members.as_array().unwrap();
                 assert!(!members.is_empty());
@@ -606,7 +609,10 @@ fn pointer_enums_hold_the_shown_handles_and_none() {
             json!(["s1", "s2", "s3", "none"])
         );
         let schema = schema_of::<Pick<Sheet>>(showing, Pointers::Plain);
-        assert_eq!(schema["properties"]["pick"], json!({"type": "string"}));
+        assert_eq!(
+            schema["properties"]["pick"],
+            json!({"type": "string", "description": PLAIN_NOTE_OR_NONE})
+        );
         let schema = schema_of::<Each<Sheet, Rich>>(showing, Pointers::Enum);
         let entry = &schema["properties"]["entries"]["items"]["properties"];
         assert_eq!(entry["of"]["enum"], json!(["s1", "s2", "s3"]));
@@ -614,6 +620,56 @@ fn pointer_enums_hold_the_shown_handles_and_none() {
         assert_eq!(entry["maybe_opt"]["enum"], json!(["o1", "o2", "none"]));
         let anchor = &entry["edit"]["properties"]["insert"]["items"]["properties"]["after"];
         assert_eq!(anchor["enum"], json!(["s1", "s2", "s3", "start"]));
+    });
+}
+
+const PLAIN_NOTE: &str =
+    "One name shown in square brackets, written without the brackets, such as s1.";
+const PLAIN_NOTE_OR_NONE: &str =
+    "One name shown in square brackets, written without the brackets, such as s1, or the word none.";
+
+#[test]
+fn a_plain_pointer_says_how_a_handle_is_written() {
+    with_showing(3, 2, |showing| {
+        let schema = schema_of::<Each<Sheet, Rich>>(showing, Pointers::Plain);
+        let entry = &schema["properties"]["entries"]["items"]["properties"];
+        assert_eq!(
+            entry["of"],
+            json!({"type": "string", "description": PLAIN_NOTE})
+        );
+        let schema = schema_of::<Each<Sheet, Rich>>(showing, Pointers::Enum);
+        let entry = &schema["properties"]["entries"]["items"]["properties"];
+        assert_eq!(
+            entry["of"],
+            json!({"type": "string", "enum": ["s1", "s2", "s3"]})
+        );
+    });
+}
+
+#[test]
+fn a_plain_pointer_that_may_be_none_names_the_word_too() {
+    with_showing(3, 0, |showing| {
+        let schema = schema_of::<Pick<Sheet>>(showing, Pointers::Plain);
+        assert_eq!(
+            schema["properties"]["pick"],
+            json!({"type": "string", "description": PLAIN_NOTE_OR_NONE})
+        );
+    });
+}
+
+#[test]
+fn a_plain_pointer_with_nothing_shown_holds_only_the_extra_word() {
+    with_showing(0, 0, |showing| {
+        let schema = schema_of::<Pick<Sheet>>(showing, Pointers::Plain);
+        assert_eq!(
+            schema["properties"]["pick"],
+            json!({"type": "string", "description": "The word none."})
+        );
+        let schema = schema_of::<PickSome<Sheet>>(showing, Pointers::Plain);
+        assert_eq!(
+            schema["properties"]["picks"]["items"],
+            json!({"type": "string"})
+        );
     });
 }
 
@@ -780,7 +836,9 @@ fn pick_reasons() {
     with_showing(3, 0, |showing| {
         for (text, want) in [
             (r#"{"pick":"s99"}"#, Why::Unplaced),
-            (r#"{"pick":"[s1]"}"#, Why::Unplaced),
+            (r#"{"pick":"[s1] text"}"#, Why::Unplaced),
+            (r#"{"pick":"[[s1]]"}"#, Why::Unplaced),
+            (r#"{"pick":"[s1"}"#, Why::Unplaced),
             (r#"{"pick":"None"}"#, Why::Unplaced),
             (r#"{"pick":1}"#, Why::NotRead),
             (r#"{"choice":"s1"}"#, Why::NotRead),
@@ -799,6 +857,18 @@ fn pick_reasons() {
             via_pick("{\"pick\":\"s1\"}", Ended::Declined, showing),
             Settled::Unanswered(Why::Declined)
         );
+    });
+}
+
+#[test]
+fn a_field_holding_the_prose_form_of_a_shown_handle_resolves() {
+    with_showing(3, 0, |showing| {
+        let Settled::Answered(Some(picked)) =
+            via_pick(r#"{"pick":"[s2]"}"#, Ended::Complete, showing)
+        else {
+            panic!("the bracketed handle did not resolve");
+        };
+        assert_eq!(picked.handle.written(), "s2");
     });
 }
 
@@ -1674,7 +1744,10 @@ fn a_change_after_has_no_start_in_either_anchor() {
             for anchor in anchors {
                 match pointers {
                     Pointers::Enum => assert_eq!(anchor["enum"], json!(["s1", "s2", "s3"])),
-                    Pointers::Plain => assert_eq!(anchor, &json!({"type": "string"})),
+                    Pointers::Plain => assert_eq!(
+                        anchor,
+                        &json!({"type": "string", "description": PLAIN_NOTE})
+                    ),
                 }
             }
             assert_dialect(&schema);

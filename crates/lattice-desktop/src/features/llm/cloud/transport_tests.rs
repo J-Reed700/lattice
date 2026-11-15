@@ -355,38 +355,42 @@ fn structured() -> CompletionRequest {
     })
 }
 
-/// Claude refuses some schemas it cannot compile ("The compiled grammar is
-/// too large"), which no shape check predicts; the request goes once more
-/// with the schema asked for in words.
+/// Claude refuses some schemas it cannot compile, which no shape check
+/// predicts; the request goes once more with the schema asked for in words.
 #[tokio::test]
 async fn a_schema_claude_refuses_is_asked_for_in_words() {
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(body_string_contains("json_schema"))
-        .respond_with(
-            ResponseTemplate::new(400).set_body_json(json!({"type":"error","error":{
-                "type":"invalid_request_error",
-                "message":"The compiled grammar is too large, which would cause performance issues."
-            }})),
-        )
-        .expect(1)
-        .mount(&server)
-        .await;
-    Mock::given(method("POST"))
-        .and(body_string_contains("matches this JSON Schema"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "content":[{"type":"text","text":"{\"ok\":true}"}],"stop_reason":"end_turn"
-        })))
-        .expect(1)
-        .mount(&server)
-        .await;
+    for reason in [
+        "The compiled grammar is too large, which would cause performance issues.",
+        "Schema is too complex for compilation.",
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(body_string_contains("json_schema"))
+            .respond_with(
+                ResponseTemplate::new(400).set_body_json(json!({"type":"error","error":{
+                    "type":"invalid_request_error",
+                    "message":reason
+                }})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(body_string_contains("matches this JSON Schema"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "content":[{"type":"text","text":"{\"ok\":true}"}],"stop_reason":"end_turn"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
 
-    let response = anthropic_client(&server)
-        .await
-        .complete(&structured())
-        .await
-        .unwrap();
-    assert_eq!(response.text, "{\"ok\":true}");
+        let response = anthropic_client(&server)
+            .await
+            .complete(&structured())
+            .await
+            .unwrap_or_else(|error| panic!("{reason}: {error:?}"));
+        assert_eq!(response.text, "{\"ok\":true}", "{reason}");
+    }
 }
 
 #[derive(Clone, Default)]

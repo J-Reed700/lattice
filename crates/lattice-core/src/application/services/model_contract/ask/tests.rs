@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::*;
 use crate::application::ports::llm_port::{CompletionInput, CompletionRequest, CompletionResponse};
+use crate::application::services::model_contract::shape::{Authored, Fields, Form, New as Items};
 use crate::application::services::model_contract::shown::Drawn;
 use crate::application::services::model_contract::ContractId;
 
@@ -1327,7 +1328,7 @@ async fn items_of_a_cut_off_reply_stand_and_the_next_request_is_built_from_them(
         Found {
             items: vec!["a".to_owned(), "b".to_owned(), "c".to_owned()],
             rest: None,
-            left_out: 0
+            left_out: 0,
         }
     );
     assert_eq!(script.sent(), 2);
@@ -1356,7 +1357,7 @@ async fn no_input_stops_the_asking() {
         Found {
             items: vec!["a".to_owned()],
             rest: Some(Why::CutOff),
-            left_out: 0
+            left_out: 0,
         }
     );
     assert_eq!(script.sent(), 1);
@@ -1423,7 +1424,7 @@ async fn nothing_read_and_nothing_standing_gets_one_correction() {
         Found {
             items: Vec::new(),
             rest: Some(Why::NotRead),
-            left_out: 0
+            left_out: 0,
         }
     );
     assert_eq!(script.sent(), 2);
@@ -1475,7 +1476,7 @@ async fn an_answer_left_out_whole_twice_is_unanswered() {
         Found {
             items: Vec::new(),
             rest: Some(Why::Refused(BAD_REASON.into())),
-            left_out: 2
+            left_out: 2,
         }
     );
     assert_eq!(script.sent(), 2);
@@ -1496,6 +1497,76 @@ async fn an_answer_left_out_whole_twice_is_unanswered() {
     );
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct Pointed {
+    note: String,
+    tile: Picked<Tile>,
+}
+
+impl Authored for Pointed {
+    fn form() -> Form {
+        Form::new().text("note").point::<Tile>("tile")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        let note = fields.text("note")?;
+        let tile = fields.point::<Tile>("tile")?;
+        Some(Self { note, tile })
+    }
+}
+
+struct Pointing;
+
+impl Contract for Pointing {
+    const ID: ContractId = ContractId::new("test-pointing");
+    type Input = Input;
+}
+
+impl Answered for Pointing {
+    type Answer = Items<Pointed>;
+    const ALONE: Alone = Alone::Pending;
+
+    fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
+        says(input, showing)
+    }
+}
+
+const POINTS_AT_NOTHING: &str = r#"{"items":[{"note":"a first sentence","tile":"t9"}]}"#;
+const POINTS_AT_A_TILE: &str = r#"{"items":[{"note":"a first sentence","tile":"t1"}]}"#;
+
+async fn run_pointing(script: &Script) -> Found<Pointed> {
+    let mut scope = Scope::for_question();
+    ask_new::<Pointing>(
+        script,
+        &Plain,
+        &mut scope,
+        Input::of(&[1]),
+        |_: &[Pointed]| None,
+        &CallOptions::default(),
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn items_that_point_at_nothing_shown_are_corrected_as_unplaced() {
+    let script = Script::new(&[(POINTS_AT_NOTHING, STOP), (POINTS_AT_A_TILE, STOP)]);
+    let found = run_pointing(&script).await;
+    assert_eq!(found.items.len(), 1);
+    assert!(script.prompt(1).contains(UNPLACED), "{}", script.prompt(1));
+    assert!(!script.prompt(1).contains(NOT_READ));
+}
+
+#[tokio::test]
+async fn items_that_point_at_nothing_shown_twice_are_unanswered_as_unplaced() {
+    let script = Script::new(&[]).always(POINTS_AT_NOTHING, STOP);
+    let found = run_pointing(&script).await;
+    assert!(found.items.is_empty());
+    assert_eq!(found.rest, Some(Why::Unplaced));
+    assert_eq!(found.left_out, 2);
+    assert_eq!(script.sent(), 2);
+}
+
 #[tokio::test]
 async fn an_answer_that_holds_nothing_is_read_to_its_end_and_not_asked_again() {
     let script = Script::new(&[("", STOP)]);
@@ -1505,7 +1576,7 @@ async fn an_answer_that_holds_nothing_is_read_to_its_end_and_not_asked_again() {
         Found {
             items: Vec::new(),
             rest: None,
-            left_out: 0
+            left_out: 0,
         }
     );
     assert_eq!(script.sent(), 1);

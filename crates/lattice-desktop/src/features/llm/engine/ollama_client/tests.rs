@@ -15,6 +15,17 @@ impl UncutChatRequest for OllamaClient {
     }
 }
 
+#[test]
+fn a_schema_of_handles_is_enforced() {
+    let client = OllamaClient::with_model("http://localhost:11434", "any-model").unwrap();
+    let schema = legacy::schema(serde_json::json!({
+        "type": "object",
+        "properties": {"pick": {"type": "string", "enum": ["h1", "h2", "h3"]}},
+        "required": ["pick"]
+    }));
+    assert!(ModelBackend::enforces(&client, &schema));
+}
+
 #[tokio::test]
 async fn typed_completion_sends_schema_reasoning_sampling_and_output_budget() {
     use lattice_core::application::ports::llm_port::{CompletionInput, SamplingOverride};
