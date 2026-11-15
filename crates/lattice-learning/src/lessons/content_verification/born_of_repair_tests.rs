@@ -195,10 +195,12 @@ impl Script {
                 "the run ends at a repair request past the script".into(),
             ));
         };
-        let after = replacements
+        let edits: Vec<Value> = replacements
             .iter()
-            .fold(body.clone(), |text, (from, to)| text.replace(*from, to));
-        Ok(json!({"edits":[{"path":"/blocks/0/body","before":body,"after":after}]}).to_string())
+            .filter(|(from, _)| body.contains(*from))
+            .map(|(from, to)| json!({"path":"/blocks/0/body","before":from,"after":to}))
+            .collect();
+        Ok(json!({ "edits": edits }).to_string())
     }
 }
 

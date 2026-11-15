@@ -1727,11 +1727,17 @@ async fn a_contradicted_claim_gets_a_correction_then_is_taken_out() -> Result<()
                 assert!(!prompt.contains("lastAttempt"));
                 // The correction drops the first sentence and leaves the
                 // second as it was.
-                let body = fixture_task(prompt).unwrap()["candidate"]["blocks"][0]["body"]
+                let dropped = format!("{BAD} ");
+                let edits = if asked.last().unwrap()["candidate"]["blocks"][0]["body"]
                     .as_str()
                     .unwrap()
-                    .replace(&format!("{BAD} "), "");
-                return Ok(repair_body(prompt, json!(body)));
+                    .contains(BAD)
+                {
+                    json!([{"path":"/blocks/0/body","before":dropped,"after":""}])
+                } else {
+                    json!([])
+                };
+                return Ok(json!({ "edits": edits }).to_string());
             }
             if prompt.starts_with("Source passages:")
                 && prompt
@@ -1786,11 +1792,10 @@ async fn a_contradicted_claim_gets_a_correction_then_is_taken_out() -> Result<()
     let reason = asked[1]["failedClaims"][0]["reason"].as_str().unwrap();
     assert!(reason.contains("preserves whitespace"), "{reason}");
     assert!(!asked[1].to_string().contains("lastAttempt"));
-    // The second correction has no first sentence left to drop, so its edit
-    // changes nothing and the section is asked for once.
+    // The second correction has no first sentence left to drop, so its entry
+    // changes nothing; the model is never asked to write the section itself.
     let sections = model.sections.lock().unwrap();
-    assert_eq!(sections.len(), 1, "{sections:?}");
-    assert!(sections[0].contains("changed nothing"), "{}", sections[0]);
+    assert!(sections.is_empty(), "{sections:?}");
     assert!(!raw.contains(BAD) && !raw.contains(SECOND), "{raw}");
     assert!(raw.contains(GOOD));
     assert!(report.issues.is_empty());

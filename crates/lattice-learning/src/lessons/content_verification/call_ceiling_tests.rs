@@ -88,7 +88,9 @@ impl Rounds {
                 .iter()
                 .find(|(from, _)| body.contains(*from))
                 .unwrap_or_else(|| panic!("no rewrite is scripted for {body}"));
-            return Ok(json!({"edits":[{"path":"/blocks/0/body","before":body,"after":body.replace(from, to)}]}).to_string());
+            return Ok(
+                json!({"edits":[{"path":"/blocks/0/body","before":from,"after":to}]}).to_string(),
+            );
         }
         if prompt.starts_with("You decide whether one statement is standard knowledge") {
             let statement = prompt.rsplit("\n\nStatement: ").next().unwrap_or_default();

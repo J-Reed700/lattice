@@ -4,6 +4,7 @@
 //! comparison is all a request holds; each judgment finished into a finding
 //! and its receipt.
 use super::*;
+use lattice_core::application::services::claim_verification::CountedPast;
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{protocol, shared::protocol::Protocol};
 
@@ -13,6 +14,30 @@ const UNUSABLE: &str =
 
 /// The rule that saves which groups of comparisons are checked in halves.
 const SPLIT_KEYS: Protocol = protocol!("claim-batch-split", 1);
+
+/// The rule that saves which batches the backend counted past its window.
+const COUNTED_PAST_KEYS: Protocol = protocol!("claim-batch-counted-past", 1);
+
+/// The batches the lesson being prepared knows the backend counted past its window.
+pub(crate) struct CountedPastBatches;
+
+#[async_trait::async_trait]
+impl CountedPast for CountedPastBatches {
+    async fn holds(&self, key: &str) -> Result<bool> {
+        Ok(
+            crate::lesson_drafts::checkpoint(&COUNTED_PAST_KEYS.key(key)).await?
+                == Some(json!(true)),
+        )
+    }
+
+    async fn keep(&self, key: &str) -> Result<()> {
+        crate::lesson_drafts::record_checkpoint(&COUNTED_PAST_KEYS.key(key), json!(true)).await?;
+        crate::lesson_progress::stage(
+            "A group of checks was too long for the model's context window; checking them in smaller groups with the same evidence",
+        );
+        Ok(())
+    }
+}
 
 /// Finish `pending` with the judge's `judgment`. `shown` holds the positions
 /// in the page of the passages the judge was shown when it was not shown them

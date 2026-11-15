@@ -194,8 +194,10 @@ impl Figures {
             } else {
                 figure(repair)
             };
-            let after = body.replace(&statement_in(body).unwrap(), &replacement);
-            return Ok(json!({"edits":[{"path":path,"before":body,"after":after}]}).to_string());
+            let before = statement_in(body).unwrap();
+            return Ok(
+                json!({"edits":[{"path":path,"before":before,"after":replacement}]}).to_string(),
+            );
         }
         if prompt.starts_with("Source passages:") {
             let claim = prompt

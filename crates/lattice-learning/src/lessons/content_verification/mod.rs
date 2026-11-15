@@ -605,7 +605,8 @@ pub async fn judge_batch_for_publication(
     claims: &[lattice_core::application::services::claim_verification::LocatedClaim],
 ) -> Result<lattice_core::application::services::claim_verification::Answered<Vec<ClaimJudgment>>> {
     let checker =
-        ClaimChecker::for_policy(llm, SamplingOverride::deterministic(), CheckPolicy::Strict);
+        ClaimChecker::for_policy(llm, SamplingOverride::deterministic(), CheckPolicy::Strict)
+            .remembering(&evidence_checks::CountedPastBatches);
     checker
         .check_batch_without_deadline(
             claims,
