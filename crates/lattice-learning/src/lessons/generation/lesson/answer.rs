@@ -4,6 +4,7 @@
 use crate::assessment::assessment_engine::{option_order, LearningItemFormat};
 use crate::dto::LearningSourceDto;
 use crate::lessons::rows::Quotes;
+use crate::lessons::shape::{self as lesson_shape, Lengths, ShapePolicy};
 use crate::lessons::structured_call::{Asking, CallKind, ReasonFirst};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::model_contract::ask::{
@@ -66,11 +67,16 @@ pub(crate) struct Input {
     sources: Vec<Source>,
     topics: Vec<Topic>,
     after: Told<Value>,
+    lengths: Told<Lengths>,
 }
 
 impl Input {
     /// The request for the authoring `prompt`, whose `sources` are numbered as it numbers them.
-    pub(super) fn of(prompt: &str, sources: &[LearningSourceDto]) -> Result<Self> {
+    pub(super) fn of(
+        prompt: &str,
+        sources: &[LearningSourceDto],
+        lengths: Lengths,
+    ) -> Result<Self> {
         let Value::Object(object) = serde_json::from_str::<Value>(prompt)
             .map_err(|error| AppError::InternalError(error.to_string()))?
         else {
@@ -107,6 +113,7 @@ impl Input {
                 .collect(),
             topics,
             after: Told(Value::Object(after)),
+            lengths: Told(lengths),
         })
     }
 }
@@ -660,7 +667,7 @@ pub(super) async fn fits(
 
 /// What the writer is sent for `prompt` and its `sources`.
 pub(super) fn request(prompt: &str, sources: &[LearningSourceDto]) -> Result<Says> {
-    let input = Input::of(prompt, sources)?;
+    let input = Input::of(prompt, sources, lesson_shape::policy().lengths())?;
     let mut scope = Scope::for_question();
     LessonWriter::says(&input, &mut scope.request())
 }

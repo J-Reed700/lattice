@@ -263,6 +263,16 @@ fn older_turns_are_cut_before_the_newest_and_the_passages_get_the_rest() {
 }
 
 #[tokio::test]
+async fn an_enforcing_backend_is_asked_for_at_least_one_rubric_criterion() {
+    let model = activity_model(vec![activity(json!([]), json!([]))]).enforcing();
+    asked_activity(&model, &activity_input(&[])).await;
+
+    let sent = model.sent();
+    let schema = sent[0].request.schema().unwrap().as_json();
+    assert_eq!(schema["properties"]["rubric"]["minItems"], 1, "{schema}");
+}
+
+#[tokio::test]
 async fn an_activity_names_its_sources_by_label_and_the_app_reads_the_version() {
     let model = activity_model(vec![activity(json!(["s1", "s9"]), json!([]))]);
     let Settled::Answered(draft) = asked_activity(&model, &activity_input(&[])).await else {

@@ -1453,6 +1453,22 @@ mod evaluator {
     }
 
     #[tokio::test]
+    async fn an_enforcing_backend_is_asked_for_at_least_one_check_file() {
+        let model = ScriptedModel::new()
+            .enforcing()
+            .on_request::<CustomEvaluator>(|_, _| {
+                reply(json!({"items":[{"path":"checks.py","content":"assert True\n"}]}).to_string())
+            });
+        generate(&model, "Fire the bowls.", &starter(), &runtime(&[]))
+            .await
+            .unwrap();
+
+        let sent = model.sent();
+        let schema = sent[0].request.schema().unwrap().as_json();
+        assert_eq!(schema["properties"]["items"]["minItems"], 1, "{schema}");
+    }
+
+    #[tokio::test]
     async fn a_runtime_without_named_files_has_the_model_name_each_check() -> Result<()> {
         let model = ScriptedModel::new().on_request::<CustomEvaluator>(|_, _| {
             reply(
