@@ -119,7 +119,7 @@ Plan the reference material a course on this goal needs. Break the goal into the
   "include_reasoning": false,
   "sampling": null,
   "thinking": "off",
-  "max_output_tokens": 120795,
+  "max_output_tokens": 120781,
   "stop": [],
   "want_logprobs": false,
   "priority": "background",
