@@ -254,12 +254,7 @@ impl ask::Transport for Counting {
         let output = grounded_generation::generate(llm, request.clone()).await?;
         self.spent
             .fetch_add(output.output_tokens, Ordering::Relaxed);
-        let finish = output.finish();
-        Ok(Sent {
-            request,
-            text: output.text,
-            finish,
-        })
+        Ok(Sent::of(request, output))
     }
 
     async fn follow(&self, llm: &dyn LLMPort, step: Followup) -> Result<Sent> {
@@ -358,9 +353,11 @@ impl ClaimChecker<'_> {
     /// Whether a part-wise check of `statement` against `passages` fits the
     /// window beside its answer.
     pub fn bridge_fits(&self, statement: &str, passages: &[String]) -> bool {
-        self.bridge_tokens(statement, passages).is_some_and(|tokens| {
-            tokens.saturating_add(self.max_output_tokens as usize) <= self.llm.max_context_tokens()
-        })
+        self.bridge_tokens(statement, passages)
+            .is_some_and(|tokens| {
+                tokens.saturating_add(self.max_output_tokens as usize)
+                    <= self.llm.max_context_tokens()
+            })
     }
 
     fn bridge_tokens(&self, statement: &str, passages: &[String]) -> Option<usize> {

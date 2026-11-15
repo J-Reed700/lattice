@@ -230,13 +230,9 @@ impl AskTransport for Batching<'_> {
         };
         let output =
             grounded_generation::generate_streaming(llm, request.clone(), &streaming).await?;
-        self.spent.fetch_add(output.output_tokens, Ordering::Relaxed);
-        let finish = output.finish();
-        Ok(Sent {
-            request,
-            text: output.text,
-            finish,
-        })
+        self.spent
+            .fetch_add(output.output_tokens, Ordering::Relaxed);
+        Ok(Sent::of(request, output))
     }
 
     async fn follow(&self, llm: &dyn LLMPort, step: Followup) -> Result<Sent> {
@@ -429,10 +425,7 @@ mod tests {
         }
     }
 
-    async fn judged(
-        model: &ScriptedModel,
-        claims: &[LocatedClaim],
-    ) -> Result<Vec<ClaimJudgment>> {
+    async fn judged(model: &ScriptedModel, claims: &[LocatedClaim]) -> Result<Vec<ClaimJudgment>> {
         let checker = ClaimChecker::new(
             model,
             SamplingOverride::deterministic(),

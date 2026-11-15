@@ -1108,9 +1108,12 @@ async fn a_refused_item_is_left_out() {
 
 #[tokio::test]
 async fn an_unread_item_is_counted_and_a_clean_answer_counts_none() {
-    let script = Script::new(&[("+ a
+    let script = Script::new(&[(
+        "+ a
 - x
-+ b", STOP)]);
++ b",
+        STOP,
+    )]);
     let found = run_new(&script, 10).await.unwrap();
     assert_eq!(found.items, vec!["a".to_owned(), "b".to_owned()]);
     assert_eq!(found.left_out, 1);
@@ -1121,8 +1124,10 @@ async fn an_unread_item_is_counted_and_a_clean_answer_counts_none() {
 
 #[tokio::test]
 async fn an_item_left_in_a_cut_off_tail_is_not_counted() {
-    let script = Script::new(&[("+ a
-+ b", LENGTH)]);
+    let script = Script::new(&[(
+        "+ a
++ b", LENGTH,
+    )]);
     let found = run_new(&script, 1).await.unwrap();
     assert_eq!(found.rest, Some(Why::CutOff));
     assert_eq!(found.left_out, 0);
@@ -1692,9 +1697,15 @@ mod metering {
     #[tokio::test]
     async fn a_plain_send_carries_the_tokens_the_model_reported() {
         let llm = Counting::new(&["red"]);
-        let request = GroundedRequest::of("You judge tiles.", "Say a word.");
+        let request = GroundedRequest::of("You judge tiles.".into(), "Say a word.".into());
         let sent = Plain.send(&llm, request).await.unwrap();
-        assert_eq!(sent.usage, Usage { input: 7, output: 3 });
+        assert_eq!(
+            sent.usage,
+            Usage {
+                input: 7,
+                output: 3
+            }
+        );
     }
 
     #[tokio::test]
