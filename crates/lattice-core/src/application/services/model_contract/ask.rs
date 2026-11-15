@@ -693,11 +693,11 @@ fn request_of(says: Says, schema: Option<Schema>, call: &CallOptions) -> Grounde
 /// pointers, else with plain ones.
 fn schema_for<C: Answered>(llm: &dyn LLMPort, showing: &Showing<'_>) -> Option<Schema> {
     let counts = <C::Answer as Shape>::schema(showing, Held::Counts)?;
-    let enums = <C::Answer as Shape>::schema(showing, Held::Enums)?;
-    if counts != enums && llm.enforces(&counts) {
+    if llm.enforces(&counts) {
         return Some(counts);
     }
-    if llm.enforces(&enums) {
+    let enums = <C::Answer as Shape>::schema(showing, Held::Enums)?;
+    if enums != counts && llm.enforces(&enums) {
         return Some(enums);
     }
     <C::Answer as Shape>::schema(showing, Held::Plain)

@@ -17,6 +17,8 @@ pub(super) const ORDERING_ASKED: RangeInclusive<usize> = 3..=8;
 static OPTIONS: Count = Count("options");
 static PAIRS: Count = Count("pairs");
 static ORDERED: Count = Count("orderedValues");
+static ACCEPTED: Count = Count("acceptedAnswers");
+static BLANKS: Count = Count("blanks");
 
 /// One fill-in blank as the key keeps it.
 #[derive(Debug, Default)]
@@ -157,7 +159,7 @@ pub(crate) struct Blank {
 
 impl Authored for Blank {
     fn form() -> Form {
-        Form::new().list::<Phrase>("acceptedAnswers")
+        Form::new().counted::<Phrase>("acceptedAnswers", &ACCEPTED)
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
@@ -302,11 +304,15 @@ impl Body for ShortBody {
     const FIELDS: &'static str = "acceptedAnswers (a list of objects with text), isNumeric (the word true or false), numericValue and tolerance (numbers written as text), units (a list of objects with text)";
 
     fn fields(form: Form) -> Form {
-        form.list::<Phrase>("acceptedAnswers")
+        form.counted::<Phrase>("acceptedAnswers", &ACCEPTED)
             .word::<Truth>("isNumeric")
             .text("numericValue")
             .text("tolerance")
             .list::<Phrase>("units")
+    }
+
+    fn asks(showing: &mut Showing<'_>) {
+        showing.asks(&ACCEPTED, 1..);
     }
 
     fn read(fields: &mut Fields<'_, '_>, raw: &mut RawItem) -> Option<()> {
@@ -331,7 +337,12 @@ impl Body for ClozeBody {
         "blanks (a list; each blank has acceptedAnswers, a list of objects with text)";
 
     fn fields(form: Form) -> Form {
-        form.list::<Blank>("blanks")
+        form.counted::<Blank>("blanks", &BLANKS)
+    }
+
+    fn asks(showing: &mut Showing<'_>) {
+        showing.asks(&BLANKS, 1..);
+        showing.asks(&ACCEPTED, 1..);
     }
 
     fn read(fields: &mut Fields<'_, '_>, raw: &mut RawItem) -> Option<()> {

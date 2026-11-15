@@ -18,7 +18,9 @@ use lattice_core::application::services::model_contract::ask::{
     ask, Alone, Answered, Refusal, Says, Settled,
 };
 use lattice_core::application::services::model_contract::packed::Packed;
-use lattice_core::application::services::model_contract::shape::{self, Authored, Fields, Form};
+use lattice_core::application::services::model_contract::shape::{
+    self, Authored, Fields, Form, STATEMENTS,
+};
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Internal, Kind, Picked, Scope, Showing, Told,
 };
@@ -433,7 +435,7 @@ impl Authored for PracticalDraft {
             .text("title")
             .text("brief")
             .cite::<SourceHeading>("sources")
-            .list::<RubricRow>("rubric")
+            .counted::<RubricRow>("rubric", &STATEMENTS)
             .list::<DraftFile>("starterFiles")
             .list::<DraftFile>("referenceFiles")
     }
@@ -497,6 +499,7 @@ impl Answered for PracticalActivity {
     const ALONE: Alone = Alone::Fails;
 
     fn says(input: &ActivityInput, showing: &mut Showing<'_>) -> Result<Says> {
+        showing.asks(&STATEMENTS, 1..);
         let groups = by_source(input.passages.iter());
         let headings: Vec<SourceHeading> = groups
             .iter()

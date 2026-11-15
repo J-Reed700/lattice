@@ -8,7 +8,7 @@ use lattice_core::application::services::model_contract::ask::{
     ask_each, ask_new, Alone, Answered, Refusal, Says, Settled,
 };
 use lattice_core::application::services::model_contract::shape::{
-    Authored, Each, Fields, Form, New,
+    Authored, Each, Fields, Form, New, STATEMENTS,
 };
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Kind, Scope, Showing, Told,
@@ -231,6 +231,7 @@ impl Answered for CustomEvaluator {
     const ALONE: Alone = Alone::Fails;
 
     fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
+        showing.asks(&STATEMENTS, 1..);
         input.says(showing, false)
     }
 

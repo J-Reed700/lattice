@@ -14,7 +14,7 @@ use crate::application::services::model_contract::ask::{
     ask, failed, Alone, Answered, Metered, Plain, Refusal, Says, Settled, Why,
 };
 use crate::application::services::model_contract::shape::{
-    Authored, Fields, Form, Union, Value as Statement, Vocabulary,
+    Authored, Fields, Form, Union, Value as Statement, Vocabulary, STATEMENTS,
 };
 use crate::application::services::model_contract::shown::{
     Drawn, Kind, Picked, Scope, Showing, Told,
@@ -321,7 +321,7 @@ impl Authored for Conclusion {
             .word::<EditorialProcess>("editorial")
             .word::<ContentNature>("nature")
             .list::<Raised>("flags")
-            .list::<Basis>("reasons")
+            .counted::<Basis>("reasons", &STATEMENTS)
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
@@ -347,6 +347,7 @@ impl Answered for SourceStanding {
     const ALONE: Alone = Alone::Pending;
 
     fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
+        showing.asks(&STATEMENTS, 1..);
         let flags = showing.show(&input.flags)?;
         let listed: Vec<String> = flags
             .iter()

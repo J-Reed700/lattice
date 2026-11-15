@@ -11,7 +11,7 @@ use lattice_core::application::services::model_contract::ask::{
     self, ask, Alone, Answered, Says, Settled,
 };
 use lattice_core::application::services::model_contract::shape::{
-    self, Authored, Fields, Form, Vocabulary,
+    self, Authored, Count, Fields, Form, Vocabulary,
 };
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Internal, Kind, Picked, Scope, Showing, Told,
@@ -24,6 +24,11 @@ use serde_json::{json, Map, Value};
 
 /// Said after the lesson's own instructions: the answer's fields, in words.
 const FORM: &str = " Write the answer as one object. ideas lists the lesson's core ideas in teaching order, each with its sections in teaching order: every section has a kind (explanation, worked_example, contrast or check), a title, a body, cites and citations. guidedPractice, independentPractice, reflection and recap are one section each, written in their own fields; the two practice sections also have a rubric of criteria, each with a title, a description and a dimension. questions lists the questions, each with a kind, a prompt, the wrong choices in wrong (each with its option and its reason), then the right choice in right, an explanation, cites and citations. cites names, by their handles, the sentences of the excerpts shown in sources that the section or question rests on: at least one whenever sources are shown, whatever its kind. Each entry of citations has the sentence it cites and, in cites, the handles of the excerpt sentences that state it.";
+
+static IDEAS: Count = Count("ideas");
+static SECTIONS: Count = Count("sections");
+static QUESTIONS: Count = Count("questions");
+static WRONG: Count = Count("wrong");
 
 /// The lesson writer's call: its reasoning step and its answer.
 pub(crate) struct LessonWriter;
@@ -308,7 +313,7 @@ struct Idea {
 
 impl Authored for Idea {
     fn form() -> Form {
-        Form::new().list::<Section>("sections")
+        Form::new().counted::<Section>("sections", &SECTIONS)
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
@@ -403,7 +408,7 @@ impl Authored for Question {
         Form::new()
             .word::<Asked>("kind")
             .text("prompt")
-            .list::<Wrong>("wrong")
+            .counted::<Wrong>("wrong", &WRONG)
             .text("right")
             .text("explanation")
             .cite_some::<Quoted>("cites")
@@ -437,12 +442,12 @@ pub(crate) struct Draft {
 impl Authored for Draft {
     fn form() -> Form {
         Form::new()
-            .list::<Idea>("ideas")
+            .counted::<Idea>("ideas", &IDEAS)
             .group::<Practice>("guidedPractice")
             .group::<Practice>("independentPractice")
             .group::<Part>("reflection")
             .group::<Part>("recap")
-            .list::<Question>("questions")
+            .counted::<Question>("questions", &QUESTIONS)
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
@@ -462,6 +467,11 @@ impl Answered for LessonWriter {
     const ALONE: Alone = Alone::Fails;
 
     fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
+        let lengths = input.lengths.0;
+        showing.asks(&IDEAS, lengths.ideas.0..=lengths.ideas.1);
+        showing.asks(&SECTIONS, lengths.sections.0..=lengths.sections.1);
+        showing.asks(&QUESTIONS, lengths.questions.0..=lengths.questions.1);
+        showing.asks(&WRONG, super::WRONG_CHOICES..=super::WRONG_CHOICES);
         let sources = showing.show(&input.sources)?;
         let quotes = quotes_of(input);
         let quoted = showing.show(quotes.all())?;

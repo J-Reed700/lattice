@@ -16,7 +16,7 @@ use crate::application::services::model_contract::ask::{
 };
 use crate::application::services::model_contract::request::GroundedRequest;
 use crate::application::services::model_contract::shape::{
-    Authored, Fields, Form, Value, Vocabulary,
+    Authored, Fields, Form, Value, Vocabulary, STATEMENTS,
 };
 use crate::application::services::model_contract::shown::{
     Drawn, Internal, Kind, Picked, Scope, Showing, Told,
@@ -174,7 +174,9 @@ pub struct ReadParts {
 
 impl Authored for ReadParts {
     fn form() -> Form {
-        Form::new().list::<ReadPart>("parts").text("reason")
+        Form::new()
+            .counted::<ReadPart>("parts", &STATEMENTS)
+            .text("reason")
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
@@ -206,6 +208,7 @@ impl ask::Answered for ClaimParts {
     const ALONE: Alone = Alone::Pending;
 
     fn says(input: &PartsInput, showing: &mut Showing<'_>) -> Result<Says> {
+        showing.asks(&STATEMENTS, 1..);
         let mut listed = Vec::with_capacity(input.passages.len());
         for (handle, passage) in showing.show(&input.passages)?.iter() {
             listed.push(format!("{}\n{}", handle.bracketed(), passage.text.0));
