@@ -783,3 +783,77 @@ async fn linking_the_whole_outline_says_one_outline_item() {
         Some("Linked 1 outline item; 1 of 1 decided")
     );
 }
+
+/// Records every text the retrieval measures.
+struct Measuring {
+    inner: ScriptedModel,
+    measured: std::sync::Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Measuring {
+    async fn complete(
+        &self,
+        request: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        self.inner.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        self.inner.model_name()
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.inner.max_context_tokens()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.measured.lock().unwrap().push(text.to_owned());
+        self.inner.count_tokens(text)
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn each_passage_is_measured_once_for_an_item() {
+    let llm = Measuring {
+        inner: model(vec![]),
+        measured: std::sync::Mutex::new(vec![]),
+    };
+    let sources: Vec<LearningSourceDto> = (0..40)
+        .map(|i| {
+            source(
+                &format!("s{i}"),
+                &format!("Study {i}"),
+                &format!("Random assignment in study {i} limits confounding when the treatment groups are compared. Trial {i} reports the comparison in plain words for every reader."),
+            )
+        })
+        .collect();
+    let collection = ReferenceCollection::lexical(&sources).unwrap();
+    let hashes = source_hashes(&sources);
+    let mut item = Pending {
+        path: "/modules/0/summary".into(),
+        kind: ItemKind::Summary,
+        text: "Random assignment limits confounding.".into(),
+        module_title: "Assignment".into(),
+        lesson_title: None,
+        candidates: vec![],
+        author: None,
+    };
+    candidates_for(&llm, &mut item, &collection, &sources, &hashes, 1_000_000)
+        .await
+        .unwrap();
+    assert!(
+        item.candidates.len() > 16,
+        "the scenario pages past the first page, got {} candidates",
+        item.candidates.len()
+    );
+    let measured = llm.measured.lock().unwrap();
+    let distinct: std::collections::HashSet<&String> = measured.iter().collect();
+    assert_eq!(
+        measured.len(),
+        distinct.len(),
+        "each passage's quote is measured once, {} measurements of {} distinct texts",
+        measured.len(),
+        distinct.len()
+    );
+}

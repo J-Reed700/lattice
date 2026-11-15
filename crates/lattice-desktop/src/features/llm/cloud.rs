@@ -9,6 +9,7 @@ use lattice_core::application::{
     ports::llm_port::{CompletionRequest, CompletionResponse, LLMPort},
 };
 use lattice_core::domain::models::vision::VisionGeometry;
+use lattice_core::shared::error::WithCauses;
 use lattice_core::shared::error::{AppError, Result};
 use protocol::{cloud_provider, protocols, CompletionProtocol, ProviderApi};
 use serde_json::Value;
@@ -80,7 +81,7 @@ impl CloudLlm {
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(10))
             .build()
-            .map_err(|e| AppError::InvalidConfig(e.to_string()))?;
+            .map_err(|e| AppError::InvalidConfig(WithCauses(&e).to_string()))?;
         Ok(Self {
             protocol,
             model: settings.model.clone(),
@@ -149,7 +150,7 @@ impl CloudLlm {
                 if e.is_timeout() {
                     self.budget_error()
                 } else {
-                    AppError::Network(format!("Cloud request failed: {e}"))
+                    AppError::Network(format!("Cloud request failed: {}", WithCauses(&e)))
                 }
             })?;
             let status = response.status();
@@ -231,10 +232,9 @@ impl CloudLlm {
         let response = self
             .send_with_fallback(self.body(fitted, false)?, deadline, true)
             .await?;
-        let value: Value = response
-            .json()
-            .await
-            .map_err(|e| AppError::Network(format!("Invalid cloud response: {e}")))?;
+        let value: Value = response.json().await.map_err(|e| {
+            AppError::Network(format!("Invalid cloud response: {}", WithCauses(&e)))
+        })?;
         // Without the server's own timings a whole answer at once has no
         // edge between reading and writing, so it is not timed.
         self.protocol.parse_reply(value)

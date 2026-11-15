@@ -8,7 +8,8 @@ fn restore_lesson_quotes(candidate: &mut Value, authoring: &Value) -> usize {
 }
 
 fn reanchor_lesson_quotes(candidate: &mut Value, authoring: &Value) -> usize {
-    reanchor_quotes_in(candidate, &authored(authoring).unwrap())
+    let table = authored(authoring).unwrap();
+    reanchor_quotes_in(candidate, &table, &table)
 }
 
 const EXCERPT: &str = "This saved reference describes the exact behavior of the example tool.";
@@ -22,7 +23,7 @@ fn context() -> Value {
 }
 
 fn approval() -> Value {
-    json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![json!({"index":0,"passageId":"section-0-passage-0","finding":"The complete explanation was reviewed and no teaching defect was found.","hasDefect":false})])})
+    json!({"issues":[],"sectionDefects":[]})
 }
 
 #[tokio::test]
@@ -44,12 +45,12 @@ async fn lesson_review_only_rewrites_established_findings() -> Result<()> {
         }
         let mut review = approval();
         if let Some(issues) = review.get_mut("issues") {
-            *issues = json!(["Correct the example's claimed behavior using the reference."]);
+            *issues = json!([{"note":"The lesson promises that the tutor runs the learner's code; correct the promise using the reference.","concern":"promise"}]);
         }
         let decision = json!({"decisions":[{"issueId":"issue-0","verdict":if actionable {"actionable"} else {"not_established"},"basis":"external_fact","evidenceIds":["reference-0"],"partId":"lesson","requirementId":null,"reason":"The source comparison determines whether this proposed correction is justified."}]});
         let mut outputs = vec![review.to_string(), decision.to_string()];
         if actionable {
-            outputs.extend([json!({"edits":[{"path":"/blocks/0/title","before":"Example","after":"Corrected example"}]}).to_string(), clean_review(&[0], &[verdict("reviewer/1", "resolved")])]);
+            outputs.extend([json!({"edits":[{"path":"/blocks/0/title","before":"Example","after":"Corrected example"}]}).to_string(), clean_review(&[verdict("reviewer/1", "resolved")])]);
         }
         let model = ScriptedModel {
             outputs: Mutex::new(outputs.into()),
@@ -349,10 +350,7 @@ async fn a_repair_that_goes_wrong_in_one_block_still_applies_the_edits_of_the_ot
     original["blocks"][1]["title"] = json!("Example");
     original["blocks"][2]["citations"] =
         json!([{"sentence":"The tool behaves as described.","sourceIndex":0,"quote":EXCERPT}]);
-    let approved = || {
-        let check = |index: usize| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"The complete explanation was reviewed and no teaching defect was found.","hasDefect":false});
-        json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks((0..3).map(check).collect())}).to_string()
-    };
+    let approved = || json!({"issues":[],"sectionDefects":[]}).to_string();
     let chained = "This saved reference describes how the example tool behaves.";
     let patch = json!({"edits":[
         {"path":"/blocks/0/quote","before":invented,"after":EXCERPT},
@@ -363,7 +361,7 @@ async fn a_repair_that_goes_wrong_in_one_block_still_applies_the_edits_of_the_ot
         {"path":"/blocks/2/citations/0/quote","before":chained,"after":EXCERPT}
     ]});
     let model = ScriptedModel {
-        outputs: Mutex::new(vec![approved(), patch.to_string(), clean_review(&[0], &[])].into()),
+        outputs: Mutex::new(vec![approved(), patch.to_string(), clean_review(&[])].into()),
         prompts: Mutex::new(Vec::new()),
     };
 

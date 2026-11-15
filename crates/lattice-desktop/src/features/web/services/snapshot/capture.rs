@@ -25,6 +25,7 @@ use crate::features::web::traits::page_snapshot::{
     ProgressSink,
 };
 use crate::infrastructure::extraction::html_text::html_to_text;
+use lattice_core::shared::error::WithCauses;
 
 /// How far into the document to look for `<meta charset>` (the HTML prescan window).
 const META_SNIFF_BYTES: usize = 1024;
@@ -346,9 +347,9 @@ fn send_error(error: reqwest::Error) -> CaptureError {
     if error.is_timeout() {
         CaptureError::Timeout
     } else if error.is_redirect() {
-        CaptureError::Refused(error.to_string())
+        CaptureError::Refused(WithCauses(&error).to_string())
     } else {
-        CaptureError::Network(error.to_string())
+        CaptureError::Network(WithCauses(&error).to_string())
     }
 }
 

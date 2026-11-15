@@ -4,13 +4,14 @@
 //! leads its page.
 use super::*;
 use crate::reference_collection::{PassageKind, Scope};
+use std::collections::BTreeSet;
 
-const RESEARCH_SCOPE_POLICY: Protocol = lattice_core::protocol!("claim-research-scope", 1);
+const RESEARCH_SCOPE_POLICY: Protocol = lattice_core::protocol!("claim-research-scope", 2);
 const EVIDENCE_KEYS: Protocol = lattice_core::protocol!("claim-evidence", 2);
 /// How the first page of the course is ranked: one hybrid list over the
 /// course, without what the claim's citation shows, sliced by the page budget.
 /// A selection saved under another ranking is retrieved anew, once.
-const RANKING: Protocol = lattice_core::protocol!("two-pass-hybrid", 2);
+const RANKING: Protocol = lattice_core::protocol!("two-pass-hybrid", 3);
 
 /// Automatic research is requested for specific failed comparisons. Bind the
 /// resulting source snapshot to those claims so adding a broadly relevant page
@@ -29,7 +30,13 @@ struct ResearchScope {
 struct ResearchTarget {
     unit: usize,
     statement: String,
+    /// The versions research chose for this claim, sorted.
+    sources: Vec<String>,
 }
+
+/// The claims research was asked for, by unit and statement, each with the
+/// versions it chose for the claim.
+pub(super) type ResearchTargets = HashMap<(usize, String), BTreeSet<String>>;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Selection {
@@ -128,6 +135,7 @@ fn research_scope_key(current: &[SourceBinding]) -> String {
 pub(super) async fn record_research_scope(
     references: &ReferenceCollection<'_>,
     findings: &[Finding],
+    chosen: &[(usize, String)],
     retained: &ClaimChecks,
 ) -> Result<()> {
     let current = sources(references);
@@ -136,8 +144,22 @@ pub(super) async fn record_research_scope(
         .map(|finding| ResearchTarget {
             unit: finding.unit,
             statement: finding.statement.clone(),
+            sources: Vec::new(),
         })
         .collect();
+    for (gap, version) in chosen {
+        if let Some(finding) = findings.get(*gap) {
+            for target in targets.iter_mut().filter(|target| {
+                target.unit == finding.unit && target.statement == finding.statement
+            }) {
+                target.sources.push(version.clone());
+            }
+        }
+    }
+    for target in &mut targets {
+        target.sources.sort();
+        target.sources.dedup();
+    }
     targets.sort();
     targets.dedup();
     if targets.is_empty() {
@@ -148,13 +170,7 @@ pub(super) async fn record_research_scope(
         .research_scopes
         .lock()
         .unwrap_or_else(|error| error.into_inner())
-        .insert(
-            key.clone(),
-            targets
-                .iter()
-                .map(|target| (target.unit, target.statement.clone()))
-                .collect(),
-        );
+        .insert(key.clone(), targets.iter().map(chosen_of).collect());
     crate::lesson_drafts::record_checkpoint(
         &key,
         serde_json::to_value(ResearchScope {
@@ -166,10 +182,18 @@ pub(super) async fn record_research_scope(
     .await
 }
 
+fn chosen_of(target: &ResearchTarget) -> ((usize, String), BTreeSet<String>) {
+    (
+        (target.unit, target.statement.clone()),
+        target.sources.iter().cloned().collect(),
+    )
+}
+
+/// The claims research was asked for, each with the versions it chose.
 async fn research_scope(
     current: &[SourceBinding],
     retained: &ClaimChecks,
-) -> Result<Option<HashSet<(usize, String)>>> {
+) -> Result<Option<ResearchTargets>> {
     let key = research_scope_key(current);
     if let Some(targets) = retained
         .research_scopes
@@ -195,11 +219,7 @@ async fn research_scope(
     {
         return Ok(None);
     }
-    let targets: HashSet<_> = scope
-        .targets
-        .into_iter()
-        .map(|target| (target.unit, target.statement))
-        .collect();
+    let targets: ResearchTargets = scope.targets.iter().map(chosen_of).collect();
     retained
         .research_scopes
         .lock()
@@ -282,7 +302,7 @@ pub(super) async fn is_saved(
     }
     let for_research = research_scope(current, retained)
         .await?
-        .is_none_or(|targets| targets.contains(&(unit, claim.statement.clone())));
+        .is_none_or(|targets| targets.contains_key(&(unit, claim.statement.clone())));
     Ok(!for_research)
 }
 
@@ -311,15 +331,23 @@ pub(super) async fn select(
                 .filter(|source| !saved.sources.contains(source))
                 .map(|source| source.id.clone())
                 .collect();
-            let claim_is_research_target = research_scope
+            let scope = research_scope
                 .as_ref()
-                .is_none_or(|targets| targets.contains(&(unit, claim.statement.clone())));
+                .map(|targets| targets.get(&(unit, claim.statement.clone())));
+            let claim_is_research_target = scope.is_none_or(|target| target.is_some());
+            let chosen: HashSet<String> = scope
+                .flatten()
+                .into_iter()
+                .flatten()
+                .filter(|version| added.contains(*version))
+                .cloned()
+                .collect();
             let led = if !added.is_empty() && claim_is_research_target {
                 research_led(
                     llm,
                     (claim, checked),
                     references,
-                    &added,
+                    (&chosen, &added),
                     attribution,
                     budget.tokens,
                     evidence.clone(),
@@ -369,23 +397,32 @@ pub(super) async fn select(
 }
 
 /// The first page of a claim research was asked for, once research saved
-/// `added` versions: the best of what it added, in the claim's list over
-/// those versions, leads the page, and the earlier page's passages, in
-/// their order, fill what the budget and the window leave. `None` when
-/// research added nothing on the claim's subject.
+/// `added` versions: what research chose for the claim, in the claim's list
+/// over those versions, leads the page, then the best of what the round saved
+/// for others, and the earlier page's passages, in their order, fill what the
+/// budget and the window leave. `None` when research added nothing on the
+/// claim's subject.
 async fn research_led(
     llm: &dyn LLMPort,
     (claim, checked): (&Claim, &str),
     references: &ReferenceCollection<'_>,
-    added: &HashSet<String>,
+    (chosen, added): (&HashSet<String>, &HashSet<String>),
     attribution: &[EvidencePassage],
     budget: Option<usize>,
     mut earlier: Vec<EvidencePassage>,
 ) -> Result<Option<Vec<EvidencePassage>>> {
-    let list = references
-        .claim_list(&claim.statement, &Scope::Keys(added.clone()), attribution)
-        .await?;
-    let (found, _) = evidence_checks::page_of(llm, checked, &list.passages, attribution, budget);
+    let mut passages = Vec::new();
+    let others: HashSet<String> = added.difference(chosen).cloned().collect();
+    for scope in [chosen, &others] {
+        if scope.is_empty() {
+            continue;
+        }
+        let list = references
+            .claim_list(&claim.statement, &Scope::Keys(scope.clone()), attribution)
+            .await?;
+        passages.extend(list.passages);
+    }
+    let (found, _) = evidence_checks::page_of(llm, checked, &passages, attribution, budget);
     if found.is_empty() {
         return Ok(None);
     }

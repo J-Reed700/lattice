@@ -7,14 +7,14 @@ use super::*;
 use lattice_core::domain::learning::acceptance::Reading;
 
 /// The citation events `cite_where_supported` made, one for each finding it
-/// cited, with `kept` the live statements that are not being cited.
+/// cited, with `kept` the live claims' sentences that are not being cited.
 fn recited(
     candidate: &mut Value,
     findings: &[Finding],
     kept: &[(usize, String)],
     numbered: &mut Vec<LearningSourceDto>,
     references: &ReferenceCollection<'_>,
-    tried: &mut HashSet<(usize, String)>,
+    tried: &mut HashSet<(usize, String, String)>,
 ) -> Result<Vec<lattice_core::domain::learning::claim_review::ClaimEvent>> {
     let cited =
         repair::cite_where_supported(candidate, findings, kept, numbered, references, tried)?;
@@ -348,6 +348,12 @@ async fn a_section_with_no_quotation_of_its_own_can_be_cited() -> Result<()> {
 
 const NONE: &str = "Missing values in nonblank rows default to None.";
 
+/// A sentence whose statement names context the sentence leaves implicit: the
+/// sentence holds 8 of the statement's 22 terms, under the half the locator
+/// asks for.
+pub(super) const IMPLICIT_SENTENCE: &str = "Writing a new system erases the card, so back up first, then write the image again with remote login enabled in customisation.";
+pub(super) const IMPLICIT_STATEMENT: &str = "Acme Installer lets users turn on remote login from its customisation screen, which is offered whenever a new image is written to the card.";
+
 /// A lesson of one section that says `body` and cites an unrelated quotation.
 fn csv_lesson(body: &str) -> Value {
     json!({"blocks":[{"kind":"explanation","title":"Rows","body":body,"rubric":[],
@@ -400,8 +406,8 @@ fn an_entry_a_live_statement_shares_stays_and_a_second_entry_for_the_sentence_is
         lesson["blocks"][0]["citations"] = json!([shared]);
         lesson
     };
-    // Another live statement of the sentence reads against that entry too.
-    let kept = [(0, "DictReader preserves field-name whitespace.".to_owned())];
+    // Another live claim stands on the sentence, so it reads against that entry too.
+    let kept = [(0, GOOD.to_owned())];
 
     let mut candidate = lesson.clone();
     let cited = recited(
@@ -439,8 +445,8 @@ fn claims_on_two_sentences_of_a_section_are_both_cited_in_one_call() -> Result<(
     let references = ReferenceCollection::lexical(&sources)?;
     let body = format!("{GOOD} {NONE}");
     let findings = [
-        found_in(&sources[0], GOOD, (body.as_str(), GOOD)),
-        found_in(&sources[0], NONE, (body.as_str(), NONE)),
+        found_in(&sources[0], GOOD, (GOOD, GOOD)),
+        found_in(&sources[0], NONE, (NONE, NONE)),
     ];
     let mut candidate = csv_lesson(&body);
 
@@ -513,7 +519,7 @@ fn a_second_claim_on_a_sentence_cited_in_the_call_is_deferred() -> Result<()> {
 fn a_claim_that_draws_on_several_sentences_of_its_quote_cannot_be_cited() -> Result<()> {
     let sources = [source()];
     let references = ReferenceCollection::lexical(&sources)?;
-    // No sentence holds the greater part of this statement's words.
+    // The claim's quote holds four sentences, so none of them is its own.
     let passage = "The Peace of Westphalia was signed in 1648 in the cities of Osnabrück and Münster. It ended the Thirty Years' War in the Holy Roman Empire. It also closed the Eighty Years' War between Spain and the Dutch Republic. Historians often date the modern order of sovereign states from these treaties.";
     let statement = "Signed in 1648, the Peace of Westphalia ended the Thirty Years' War and is often seen by historians as the start of the order of sovereign states.";
     let finding = found_in(&sources[0], GOOD, (passage, statement));
@@ -529,7 +535,10 @@ fn a_claim_that_draws_on_several_sentences_of_its_quote_cannot_be_cited() -> Res
         &mut HashSet::new(),
     )?;
 
-    assert!(matches!(cited.as_slice(), [repair::Cited::Cannot]));
+    assert!(matches!(
+        cited.as_slice(),
+        [repair::Cited::Cannot(repair::Unwritten::SeveralSentences)]
+    ));
     assert_eq!(candidate, before);
     Ok(())
 }

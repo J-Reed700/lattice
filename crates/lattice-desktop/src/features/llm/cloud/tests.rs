@@ -836,7 +836,7 @@ async fn a_streamed_answer_is_timed_from_its_first_delta() {
     let sent = Instant::now().checked_sub(Duration::from_secs(2)).unwrap();
     let response = streaming::drain(
         protocols(CloudProvider::Openai).completion,
-        futures::stream::iter([Ok::<_, String>(bytes)]),
+        futures::stream::iter([Ok::<_, std::io::Error>(bytes)]),
         Duration::from_secs(1),
         sent,
         &|_| Ok(()),
@@ -863,7 +863,7 @@ async fn a_streams_own_timings_win_over_the_clock() {
     let sent = Instant::now().checked_sub(Duration::from_secs(10)).unwrap();
     let response = streaming::drain(
         protocols(CloudProvider::Google).completion,
-        futures::stream::iter([Ok::<_, String>(bytes)]),
+        futures::stream::iter([Ok::<_, std::io::Error>(bytes)]),
         Duration::from_secs(1),
         sent,
         &|_| Ok(()),

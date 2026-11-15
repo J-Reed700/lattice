@@ -39,6 +39,7 @@ fn the_check_contract_reads_what_it_renders() {
         unseen: vec![Unseen {
             quote: "See the chart.".into(),
             what: "the chart".into(),
+            never_shown: true,
         }],
         reports,
     };

@@ -2,6 +2,7 @@
 //! Ground model findings before they can drive a lesson rewrite.
 use crate::generation;
 use crate::lessons::structured_call::{complete_checked_request, CallKind, ReasonFirst};
+use crate::lessons::trace::{self, Stage};
 use crate::model_call::ErrorClass;
 use crate::reference_collection::{item_tokens, ReferenceCollection, ReferencePassage};
 use crate::review_findings::{FindingSite, ReviewFinding};
@@ -102,6 +103,38 @@ enum Basis {
     ExternalFact,
     LessonContract,
     InternalConflict,
+}
+
+impl Basis {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::ExternalFact => "external_fact",
+            Self::LessonContract => "lesson_contract",
+            Self::InternalConflict => "internal_conflict",
+        }
+    }
+}
+
+/// Traces what the gate made of `issue`, with the decision's reason.
+fn trace_ruling(issue: &ReviewFinding, finding: &Finding, ruling: &str) {
+    trace::decided_finding(Stage::TeachingReview, issue, ruling, &finding.reason);
+}
+
+/// What the gate says of an issue its own evidence ruled on.
+fn evidence_ruling(finding: &Finding, established: bool) -> String {
+    if established {
+        format!(
+            "evidence gate: established as {} on {} at {}",
+            finding.basis.as_str(),
+            finding.evidence_ids.join(", "),
+            finding.part_id.as_deref().unwrap_or("lesson")
+        )
+    } else {
+        format!(
+            "evidence gate: not established ({})",
+            finding.basis.as_str()
+        )
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -271,8 +304,17 @@ fn decided(
     evidence: &HashMap<String, EvidenceKind>,
 ) -> Result<Ruling> {
     let Some(named) = finding.left_to.as_deref().filter(|id| *id != "none") else {
-        return Ok(established_on_evidence(index, issue, finding, evidence)?
-            .map_or(Ruling::Neither, Ruling::Established));
+        let established = established_on_evidence(index, issue, finding, evidence)?;
+        match established {
+            Some(established) => {
+                trace_ruling(issue, finding, &evidence_ruling(finding, true));
+                return Ok(Ruling::Established(established));
+            }
+            None => {
+                trace_ruling(issue, finding, &evidence_ruling(finding, false));
+                return Ok(Ruling::Neither);
+            }
+        }
     };
     let known = beside
         .recorded
@@ -281,6 +323,11 @@ fn decided(
         .find_map(|(at, known)| (recorded_id(at) == named).then_some(known));
     if let Some(known) = known {
         tracing::info!(finding = %issue.id().as_str(), recorded = %known.id().as_str(), "A reviewer finding that another check already recorded is not repaired twice");
+        trace_ruling(
+            issue,
+            finding,
+            &format!("evidence gate: already recorded as {}", known.id().as_str()),
+        );
         return Ok(Ruling::Neither);
     }
     let decides = beside
@@ -296,6 +343,18 @@ fn decided(
     };
     let established = established_on_evidence(index, issue, finding, evidence)?;
     tracing::info!(finding = %issue.id().as_str(), check = %decides, established = established.is_some(), "A reviewer finding about what another check decides is left to that check");
+    trace_ruling(
+        issue,
+        finding,
+        &format!(
+            "evidence gate: left to {decides}, {}",
+            if established.is_some() {
+                "established"
+            } else {
+                "not established"
+            }
+        ),
+    );
     Ok(Ruling::Left(Left {
         check,
         finding: issue.clone(),

@@ -11,6 +11,7 @@ use crate::infrastructure::extraction::markup::escape_html;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use lattice_core::application::contracts::web::CleanArticle;
+use lattice_core::shared::error::WithCauses;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::text::normalize_whitespace;
 use lazy_regex::regex;
@@ -232,7 +233,7 @@ impl ArticleExtractorService {
             .headers(headers)
             .send()
             .await
-            .map_err(|e| AppError::Network(format!("Failed to fetch URL: {}", e)))?;
+            .map_err(|e| AppError::Network(format!("Failed to fetch URL: {}", WithCauses(&e))))?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -246,10 +247,9 @@ impl ArticleExtractorService {
             debug!("YouTube URL redirected to: {}", final_url);
         }
 
-        let html = response
-            .text()
-            .await
-            .map_err(|e| AppError::Network(format!("Failed to read response body: {}", e)))?;
+        let html = response.text().await.map_err(|e| {
+            AppError::Network(format!("Failed to read response body: {}", WithCauses(&e)))
+        })?;
 
         self.extract_youtube_article_from_html(&html, &final_url)
     }
@@ -413,7 +413,7 @@ impl ArticleExtractorServiceTrait for ArticleExtractorService {
             .headers(headers)
             .send()
             .await
-            .map_err(|e| AppError::Network(format!("Failed to fetch URL: {}", e)))?;
+            .map_err(|e| AppError::Network(format!("Failed to fetch URL: {}", WithCauses(&e))))?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -427,10 +427,9 @@ impl ArticleExtractorServiceTrait for ArticleExtractorService {
             debug!("URL redirected to: {}", final_url);
         }
 
-        let html = response
-            .text()
-            .await
-            .map_err(|e| AppError::Network(format!("Failed to read response body: {}", e)))?;
+        let html = response.text().await.map_err(|e| {
+            AppError::Network(format!("Failed to read response body: {}", WithCauses(&e)))
+        })?;
 
         self.extract_article(&html, &final_url).await
     }

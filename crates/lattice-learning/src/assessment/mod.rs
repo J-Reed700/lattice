@@ -5,6 +5,7 @@ pub mod assessment_generation;
 pub mod assessment_repository;
 #[cfg(test)]
 pub(crate) mod assessment_tests;
+pub(crate) mod bank_writing;
 pub(crate) mod batched;
 pub mod grade_rationale;
 pub(crate) mod item_review;

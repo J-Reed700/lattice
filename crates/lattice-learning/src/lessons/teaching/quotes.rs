@@ -1,6 +1,8 @@
 //! Lesson quotation provenance: check the author's quotations against the
 //! supplied excerpts, restore their typography, and re-anchor a quotation the
 //! author could not match to the nearest real passage.
+use crate::dto::LearningSourceDto;
+use crate::reference_collection::ReferenceCollection;
 use crate::review_findings::FindingSite;
 use lattice_core::shared::text::sentences;
 use serde::{Deserialize, Serialize};
@@ -43,6 +45,38 @@ pub(crate) fn numbered(sources: &[crate::dto::LearningSourceDto]) -> Table<'_> {
         .enumerate()
         .map(|(index, source)| (index as u64, source.excerpt.as_str()))
         .collect()
+}
+
+/// The saved source a numbered one is: its whole text, where the writer was shown passages of it.
+pub(crate) fn saved<'a>(
+    references: &'a ReferenceCollection<'_>,
+    source: &'a LearningSourceDto,
+) -> &'a LearningSourceDto {
+    references
+        .sources
+        .iter()
+        .find(|saved| saved.id == source.id)
+        .unwrap_or(source)
+}
+
+/// What a lesson's quotations are checked against: `sourceIndex` i names the
+/// whole saved text of the i-th numbered source, so a citation may quote any
+/// part of the source it names, not only the passages the writer was shown.
+pub(crate) fn checked<'a>(
+    numbered: &'a [LearningSourceDto],
+    references: &'a ReferenceCollection<'_>,
+) -> Table<'a> {
+    numbered
+        .iter()
+        .enumerate()
+        .map(|(index, source)| (index as u64, saved(references, source).excerpt.as_str()))
+        .collect()
+}
+
+/// Whether `quote` is a quotation of the text `index` names.
+fn holds(table: &Table, index: Option<u64>, quote: &str) -> bool {
+    excerpt_of(table, index)
+        .is_some_and(|excerpt| crate::generation::validate_excerpt_quote(quote, excerpt).is_ok())
 }
 
 /// The text `index` names.
@@ -263,40 +297,36 @@ fn nearest(
 }
 
 /// The source and passage a quotation the author could not match is cited to
-/// instead: the span closest to the quotation (at least 60% of its terms),
-/// otherwise the one that shares the most terms (at least two) with
-/// `own_text`, the sentence or item it supports. `None` when the quotation
-/// holds or nothing is near.
+/// instead: the span of the passages `shown` closest to the quotation (at
+/// least 60% of its terms), otherwise the one that shares the most terms (at
+/// least two) with `own_text`, the sentence or item it supports. `None` when
+/// the quotation holds in `checked`, or nothing near it holds there too.
 fn reanchored(
-    excerpts: &Table,
+    checked: &Table,
+    shown: &Table,
     index: Option<u64>,
     quote: &str,
     own_text: &str,
 ) -> Option<(u64, String)> {
-    let valid = index
-        .and_then(|index| excerpts.iter().find(|(source, _)| *source == index))
-        .is_some_and(|(_, excerpt)| {
-            crate::generation::validate_excerpt_quote(quote, excerpt).is_ok()
-        });
-    if valid {
+    if holds(checked, index, quote) {
         return None;
     }
     let (_, source, text) = (!quote.trim().is_empty())
-        .then(|| nearest(excerpts, index, (quote, 0.6, 1)))
+        .then(|| nearest(shown, index, (quote, 0.6, 1)))
         .flatten()
-        .or_else(|| nearest(excerpts, index, (own_text, 0.0, 2)))?;
-    Some((source, text))
+        .or_else(|| nearest(shown, index, (own_text, 0.0, 2)))?;
+    holds(checked, Some(source), &text).then_some((source, text))
 }
 
 /// After the author has had its chance to correct its quotations, cite the
-/// real passage it meant instead of discarding the lesson: the span closest
-/// to its quotation (at least 60% of its terms) in the cited or another
-/// supplied excerpt, otherwise the span that shares the most terms (at least
-/// two) with the item itself, or with the sentence a citation is for.
+/// real passage it meant instead of discarding the lesson: a quotation that
+/// holds in `checked` is left alone; otherwise the nearest passage among those
+/// `shown` (closest to the quotation, else sharing the most terms with the
+/// item or the sentence a citation is for) is written if it holds there too.
 /// Citations are provenance; the final review below and claim verification
 /// still check every claim before anything is published.
-pub(super) fn reanchor_quotes_in(candidate: &mut Value, excerpts: &Table) -> usize {
-    if excerpts.is_empty() {
+pub(super) fn reanchor_quotes_in(candidate: &mut Value, checked: &Table, shown: &Table) -> usize {
+    if shown.is_empty() {
         return 0;
     }
     let mut changed = 0;
@@ -307,7 +337,7 @@ pub(super) fn reanchor_quotes_in(candidate: &mut Value, excerpts: &Table) -> usi
             .unwrap_or_default()
             .to_owned();
         let index = part.get("sourceIndex").and_then(Value::as_u64);
-        let Some((source, text)) = reanchored(excerpts, index, &quote, own_text) else {
+        let Some((source, text)) = reanchored(checked, shown, index, &quote, own_text) else {
             return;
         };
         if let Some(object) = part.as_object_mut() {

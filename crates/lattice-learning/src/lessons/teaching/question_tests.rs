@@ -33,7 +33,9 @@ fn kept(
 ) -> Value {
     let part = finding.site.and_then(FindingSite::pointer).unwrap();
     let touched = std::collections::BTreeMap::from([(part, vec![&finding])]);
-    let out = protected::confine_review(previous, repaired, &touched, protected).unwrap();
+    let out = protected::confine_review(previous, repaired, &touched, protected)
+        .unwrap()
+        .expect("the repair stays inside what its finding may change");
     assert_ne!(&out, previous, "the confined repair kept nothing");
     out
 }
@@ -84,7 +86,7 @@ fn a_question_repair_keeps_its_changes_and_leaves_a_protected_sentence_byte_iden
 }
 
 #[test]
-fn a_question_repair_that_rewrites_a_protected_sentence_keeps_it_as_it_was() {
+fn a_question_repair_that_rewrites_a_protected_sentence_is_refused_with_its_reason() {
     let previous = question_lesson();
     let mut repaired = whole_question_repair(&previous);
     repaired["questions"][0]["explanation"] = json!("Only ls lists a folder.");
@@ -96,14 +98,12 @@ fn a_question_repair_that_rewrites_a_protected_sentence_keeps_it_as_it_was() {
     }];
     let named = finding(FindingSite::Question(0), PROMPT);
     let touched = std::collections::BTreeMap::from([("/questions/0".to_owned(), vec![&named])]);
-    let result = protected::confine_review(&previous, &repaired, &touched, &protected);
-    if let Ok(out) = result {
-        assert!(out["questions"][0]["explanation"]
-            .as_str()
-            .unwrap()
-            .contains(PROTECTED));
-        assert_eq!(out["questions"][0]["correctIndex"], json!(2));
-    }
+    let reasons = protected::confine_review(&previous, &repaired, &touched, &protected)
+        .unwrap()
+        .expect_err("the repair rewrote a protected sentence");
+    assert!(reasons.contains(&format!(
+        "it changes \"{PROTECTED}\", which states a checked claim and must stay as it is"
+    )));
 }
 
 #[test]
@@ -166,7 +166,7 @@ fn a_block_finding_on_its_case_sentence_keeps_the_rename_in_the_steps_too() {
 }
 
 #[test]
-fn a_repair_leaves_another_unit_and_a_protected_sentence_as_they_were() {
+fn a_repair_that_also_changes_another_unit_is_refused_with_its_reason() {
     let previous = worked_lesson();
     let mut repaired = renamed_repair(&previous);
     repaired["blocks"][1]["body"] = json!("The cd command moves between folders.");
@@ -176,17 +176,17 @@ fn a_repair_leaves_another_unit_and_a_protected_sentence_as_they_were() {
         quote: PROTECTED.into(),
         released: false,
     }];
-    let out = kept(
-        &previous,
-        &repaired,
-        finding(FindingSite::Section(0), CASE),
-        &protected,
-    );
-    assert_eq!(out["blocks"][1], previous["blocks"][1]);
-    assert!(out["blocks"][0]["body"]
-        .as_str()
+    let named = finding(FindingSite::Section(0), CASE);
+    let touched = std::collections::BTreeMap::from([("/blocks/0".to_owned(), vec![&named])]);
+    let reasons = protected::confine_review(&previous, &repaired, &touched, &protected)
         .unwrap()
-        .ends_with(PROTECTED));
+        .expect_err("the repair changed a unit its finding is not about");
+    assert_eq!(
+        reasons,
+        vec![format!(
+            "it changes \"{OTHER}\", which is outside what the correction was asked to change"
+        )]
+    );
 }
 
 #[test]

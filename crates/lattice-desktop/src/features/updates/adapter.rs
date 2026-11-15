@@ -15,6 +15,7 @@
 
 use async_trait::async_trait;
 use lattice_core::application::ports::update_checker_port::{UpdateCheckerPort, UpdateInfoData};
+use lattice_core::shared::error::WithCauses;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::http::reqwest_client_builder;
 use semver::Version;
@@ -62,13 +63,13 @@ impl UpdateCheckerAdapter {
         let client = reqwest_client_builder()
             .user_agent("Lattice-Desktop")
             .build()
-            .map_err(|e| AppError::Network(format!("Failed to create HTTP client: {}", e)))?;
+            .map_err(|e| {
+                AppError::Network(format!("Failed to create HTTP client: {}", WithCauses(&e)))
+            })?;
 
-        let response = client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| AppError::Network(format!("Failed to fetch release info: {}", e)))?;
+        let response = client.get(&url).send().await.map_err(|e| {
+            AppError::Network(format!("Failed to fetch release info: {}", WithCauses(&e)))
+        })?;
 
         if !response.status().is_success() {
             return Err(AppError::Network(format!(
@@ -77,10 +78,9 @@ impl UpdateCheckerAdapter {
             )));
         }
 
-        let release: GitHubRelease = response
-            .json()
-            .await
-            .map_err(|e| AppError::Serialization(format!("Failed to parse release info: {}", e)))?;
+        let release: GitHubRelease = response.json().await.map_err(|e| {
+            AppError::Serialization(format!("Failed to parse release info: {}", WithCauses(&e)))
+        })?;
 
         Ok(release)
     }

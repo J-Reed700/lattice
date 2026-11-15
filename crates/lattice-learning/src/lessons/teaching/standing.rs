@@ -291,13 +291,25 @@ impl Standing {
                 continue;
             };
             if !verdict.present {
-                self.open.remove(position);
+                let gone = self.open.remove(position);
+                crate::lessons::trace::decided_finding(
+                    crate::lessons::trace::Stage::TeachingReview,
+                    &gone,
+                    "no longer present",
+                    "the reviewer judged the defect gone",
+                );
                 self.about.remove(&verdict.id);
                 continue;
             }
             let Some(finding) = self.open.get_mut(position) else {
                 continue;
             };
+            crate::lessons::trace::decided_finding(
+                crate::lessons::trace::Stage::TeachingReview,
+                finding,
+                "still present",
+                &format!("the reviewer judged it again at \"{}\"", verdict.quote),
+            );
             finding.passage = Some(verdict.quote);
             let written = sentence_digests(&sentences_of(candidate, finding));
             self.about.entry(verdict.id).or_default().extend(written);
@@ -348,6 +360,12 @@ impl Standing {
                 tracing::info!(
                     part = %site_of(&finding).label(),
                     "A new finding is about text the reviewer had already judged and is not kept"
+                );
+                crate::lessons::trace::decided_finding(
+                    crate::lessons::trace::Stage::TeachingReview,
+                    &finding,
+                    "not kept",
+                    "it is about text the reviewer had already judged",
                 );
                 continue;
             }

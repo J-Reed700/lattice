@@ -6,6 +6,7 @@ use super::repair;
 use super::subject::{Decision, Pass, Settled, Step, Subject};
 use super::{json_or_text, ReviewSchema};
 use crate::lessons::structured_call::refusal;
+use crate::lessons::trace::{self, Cause, Stage};
 use crate::model_call::ErrorClass;
 use crate::outline_progress::OutlineStage;
 use crate::review_findings::{ReviewFinding, SetAside};
@@ -55,7 +56,9 @@ pub(super) async fn review_material(
         // fit
         let mut value = json_or_text(&candidate);
         if subject.settle_quotes(&mut value, &authoring, attempt) {
+            let before = candidate.clone();
             candidate = serde_json::to_string(&value)?;
+            trace::changed(Stage::TeachingReview, &Cause::none(), &before, &candidate);
             subject.save(&candidate).await?;
         }
         subject.select_sources(llm, &mut authoring, &value).await?;
@@ -69,11 +72,27 @@ pub(super) async fn review_material(
             schema,
         };
         let found = subject.find(llm, &pass).await?;
+        for finding in &found.findings {
+            trace::decided_finding(
+                Stage::TeachingReview,
+                finding,
+                "raised",
+                &format!("by review pass {attempt}"),
+            );
+        }
         let edits = found.edits;
         // decide, and repair until the material changes
         loop {
             let send = match subject.decide(attempt, &value, found.findings.clone())? {
                 Decision::Publish(set_aside) => {
+                    for aside in &set_aside {
+                        trace::decided_finding(
+                            Stage::TeachingReview,
+                            &aside.finding,
+                            "waits for the user",
+                            &format!("{} repairs were tried and did not settle it", aside.repairs),
+                        );
+                    }
                     subject.save(&candidate).await?;
                     return Ok(Reviewed {
                         candidate,
@@ -83,6 +102,14 @@ pub(super) async fn review_material(
                 Decision::Repair(send) => send,
                 Decision::Review => break,
             };
+            for finding in &send {
+                trace::decided_finding(
+                    Stage::TeachingRepair,
+                    finding,
+                    "sent to repair",
+                    &format!("after review pass {attempt}"),
+                );
+            }
             if let Some(progress) = subject.progress() {
                 progress.stage(OutlineStage::Repairing);
             }
@@ -159,18 +186,42 @@ impl Repairs<'_> {
                     _ if self.edits && group.len() > 1 => {
                         let (first, second) = group.split_at(group.len() / 2);
                         tracing::info!(%error, findings = group.len(), "The teaching repair could not be made for these findings together; each half is repaired on its own");
+                        trace::decided(
+                            Stage::TeachingRepair,
+                            &trace::group(&group),
+                            "split",
+                            &format!("the repair could not be made together; each half is repaired on its own: {error}"),
+                        );
                         Settled::Split(first.to_vec(), second.to_vec())
                     }
-                    class => subject.unmade(&group, class, refusal(&error))?,
+                    class => {
+                        let reason = refusal(&error);
+                        trace::refused(Stage::TeachingRepair, &trace::group(&group), &reason, None);
+                        subject.unmade(&group, class, reason)?
+                    }
                 },
             };
             match settled {
                 Settled::Changed(text) => {
+                    trace::changed(
+                        Stage::TeachingRepair,
+                        &Cause::none().findings(&group),
+                        candidate.as_str(),
+                        &text,
+                    );
                     *candidate = text;
                     changed = true;
                     subject.save(candidate).await?;
                 }
-                Settled::Unchanged => subject.save(candidate).await?,
+                Settled::Unchanged => {
+                    trace::decided(
+                        Stage::TeachingRepair,
+                        &trace::group(&group),
+                        "left the material unchanged",
+                        "the repair's edits changed nothing that could stay",
+                    );
+                    subject.save(candidate).await?
+                }
                 Settled::Split(first, second) => {
                     groups.push_front(second);
                     groups.push_front(first);

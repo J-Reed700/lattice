@@ -75,11 +75,16 @@ fn a_finding_that_the_lesson_lacks_something_is_not_held_when_something_is_prote
     );
 }
 
-fn confined(previous: &str, repaired: &str, finding: &ReviewFinding) -> String {
+fn confined(
+    previous: &str,
+    repaired: &str,
+    finding: &ReviewFinding,
+) -> std::result::Result<String, Vec<String>> {
     let (previous, repaired) = (lesson(previous), lesson(repaired));
     let touched = BTreeMap::from([("/blocks/0".to_owned(), vec![finding])]);
-    let out = confine_review(&previous, &repaired, &touched, &[protect()]).unwrap();
-    out["blocks"][0]["body"].as_str().unwrap().to_owned()
+    confine_review(&previous, &repaired, &touched, &[protect()])
+        .unwrap()
+        .map(|out| out["blocks"][0]["body"].as_str().unwrap().to_owned())
 }
 
 #[test]
@@ -88,7 +93,8 @@ fn a_sentence_added_after_a_protected_one_is_kept() {
         &format!("{OPEN} {PROTECTED}"),
         &format!("{OPEN} {PROTECTED} {ADDED}"),
         &used(PROTECTED),
-    );
+    )
+    .unwrap();
     assert_eq!(kept, format!("{OPEN} {PROTECTED} {ADDED}"));
 }
 
@@ -98,25 +104,31 @@ fn a_sentence_added_before_a_protected_one_is_kept() {
         &format!("{PROTECTED} {OPEN}"),
         &format!("{ADDED} {PROTECTED} {OPEN}"),
         &used(PROTECTED),
-    );
+    )
+    .unwrap();
     assert_eq!(kept, format!("{ADDED} {PROTECTED} {OPEN}"));
 }
 
 #[test]
 fn a_sentence_added_beside_the_only_sentence_when_all_are_protected_is_kept() {
-    let kept = confined(PROTECTED, &format!("{PROTECTED} {ADDED}"), &used(PROTECTED));
+    let kept = confined(PROTECTED, &format!("{PROTECTED} {ADDED}"), &used(PROTECTED)).unwrap();
     assert_eq!(kept, format!("{PROTECTED} {ADDED}"));
 }
 
 #[test]
-fn a_change_that_rewrites_a_protected_sentence_is_put_back() {
+fn a_change_that_rewrites_a_protected_sentence_is_refused_with_its_reason() {
     let previous = format!("{OPEN} {PROTECTED}");
-    let kept = confined(
+    let refused = confined(
         &previous,
         &format!("{OPEN} A rewritten sentence."),
         &used(PROTECTED),
     );
-    assert_eq!(kept, previous);
+    assert_eq!(
+        refused,
+        Err(vec![format!(
+            "it changes \"{PROTECTED}\", which states a checked claim and must stay as it is"
+        )])
+    );
 }
 
 const SHELF: &str = "The kettle sits on the top shelf by the window.";
@@ -138,7 +150,9 @@ fn citations_naming_other_sentences_of_the_body_survive_a_repair_of_the_whole_se
     let repaired = cited_lesson(HOOK, JAR);
     let finding = reviewer(FindingSite::Section(0));
     let touched = BTreeMap::from([("/blocks/0".to_owned(), vec![&finding])]);
-    let out = confine_review(&previous, &repaired, &touched, &[]).unwrap();
+    let out = confine_review(&previous, &repaired, &touched, &[])
+        .unwrap()
+        .unwrap();
     assert_eq!(
         out["blocks"][0]["citations"],
         repaired["blocks"][0]["citations"]

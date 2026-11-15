@@ -361,3 +361,69 @@ fn a_citation_that_names_another_sentence_of_the_body_in_place_is_kept() {
         .section;
     assert_eq!(confined["citations"][0]["sentence"], ROPE);
 }
+
+#[test]
+fn confinement_lists_each_change_it_reverted_and_returns_the_same_section() {
+    let before = section(&format!("{VERIFIED} {FAILED} {OTHER}"));
+    let after = json!({
+        "kind": "explanation",
+        "title": "Boiling water",
+        "body": "Water boils at 100 degrees at sea level. Salt raises the boiling point slightly. Stir it as it heats.",
+    });
+    let confined = confine(
+        &before,
+        &after,
+        &[sentence("body", FAILED)],
+        &[sentence("body", VERIFIED)],
+    )
+    .unwrap();
+    assert_eq!(
+        confined.section,
+        json!({
+            "kind": "explanation",
+            "title": "Boiling",
+            "body": format!("{VERIFIED} Salt raises the boiling point slightly. {OTHER}"),
+        })
+    );
+    assert!(confined
+        .undone
+        .contains(&Undone::Protected(VERIFIED.to_owned())));
+    assert!(confined.undone.contains(&Undone::Outside(OTHER.to_owned())));
+    assert!(confined.reasons().contains(&format!(
+        "it changes \"{VERIFIED}\", which states a checked claim and must stay as it is"
+    )));
+    assert!(confined.reasons().contains(&format!(
+        "it changes \"{OTHER}\", which is outside what the correction was asked to change"
+    )));
+}
+
+#[test]
+fn confinement_lists_a_new_sentence_the_section_already_has() {
+    let before = section(&format!("{VERIFIED} {FAILED} {OTHER}"));
+    let repeated = section(&format!("{VERIFIED} {FAILED} {VERIFIED} {OTHER}"));
+    let confined = confine(&before, &repeated, &[sentence("body", FAILED)], &[]).unwrap();
+    assert_eq!(confined.undone, vec![Undone::Repeated(VERIFIED.to_owned())]);
+    assert_eq!(
+        confined.reasons(),
+        vec![format!(
+            "it adds \"{VERIFIED}\", which the lesson already says"
+        )]
+    );
+}
+
+#[test]
+fn confinement_lists_nothing_when_nothing_was_reverted() {
+    let before = section(&format!("{VERIFIED} {FAILED} {OTHER}"));
+    let fixed = section(&format!(
+        "{VERIFIED} Salt raises the boiling point. {OTHER}"
+    ));
+    let confined = confine(
+        &before,
+        &fixed,
+        &[sentence("body", FAILED)],
+        &[sentence("body", VERIFIED)],
+    )
+    .unwrap();
+    assert_eq!(confined.section, fixed);
+    assert!(confined.undone.is_empty());
+}

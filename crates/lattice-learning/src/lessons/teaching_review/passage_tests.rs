@@ -3,7 +3,7 @@ use super::review_candidate;
 use serde_json::json;
 
 fn passages(body: &str) -> Vec<String> {
-    let (reviewed, ids) = review_candidate(&json!({"blocks":[{"body":body}]}));
+    let (reviewed, ids) = review_candidate(&json!({"blocks":[{"body":body}]}), &[0]);
     let texts: Vec<String> = reviewed["blocks"][0]["bodyPassages"]
         .as_array()
         .unwrap()

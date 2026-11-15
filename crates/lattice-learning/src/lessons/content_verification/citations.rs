@@ -1,10 +1,10 @@
 //! The passages a lesson section cites, which a claim of that section is
 //! checked against by its own citation and nothing else (course evidence index
 //! §5.1), and the sources the lesson cites anywhere. A sentence the writer cited has its own,
-//! which the claim that restates it is read against instead (claim classes
-//! design §3.5).
+//! which the claim standing on that sentence is read against instead (claim
+//! classes design §3.5).
 use super::*;
-use lattice_core::shared::text::claim_sentence;
+use lattice_core::shared::text::same_text::holds_sentence;
 
 /// A sentence the writer cited, with the passages its quote resolves to.
 struct CitedSentence {
@@ -17,7 +17,8 @@ struct CitedSentence {
 /// each block's and question's quote, and the quote of each sentence listed in
 /// its citations, resolved to its span in the saved references and widened
 /// like a retrieved passage. A claim's own citation reads those of the
-/// sentence it restates when the writer cited one, otherwise its section's.
+/// sentence it stands on, its quote, when the writer cited one, otherwise its
+/// section's.
 #[derive(Default)]
 pub(super) struct Citations {
     by_unit: HashMap<usize, Vec<EvidencePassage>>,
@@ -85,21 +86,21 @@ impl Citations {
         self.by_unit.get(&unit).map_or(&[], Vec::as_slice)
     }
 
-    /// Whether the writer cited a sentence of section `unit` that `statement`
-    /// restates.
-    pub(super) fn is_cited(&self, unit: usize, statement: &str) -> bool {
+    /// Whether the writer cited the sentence `sentence` of section `unit`, the
+    /// one a claim stands on, its quote.
+    pub(super) fn is_cited(&self, unit: usize, sentence: &str) -> bool {
         self.sentences
             .iter()
-            .any(|cited| cited.unit == unit && restates(&cited.sentence, statement))
+            .any(|cited| cited.unit == unit && holds_sentence(&cited.sentence, sentence))
     }
 
-    /// The passages the claim `statement` of section `unit` is read against:
-    /// those the sentences it restates cite, and when the writer cited none of
-    /// them, the section's.
-    pub(super) fn of_claim(&self, unit: usize, statement: &str) -> Vec<EvidencePassage> {
+    /// The passages the claim standing on `sentence`, its quote, of section
+    /// `unit` is read against: those the entries holding that sentence cite,
+    /// and when the writer cited none, the section's.
+    pub(super) fn of_claim(&self, unit: usize, sentence: &str) -> Vec<EvidencePassage> {
         let mut own = Vec::new();
         for cited in &self.sentences {
-            if cited.unit == unit && restates(&cited.sentence, statement) {
+            if cited.unit == unit && holds_sentence(&cited.sentence, sentence) {
                 merge(&mut own, &cited.passages);
             }
         }
@@ -189,12 +190,6 @@ fn merge(into: &mut Vec<EvidencePassage>, passages: &[EvidencePassage]) {
             into.push(passage.clone());
         }
     }
-}
-
-/// Whether `statement` restates `sentence` as the locator reads it: the
-/// sentence holds the greater part of the statement's words.
-pub(super) fn restates(sentence: &str, statement: &str) -> bool {
-    claim_sentence(sentence, (0, sentence.len()), statement).is_some()
 }
 
 /// Where a text names one of the lesson's sources by its index.

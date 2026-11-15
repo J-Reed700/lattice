@@ -4,11 +4,10 @@ use super::*;
 use std::ops::RangeInclusive;
 use unicode_normalization::UnicodeNormalization;
 
-/// The words of the answer a learner can copy out of the prompt: the first of
-/// `answers` whose whole text is in it. For a choice question `answers` is the
-/// key and the rule holds only while no other option's whole text is in the
-/// prompt too, since a prompt naming several options is a comparison.
-pub fn answer_in_prompt(prompt: &str, answers: &[&str], others: &[&str]) -> Option<String> {
+/// The key's words when a learner can copy them out of a choice question's
+/// prompt: its whole text is in the prompt and no other option's is, since a
+/// prompt naming several options is a comparison.
+pub fn answer_in_prompt(prompt: &str, key: &str, others: &[&str]) -> Option<String> {
     let stem = normalize_answer(prompt);
     if others
         .iter()
@@ -16,10 +15,7 @@ pub fn answer_in_prompt(prompt: &str, answers: &[&str], others: &[&str]) -> Opti
     {
         return None;
     }
-    answers
-        .iter()
-        .find(|answer| whole_words(&stem, &normalize_answer(answer)))
-        .map(|answer| answer.trim().to_owned())
+    whole_words(&stem, &normalize_answer(key)).then(|| key.trim().to_owned())
 }
 
 /// The sentence saying the prompt holds its answer, `words` being what `answer_in_prompt` found.
@@ -198,13 +194,11 @@ pub fn key_length_rule() -> String {
     )
 }
 
-/// Every content fault of a bank item, each in words its writer is told: its
-/// choices and key, its answer being in its prompt, and its key's length.
+/// Every content fault of a bank item, each in words its writer is told: a
+/// choice question's choices and key, its key being in its prompt, and its
+/// key's length.
 pub fn item_faults(candidate: &LearningAssessmentCandidate) -> Vec<String> {
     let prompt = candidate.prompt.as_str();
-    let found = |answers: &[&str], others: &[&str]| {
-        answer_in_prompt(prompt, answers, others).map(|words| answer_in_prompt_message(&words))
-    };
     match (&candidate.format, &candidate.key) {
         (LearningItemFormat::SingleChoice, LearningAssessmentKey::Choice(key)) => {
             let options = &candidate.options;
@@ -218,13 +212,13 @@ pub fn item_faults(candidate: &LearningAssessmentCandidate) -> Vec<String> {
                 .filter(|(index, _)| index != key)
                 .map(|(_, option)| option.as_str())
                 .collect();
-            let answers: Vec<&str> = options.get(*key).map(String::as_str).into_iter().collect();
-            faults.extend(found(&answers, &others));
+            faults.extend(
+                options
+                    .get(*key)
+                    .and_then(|key| answer_in_prompt(prompt, key, &others))
+                    .map(|words| answer_in_prompt_message(&words)),
+            );
             faults
-        }
-        (LearningItemFormat::ShortAnswer, LearningAssessmentKey::Text(key)) => {
-            let answers: Vec<&str> = key.variants.iter().map(String::as_str).collect();
-            found(&answers, &[]).into_iter().collect()
         }
         _ => Vec::new(),
     }

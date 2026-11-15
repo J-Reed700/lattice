@@ -83,6 +83,83 @@ fn a_quotation_of_a_source_research_numbered_holds_though_the_writer_was_not_giv
     assert_eq!(settled, candidate);
 }
 
+const SHOWN_TIDE: &str = "The harbor town of Veldmoor keeps a brass gauge beside its eastern quay.";
+const SHOWN_SLATE: &str =
+    "Each morning the keeper reads the gauge and writes the height of the tide on a slate board.";
+const UNSHOWN_LEDGER: &str =
+    "Triangular lanterns hang from the Veldmoor customs house, and the keeper’s ledger lists every lantern by name.";
+const UNSHOWN_GLASS: &str =
+    "A lantern is replaced only when its glass has cracked across both panes.";
+
+/// The writer was shown the first paragraph of a saved text of two.
+fn harbor() -> (
+    Vec<crate::dto::LearningSourceDto>,
+    ReferenceCollection<'static>,
+) {
+    let shown = format!("{SHOWN_TIDE} {SHOWN_SLATE}");
+    let saved = source(
+        "harbor",
+        &format!("{shown}\n\n{UNSHOWN_LEDGER} {UNSHOWN_GLASS}"),
+    );
+    let references = ReferenceCollection::lexical(&[saved]).unwrap();
+    (vec![source("harbor", &shown)], references)
+}
+
+fn harbor_block(body: &str, quote: &str) -> Value {
+    json!({"blocks":[{"kind":"explanation","title":"Example","body":body,"sourceIndex":0,"quote":quote}],"questions":[]})
+}
+
+#[test]
+fn a_quotation_from_the_saved_text_the_writer_was_not_shown_holds() {
+    let (numbered, references) = harbor();
+    let subject = LessonSubject::new(&references, &numbered, &[], Held::default());
+    let own = harbor_block("A teaching explanation.", UNSHOWN_LEDGER);
+    assert!(subject.quote_checks(&own, &writer_context()).is_empty());
+
+    let mut cited = harbor_block("A teaching explanation.", SHOWN_TIDE);
+    cited["blocks"][0]["citations"] = json!([{
+        "sentence": "The keeper's ledger lists every lantern.",
+        "sourceIndex": 0,
+        "quote": UNSHOWN_LEDGER
+    }]);
+    assert!(subject.quote_checks(&cited, &writer_context()).is_empty());
+}
+
+#[test]
+fn a_citation_outside_the_passages_the_writer_was_shown_is_left_where_it_is() {
+    let (numbered, references) = harbor();
+    let subject = LessonSubject::new(&references, &numbered, &[], Held::default());
+    let candidate = harbor_block(
+        "The keeper reads the brass gauge each morning and writes the tide height down.",
+        UNSHOWN_GLASS,
+    );
+    let mut settled = candidate.clone();
+    assert!(!subject.settle_quotes(&mut settled, &writer_context(), 1));
+    assert_eq!(settled, candidate);
+}
+
+#[test]
+fn the_typography_of_a_quotation_the_writer_was_not_shown_is_restored() {
+    let (numbered, references) = harbor();
+    let subject = LessonSubject::new(&references, &numbered, &[], Held::default());
+    let mut candidate = harbor_block("A teaching explanation.", &UNSHOWN_LEDGER.replace('’', "'"));
+    assert!(subject.settle_quotes(&mut candidate, &writer_context(), 0));
+    assert_eq!(candidate["blocks"][0]["quote"], UNSHOWN_LEDGER);
+}
+
+#[test]
+fn a_quotation_no_saved_text_holds_is_cited_to_the_nearest_passage_shown() {
+    let (numbered, references) = harbor();
+    let subject = LessonSubject::new(&references, &numbered, &[], Held::default());
+    let mut candidate = harbor_block(
+        "A teaching explanation.",
+        "Every morning the keeper records the tide height upon a slate board.",
+    );
+    assert!(subject.settle_quotes(&mut candidate, &writer_context(), 1));
+    assert_eq!(candidate["blocks"][0]["quote"], SHOWN_SLATE);
+    assert_eq!(candidate["blocks"][0]["sourceIndex"], 0);
+}
+
 #[test]
 fn a_quotation_the_numbered_source_does_not_hold_still_fails() {
     let checks = quote_checks_of(&numbered(), &cited(1, WRITTEN));

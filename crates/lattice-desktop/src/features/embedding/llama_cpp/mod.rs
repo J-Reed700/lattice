@@ -33,6 +33,7 @@ pub(crate) use identity::{resolve_prefixes, space_identity};
 pub use launch::{EmbeddingLaunch, EmbeddingServerStarter, EmbeddingWork, SERVER_SLOTS};
 
 use client::Failure;
+use lattice_core::shared::error::WithCauses;
 
 /// Queries remembered per service. A query is embedded on every search and
 /// the same few recur; documents are embedded once and never cached.
@@ -75,7 +76,9 @@ impl LlamaEmbeddingService {
     ) -> Result<Self> {
         let http = lattice_core::shared::http::loopback_client_builder()
             .build()
-            .map_err(|e| AppError::ModelLoadFailed(format!("No HTTP client: {e}")))?;
+            .map_err(|e| {
+                AppError::ModelLoadFailed(format!("No HTTP client: {}", WithCauses(&e)))
+            })?;
         Ok(Self {
             server: parking_lot::Mutex::new(server),
             restart: None,
@@ -201,7 +204,7 @@ impl LlamaEmbeddingService {
         };
         tracing::warn!(
             endpoint = server.endpoint(),
-            %error,
+            error = %WithCauses(&error),
             "embedding.server.died; starting it again"
         );
         let server = self.restarted(restart, &server, work).await?;
@@ -329,8 +332,9 @@ fn refuse_empty(text: &str) -> Result<()> {
 fn transport_error(server: &RunningLlamaServer, error: &reqwest::Error) -> AppError {
     AppError::EmbeddingFailed {
         reason: format!(
-            "The embedding server at {} did not answer: {error}",
-            server.endpoint()
+            "The embedding server at {} did not answer: {}",
+            server.endpoint(),
+            WithCauses(error)
         ),
     }
 }

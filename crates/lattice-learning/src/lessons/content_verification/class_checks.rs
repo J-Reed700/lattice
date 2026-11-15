@@ -42,7 +42,7 @@ pub(super) async fn sort(
         let held = given.get(index).copied().flatten();
         sorted.push(match held {
             Some(held) => Some(held),
-            None if citations.is_cited(*unit, &claim.statement) => Some(Classed {
+            None if citations.is_cited(*unit, &claim.quote) => Some(Classed {
                 class: Class::Sourced,
                 by: ClassifiedBy::Writer,
             }),

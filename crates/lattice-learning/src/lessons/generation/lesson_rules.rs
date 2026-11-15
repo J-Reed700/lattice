@@ -525,8 +525,7 @@ fn choice_findings(
         .filter(|(at, _)| Some(*at) != right)
         .map(|(_, option)| option.as_str())
         .collect();
-    let words =
-        key.and_then(|key| answer_in_prompt(text(question, "prompt"), &[key.as_str()], &others));
+    let words = key.and_then(|key| answer_in_prompt(text(question, "prompt"), key, &others));
     if let Some(words) = words {
         let message = answer_in_prompt_message(&words);
         found.push(structure(

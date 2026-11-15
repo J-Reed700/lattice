@@ -27,10 +27,10 @@ pub(crate) async fn held(candidate: &Value) -> Result<Held> {
     }
 }
 
-/// The text hashes of the questions whose findings wait for the user.
-pub(crate) async fn question_texts() -> Result<BTreeSet<String>> {
+/// The text hashes of the parts whose findings wait for the user and end with their part.
+pub(crate) async fn waiting_part_texts() -> Result<BTreeSet<String>> {
     match repository() {
-        Some((store, lesson_id, _)) => store.waiting_question_texts(&lesson_id).await,
+        Some((store, lesson_id, _)) => store.waiting_part_texts(&lesson_id).await,
         None => Ok(BTreeSet::new()),
     }
 }
@@ -68,6 +68,14 @@ pub(crate) async fn record(candidate: &Value, findings: Vec<ReviewFinding>) -> R
             repairs: 0,
         })
         .collect();
+    for aside in &set_aside {
+        crate::lessons::trace::decided_finding(
+            crate::lessons::trace::Stage::TeachingReview,
+            &aside.finding,
+            "waits for the user",
+            "found once the review was over, on the lesson as it publishes",
+        );
+    }
     store
         .record(&lesson_id, &job_id, candidate, &set_aside, false)
         .await
