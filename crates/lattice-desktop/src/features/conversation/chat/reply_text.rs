@@ -12,15 +12,15 @@ use lattice_core::application::services::model_contract::reply::{
     self, Lines, Markers, Piece, Place, Reference,
 };
 use lattice_core::application::services::model_contract::shown::{Drawn, Kind};
+use lattice_core::application::services::tool_handles::{FolderFile, Source};
 use lattice_core::domain::conversation::{ConversationMessage, MessageRole};
 use lattice_core::shared::citation_markers::old_markers;
 use lattice_core::shared::stored_references::{cut, stored_places};
 use serde_json::{json, Value};
 
 use super::dto::{LinesDto, ReplyPieceDto, ReplyReferenceDto};
-use super::retrieval::source_names::{name_sources, Source};
+use super::retrieval::source_names::name_sources;
 use super::TurnSource;
-use crate::features::explorer::file_refs::FolderFile;
 
 #[cfg(test)]
 mod tests;

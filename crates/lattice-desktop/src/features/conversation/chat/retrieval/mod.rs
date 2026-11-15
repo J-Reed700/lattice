@@ -672,7 +672,7 @@ pub(super) fn format_tool_result(
     page_offset: usize,
     source_text: bool,
     citations: &std::collections::HashMap<String, u32>,
-    call: &crate::features::function_calling::handles::CallView<'_>,
+    call: &lattice_core::application::services::tool_handles::CallView<'_>,
 ) -> Rendered {
     format_tool_result_impl(
         tool_name,

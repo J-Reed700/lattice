@@ -2,9 +2,9 @@
 
 use super::super::{ChatEventSink, ChatStreamEventDto};
 use lattice_core::application::services::model_contract::kept::TurnNames;
-use crate::features::function_calling::handles::{picture_line, Picture};
 use lattice_core::application::services::model_contract::reply::{self, Markers, Piece, Splitter};
 use lattice_core::application::services::model_contract::shown::Kind;
+use lattice_core::application::services::tool_handles::{picture_line, Picture};
 use lattice_core::shared::error::Result;
 use std::sync::{Arc, Mutex, PoisonError};
 use tracing::warn;

@@ -1,6 +1,6 @@
 use super::*;
-use crate::features::function_calling::handles::ToolHandles;
 use lattice_core::application::contracts::images::FoundImage;
+use lattice_core::application::services::tool_handles::ToolHandles;
 
 fn found(number: u32, caption: &str, license: Option<&str>) -> FoundImage {
     FoundImage {

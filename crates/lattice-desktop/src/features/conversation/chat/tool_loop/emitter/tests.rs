@@ -1,8 +1,7 @@
 use super::*;
 use crate::features::conversation::chat::reply_text::{markers, wire, ReplyText};
-use crate::features::function_calling::handles::{Picture, ToolHandles};
 use lattice_core::application::services::model_contract::reply::Place;
-use crate::features::conversation::chat::retrieval::source_names::Source;
+use lattice_core::application::services::tool_handles::{Picture, Source, ToolHandles};
 
 fn names_with_sources(count: u32) -> Arc<TurnNames> {
     let names = Arc::new(TurnNames::unstored());

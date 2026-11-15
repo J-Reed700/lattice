@@ -9,18 +9,15 @@ pub(crate) struct Rendered {
 }
 
 /// One labelled source's text inside a result: the app's heading, the line it
-/// stands on, where its text is, and the lines that label text of this passage
-/// shown inside it. Ranges are bytes of `Rendered::text`.
+/// stands on, and where its text is. Ranges are bytes of `Rendered::text`.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Passage {
     pub heading: String,
     pub line: Range<usize>,
     pub body: Range<usize>,
-    pub legend: Vec<Legend>,
 }
 
-/// A line the app wrote to label text shown elsewhere: in the result outside
-/// every passage (`Rendered::legend`), or inside the passage that holds it.
+/// A line the app wrote to label text shown elsewhere in the result.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Legend {
     pub line: String,
@@ -57,11 +54,6 @@ impl Rendered {
                 heading: passage.heading,
                 line: moved(passage.line, by),
                 body: moved(passage.body, by),
-                legend: passage
-                    .legend
-                    .into_iter()
-                    .map(|legend| moved_legend(legend, by))
-                    .collect(),
             }));
         self.legend.extend(
             other
@@ -92,7 +84,6 @@ impl Rendered {
             passage.line.end = passage.line.end.min(at);
             passage.body.start = passage.body.start.min(at);
             passage.body.end = passage.body.end.min(at);
-            passage.legend.retain(|legend| legend.at.end <= at);
         }
         self.legend.retain(|legend| legend.at.end <= at);
     }
@@ -119,7 +110,6 @@ mod tests {
                 heading: heading.to_owned(),
                 line,
                 body: start..text.len(),
-                legend: Vec::new(),
             }],
             text,
             legend: Vec::new(),
@@ -168,25 +158,6 @@ mod tests {
         assert_eq!(heading_cut.passages[1].body, 40..40);
         let at_heading = both.cut(37);
         assert_eq!(at_heading.passages.len(), 1);
-    }
-
-    #[test]
-    fn a_passage_s_legend_moves_with_it_and_goes_when_cut() {
-        let mut passage = labelled("[s1] Page A", "Tides rise.");
-        passage.text.push_str("\nSee above.");
-        let at = passage.text.len() - 10..passage.text.len();
-        passage.passages[0].legend.push(Legend {
-            line: "See above.".to_owned(),
-            at,
-        });
-        let mut both = Rendered::from("Intro\n".to_owned());
-        both.append(passage);
-        let legend = &both.passages[0].legend[0];
-        assert_eq!(both.text.get(legend.at.clone()), Some("See above."));
-        assert_eq!(both.clone().cut(1_000).passages[0].legend.len(), 1);
-        let shorter = both.text.chars().count() - 3;
-        let cut = both.cut(shorter);
-        assert!(cut.passages[0].legend.is_empty());
     }
 
     #[test]

@@ -403,13 +403,13 @@ fn find_files_matches_substrings_and_globs_and_skips_ignored() {
 mod model_tools {
     use super::*;
     use crate::features::explorer::file_refs::FileNames;
-    use lattice_core::application::services::model_contract::kept::TurnNames;
-    use std::sync::Arc;
     use crate::features::explorer::{prompt, tools};
     use lattice_core::application::contracts::explorer::{ExplorerFocusDto, ExplorerLineRangeDto};
     use lattice_core::application::contracts::tools::explorer as explorer_tools;
     use lattice_core::application::contracts::tools::FunctionCall;
+    use lattice_core::application::services::model_contract::kept::TurnNames;
     use serde_json::json;
+    use std::sync::Arc;
 
     fn names() -> FileNames {
         FileNames::new(Arc::new(TurnNames::unstored()))
@@ -550,18 +550,16 @@ mod model_tools {
             10_000
         )
         .is_err());
-        assert!(
-            tools::run(
-                &scope,
-                &names(),
-                "read_file",
-                &json!({"path": "logo.png"}),
-                10_000
-            )
-            .unwrap_err()
-                .to_string()
-                .contains("binary")
-        );
+        assert!(tools::run(
+            &scope,
+            &names(),
+            "read_file",
+            &json!({"path": "logo.png"}),
+            10_000
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("binary"));
     }
 
     #[test]
@@ -703,7 +701,8 @@ mod model_tools {
             true,
             false,
             &prompt::FolderPassages::default(),
-        ).unwrap();
+        )
+        .unwrap();
         assert!(
             block.contains("Top level: src/, .gitignore, logo.png, README.md"),
             "{block}"
@@ -742,7 +741,8 @@ mod model_tools {
                 false,
                 false,
                 &prompt::FolderPassages::default(),
-            ).unwrap();
+            )
+            .unwrap();
             assert!(!block.contains("Open file"), "{open_path}: {block}");
             assert!(block.contains("You cannot open other files this turn"));
         }
@@ -764,7 +764,8 @@ mod model_tools {
             true,
             false,
             &prompt::FolderPassages::default(),
-        ).unwrap();
+        )
+        .unwrap();
         assert!(block.len() <= 3_000, "{}", block.len());
         assert!(
             block.contains("not shown for length. read_file reads on from line"),
@@ -1030,8 +1031,9 @@ fn the_folder_template_cites_only_numbered_passages() {
     assert_eq!(FOLDER_POLICY.evidence_template, Some(FOLDER_TEMPLATE));
     assert!(!FOLDER_TEMPLATE.contains("Cite every factual statement"));
     assert!(!FOLDER_TEMPLATE.contains("using only the provided context"));
-    assert!(FOLDER_TEMPLATE
-        .contains("Bracketed labels like [s1] belong only to the labelled library or web passages"));
+    assert!(FOLDER_TEMPLATE.contains(
+        "Bracketed labels like [s1] belong only to the labelled library or web passages"
+    ));
     assert!(FOLDER_TEMPLATE.contains("{context}") && FOLDER_TEMPLATE.contains("{question}"));
     use sha2::{Digest, Sha256};
     assert_eq!(

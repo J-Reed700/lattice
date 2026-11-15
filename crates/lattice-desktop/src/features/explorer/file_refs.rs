@@ -6,10 +6,9 @@
 use std::sync::Arc;
 
 use lattice_core::application::services::model_contract::kept::TurnNames;
-use lattice_core::application::services::model_contract::reply::{
-    self, Lines, Piece, Reference,
-};
-use lattice_core::application::services::model_contract::shown::{Drawn, Kind};
+use lattice_core::application::services::model_contract::reply::{self, Lines, Piece, Reference};
+use lattice_core::application::services::model_contract::shown::Kind;
+use lattice_core::application::services::tool_handles::FolderFile;
 use lattice_core::shared::{AppError, Result};
 use once_cell::sync::Lazy;
 use regex::{Captures, Regex};
@@ -19,19 +18,6 @@ use super::scope::Scope;
 
 #[cfg(test)]
 mod tests;
-
-/// A file of the folder that a tool result showed, by its path from the folder root.
-pub struct FolderFile(pub String);
-
-impl Kind for FolderFile {
-    const PREFIX: &'static str = "f";
-    const DRAWN: Drawn = Drawn::Name;
-    type Ref = String;
-
-    fn reference(&self) -> String {
-        self.0.clone()
-    }
-}
 
 /// The names a conversation gives the folder's files.
 #[derive(Clone)]
@@ -80,9 +66,10 @@ impl FileNames {
         let things = [FolderFile(path.to_owned())];
         self.0.with(|scope| {
             let shown = scope.request().show(&things)?;
-            let handle = shown.handles().first().ok_or_else(|| {
-                AppError::InternalError("A file was shown under no name.".into())
-            })?;
+            let handle = shown
+                .handles()
+                .first()
+                .ok_or_else(|| AppError::InternalError("A file was shown under no name.".into()))?;
             Ok(Reference {
                 prefix: FolderFile::PREFIX,
                 number: handle.number(),

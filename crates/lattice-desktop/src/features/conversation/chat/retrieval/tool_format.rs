@@ -14,9 +14,10 @@ use super::rendered::{Passage, Rendered};
 use super::source_citations::library_chunk_id;
 use super::source_names::marker;
 use crate::features::conversation::chat::history_tools::view as history_view;
-use crate::features::function_calling::handles::{CallView, Resume};
-use crate::features::function_calling::views as tool_views;
+use lattice_core::application::services::tool_handles::{CallView, Resume};
 use serde_json::json;
+
+mod library_views;
 
 /// Room kept at the end of a result for the line saying what had to be left
 /// out of it, so that line always fits.
@@ -74,11 +75,7 @@ pub(super) fn format_tool_result(
             };
             let line = call.read_on_line(&name);
             let room = allowance.saturating_sub(line.chars().count() + 1);
-            return format!(
-                "{}\n{line}",
-                safe_truncate(text, room)
-            )
-            .into();
+            return format!("{}\n{line}", safe_truncate(text, room)).into();
         }
         if let Ok(mut output) = serde_json::from_value::<SourcePassages>(data.clone()) {
             let read_on = data
@@ -226,9 +223,7 @@ pub(super) fn format_tool_result(
         "wiki_search" => {
             if let Ok(output) = serde_json::from_value::<WikiSearchOutput>(data.clone()) {
                 if output.results.is_empty() {
-                    return "Wikipedia search returned no results."
-                        .to_string()
-                        .into();
+                    return "Wikipedia search returned no results.".to_string().into();
                 }
                 let blocks: Vec<String> = output
                     .results
@@ -333,7 +328,7 @@ pub(super) fn format_tool_result(
     }
 
     if let Some(text) = history_view::render(tool_name, &data, call)
-        .or_else(|| tool_views::render(tool_name, &data, call))
+        .or_else(|| library_views::render(tool_name, &data, call))
     {
         return fit_text(&text, allowance).into();
     }
@@ -441,7 +436,6 @@ impl Block {
                 heading: heading.to_owned(),
                 line: 0..self.heading_len,
                 body: self.heading_len + 1..self.text.len(),
-                legend: Vec::new(),
             });
         }
         rendered
@@ -619,9 +613,9 @@ fn render_fetched_page(
 #[cfg(test)]
 mod fetched_page_tests {
     use super::*;
-    use crate::features::function_calling::handles::ToolHandles;
     use lattice_core::application::contracts::tools::FunctionResult;
     use lattice_core::application::ports::turn_source::SourcePassage;
+    use lattice_core::application::services::tool_handles::ToolHandles;
 
     fn page(content: &str) -> FunctionResult {
         FunctionResult::success(

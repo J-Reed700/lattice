@@ -251,7 +251,7 @@ fn rank_sources(
             }
             // Old web-result-N ids are reused by every search. Give recalled
             // passages a distinct chunk id before the chunk-keyed maps run; a
-            // source's name is read through `Source::of`, which undoes this.
+            // source's name is read through `source_names::passage`, which undoes this.
             if !source.chunk_id.starts_with("recalled:") {
                 source.chunk_id = format!("recalled:{}:{}", source.document_id, source.chunk_id);
             }

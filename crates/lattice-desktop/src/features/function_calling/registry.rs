@@ -8,9 +8,9 @@
 //! - **Validation**: Validates tool definitions on registration
 //! - **Statistics**: Tracks usage metrics
 
-use crate::features::function_calling::handles;
 use crate::features::function_calling::FunctionRegistryTrait;
 use lattice_core::application::contracts::tools::{RegistryStats, ToolDefinition};
+use lattice_core::application::services::tool_handles as handles;
 use lattice_core::domain::sourcing::Ecosystem;
 use lattice_core::shared::error::{AppError, Result};
 use parking_lot::RwLock;

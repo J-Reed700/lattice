@@ -6,7 +6,7 @@
 //! lines. The open file and the passages ride along on every turn so that a
 //! model without tool calling can still answer about the folder.
 
-use super::file_refs::{rewrite_old_references, FileNames, FolderFile};
+use super::file_refs::{rewrite_old_references, FileNames};
 use super::fs;
 use super::index::search::{FolderHit, FolderSearch};
 use super::index::tool as folder_index_tool;
@@ -23,6 +23,7 @@ use lattice_core::application::ports::turn_source::{TurnSourcePolicy, TurnSource
 use lattice_core::application::ports::ToolDefinition;
 use lattice_core::application::services::model_contract::kept::TurnNames;
 use lattice_core::application::services::model_contract::reply::{Markers, Place};
+use lattice_core::application::services::tool_handles::FolderFile;
 use lattice_core::shared::persistence::Database;
 use std::sync::Arc;
 use tracing::warn;
@@ -489,7 +490,11 @@ fn render_named(names: &FileNames, room: usize) -> String {
         .collect();
     let closing = |left: usize| format!("[{left} more not shown.]\n");
     let all = heading.len() + lines.iter().map(String::len).sum::<usize>();
-    let reserve = if all <= room { 0 } else { closing(lines.len()).len() };
+    let reserve = if all <= room {
+        0
+    } else {
+        closing(lines.len()).len()
+    };
     let mut out = String::from(heading);
     let mut shown = 0usize;
     for line in &lines {

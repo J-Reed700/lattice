@@ -1,32 +1,27 @@
 use super::*;
-use crate::features::conversation::chat::retrieval::source_names::{label, name_sources};
-use lattice_core::application::contracts::sources::SourceDto;
 use serde_json::json;
 
-fn source(document_id: &str) -> SourceDto {
-    SourceDto {
-        page_number: None,
-        from_ocr: false,
-        document_id: document_id.to_string(),
-        chunk_id: format!("{document_id}-chunk"),
-        content: "Tide tables for the harbour.".to_string(),
-        score: 0.9,
-        path: None,
-        position: None,
-        file_name: "tides.txt".to_string(),
-        file_path: "/harbour/tides.txt".to_string(),
-        mime_type: "text/plain".to_string(),
-        category: "Text File".to_string(),
-        file_size_bytes: 10,
-        modified_at: "2024-01-15T12:00:00Z".to_string(),
-        excerpt: None,
-        highlights: None,
-        section: None,
-        chunk_index: None,
-        chunk_excerpts: None,
-        citation_id: None,
-        web_snapshot: None,
-    }
+fn name_sources(names: &TurnNames, document_ids: &[&str]) -> Vec<String> {
+    let things: Vec<Source> = document_ids
+        .iter()
+        .map(|document_id| Source {
+            document_id: (*document_id).to_owned(),
+            chunk_id: format!("{document_id}-chunk"),
+        })
+        .collect();
+    names.with(|scope| {
+        scope
+            .request()
+            .show(&things)
+            .map(|shown| {
+                shown
+                    .handles()
+                    .iter()
+                    .map(|handle| handle.bracketed())
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
 }
 
 #[test]
@@ -54,11 +49,10 @@ fn a_name_is_written_with_or_without_brackets() {
 #[test]
 fn a_source_of_the_context_opens_by_its_name() {
     let names = Arc::new(TurnNames::unstored());
-    let mut sources = [source("doc-a"), source("doc-b")];
-    name_sources(&names, &mut sources);
+    let sources = name_sources(&names, &["doc-a", "doc-b"]);
     let handles = ToolHandles::in_turn(names);
     let called = handles
-        .read_call("get_document", &json!({"document": label(&sources[1])}))
+        .read_call("get_document", &json!({"document": sources[1]}))
         .unwrap();
     assert_eq!(called.arguments["document_id"], "doc-b");
 }
@@ -66,14 +60,12 @@ fn a_source_of_the_context_opens_by_its_name() {
 #[test]
 fn a_source_is_opened_by_its_name_in_a_later_turn_of_the_conversation() {
     let names = Arc::new(TurnNames::unstored());
-    let mut first = [source("doc-a")];
-    name_sources(&names, &mut first);
-    let mut later = [source("doc-b"), source("doc-a")];
-    name_sources(&names, &mut later);
-    assert_eq!(later[1].citation_id, first[0].citation_id);
+    let first = name_sources(&names, &["doc-a"]);
+    let later = name_sources(&names, &["doc-b", "doc-a"]);
+    assert_eq!(later[1], first[0]);
     let handles = ToolHandles::in_turn(names);
     let called = handles
-        .read_call("get_document", &json!({"document": label(&first[0])}))
+        .read_call("get_document", &json!({"document": first[0]}))
         .unwrap();
     assert_eq!(called.arguments["document_id"], "doc-a");
 }
@@ -81,8 +73,7 @@ fn a_source_is_opened_by_its_name_in_a_later_turn_of_the_conversation() {
 #[test]
 fn a_source_name_nothing_showed_is_an_error_the_model_can_act_on() {
     let names = Arc::new(TurnNames::unstored());
-    let mut sources = [source("doc-a")];
-    name_sources(&names, &mut sources);
+    name_sources(&names, &["doc-a"]);
     let handles = ToolHandles::in_turn(names);
     let error = handles
         .read_call("get_document", &json!({"document": "[s7]"}))
@@ -93,8 +84,7 @@ fn a_source_name_nothing_showed_is_an_error_the_model_can_act_on() {
 #[test]
 fn a_bare_number_is_no_name() {
     let names = Arc::new(TurnNames::unstored());
-    let mut sources = [source("doc-a")];
-    name_sources(&names, &mut sources);
+    name_sources(&names, &["doc-a"]);
     let handles = ToolHandles::in_turn(names);
     let error = handles
         .read_call("get_document", &json!({"document": "[1]"}))
@@ -207,10 +197,8 @@ fn the_handle_parameters_are_plain_strings_in_a_static_schema() {
 
 mod pictures {
     use super::*;
-    use lattice_core::application::services::model_contract::kept::TurnNames;
-    use lattice_core::application::services::model_contract::reply::{
-        split, Markers, Piece, Place,
-    };
+    use crate::application::services::model_contract::kept::TurnNames;
+    use crate::application::services::model_contract::reply::{split, Markers, Piece, Place};
     use std::sync::Arc;
 
     const LINE: &str = "![A kiln](img-1)";
@@ -233,10 +221,7 @@ mod pictures {
         let handles = ToolHandles::new().in_request("request-1");
         assert_eq!(handles.picture(LINE).as_deref(), Some("[i1]"));
         assert_eq!(handles.picture(LINE).as_deref(), Some("[i1]"));
-        assert_eq!(
-            handles.picture("![A lamp](img-2)").as_deref(),
-            Some("[i2]")
-        );
+        assert_eq!(handles.picture("![A lamp](img-2)").as_deref(), Some("[i2]"));
     }
 
     #[test]

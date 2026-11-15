@@ -80,15 +80,20 @@ mod tests {
         let excerpt = "Exact document excerpt. ".repeat(30);
         let source = result(1, &excerpt);
         assert_eq!(
-            render(&mut memo, "get_document", &source, excerpt.clone(), |_| false),
+            render(&mut memo, "get_document", &source, excerpt.clone(), |_| {
+                false
+            }),
             excerpt
         );
         assert_eq!(
-            render(&mut memo, "get_document", &source, excerpt.clone(), |s| s == excerpt),
+            render(&mut memo, "get_document", &source, excerpt.clone(), |s| s
+                == excerpt),
             REUSE_NOTICE
         );
         assert_eq!(
-            render(&mut memo, "get_document", &source, excerpt.clone(), |_| false),
+            render(&mut memo, "get_document", &source, excerpt.clone(), |_| {
+                false
+            }),
             excerpt
         );
     }
@@ -110,7 +115,9 @@ mod tests {
             FunctionResult::error("denied", "scope changed"),
         ] {
             assert_eq!(
-                render(&mut memo, "get_document", &source, excerpt.clone(), |_| true),
+                render(&mut memo, "get_document", &source, excerpt.clone(), |_| {
+                    true
+                }),
                 excerpt
             );
         }
@@ -141,15 +148,23 @@ mod tests {
             assert!(memo.recent.len() <= MAX_ENTRIES);
         }
         assert_eq!(
-            render(&mut memo, "get_document", &result(0, "text"), excerpt.clone(), |_| {
-                true
-            }),
+            render(
+                &mut memo,
+                "get_document",
+                &result(0, "text"),
+                excerpt.clone(),
+                |_| { true }
+            ),
             excerpt
         );
         assert_eq!(
-            render(&mut memo, "get_document", &result(99, "text"), excerpt.clone(), |_| {
-                true
-            }),
+            render(
+                &mut memo,
+                "get_document",
+                &result(99, "text"),
+                excerpt.clone(),
+                |_| { true }
+            ),
             REUSE_NOTICE
         );
     }

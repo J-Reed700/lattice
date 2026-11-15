@@ -21,12 +21,10 @@
 pub mod commands;
 pub mod di;
 pub mod executor;
-pub mod handles;
 pub mod plugin;
 pub mod registry;
 pub mod trait_def;
 pub mod use_cases;
-pub mod views;
 
 pub use trait_def::{FunctionExecutorTrait, FunctionRegistryTrait};
 

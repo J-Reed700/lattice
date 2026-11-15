@@ -3,9 +3,9 @@
 
 use super::shown::{Record, Scope};
 use crate::application::ports::conversation_names::ConversationNames;
-use crate::shared::error::Result;
 #[cfg(any(test, feature = "test-support"))]
 use crate::shared::error::AppError;
+use crate::shared::error::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 

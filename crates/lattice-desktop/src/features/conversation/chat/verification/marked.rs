@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use lattice_core::application::services::model_contract::shown::Kind;
 
 use crate::features::conversation::chat::reply_text::ReplyText;
-use crate::features::explorer::file_refs::FolderFile;
+use lattice_core::application::services::tool_handles::FolderFile;
 
 const OPEN: char = '\u{e000}';
 const CLOSE: char = '\u{e001}';

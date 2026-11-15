@@ -33,12 +33,12 @@ use std::time::Instant;
 use tracing::{info, warn};
 
 use super::fetch_memory::FetchMemory;
-use crate::features::function_calling::handles::{picture_line, Picture};
 use super::turn::{ResearchRound, Rounds};
 use super::turn_record::TurnStepKind;
 use super::{ChatEventSink, ChatStreamEventDto, ChatTurn};
 use emitter::StreamEmitter;
 use final_round::LastRound;
+use lattice_core::application::services::tool_handles::{picture_line, Picture};
 use reading::Reading;
 pub(super) use reading::READING_INSTRUCTION;
 use room::{chars_in_flight, tool_result_allowance, window_has_room_for_a_result};
@@ -350,7 +350,7 @@ pub(super) async fn run_agentic_tool_loop(
                 recorder,
                 &turn_cancel,
                 &clock,
-                calls.labels(),
+                calls.labels_mut(),
             )
             .await
             {
@@ -362,7 +362,6 @@ pub(super) async fn run_agentic_tool_loop(
                         "Condensed earlier tool results to keep researching"
                     );
                     calls.results_condensed(&notes.result_ids);
-                    calls.keep_notes(notes.notes);
                 }
                 Ok(None) => {}
                 Err(error) if limits::ran_out(&clock, &turn_cancel) => {

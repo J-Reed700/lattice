@@ -2,9 +2,10 @@ use super::super::test_support::{reply, source};
 use super::*;
 use crate::features::conversation::chat::reply_text::markers;
 use crate::features::conversation::chat::retrieval::source_names::name_sources;
-use crate::features::explorer::file_refs::{FileNames, FolderFile};
+use crate::features::explorer::file_refs::FileNames;
 use lattice_core::application::services::model_contract::kept::TurnNames;
 use lattice_core::application::services::model_contract::reply::Place;
+use lattice_core::application::services::tool_handles::FolderFile;
 use std::sync::Arc;
 
 fn lexical_pass(text: &str, sources: &[SourceDto]) -> Vec<LexicalClaim> {

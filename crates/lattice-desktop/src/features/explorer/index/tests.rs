@@ -1342,7 +1342,8 @@ mod model {
             open_path: Some("open.txt".into()),
             selection: None,
         };
-        let turn = ExplorerTurn::with_index(scope.clone(), Some(focus.clone()), Some(search), names());
+        let turn =
+            ExplorerTurn::with_index(scope.clone(), Some(focus.clone()), Some(search), names());
         assert!(turn.has_folder_index());
         let block = turn
             .context_block(4_000, true, Some("where is the retry backoff scheduled?"))
@@ -1383,7 +1384,8 @@ mod model {
         assert_eq!(status.state, FolderIndexState::Ready);
         let search = manager.search_for(&root).await;
         assert!(search.is_none(), "nothing indexed, nothing to search");
-        let turn = ExplorerTurn::with_index(Scope::open(&text(&root)).unwrap(), None, search, names());
+        let turn =
+            ExplorerTurn::with_index(Scope::open(&text(&root)).unwrap(), None, search, names());
         let block = turn.context_block(4_000, true, Some("anything")).await;
         assert!(!block.contains("Passages from the folder"), "{block}");
         assert!(!block.contains("search_folder"));

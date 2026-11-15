@@ -5,11 +5,10 @@
 use super::ToolOutputSettingsDto;
 use crate::features::conversation::chat::dto::SourceDto;
 use crate::features::conversation::chat::retrieval::source_names::marker;
-use crate::features::conversation::chat::retrieval::{Legend, Passage, Rendered};
 use crate::features::conversation::chat::retrieval::{
     build_document_part_citation, build_library_source_citations, build_web_source_citations,
 };
-use crate::features::function_calling::handles::{Resume, ToolHandles, READ_MORE};
+use crate::features::conversation::chat::retrieval::{Legend, Passage, Rendered};
 use lattice_core::application::contracts::images::FindImageOutput;
 use lattice_core::application::contracts::tools::{
     FunctionResult, GetDocumentOutput, SemanticSearchOutput, WikiSearchOutput, WikiSummaryOutput,
@@ -18,6 +17,7 @@ use lattice_core::application::contracts::web::{
     FetchUrlContentOutput, WebSearchOutput, WebSearchResult,
 };
 use lattice_core::application::ports::turn_source::SourcePassages;
+use lattice_core::application::services::tool_handles::{Resume, ToolHandles, READ_MORE};
 use lattice_core::shared::text::build_excerpt;
 
 /// Preview length for a page the model fetched itself, matching the preview a
@@ -90,7 +90,6 @@ pub(super) fn citable_passages(
             heading,
             line,
             body: body_start..text.len(),
-            legend: Vec::new(),
         });
     }
     let used = text.chars().count();
@@ -615,7 +614,6 @@ mod citable_tests {
                 heading: "Heading".to_owned(),
                 line: 0..7,
                 body: 8..result.text.len(),
-                legend: Vec::new(),
             });
             result
         };

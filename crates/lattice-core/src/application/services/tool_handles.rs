@@ -1,5 +1,5 @@
-//! What the model is told to call things by in tool results, and the one place
-//! where a tool call's names become the app's own arguments.
+//! The kinds of thing a turn names for the model, and the one place where a
+//! tool call's names become the app's own arguments.
 //!
 //! A result shows a document, a message or the point where a read
 //! stopped under a handle; a later call passes that handle back. Ids, offsets,
@@ -7,16 +7,14 @@
 
 use std::sync::Arc;
 
-use lattice_core::application::contracts::tools::ToolDefinition;
-use lattice_core::application::services::model_contract::kept::TurnNames;
-use lattice_core::application::services::model_contract::reply::Reference;
-use lattice_core::application::services::model_contract::shown::{Drawn, Kind};
-use lattice_core::application::services::model_contract::tools::{ArgumentError, Parameters};
-use lattice_core::shared::error::Result;
+use crate::application::contracts::tools::ToolDefinition;
+use crate::application::services::model_contract::kept::TurnNames;
+use crate::application::services::model_contract::reply::Reference;
+use crate::application::services::model_contract::shown::{Drawn, Kind};
+use crate::application::services::model_contract::tools::{ArgumentError, Parameters};
+use crate::shared::error::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-use crate::features::conversation::chat::retrieval::source_names::Source;
 
 #[cfg(test)]
 mod tests;
@@ -26,6 +24,36 @@ pub const READ_MORE: &str = "read_more";
 
 const GET_DOCUMENT: &str = "get_document";
 const READ_CONVERSATION_HISTORY: &str = "read_conversation_history";
+
+/// A passage of a document, or a web page, a reply may cite.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Source {
+    pub document_id: String,
+    pub chunk_id: String,
+}
+
+impl Kind for Source {
+    const PREFIX: &'static str = "s";
+    const DRAWN: Drawn = Drawn::Number;
+    type Ref = (String, String);
+
+    fn reference(&self) -> (String, String) {
+        (self.document_id.clone(), self.chunk_id.clone())
+    }
+}
+
+/// A file of the folder that a tool result showed, by its path from the folder root.
+pub struct FolderFile(pub String);
+
+impl Kind for FolderFile {
+    const PREFIX: &'static str = "f";
+    const DRAWN: Drawn = Drawn::Name;
+    type Ref = String;
+
+    fn reference(&self) -> String {
+        self.0.clone()
+    }
+}
 
 /// A document some tool listed or a source of the turn's context.
 pub struct Document(pub String);
@@ -314,9 +342,11 @@ impl ToolHandles {
 
     fn message_named(&self, arguments: &Value) -> std::result::Result<String, ArgumentError> {
         let parameters = message_parameters();
-        let picked = self
-            .names
-            .with(|scope| parameters.read(arguments, scope).handle::<Message>("message"))?;
+        let picked = self.names.with(|scope| {
+            parameters
+                .read(arguments, scope)
+                .handle::<Message>("message")
+        })?;
         Ok(picked.reference)
     }
 }
@@ -334,12 +364,7 @@ const APP_OWNED: &[(&str, &[&str])] = &[
     ("search_conversation_history", &["offset"]),
     (
         READ_CONVERSATION_HISTORY,
-        &[
-            "message_ids",
-            "from_sequence",
-            "to_sequence",
-            "start_byte",
-        ],
+        &["message_ids", "from_sequence", "to_sequence", "start_byte"],
     ),
 ];
 

@@ -138,7 +138,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
 /// only when the folder's index has something in it.
 pub fn add_to_turn(tools: &mut Vec<ToolDefinition>, folder_index: bool) {
     let index_tool = folder_index.then(folder_index_tool::definition);
-    let read_more = crate::features::function_calling::handles::read_more_definition()
+    let read_more = lattice_core::application::services::tool_handles::read_more_definition()
         .ok()
         .map(ToolDefinition::from);
     for definition in definitions().into_iter().chain(index_tool).chain(read_more) {
@@ -533,18 +533,15 @@ fn search_files(
         "{count} match{} for \"{query}\"{place}:\n",
         if count == 1 { "" } else { "es" }
     );
-    let lines = result
-        .matches
-        .iter()
-        .map(|found| {
-            Ok(format!(
-                "{} {}:{}: {}",
-                names.name(&found.path)?,
-                found.path,
-                found.line,
-                found.preview
-            ))
-        });
+    let lines = result.matches.iter().map(|found| {
+        Ok(format!(
+            "{} {}:{}: {}",
+            names.name(&found.path)?,
+            found.path,
+            found.line,
+            found.preview
+        ))
+    });
     push_lines(
         &mut out,
         lines,
@@ -560,12 +557,7 @@ fn search_files(
     Ok(out)
 }
 
-fn find_files(
-    scope: &Scope,
-    names: &FileNames,
-    pattern: &str,
-    max_chars: usize,
-) -> Result<String> {
+fn find_files(scope: &Scope, names: &FileNames, pattern: &str, max_chars: usize) -> Result<String> {
     let found = fs::find_files(scope, pattern, listable(max_chars))?;
     if found.paths.is_empty() {
         return Ok(format!(

@@ -1,7 +1,7 @@
 use super::*;
-use std::sync::Arc;
 use crate::features::conversation::chat::retrieval::source_names::name_sources;
 use serde_json::json;
+use std::sync::Arc;
 
 fn source(document: &str, old_number: Option<u32>) -> SourceDto {
     SourceDto {

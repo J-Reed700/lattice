@@ -142,7 +142,7 @@ pub fn history_tool_definitions() -> Vec<ToolDefinition> {
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "message": crate::features::function_calling::handles::message_property(),
+                    "message": lattice_core::application::services::tool_handles::message_property(),
                     "max_bytes": {
                         "type": "integer",
                         "description": "Requested response ceiling in bytes; the turn's own \
@@ -170,7 +170,7 @@ pub fn tools_for_turn(
         external_tools.to_vec()
     };
     if history_available {
-        let more = crate::features::function_calling::handles::read_more_definition()
+        let more = lattice_core::application::services::tool_handles::read_more_definition()
             .ok()
             .map(ToolDefinition::from);
         for definition in history_tool_definitions().into_iter().chain(more) {

@@ -308,7 +308,7 @@ fn shedding_frees_the_newest_results_first_and_then_nothing() {
 
 mod pictures {
     use super::*;
-    use crate::features::function_calling::handles::ToolHandles;
+    use lattice_core::application::services::tool_handles::ToolHandles;
 
     const LINE: &str = "![A kiln](img-1)";
 

@@ -3,8 +3,8 @@
 
 use crate::features::conversation::chat::fetch_memory::{self, Recall};
 use crate::features::conversation::chat::turn_record::TurnStepKind;
-use crate::features::function_calling::handles::CallView;
 use lattice_core::application::ports::ToolDefinition;
+use lattice_core::application::services::tool_handles::CallView;
 use lattice_core::shared::http::host_of;
 use std::collections::HashSet;
 
@@ -186,7 +186,7 @@ pub(super) fn tool_activity_label(tool: &str, arguments: &serde_json::Value) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::function_calling::handles::ToolHandles;
+    use lattice_core::application::services::tool_handles::ToolHandles;
 
     /// "Already fetched" alone invites the model to think the text was lost.
     #[test]

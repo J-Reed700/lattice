@@ -28,19 +28,19 @@ use crate::features::conversation::chat::ports::{
 use crate::features::conversation::chat::retrieval::source_names::name_sources;
 use crate::features::conversation::chat::retrieval::{
     citation_ids_by_chunk, deduplicate_sources, document_page_room, fetched_page_text_room,
-    format_tool_result, merge_tool_sources, record_tool_document_references, Rendered,
+    format_tool_result, merge_tool_sources, record_tool_document_references,
 };
 use crate::features::conversation::chat::turn_record::{StepGuard, TurnRecorder, TurnStepKind};
 use crate::features::conversation::chat::{
     source_snapshots, web_steps, ChatEventSink, ChatStreamEventDto, RetrievalTraceDto,
 };
 use crate::features::conversation::ConversationServiceTrait;
-use crate::features::function_calling::handles::{CallView, ToolHandles};
 use futures::{FutureExt, StreamExt};
 use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
 use lattice_core::application::ports::llm_port::CompletionInput;
 use lattice_core::application::ports::ToolDefinition;
 use lattice_core::application::services::model_contract::kept::TurnNames;
+use lattice_core::application::services::tool_handles::{CallView, ToolHandles};
 use lattice_core::shared::error::Result;
 use lattice_core::shared::http::url_identity::identity;
 use std::collections::HashSet;
@@ -305,13 +305,8 @@ impl<'a> ToolCalls<'a> {
     }
 
     /// What the app wrote as a label in the results it has put in the transcript.
-    pub(super) fn labels(&self) -> &Labels {
-        &self.labels
-    }
-
-    /// The notes that replaced results now stand in the transcript, with their labels.
-    pub(super) fn keep_notes(&mut self, notes: Rendered) {
-        self.labels.keep_notes(notes);
+    pub(super) fn labels_mut(&mut self) -> &mut Labels {
+        &mut self.labels
     }
 
     fn prepare(
