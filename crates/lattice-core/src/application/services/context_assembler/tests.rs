@@ -780,7 +780,7 @@ fn a_memory_item_quotes_an_answer_without_its_references_while_the_replay_keeps_
     let content = "The limit is 40 units [s1] per day.";
     let marker = content.find("[s1]").expect("marker");
     let mut stored = message(1, SourceRole::Assistant, content);
-    stored.references = vec![marker..marker + 4];
+    stored.references = std::iter::once(marker..marker + 4).collect();
     let memory = snapshot(
         vec![item(
             "i1",

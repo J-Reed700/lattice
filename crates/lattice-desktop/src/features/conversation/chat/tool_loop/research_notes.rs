@@ -465,6 +465,10 @@ pub(super) fn shown_in(request: &CompletionRequest) -> String {
         .join("\n")
 }
 
+/// A result's handle, its heading, and its sentences as handle and text.
+#[cfg(test)]
+type ShownResult = (String, String, Vec<(String, String)>);
+
 /// An answer for the results the prompt shows: an entry for each whose
 /// heading `answered` takes, keeping the sentences `keep` takes.
 #[cfg(test)]
@@ -473,7 +477,7 @@ pub(super) fn scripted_answer(
     answered: impl Fn(&str) -> bool,
     keep: impl Fn(&str) -> bool,
 ) -> String {
-    let mut shown: Vec<(String, String, Vec<(String, String)>)> = Vec::new();
+    let mut shown: Vec<ShownResult> = Vec::new();
     for line in prompt.lines() {
         let Some((handle, rest)) = line.strip_prefix('[').and_then(|l| l.split_once("] ")) else {
             continue;
@@ -594,7 +598,7 @@ mod tests {
         "Sign up for the newsletter to hear about tide tables and kiln rotas every single week.";
 
     fn noise() -> String {
-        vec![NOISE; 10].join(" ")
+        [NOISE; 10].join(" ")
     }
 
     fn request_of(items: Vec<CompletionInput>) -> CompletionRequest {

@@ -14,7 +14,7 @@ use lattice_core::application::services::model_contract::shape::{
     Authored, Each, Fields, Form, Value,
 };
 use lattice_core::application::services::model_contract::shown::{
-    Drawn, Handle, Internal, Kind, Picked, Scope, Shown, Showing, Told,
+    Drawn, Handle, Internal, Kind, Picked, Scope, Showing, Shown, Told,
 };
 use lattice_core::application::services::model_contract::{Contract, ContractId};
 use lattice_core::shared::error::{AppError, Result};
@@ -28,7 +28,8 @@ const MAP_FORM: &str = "Answer with an entries list: each entry names an entry i
 
 const MERGE_FORM: &str = "Answer with one list of bullets for each section: `highlights` (Entry Highlights), `practical_details` (Practical Details), `decisions_constraints` (Decisions & Constraints), `open_questions_risks` (Open Questions & Risks) and `evidence_notes` (Evidence Notes). Each bullet has `text` and `from`, the handles of the bullets it merges.";
 
-const BRIEF_FORM: &str = "Answer with a `brief` field that holds the final journal brief, written as markdown.";
+const BRIEF_FORM: &str =
+    "Answer with a `brief` field that holds the final journal brief, written as markdown.";
 
 /// The five sections of a chunk's notes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,7 +74,7 @@ impl Section {
 /// One bullet of a chunk's notes, as the app carries it between steps: the
 /// entries it is about, and the global citation ids of the sources behind it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(super) struct Note {
+pub(in crate::features::conversation) struct Note {
     pub(super) section: Section,
     pub(super) entries: Vec<usize>,
     pub(super) text: String,
@@ -290,7 +291,10 @@ impl Mapped {
         for (section, bullets) in &self.0 {
             for bullet in bullets {
                 let mut sources = Vec::new();
-                unique(&mut sources, bullet.sources.iter().map(|pick| pick.reference));
+                unique(
+                    &mut sources,
+                    bullet.sources.iter().map(|pick| pick.reference),
+                );
                 notes.push(Note {
                     section: *section,
                     entries: vec![*part.entry.value()],
@@ -730,7 +734,11 @@ pub(super) async fn write_brief(
         Settled::Answered(brief) => brief,
         Settled::Unanswered(why) => return Err(unanswered("brief", why)),
     };
-    let pieces = split(&scope, Markers::new().of::<NoteUnit>(Place::Inline), &brief.text);
+    let pieces = split(
+        &scope,
+        Markers::new().of::<NoteUnit>(Place::Inline),
+        &brief.text,
+    );
     Ok(numbered(&pieces, chunks))
 }
 

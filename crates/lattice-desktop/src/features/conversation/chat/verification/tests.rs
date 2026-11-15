@@ -215,7 +215,7 @@ async fn live_grounding_adversarial_regressions() {
         ("negation", "The design workspace does not retain hourly file versions for 14 days before expiration [s1].", ClaimVerdict::Contradicted, true),
         ("invented_citation", "The design workspace retains hourly file versions for 14 days before expiration [s99].", ClaimVerdict::Unsupported, false),
     ] {
-        let report = verifier.verify_text(answer, &[evidence.clone()]).await;
+        let report = verifier.verify_text(answer, std::slice::from_ref(&evidence)).await;
         println!("{name}: {}", report.metadata_json());
         assert_eq!(report.claims_evaluated, 1, "{name}");
         assert_eq!(report.claims[0].verdict, expected, "{name}");

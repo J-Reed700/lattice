@@ -173,28 +173,6 @@ use tools::*;
 use turn::run_turn;
 pub use turn::MessageAttachments;
 
-/// Runs a turn no window watches, such as a part of a journal synthesis: its
-/// stream goes nowhere and only its answer is used.
-pub(crate) async fn run_unwatched_turn(
-    container: &dyn ChatRuntime,
-    conversation_id: String,
-    message: String,
-    tool_preferences: ToolPreferences,
-) -> Result<ChatResponse> {
-    run_turn(
-        container,
-        Some(conversation_id),
-        message,
-        Some(tool_preferences),
-        None,
-        None,
-        MessageAttachments::default(),
-        None,
-        Arc::new(|_| Ok(())),
-    )
-    .await
-}
-
 fn elapsed_ms(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
 }

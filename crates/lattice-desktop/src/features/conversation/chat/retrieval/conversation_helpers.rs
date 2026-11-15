@@ -292,7 +292,6 @@ pub(super) async fn load_recent_document_metadata(
         .await
         .ok()??;
     Some(super::RecentDocumentMetadata {
-        document_id,
         title: doc.file_name().to_string(),
     })
 }

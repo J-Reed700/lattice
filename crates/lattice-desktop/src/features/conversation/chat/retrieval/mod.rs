@@ -489,7 +489,6 @@ pub(super) async fn record_tool_document_references(
 
 #[derive(Debug, Clone)]
 pub(super) struct RecentDocumentMetadata {
-    pub(super) document_id: String,
     pub(super) title: String,
 }
 
