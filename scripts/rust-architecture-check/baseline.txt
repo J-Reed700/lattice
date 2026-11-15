@@ -86,7 +86,6 @@ old-model-call features/conversation/chat/tool_loop/reading.rs legacy 11
 old-model-call features/conversation/chat/tool_loop/research_notes.rs legacy 3
 old-model-call features/conversation/chat/verification/judge.rs legacy 2
 old-model-call features/conversation/handoff.rs legacy 2
-old-model-call features/conversation/memory/mod.rs legacy 2
 old-model-call features/search/hyde/hyde_generator.rs legacy 2
 old-model-call features/summaries/use_cases/generate_summaries.rs legacy 2
 old-model-call lattice-learning/drills/material/code/clean.rs legacy 2

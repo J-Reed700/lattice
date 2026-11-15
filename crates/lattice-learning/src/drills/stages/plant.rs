@@ -4,7 +4,7 @@
 //! evidence it breaks, and is of a pattern of the list or of another pattern of the catalogue.
 
 use super::ask::{describe_fault, normalise};
-use super::code_units::{describe_edit, placed, CodeFile, CodeUnits, Weight};
+use super::code_units::{describe_edit, placed, CodeFile, Weight};
 use super::outputs::{Baseline, Mutation, Planted, Trail, Verification};
 use super::DrillBuild;
 use crate::drills::budget;

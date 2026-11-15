@@ -4,7 +4,6 @@
 
 use super::{judge, unproven, ProofCase, ProofStrategy, ProofVerdict, Tools};
 use crate::drills::budget;
-use crate::drills::build::ask::describe_fault;
 use crate::drills::build::code_units::{describe_edit, placed, CodeFile, CodeUnits, Weight};
 use crate::drills::build::{Mutation, Trail, Verification};
 use crate::drills::runner::RunOutcome;
