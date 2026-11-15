@@ -7,8 +7,6 @@
 
 #![cfg(test)]
 
-use sqlx::SqlitePool;
-
 use super::commands::build_create_record;
 use super::dto::CreatePassageReferenceRequestDto;
 use super::repository::PassageReferenceRepository;
@@ -17,8 +15,9 @@ use lattice_core::shared::error::AppError;
 use lattice_core::shared::persistence::{Database, Page};
 
 async fn fresh_repository() -> PassageReferenceRepository {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+        .await
+        .unwrap();
     PassageReferenceRepository::new(Database::new(pool))
 }
 

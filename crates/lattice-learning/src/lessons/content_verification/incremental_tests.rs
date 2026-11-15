@@ -206,16 +206,14 @@ async fn a_receipt_is_found_only_for_the_statement_on_the_quote_it_was_saved_for
 async fn research_reopens_one_of_170_checks_and_resume_reuses_all_completed_decisions() -> Result<()>
 {
     let dir = tempfile::tempdir()?;
-    let options = crate::test_support::file_options(dir.path().join("incremental.db"));
+    let path = dir.path().join("incremental.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
+    let options = crate::test_support::file_options(path);
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options.clone())
         .await?;
     let db = Database::new(pool.clone());
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
     let (repo, job, lesson) = batch_scheduler_tests::setup(&db).await?;
     let mut sources = references(170);
     let model = IncrementalModel::default();

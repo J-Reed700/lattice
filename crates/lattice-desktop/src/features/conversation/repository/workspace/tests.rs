@@ -1,8 +1,8 @@
 use super::*;
 use crate::features::conversation::space_repository::ConversationSpaceRepository;
 use crate::infrastructure::persistence::database::initialize_database;
-use crate::tests::sqlite::file_options;
 use lattice_core::shared::persistence::Database;
+use lattice_core::shared::testing::sqlite::file_options;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 

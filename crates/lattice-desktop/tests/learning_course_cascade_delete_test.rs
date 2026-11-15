@@ -37,15 +37,7 @@ enum Schema {
 #[tokio::test]
 async fn test_course_cascade_deletion_with_all_assessment_and_revisions_data(
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let options = SqliteConnectOptions::from_str("sqlite::memory:")?.pragma("foreign_keys", "ON");
-
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(options)
-        .await?;
-
-    // Run all migrations including the cascade fix migration
-    sqlx::migrate!("./migrations").run(&pool).await?;
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory().await?;
 
     // Ensure foreign keys are active
     let fk_status: i64 = sqlx::query_scalar("PRAGMA foreign_keys;")

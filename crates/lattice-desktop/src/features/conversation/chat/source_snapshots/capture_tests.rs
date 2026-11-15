@@ -144,10 +144,17 @@ async fn save_answer_citing_an_unread_page(
 }
 
 /// One migrated database per test, shared by the service and the archive.
-async fn migrated_pool() -> sqlx::SqlitePool {
-    let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    pool
+async fn migrated_pool() -> (tempfile::TempDir, sqlx::SqlitePool) {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("lattice.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path)
+        .await
+        .unwrap();
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(lattice_core::shared::testing::sqlite::file_options(&path))
+        .await
+        .unwrap();
+    (directory, pool)
 }
 
 async fn metadata_of(pool: &sqlx::SqlitePool, id: &str) -> serde_json::Value {
@@ -204,7 +211,7 @@ async fn the_turn_returns_while_a_cited_page_is_still_being_read() {
         })),
         ..Default::default()
     };
-    let pool = migrated_pool().await;
+    let (_directory, pool) = migrated_pool().await;
     let db = Database::new(pool.clone());
     let saved = save_answer_citing_an_unread_page(&runtime, pool, &db).await;
     assert_eq!(
@@ -243,7 +250,7 @@ async fn the_turn_returns_while_a_cited_page_is_still_being_read() {
 async fn a_captured_page_is_archived_attached_and_announced() {
     // The archive and the conversation share one database, so the page is
     // stored beside the conversation it was cited in.
-    let pool = migrated_pool().await;
+    let (_directory, pool) = migrated_pool().await;
     let db = Database::new(pool.clone());
     let runtime = FakeRuntime {
         page_reader: Some(Arc::new(ReadyReader)),

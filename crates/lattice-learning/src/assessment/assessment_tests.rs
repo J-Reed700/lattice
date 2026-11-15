@@ -543,15 +543,6 @@ fn the_graders_reasons_are_shown_whole_however_long() {
     assert_eq!(rationale.summary, summary.trim());
 }
 
-async fn migrated() -> Result<SqlitePool> {
-    let pool = crate::tests::pool().await?;
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    Ok(pool)
-}
-
 const WORDS: [&str; 24] = [
     "membrane",
     "enzyme",
@@ -721,7 +712,7 @@ pub(crate) async fn take_quiz(
 
 #[tokio::test]
 async fn a_quiz_that_changed_since_it_was_loaded_is_reported_as_a_conflict() -> Result<()> {
-    let pool = migrated().await?;
+    let pool = crate::tests::pool().await?;
     let database = Database::new(pool);
     let program = crate::tests::fixture();
     let programs = LearningRepository::new(database.clone());
@@ -791,7 +782,7 @@ async fn a_quiz_that_changed_since_it_was_loaded_is_reported_as_a_conflict() -> 
 
 #[tokio::test]
 async fn a_lesson_quiz_grades_keyed_answers_at_once_and_waits_for_written_ones() -> Result<()> {
-    let pool = migrated().await?;
+    let pool = crate::tests::pool().await?;
     let database = Database::new(pool);
     let program = crate::tests::fixture();
     let programs = LearningRepository::new(database.clone());
@@ -991,7 +982,7 @@ async fn a_lesson_quiz_grades_keyed_answers_at_once_and_waits_for_written_ones()
 
 #[tokio::test]
 async fn a_long_grade_summary_is_kept_whole_in_the_evidence_ledger() -> Result<()> {
-    let pool = migrated().await?;
+    let pool = crate::tests::pool().await?;
     let database = Database::new(pool.clone());
     let program = crate::tests::fixture();
     let programs = LearningRepository::new(database.clone());
@@ -1210,7 +1201,7 @@ async fn graded_quiz(database: &Database) -> Result<GradedQuiz> {
 #[tokio::test]
 async fn a_learners_long_note_is_held_to_the_chat_limit() -> Result<()> {
     use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
-    let pool = migrated().await?;
+    let pool = crate::tests::pool().await?;
     let database = Database::new(pool);
     let quiz = graded_quiz(&database).await?;
     let repo = LearningAssessmentRepository::new(database.clone());
@@ -1377,7 +1368,7 @@ async fn answer_and_submit(
 
 #[tokio::test]
 async fn a_changed_right_answer_does_not_regrade_an_open_quiz() -> Result<()> {
-    let pool = migrated().await?;
+    let pool = crate::tests::pool().await?;
     let database = Database::new(pool.clone());
     let (program_id, scope) = lesson_program(&database).await?;
     let repo = LearningAssessmentRepository::new(database.clone());
@@ -1395,7 +1386,7 @@ async fn a_changed_right_answer_does_not_regrade_an_open_quiz() -> Result<()> {
 
 #[tokio::test]
 async fn a_removed_choice_does_not_break_or_regrade_an_open_quiz() -> Result<()> {
-    let pool = migrated().await?;
+    let pool = crate::tests::pool().await?;
     let database = Database::new(pool.clone());
     let (program_id, scope) = lesson_program(&database).await?;
     let repo = LearningAssessmentRepository::new(database.clone());
@@ -1417,7 +1408,7 @@ async fn a_removed_choice_does_not_break_or_regrade_an_open_quiz() -> Result<()>
 
 #[tokio::test]
 async fn a_quiz_drawn_after_a_change_uses_the_changed_question() -> Result<()> {
-    let pool = migrated().await?;
+    let pool = crate::tests::pool().await?;
     let database = Database::new(pool.clone());
     let (program_id, scope) = lesson_program(&database).await?;
     let repo = LearningAssessmentRepository::new(database.clone());
@@ -1463,7 +1454,7 @@ fn reveal_of(form: &LearningAssessmentFormDto, item_id: &str) -> LearningKeyReve
 
 #[tokio::test]
 async fn a_submitted_quiz_reveals_the_explanation_it_was_drawn_with() -> Result<()> {
-    let pool = migrated().await?;
+    let pool = crate::tests::pool().await?;
     let database = Database::new(pool.clone());
     let (program_id, scope) = lesson_program(&database).await?;
     let repo = LearningAssessmentRepository::new(database.clone());
@@ -1485,7 +1476,7 @@ async fn a_submitted_quiz_reveals_the_explanation_it_was_drawn_with() -> Result<
 
 #[tokio::test]
 async fn a_submitted_quiz_reveals_the_wrong_choice_reasons_it_was_drawn_with() -> Result<()> {
-    let pool = migrated().await?;
+    let pool = crate::tests::pool().await?;
     let database = Database::new(pool.clone());
     let (program_id, scope) = lesson_program(&database).await?;
     let repo = LearningAssessmentRepository::new(database.clone());
@@ -1587,7 +1578,7 @@ async fn placed_lesson(database: &Database) -> Result<(String, String)> {
 
 #[tokio::test]
 async fn a_lesson_question_the_bank_rejects_keeps_its_place_as_dropped() -> Result<()> {
-    let pool = migrated().await?;
+    let pool = crate::tests::pool().await?;
     let database = Database::new(pool.clone());
     let (_, lesson_id) = placed_lesson(&database).await?;
     let rows: Vec<(String, String)> = sqlx::query_as(
@@ -1607,7 +1598,7 @@ async fn a_lesson_question_the_bank_rejects_keeps_its_place_as_dropped() -> Resu
 
 #[tokio::test]
 async fn a_quiz_never_draws_the_dropped_lesson_question() -> Result<()> {
-    let pool = migrated().await?;
+    let pool = crate::tests::pool().await?;
     let database = Database::new(pool.clone());
     let (program_id, lesson_id) = placed_lesson(&database).await?;
     let dropped: Option<String> = sqlx::query_scalar(
@@ -1704,7 +1695,7 @@ async fn drawn_ids(pool: &SqlitePool, program_id: &str) -> Result<Vec<String>> {
 
 #[tokio::test]
 async fn a_lesson_question_with_a_waiting_finding_is_not_drawn() -> Result<()> {
-    let pool = migrated().await?;
+    let pool = crate::tests::pool().await?;
     let database = Database::new(pool.clone());
     let (program_id, lesson_id, own) = three_own_questions(&pool, &database).await?;
     add_finding(&pool, &lesson_id, "question", 1, "waiting", None).await?;
@@ -1723,7 +1714,7 @@ async fn a_lesson_question_with_a_waiting_finding_is_not_drawn() -> Result<()> {
 
 #[tokio::test]
 async fn a_kept_finding_leaves_the_question_drawn() -> Result<()> {
-    let pool = migrated().await?;
+    let pool = crate::tests::pool().await?;
     let database = Database::new(pool.clone());
     let (program_id, lesson_id, own) = three_own_questions(&pool, &database).await?;
     add_finding(&pool, &lesson_id, "question", 1, "kept", None).await?;
@@ -1733,7 +1724,7 @@ async fn a_kept_finding_leaves_the_question_drawn() -> Result<()> {
 
 #[tokio::test]
 async fn an_edited_question_with_a_waiting_finding_is_drawn() -> Result<()> {
-    let pool = migrated().await?;
+    let pool = crate::tests::pool().await?;
     let database = Database::new(pool.clone());
     let (program_id, lesson_id, own) = three_own_questions(&pool, &database).await?;
     add_finding(&pool, &lesson_id, "question", 1, "waiting", Some(5)).await?;
@@ -1743,7 +1734,7 @@ async fn an_edited_question_with_a_waiting_finding_is_drawn() -> Result<()> {
 
 #[tokio::test]
 async fn a_waiting_section_finding_leaves_the_question_drawn() -> Result<()> {
-    let pool = migrated().await?;
+    let pool = crate::tests::pool().await?;
     let database = Database::new(pool.clone());
     let (program_id, lesson_id, own) = three_own_questions(&pool, &database).await?;
     add_finding(&pool, &lesson_id, "section", 1, "waiting", None).await?;
@@ -1753,7 +1744,7 @@ async fn a_waiting_section_finding_leaves_the_question_drawn() -> Result<()> {
 
 #[tokio::test]
 async fn the_finding_index_counts_a_dropped_question() -> Result<()> {
-    let pool = migrated().await?;
+    let pool = crate::tests::pool().await?;
     let database = Database::new(pool.clone());
     let (program_id, lesson_id, own) = three_own_questions(&pool, &database).await?;
     sqlx::query("UPDATE learning_assessment_candidates SET review_status='dropped' WHERE id=?")
@@ -1819,7 +1810,7 @@ fn rows_of(prompts: &[&str], statuses: &[&str]) -> Vec<(String, String)> {
 
 #[tokio::test]
 async fn near_duplicate_lesson_questions_all_stay_in_the_bank_in_order() -> Result<()> {
-    let pool = migrated().await?;
+    let pool = crate::tests::pool().await?;
     let database = Database::new(pool.clone());
     let program = accepted_program(&database).await?;
     let lesson_id = program.modules[0].lessons[0].id.clone();
@@ -1858,7 +1849,7 @@ async fn near_duplicate_lesson_questions_all_stay_in_the_bank_in_order() -> Resu
 
 #[tokio::test]
 async fn bank_items_sharing_most_of_their_words_are_both_stored() -> Result<()> {
-    let pool = migrated().await?;
+    let pool = crate::tests::pool().await?;
     let database = Database::new(pool.clone());
     let program = accepted_program(&database).await?;
     let mut setup = database.begin_write().await?;
@@ -1903,7 +1894,7 @@ async fn bank_items_sharing_most_of_their_words_are_both_stored() -> Result<()> 
 
 #[tokio::test]
 async fn a_lesson_question_repeated_from_the_program_stays_in_its_place_as_dropped() -> Result<()> {
-    let pool = migrated().await?;
+    let pool = crate::tests::pool().await?;
     let database = Database::new(pool.clone());
     let program = accepted_program(&database).await?;
     let program_id = program.summary.id.clone();

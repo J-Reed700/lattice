@@ -76,12 +76,9 @@ mod tests {
 
     #[tokio::test]
     async fn orphan_cleanup_keeps_every_directory_no_record_names() {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
             .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         let dir = tempfile::tempdir().unwrap();
         for id in ["pending", "installed", "orphan"] {
             std::fs::create_dir(dir.path().join(id)).unwrap();
@@ -137,12 +134,9 @@ mod tests {
 
     #[tokio::test]
     async fn orphan_cleanup_keeps_every_model_while_the_gate_is_shut() {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
             .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         let dir = tempfile::tempdir().unwrap();
         let orphan = dir.path().join("orphan");
         std::fs::create_dir(&orphan).unwrap();

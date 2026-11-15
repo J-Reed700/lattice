@@ -488,11 +488,11 @@ mod tests {
     use super::*;
     use crate::features::conversation::repository::ConversationRepository;
     use lattice_core::shared::persistence::Database;
-    use sqlx::sqlite::SqlitePoolOptions;
 
     async fn thread() -> (ConversationRepository, String) {
-        let pool = SqlitePoolOptions::new().connect(":memory:").await.unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+            .await
+            .unwrap();
         let repo = ConversationRepository::new(Database::new(pool));
         let id = repo.create("Thread", None).await.unwrap().id.to_string();
         (repo, id)

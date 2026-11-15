@@ -37,18 +37,16 @@ const PLAN: &str = r#"{
 
 async fn open() -> (tempfile::TempDir, SqlitePool, Database) {
     let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("t.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path)
+        .await
+        .unwrap();
     let pool = SqlitePoolOptions::new()
         .max_connections(8)
-        .connect_with(
-            crate::test_support::file_options(dir.path().join("t.db")).foreign_keys(false),
-        )
+        .connect_with(crate::test_support::file_options(path).foreign_keys(false))
         .await
         .unwrap();
     let db = Database::new(pool.clone());
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .unwrap();
     sqlx::query("INSERT INTO learning_practical_activities(id,program_id,lesson_id,kind,title,brief,status,practice_mode,allowed_aids_json,outcome_ids_json,source_version_ids_json,rubric_json,runtime_kind,generator_model,created_at,updated_at) VALUES('ready','program','lesson','interview','Acme loop','','ready','practice','[]','[]','[]','[]','none','model',0,0)")
         .execute(&pool)
         .await

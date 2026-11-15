@@ -1,6 +1,5 @@
 //! Shared fixtures for the conversation repository tests.
 
-use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 
 mod conversations;
@@ -15,14 +14,15 @@ mod pruning;
 mod tangents;
 mod web_sources;
 
+/// A database at the real migrated schema, not a hand-maintained copy of it, so
+/// the tests cannot pass against a schema production does not have.
 async fn create_test_pool() -> SqlitePool {
-    SqlitePoolOptions::new().connect(":memory:").await.unwrap()
+    lattice_core::shared::testing::sqlite::migrated_in_memory()
+        .await
+        .unwrap()
 }
 
-/// Applies the real migration, not a hand-maintained copy of it, so the tests
-/// cannot pass against a schema production does not have.
 async fn setup_schema(pool: &SqlitePool) {
-    sqlx::migrate!("./migrations").run(pool).await.unwrap();
     // The memory-invalidation triggers depend on FK cascade behaviour, and the
     // conversation/message relationship is what several of these tests assert.
     sqlx::query("PRAGMA foreign_keys = ON")

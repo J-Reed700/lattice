@@ -97,9 +97,9 @@ impl DocumentContentPreviewPort for StubPreview {
 }
 
 async fn fresh_sqlite_pool() -> SqlitePool {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    pool
+    lattice_core::shared::testing::sqlite::migrated_in_memory()
+        .await
+        .unwrap()
 }
 
 fn make_document(id: &str, file_name: &str) -> Document {

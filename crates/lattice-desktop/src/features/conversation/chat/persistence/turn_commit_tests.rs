@@ -11,8 +11,9 @@ async fn service_with_pending_question() -> (
     String,
     String,
 ) {
-    let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+        .await
+        .unwrap();
     let service: Arc<dyn ConversationServiceTrait> = Arc::new(ConversationService::new(Arc::new(
         ConversationRepository::new(Database::new(pool.clone())),
     )));

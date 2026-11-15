@@ -145,7 +145,8 @@ mod tests {
     async fn outbox_replays_after_reopen_and_rolls_back_with_the_note() {
         use sqlx::sqlite::SqlitePoolOptions;
         let directory = tempfile::tempdir().unwrap();
-        let options = crate::tests::sqlite::file_options(directory.path().join("notes.db"));
+        let options =
+            lattice_core::shared::testing::sqlite::file_options(directory.path().join("notes.db"));
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(options.clone())

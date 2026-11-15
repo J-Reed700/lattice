@@ -34,16 +34,16 @@ fn deck() -> StudyDeckDto {
 
 async fn open() -> (tempfile::TempDir, SqlitePool, Database, StudyDeckDto) {
     let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("t.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path)
+        .await
+        .unwrap();
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
-        .connect_with(crate::test_support::file_options(dir.path().join("t.db")))
+        .connect_with(crate::test_support::file_options(path))
         .await
         .unwrap();
     let db = Database::new(pool.clone());
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .unwrap();
     let deck = deck();
     StudyRepository::new(db.clone()).save(&deck).await.unwrap();
     (dir, pool, db, deck)

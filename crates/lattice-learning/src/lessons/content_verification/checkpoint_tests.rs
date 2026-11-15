@@ -14,16 +14,14 @@ use lattice_core::shared::runtime::jobs::{JobStore, RecoveryPolicy};
 #[tokio::test]
 async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let options = crate::test_support::file_options(directory.path().join("sections.sqlite"));
+    let path = directory.path().join("sections.sqlite");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
+    let options = crate::test_support::file_options(path);
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())
         .await?;
     let db = Database::new(pool.clone());
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
     let programs = LearningRepository::new(db.clone());
     let program = crate::tests::fixture();
     programs.create(&program).await?;
@@ -214,16 +212,14 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
 async fn interrupted_coverage_retains_omissions_without_reusing_them_after_correction() -> Result<()>
 {
     let directory = tempfile::tempdir()?;
-    let options = crate::test_support::file_options(directory.path().join("coverage.sqlite"));
+    let path = directory.path().join("coverage.sqlite");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
+    let options = crate::test_support::file_options(path);
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())
         .await?;
     let db = Database::new(pool.clone());
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
     let programs = LearningRepository::new(db.clone());
     let program = crate::tests::fixture();
     programs.create(&program).await?;
@@ -342,16 +338,14 @@ async fn interrupted_coverage_retains_omissions_without_reusing_them_after_corre
 async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_evidence(
 ) -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let options = crate::test_support::file_options(directory.path().join("checkpoints.sqlite"));
+    let path = directory.path().join("checkpoints.sqlite");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
+    let options = crate::test_support::file_options(path);
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())
         .await?;
     let db = Database::new(pool.clone());
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
     let programs = LearningRepository::new(db.clone());
     let program = crate::tests::fixture();
     programs.create(&program).await?;

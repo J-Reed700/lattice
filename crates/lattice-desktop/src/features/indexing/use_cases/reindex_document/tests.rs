@@ -170,12 +170,9 @@ impl EmbeddingPort for MockEmbedder {
 }
 
 async fn pool_with(document: Option<&Document>) -> (SqlitePool, Database) {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     let db = Database::new(pool.clone());
     if let Some(document) = document {
         let mut tx = db.begin_write().await.unwrap();

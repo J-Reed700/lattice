@@ -55,10 +55,6 @@ async fn file_pool(path: std::path::PathBuf) -> Result<SqlitePool> {
         .max_connections(1)
         .connect_with(options)
         .await?;
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
     Ok(pool)
 }
 
@@ -94,6 +90,7 @@ fn save_request(
 async fn attempt_session_and_artifact_survive_file_backed_reopen() -> Result<()> {
     let dir = tempfile::tempdir().map_err(|e| AppError::Database(e.to_string()))?;
     let path = dir.path().join("practice.sqlite");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
     let pool = file_pool(path.clone()).await?;
     let db = Database::new(pool.clone());
     let (p, lesson) = setup(&pool, &db).await?;

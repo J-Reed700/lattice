@@ -924,15 +924,13 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
 }
 
 async fn shared_file_pool(directory: &std::path::Path) -> Result<SqlitePool> {
-    let options = crate::test_support::file_options(directory.join("plan.sqlite"));
+    let path = directory.join("plan.sqlite");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
+    let options = crate::test_support::file_options(path);
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options)
         .await?;
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .unwrap();
     Ok(pool)
 }
 

@@ -280,7 +280,6 @@ mod tests {
     use lattice_core::application::contracts::web::CleanArticle;
     use lattice_core::application::ports::DocumentRepositoryPort;
     use parking_lot::Mutex;
-    use sqlx::sqlite::SqlitePoolOptions;
     use sqlx::SqlitePool;
     use std::collections::HashSet;
     use std::path::PathBuf;
@@ -358,12 +357,9 @@ mod tests {
         async fn new() -> Self {
             let temp = TempDir::new().unwrap();
             let library_root = temp.path().join("files");
-            let pool = SqlitePoolOptions::new()
-                .max_connections(1)
-                .connect("sqlite::memory:")
+            let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
                 .await
                 .unwrap();
-            sqlx::migrate!("./migrations").run(&pool).await.unwrap();
             let database = Database::new(pool.clone());
 
             Self {
