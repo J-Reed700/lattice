@@ -199,6 +199,33 @@ fn a_sentence_is_replaced_where_it_was() {
     assert!(units.changed());
 }
 
+/// `SENTENCES` with its sentence at `index` replaced by `with`.
+fn replaced(index: usize, with: &str) -> String {
+    let mut units = Units::of(SENTENCES, Grain::Sentence);
+    let (_, u) = shown_rows(&units);
+    let mut change = nothing();
+    change.replace.push((u[index].clone(), with.to_owned()));
+    applied(&mut units, change);
+    units.text()
+}
+
+#[test]
+fn a_replacement_written_as_its_row_is_the_text_after_its_label() {
+    assert_eq!(
+        replaced(1, "[u2] Circles are round."),
+        replaced(1, "Circles are round.")
+    );
+    assert_eq!(
+        replaced(1, "\n\n[u2] Circles are round."),
+        replaced(1, "\n\nCircles are round.")
+    );
+}
+
+#[test]
+fn a_replacement_that_starts_with_another_units_label_is_left_as_written() {
+    assert!(replaced(1, "[u1] Circles are round.").contains("[u1] Circles are round."));
+}
+
 #[test]
 fn a_sentence_is_inserted_after_its_anchor() {
     let mut units = Units::of(SENTENCES, Grain::Sentence);

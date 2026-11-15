@@ -240,6 +240,16 @@ fn the_judge_is_not_asked_for_a_verdict_beside_the_parts() {
     assert!(!BRIDGE_SYSTEM.contains("\"verdict\""));
 }
 
+#[test]
+fn the_judge_is_told_what_its_kinds_decide() {
+    assert!(
+        BRIDGE_SYSTEM.ends_with(
+            " What the kinds decide: one contradicted part makes the whole claim count as contradicted; otherwise one specific_missing part makes it count as unsupported; otherwise it counts as supported."
+        ),
+        "{BRIDGE_SYSTEM}"
+    );
+}
+
 #[tokio::test]
 async fn a_reply_is_read_where_it_is_unambiguous() {
     let llm = Scripted::new(vec![Reply::Text(
