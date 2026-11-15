@@ -1221,6 +1221,8 @@ fn a_pointer_that_names_nothing_gives_rows_with_no_field() {
 fn the_edits_words_are_the_ones_the_teaching_repair_sends() {
     use super::rows::words::{citing, KEYS, NO_CITATIONS, SENTENCES};
     assert!(SENTENCES.starts_with("candidate shows the material with a label"));
+    assert!(SENTENCES.contains("each of its options, each option's reason and its explanation"));
+    assert!(SENTENCES.contains("A short text such as an option is one labelled sentence"));
     assert!(KEYS.starts_with("A question's answer key"));
     assert!(NO_CITATIONS.starts_with("This material takes no citations"));
     assert!(citing().starts_with("A sentence that states a figure"));

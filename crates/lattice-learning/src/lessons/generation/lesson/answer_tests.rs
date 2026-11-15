@@ -83,17 +83,21 @@ fn handles(task: &Value, source: usize) -> Vec<String> {
         .collect()
 }
 
-fn part(title: &str) -> Value {
-    json!({"title": title, "body": "Its body.", "cites": [], "citations": []})
+fn part(title: &str, cites: &[String]) -> Value {
+    json!({"title": title, "body": "Its body.", "cites": cites, "citations": []})
 }
 
-fn practice(title: &str) -> Value {
+fn practice(title: &str, cites: &[String]) -> Value {
     json!({"title": title, "body": "Its body.",
         "rubric": [{"title": "Clear", "description": "States it.", "dimension": "recall"}],
-        "cites": [], "citations": []})
+        "cites": cites, "citations": []})
 }
 
 fn written(_: &str, user: &str) -> String {
+    written_answer(user).to_string()
+}
+
+fn written_answer(user: &str) -> Value {
     let task: Value = serde_json::from_str(user).unwrap();
     let gate = handles(&task, 0);
     let (first, second) = (gate[0].clone(), gate[1].clone());
@@ -103,17 +107,17 @@ fn written(_: &str, user: &str) -> String {
             {"sections": [
                 {"kind": "explanation", "title": "Gates", "body": "The gate opens early.",
                  "cites": [first], "citations": [{"sentence": "The gate opens early.", "cites": [first, second]}]},
-                {"kind": "worked_example", "title": "Case", "body": "Work a case.", "cites": [], "citations": []}
+                {"kind": "worked_example", "title": "Case", "body": "Work a case.", "cites": [second], "citations": []}
             ]},
             {"sections": [
                 {"kind": "explanation", "title": "Kilns", "body": "Bowls fire.",
                  "cites": ["zz9", kiln], "citations": [{"sentence": "Bowls fire once shut.", "cites": ["q99"]}]}
             ]}
         ],
-        "guidedPractice": practice("Try"),
-        "independentPractice": practice("Make"),
-        "reflection": part("Reflect"),
-        "recap": part("Recap"),
+        "guidedPractice": practice("Try", &[first.clone()]),
+        "independentPractice": practice("Make", &[first.clone()]),
+        "reflection": part("Reflect", &[kiln.clone()]),
+        "recap": part("Recap", &[kiln.clone()]),
         "questions": [{
             "kind": "quiz", "prompt": "When does the gate open?", "right": "Early",
             "wrong": [
@@ -124,7 +128,6 @@ fn written(_: &str, user: &str) -> String {
             "explanation": "It opens early.", "cites": [kiln], "citations": []
         }]
     })
-    .to_string()
 }
 
 #[test]
@@ -241,8 +244,8 @@ async fn the_answer_becomes_the_draft_later_stages_read() {
         json!({"sentence": "The gate opens early.", "sourceIndex": 0, "quote": GATE})
     );
     assert_eq!(cited[1]["quote"], CRANE);
-    assert_eq!(blocks[1]["sourceIndex"], Value::Null);
-    assert_eq!(blocks[1]["quote"], "");
+    assert_eq!(blocks[1]["sourceIndex"], 0);
+    assert_eq!(blocks[1]["quote"], CRANE);
     assert_eq!(blocks[2]["sourceIndex"], 1);
     assert_eq!(blocks[2]["quote"], KILN);
     assert_eq!(blocks[2]["citations"], json!([]));
@@ -394,4 +397,214 @@ fn the_stored_quote_of_a_cite_is_the_sentences_exact_words() {
 
     assert_eq!(part["sourceIndex"], 0);
     assert_eq!(part["quote"], CRANE);
+}
+
+async fn schema_for(held: &[LearningSourceDto]) -> Value {
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let kept = seen.clone();
+    let model = ScriptedModel::new().on_request::<LessonWriter>(move |sent, _| {
+        if let Some(schema) = sent.request.schema() {
+            *kept.lock().unwrap() = Some(schema.as_json().clone());
+        }
+        reply("The lesson is planned.".to_owned())
+    });
+    let input = Input::of(&stored_prompt(), held).unwrap();
+    let _ = write(&model, &input, "Write it.").await;
+    let schema = seen.lock().unwrap().clone();
+    schema.unwrap()
+}
+
+/// The property names and the `minItems` of `cites` of every object of `schema` that has a `cites`.
+fn cite_fields(schema: &Value, out: &mut Vec<(Vec<String>, Option<u64>)>) {
+    match schema {
+        Value::Object(object) => {
+            if let Some(properties) = object.get("properties").and_then(Value::as_object) {
+                if let Some(cites) = properties.get("cites") {
+                    out.push((
+                        properties.keys().cloned().collect(),
+                        cites.get("minItems").and_then(Value::as_u64),
+                    ));
+                }
+            }
+            for value in object.values() {
+                cite_fields(value, out);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                cite_fields(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn cite_minimums(schema: &Value) -> Vec<(Vec<String>, Option<u64>)> {
+    let mut out = Vec::new();
+    cite_fields(schema, &mut out);
+    out
+}
+
+fn holds_name(keys: &[String], name: &str) -> bool {
+    keys.iter().any(|key| key == name)
+}
+
+#[tokio::test]
+async fn with_sources_each_part_must_cite_at_least_one_sentence() {
+    let found = cite_minimums(&schema_for(&sources()).await);
+
+    let parts: Vec<_> = found
+        .iter()
+        .filter(|(keys, _)| !holds_name(keys, "sentence"))
+        .collect();
+    let held = |name: &str| parts.iter().any(|(keys, _)| holds_name(keys, name));
+    assert!(held("kind") && held("rubric") && held("wrong"), "{found:?}");
+    assert!(
+        parts
+            .iter()
+            .any(|(keys, _)| keys.len() == 4 && !holds_name(keys, "kind")),
+        "{found:?}"
+    );
+    for (keys, least) in parts {
+        assert_eq!(*least, Some(1), "{keys:?}");
+    }
+    let entries: Vec<_> = found
+        .iter()
+        .filter(|(keys, _)| holds_name(keys, "sentence"))
+        .collect();
+    assert!(!entries.is_empty(), "{found:?}");
+    for (keys, least) in entries {
+        assert_eq!(*least, None, "{keys:?}");
+    }
+}
+
+#[tokio::test]
+async fn with_no_sources_no_part_must_cite() {
+    let found = cite_minimums(&schema_for(&[]).await);
+
+    assert!(!found.is_empty(), "{found:?}");
+    for (keys, least) in found {
+        assert_eq!(least, None, "{keys:?}");
+    }
+}
+
+#[tokio::test]
+async fn the_wrong_choices_are_asked_before_the_right_one() {
+    let found = cite_minimums(&schema_for(&sources()).await);
+
+    let (keys, _) = found
+        .iter()
+        .find(|(keys, _)| holds_name(keys, "wrong"))
+        .unwrap();
+    assert_eq!(
+        keys,
+        &[
+            "kind",
+            "prompt",
+            "wrong",
+            "right",
+            "explanation",
+            "cites",
+            "citations"
+        ]
+    );
+}
+
+fn uncited(user: &str) -> Value {
+    let mut answer = written_answer(user);
+    for section in answer["ideas"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .flat_map(|idea| idea["sections"].as_array_mut().unwrap())
+    {
+        section["cites"] = json!([]);
+    }
+    for key in [
+        "guidedPractice",
+        "independentPractice",
+        "reflection",
+        "recap",
+    ] {
+        answer[key]["cites"] = json!([]);
+    }
+    for question in answer["questions"].as_array_mut().unwrap() {
+        question["cites"] = json!([]);
+    }
+    answer
+}
+
+fn assert_refused_for_citing_nothing(written: Result<String>) {
+    let Err(error) = written else {
+        panic!("an answer with a part that cites nothing was read");
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("cites names none of the things shown: name at least one."),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn an_answer_with_an_uncited_section_is_not_read_when_sources_are_shown() {
+    let input = Input::of(&stored_prompt(), &sources()).unwrap();
+    let model = writing(|_, user| {
+        let mut answer = written_answer(user);
+        answer["ideas"][0]["sections"][0]["cites"] = json!([]);
+        answer.to_string()
+    });
+
+    assert_refused_for_citing_nothing(write(&model, &input, "Write it.").await);
+}
+
+#[tokio::test]
+async fn an_answer_with_an_uncited_question_is_not_read_when_sources_are_shown() {
+    let input = Input::of(&stored_prompt(), &sources()).unwrap();
+    let model = writing(|_, user| {
+        let mut answer = written_answer(user);
+        answer["questions"][0]["cites"] = json!([]);
+        answer.to_string()
+    });
+
+    assert_refused_for_citing_nothing(write(&model, &input, "Write it.").await);
+}
+
+#[tokio::test]
+async fn an_answer_with_an_uncited_closing_section_is_not_read_when_sources_are_shown() {
+    for key in [
+        "guidedPractice",
+        "independentPractice",
+        "reflection",
+        "recap",
+    ] {
+        let input = Input::of(&stored_prompt(), &sources()).unwrap();
+        let model = writing(move |_, user| {
+            let mut answer = written_answer(user);
+            answer[key]["cites"] = json!([]);
+            answer.to_string()
+        });
+
+        assert_refused_for_citing_nothing(write(&model, &input, "Write it.").await);
+    }
+}
+
+#[tokio::test]
+async fn an_answer_that_cites_nothing_is_read_when_no_sources_are_shown() {
+    let input = Input::of(&stored_prompt(), &[]).unwrap();
+    let (_, task) = request_of(&stored_prompt());
+    let answer = uncited(&task.to_string()).to_string();
+    let model = writing(move |_, _| answer.clone());
+
+    let stored: Value =
+        serde_json::from_str(&write(&model, &input, "Write it.").await.unwrap()).unwrap();
+
+    assert_eq!(stored["blocks"][0]["sourceIndex"], Value::Null);
+}
+
+#[test]
+fn the_form_asks_for_wrong_choices_first_and_for_a_citation_in_every_part() {
+    assert!(FORM.contains("the wrong choices in wrong (each with its option and its reason), then the right choice in right"));
+    assert!(FORM.contains("at least one whenever sources are shown, whatever its kind"));
+    assert!(!FORM.contains("the right choice in right, the other choices"));
 }

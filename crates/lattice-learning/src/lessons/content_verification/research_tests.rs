@@ -378,6 +378,50 @@ async fn a_blank_reason_is_corrected_for_its_result_alone() -> Result<()> {
 }
 
 #[tokio::test]
+async fn selected_results_come_in_the_order_the_model_marked_them() -> Result<()> {
+    let llm = selector(|_, _| {
+        json!({"marks":[
+            marked("r3", "The strongest reference."),
+            marked("r1", "A weaker reference.")
+        ]})
+    });
+
+    let selected = select_noted(&llm, "Pottery", "kiln firing", &[], kiln_guides(3)).await?;
+
+    assert_eq!(
+        urls(&selected),
+        ["https://example.org/kiln-2", "https://example.org/kiln-0"]
+    );
+    assert_eq!(selected[0].1, "The strongest reference.");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_result_marked_twice_alike_is_placed_where_it_was_first_marked() -> Result<()> {
+    let llm = selector(|_, _| {
+        json!({"marks":[
+            marked("r3", "The strongest reference."),
+            marked("r1", "A weaker reference."),
+            marked("r3", "The strongest reference.")
+        ]})
+    });
+
+    let selected = select_noted(&llm, "Pottery", "kiln firing", &[], kiln_guides(3)).await?;
+
+    assert_eq!(
+        urls(&selected),
+        ["https://example.org/kiln-2", "https://example.org/kiln-0"]
+    );
+    Ok(())
+}
+
+#[test]
+fn the_selector_is_told_to_select_in_preference_order() {
+    assert!(SELECT_SYSTEM
+        .contains("Select, in preference order, every result that is both directly relevant"));
+}
+
+#[tokio::test]
 async fn a_result_that_stays_unanswered_is_not_selected_and_spoils_no_other() -> Result<()> {
     let llm = selector(|_, nth| match nth {
         0 => json!({"marks":[
@@ -1544,6 +1588,80 @@ async fn a_round_fetches_the_selectors_first_choice_and_one_page_on_the_owners_s
             // A login page is never offered to the selector.
             let prompts = llm.prompts.lock().unwrap();
             assert!(prompts.iter().all(|prompt| !prompt.contains("Sign in")));
+            Ok(())
+        },
+    )
+    .await
+}
+
+#[tokio::test]
+async fn the_page_a_round_keeps_for_a_statement_is_the_one_the_selector_marked_first() -> Result<()>
+{
+    let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
+    let mut program = crate::tests::fixture();
+    program.summary.status = crate::dto::LearningProgramStatus::Active;
+    repo.create(&program).await?;
+    let sources = repo.verification_sources(&program.summary.id).await?;
+    let references = ReferenceCollection::lexical(&sources)?;
+    let pages = [
+        ("https://docs.example.org/guide", "Random assignment guide"),
+        (
+            "https://docs.example.org/reference",
+            "Random assignment reference",
+        ),
+        ("https://docs.example.org/notes", "Random assignment notes"),
+    ];
+    let web = serving(&pages);
+    for (index, (url, title)) in pages.iter().enumerate() {
+        web.0.set_url_content(
+            *url,
+            FetchUrlContentOutput {
+                url: (*url).into(),
+                title: Some((*title).into()),
+                content: format!("Page {index}. {CAPTURE}"),
+                content_truncated: false,
+                word_count: 170,
+                fetch_time_ms: 1.,
+                content_type: None,
+                from_cache: false,
+                read_via: Default::default(),
+            },
+        );
+    }
+    let llm = ScriptedModel {
+        outputs: Mutex::new(
+            [
+                crate::references::web_research::needs_answer(json!([
+                    {"gap":0,"query":"random assignment confounding","kind":"web"}
+                ]))
+                .to_string(),
+                selection(&[2, 0, 1]),
+            ]
+            .into(),
+        ),
+        prompts: Mutex::new(vec![]),
+    };
+    run(
+        db.clone(),
+        program.summary.id.clone(),
+        program.summary.goal.clone(),
+        Some(web),
+        async {
+            let outcome = expand(&llm, &references, &[gap()], &[], &ClaimChecks::default()).await?;
+            let Expansion::Saved(expanded, searched) = outcome else {
+                panic!("the page is a source");
+            };
+            assert_eq!(searched.sources_added.len(), 1);
+            assert!(expanded
+                .sources
+                .iter()
+                .any(|source| source.excerpt.contains("Page 2.")));
+            assert!(!expanded
+                .sources
+                .iter()
+                .any(|source| source.excerpt.contains("Page 0.")));
             Ok(())
         },
     )

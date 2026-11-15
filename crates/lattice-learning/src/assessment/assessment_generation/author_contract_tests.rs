@@ -219,20 +219,61 @@ fn a_quote_that_cites_no_shown_sentence_is_refused_and_the_item_is_told_so() {
 }
 
 #[test]
-fn a_quote_citing_two_passages_is_refused() {
+fn a_quote_citing_two_passages_is_built_from_both_in_cited_order() {
     let need = single_choice();
-    let first = passage("Firing", FIRING);
-    let second = passage("Glazing", GLAZING);
-    let raw = one_item(&[&first, &second], &kiln_choice(ASKED, &[0], &["u1", "u3"]));
-    let unbuilt = to_candidate(raw, &need, &[&first, &second]).unwrap_err();
-    assert!(
-        unbuilt
-            .faults
-            .iter()
-            .any(|fault| fault.contains("more than one passage")),
-        "{:?}",
-        unbuilt.faults
+    let first_id = uuid::Uuid::new_v4().to_string();
+    let second_id = uuid::Uuid::new_v4().to_string();
+    let mut first = passage("Firing", FIRING);
+    first.source_version_ids = vec![first_id.clone(), "not-an-id".into()];
+    let mut second = passage("Glazing", GLAZING);
+    second.source_version_ids = vec![second_id.clone(), first_id.clone()];
+    let raw = one_item(&[&first, &second], &kiln_choice(ASKED, &[0], &["u3", "u2"]));
+    let item = to_candidate(raw, &need, &[&first, &second]).unwrap();
+    assert_eq!(
+        item.source_quote,
+        format!("{GLAZING} A tray left inside past noon cracks along its base.")
     );
+    assert_eq!(item.candidate.source_version_ids, vec![second_id, first_id]);
+}
+
+#[test]
+fn a_quote_citing_a_second_passage_after_the_first_lists_both_ids_once_in_cited_order() {
+    let need = single_choice();
+    let first_id = uuid::Uuid::new_v4().to_string();
+    let second_id = uuid::Uuid::new_v4().to_string();
+    let mut first = passage("Firing", FIRING);
+    first.source_version_ids = vec![first_id.clone()];
+    let mut second = passage("Glazing", GLAZING);
+    second.source_version_ids = vec![second_id.clone()];
+    let raw = one_item(
+        &[&first, &second],
+        &kiln_choice(ASKED, &[0], &["u1", "u3", "u2"]),
+    );
+    let item = to_candidate(raw, &need, &[&first, &second]).unwrap();
+    assert_eq!(item.candidate.source_version_ids, vec![first_id, second_id]);
+    assert!(!item.source_quote.is_empty());
+}
+
+#[test]
+fn a_quote_citing_a_sentence_of_one_of_two_passages_keeps_only_that_passages_ids() {
+    let need = single_choice();
+    let first_id = uuid::Uuid::new_v4().to_string();
+    let second_id = uuid::Uuid::new_v4().to_string();
+    let mut first = passage("Firing", FIRING);
+    first.source_version_ids = vec![first_id.clone()];
+    let mut second = passage("Glazing", GLAZING);
+    second.source_version_ids = vec![second_id];
+    let raw = one_item(&[&first, &second], &kiln_choice(ASKED, &[0], &["u1", "u2"]));
+    let item = to_candidate(raw, &need, &[&first, &second]).unwrap();
+    assert_eq!(item.source_quote, FIRING);
+    assert_eq!(item.candidate.source_version_ids, vec![first_id]);
+}
+
+#[test]
+fn the_author_is_told_items_rest_on_sentences_of_the_passages_not_of_one_passage() {
+    let said = system();
+    assert!(said.contains("sentences of the passages"), "{said}");
+    assert!(!said.contains("one passage"), "{said}");
 }
 
 #[test]

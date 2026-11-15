@@ -3,6 +3,8 @@ use super::scripted::{answering, solved, solved_text};
 use super::*;
 use crate::lessons::course_generation_tests::RequestLog;
 use crate::lessons::structured_call::task_messages;
+use lattice_core::application::services::model_contract::shape::Pointers;
+use lattice_core::application::services::model_contract::test_support::samples::schema_of;
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use lattice_core::application::services::model_contract::test_support::ScriptedModel;
 
@@ -118,7 +120,7 @@ fn everything() -> ScriptedModel {
     });
     answering::<SolveOrder>(model, |task, _| {
         let options = &task["question"]["options"];
-        json!({"order": [options[1]["id"], options[0]["id"], options[2]["id"]]})
+        json!({"reason": WORKING, "order": [options[1]["id"], options[0]["id"], options[2]["id"]]})
     })
 }
 
@@ -185,6 +187,67 @@ fn the_ordering_solve_shows_what_the_model_is_told_and_nothing_internal() {
         marks.told("Stamp the parcel.".to_owned()),
     ];
     holds::<SolveOrder>(&questions(question), &marks);
+}
+
+#[test]
+fn the_ordering_solve_asks_for_its_reasoning_before_the_order() {
+    let mut marks = Marks::new();
+    let mut question = told(&mut marks, 5);
+    question.options = vec![
+        marks.told("Weigh the parcel.".to_owned()),
+        marks.told("Stamp the parcel.".to_owned()),
+    ];
+
+    let schema = schema_of::<SolveOrder>(&questions(question), Pointers::Enum).unwrap();
+    let schema = schema.as_json();
+
+    let properties: Vec<&str> = schema["properties"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(properties, ["reason", "order"], "{schema}");
+    assert_eq!(schema["required"], json!(["reason", "order"]), "{schema}");
+}
+
+#[test]
+fn the_ordering_instructions_say_the_reasoning_comes_first() {
+    assert!(ORDER_FORM.contains("reasoning first, in reason, then an order list"));
+}
+
+#[tokio::test]
+async fn an_ordering_solve_carries_its_reasoning_with_its_order() {
+    let model = everything();
+    let item = ordering();
+
+    let solutions = solve_items(&model, &[(&item, "Reference quote.")])
+        .await
+        .unwrap();
+
+    let solution = solutions[0].as_ref().unwrap();
+    assert_eq!(solution.reason, WORKING);
+    assert_eq!(
+        solution.answer,
+        Answer::Order(vec!["Stamp".into(), "Weigh".into(), "Post".into()])
+    );
+}
+
+#[tokio::test]
+async fn an_ordering_solve_with_an_empty_reason_is_asked_for_again() {
+    let model = answering::<SolveOrder>(ScriptedModel::new(), |task, nth| {
+        let options = &task["question"]["options"];
+        let reason = if nth == 0 { "  " } else { WORKING };
+        json!({"reason": reason, "order": [options[0]["id"], options[1]["id"], options[2]["id"]]})
+    });
+    let item = ordering();
+
+    let solutions = solve_items(&model, &[(&item, "Reference quote.")])
+        .await
+        .unwrap();
+
+    assert_eq!(solutions[0].as_ref().unwrap().reason, WORKING);
+    assert!(model.count::<SolveOrder>() >= 2);
 }
 
 #[tokio::test]
@@ -383,18 +446,18 @@ async fn a_solvers_reason_reaches_the_repair_whole() {
 }
 
 #[test]
-fn an_ordering_solve_with_no_reasoning_disputes_by_its_answer_alone() {
+fn an_ordering_dispute_carries_the_solvers_reasoning() {
     let item = ordering();
     let solution = Solution {
-        reason: String::new(),
+        reason: WORKING.into(),
         answer: Answer::Order(vec!["Stamp".into(), "Weigh".into(), "Post".into()]),
     };
 
     assert_eq!(
         compare(&item, &solution),
-        KeyVerdict::Disputed(
-            "An independent solution answered order [\"Stamp\", \"Weigh\", \"Post\"]".into()
-        )
+        KeyVerdict::Disputed(format!(
+            "An independent solution answered order [\"Stamp\", \"Weigh\", \"Post\"]: {WORKING}"
+        ))
     );
 }
 
