@@ -5,6 +5,7 @@ use lattice_core::application::services::model_contract::shape::{Authored, Each,
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Internal, Kind, Picked, Showing, Told,
 };
+use lattice_core::application::services::model_contract::units::{Grain, Texts, Unit};
 use lattice_core::application::services::model_contract::{Contract, ContractId};
 use lattice_core::shared::text::segmentation::{
     partition, Chars, Overflow, Plan, Prose, Rung, Strength,
@@ -24,23 +25,12 @@ impl Contract for InventoryExtraction {
     type Input = Input;
 }
 
-/// One sentence of a section, as the model points at it.
+/// One passage of a section: the field it is of, and its words.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Sentence {
-    id: String,
-    passage: Internal<usize>,
+pub(crate) struct Passage {
+    id: Internal<String>,
     field: Told<String>,
     text: Told<String>,
-}
-
-impl Kind for Sentence {
-    const PREFIX: &'static str = "u";
-    const DRAWN: Drawn = Drawn::Itself;
-    type Ref = String;
-
-    fn reference(&self) -> String {
-        self.id.clone()
-    }
 }
 
 /// Text of a section the model reads and locates no claim in.
@@ -59,7 +49,7 @@ pub(crate) struct Section {
     check_role: Option<Told<String>>,
     context: Vec<Part>,
     context_role: Option<Told<String>>,
-    sentences: Vec<Sentence>,
+    passages: Vec<Passage>,
 }
 
 impl Kind for Section {
@@ -79,34 +69,16 @@ fn told_text(value: &Value) -> Option<Told<String>> {
 impl Section {
     /// The section at `index`, from its input `unit`.
     fn of(index: usize, unit: &Value) -> Self {
-        let sentences = unit["passages"]
+        let passages = unit["passages"]
             .as_array()
             .into_iter()
             .flatten()
-            .enumerate()
-            .flat_map(|(place, passage)| {
-                let listed = claim_sentences::listed(passage);
-                let field = Told(
-                    listed
-                        .get("field")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned(),
-                );
-                listed
-                    .get("sentences")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|sentence| {
-                        Some(Sentence {
-                            id: sentence["id"].as_str()?.to_owned(),
-                            passage: Internal::of(place),
-                            field: field.clone(),
-                            text: told_text(&sentence["text"])?,
-                        })
-                    })
-                    .collect::<Vec<_>>()
+            .filter_map(|passage| {
+                Some(Passage {
+                    id: Internal::of(passage["id"].as_str()?.to_owned()),
+                    field: Told(passage["field"].as_str().unwrap_or_default().to_owned()),
+                    text: told_text(&passage["text"])?,
+                })
             })
             .collect();
         Self {
@@ -124,8 +96,22 @@ impl Section {
                 })
                 .collect(),
             context_role: told_text(&unit["contextRole"]),
-            sentences,
+            passages,
         }
+    }
+
+    /// The passages of the section as sentences, each text of the passage it is of.
+    fn texts(&self) -> Texts<&Passage> {
+        let mut texts = Texts::new();
+        for passage in &self.passages {
+            texts.push(
+                passage,
+                passage.id.value(),
+                &passage.text.0,
+                Grain::Sentence,
+            );
+        }
+        texts
     }
 }
 
@@ -138,18 +124,18 @@ pub(crate) struct Input {
 /// A claim of a section: the sentence that states it, and the claim in standalone words.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Located {
-    sentence: Picked<Sentence>,
+    sentence: Picked<Unit>,
     statement: String,
 }
 
 impl Authored for Located {
     fn form() -> Form {
-        Form::new().own::<Sentence>("sentenceId").text("statement")
+        Form::new().own::<Unit>("sentenceId").text("statement")
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
         Some(Self {
-            sentence: fields.own::<Sentence>("sentenceId")?,
+            sentence: fields.own::<Unit>("sentenceId")?,
             statement: fields.text("statement")?,
         })
     }
@@ -185,18 +171,17 @@ impl Answered for InventoryExtraction {
         let sections = showing.show(&input.sections)?;
         let mut units = Vec::new();
         for (handle, section) in sections.iter() {
-            let own = showing.under(handle, &section.sentences)?;
             let mut passages: Vec<(&Told<String>, Vec<Value>)> = Vec::new();
-            let mut place = None;
-            for (label, sentence) in own.iter() {
-                let at = *sentence.passage.value();
-                if place != Some(at) {
-                    place = Some(at);
-                    passages.push((&sentence.field, Vec::new()));
+            for (passage, units) in section.texts().iter() {
+                let own = showing.under(handle, units.units())?;
+                if own.is_empty() {
+                    continue;
                 }
-                if let Some((_, listed)) = passages.last_mut() {
-                    listed.push(json!({"id": label.written(), "text": sentence.text}));
-                }
+                let listed = own
+                    .iter()
+                    .map(|(label, unit)| json!({"id": label.written(), "text": unit.text()}))
+                    .collect();
+                passages.push((&passage.field, listed));
             }
             let mut unit = serde_json::Map::new();
             unit.insert("id".into(), json!(handle.written()));
@@ -363,15 +348,14 @@ pub(crate) fn inputs(content: &[Value]) -> Vec<Value> {
 /// The inventory of `section` that `claims` gives: each claim's quote is the exact text of the sentence it points at.
 fn resolve(section: &Section, claims: Claims) -> std::result::Result<UnitClaims, String> {
     let index = *section.index.value();
+    let texts = section.texts();
     let mut located = Vec::new();
     for claim in claims.claims {
-        let sentence = section
-            .sentences
-            .iter()
-            .find(|sentence| sentence.id == claim.sentence.reference)
+        let (_, sentence) = texts
+            .found(claim.sentence.reference)
             .ok_or_else(|| format!("Section {index} names a sentence it does not hold"))?;
         located.push(Claim {
-            quote: sentence.text.0.clone(),
+            quote: sentence.to_owned(),
             statement: claim.statement,
         });
     }
@@ -565,13 +549,12 @@ mod tests {
     #[test]
     fn the_extraction_request_shows_what_it_tells_and_hides_the_internal_ids() {
         let mut marks = Marks::new();
-        let sentences = |marks: &mut Marks, ids: [&str; 2], texts: [&str; 2]| -> Vec<Sentence> {
+        let passages = |marks: &mut Marks, ids: [&str; 2], texts: [&str; 2]| -> Vec<Passage> {
             ids.iter()
                 .zip(texts)
-                .map(|(id, text)| Sentence {
-                    id: marks.reference((*id).to_owned()),
-                    passage: Internal::of(0),
-                    field: marks.told("/body".to_owned()),
+                .map(|(id, text)| Passage {
+                    id: marks.internal((*id).to_owned()),
+                    field: marks.told("/explanation".to_owned()),
                     text: marks.told(text.to_owned()),
                 })
                 .collect()
@@ -583,12 +566,9 @@ mod tests {
             check_role: None,
             context: Vec::new(),
             context_role: None,
-            sentences: sentences(
+            passages: passages(
                 &mut marks,
-                [
-                    "unit-7340219-passage-0-sentence-0",
-                    "unit-7340219-passage-0-sentence-1",
-                ],
+                ["unit-7340219-passage-0", "unit-7340219-passage-1"],
                 [
                     "The harbour kiln heats before a firing.",
                     "Tide tables list high water.",
@@ -601,16 +581,13 @@ mod tests {
             correct_index: Some(marks.told(2_u64)),
             check_role: Some(marks.told("A check poses a case first.".to_owned())),
             context: vec![Part {
-                field: marks.told("/prompt".to_owned()),
+                field: marks.told("/options/0".to_owned()),
                 text: marks.told("Which kiln heats the glaze fastest?".to_owned()),
             }],
             context_role: Some(marks.told("The question and its options.".to_owned())),
-            sentences: sentences(
+            passages: passages(
                 &mut marks,
-                [
-                    "unit-7340220-passage-0-sentence-0",
-                    "unit-7340220-passage-0-sentence-1",
-                ],
+                ["unit-7340220-passage-0", "unit-7340220-passage-1"],
                 ["The glaze kiln is the fastest.", "The salt kiln is slower."],
             ),
         };
@@ -621,6 +598,28 @@ mod tests {
             &marks,
         );
     }
+    #[test]
+    fn equal_sentences_of_a_section_are_two_places_a_claim_can_name() {
+        let body = format!(
+            "{}\n\n{}",
+            "Tides follow the moon.", "Tides follow the moon."
+        );
+        let section = Section::of(0, &inputs(&[json!({"body":body})])[0]);
+        let texts = section.texts();
+        let units: Vec<_> = texts
+            .iter()
+            .flat_map(|(_, units)| units.units().iter().map(Unit::reference))
+            .collect();
+        assert_eq!(units.len(), 2);
+        assert_ne!(units[0], units[1]);
+        for unit in units {
+            assert_eq!(
+                texts.found(unit).map(|(_, text)| text),
+                Some("Tides follow the moon.")
+            );
+        }
+    }
+
     #[tokio::test]
     async fn an_unreadable_inventory_fails_the_job_instead_of_deferring() -> Result<()> {
         let pool = crate::tests::pool().await?;

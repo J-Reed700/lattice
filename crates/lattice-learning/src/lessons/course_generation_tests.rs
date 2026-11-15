@@ -401,9 +401,9 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
     assert!(criteria.iter().all(|criterion| criterion.score.is_none()));
 
     let mut attempted = frozen.clone();
-    attempted.artifact.text =
-        "I assigned groups randomly.
-I measured the outcome before comparing the groups.".into();
+    attempted.artifact.text = "I assigned groups randomly.
+I measured the outcome before comparing the groups."
+        .into();
     let entry = |of: &str| json!({"of":of,"evidence":["u1"],"observation":"The design includes random assignment; explain the remaining limitations.","score":"l3"});
     let scored = Model(json!({"entries":[entry("c1"),entry("c2")]}).to_string());
     let (_, graded) = crate::practice_generation::grade(&scored, &attempted).await?;
@@ -412,8 +412,8 @@ I measured the outcome before comparing the groups.".into();
     ));
 
     let recall = Model(json!({"items":[
-        {"question":"When should the outcome be defined?","answer":"Before collecting data.","explanation":"Define it when designing the experiment.","cites":["s1"]},
-        {"question":"What should a concrete example show?","answer":"The result and its limitations.","explanation":"Interpret the result within its limits.","cites":["s1"]}
+        {"question":"When should the outcome be defined?","answer":"Before collecting data.","explanation":"Define it when designing the experiment.","cites":["u1"]},
+        {"question":"What should a concrete example show?","answer":"The result and its limitations.","explanation":"Interpret the result within its limits.","cites":["u1"]}
     ]}).to_string());
     let cards = generation::generate_recall_drafts(&recall, &prepared, &lesson_id, 2).await?;
     assert_eq!(cards.len(), 2);
@@ -761,7 +761,10 @@ impl ScriptedModel {
             return Ok(reply);
         }
         let reply = outputs.pop_front().unwrap_or_default();
-        Ok(crate::generation::outline::fixture::description_answer(prompt, &reply).unwrap_or(reply))
+        Ok(
+            crate::generation::outline::fixture::description_answer(prompt, &reply)
+                .unwrap_or(reply),
+        )
     }
 }
 
@@ -1341,15 +1344,24 @@ async fn placement_tasks_keep_keys_private_and_save_answers_with_replay_and_conf
 #[tokio::test]
 async fn depth_is_enforced_and_failed_source_acquisition_cannot_become_a_topic_course() -> Result<()>
 {
-    assert!(generation::generate_outline(
-        &outline(2, 2),
-        &request(LearningCourseDepth::Course),
-        &[]
-    )
-    .await
-    .is_err());
+    let drafted = |model: Model, depth: LearningCourseDepth| async move {
+        let request = request(depth);
+        generation::draft_outline(
+            &model,
+            &request,
+            &[],
+            &[],
+            &crate::outline_progress::OutlineProgress::default(),
+            |raw| generation::decode_outline(raw, &request, &[]),
+        )
+        .await
+        .map(|(modules, _, _)| modules)
+    };
+    assert!(drafted(outline(2, 2), LearningCourseDepth::Course)
+        .await
+        .is_err());
     assert_eq!(
-        generation::generate_outline(&outline(6, 4), &request(LearningCourseDepth::DeepDive), &[])
+        drafted(outline(6, 4), LearningCourseDepth::DeepDive)
             .await?
             .len(),
         6

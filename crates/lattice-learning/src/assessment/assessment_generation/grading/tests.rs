@@ -248,8 +248,8 @@ async fn a_grade_that_cites_nothing_has_no_words_and_no_quote() -> Result<()> {
 }
 
 #[tokio::test]
-async fn the_request_names_items_criteria_and_sentences_by_handle_and_asks_for_no_points() -> Result<()>
-{
+async fn the_request_names_items_criteria_and_sentences_by_handle_and_asks_for_no_points(
+) -> Result<()> {
     let model = answering::<GradeWritten>(|shows| {
         let all = marks(shows, "met", &[shows.sentence(0)], &[]);
         Some(entry(shows, all, ""))
@@ -304,7 +304,11 @@ async fn a_criterion_left_out_is_asked_for_again_with_its_item_alone() -> Result
     let sent = model.sent();
     assert_eq!(sent.len(), 2);
     let again: Vec<String> = shown(&sent[1]).into_iter().map(|s| s.item).collect();
-    assert_eq!(again, ["i2"], "only the item that was left out is asked again");
+    assert_eq!(
+        again,
+        ["i2"],
+        "only the item that was left out is asked again"
+    );
     Ok(())
 }
 
@@ -325,8 +329,11 @@ async fn an_empty_reply_to_a_learners_note_is_corrected_for_its_item_alone() -> 
         reply(json!({ "entries": entries }).to_string())
     });
     let note = "I named the damper.";
-    let graded = grade_written(&model, &[written("q1", Some(note)), written("q2", Some(note))])
-        .await?;
+    let graded = grade_written(
+        &model,
+        &[written("q1", Some(note)), written("q2", Some(note))],
+    )
+    .await?;
     assert_eq!(item_ids(&graded), ["q1", "q2"]);
     assert!(graded
         .iter()
@@ -437,7 +444,6 @@ async fn a_judgement_is_filled_from_the_apps_own_words() -> Result<()> {
     );
     assert_eq!(criterion.your_words, ["In 1887."]);
     assert_eq!(criterion.verdict, GraderVerdict::Met);
-    assert_eq!(criterion.points, 1.0);
     assert_eq!(criterion.source_quote, None);
     Ok(())
 }
@@ -447,7 +453,6 @@ async fn a_judgement_of_not_equivalent_misses_the_equivalence_criterion() -> Res
     let model = answering::<JudgeShort>(|shows| Some(judged(shows, "not_equivalent", &[], "")));
     let graded = judge_short_answers(&model, &[short("a")]).await?;
     assert_eq!(graded[0].item.criteria[0].verdict, GraderVerdict::Missed);
-    assert_eq!(graded[0].item.criteria[0].points, 0.0);
     Ok(())
 }
 
@@ -474,11 +479,7 @@ async fn an_empty_reply_to_a_learners_note_on_a_short_answer_is_corrected() -> R
 
 /// Judges every short answer equivalent, except that a request holding more than `fits`
 /// items, or the item `cut`, has its reply cut off at the output limit.
-fn grader(
-    fits: usize,
-    cut: &'static str,
-    sizes: Arc<Mutex<Vec<usize>>>,
-) -> ScriptedModel {
+fn grader(fits: usize, cut: &'static str, sizes: Arc<Mutex<Vec<usize>>>) -> ScriptedModel {
     ScriptedModel::new().on_request::<JudgeShort>(move |sent, _| {
         let items = shown(sent);
         sizes.lock().unwrap().push(items.len());

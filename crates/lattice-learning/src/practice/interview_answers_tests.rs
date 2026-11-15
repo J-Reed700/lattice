@@ -190,7 +190,10 @@ fn review_fields_keep_exact_author_text_separate_from_provenance() -> Result<()>
     let support = interview_answer_review::point_support(&answer, &guide);
     assert_eq!(support[0].basis.0, "captured_source");
     assert_eq!(
-        support[0].quotes.as_ref().map(|quotes| quotes.0[0]["quote"].clone()),
+        support[0]
+            .quotes
+            .as_ref()
+            .map(|quotes| quotes.0[0]["quote"].clone()),
         Some(json!(answer.key_points[0].citations[0].quote))
     );
     assert_eq!(guide[*support[0].field.value()].path, "/keyPoints/0/point");
@@ -254,11 +257,13 @@ fn handle_of(path: &str, nth: usize) -> String {
         .iter()
         .position(|part| part.path == path)
         .expect("field");
-    let at = interview_answer_review::sentences_of(&guide)
+    let input = interview_answer_review::input_of(&json!({}), "", &answer, &guide, &[source()]);
+    let before: usize = interview_answer_review::texts_of(&input)
         .iter()
-        .position(|sentence| sentence.at.field == field && sentence.at.sentence == nth)
-        .expect("sentence");
-    format!("s{}", at + 1)
+        .filter(|(of, _)| **of < field)
+        .map(|(_, units)| units.units().len())
+        .sum();
+    format!("u{}", before + nth + 1)
 }
 
 async fn reviewed_answer(
@@ -266,8 +271,14 @@ async fn reviewed_answer(
     outputs: Vec<Value>,
 ) -> Result<interview_answer_review::Review> {
     let llm = model(outputs);
-    interview_answer_review::review(&llm, &json!({"id":"question"}), "An outline.", answer, &[source()])
-        .await
+    interview_answer_review::review(
+        &llm,
+        &json!({"id":"question"}),
+        "An outline.",
+        answer,
+        &[source()],
+    )
+    .await
 }
 
 async fn reviewed(outputs: Vec<Value>) -> Result<interview_answer_review::Review> {
@@ -278,11 +289,8 @@ async fn reviewed(outputs: Vec<Value>) -> Result<interview_answer_review::Review
 
 #[tokio::test]
 async fn review_findings_cite_the_answer_and_cannot_be_overridden_by_acceptance() -> Result<()> {
-    assert!(reviewed(vec![accepted_review()])
-        .await?
-        .issues
-        .is_empty());
-    let issue = rejected_review("s1", "Explain the durability boundary.");
+    assert!(reviewed(vec![accepted_review()]).await?.issues.is_empty());
+    let issue = rejected_review("u1", "Explain the durability boundary.");
     let review = reviewed(vec![issue.clone()]).await?;
     assert_eq!(
         serde_json::to_value(&review.issues)?,
@@ -297,18 +305,18 @@ async fn review_findings_cite_the_answer_and_cannot_be_overridden_by_acceptance(
     let mut contradictory = issue.clone();
     contradictory["accepted"] = json!(true);
     assert_eq!(reviewed(vec![contradictory]).await?.issues.len(), 1);
-    for sentences in [json!([]), json!(["s99"]), json!(["r1"]), json!([""])] {
+    for sentences in [json!([]), json!(["u99"]), json!(["r1"]), json!([""])] {
         let mut bad = issue.clone();
         bad["items"][0]["sentences"] = sentences.clone();
-        assert!(
-            reviewed(vec![bad]).await?.issues.is_empty(),
-            "{sentences}"
-        );
+        assert!(reviewed(vec![bad]).await?.issues.is_empty(), "{sentences}");
     }
     for (field, blank) in [("demonstration", ""), ("problem", "  ")] {
         let mut unsupported = issue.clone();
         unsupported["items"][0][field] = json!(blank);
-        assert!(reviewed(vec![unsupported]).await?.issues.is_empty(), "{field}");
+        assert!(
+            reviewed(vec![unsupported]).await?.issues.is_empty(),
+            "{field}"
+        );
     }
     Ok(())
 }
@@ -341,26 +349,23 @@ async fn a_review_that_cannot_be_read_fails_the_guide() {
         .await
         .expect_err("an unreadable review clears nothing");
     assert!(
-        matches!(error, lattice_core::shared::error::AppError::ModelAnswerUnusable(_)),
+        matches!(
+            error,
+            lattice_core::shared::error::AppError::ModelAnswerUnusable(_)
+        ),
         "{error}"
     );
 }
 
 #[test]
 fn the_review_request_shows_what_the_model_is_told_and_nothing_internal() {
-    use interview_answer_review::{GuideReview, Input, Place, Sentence, Support};
-    use lattice_core::application::services::model_contract::test_support::taint::{
-        holds, Marks,
-    };
+    use interview_answer_review::{Field, GuideReview, Input, Support};
+    use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
     let mut marks = Marks::new();
     let input = Input {
         question: marks.told(json!({"prompt":"How is a lost upload response retried?"})),
         independent_solution: marks.told("The retry keeps the intended effect.".to_owned()),
-        sentences: vec![Sentence {
-            at: marks.reference(Place {
-                field: 100_001,
-                sentence: 100_002,
-            }),
+        fields: vec![Field {
             role: marks.told("referenceAnswer".to_owned()),
             text: marks.told("The harbour gate opens at first light.".to_owned()),
         }],
@@ -574,10 +579,7 @@ async fn rejected_standards_are_repaired_before_they_can_be_saved() -> Result<()
     initial["referenceAnswer"] = json!("Require an identical response on every retry.");
     let llm = model(vec![
         initial,
-        rejected_review(
-            "s1",
-            "Explain that responses can differ.",
-        ),
+        rejected_review("u1", "Explain that responses can differ."),
         standard(),
         accepted_review(),
     ]);
@@ -615,15 +617,9 @@ async fn a_second_repair_must_receive_a_fresh_review_before_acceptance() -> Resu
         json!("Preserve the intended effect but verify only when the response arrives.");
     let llm = model(vec![
         initial,
-        rejected_review(
-            "s1",
-            "Repeated responses may differ.",
-        ),
+        rejected_review("u1", "Repeated responses may differ."),
         first_repair,
-        rejected_review(
-            "s1",
-            "Verify the explicit lost-response scenario.",
-        ),
+        rejected_review("u1", "Verify the explicit lost-response scenario."),
         standard(),
         accepted_review(),
     ]);
@@ -694,10 +690,7 @@ async fn behavioral_standard_repairs_fabricated_history_before_review() -> Resul
 
 #[tokio::test]
 async fn repeatedly_rejected_standard_never_becomes_an_answer_key() {
-    let rejected = rejected_review(
-        "s1",
-        "The proposed answer contradicts the specification.",
-    );
+    let rejected = rejected_review("u1", "The proposed answer contradicts the specification.");
     let mut second = standard();
     second["evidenceGaps"] = json!(["The first revision still needs verification."]);
     let mut third = standard();
@@ -725,10 +718,7 @@ async fn repeatedly_rejected_standard_never_becomes_an_answer_key() {
 async fn unchanged_rejected_guides_stop_without_repeating_the_same_review() {
     let llm = model(vec![
         standard(),
-        rejected_review(
-            "s1",
-            "Resolve the reported defect.",
-        ),
+        rejected_review("u1", "Resolve the reported defect."),
         standard(),
         accepted_review(),
     ]);
@@ -845,8 +835,8 @@ async fn a_review_finding_is_read_at_any_length() -> Result<()> {
     answer.reference_answer = reference.clone();
     let wordy = "The scoring would reject a valid retry. ".repeat(20);
     let valid = "A valid retry would be rejected.";
-    let first = vec!["s1".to_owned()];
-    let every: Vec<String> = (1..=20).map(|at| format!("s{at}")).collect();
+    let first = vec!["u1".to_owned()];
+    let every: Vec<String> = (1..=20).map(|at| format!("u{at}")).collect();
     for (what, sentences, demonstration, problem) in [
         ("a short finding", &first, valid, "Explain it."),
         ("demonstration", &first, wordy.as_str(), "Explain it."),

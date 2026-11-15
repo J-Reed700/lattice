@@ -9,7 +9,7 @@ fn part(index: usize) -> Part {
         site: FindingSite::Section(index),
         fields: vec!["body".to_owned()],
         texts: vec!["Alpha holds the line.".to_owned()],
-        shown: Value::Null,
+        shown: json!({"body": "Alpha holds the line."}),
     }
 }
 
@@ -45,15 +45,13 @@ fn a_missing_item_with_no_part_is_not_told_one() {
 
 fn used_note(protected: &[Protected]) -> String {
     let parts = [part(0)];
-    let hit = hit_at(
-        &parts,
-        &Place::Lesson {
-            part: 0,
-            text: 0,
-            index: 0,
-        },
-    )
-    .unwrap();
+    let texts = Lesson::of(&parts, 1, |_| false).texts();
+    let unit = texts
+        .iter()
+        .next()
+        .and_then(|(_, units)| units.spans().first().map(|(unit, _)| *unit))
+        .unwrap();
+    let hit = hit_at(&parts, &texts, unit).unwrap();
     let settled = Settled {
         taught: Vec::new(),
         missing: Vec::new(),

@@ -6,7 +6,6 @@ use super::{json_or_text, ReviewSchema};
 use crate::lessons::structured_call::refusal;
 use crate::lessons::trace::{self, Cause, Stage};
 use crate::model_call::ErrorClass;
-use crate::outline_progress::OutlineStage;
 use crate::review_findings::{ReviewFinding, SetAside};
 use lattice_core::{
     application::ports::LLMPort,
@@ -44,13 +43,6 @@ pub(super) async fn review_material(
     subject.given(llm, &authoring);
     subject.save(&candidate).await?;
     for attempt in 0usize.. {
-        if let Some(progress) = subject.progress() {
-            progress.stage(if attempt == 0 {
-                OutlineStage::Reviewing
-            } else {
-                OutlineStage::CheckingRepair
-            });
-        }
         // fit
         let mut value = json_or_text(&candidate);
         if subject.settle_quotes(&mut value, &authoring, attempt) {
@@ -59,7 +51,6 @@ pub(super) async fn review_material(
             trace::changed(Stage::TeachingReview, &Cause::none(), &before, &candidate);
             subject.save(&candidate).await?;
         }
-        subject.select_sources(llm, &mut authoring, &value).await?;
         let quote_checks = subject.quote_checks(&value, &authoring);
         // review
         let pass = Pass {
@@ -107,9 +98,6 @@ pub(super) async fn review_material(
                     "sent to repair",
                     &format!("after review pass {attempt}"),
                 );
-            }
-            if let Some(progress) = subject.progress() {
-                progress.stage(OutlineStage::Repairing);
             }
             subject.step(Step::Repairing);
             let repairs = Repairs {
@@ -168,10 +156,10 @@ impl Repairs<'_> {
             output_tokens: self.output_tokens,
         };
         let made = if self.edits {
-            let mended = repair::mend(self.llm, &request, subject.progress()).await;
+            let mended = repair::mend(self.llm, &request).await;
             mended.and_then(|mended| subject.settle_mended(&previous, &send, mended))
         } else {
-            let text = repair::rewrite(self.llm, &request, subject.progress()).await;
+            let text = repair::rewrite(self.llm, &request).await;
             text.and_then(|text| subject.settle_rewrite(&previous, &send, &text))
         };
         let settled = match made {

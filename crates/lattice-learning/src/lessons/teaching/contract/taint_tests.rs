@@ -4,39 +4,30 @@ use super::asks::{
     Course, Input, LessonContractCheck, LessonContractFind, LessonContractReports, Planned,
     Reported, ReportsInput,
 };
-use super::confirm::{ConfirmPlanned, ConfirmUse, Given, PlannedInput, UseInput};
-use super::sentence::{Lesson, Place, Sentence, Spot, Text, View};
+use super::confirm::{ConfirmPlanned, ConfirmUse, Earlier, Gave, Given, PlannedInput, UseInput};
+use super::sentence::{Lesson, Spot, Text, View};
+use lattice_core::application::services::model_contract::shown::{Internal, Told};
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use serde_json::json;
 
-fn place(marks: &mut Marks, part: usize, index: usize) -> Place {
-    marks.reference(Place::Lesson {
-        part,
-        text: 100_002,
-        index,
-    })
-}
-
-fn sentence(marks: &mut Marks, at: Place, words: &str) -> Sentence {
-    Sentence {
-        place: at,
-        words: marks.told(words.to_owned()),
-    }
-}
-
 /// A lesson of one section of two sentences, and one question of one; the section can be named as a place when `named`.
 fn lesson(marks: &mut Marks, named: bool) -> Lesson {
-    let view = |marks: &mut Marks, part: usize, title: &str, body: &str, spot: Option<usize>| {
-        let first = place(marks, part, 100_003);
-        let second = place(marks, part, 100_004);
+    let view = |marks: &mut Marks, order: usize, title: &str, body: &str, spot: Option<usize>| {
+        let sentences = [
+            format!("{body} comes first."),
+            format!("{body} comes second."),
+        ];
+        for sentence in &sentences {
+            marks.told(sentence.clone());
+        }
         View {
-            frame: marks.told(json!({"kind": "explanation", "title": title, "bodyOfTheSection": null})),
+            order: marks.internal(order),
+            frame: marks
+                .told(json!({"kind": "explanation", "title": title, "bodyOfTheSection": null})),
             texts: vec![Text {
                 at: marks.internal("/bodyOfTheSection".to_owned()),
-                sentences: vec![
-                    sentence(marks, first, &format!("{body} comes first.")),
-                    sentence(marks, second, &format!("{body} comes second.")),
-                ],
+                of: marks.internal(100_002),
+                words: Told(sentences.join(" ")),
             }],
             spot: spot.map(|at| Spot {
                 at: marks.reference(at),
@@ -141,39 +132,30 @@ fn the_confirming_read_of_a_planned_item_keeps_what_is_internal_out_and_says_wha
 fn the_confirming_read_of_a_use_keeps_what_is_internal_out_and_says_what_the_model_must_know() {
     let mut marks = Marks::new();
     let lesson = lesson(&mut marks, false);
-    let at = lesson.sentences()[1].place.clone();
-    let prior = place_of(&mut marks, Place::Prior { index: 100_008 }, "The learner has used a file manager.");
-    let title = place_of(
-        &mut marks,
-        Place::Earlier {
+    let at = lesson
+        .texts()
+        .iter()
+        .next()
+        .and_then(|(_, units)| units.spans().get(1).map(|(unit, _)| *unit))
+        .unwrap();
+    marks.reference(serde_json::to_value(at).unwrap()["text"].clone());
+    let given = |marks: &mut Marks, given: usize, words: &str| Given {
+        at: marks.reference(Gave {
             lesson: 100_009,
-            given: 100_010,
-        },
-        "Looking around",
-    );
-    let action = place_of(
-        &mut marks,
-        Place::Earlier {
-            lesson: 100_009,
-            given: 100_011,
-        },
-        "Listing the files in a folder",
-    );
+            given,
+        }),
+        words: marks.told(words.to_owned()),
+    };
     let input = UseInput {
         lesson,
-        prior: vec![prior],
-        earlier: vec![Given {
-            title: Some(title),
-            actions: vec![action],
+        prior: Some(marks.told("The learner has used a file manager.".to_owned())),
+        earlier: vec![Earlier {
+            title: Some(given(&mut marks, 100_010, "Looking around")),
+            actions: vec![given(&mut marks, 100_011, "Listing the files in a folder")],
             terms: Vec::new(),
         }],
-        at: marks.internal(at),
+        at: Internal::of(at),
         what: marks.told("the terminal application".to_owned()),
     };
     holds::<ConfirmUse>(&input, &marks);
-}
-
-fn place_of(marks: &mut Marks, at: Place, words: &str) -> Sentence {
-    let at = marks.reference(at);
-    sentence(marks, at, words)
 }

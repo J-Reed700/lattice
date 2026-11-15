@@ -24,9 +24,7 @@ fn context(ideas: &[&str]) -> Value {
 }
 
 fn lesson(bodies: [&str; 3]) -> Value {
-    let block = |title: &str, body: &str| {
-        json!({"kind": "explanation", "title": title, "body": body, "rubric": [], "sourceIndex": 0, "quote": "An excerpt."})
-    };
+    let block = |title: &str, body: &str| json!({"kind": "explanation", "title": title, "body": body, "rubric": [], "sourceIndex": 0, "quote": "An excerpt."});
     json!({"blocks": [
         block("Opening", bodies[0]),
         block("Listing", bodies[1]),
@@ -262,5 +260,96 @@ async fn a_report_the_ask_rules_decided_is_not_outside() -> Result<()> {
     let report = first_section_report();
     let ruled = run(&model, &context(&[]), &candidate, &[&report]).await?;
     assert!(ruled.outside.is_empty(), "{:?}", ruled.outside);
+    Ok(())
+}
+
+/// The name the confirming read of a use shows the first action of the first earlier lesson under.
+fn earlier_name(sent: &Sent) -> String {
+    let (_, user) = task_messages(&sent.request);
+    let task = task_of(user);
+    let row = task["earlierLessons"][0]["actions"][0].as_str().unwrap();
+    row.trim_start_matches('[')
+        .split(']')
+        .next()
+        .unwrap()
+        .to_owned()
+}
+
+#[tokio::test]
+async fn what_an_earlier_lesson_gives_is_cited_under_its_own_letter() -> Result<()> {
+    let model = on::<LessonContractCheck>(Layered::new(), nothing_taught);
+    let model = on::<LessonContractFind>(model, using_the_terminal);
+    let model = on::<ConfirmUse>(model, |sent| {
+        json!({"asked": "yes", "taught": "yes", "units": [], "given": [earlier_name(sent)]})
+            .to_string()
+    });
+    let candidate = lesson([USING, "The list shows names.", "Read the names."]);
+    let ruled = run(&model, &context(&[]), &candidate, &[]).await?;
+    assert!(ruled.findings.is_empty(), "{:?}", ruled.findings);
+    let sent = asks::<ConfirmUse>(&model);
+    assert_eq!(sent.len(), 1);
+    assert!(earlier_name(&sent[0]).starts_with('e'));
+    assert!(shown(&sent[0])
+        .iter()
+        .all(|(name, _)| name.starts_with('u') || name.starts_with('e')));
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_learners_prior_knowledge_is_cited_as_a_sentence() -> Result<()> {
+    let model = on::<LessonContractCheck>(Layered::new(), nothing_taught);
+    let model = on::<LessonContractFind>(model, using_the_terminal);
+    let model = on::<ConfirmUse>(model, |sent| {
+        let units = name_of(sent, "used a file manager");
+        json!({"asked": "yes", "taught": "yes", "units": [units], "given": []}).to_string()
+    });
+    let candidate = lesson([USING, "The list shows names.", "Read the names."]);
+    let ruled = run(&model, &context(&[]), &candidate, &[]).await?;
+    assert!(ruled.findings.is_empty(), "{:?}", ruled.findings);
+    let sent = asks::<ConfirmUse>(&model);
+    assert!(name_of(&sent[0], "used a file manager").starts_with('u'));
+    Ok(())
+}
+
+#[tokio::test]
+async fn equal_sentences_of_two_parts_are_two_places() -> Result<()> {
+    let model = on::<LessonContractCheck>(Layered::new(), nothing_taught);
+    let model = on::<LessonContractFind>(model, |sent| {
+        let second = shown(sent)
+            .into_iter()
+            .filter(|(_, said)| said == USING)
+            .nth(1)
+            .map(|(name, _)| name)
+            .unwrap();
+        json!({"items": [{"finding": {"kind": "usedBeforeTaught", "what": "the terminal", "uses": [second], "taughtLater": []}}]}).to_string()
+    });
+    let model = on::<ConfirmUse>(model, |_| {
+        json!({"asked": "yes", "taught": "no", "units": [], "given": []}).to_string()
+    });
+    let candidate = lesson([USING, USING, "Read the names."]);
+    let ruled = run(&model, &context(&[]), &candidate, &[]).await?;
+    assert_eq!(ruled.findings.len(), 1, "{:?}", ruled.findings);
+    assert_eq!(ruled.findings[0].site, Some(FindingSite::Section(1)));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_prior_knowledge_of_null_is_no_prior_knowledge() -> Result<()> {
+    let model = on::<LessonContractCheck>(Layered::new(), nothing_taught);
+    let model = on::<LessonContractFind>(model, using_the_terminal);
+    let model = on::<ConfirmUse>(model, |_| {
+        json!({"asked": "yes", "taught": "no", "units": [], "given": []}).to_string()
+    });
+    let mut context = context(&[]);
+    context["priorKnowledge"] = Value::Null;
+    let candidate = lesson([USING, "The list shows names.", "Read the names."]);
+    run(&model, &context, &candidate, &[]).await?;
+    let sent = asks::<ConfirmUse>(&model);
+    assert_eq!(sent.len(), 1);
+    let (_, user) = task_messages(&sent[0].request);
+    assert_eq!(task_of(user)["priorKnowledge"], Value::Null);
+    assert!(shown(&sent[0])
+        .iter()
+        .all(|(_, said)| !said.contains("null")));
     Ok(())
 }

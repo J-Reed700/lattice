@@ -77,8 +77,9 @@ fn handles(task: &Value, source: usize) -> Vec<String> {
     task["sources"][source]["excerpt"]
         .as_str()
         .unwrap()
-        .lines()
-        .map(|row| row.trim_start_matches('[').split_once(']').unwrap().0.to_owned())
+        .split('[')
+        .skip(1)
+        .map(|marked| marked.split_once(']').unwrap().0.to_owned())
         .collect()
 }
 
@@ -106,7 +107,7 @@ fn written(_: &str, user: &str) -> String {
             ]},
             {"sections": [
                 {"kind": "explanation", "title": "Kilns", "body": "Bowls fire.",
-                 "cites": ["zz9", kiln], "citations": [{"sentence": "Bowls fire once shut.", "cites": ["u99"]}]}
+                 "cites": ["zz9", kiln], "citations": [{"sentence": "Bowls fire once shut.", "cites": ["q99"]}]}
             ]}
         ],
         "guidedPractice": practice("Try"),
@@ -171,12 +172,9 @@ fn the_request_names_sources_and_their_sentences_by_handle() {
     assert_eq!(task["sources"][1]["id"], "s2");
     assert_eq!(
         task["sources"][0]["excerpt"],
-        format!("[u1] {GATE}\n[u2] {CRANE}")
+        format!("[q1] {GATE} [q2] {CRANE}")
     );
-    assert!(task["sources"][1]["excerpt"]
-        .as_str()
-        .unwrap()
-        .ends_with(KILN));
+    assert_eq!(task["sources"][1]["excerpt"], format!("[q3] {KILN}"));
     assert_eq!(
         task["evidenceByTopic"][1]["coveringSources"],
         json!(["s1", "s2"])
@@ -285,7 +283,9 @@ fn the_right_choice_is_not_always_laid_out_first() {
             cites: Vec::new(),
             cited: Vec::new(),
         };
-        Excerpts(Vec::new()).question(&question)["correctIndex"].as_u64().unwrap()
+        super::question(&Quotes::default(), &question)["correctIndex"]
+            .as_u64()
+            .unwrap()
     };
     let prompts = [
         "Which tide is highest?",
@@ -297,7 +297,10 @@ fn the_right_choice_is_not_always_laid_out_first() {
     ];
     let positions: Vec<u64> = prompts.iter().map(|prompt| shown(prompt)).collect();
     assert!(positions.iter().any(|at| *at != 0), "{positions:?}");
-    assert!(positions.iter().any(|at| *at != positions[0]), "{positions:?}");
+    assert!(
+        positions.iter().any(|at| *at != positions[0]),
+        "{positions:?}"
+    );
     let expected: Vec<u64> = prompts
         .iter()
         .map(|prompt| {
@@ -346,6 +349,49 @@ async fn a_scripted_saved_lesson_is_written_as_the_same_lesson() {
         old_question["correctIndex"].as_u64().unwrap() as usize,
         question["correctIndex"].as_u64().unwrap() as usize,
     );
-    assert_eq!(question["options"][right], old_question["options"][old_right]);
+    assert_eq!(
+        question["options"][right],
+        old_question["options"][old_right]
+    );
     assert_eq!(question["rationales"][right], "");
+}
+
+#[test]
+fn a_sentence_under_the_quote_floor_carries_no_handle() {
+    let short = "The gate opens.";
+    let sources = vec![source(
+        "source-a",
+        "Harbour almanac",
+        &format!("{short} {CRANE}"),
+    )];
+    let input = Input::of(&stored_prompt(), &sources).unwrap();
+    let mut scope = Scope::for_question();
+    let says = LessonWriter::says(&input, &mut scope.request()).unwrap();
+    let task: Value = serde_json::from_str(&says.task).unwrap();
+
+    assert_eq!(
+        task["sources"][0]["excerpt"],
+        format!("{short} [q1] {CRANE}")
+    );
+}
+
+#[test]
+fn the_stored_quote_of_a_cite_is_the_sentences_exact_words() {
+    let input = Input::of(&stored_prompt(), &sources()).unwrap();
+    let quotes = quotes_of(&input);
+    let mut scope = Scope::for_question();
+    let mut showing = scope.request();
+    let shown = showing.show(quotes.all()).unwrap();
+    let cites: Vec<Picked<Quoted>> = shown
+        .iter()
+        .map(|(handle, quoted)| Picked {
+            handle: handle.clone(),
+            reference: quoted.reference(),
+        })
+        .collect();
+    let mut part = Map::new();
+    cite_into(&quotes, &mut part, &cites[1..2], &[]);
+
+    assert_eq!(part["sourceIndex"], 0);
+    assert_eq!(part["quote"], CRANE);
 }

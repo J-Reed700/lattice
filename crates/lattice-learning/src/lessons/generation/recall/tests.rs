@@ -116,9 +116,11 @@ fn prompt_of(sent: &Sent) -> String {
             _ => None,
         })
         .collect::<Vec<_>>()
-        .join("
+        .join(
+            "
 
-")
+",
+        )
 }
 
 fn answer(cards: Vec<Value>) -> String {
@@ -160,7 +162,7 @@ async fn a_complete_answer_is_read_and_each_card_cites_its_source() {
     assert!(task.get("alreadyWritten").is_none());
     let prompt = prompt_of(&sent[0]);
     assert!(!prompt.contains(&program.sources[0].id), "{prompt}");
-    assert_eq!(names(&sent[0]), ["s1", "s2", "s3"]);
+    assert_eq!(names(&sent[0]), ["u1", "u2", "u3"]);
 }
 
 #[tokio::test]
@@ -168,7 +170,7 @@ async fn one_card_that_cites_nothing_shown_is_left_out_and_the_others_stand() {
     let (model, result) = generated(true, 2, |shown| {
         vec![
             card("What opens at first light?", &[&shown[0]]),
-            card("What does the table list?", &["s99"]),
+            card("What does the table list?", &["u99"]),
         ]
     })
     .await;
@@ -230,7 +232,10 @@ async fn an_answer_cut_off_after_a_card_keeps_it_and_asks_only_for_the_rest() {
             let closed = card("What opens at first light?", &[&shown[0]]);
             cut_off(format!("{{\"items\":[{closed},{{\"question\":\"Half"))
         } else {
-            reply(answer(vec![card("What does the table list?", &[&shown[1]])]))
+            reply(answer(vec![card(
+                "What does the table list?",
+                &[&shown[1]],
+            )]))
         }
     });
     let drafts = generate_recall_drafts(&model, &program, &lesson_id, 2)
@@ -240,7 +245,10 @@ async fn an_answer_cut_off_after_a_card_keeps_it_and_asks_only_for_the_rest() {
     let sent = model.sent();
     let rest = sent.last().map(task).unwrap();
     assert_eq!(rest["count"], json!(1));
-    assert_eq!(rest["alreadyWritten"], json!(["What opens at first light?"]));
+    assert_eq!(
+        rest["alreadyWritten"],
+        json!(["What opens at first light?"])
+    );
 }
 
 #[tokio::test]
@@ -257,10 +265,7 @@ async fn a_lesson_without_sources_is_cited_by_its_own_sentences() {
     assert!(drafts.iter().all(|draft| draft.source_ids.is_empty()));
     let task = task(&model.sent()[0]);
     assert_eq!(task["sources"], json!([]));
-    assert_eq!(
-        task["blocks"][1]["body"],
-        json!(format!("[s3] {KILN}"))
-    );
+    assert_eq!(task["blocks"][1]["body"], json!(format!("[u3] {KILN}")));
 }
 
 #[tokio::test]
@@ -347,8 +352,8 @@ fn sources_are_shown_in_the_lessons_order_and_each_in_document_order() {
     assert_eq!(
         task["sources"],
         json!([
-            {"title":"Reference 0","excerpt":format!("[s1] {GATE}\n\n[s2] {TABLE}")},
-            {"title":"Reference 1","excerpt":format!("[s3] {KILN}")},
+            {"title":"Reference 0","excerpt":format!("[u1] {GATE}\n\n[u2] {TABLE}")},
+            {"title":"Reference 1","excerpt":format!("[u3] {KILN}")},
         ])
     );
 }
@@ -357,7 +362,13 @@ fn sources_are_shown_in_the_lessons_order_and_each_in_document_order() {
 fn a_cut_of_the_passages_keeps_the_best_first() {
     let cut = RecallDrafts::within(&two_sources(), 2).unwrap();
     assert_eq!(cut.passages.len(), 2);
-    assert_eq!(RecallDrafts::within(&two_sources(), 0).unwrap().passages.len(), 0);
+    assert_eq!(
+        RecallDrafts::within(&two_sources(), 0)
+            .unwrap()
+            .passages
+            .len(),
+        0
+    );
 }
 
 #[test]
@@ -366,10 +377,18 @@ fn the_answer_points_at_what_is_shown_and_bounds_no_text() {
         .unwrap()
         .as_json()
         .to_string();
-    for named in ["\"items\"", "\"cites\"", "\"s1\"", "\"s2\"", "\"s3\""] {
+    for named in ["\"items\"", "\"cites\"", "\"u1\"", "\"u2\"", "\"u3\""] {
         assert!(schema.contains(named), "{named}: {schema}");
     }
-    for absent in ["\"s4\"", "sourceIds", "quote", "minLength", "maxLength", "minItems", "maxItems"] {
+    for absent in [
+        "\"u4\"",
+        "sourceIds",
+        "quote",
+        "minLength",
+        "maxLength",
+        "minItems",
+        "maxItems",
+    ] {
         assert!(!schema.contains(absent), "{absent}: {schema}");
     }
 }

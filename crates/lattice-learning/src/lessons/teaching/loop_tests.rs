@@ -872,49 +872,6 @@ async fn a_long_review_issue_is_repaired_where_a_review_fails_closed() -> Result
 }
 
 #[tokio::test]
-async fn an_outline_review_sends_every_issue_it_reports_to_the_repair() -> Result<()> {
-    let issues: Vec<String> = (1..=7)
-        .map(|n| format!("Defect number {n} of the outline."))
-        .collect();
-    let model = model(vec![
-        json!({"issues": issues}).to_string(),
-        json!({"modules":[{"title":"Revised"}]}).to_string(),
-        json!({"issues":[],"openFindings":[verdict("reviewer/1", "resolved"), verdict("reviewer/2", "resolved"), verdict("reviewer/3", "resolved"), verdict("reviewer/4", "resolved"), verdict("reviewer/5", "resolved"), verdict("reviewer/6", "resolved"), verdict("reviewer/7", "resolved")]}).to_string(),
-    ]);
-    let progress = crate::outline_progress::OutlineProgress::default();
-    let sources = references();
-    review_and_repair_with_progress(
-        &model,
-        LESSON_REPAIR_SYSTEM,
-        &context(),
-        &json!({"type":"object","properties":{"modules":{"type":"array"}}}),
-        json!({"modules":[]}).to_string(),
-        4000,
-        OutlineReviewContext {
-            progress: &progress,
-            sources: &sources,
-        },
-    )
-    .await?;
-    let prompts = model.prompts.lock().unwrap();
-    assert!(!prompts[0].contains("at most six"), "{}", prompts[0]);
-    assert!(prompts[0].contains("every material defect"));
-    let sent = prompts
-        .iter()
-        .find(|prompt| prompt.contains("issuesToFix"))
-        .unwrap();
-    let request: Value = fixture_task(sent).expect("a JSON task");
-    let notes: Vec<&str> = request["issuesToFix"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|entry| entry["note"].as_str().unwrap())
-        .collect();
-    assert_eq!(notes, issues, "{sent}");
-    Ok(())
-}
-
-#[tokio::test]
 async fn the_lesson_review_asks_for_every_concern_it_owns_with_no_count_cap() -> Result<()> {
     let model = model(vec![review(None)]);
     run(&model, lesson(EXCERPT)).await?;
@@ -3564,56 +3521,6 @@ async fn a_whole_repair_is_neither_sent_nor_charged_a_failing_quotation() -> Res
     Ok(())
 }
 
-async fn repaired_outline(model: &dyn LLMPort, outline: Value) -> Result<String> {
-    let progress = crate::outline_progress::OutlineProgress::default();
-    let sources = references();
-    review_and_repair_with_progress(
-        model,
-        LESSON_REPAIR_SYSTEM,
-        &context(),
-        &json!({"type":"object","properties":{"modules":{"type":"array"}}}),
-        outline.to_string(),
-        4000,
-        OutlineReviewContext {
-            progress: &progress,
-            sources: &sources,
-        },
-    )
-    .await
-}
-
-#[tokio::test]
-async fn an_outline_repair_that_leaves_a_finding_is_repaired_again() {
-    let model = model(vec![
-        json!({"issues":["Defect one of the outline."]}).to_string(),
-        json!({"modules":[{"title":"Revised"}]}).to_string(),
-        json!({"issues":["Defect two of the outline."],"openFindings":[verdict("reviewer/1", "resolved")]}).to_string(),
-        json!({"modules":[{"title":"Revised again"}]}).to_string(),
-        json!({"issues":[],"openFindings":[verdict("reviewer/2", "resolved")]}).to_string(),
-    ]);
-    let result = repaired_outline(&model, json!({"modules":[]})).await;
-    assert!(result.is_ok(), "{result:?}");
-}
-
-#[tokio::test]
-async fn an_outline_revision_whose_quote_matches_no_reference_is_repaired() {
-    let cited = |quote: &str| json!({"modules":[{"summary":{"text":"Summary","sourceIndex":0,"quote":quote}}]});
-    let model = model(vec![
-        json!({"issues":[]}).to_string(),
-        cited("A different imaginary handbook says this tool behaves in another way entirely.")
-            .to_string(),
-        json!({"issues":[]}).to_string(),
-        cited(EXCERPT).to_string(),
-        json!({"issues":[]}).to_string(),
-    ]);
-    let result = repaired_outline(
-        &model,
-        cited("An imaginary handbook says this tool behaves in a different way entirely."),
-    )
-    .await;
-    assert!(result.is_ok(), "{result:?}");
-}
-
 const ALPHA: &str = "Alpha is first.";
 const GAMMA: &str = "Gamma is third.";
 
@@ -3670,7 +3577,7 @@ async fn settle_protected(
             keeps: subject.keeps(),
             output_tokens: 4000,
         };
-        super::repair::mend(&llm, &request, subject.progress()).await?
+        super::repair::mend(&llm, &request).await?
     };
     let settled = subject.settle_mended(previous, send, mended)?;
     let told = send
@@ -3785,7 +3692,7 @@ fn a_whole_rewrite_that_changes_a_protected_sentence_changes_nothing_and_charges
 }
 
 #[tokio::test]
-async fn a_lesson_asks_its_reviewer_for_concerns_and_an_outline_does_not() -> Result<()> {
+async fn a_lesson_asks_its_reviewer_for_concerns() -> Result<()> {
     let lesson_model = ByRequest::new(|_| false, |_, _| Vec::new());
     run(&lesson_model, parts_lesson(1)).await?;
     let asked = lesson_model.schemas();
@@ -3794,13 +3701,6 @@ async fn a_lesson_asks_its_reviewer_for_concerns_and_an_outline_does_not() -> Re
         let text = schema.to_string();
         assert!(text.contains("\"concerns\""));
         assert!(text.contains("\"concern\""));
-    }
-    let outline_model = ByRequest::new(|_| false, |_, _| Vec::new());
-    repaired_outline(&outline_model, json!({"modules":[]})).await?;
-    let asked = outline_model.schemas();
-    assert!(!asked.is_empty());
-    for schema in &asked {
-        assert!(!schema.to_string().contains("\"concern"));
     }
     Ok(())
 }

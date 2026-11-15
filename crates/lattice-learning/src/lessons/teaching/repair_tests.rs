@@ -116,7 +116,7 @@ async fn mended_with(
         keeps,
         output_tokens: 0,
     };
-    mend(model, &request, None).await
+    mend(model, &request).await
 }
 
 async fn mended(
@@ -697,10 +697,7 @@ async fn a_key_is_moved_with_its_reasons_inside_the_findings_part() -> Result<()
     assert_eq!(made.outcomes, [Outcome::Applied]);
     let question = &made.candidate["questions"][0];
     assert_eq!(question["correctIndex"], json!(1));
-    assert_eq!(
-        question["rationales"],
-        json!(["Neap tides run lower.", ""])
-    );
+    assert_eq!(question["rationales"], json!(["Neap tides run lower.", ""]));
     assert_eq!(made.candidate["questions"][1]["correctIndex"], json!(0));
     assert_eq!(made.written[0], vec!["Neap tides run lower.".to_owned()]);
     Ok(())
@@ -755,7 +752,8 @@ fn the_instructions_hold_the_key_rule_once_right_after_the_sentence_rule() {
 
 #[test]
 fn a_flat_key_change_becomes_a_keys_item_for_the_first_sentence_of_the_right_option() {
-    let task = json!({"candidate": {"questions": [{"options": ["[u1] Three", "[u2] Four. [u3] Yes."]}]}});
+    let task =
+        json!({"candidate": {"questions": [{"options": ["[u1] Three", "[u2] Four. [u3] Yes."]}]}});
     let flat = json!({"path": "/questions/0/correctIndex", "before": 0, "after": 1});
     assert_eq!(
         key_item(&task, &flat),
@@ -766,5 +764,8 @@ fn a_flat_key_change_becomes_a_keys_item_for_the_first_sentence_of_the_right_opt
         key_item(&task, &said),
         Some(json!({"right": "u1", "wasWrong": "Four is too many."}))
     );
-    assert_eq!(key_item(&task, &json!({"path": "/questions/0/prompt"})), None);
+    assert_eq!(
+        key_item(&task, &json!({"path": "/questions/0/prompt"})),
+        None
+    );
 }

@@ -1,11 +1,14 @@
 //! Code as lines the model points at: one `Units` per file, and a change of lines made on them.
 
+use super::ask::describe_fault;
 use lattice_core::application::services::model_contract::ask::{Refusal, Settled, Why};
-use lattice_core::application::services::model_contract::edit::{Anchor, Applied, Change, Consistent};
+use lattice_core::application::services::model_contract::edit::{
+    Anchor, Applied, Change, Consistent,
+};
 use lattice_core::application::services::model_contract::shape::Vocabulary;
 use lattice_core::application::services::model_contract::shown::{Picked, Showing, Told};
 use lattice_core::application::services::model_contract::units::{Grain, Unit, UnitRef, Units};
-use lattice_core::domain::learning::drills::{DrillFile, Edit, Severity};
+use lattice_core::domain::learning::drills::{apply, DrillFile, Edit, EditFault, Severity};
 use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
 
@@ -78,7 +81,10 @@ impl CodeUnits {
 
     /// The path and the lines of the file a change edits. A refusal when it edits more than one file, or when
     /// it places something at the start with several files shown.
-    pub(crate) fn file_of(&self, change: &Change<Unit, String>) -> std::result::Result<usize, Refusal> {
+    pub(crate) fn file_of(
+        &self,
+        change: &Change<Unit, String>,
+    ) -> std::result::Result<usize, Refusal> {
         let anchors = change
             .insert
             .iter()
@@ -110,7 +116,9 @@ impl CodeUnits {
                 .iter()
                 .position(|(_, units)| units.text_of(unit).is_some())
             else {
-                return Err(Refusal("A line of the change is not one of the lines shown.".into()));
+                return Err(Refusal(
+                    "A line of the change is not one of the lines shown.".into(),
+                ));
             };
             if !owners.contains(&owner) {
                 owners.push(owner);
@@ -151,9 +159,9 @@ impl CodeUnits {
         };
         match self.files.get_mut(file) {
             Some((_, units)) => units.apply(change),
-            None => Settled::Unanswered(Why::Contradicted(
-                "The change names no file shown.".into(),
-            )),
+            None => {
+                Settled::Unanswered(Why::Contradicted("The change names no file shown.".into()))
+            }
         }
     }
 
@@ -227,7 +235,9 @@ impl Rewrite {
         let kept = kept.saturating_sub(extra);
         Some(Edit {
             path: self.path.clone(),
-            before: before.get(start..before.len().saturating_sub(kept))?.concat(),
+            before: before
+                .get(start..before.len().saturating_sub(kept))?
+                .concat(),
             after: after.get(start..after.len().saturating_sub(kept))?.concat(),
         })
     }
@@ -236,6 +246,62 @@ impl Rewrite {
     pub(crate) fn lines(&self) -> usize {
         self.was.split_inclusive('\n').count()
     }
+}
+
+/// The edit a change makes when it applies beside the other edits and can be undone, and the files it gives
+/// alone. The edit takes in as many lines around the change as it needs to occur once in its file and be undone.
+pub(crate) fn placed(
+    files: &[CodeFile],
+    others: &[Edit],
+    change: &Consistent<Unit, String>,
+) -> std::result::Result<(Edit, Vec<DrillFile>), Refusal> {
+    let clean: Vec<DrillFile> = files
+        .iter()
+        .map(|file| DrillFile {
+            path: file.path.0.clone(),
+            text: file.text.0.clone(),
+        })
+        .collect();
+    CodeUnits::of(files).file_of(change.change())?;
+    let nothing = || Refusal("The change leaves the code as it is. Change the code.".into());
+    let rewrite = CodeUnits::of(files)
+        .rewrite(change.clone())
+        .ok_or_else(nothing)?;
+    let paths: Vec<String> = clean.iter().map(|file| file.path.clone()).collect();
+    let mut labels: Vec<String> = others.iter().map(|_| "Another change".to_owned()).collect();
+    labels.push("The new change".to_owned());
+    for extra in 0..=rewrite.lines() {
+        let new = rewrite.edit(extra).ok_or_else(nothing)?;
+        if new.before == new.after {
+            return Err(nothing());
+        }
+        if new.after.trim().is_empty() {
+            continue;
+        }
+        let mut edits = others.to_vec();
+        edits.push(new.clone());
+        let changed = match apply(&clean, &edits) {
+            Ok((changed, _)) => changed,
+            Err(EditFault::Ambiguous { edit, .. }) if edit == others.len() => continue,
+            Err(fault) => {
+                return Err(Refusal(describe_fault(fault, &edits, &labels, &paths)));
+            }
+        };
+        let fix = Edit {
+            path: new.path.clone(),
+            before: new.after.clone(),
+            after: new.before.clone(),
+        };
+        if apply(&changed, std::slice::from_ref(&fix)).is_err() {
+            continue;
+        }
+        let (alone, _) = apply(&clean, std::slice::from_ref(&new))
+            .map_err(|_| Refusal("The new change does not apply to the code on its own.".into()))?;
+        return Ok((new, alone));
+    }
+    Err(Refusal(
+        "The new change cannot be placed so that it can be undone. Change other lines.".into(),
+    ))
 }
 
 /// An edit as a prompt shows it: the file, the lines it replaces, and what they become.
@@ -247,8 +313,11 @@ pub(crate) fn describe_edit(edit: &Edit) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+    use lattice_core::application::services::model_contract::edit::{consistent, Change};
+    use lattice_core::application::services::model_contract::shown::{Kind, Scope};
 
     fn rewrite(was: &str, now: &str) -> Rewrite {
         Rewrite {
@@ -317,5 +386,98 @@ mod tests {
         let units = CodeUnits::of(&shown);
         let texts: Vec<String> = units.files().into_iter().map(|file| file.text).collect();
         assert_eq!(texts, ["x = 1\r\n\r\n    y = 2".to_owned(), String::new()]);
+    }
+
+    const PATH: &str = "tides/almanac.py";
+
+    fn replacing(shown: &[CodeFile], line: usize, with: &str) -> Consistent<Unit, String> {
+        let mut scope = Scope::for_question();
+        let mut showing = scope.request();
+        let units: Vec<Units> = shown
+            .iter()
+            .map(|file| Units::of(&file.text.0, Grain::Line))
+            .collect();
+        let mut picked: Vec<Picked<Unit>> = Vec::new();
+        for lines in &units {
+            let handles = lines.shown(&mut showing).unwrap();
+            picked.extend(handles.iter().map(|(handle, unit)| Picked {
+                handle: handle.clone(),
+                reference: unit.reference(),
+            }));
+        }
+        consistent(Change {
+            replace: vec![(picked[line].clone(), with.to_owned())],
+            insert: Vec::new(),
+            remove: Vec::new(),
+            moved: Vec::new(),
+        })
+        .unwrap()
+    }
+
+    fn other(before: &str, after: &str) -> Edit {
+        Edit {
+            path: PATH.into(),
+            before: before.into(),
+            after: after.into(),
+        }
+    }
+
+    #[test]
+    fn a_change_beside_other_edits_that_can_be_undone_is_placed_with_the_files_it_gives_alone() {
+        let shown = files(&[(PATH, "a1\nb2\nc3\nd4\ne5\n")]);
+        let change = replacing(&shown, 1, "B2");
+        let (edit, alone) = placed(&shown, &[other("e5\n", "E5\n")], &change).unwrap();
+        assert_eq!(
+            (edit.before.as_str(), edit.after.as_str()),
+            ("b2\n", "B2\n")
+        );
+        assert_eq!(
+            alone,
+            [DrillFile {
+                path: PATH.into(),
+                text: "a1\nB2\nc3\nd4\ne5\n".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn a_change_that_leaves_the_code_as_it_is_is_refused() {
+        let shown = files(&[(PATH, "a1\nb2\nc3\n")]);
+        let change = replacing(&shown, 1, "b2");
+        let refusal = placed(&shown, &[], &change).unwrap_err();
+        assert!(
+            refusal.0.contains("leaves the code as it is"),
+            "{}",
+            refusal.0
+        );
+    }
+
+    #[test]
+    fn a_change_that_collides_with_another_edit_is_refused() {
+        let shown = files(&[(PATH, "a1\nb2\nc3\nd4\ne5\n")]);
+        let change = replacing(&shown, 1, "B2");
+        let refusal = placed(&shown, &[other("b2\n", "X2\n")], &change).unwrap_err();
+        assert!(
+            refusal
+                .0
+                .contains("Another change and The new change overlap"),
+            "{}",
+            refusal.0
+        );
+    }
+
+    #[test]
+    fn a_change_whose_lines_occur_twice_takes_in_neighbouring_lines_until_it_occurs_once() {
+        let shown = files(&[(PATH, "a1\nsame\nb2\nc3\nsame\nd4\n")]);
+        let change = replacing(&shown, 1, "SAME");
+        let (edit, alone) = placed(&shown, &[], &change).unwrap();
+        assert_eq!(
+            (edit.before.as_str(), edit.after.as_str()),
+            ("a1\nsame\nb2\n", "a1\nSAME\nb2\n")
+        );
+        assert_eq!(
+            alone.first().map(|file| file.text.as_str()),
+            Some("a1\nSAME\nb2\nc3\nsame\nd4\n")
+        );
     }
 }

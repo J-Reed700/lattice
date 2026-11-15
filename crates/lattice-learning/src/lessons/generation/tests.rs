@@ -1,7 +1,5 @@
-use super::outline::outline_schema;
 use super::*;
 use crate::dto::LearningProgramDto;
-use crate::lessons::course_generation_tests::length_bounds;
 use crate::lessons::course_plan::CoursePlan;
 
 fn source() -> LearningSourceDto {
@@ -87,11 +85,6 @@ fn outline_citations_are_optional_but_exact_when_present() {
     assert!(optional_citation(&sources, Some(1), exact).is_err());
     assert!(optional_citation(&[], Some(0), exact).is_err());
     assert!(optional_citation(&[], None, "").unwrap().is_none());
-    let with_sources = outline_schema(None, 1).to_string();
-    assert!(with_sources.contains("\"anyOf\":[{\"type\":\"null\"}"));
-    let without = outline_schema(None, 0).to_string();
-    assert!(!without.contains("anyOf"));
-    assert!(without.contains("\"sourceIndex\":{\"type\":\"null\"}"));
 }
 
 #[test]
@@ -154,13 +147,6 @@ fn decode_outline_names_the_modules_and_lessons_whose_titles_repeat() {
         refused.starts_with("Lessons 1.1 and 2.2 share the title"),
         "{refused}"
     );
-}
-
-#[test]
-fn generated_ids_are_not_accepted_from_model_schema() {
-    let schema = outline_schema(None, 1);
-    assert!(schema.to_string().contains("additionalProperties"));
-    assert!(!schema.to_string().contains("\"id\""));
 }
 
 #[test]
@@ -536,7 +522,7 @@ async fn prompt_snapshot_recall_drafts() -> Result<()> {
             "question":question,
             "answer":"A bounded passage limits what the course may claim.",
             "explanation":"The excerpt says the passage is bounded.",
-            "cites":["s1"]
+            "cites":["u1"]
         })
     };
     let inner = ScriptedModel {
@@ -556,14 +542,6 @@ async fn prompt_snapshot_recall_drafts() -> Result<()> {
 
     llm.assert_snapshot::<super::recall::RecallDrafts>();
     Ok(())
-}
-
-#[test]
-fn the_outline_schema_bounds_no_text_but_a_blank() {
-    for sources in [0, 1] {
-        let bounds = length_bounds(&outline_schema(None, sources));
-        assert!(bounds.is_empty(), "{sources} sources: {bounds:?}");
-    }
 }
 
 #[test]
@@ -618,33 +596,4 @@ fn the_writer_is_told_what_the_lesson_s_own_figures_are() {
         text.contains("The lesson's own figures are the quantities its own example, scenario or exercise sets, and the results calculated from them."),
         "{text}"
     );
-}
-
-#[test]
-fn a_stored_outline_meets_the_outline_schema() {
-    let (modules, _, lessons, _) = crate::dto::LearningCourseDepth::bounds(None);
-    let cited = || json!({"text":"A statement.","sourceIndex":0,"quote":"A quote."});
-    let module = |index: usize| {
-        json!({
-            "title":format!("Module {index}"),
-            "summary":cited(),
-            "outcomes":[cited(), cited()],
-            "prerequisiteIndices":if index == 0 { vec![] } else { vec![0] },
-            "project":{"title":"A project","brief":"Its brief.","deliverables":["One","Two"],"successCriteria":["Works","Is clear"]},
-            "lessons":(0..lessons).map(|n| json!({"title":format!("Lesson {n}"),"objective":"Its objective.","estimatedMinutes":20,"sourceIndex":0,"quote":"A quote."})).collect::<Vec<_>>()
-        })
-    };
-    let outline: outline::GeneratedOutline =
-        serde_json::from_value(json!({"modules":(0..modules).map(module).collect::<Vec<_>>()}))
-            .unwrap();
-    let rendered = serde_json::to_value(&outline).unwrap();
-    let validator = jsonschema::JSONSchema::compile(&outline_schema(None, 1)).unwrap();
-    let errors: Vec<String> = validator
-        .validate(&rendered)
-        .err()
-        .into_iter()
-        .flatten()
-        .map(|error| error.to_string())
-        .collect();
-    assert!(errors.is_empty(), "{errors:?}");
 }

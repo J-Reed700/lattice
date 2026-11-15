@@ -84,7 +84,6 @@ pub(super) async fn run(model: &ScriptedModel, scope: Scope<'_>, remit: Remit) -
         &candidate(),
         scope,
         remit,
-        None,
     )
     .await
 }
@@ -104,13 +103,19 @@ async fn an_issue_and_a_section_defect_are_read_and_placed() {
     let model = reviewer::<Anything>(|task, _| {
         items(vec![
             issue("The lesson never states its aim."),
-            defect(&passage(task, 2, 0), "The rest comes after rolling, not before."),
+            defect(
+                &passage(task, 2, 0),
+                "The rest comes after rolling, not before.",
+            ),
         ])
     });
     let judged = run(&model, Scope::default(), Remit::Open).await.unwrap();
     assert_eq!(judged.reported.len(), 2);
     assert_eq!(judged.reported[0].site, None);
-    assert_eq!(judged.reported[0].summary, "The lesson never states its aim.");
+    assert_eq!(
+        judged.reported[0].summary,
+        "The lesson never states its aim."
+    );
     let placed = &judged.reported[1];
     assert_eq!(placed.site, Some(FindingSite::Section(2)));
     assert_eq!(placed.passage_id.as_deref(), Some("section-2-passage-0"));
@@ -129,7 +134,10 @@ async fn a_defect_that_points_at_nothing_shown_is_left_out_and_the_others_stand(
     let model = reviewer::<Anything>(|task, _| {
         items(vec![
             defect("p99", "A claim outside the lesson."),
-            defect(&passage(task, 1, 0), "The membrane claim contradicts the example."),
+            defect(
+                &passage(task, 1, 0),
+                "The membrane claim contradicts the example.",
+            ),
         ])
     });
     let judged = run(&model, Scope::default(), Remit::Open).await.unwrap();
@@ -168,7 +176,10 @@ async fn only_passages_of_sections_in_review_carry_a_name() {
         .next()
         .unwrap();
     let blocks = task["candidate"]["blocks"].as_array().unwrap();
-    let marks: Vec<Value> = blocks.iter().map(|block| block["inReview"].clone()).collect();
+    let marks: Vec<Value> = blocks
+        .iter()
+        .map(|block| block["inReview"].clone())
+        .collect();
     assert_eq!(marks, [json!(true), json!(false), json!(true)]);
     assert!(blocks[0]["bodyPassages"][0].get("id").is_some());
     assert!(blocks[1]["bodyPassages"][0].get("id").is_none());
@@ -188,7 +199,13 @@ async fn an_open_finding_reported_resolved_is_gone_and_one_left_unmarked_is_pres
         asked: Some(&asked),
     };
     let judged = run(&model, scope, Remit::Open).await.unwrap();
-    let verdict = |id: &FindingId| judged.verdicts.iter().find(|v| &v.id == id).map(|v| v.present);
+    let verdict = |id: &FindingId| {
+        judged
+            .verdicts
+            .iter()
+            .find(|v| &v.id == id)
+            .map(|v| v.present)
+    };
     assert_eq!(verdict(&asked[0].id), Some(true));
     assert_eq!(verdict(&asked[1].id), Some(false));
 }
@@ -230,32 +247,29 @@ async fn a_report_carries_the_open_finding_it_continues() {
 }
 
 #[tokio::test]
-async fn a_cut_off_answer_keeps_what_closed_leaves_open_findings_as_they_stood_and_asks_for_the_rest()
-{
+async fn a_cut_off_answer_keeps_what_closed_leaves_open_findings_as_they_stood_and_asks_for_the_rest(
+) {
     let asked = [asked_at(1, FindingSite::Section(0))];
     let model = ScriptedModel::new().on_request::<TeachingReview<Anything>>(|sent, _| {
-        let reply: BoxFuture<'static, Result<CompletionResponse>> = if sent
-            .request
-            .schema()
-            .is_none()
-        {
-            Box::pin(std::future::ready(Ok(CompletionResponse::from_text(
-                "The candidate reads as written.",
-            ))))
-        } else if task_of(&sent.request).get("alreadyReported").is_none() {
-            let cut = format!(
-                "{{\"items\":[{{\"entry\":{}}},{{\"entry\":{{\"kind\":\"iss",
-                issue("The first gap stands.")
-            );
-            Box::pin(std::future::ready(Ok(CompletionResponse {
-                finish_reason: "length".into(),
-                ..CompletionResponse::from_text(cut)
-            })))
-        } else {
-            Box::pin(std::future::ready(Ok(CompletionResponse::from_text(
-                items(vec![issue("The second gap.")]),
-            ))))
-        };
+        let reply: BoxFuture<'static, Result<CompletionResponse>> =
+            if sent.request.schema().is_none() {
+                Box::pin(std::future::ready(Ok(CompletionResponse::from_text(
+                    "The candidate reads as written.",
+                ))))
+            } else if task_of(&sent.request).get("alreadyReported").is_none() {
+                let cut = format!(
+                    "{{\"items\":[{{\"entry\":{}}},{{\"entry\":{{\"kind\":\"iss",
+                    issue("The first gap stands.")
+                );
+                Box::pin(std::future::ready(Ok(CompletionResponse {
+                    finish_reason: "length".into(),
+                    ..CompletionResponse::from_text(cut)
+                })))
+            } else {
+                Box::pin(std::future::ready(Ok(CompletionResponse::from_text(
+                    items(vec![issue("The second gap.")]),
+                ))))
+            };
         reply
     });
     let scope = Scope {
@@ -316,9 +330,8 @@ async fn an_empty_complete_review_finds_nothing() {
 async fn a_long_finding_is_read_not_refused() {
     let long = "The step is wrong. ".repeat(400);
     let said = long.clone();
-    let model = reviewer::<Anything>(move |task, _| {
-        items(vec![defect(&passage(task, 0, 0), &said)])
-    });
+    let model =
+        reviewer::<Anything>(move |task, _| items(vec![defect(&passage(task, 0, 0), &said)]));
     let judged = run(&model, Scope::default(), Remit::Open).await.unwrap();
     assert_eq!(judged.reported[0].summary, long.trim());
 }
@@ -338,7 +351,6 @@ async fn the_writers_excerpts_are_shown_the_cited_first() {
         &cited,
         Scope::default(),
         Remit::Open,
-        None,
     )
     .await
     .unwrap();
@@ -405,7 +417,6 @@ async fn prompt_snapshot_teaching_review() {
             asked: Some(&asked),
         },
         Remit::Open,
-        None,
     )
     .await
     .unwrap();
@@ -442,8 +453,12 @@ fn translated(script: Value) -> Vec<Value> {
 
 #[test]
 fn a_scripted_issue_becomes_an_issue_entry_that_continues_the_open_finding() {
-    let entries = translated(json!({"issues":["A gap.",{"note":"Again.","continues":"reviewer/2"}]}));
-    assert_eq!(entries[0], json!({"kind":"issue","note":"A gap.","continues":"none"}));
+    let entries =
+        translated(json!({"issues":["A gap.",{"note":"Again.","continues":"reviewer/2"}]}));
+    assert_eq!(
+        entries[0],
+        json!({"kind":"issue","note":"A gap.","continues":"none"})
+    );
     assert_eq!(entries[1]["continues"], "f1");
 }
 
@@ -454,7 +469,9 @@ fn a_scripted_section_defect_lands_on_the_handle_of_its_passage() {
     ]}));
     assert_eq!(
         entries,
-        [json!({"kind":"sectionDefect","passageId":"p2","finding":"Beta fails.","continues":"none"})]
+        [
+            json!({"kind":"sectionDefect","passageId":"p2","finding":"Beta fails.","continues":"none"})
+        ]
     );
 }
 

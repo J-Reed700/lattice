@@ -60,7 +60,6 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
                     &candidate,
                     Scope::default(),
                     Remit::Open,
-                    None,
                 )
                 .await?
                 .reported
@@ -87,7 +86,6 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
             &candidate,
             Scope::default(),
             Remit::Open,
-            None,
         )
         .await?;
         assert_eq!(
@@ -106,7 +104,6 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
             &candidate,
             Scope::default(),
             Remit::Open,
-            None,
         )
         .await?;
         assert_eq!(model.prompts.lock().unwrap().len(), 7);
@@ -139,7 +136,6 @@ async fn incomplete_reviews_are_never_saved_as_completed() -> Result<()> {
                 &candidate,
                 Scope::default(),
                 Remit::Open,
-                None,
             )
             .await
             .is_err());

@@ -16,7 +16,6 @@ use crate::dto::LearningSourceDto;
 use crate::lessons::content_verification::Protected;
 use crate::lessons::copied_wording::Wording;
 use crate::model_call::ErrorClass;
-use crate::outline_progress::OutlineProgress;
 use crate::reference_collection::ReferenceCollection;
 use crate::review_evidence::Checked;
 use crate::review_findings::{
@@ -140,10 +139,6 @@ impl<'a> LessonSubject<'a> {
 
 #[async_trait::async_trait]
 impl Subject for LessonSubject<'_> {
-    fn progress(&self) -> Option<&OutlineProgress> {
-        None
-    }
-
     fn wording(&self) -> &Wording {
         &self.wording
     }
@@ -251,7 +246,6 @@ impl Subject for LessonSubject<'_> {
                     let instructions = review_instructions(
                         &ReviewTexts::lesson(),
                         round,
-                        true,
                         LESSON_REVIEW_EVIDENCE_SCOPE,
                     );
                     let review = crate::teaching_review::review(
@@ -261,7 +255,6 @@ impl Subject for LessonSubject<'_> {
                         pass.value,
                         round.scope(),
                         crate::teaching_review::Remit::Lesson,
-                        None,
                     );
                     let (judged, plan) = futures::try_join!(review, against_plan)?;
                     (Some(judged), plan.findings)

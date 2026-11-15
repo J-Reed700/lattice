@@ -10,8 +10,8 @@ use lattice_core::application::services::model_contract::shape::{
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Kind, Picked, Scope, Showing, Told,
 };
+use lattice_core::application::services::model_contract::units::{Grain, Texts, Unit, Units};
 use lattice_core::application::services::model_contract::{Contract, ContractId};
-use lattice_core::shared::text::sentences;
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -38,36 +38,6 @@ impl Contract for DiagnosticEvaluation {
     type Input = Input;
 }
 
-/// A sentence of a learner's response: an own thing of its prompt, by its place in the response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Sentence {
-    pub(super) span: (usize, usize),
-    pub(super) text: Told<String>,
-}
-
-impl Kind for Sentence {
-    const PREFIX: &'static str = "s";
-    const DRAWN: Drawn = Drawn::Itself;
-    type Ref = (usize, usize);
-
-    fn reference(&self) -> (usize, usize) {
-        self.span
-    }
-}
-
-impl Sentence {
-    /// The sentences of `response`, in order.
-    pub(super) fn of(response: &str) -> Vec<Self> {
-        sentences(response)
-            .into_iter()
-            .map(|(start, end)| Self {
-                span: (start, end),
-                text: Told(response.get(start..end).unwrap_or_default().to_owned()),
-            })
-            .collect()
-    }
-}
-
 /// The private key of a prompt's task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Key {
@@ -83,7 +53,7 @@ pub(crate) struct Prompt {
     pub(super) prompt: Told<String>,
     pub(super) outcome_title: Told<String>,
     pub(super) key: Option<Key>,
-    pub(super) response: Vec<Sentence>,
+    pub(super) response: Told<String>,
 }
 
 impl Kind for Prompt {
@@ -130,7 +100,7 @@ impl Signal {
 /// What the model decided for one prompt.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Finding {
-    pub(super) evidence: Vec<Picked<Sentence>>,
+    pub(super) evidence: Vec<Picked<Unit>>,
     pub(super) feedback: String,
     pub(super) signal: Signal,
 }
@@ -139,7 +109,7 @@ impl Authored for Finding {
     /// The grounds come before the signal: a constrained decoder commits to a signal only after writing them.
     fn form() -> Form {
         Form::new()
-            .cite_own::<Sentence>("evidence")
+            .cite_own::<Unit>("evidence")
             .text("feedback")
             .word::<Signal>("signal")
     }
@@ -159,22 +129,14 @@ impl Answered for DiagnosticEvaluation {
 
     fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
         let prompts = showing.show(&input.prompts)?;
+        let texts = texts(&input.prompts);
         let mut tasks = Vec::new();
         let mut listed = Vec::new();
         let mut responses = Vec::new();
         for (handle, prompt) in prompts.iter() {
-            let sentences = showing.under(handle, &prompt.response)?;
-            let rows = sentences
-                .iter()
-                .map(|(label, sentence)| {
-                    format!(
-                        "{} {}",
-                        label.bracketed(),
-                        sentence.text.0.replace(['\r', '\n'], " ")
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let units = units_of(&texts, &prompt.id)?;
+            let shown = showing.under(handle, units.units())?;
+            let rows = units.rows(&shown);
             if let Some(key) = &prompt.key {
                 tasks.push(json!({"promptId": handle.written(), "prompt": key.prompt, "expectedAnswer": key.expected_answer, "criteria": key.criteria}));
             }
@@ -201,10 +163,42 @@ impl Answered for DiagnosticEvaluation {
     }
 }
 
+/// Each prompt's response as sentences, told apart by the prompt's id.
+fn texts(prompts: &[Prompt]) -> Texts<String> {
+    let mut texts = Texts::new();
+    for prompt in prompts {
+        texts.push(
+            prompt.id.clone(),
+            &prompt.id,
+            &prompt.response.0,
+            Grain::Sentence,
+        );
+    }
+    texts
+}
+
+fn units_of<'a>(texts: &'a Texts<String>, id: &str) -> Result<&'a Units> {
+    texts
+        .iter()
+        .find_map(|(of, units)| (of == id).then_some(units))
+        .ok_or_else(|| AppError::InternalError("A prompt's response was not cut.".into()))
+}
+
 /// The text of `response` from the first of the cited sentences to the last.
-fn quote(response: &str, evidence: &[Picked<Sentence>]) -> Option<String> {
-    let start = evidence.iter().map(|cited| cited.reference.0).min()?;
-    let end = evidence.iter().map(|cited| cited.reference.1).max()?;
+fn quote(
+    texts: &Texts<String>,
+    id: &str,
+    response: &str,
+    evidence: &[Picked<Unit>],
+) -> Option<String> {
+    let spans = units_of(texts, id).ok()?.spans();
+    let held: Vec<_> = spans
+        .iter()
+        .filter(|(at, _)| evidence.iter().any(|cited| cited.reference == *at))
+        .map(|(_, span)| span)
+        .collect();
+    let start = held.iter().map(|span| span.start).min()?;
+    let end = held.iter().map(|span| span.end).max()?;
     response.get(start..end).map(str::to_owned)
 }
 
@@ -252,7 +246,7 @@ pub async fn evaluate(
                     expected_answer: Told(task.expected_answer.clone()),
                     criteria: Told(task.criteria.clone()),
                 }),
-            response: Sentence::of(answer),
+            response: Told((*answer).to_owned()),
         })
         .collect();
     let settled = ask_each::<DiagnosticEvaluation>(
@@ -273,6 +267,7 @@ pub async fn evaluate(
         AppError::ModelAnswerUnusable(_) => AppError::ModelAnswerUnusable(UNTIED.into()),
         other => other,
     })?;
+    let texts = texts(&items);
     let mut findings = Vec::with_capacity(items.len());
     for ((prompt, answer), settled) in attempt.prompts.iter().zip(answers).zip(settled) {
         match settled {
@@ -281,7 +276,7 @@ pub async fn evaluate(
                 outcome_id: prompt.outcome_id.clone(),
                 signal: finding.signal.dto(),
                 feedback: finding.feedback,
-                evidence_quote: quote(answer, &finding.evidence),
+                evidence_quote: quote(&texts, &prompt.id, answer, &finding.evidence),
             }),
             Settled::Unanswered(why) => return Err(ask::failed(&why)),
         }

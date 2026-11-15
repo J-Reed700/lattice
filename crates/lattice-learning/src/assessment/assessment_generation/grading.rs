@@ -9,7 +9,7 @@ use lattice_core::application::services::model_contract::shape::{
     Authored, Each, Fields, Form, Vocabulary,
 };
 use lattice_core::application::services::model_contract::shown::{
-    Drawn, Kind, Picked, Scope, Shown, Showing, Told,
+    Drawn, Kind, Picked, Scope, Showing, Shown, Told,
 };
 use lattice_core::shared::text::sentences;
 
@@ -498,8 +498,6 @@ pub async fn grade_written(llm: &dyn LLMPort, answers: &[WrittenAnswer]) -> Resu
                     full_credit_includes: mark.full_credit_includes,
                     source_quote: quote_of(&answer.reference, &mark.source),
                     verdict: mark.verdict,
-                    // `check` recomputes the points from the verdict.
-                    points: 0.0,
                 })
                 .collect();
             Some(RawGrade {
@@ -508,7 +506,10 @@ pub async fn grade_written(llm: &dyn LLMPort, answers: &[WrittenAnswer]) -> Resu
                     criteria,
                     summary: graded.summary,
                 },
-                response_to_note: answer.learner_note.as_ref().map(|_| graded.response_to_note),
+                response_to_note: answer
+                    .learner_note
+                    .as_ref()
+                    .map(|_| graded.response_to_note),
             })
         })
         .collect())
@@ -570,7 +571,6 @@ pub async fn judge_short_answers(
                         } else {
                             GraderVerdict::Missed
                         },
-                        points: if equivalent { 1.0 } else { 0.0 },
                     }],
                     summary: judged.summary,
                 },

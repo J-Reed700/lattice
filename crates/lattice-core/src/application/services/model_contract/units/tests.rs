@@ -709,3 +709,38 @@ fn iter_keeps_the_order_the_texts_were_pushed() {
     let order: Vec<i32> = texts.iter().map(|(of, _)| *of).collect();
     assert_eq!(order, vec![3, 1, 2]);
 }
+
+#[test]
+fn a_text_shown_to_be_quoted_is_named_apart_from_the_material() {
+    let material = Units::of("Ann ran. Bob sat.", Grain::Sentence);
+    let source = Units::of("Cy hid. Di won.", Grain::Sentence);
+    let mut scope = Scope::for_question();
+    let mut showing = scope.request();
+    let own = material.rows(&material.shown(&mut showing).expect("shown"));
+    let quotable = source.quoted();
+    let quoted = source.rows(&showing.show(&quotable).expect("shown"));
+    assert_eq!(own, ["[u1] Ann ran.", "[u2] Bob sat."].join("\n"));
+    assert_eq!(quoted, ["[q1] Cy hid.", "[q2] Di won."].join("\n"));
+
+    assert_eq!(showing.resolve::<Unit>("q1"), None);
+    assert_eq!(showing.resolve::<Quoted>("u1"), None);
+    let picked = showing.resolve::<Quoted>("q2").expect("resolves");
+    assert_eq!(source.text_of(picked.reference), Some("Di won."));
+}
+
+#[test]
+fn a_quoted_unit_that_is_not_shown_is_written_without_a_handle() {
+    let source = Units::of("Cy hid.\n\nDi won. Ed lost.", Grain::Sentence);
+    let chosen: Vec<Quoted> = source
+        .quoted()
+        .into_iter()
+        .filter(|quoted| quoted.text() != "Di won.")
+        .collect();
+    let mut scope = Scope::for_question();
+    let mut showing = scope.request();
+    let shown = showing.show(&chosen).expect("shown");
+    assert_eq!(
+        source.marked(&shown),
+        "[q1] Cy hid.\n\nDi won. [q2] Ed lost."
+    );
+}

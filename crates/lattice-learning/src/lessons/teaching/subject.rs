@@ -1,5 +1,5 @@
 //! What a review is of. The review loop asks a subject for each step that
-//! differs between a lesson, a curriculum outline and other material.
+//! differs between a lesson and other material.
 mod closed;
 mod lesson;
 use super::quotes::{authored, reanchor_quotes_in, restore_quotes_in, QuoteCheck, Table};
@@ -9,10 +9,9 @@ use super::ReviewSchema;
 use crate::dto::LearningBlockKind;
 use crate::lessons::copied_wording::Wording;
 use crate::model_call::ErrorClass;
-use crate::outline_progress::OutlineProgress;
 use crate::review_findings::{ReviewFinding, SetAside};
 use crate::teaching_review::LessonConcern;
-pub(super) use closed::{MaterialSubject, OutlineSubject};
+pub(super) use closed::MaterialSubject;
 use lattice_core::{application::ports::LLMPort, shared::error::Result};
 pub(super) use lesson::LessonSubject;
 use serde_json::{json, Value};
@@ -214,8 +213,6 @@ pub(super) enum Settled {
 
 #[async_trait::async_trait]
 pub(super) trait Subject: Send + Sync {
-    /// Where an outline's progress is reported, when it is one.
-    fn progress(&self) -> Option<&OutlineProgress>;
     /// The source wording a repair's edits may not copy.
     fn wording(&self) -> &Wording;
     /// Reports a step of the review.
@@ -230,15 +227,6 @@ pub(super) trait Subject: Send + Sync {
     async fn save(&self, candidate: &str) -> Result<()>;
     /// Brings the candidate's quotations to their sources' exact words; true when it changed.
     fn settle_quotes(&self, candidate: &mut Value, authoring: &Value, attempt: usize) -> bool;
-    /// Chooses the reference passages this pass's review reads.
-    async fn select_sources(
-        &self,
-        _llm: &dyn LLMPort,
-        _authoring: &mut Value,
-        _candidate: &Value,
-    ) -> Result<()> {
-        Ok(())
-    }
     /// The quotations that match no saved reference.
     fn quote_checks(&self, candidate: &Value, authoring: &Value) -> Vec<QuoteCheck>;
     /// Every check of one pass.
@@ -329,22 +317,14 @@ impl ReviewTexts {
     }
 }
 
-/// The reviewer's instructions for one round. `block_checks` is whether the
-/// material has sections to check.
-fn review_instructions(
-    texts: &ReviewTexts,
-    round: &Round,
-    block_checks: bool,
-    scope: &str,
-) -> String {
+/// The reviewer's instructions for one round.
+fn review_instructions(texts: &ReviewTexts, round: &Round, scope: &str) -> String {
     let system: &str = if round.first {
         &texts.first
     } else {
         &texts.recheck
     };
-    let checks: &str = if !block_checks {
-        ""
-    } else if round.whole {
+    let checks: &str = if round.whole {
         &texts.whole
     } else {
         &texts.changed

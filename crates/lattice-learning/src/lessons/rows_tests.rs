@@ -3,7 +3,8 @@ use super::rows::{Edits, Held, Left, Quotes, Rows, Took};
 use lattice_core::application::services::model_contract::shape::{
     Ended, Settled, Single, Value as Whole, Written,
 };
-use lattice_core::application::services::model_contract::shown::Scope;
+use lattice_core::application::services::model_contract::shown::{Kind, Scope};
+use lattice_core::application::services::model_contract::units::{Grain, Units};
 use serde_json::{json, Value};
 
 const TITLE: &str = "Reading a tide table";
@@ -282,9 +283,51 @@ fn quotes_are_the_long_enough_sentences_of_each_excerpt_each_once() {
     let seen: Vec<(u64, &str)> = quotes
         .all()
         .iter()
-        .map(|quotable| (quotable.source_index(), quotable.text()))
+        .filter_map(|quotable| quotes.get(quotable.reference()))
         .collect();
-    assert_eq!(seen, vec![(0, QUOTE_A), (0, QUOTE_B), (1, QUOTE_KILN)]);
+    assert_eq!(
+        seen,
+        vec![(0, QUOTE_A), (0, QUOTE_B), (0, QUOTE_A), (1, QUOTE_KILN)]
+    );
+}
+
+#[test]
+fn a_sentence_under_the_quote_floor_has_no_handle_and_no_cite_can_name_it() {
+    let quotes = quotes();
+    let excerpt = format!("{QUOTE_A} Short one. {QUOTE_B} {QUOTE_A}");
+    let cut = Units::of_at(&excerpt, Grain::Sentence, "0");
+    let short = cut
+        .units()
+        .iter()
+        .find(|unit| unit.text() == "Short one.")
+        .expect("the short sentence is a unit");
+    assert_eq!(quotes.get(short.reference()), None);
+    assert!(quotes
+        .all()
+        .iter()
+        .all(|quotable| quotable.text() != "Short one."));
+}
+
+#[test]
+fn two_excerpts_of_one_source_are_two_texts_and_an_excerpt_added_twice_is_one() {
+    let other = format!("{QUOTE_B} {QUOTE_A}");
+    let mut quotes = Quotes::default();
+    quotes.push(0, QUOTE_A);
+    quotes.push(0, &other);
+    quotes.push(0, QUOTE_A);
+    quotes.push(0, &other);
+    let seen: Vec<(u64, &str)> = quotes
+        .all()
+        .iter()
+        .filter_map(|quotable| quotes.get(quotable.reference()))
+        .collect();
+    assert_eq!(seen, vec![(0, QUOTE_A), (0, QUOTE_B), (0, QUOTE_A)]);
+    let refs: Vec<_> = quotes
+        .all()
+        .iter()
+        .map(|quotable| quotable.reference())
+        .collect();
+    assert_ne!(refs.first(), refs.get(2));
 }
 
 #[test]
@@ -295,14 +338,34 @@ fn an_excerpt_is_marked_with_the_handle_of_each_quotable_sentence() {
     let shown = showing.show(quotes.all()).expect("shown");
     let excerpt = format!("{QUOTE_A} Short one. {QUOTE_B} {QUOTE_A}");
     assert_eq!(
-        Quotes::marked(0, &excerpt, &shown),
-        format!("[q1] {QUOTE_A} Short one. [q2] {QUOTE_B} [q1] {QUOTE_A}")
+        quotes.marked(0, &excerpt, &shown),
+        format!("[q1] {QUOTE_A} Short one. [q2] {QUOTE_B} [q3] {QUOTE_A}")
     );
     assert_eq!(
-        Quotes::marked(1, QUOTE_KILN, &shown),
-        format!("[q3] {QUOTE_KILN}")
+        quotes.marked(1, QUOTE_KILN, &shown),
+        format!("[q4] {QUOTE_KILN}")
     );
-    assert_eq!(Quotes::marked(5, QUOTE_KILN, &shown), QUOTE_KILN);
+    assert_eq!(quotes.marked(5, QUOTE_KILN, &shown), QUOTE_KILN);
+}
+
+#[test]
+fn marking_leaves_the_excerpt_as_it_is_apart_from_the_handles() {
+    let quotes = quotes();
+    let mut scope = Scope::for_question();
+    let mut showing = scope.request();
+    let shown = showing.show(quotes.all()).expect("shown");
+    let excerpt = format!(
+        "  {QUOTE_A}
+
+ Short one.  {QUOTE_B}	{QUOTE_A}
+"
+    );
+    let marked = quotes.marked(0, &excerpt, &shown);
+    let mut bare = marked;
+    for handle in ["[q1] ", "[q2] ", "[q3] "] {
+        bare = bare.replacen(handle, "", 1);
+    }
+    assert_eq!(bare, excerpt);
 }
 
 // ---- citations follow their sentences ----
@@ -1107,7 +1170,10 @@ fn a_part_s_fields_have_their_real_pointers() {
     assert_eq!(rows.value(), material);
     let units = Rows::of(&material);
     let whole = render(&units);
-    assert_eq!(whole["blocks"][1]["body"], json!("[u5] Kilns are fired at dawn. [u6] Boats leave at noon."));
+    assert_eq!(
+        whole["blocks"][1]["body"],
+        json!("[u5] Kilns are fired at dawn. [u6] Boats leave at noon.")
+    );
 }
 
 #[test]
@@ -1116,12 +1182,19 @@ fn a_change_in_a_part_gives_the_whole_lesson_with_only_that_part_changed() {
     let mut rows = Rows::of_part(&material, "/blocks/1");
     let rendered = render(&rows);
     let dawn = h(&rendered, "Kilns are fired at dawn.");
-    take(&mut rows, &Quotes::default(), replacing(&dawn, "Kilns are lit at first light."))
-        .expect("taken");
+    take(
+        &mut rows,
+        &Quotes::default(),
+        replacing(&dawn, "Kilns are lit at first light."),
+    )
+    .expect("taken");
     let mut expected = material.clone();
     expected["blocks"][1]["body"] = json!("Kilns are lit at first light. Boats leave at noon.");
     assert_eq!(rows.value()["blocks"][0], material["blocks"][0]);
-    assert_eq!(rows.value()["blocks"][1]["body"], expected["blocks"][1]["body"]);
+    assert_eq!(
+        rows.value()["blocks"][1]["body"],
+        expected["blocks"][1]["body"]
+    );
     assert_eq!(rows.value()["questions"], material["questions"]);
 }
 

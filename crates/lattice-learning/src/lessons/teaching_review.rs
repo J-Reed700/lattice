@@ -3,7 +3,6 @@ use crate::dto::LearningBlockKind;
 use crate::lessons::structured_call::{Asking, CallKind, ReasonFirst};
 use crate::lessons::trace::{self, Stage};
 use crate::lessons::writer_excerpts::WriterExcerpts;
-use crate::outline_progress::OutlineProgress;
 use crate::reference_collection::item_tokens;
 use crate::review_findings::{FindingId, FindingSite, ReviewFinding};
 use lattice_core::{
@@ -24,8 +23,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::marker::PhantomData;
 
-use concerns::{CheckConcern, IssueConcern};
 pub(crate) use concerns::LessonConcern;
+use concerns::{CheckConcern, IssueConcern};
 
 pub(super) const POLICY: Protocol = protocol!("section-review", 8);
 
@@ -259,11 +258,11 @@ impl<L: Lens> Answered for TeachingReview<L> {
         let open = showing.show(&input.open)?;
         let mut candidate = input.candidate.0.clone();
         for (handle, passage) in passages.iter() {
-            let place = format!("/blocks/{}/bodyPassages/{}", passage.section, passage.number);
-            if let Some(entry) = candidate
-                .pointer_mut(&place)
-                .and_then(Value::as_object_mut)
-            {
+            let place = format!(
+                "/blocks/{}/bodyPassages/{}",
+                passage.section, passage.number
+            );
+            if let Some(entry) = candidate.pointer_mut(&place).and_then(Value::as_object_mut) {
                 entry.insert("id".into(), json!(handle.written()));
             }
         }
@@ -648,11 +647,7 @@ fn already_reported<L: Lens>(standing: &[Item<L>]) -> Vec<String> {
 }
 
 /// The entries the reviewer wrote, and whether its answer was read to its end.
-async fn ask_entries<L: Lens>(
-    llm: &dyn LLMPort,
-    input: &Input,
-    progress: Option<&OutlineProgress>,
-) -> Result<(Vec<Entry>, bool)> {
+async fn ask_entries<L: Lens>(llm: &dyn LLMPort, input: &Input) -> Result<(Vec<Entry>, bool)> {
     let brief = if input.open.is_empty() {
         REVIEW_DRAFT_BRIEF.to_owned()
     } else {
@@ -661,7 +656,7 @@ async fn ask_entries<L: Lens>(
     let found = ask_new::<TeachingReview<L>>(
         llm,
         &Asking {
-            progress,
+            progress: None,
             reasoning: Some(ReasonFirst {
                 kind: CallKind::Authoring,
                 subject: "the teaching review",
@@ -699,7 +694,6 @@ pub async fn review(
     candidate: &Value,
     scope: Scope<'_>,
     remit: Remit,
-    progress: Option<&OutlineProgress>,
 ) -> Result<Judged> {
     let Value::Object(mut prompt) = prompt else {
         return Err(AppError::InternalError(
@@ -769,8 +763,8 @@ pub async fn review(
         return Ok(saved);
     }
     let (entries, complete) = match remit {
-        Remit::Open => ask_entries::<Anything>(llm, &input, progress).await?,
-        Remit::Lesson => ask_entries::<Concerns>(llm, &input, progress).await?,
+        Remit::Open => ask_entries::<Anything>(llm, &input).await?,
+        Remit::Lesson => ask_entries::<Concerns>(llm, &input).await?,
     };
     let found = judged(&input, candidate, remit, entries, complete);
     if complete {

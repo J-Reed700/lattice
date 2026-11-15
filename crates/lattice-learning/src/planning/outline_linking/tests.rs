@@ -2,9 +2,9 @@ use super::spans::{last_sentence_end, sentence_ends};
 use super::*;
 use crate::dto::{GenerateLearningProgramRequestDto, LearningCourseDepth};
 use crate::lessons::content_verification::tests::fixture_task;
+use crate::lessons::content_verification::tests::{fixture_completion, fixture_prompts};
 use crate::lessons::course_generation_tests::ScriptedModel;
 use crate::reference_collection::ReferencePassage;
-use crate::lessons::content_verification::tests::{fixture_completion, fixture_prompts};
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use lattice_core::shared::error::AppError;
@@ -131,9 +131,21 @@ impl LLMPort for Answering {
 async fn the_chooser_links_items_to_the_apps_own_passage_text() {
     let mut draft = draft(candidate());
     let llm = model(vec![entries(&[
-        ("i1", "p2", "The passage addresses interpreting observed differences."),
-        ("i2", "p1", "The passage explains random assignment and confounding."),
-        ("i3", "p2", "The passage is about uncertainty estimates, not assignment."),
+        (
+            "i1",
+            "p2",
+            "The passage addresses interpreting observed differences.",
+        ),
+        (
+            "i2",
+            "p1",
+            "The passage explains random assignment and confounding.",
+        ),
+        (
+            "i3",
+            "p2",
+            "The passage is about uncertainty estimates, not assignment.",
+        ),
         ("i4", "none", "Neither passage plans treatment groups."),
     ])]);
     let log = link(
@@ -364,9 +376,9 @@ async fn an_unusable_decision_leaves_only_that_item_unlinked_and_never_fails() {
 #[tokio::test]
 async fn an_item_no_decision_reaches_loses_its_author_citation_and_gets_no_receipt() {
     let mut draft = draft(candidate());
-    let llm = answering(|task, _| {
-        json!({"entries": shown_items(task).iter().filter(|id| *id != "i3").map(|id| json!({"of": id, "candidate": "none", "reason": "ok"})).collect::<Vec<_>>()})
-    });
+    let llm = answering(
+        |task, _| json!({"entries": shown_items(task).iter().filter(|id| *id != "i3").map(|id| json!({"of": id, "candidate": "none", "reason": "ok"})).collect::<Vec<_>>()}),
+    );
     let log = link(
         &llm,
         &mut draft,
@@ -423,7 +435,15 @@ async fn a_choice_without_a_reason_is_corrected_alone() {
         "outcomes":[],"lessons":[]}]}),
     );
     let llm = answering(|_, nth| {
-        entries(&[("i1", "p1", if nth == 0 { " " } else { "It explains assignment." })])
+        entries(&[(
+            "i1",
+            "p1",
+            if nth == 0 {
+                " "
+            } else {
+                "It explains assignment."
+            },
+        )])
     });
     link(
         &llm,
@@ -525,10 +545,45 @@ fn one_item_whose_candidates_outgrow_the_room_is_offered_the_best_that_fit() {
     assert_eq!(cut.items.len(), 1);
     assert_eq!(cut.items[0].candidates.value(), &vec![0, 1]);
     assert_eq!(cut.passages.len(), 2);
-    assert!(OutlineLinking::within(&input_for(&open, &passages, &costs), 0)
-        .unwrap()
-        .items
-        .is_empty());
+    assert!(
+        OutlineLinking::within(&input_for(&open, &passages, &costs), 0)
+            .unwrap()
+            .items
+            .is_empty()
+    );
+}
+
+#[test]
+fn an_item_that_does_not_fit_is_passed_over_and_a_later_one_is_still_shown() {
+    let passages = plain_passages(4);
+    let costs = vec![10, 50, 10, 10];
+    let items = [
+        plain_item(0, vec![0]),
+        plain_item(1, vec![1]),
+        plain_item(2, vec![2]),
+    ];
+    let open: Vec<&Item> = items.iter().collect();
+    let cut = OutlineLinking::within(&input_for(&open, &passages, &costs), 25).unwrap();
+    assert_eq!(cut.items.iter().map(|i| i.at).collect::<Vec<_>>(), [0, 2]);
+    assert_eq!(
+        cut.passages.iter().map(|p| p.at).collect::<Vec<_>>(),
+        [0, 2]
+    );
+}
+
+#[test]
+fn a_passage_two_items_share_is_counted_once() {
+    let passages = plain_passages(3);
+    let costs = vec![10; 3];
+    let items = [
+        plain_item(0, vec![0, 1]),
+        plain_item(1, vec![1, 2]),
+        plain_item(2, vec![0, 2]),
+    ];
+    let open: Vec<&Item> = items.iter().collect();
+    let cut = OutlineLinking::within(&input_for(&open, &passages, &costs), 30).unwrap();
+    assert_eq!(cut.items.len(), 3);
+    assert_eq!(cut.passages.len(), 3);
 }
 
 #[tokio::test]
@@ -1076,9 +1131,21 @@ async fn prompt_snapshot_outline_linking() {
     use lattice_core::application::services::model_contract::test_support::snapshot;
     let mut draft = draft(candidate());
     let llm = model(vec![entries(&[
-        ("i1", "p2", "The passage addresses interpreting observed differences."),
-        ("i2", "p1", "The passage explains random assignment and confounding."),
-        ("i3", "p2", "The passage is about uncertainty estimates, not assignment."),
+        (
+            "i1",
+            "p2",
+            "The passage addresses interpreting observed differences.",
+        ),
+        (
+            "i2",
+            "p1",
+            "The passage explains random assignment and confounding.",
+        ),
+        (
+            "i3",
+            "p2",
+            "The passage is about uncertainty estimates, not assignment.",
+        ),
         ("i4", "none", "Neither passage plans treatment groups."),
     ])]);
     let capture = Capture::of::<OutlineLinking>(&llm);

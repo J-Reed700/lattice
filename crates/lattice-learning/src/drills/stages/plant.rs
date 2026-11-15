@@ -4,7 +4,7 @@
 //! evidence it breaks, and is of a pattern of the list or of another pattern of the catalogue.
 
 use super::ask::{describe_fault, normalise};
-use super::code_units::{describe_edit, CodeFile, CodeUnits, Weight};
+use super::code_units::{describe_edit, placed, CodeFile, CodeUnits, Weight};
 use super::outputs::{Baseline, Mutation, Planted, Trail, Verification};
 use super::DrillBuild;
 use crate::drills::budget;
@@ -24,7 +24,7 @@ use lattice_core::application::services::model_contract::shown::{
 use lattice_core::application::services::model_contract::units::{Grain, Unit, Units};
 use lattice_core::application::services::model_contract::{Contract, ContractId};
 use lattice_core::domain::learning::drills::{
-    apply, patterns_for, DrillFile, Edit, EditFault, Family, LessonBrief, Pattern, Severity,
+    apply, patterns_for, DrillFile, Edit, Family, LessonBrief, Pattern, Severity,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
@@ -331,9 +331,7 @@ impl<const TESTED: bool, const LESSONS: bool> Answered for Plant<TESTED, LESSONS
 
     fn accept(input: &Input, plan: &Plan<TESTED, LESSONS>) -> std::result::Result<(), Refusal> {
         if plan.consequence.trim().is_empty() || plan.explanation.trim().is_empty() {
-            return Err(Refusal(
-                "Give the consequence and the explanation.".into(),
-            ));
+            return Err(Refusal("Give the consequence and the explanation.".into()));
         }
         if !plan.killing_test.trim().is_empty() && !plan.no_test_because.trim().is_empty() {
             return Err(Refusal(
@@ -364,60 +362,6 @@ impl<const TESTED: bool, const LESSONS: bool> Answered for Plant<TESTED, LESSONS
         let others: Vec<Edit> = input.others.iter().map(|edit| edit.0.clone()).collect();
         placed(&input.files, &others, &plan.change).map(|_| ())
     }
-}
-
-/// The edit a change makes when it applies beside the other edits and can be undone. The edit takes in as many
-/// lines around the change as it needs to occur once in its file and be undone.
-fn placed(
-    files: &[CodeFile],
-    others: &[Edit],
-    change: &Consistent<Unit, String>,
-) -> std::result::Result<Edit, Refusal> {
-    let clean: Vec<DrillFile> = files
-        .iter()
-        .map(|file| DrillFile {
-            path: file.path.0.clone(),
-            text: file.text.0.clone(),
-        })
-        .collect();
-    CodeUnits::of(files).file_of(change.change())?;
-    let nothing = || Refusal("The change leaves the code as it is. Change the code.".into());
-    let rewrite = CodeUnits::of(files)
-        .rewrite(change.clone())
-        .ok_or_else(nothing)?;
-    let paths: Vec<String> = clean.iter().map(|file| file.path.clone()).collect();
-    let mut labels: Vec<String> = others.iter().map(|_| "Another change".to_owned()).collect();
-    labels.push("The new change".to_owned());
-    for extra in 0..=rewrite.lines() {
-        let new = rewrite.edit(extra).ok_or_else(nothing)?;
-        if new.before == new.after {
-            return Err(nothing());
-        }
-        if new.after.trim().is_empty() {
-            continue;
-        }
-        let mut edits = others.to_vec();
-        edits.push(new.clone());
-        let changed = match apply(&clean, &edits) {
-            Ok((changed, _)) => changed,
-            Err(EditFault::Ambiguous { edit, .. }) if edit == others.len() => continue,
-            Err(fault) => {
-                return Err(Refusal(describe_fault(fault, &edits, &labels, &paths)));
-            }
-        };
-        let fix = Edit {
-            path: new.path.clone(),
-            before: new.after.clone(),
-            after: new.before.clone(),
-        };
-        if apply(&changed, std::slice::from_ref(&fix)).is_err() {
-            continue;
-        }
-        return Ok(new);
-    }
-    Err(Refusal(
-        "The change cannot be placed so that it can be undone. Change other lines.".into(),
-    ))
 }
 
 /// What the stage is asked about, the same in every round.
@@ -473,7 +417,7 @@ fn judge<const TESTED: bool, const LESSONS: bool>(
     if standing.planted.iter().any(|planted| planted == pattern.id) {
         return Judged::Conflict;
     }
-    let Ok(edit) = placed(&base.coded, &standing.edits, &plan.change) else {
+    let Ok((edit, _)) = placed(&base.coded, &standing.edits, &plan.change) else {
         return Judged::Conflict;
     };
     if pattern.family == Family::Testing && !base.tests.contains(&edit.path) {
@@ -590,14 +534,14 @@ impl DrillBuild<'_> {
                 brief: base.brief.clone().map(Told),
                 files: base.coded.clone(),
                 targets: Vec::new(),
-                catalogue: base.others.iter().map(|pattern| Catalogued::of(pattern)).collect(),
+                catalogue: base
+                    .others
+                    .iter()
+                    .map(|pattern| Catalogued::of(pattern))
+                    .collect(),
                 others: standing.edits.iter().cloned().map(Told).collect(),
                 planted: standing.planted.iter().cloned().map(Internal::of).collect(),
-                lessons_left: Told(
-                    base.wording
-                        .lesson_issues
-                        .saturating_sub(standing.lessons),
-                ),
+                lessons_left: Told(base.wording.lesson_issues.saturating_sub(standing.lessons)),
                 room: Internal::of(budget::mutations(open.len())),
             };
             let settled = ask_each::<Plant<TESTED, LESSONS>>(
