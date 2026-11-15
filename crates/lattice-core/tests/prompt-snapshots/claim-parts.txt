@@ -43,7 +43,8 @@ Claim: Quillet is a lexer and tokenizes.
           "passages": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "description": "One name shown in square brackets, written without the brackets, such as p1."
             }
           }
         },

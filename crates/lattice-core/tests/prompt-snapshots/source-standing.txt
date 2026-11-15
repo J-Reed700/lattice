@@ -115,7 +115,8 @@ Return the standing, the publisher, the editorial process, the nature of the con
         "type": "object",
         "properties": {
           "flag": {
-            "type": "string"
+            "type": "string",
+            "description": "One name shown in square brackets, written without the brackets, such as f1."
           },
           "code": {
             "type": "string",
