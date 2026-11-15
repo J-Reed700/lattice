@@ -2,7 +2,8 @@
 //! judged stands while the inputs it judged are unchanged.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::loop_tests::{
-    context, part_a_is_wrong, parts_lesson, references, retitled, ByRequest, EXCERPT, INPUT,
+    context, part_a_is_wrong, parts_lesson, references, retitled, sections_in_review, ByRequest,
+    EXCERPT, INPUT,
 };
 use super::*;
 use crate::content_verification::tests::fixture_task;
@@ -97,8 +98,8 @@ async fn a_later_review_in_the_job_asks_only_about_the_section_that_changed() ->
     .await?;
     let reviews = model.reviews();
     assert_eq!(reviews.len(), 2);
-    assert_eq!(reviews[0]["sectionIndicesToReview"], json!([0, 1, 2]));
-    assert_eq!(reviews[1]["sectionIndicesToReview"], json!([1]));
+    assert_eq!(sections_in_review(&reviews[0]), json!([0, 1, 2]));
+    assert_eq!(sections_in_review(&reviews[1]), json!([1]));
     Ok(())
 }
 
@@ -110,10 +111,7 @@ async fn asked_again(
     let model = ByRequest::new(|_| false, |_, _| Vec::new());
     let same = |lesson: Value| lesson;
     two_reviews(&model, &context(), &parts_lesson(2), before, &same, after).await?;
-    Ok(model
-        .reviews()
-        .get(1)
-        .map(|request| request["sectionIndicesToReview"].clone()))
+    Ok(model.reviews().get(1).map(sections_in_review))
 }
 
 #[tokio::test]

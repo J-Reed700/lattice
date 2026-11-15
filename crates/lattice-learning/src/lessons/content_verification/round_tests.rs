@@ -6,8 +6,8 @@
 use super::*;
 use async_trait::async_trait;
 use lattice_core::domain::learning::acceptance::{
-    decide, start, End, NodeId, Outcome, Position, StandardPolicy, Step, Taken, Then, Walked,
-    CLASSES,
+    decide, start, Classes, End, NodeId, Outcome, Position, StandardPolicy, Step, Taken, Then,
+    Walked, CLASSES,
 };
 use std::collections::VecDeque;
 
@@ -34,7 +34,7 @@ impl Scripted {
             claim: ClaimId(claim.to_owned()),
             walked: Walked::At(Position {
                 class,
-                changed_class: false,
+                visited: Classes::of(class),
                 reasked: false,
                 node: NodeId(node),
                 rewrites_left: 2,

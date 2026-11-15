@@ -57,6 +57,7 @@ use reqwest::Client;
 use tokio::sync::Semaphore;
 
 use super::web::{check_public_url, parse_html, read_text_bounded, SitePacer};
+use lattice_core::shared::error::WithCauses;
 
 /// What every finder shares with the page reader: the guarded public client,
 /// the per-host pacer, the HTML parser admission, and the user's optional
@@ -125,7 +126,7 @@ impl FinderHttp {
         };
         let response = match self.client.get(url).headers(headers).send().await {
             Ok(response) => response,
-            Err(error) => return Fetched::Transport(error.to_string()),
+            Err(error) => return Fetched::Transport(WithCauses(&error).to_string()),
         };
         let status = response.status();
         if !status.is_success() {

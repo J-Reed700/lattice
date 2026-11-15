@@ -25,6 +25,7 @@ struct Routed<'a> {
     drafting: Mutex<Vec<String>>,
     confirming: Mutex<Vec<(String, String)>>,
     confirmed: Mutex<Vec<String>>,
+    confirmed_schemas: Mutex<Vec<Value>>,
 }
 
 /// A confirming read nobody scripted: not taught, and an item belongs in
@@ -48,6 +49,7 @@ impl<'a> Routed<'a> {
             drafting: Mutex::new(Vec::new()),
             confirming: Mutex::new(Vec::new()),
             confirmed: Mutex::new(Vec::new()),
+            confirmed_schemas: Mutex::new(Vec::new()),
         }
     }
 
@@ -62,6 +64,10 @@ impl<'a> Routed<'a> {
 
     fn confirmed(&self) -> Vec<String> {
         self.confirmed.lock().unwrap().clone()
+    }
+
+    fn confirmed_schemas(&self) -> Vec<Value> {
+        self.confirmed_schemas.lock().unwrap().clone()
     }
 
     fn drafting(&self) -> Vec<String> {
@@ -81,6 +87,9 @@ impl LLMPort for Routed<'_> {
             && !crate::lessons::structured_call::is_draft_request(request)
         {
             self.confirmed.lock().unwrap().push(user.to_owned());
+            if let Some(schema) = &request.json_schema {
+                self.confirmed_schemas.lock().unwrap().push(schema.clone());
+            }
             let reply = self
                 .confirming
                 .lock()
@@ -166,6 +175,10 @@ fn block(title: &str, body: &str) -> Value {
     json!({"kind":"explanation","title":title,"body":body,"rubric":[],"sourceIndex":0,"quote":EXCERPT})
 }
 
+fn block_of(kind: &str, title: &str, body: &str) -> Value {
+    json!({"kind":kind,"title":title,"body":body,"rubric":[],"sourceIndex":0,"quote":EXCERPT})
+}
+
 fn lesson(bodies: [&str; 3]) -> Value {
     json!({"blocks":[
         block("Opening", bodies[0]),
@@ -174,14 +187,14 @@ fn lesson(bodies: [&str; 3]) -> Value {
     ],"questions":[]})
 }
 
-fn reviewed(blocks: usize) -> String {
-    reviewed_of(&(0..blocks).collect::<Vec<_>>(), &[])
+fn reviewed() -> String {
+    reviewed_of(&[])
 }
 
-/// A review that finds no defect in the sections it is asked about, and gives
-/// `verdicts` on the findings it is asked about.
-fn reviewed_of(sections: &[usize], verdicts: &[Value]) -> String {
-    clean_review(sections, verdicts)
+/// A review that finds no defect, and gives `verdicts` on the findings it is
+/// asked about.
+fn reviewed_of(verdicts: &[Value]) -> String {
+    clean_review(verdicts)
 }
 
 fn edits(edits: Value) -> String {
@@ -317,11 +330,11 @@ fn body(reviewed: &Reviewed, section: usize) -> String {
 #[tokio::test]
 async fn a_planned_action_the_lesson_does_not_teach_is_a_finding_at_its_section() -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         retitle_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         retitle_again_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let missing = answer(
         json!([not_taught("action-0")]),
@@ -377,11 +390,11 @@ async fn a_planned_action_the_lesson_does_not_teach_is_a_finding_at_its_section(
 async fn a_use_before_it_is_taught_is_a_finding_only_when_its_words_are_in_the_lesson() -> Result<()>
 {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         retitle_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         retitle_again_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let found = answer(
         json!([]),
@@ -419,11 +432,11 @@ async fn a_use_before_it_is_taught_is_a_finding_only_when_its_words_are_in_the_l
 #[tokio::test]
 async fn a_planned_item_reported_taught_with_words_not_in_the_lesson_is_not_taught() -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         retitle_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         retitle_again_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let reported = answer(
         json!([
@@ -453,11 +466,11 @@ async fn a_planned_item_reported_taught_with_words_not_in_the_lesson_is_not_taug
 #[tokio::test]
 async fn a_planned_item_missing_from_the_answer_is_not_taught() -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         retitle_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         retitle_again_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let model = Routed::new(&scripted, vec![]);
     let candidate = lesson([
@@ -473,13 +486,7 @@ async fn a_planned_item_missing_from_the_answer_is_not_taught() -> Result<()> {
 
 #[tokio::test]
 async fn a_contradiction_is_sited_at_the_statement_that_is_not_protected() -> Result<()> {
-    let scripted = scripted(vec![
-        reviewed(3),
-        retitle(),
-        retitle(),
-        retitle(),
-        retitle(),
-    ]);
+    let scripted = scripted(vec![reviewed(), retitle(), retitle(), retitle(), retitle()]);
     let clash = answer(
         json!([]),
         json!([]),
@@ -526,11 +533,11 @@ async fn a_contradiction_is_sited_at_the_statement_that_is_not_protected() -> Re
 #[tokio::test]
 async fn a_contradiction_between_two_parts_that_can_change_is_about_both() -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         retitle_at(2),
-        reviewed_of(&[2], &[]),
+        reviewed_of(&[]),
         retitle_again_at(2),
-        reviewed_of(&[2], &[]),
+        reviewed_of(&[]),
     ]);
     let clash = answer(
         json!([]),
@@ -564,11 +571,11 @@ async fn a_contradiction_between_two_parts_that_can_change_is_about_both() -> Re
 async fn a_finding_in_a_section_with_protected_sentences_is_repaired_when_it_touches_none(
 ) -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         edits(
             json!([{"path":"/blocks/1/body","before":"Type ls -l to see sizes.","after":"Type ls to list names."}]),
         ),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let found = answer(
         json!([]),
@@ -600,11 +607,11 @@ async fn teaching_can_be_added_beside_an_editable_sentence_in_a_section_with_pro
 ) -> Result<()> {
     let added = "To open the terminal, press the Terminal icon in the dock and a window with a prompt appears.";
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         edits(
             json!([{"path":"/blocks/1/body","before":"Then look at the list.","after":format!("Then look at the list. {added}")}]),
         ),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let missing = answer(
         json!([not_taught("action-0")]),
@@ -640,16 +647,16 @@ async fn teaching_can_be_added_beside_an_editable_sentence_in_a_section_with_pro
 #[tokio::test]
 async fn a_recheck_after_a_repair_checks_the_whole_lesson_again() -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         edits(json!([
             {"path":"/blocks/0/body","before":"Type ls -l to see sizes.","after":"Type ls to list names."},
             {"path":"/blocks/2/body","before":"Read the names.","after":"Then rename a file with mv old.txt new.txt."}
         ])),
-        reviewed_of(&[0, 2], &[]),
+        reviewed_of(&[]),
         edits(
             json!([{"path":"/blocks/2/body","before":"Then rename a file with mv old.txt new.txt.","after":"Read the names."}]),
         ),
-        reviewed_of(&[2], &[]),
+        reviewed_of(&[]),
     ]);
     let first = answer(
         json!([]),
@@ -716,13 +723,13 @@ fn replace_in_listing(before: &str, after: &str) -> String {
 #[tokio::test]
 async fn a_third_defect_in_a_section_gets_its_own_repairs() -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         replace_in_listing(FIRST_USE, "Name the first tool before listing names."),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         replace_in_listing(SECOND_USE, "Name the second tool before sorting names."),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         replace_in_listing(THIRD_USE, "Name the third tool before counting names."),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let model = Routed::new(
         &scripted,
@@ -747,12 +754,12 @@ async fn a_third_defect_in_a_section_gets_its_own_repairs() -> Result<()> {
 #[tokio::test]
 async fn two_defects_in_one_section_are_two_entries_for_the_repair() -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         replace_in_listing(
             &format!("{FIRST_USE} {SECOND_USE}"),
             "Name both tools before listing and sorting names.",
         ),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let model = Routed::new(
         &scripted,
@@ -787,13 +794,13 @@ async fn two_defects_in_one_section_are_two_entries_for_the_repair() -> Result<(
 #[tokio::test]
 async fn one_fixed_defect_does_not_charge_the_other_in_its_section() -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         replace_in_listing(FIRST_USE, "Name the first tool before listing names."),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         retitle_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         retitle_again_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let model = Routed::new(
         &scripted,
@@ -863,13 +870,13 @@ async fn a_defect_in_words_a_repair_wrote_continues_the_count_of_its_own_kind_of
         )
     };
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         replace_for(&clash, other, first),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         replace_for(&use_of("the second tool"), first, second),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         replace_for(&use_of("the third tool"), second, third),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let contradiction = answer(
         json!([]),
@@ -915,17 +922,17 @@ async fn a_defect_in_words_a_repair_wrote_continues_the_count_of_its_own_kind_of
 #[tokio::test]
 async fn words_that_point_at_what_the_learner_never_sees_are_a_finding() -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         retitle_at(2),
-        reviewed_of(&[2], &[]),
+        reviewed_of(&[]),
         retitle_again_at(2),
-        reviewed_of(&[2], &[]),
+        reviewed_of(&[]),
     ]);
     let pointing = answer(
         json!([]),
         json!([]),
         json!([]),
-        json!([{"quote":"which the excerpt does not describe","what":"an excerpt the learner is never shown"}]),
+        json!([{"quote":"which the excerpt does not describe","what":"an excerpt the learner is never shown","neverShown":true}]),
     );
     let model = Routed::new(
         &scripted,
@@ -979,15 +986,12 @@ async fn an_outline_review_never_checks_against_a_course_plan() -> Result<()> {
 }
 
 fn defect_in_first_section() -> String {
-    let checks = (0..3)
-        .map(|index| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"The first section states a wrong result.","hasDefect":index == 0}))
-        .collect();
-    json!({"issues":[],"blockChecks":crate::lessons::teaching_review::fixture_checks(checks)})
-        .to_string()
+    let defect = json!({"passageId":"section-0-passage-0","finding":"The first section promises that the tutor certifies the learner's work as expert reviewed.","concerns":["promise"]});
+    json!({"issues":[],"sectionDefects":[defect]}).to_string()
 }
 
 fn actionable() -> String {
-    json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"internal_conflict","evidenceIds":["blocks-0"],"partId":"blocks-0","requirementId":null,"reason":"The section states a wrong result."}]}).to_string()
+    json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"internal_conflict","evidenceIds":["blocks-0"],"partId":"blocks-0","requirementId":null,"reason":"The section promises expert certification."}]}).to_string()
 }
 
 const LEARNER_SEES_ONLY_THE_LESSON: &str = "never mentions the course plan";
@@ -998,7 +1002,7 @@ async fn the_span_edit_repair_is_told_the_learner_sees_only_the_lesson() -> Resu
         defect_in_first_section(),
         actionable(),
         retitle(),
-        reviewed_of(&[0], &[verdict("reviewer/1", "resolved")]),
+        reviewed_of(&[verdict("reviewer/1", "resolved")]),
     ]);
     let model = Routed::new(&scripted, vec![]);
     let candidate = lesson([
@@ -1030,7 +1034,7 @@ async fn the_whole_lesson_repair_is_told_not_to_mention_the_plan_or_the_excerpts
         "The list shows names.",
         "Read the names.",
     ]);
-    let scripted = scripted(vec![fixed.to_string(), reviewed(3)]);
+    let scripted = scripted(vec![fixed.to_string(), reviewed()]);
     let model = Routed::new(&scripted, vec![]);
     let schema = json!({"type":"object","required":["blocks","questions"]});
     run_under(&model, &broken, &context(&[], &[]), &[], &schema).await?;
@@ -1048,7 +1052,7 @@ async fn the_whole_lesson_repair_is_told_not_to_mention_the_plan_or_the_excerpts
 
 #[tokio::test]
 async fn the_check_covers_the_steps_a_deliverable_needs_including_saving_the_work() -> Result<()> {
-    let scripted = scripted(vec![reviewed(3)]);
+    let scripted = scripted(vec![reviewed()]);
     let model = Routed::new(&scripted, vec![]);
     let candidate = lesson([
         "A terminal takes typed commands.",
@@ -1068,7 +1072,7 @@ async fn the_check_covers_the_steps_a_deliverable_needs_including_saving_the_wor
 
 #[tokio::test]
 async fn the_request_carries_the_modules_title_and_milestone() -> Result<()> {
-    let scripted = scripted(vec![reviewed(3)]);
+    let scripted = scripted(vec![reviewed()]);
     let model = Routed::new(&scripted, vec![]);
     let candidate = lesson([
         "A terminal takes typed commands.",
@@ -1102,7 +1106,7 @@ async fn the_request_carries_the_modules_title_and_milestone() -> Result<()> {
 
 #[tokio::test]
 async fn the_check_is_told_what_later_lessons_teach() -> Result<()> {
-    let scripted = scripted(vec![reviewed(3)]);
+    let scripted = scripted(vec![reviewed()]);
     let model = Routed::new(&scripted, vec![]);
     let candidate = lesson([
         "A terminal takes typed commands.",
@@ -1180,13 +1184,13 @@ async fn finding_note_in(
     marker: &str,
 ) -> Result<String> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         retitle_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         retitle_again_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         retitle_third_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let found = answer(planned, used, json!([]), json!([]));
     let model = Routed::new(
@@ -1225,7 +1229,7 @@ async fn the_contract_check_describes_learner_actions_in_no_subjects_terms() -> 
         assert!(checks.contains(expected), "missing {expected:?} in {checks}");
     }
 
-    let scripted = scripted(vec![reviewed(3)]);
+    let scripted = scripted(vec![reviewed()]);
     let model = Routed::new(&scripted, vec![]);
     let candidate = lesson(["One.", "Two.", "Three."]);
     run(&model, &candidate, &context(&[], &[]), &[]).await?;
@@ -1318,7 +1322,7 @@ async fn check_two_counts_teaching_where_a_step_asks_for_it() -> Result<()> {
         "{check}"
     );
 
-    let scripted = scripted(vec![reviewed(3)]);
+    let scripted = scripted(vec![reviewed()]);
     let model = Routed::new(&scripted, vec![]);
     let candidate = lesson(["One.", "Two.", "Three."]);
     run(&model, &candidate, &context(&[], &[]), &[]).await?;
@@ -1401,7 +1405,7 @@ const TYPED: &str = "A terminal takes typed commands.";
 
 #[tokio::test]
 async fn an_item_is_taught_wherever_in_the_lesson_its_words_are() -> Result<()> {
-    let scripted = scripted(vec![reviewed(3), retitle(), reviewed(3)]);
+    let scripted = scripted(vec![reviewed(), retitle(), reviewed()]);
     let reported = answer(
         json!([taught("idea-0", TYPED)]),
         json!([]),
@@ -1420,11 +1424,11 @@ async fn an_item_is_taught_wherever_in_the_lesson_its_words_are() -> Result<()> 
 #[tokio::test]
 async fn a_use_is_a_finding_at_the_part_that_holds_its_words() -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         retitle_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         retitle_again_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let found = answer(
         json!([]),
@@ -1452,7 +1456,7 @@ async fn a_use_is_a_finding_at_the_part_that_holds_its_words() -> Result<()> {
 #[tokio::test]
 async fn a_use_the_confirming_read_finds_taught_raises_nothing_and_asks_for_no_repair() -> Result<()>
 {
-    let scripted = scripted(vec![reviewed(3), retitle(), reviewed(3)]);
+    let scripted = scripted(vec![reviewed(), retitle(), reviewed()]);
     let found = answer(
         json!([]),
         json!([used(
@@ -1489,15 +1493,15 @@ const LISTED: &str = "Look at the list of names.";
 #[tokio::test]
 async fn an_item_found_taught_is_not_asked_again_until_its_sentence_changes() -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         edits(
             json!([{"path":"/blocks/1/body","before":"Type ls -l to see sizes.","after":"Type ls to list names."}]),
         ),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         edits(
             json!([{"path":"/blocks/0/body","before":TYPED,"after":"A terminal runs typed commands."}]),
         ),
-        reviewed_of(&[0], &[]),
+        reviewed_of(&[]),
     ]);
     let first = answer(
         json!([taught("idea-0", TYPED)]),
@@ -1540,7 +1544,7 @@ async fn an_item_found_taught_is_not_asked_again_until_its_sentence_changes() ->
 
 #[tokio::test]
 async fn a_confirming_read_that_finds_a_planned_items_words_settles_it() -> Result<()> {
-    let scripted = scripted(vec![reviewed(3), retitle(), reviewed(3)]);
+    let scripted = scripted(vec![reviewed(), retitle(), reviewed()]);
     let missing = answer(
         json!([not_taught("action-0")]),
         json!([]),
@@ -1566,11 +1570,11 @@ async fn a_confirming_read_that_finds_a_planned_items_words_settles_it() -> Resu
 async fn a_planned_item_the_confirming_read_does_not_find_is_a_finding_where_it_belongs(
 ) -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         retitle_at(2),
-        reviewed_of(&[2], &[]),
+        reviewed_of(&[]),
         retitle_again_at(2),
-        reviewed_of(&[2], &[]),
+        reviewed_of(&[]),
     ]);
     let missing = answer(
         json!([not_taught("idea-0")]),
@@ -1589,6 +1593,60 @@ async fn a_planned_item_the_confirming_read_does_not_find_is_a_finding_where_it_
     Ok(())
 }
 
+async fn waiting_after_planned_contrast(
+    reply: Value,
+) -> Result<(Vec<(String, Option<String>)>, Vec<Value>)> {
+    let scripted = scripted(vec![
+        reviewed(),
+        retitle_at(1),
+        reviewed_of(&[]),
+        retitle_again_at(1),
+        reviewed_of(&[]),
+    ]);
+    let missing = answer(
+        json!([not_taught("contrast")]),
+        json!([]),
+        json!([]),
+        json!([]),
+    );
+    let model = Routed::new(&scripted, vec![missing.clone(), missing.clone(), missing])
+        .confirming("A planned confusion", reply);
+    let candidate = json!({"blocks":[
+        block_of("explanation", "Opening", TYPED),
+        block_of("contrast", "Contrast", "The list shows names."),
+        block_of("explanation", "Reading", "Read the names.")
+    ],"questions":[]});
+    let ctx = context_planning(&[], &[], &[], "A planned confusion");
+    let result = run(&model, &candidate, &ctx, &[]).await?;
+    Ok((waiting(&result), model.confirmed_schemas()))
+}
+
+#[tokio::test]
+async fn a_planned_contrast_is_placed_only_in_a_contrast_section() -> Result<()> {
+    let (found, schemas) =
+        waiting_after_planned_contrast(json!({"taught":false,"quote":"","belongs":"section-1"}))
+            .await?;
+    assert_eq!(found, [("teaching:section-1".to_owned(), None)]);
+    assert!(!schemas.is_empty());
+    for schema in &schemas {
+        assert_eq!(
+            schema["properties"]["belongs"]["enum"],
+            json!(["section-1"])
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_planned_contrast_the_confirming_read_puts_in_an_explanation_is_not_placed_there(
+) -> Result<()> {
+    let (found, _) =
+        waiting_after_planned_contrast(json!({"taught":false,"quote":"","belongs":"section-0"}))
+            .await?;
+    assert_eq!(found, [("teaching:lesson".to_owned(), None)]);
+    Ok(())
+}
+
 /// The section a use is confirmed in: words before the use, the use, words after.
 const USED_IN: &str = "Use the list command. Type ls -l to see sizes. Then read the list.";
 
@@ -1596,11 +1654,11 @@ const USED_IN: &str = "Use the list command. Type ls -l to see sizes. Then read 
 /// confirming read of it.
 async fn waiting_after_confirming(reply: Value) -> Result<Vec<(String, Option<String>)>> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         retitle_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         retitle_again_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let found = answer(
         json!([]),
@@ -1683,11 +1741,11 @@ async fn a_use_the_part_asked_for_and_nothing_taught_stands() -> Result<()> {
 async fn the_question_put_for_a_use_asks_whether_the_part_asks_it_and_names_both_standards(
 ) -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         retitle_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         retitle_again_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let found = answer(
         json!([]),
@@ -1715,13 +1773,13 @@ async fn the_question_put_for_a_use_asks_whether_the_part_asks_it_and_names_both
 async fn every_negative_is_read_again_once_and_a_use_is_shown_only_the_parts_up_to_it() -> Result<()>
 {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         retitle_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         retitle_again_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         retitle_third_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let found = answer(
         json!([not_taught("idea-0"), not_taught("idea-1")]),
@@ -1760,17 +1818,17 @@ async fn every_negative_is_read_again_once_and_a_use_is_shown_only_the_parts_up_
 async fn words_pointing_at_what_is_never_seen_are_a_finding_in_every_part_that_holds_them(
 ) -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         retitle_both("", ", revised"),
-        reviewed_of(&[1, 2], &[]),
+        reviewed_of(&[]),
         retitle_both(", revised", ", revised again"),
-        reviewed_of(&[1, 2], &[]),
+        reviewed_of(&[]),
     ]);
     let pointing = answer(
         json!([]),
         json!([]),
         json!([]),
-        json!([{"quote":"see the excerpt above","what":"an excerpt the learner is never shown"}]),
+        json!([{"quote":"see the excerpt above","what":"an excerpt the learner is never shown","neverShown":true}]),
     );
     let model = Routed::new(
         &scripted,
@@ -1795,6 +1853,29 @@ async fn words_pointing_at_what_is_never_seen_are_a_finding_in_every_part_that_h
             )
         ]
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_unseen_entry_the_check_says_the_learner_sees_is_no_finding() -> Result<()> {
+    let scripted = scripted(vec![reviewed(), reviewed(), reviewed()]);
+    let dismissed = answer(
+        json!([]),
+        json!([]),
+        json!([]),
+        json!([{"quote":"see the excerpt above","what":"the steps below, which the lesson shows","neverShown":false}]),
+    );
+    let model = Routed::new(
+        &scripted,
+        vec![dismissed.clone(), dismissed.clone(), dismissed],
+    );
+    let candidate = lesson([
+        TYPED,
+        "For sizes, see the excerpt above.",
+        "For names, see the excerpt above.",
+    ]);
+    let result = run(&model, &candidate, &context(&[], &[]), &[]).await?;
+    assert_eq!(waiting(&result), []);
     Ok(())
 }
 

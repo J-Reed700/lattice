@@ -16,6 +16,7 @@ use chrono::{NaiveDate, Utc};
 use encoding_rs::{Encoding, UTF_8};
 use lattice_core::application::contracts::web::{HttpFacts, ProvenanceSignals, ReadVia};
 use lattice_core::domain::sourcing::unwrap_archive;
+use lattice_core::shared::error::WithCauses;
 use lattice_core::shared::error::{AppError, Result};
 use reqwest::StatusCode;
 use scraper::{Html, Selector};
@@ -161,7 +162,11 @@ pub(super) async fn read_bounded_body(
     tokio::time::timeout(RESPONSE_BODY_TIMEOUT, async move {
         let mut response = response;
         let mut body = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| WithCauses(&e).to_string())?
+        {
             if body.len().saturating_add(chunk.len()) > max_bytes {
                 return Err(format!("response exceeded {max_bytes} decoded bytes"));
             }
@@ -417,7 +422,11 @@ impl WebService {
         let headers = identity::browser_headers(profile, None);
         let mut response = match self.client.get(url).headers(headers.clone()).send().await {
             Ok(response) => response,
-            Err(error) => return Ok(Live::Failed(LiveFailure::Transport(error.to_string()))),
+            Err(error) => {
+                return Ok(Live::Failed(LiveFailure::Transport(
+                    WithCauses(&error).to_string(),
+                )))
+            }
         };
 
         // A host that says when to come back is asked once more after that

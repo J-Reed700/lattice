@@ -688,10 +688,7 @@ impl Model {
         }
         if prompt.starts_with("Review instructional quality.") {
             let data = fixture_task(prompt).unwrap();
-            let asked = data["sectionIndicesToReview"].as_array().cloned();
-            let checks = data["candidate"]["blocks"].as_array().unwrap().iter().enumerate().filter(|(index,_)|asked.as_ref().is_none_or(|asked|asked.contains(&json!(index)))).map(|(index,block)|json!({"index":index,"passageId":block["bodyPassages"][0]["id"],"finding":"The corrected field-name statement agrees with the concrete example.","hasDefect":false})).collect::<Vec<_>>();
-            let mut answer =
-                json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)});
+            let mut answer = json!({"issues":[],"sectionDefects":[]});
             if let Some(open) = data["openFindings"].as_array() {
                 answer["openFindings"] = open
                     .iter()
@@ -890,6 +887,9 @@ mod teaching_release_tests;
 #[path = "evidence_paging_tests.rs"]
 mod evidence_paging_tests;
 
+#[path = "research_provenance_tests.rs"]
+mod research_provenance_tests;
+
 #[path = "recite_tests.rs"]
 mod recite_tests;
 
@@ -931,6 +931,9 @@ mod born_of_repair_tests;
 
 #[path = "apparatus_tests.rs"]
 mod apparatus_tests;
+
+#[path = "right_choice_tests.rs"]
+mod right_choice_tests;
 
 #[path = "sentence_naming_tests.rs"]
 mod sentence_naming_tests;

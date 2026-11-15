@@ -43,6 +43,7 @@ use address_guard::{
 };
 pub use bounded::{BoundedBody, BoundedFetchError};
 pub(crate) use hops::HttpHops;
+use lattice_core::shared::error::WithCauses;
 pub(crate) use pacing::{SitePacer, MIN_SITE_REQUEST_INTERVAL};
 use page::{parse_fetchable_url, Want};
 
@@ -278,7 +279,9 @@ pub(crate) fn build_public_client(timeout: Duration) -> Result<Client> {
         .redirect(redirect_policy())
         .dns_resolver(Arc::new(PublicOnlyResolver))
         .build()
-        .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))
+        .map_err(|e| {
+            AppError::InternalError(format!("Failed to create HTTP client: {}", WithCauses(&e)))
+        })
 }
 
 /// The client a scoped site's redirects are read with ([`HttpHops`]): the
@@ -291,7 +294,9 @@ fn build_hop_client(timeout: Duration) -> Result<Client> {
         .redirect(reqwest::redirect::Policy::none())
         .dns_resolver(Arc::new(PublicOnlyResolver))
         .build()
-        .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))
+        .map_err(|e| {
+            AppError::InternalError(format!("Failed to create HTTP client: {}", WithCauses(&e)))
+        })
 }
 
 /// The client for an endpoint the user named: their own SearXNG server, or a
@@ -305,7 +310,9 @@ pub(crate) fn build_instance_client(timeout: Duration) -> Result<Client> {
         .timeout(timeout)
         .redirect(reqwest::redirect::Policy::none())
         .build()
-        .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))
+        .map_err(|e| {
+            AppError::InternalError(format!("Failed to create HTTP client: {}", WithCauses(&e)))
+        })
 }
 
 /// Parse `url` and accept only `http`/`https`: the same check page reads use.

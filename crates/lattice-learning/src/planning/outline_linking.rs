@@ -27,7 +27,8 @@ use lattice_core::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Mutex, PoisonError};
 
 mod spans;
 use spans::{citable_span, is_prose};
@@ -281,18 +282,40 @@ impl Pending {
     }
 }
 
-/// The tokens a passage costs once offered as a candidate quote.
-fn quote_tokens(
-    llm: &dyn LLMPort,
-    passage: &ReferencePassage,
-    sources: &[LearningSourceDto],
-    query: &str,
-) -> usize {
-    sources
-        .iter()
-        .find(|source| source.id == passage.source_id)
-        .and_then(|source| citable_span(passage, &source.excerpt, query))
-        .map_or(0, |quote| llm.count_tokens(&json!(quote).to_string()) + 8)
+/// A passage's quote for one item: its source's index, the quote, and the
+/// tokens it costs once offered. `None` when the passage has no citable span.
+type Offer = Option<(usize, String, usize)>;
+
+/// Each passage's offer for one item, worked out the first time retrieval
+/// measures it and reused for every later page and for the candidate list.
+struct Offers<'a> {
+    llm: &'a dyn LLMPort,
+    sources: &'a [LearningSourceDto],
+    query: &'a str,
+    known: Mutex<HashMap<(String, usize, usize), Offer>>,
+}
+
+impl Offers<'_> {
+    fn of<T>(&self, passage: &ReferencePassage, read: impl FnOnce(&Offer) -> T) -> T {
+        let mut known = self.known.lock().unwrap_or_else(PoisonError::into_inner);
+        let offer = known
+            .entry((
+                passage.source_id.clone(),
+                passage.start_byte,
+                passage.end_byte,
+            ))
+            .or_insert_with(|| {
+                let (index, source) = self
+                    .sources
+                    .iter()
+                    .enumerate()
+                    .find(|(_, source)| source.id == passage.source_id)?;
+                let quote = citable_span(passage, &source.excerpt, self.query)?;
+                let tokens = self.llm.count_tokens(&json!(quote).to_string()) + 8;
+                Some((index, quote, tokens))
+            });
+        read(offer)
+    }
 }
 
 /// Offer the item every retrieved passage its share of the chooser's window
@@ -306,27 +329,34 @@ async fn candidates_for(
     share: usize,
 ) -> Result<()> {
     let query = pending.query();
+    let offers = Offers {
+        llm,
+        sources,
+        query: &query,
+        known: Mutex::default(),
+    };
     let found = collection
         .retrieve_within(&query, |passages| {
             passages
                 .iter()
-                .map(|passage| quote_tokens(llm, passage, sources, &query))
+                .map(|passage| {
+                    offers.of(passage, |offer| {
+                        offer.as_ref().map_or(0, |(_, _, tokens)| *tokens)
+                    })
+                })
                 .sum::<usize>()
                 <= share
         })
         .await?;
     for passage in found {
-        let Some((source_index, source)) = sources
-            .iter()
-            .enumerate()
-            .find(|(_, s)| s.id == passage.source_id)
-        else {
+        let Some((source_index, quote)) = offers.of(&passage, |offer| {
+            offer
+                .as_ref()
+                .map(|(index, quote, _)| (*index, quote.clone()))
+        }) else {
             continue;
         };
         let Some(hash) = hashes.get(source_index) else {
-            continue;
-        };
-        let Some(quote) = citable_span(&passage, &source.excerpt, &pending.query()) else {
             continue;
         };
         let candidate = Candidate {

@@ -24,7 +24,7 @@ impl Reader for Ground {
             let (evidence, _) = attribution_page(
                 at.executions,
                 at.citations,
-                (unit, &claim.statement),
+                (unit, &claim.quote),
                 &checked.statement,
                 parts_fit(at),
             );

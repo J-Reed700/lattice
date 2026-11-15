@@ -8,6 +8,7 @@ use super::repair_request::{repair_context, repair_fingerprint, PendingRepair, R
 use super::round::{self, Audit, Researched, Review, Settled, Unsettled, Verdict};
 use super::*;
 use crate::lessons::shape::{LessonSchema, LessonShape, Phase, ShapePolicy};
+use crate::lessons::trace::{self, Cause, Stage};
 use async_trait::async_trait;
 use lattice_core::domain::learning::acceptance::{
     AcceptancePolicy, Outcome, Position, StandardPolicy, Step, Taken,
@@ -210,7 +211,7 @@ struct PreparationReview<'a, 'r> {
     checks: ClaimChecks,
     verified: Option<String>,
     /// Citations this job repaired to where a claim's support was found.
-    cited_where_supported: HashSet<(usize, String)>,
+    cited_where_supported: HashSet<(usize, String, String)>,
     /// The draft as this round parsed it, and what its extraction,
     /// identification and readings left.
     candidate: Value,
@@ -240,7 +241,9 @@ impl Review for PreparationReview<'_, '_> {
         self.checks.rewrites = self.ledger.rewrites();
         self.checks.removed = self.ledger.cuts.units();
         if review_pass::apply_user_changes(&mut self.ledger, &mut self.candidate).await? {
-            self.raw = self.candidate.to_string();
+            let edited = self.candidate.to_string();
+            trace::changed(Stage::UserEdit, &Cause::none(), &self.raw, &edited);
+            self.raw = edited;
             self.saved = None;
             crate::lesson_drafts::save(&self.raw).await?;
             // The user's text gets the teaching review a rewrite gets (§6.2).
@@ -275,6 +278,12 @@ impl Review for PreparationReview<'_, '_> {
         crate::lesson_progress::phase(
             crate::lesson_progress::Phase::Repair,
             "Resuming the saved evidence-based repair",
+        );
+        trace::decided(
+            Stage::ClaimRepair,
+            "lesson",
+            "resuming a saved repair",
+            "the repair an earlier attempt saved for this draft still has claims to repair",
         );
         self.raw = crate::lesson_progress::checks(repair::candidate(
             self.llm,
@@ -370,6 +379,7 @@ impl Review for PreparationReview<'_, '_> {
     }
 
     async fn restore(&mut self, draft: String) -> Result<()> {
+        trace::changed(Stage::FlowRepair, &Cause::none(), &self.raw, &draft);
         self.raw = draft;
         crate::lesson_drafts::save(&self.raw).await
     }
@@ -404,11 +414,23 @@ impl Review for PreparationReview<'_, '_> {
                     ?cause,
                     "claim.state: research could not run; the claims stay at their node"
                 );
+                trace::decided(
+                    Stage::Research,
+                    "research round",
+                    "could not run",
+                    &format!("{cause:?}; the claims stay at their node"),
+                );
                 return Ok(Researched::Unresearched(cause));
             }
             research::Expansion::Unchanged(searched) => (searched, false),
             research::Expansion::Exhausted(exhausted, searched) => {
                 tracing::info!(%exhausted, "claim.state: research found nothing new for these claims");
+                trace::decided(
+                    Stage::Research,
+                    "research round",
+                    "found nothing new",
+                    &exhausted.to_string(),
+                );
                 (searched, false)
             }
         };
@@ -532,7 +554,9 @@ impl Review for PreparationReview<'_, '_> {
                 .collect();
             crate::lesson_drafts::record_checkpoint(NUMBERED_KEY.as_str(), json!(added)).await?;
             self.schema = self.schema.numbered(self.shape, self.numbered.len());
-            self.raw = self.candidate.to_string();
+            let cited = self.candidate.to_string();
+            trace::changed(Stage::ClaimRepair, &Cause::none(), &self.raw, &cited);
+            self.raw = cited;
             crate::lesson_drafts::save(&self.raw).await?;
         }
         Ok(recited)
@@ -543,7 +567,9 @@ impl Review for PreparationReview<'_, '_> {
         if !uncite(&mut self.ledger, policy, &mut self.candidate, active).await? {
             return Ok(false);
         }
-        self.raw = self.candidate.to_string();
+        let uncited = self.candidate.to_string();
+        trace::changed(Stage::ClaimRepair, &Cause::none(), &self.raw, &uncited);
+        self.raw = uncited;
         crate::lesson_drafts::save(&self.raw).await?;
         Ok(true)
     }
@@ -578,6 +604,19 @@ impl Review for PreparationReview<'_, '_> {
             } else {
                 "Correcting defects found by evidence checks"
             },
+        );
+        trace::decided(
+            Stage::ClaimRepair,
+            "lesson",
+            if escalated {
+                "repair escalated to a cut"
+            } else {
+                "repair started"
+            },
+            &format!(
+                "claims {:?}",
+                targets.iter().map(|id| id.0.as_str()).collect::<Vec<_>>()
+            ),
         );
         let mut context = repair_context(
             self.prompt,
@@ -672,14 +711,16 @@ impl Review for PreparationReview<'_, '_> {
 
     async fn excise(&mut self) -> Result<()> {
         let report = self.report.take().ok_or_else(|| out_of_order("report"))?;
+        let before = std::mem::take(&mut self.raw);
         let (raw, candidate, report) = sections::excise(
             self.llm,
             &mut self.ledger,
-            std::mem::take(&mut self.raw),
+            before.clone(),
             std::mem::take(&mut self.candidate),
             report,
         )
         .await?;
+        trace::changed(Stage::ClaimRepair, &Cause::none(), &before, &raw);
         self.raw = raw;
         self.candidate = candidate;
         self.report = Some(report);
@@ -689,10 +730,29 @@ impl Review for PreparationReview<'_, '_> {
     async fn audit(&mut self) -> Result<Audit> {
         Ok(match self.ledger.audit(&self.raw, &self.candidate).await? {
             claim_ledger::Audited::Off => Audit::Off,
-            claim_ledger::Audited::Agreed => Audit::Agreed,
+            claim_ledger::Audited::Agreed => {
+                trace::decided(
+                    Stage::Audit,
+                    "lesson",
+                    "agreed",
+                    "the Verifier agrees with every claim",
+                );
+                Audit::Agreed
+            }
             claim_ledger::Audited::Hold(reason) => {
                 self.ledger.sync().await?;
                 let claims = self.ledger.awaiting_user();
+                trace::decided(
+                    Stage::Audit,
+                    "lesson",
+                    "held for the user",
+                    &format!(
+                        "{claims} claims wait; {}",
+                        reason
+                            .as_ref()
+                            .map_or("the audit could not finish", |stop| stop.message.as_str())
+                    ),
+                );
                 Audit::Hold { claims, reason }
             }
         })
@@ -701,6 +761,12 @@ impl Review for PreparationReview<'_, '_> {
     async fn finish(&mut self, verdict: Verdict) -> Result<(String, LessonVerificationReport)> {
         match verdict {
             Verdict::Publish => {
+                trace::decided(
+                    Stage::ClaimVerification,
+                    "lesson",
+                    "every claim is resolved",
+                    "the lesson's verification is complete and it goes on to publish",
+                );
                 let report = self.report.take().ok_or_else(|| out_of_order("report"))?;
                 Ok((std::mem::take(&mut self.raw), self.ledger.bind(report)))
             }
@@ -712,6 +778,12 @@ impl Review for PreparationReview<'_, '_> {
                 waiting,
                 unresearched,
             } => {
+                trace::decided(
+                    Stage::ClaimVerification,
+                    "lesson",
+                    "a round moved nothing",
+                    &format!("{} claims wait at their nodes", waiting.len()),
+                );
                 let error = self
                     .ledger
                     .stop_no_progress(&self.raw, &waiting, unresearched)
@@ -748,7 +820,10 @@ pub(super) async fn recite(
     ledger: &mut ClaimLedger,
     policy: &dyn AcceptancePolicy,
     (candidate, report): (&mut Value, &LessonVerificationReport),
-    (numbered, tried): (&mut Vec<LearningSourceDto>, &mut HashSet<(usize, String)>),
+    (numbered, tried): (
+        &mut Vec<LearningSourceDto>,
+        &mut HashSet<(usize, String, String)>,
+    ),
     references: &ReferenceCollection<'_>,
 ) -> Result<bool> {
     let waiting = ledger.at(policy, StepKind::Recite);
@@ -782,16 +857,18 @@ pub(super) async fn recite(
         })
         .collect();
     let reciting: Vec<ClaimId> = findings.iter().map(|(id, _)| id.clone()).collect();
-    let kept = ledger.live_statements_but(&reciting);
+    let kept = ledger.live_sentences_but(&reciting);
     let cited = repair::cite_where_supported(candidate, &sent, &kept, numbered, references, tried)?;
     let mut moved = false;
-    for ((id, _), cited) in findings.iter().zip(cited) {
+    for ((id, finding), cited) in findings.iter().zip(cited) {
         match cited {
             Cited::Recited(event) => {
                 ledger.append(id, *event).await?;
                 moved |= !waiting.contains(id);
             }
-            Cited::Cannot => {}
+            Cited::Cannot(unwritten) => {
+                trace::citation_kept(id, &finding.statement, unwritten.why());
+            }
             Cited::Deferred => continue,
         }
         if waiting.contains(id) {
@@ -822,17 +899,17 @@ async fn uncite(
     if waiting.is_empty() {
         return Ok(false);
     }
-    let statements: Vec<(usize, String)> = waiting
+    let sentences: Vec<(usize, String)> = waiting
         .iter()
         .filter_map(|id| ledger.entry(id))
-        .map(|entry| (entry.location().unit_index, entry.statement().to_owned()))
+        .map(|entry| (entry.location().unit_index, entry.location().quote.clone()))
         .collect();
-    let kept = ledger.live_statements_but(&waiting);
+    let kept = ledger.live_sentences_but(&waiting);
     crate::lesson_progress::phase(
         crate::lesson_progress::Phase::Repair,
         "Dropping the citation of statements whose every part is common knowledge",
     );
-    let dropped = repair::uncite(candidate, &statements, &kept, references)?;
+    let dropped = repair::uncite(candidate, &sentences, &kept, references)?;
     let mut moved = false;
     for (id, cited) in waiting.iter().zip(dropped) {
         ledger

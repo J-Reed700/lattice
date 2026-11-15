@@ -1,7 +1,7 @@
 //! A lesson that changed since the reviewer saw it has every open finding
 //! judged again, wherever in the lesson it is.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-use super::loop_tests::{parts_lesson, retitled, run, ByRequest};
+use super::loop_tests::{parts_lesson, retitled, run, sections_in_review, ByRequest};
 use super::standing_tests::{lesson, report, reviewed, FIRST, SECOND};
 use super::*;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
@@ -83,7 +83,7 @@ async fn mended_in_the_first_section() -> Result<(ByRequest, Reviewed)> {
 async fn the_recheck_lists_the_finding_in_the_section_the_repair_did_not_change() -> Result<()> {
     let (model, _) = mended_in_the_first_section().await?;
     let reviews = model.reviews();
-    assert_eq!(reviews[1]["sectionIndicesToReview"], json!([0]));
+    assert_eq!(sections_in_review(&reviews[1]), json!([0]));
     let parts: Vec<&str> = reviews[1]["openFindings"]
         .as_array()
         .unwrap()

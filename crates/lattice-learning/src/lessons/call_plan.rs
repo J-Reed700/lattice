@@ -12,7 +12,7 @@
 //! whose path is over still holds the readings of the successor the teaching
 //! review may give it, while a rewrite is left.
 use lattice_core::domain::learning::acceptance::{
-    most_calls, start, AcceptancePolicy, Position, Walked,
+    most_calls, start, AcceptancePolicy, Classes, Position, Walked,
 };
 use lattice_core::domain::learning::claim_review::Class;
 
@@ -104,7 +104,7 @@ fn reserve(policy: &dyn AcceptancePolicy, class: Class) -> u32 {
         policy,
         Position {
             class,
-            changed_class: false,
+            visited: Classes::of(class),
             reasked: false,
             node: policy.graph(class).after_rewrite(),
             rewrites_left: 0,
@@ -118,7 +118,7 @@ fn reserve(policy: &dyn AcceptancePolicy, class: Class) -> u32 {
 fn settled(policy: &dyn AcceptancePolicy, at: PlannedAt) -> PlannedAt {
     match at {
         PlannedAt::At(position)
-            if !position.changed_class
+            if position.visited == Classes::of(position.class)
                 && !position.reasked
                 && position.node == policy.graph(position.class).entry() =>
         {

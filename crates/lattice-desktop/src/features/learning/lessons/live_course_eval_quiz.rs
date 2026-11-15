@@ -261,7 +261,7 @@ async fn blueprint_mix(
     for requirement in &requirements {
         *mix.entry(format_name(requirement.format)).or_default() += requirement.count;
     }
-    Ok((requirements.iter().map(|r| 3 * r.count).sum(), mix))
+    Ok((requirements.iter().map(|r| r.bank_target()).sum(), mix))
 }
 
 fn format_name(format: LearningItemFormat) -> String {

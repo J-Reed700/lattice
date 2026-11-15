@@ -4,7 +4,8 @@
 use std::collections::{HashMap, HashSet};
 
 use super::{
-    AcceptancePolicy, End, Next, Otherwise, Outcome, Position, Step, Taken, Target, Then, Walked,
+    AcceptancePolicy, Classes, End, Next, Otherwise, Outcome, Position, Step, Taken, Target, Then,
+    Walked,
 };
 use crate::domain::learning::claim_review::Class;
 
@@ -13,7 +14,7 @@ use crate::domain::learning::claim_review::Class;
 pub(super) enum Moved {
     To(Position),
     Ended(End),
-    /// A change of class, at an entry, by a statement that has changed class
+    /// A change of class, at an entry, into a class the statement has been in
     /// already.
     Illegal,
 }
@@ -23,7 +24,7 @@ pub(super) enum Moved {
 pub fn start(policy: &dyn AcceptancePolicy, class: Class) -> Position {
     Position {
         class,
-        changed_class: false,
+        visited: Classes::of(class),
         reasked: false,
         node: policy.graph(class).entry(),
         rewrites_left: rewrites_given(policy, class),
@@ -35,7 +36,7 @@ pub fn start(policy: &dyn AcceptancePolicy, class: Class) -> Position {
 pub fn born(policy: &dyn AcceptancePolicy, class: Class, rewrites_left: u8) -> Position {
     Position {
         class,
-        changed_class: false,
+        visited: Classes::of(class),
         reasked: false,
         node: policy.graph(class).after_rewrite(),
         rewrites_left,
@@ -49,7 +50,7 @@ pub fn born(policy: &dyn AcceptancePolicy, class: Class, rewrites_left: u8) -> P
 pub fn rewrites_given(policy: &dyn AcceptancePolicy, class: Class) -> u8 {
     let entry = Position {
         class,
-        changed_class: false,
+        visited: Classes::of(class),
         reasked: false,
         node: policy.graph(class).entry(),
         rewrites_left: 0,
@@ -172,14 +173,18 @@ pub(super) fn follow(policy: &dyn AcceptancePolicy, at: Position, next: Next) ->
     let at = stepped(policy, at);
     match next {
         Next::Go(target) => go(policy, at, target),
-        Next::FirstChange { change, otherwise } => {
-            if at.changed_class {
+        Next::FirstEntry {
+            into,
+            by,
+            otherwise,
+        } => {
+            if at.visited.has(into) {
                 match otherwise {
                     Otherwise::Node(node) => Moved::To(Position { node, ..at }),
                     Otherwise::End(end) => Moved::Ended(end),
                 }
             } else {
-                go(policy, at, change)
+                go(policy, at, by)
             }
         }
         Next::End(end) => Moved::Ended(end),
@@ -189,17 +194,17 @@ pub(super) fn follow(policy: &dyn AcceptancePolicy, at: Position, next: Next) ->
 fn go(policy: &dyn AcceptancePolicy, at: Position, target: Target) -> Moved {
     match target {
         Target::Node(node) => Moved::To(Position { node, ..at }),
-        Target::Enter(_) if at.changed_class => Moved::Illegal,
+        Target::Enter(class) if at.visited.has(class) => Moved::Illegal,
         Target::Enter(class) => Moved::To(Position {
             class,
-            changed_class: true,
+            visited: at.visited.with(class),
             reasked: at.reasked,
             node: policy.graph(class).entry(),
             rewrites_left: at.rewrites_left,
         }),
         Target::EnterAfterRewrite(class) => Moved::To(Position {
             class,
-            changed_class: true,
+            visited: at.visited.with(class),
             reasked: at.reasked,
             node: policy.graph(class).after_rewrite(),
             rewrites_left: at.rewrites_left,

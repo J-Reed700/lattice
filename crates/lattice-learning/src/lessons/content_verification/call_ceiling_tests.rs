@@ -59,7 +59,7 @@ impl Rounds {
                 return Ok(fault(prompt, section, sentence));
             }
             if prompt.starts_with("Check whether proposed lesson-review findings are justified") {
-                return Ok(json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"internal_conflict","evidenceIds":[format!("blocks-{section}")],"partId":format!("blocks-{section}"),"requirementId":null,"reason":"The step asks for something the explanation beside it never set up."}]}).to_string());
+                return Ok(json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"internal_conflict","evidenceIds":[format!("blocks-{section}")],"partId":format!("blocks-{section}"),"requirementId":null,"reason":"The step promises that the tutor runs the learner's code and reports whether the tests pass."}]}).to_string());
             }
             if prompt.starts_with("You are editing a rejected draft.") {
                 return Ok(json!({"edits":[{"path":format!("/blocks/{section}/body"),"before":sentence,"after":written}]}).to_string());
@@ -88,29 +88,18 @@ impl Rounds {
 /// holding `sentence`, and none elsewhere.
 fn fault(prompt: &str, section: usize, sentence: &str) -> String {
     let data = fixture_task(prompt).unwrap();
-    let checks: Vec<Value> = data["candidate"]["blocks"]
+    let passage = data["candidate"]["blocks"][section]["bodyPassages"]
         .as_array()
         .unwrap()
         .iter()
-        .enumerate()
-        .map(|(index, block)| {
-            let passages = block["bodyPassages"].as_array().unwrap();
-            if index == section {
-                let passage = passages
-                    .iter()
-                    .find(|passage| {
-                        passage["text"]
-                            .as_str()
-                            .is_some_and(|text| text.contains(sentence))
-                    })
-                    .unwrap();
-                json!({"index":index,"passageId":passage["id"],"finding":"This step asks the learner for something the explanation beside it never set up.","hasDefect":true})
-            } else {
-                json!({"index":index,"passageId":passages[0]["id"],"finding":"The section explains its point and asks nothing it has not set up.","hasDefect":false})
-            }
+        .find(|passage| {
+            passage["text"]
+                .as_str()
+                .is_some_and(|text| text.contains(sentence))
         })
-        .collect();
-    json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)}).to_string()
+        .unwrap();
+    let defect = json!({"passageId":passage["id"],"finding":"This step promises that the tutor runs the learner's code and reports whether the tests pass.","concerns":["promise"]});
+    json!({"issues":[],"sectionDefects":[defect]}).to_string()
 }
 
 #[async_trait::async_trait]

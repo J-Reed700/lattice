@@ -97,7 +97,7 @@ fn take_back(result: &mut Value, mut uncite: Vec<(String, usize)>) {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[cfg_attr(
     any(test, feature = "test-support"),
     derive(Serialize, Debug, PartialEq)
@@ -760,13 +760,24 @@ pub(crate) fn read_patch(text: &str) -> Result<Patch> {
     crate::generation::parse_json(text)
 }
 
+/// `apply_patch_for` on the patch `patch` holds.
+pub(super) fn apply_for(
+    candidate: &Value,
+    patch: &str,
+    lesson: &Value,
+    wording: &Wording,
+    may_change: MayChange<'_>,
+) -> Result<AppliedFor> {
+    apply_patch_for(candidate, read_patch(patch)?, lesson, wording, may_change)
+}
+
 /// Applies a patch whose changes may name the finding they are for. The edits
 /// of one finding to one block or question that has any problem are left out,
 /// and everything else applies. `may_change` says which parts a finding's
 /// changes may touch.
-pub(super) fn apply_for(
+pub(super) fn apply_patch_for(
     candidate: &Value,
-    patch: &str,
+    patch: Patch,
     lesson: &Value,
     wording: &Wording,
     may_change: MayChange<'_>,
@@ -776,7 +787,6 @@ pub(super) fn apply_for(
             "The repair's edits could not be applied: {reason} The draft was preserved."
         ))
     };
-    let patch = read_patch(patch)?;
     if patch.asks_nothing() {
         return Err(fail("it gave no edits.".into()));
     }
@@ -841,3 +851,6 @@ mod locate_tests;
 
 #[cfg(test)]
 mod citation_entry_tests;
+
+#[cfg(test)]
+mod patch_tests;

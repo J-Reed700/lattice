@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use lattice_core::domain::download::DownloadError;
+use lattice_core::shared::error::WithCauses;
 use lattice_core::shared::http::reqwest_client_builder;
 use reqwest::{header, Client, StatusCode};
 use std::path::{Path, PathBuf};
@@ -92,7 +93,7 @@ impl HttpDownloadEngine {
             .redirect(reqwest::redirect::Policy::limited(10)); // Explicit redirect policy
 
         let client = builder.build().map_err(|e| {
-            DownloadError::NetworkError(format!("Failed to create HTTP client: {}", e))
+            DownloadError::NetworkError(format!("Failed to create HTTP client: {}", WithCauses(&e)))
         })?;
 
         Ok(Self {
@@ -239,12 +240,17 @@ impl DownloadEngine for HttpDownloadEngine {
             .redirect(reqwest::redirect::Policy::none()) // Don't follow redirects
             .build()
             .map_err(|e| {
-                DownloadError::NetworkError(format!("Failed to create HTTP client: {}", e))
+                DownloadError::NetworkError(format!(
+                    "Failed to create HTTP client: {}",
+                    WithCauses(&e)
+                ))
             })?
             .head(url)
             .send()
             .await
-            .map_err(|e| DownloadError::NetworkError(format!("HEAD request failed: {}", e)))?;
+            .map_err(|e| {
+                DownloadError::NetworkError(format!("HEAD request failed: {}", WithCauses(&e)))
+            })?;
 
         let status = response.status();
 
@@ -276,12 +282,9 @@ impl DownloadEngine for HttpDownloadEngine {
             }
         }
 
-        let response = self
-            .client
-            .head(url)
-            .send()
-            .await
-            .map_err(|e| DownloadError::NetworkError(format!("HEAD request failed: {}", e)))?;
+        let response = self.client.head(url).send().await.map_err(|e| {
+            DownloadError::NetworkError(format!("HEAD request failed: {}", WithCauses(&e)))
+        })?;
 
         let status = response.status();
         let final_url = response.url().clone();
@@ -369,10 +372,13 @@ impl DownloadEngine for HttpDownloadEngine {
                 .map_err(|e| {
                     error!(
                         url = %final_url,
-                        error = %e,
+                        error = %WithCauses(&e),
                         "Range GET request failed - connection error or timeout"
                     );
-                    DownloadError::NetworkError(format!("Range GET request failed: {}", e))
+                    DownloadError::NetworkError(format!(
+                        "Range GET request failed: {}",
+                        WithCauses(&e)
+                    ))
                 })?;
 
             let range_status = range_response.status();
@@ -436,12 +442,9 @@ impl DownloadEngine for HttpDownloadEngine {
     async fn supports_resume(&self, url: &str) -> Result<bool, DownloadError> {
         debug!(url = %url, "Checking resume support");
 
-        let response = self
-            .client
-            .head(url)
-            .send()
-            .await
-            .map_err(|e| DownloadError::NetworkError(format!("HEAD request failed: {}", e)))?;
+        let response = self.client.head(url).send().await.map_err(|e| {
+            DownloadError::NetworkError(format!("HEAD request failed: {}", WithCauses(&e)))
+        })?;
 
         let status = response.status();
 

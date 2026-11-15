@@ -16,6 +16,7 @@ use lattice_core::{
 use serde::{Deserialize, Serialize};
 
 use super::protocol::protocols;
+use lattice_core::shared::error::WithCauses;
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -93,7 +94,7 @@ async fn fetch_models(
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(20))
         .build()
-        .map_err(|e| AppError::Network(e.to_string()))?;
+        .map_err(|e| AppError::Network(WithCauses(&e).to_string()))?;
     let mut models = Vec::new();
     let mut seen_ids = HashSet::new();
     let mut seen_cursors = HashSet::new();

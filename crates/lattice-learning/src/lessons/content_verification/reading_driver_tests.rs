@@ -6,8 +6,8 @@ use super::super::readings::driver::{read_until_remedy, settled, ReadSteps};
 use super::super::readings::{Read, ReadContext, Reader, ReaderSet, Statement};
 use super::*;
 use lattice_core::domain::learning::acceptance::{
-    start, walk_from, AcceptancePolicy, End, NodeId, Outcome, Position, Reading, Step, Taken, Then,
-    Walked,
+    start, walk_from, AcceptancePolicy, Classes, End, NodeId, Outcome, Position, Reading, Step,
+    Taken, Then, Walked,
 };
 use lattice_core::domain::learning::claim_review::FaultStage;
 use std::collections::VecDeque;
@@ -209,11 +209,14 @@ fn entry(policy: &dyn AcceptancePolicy, class: Class) -> Position {
     start(policy, class)
 }
 
-/// Where a statement of `class` stands at `node`, having changed class or not.
-fn at(policy: &dyn AcceptancePolicy, class: Class, changed_class: bool, node: &str) -> Position {
+/// Where a statement of `class` stands at `node`, having been in the classes of
+/// `came_from` before.
+fn at(policy: &dyn AcceptancePolicy, class: Class, came_from: &[Class], node: &str) -> Position {
     Position {
         class,
-        changed_class,
+        visited: came_from
+            .iter()
+            .fold(Classes::of(class), |visited, &before| visited.with(before)),
         reasked: false,
         node: policy.graph(class).id_of(node).unwrap(),
         rewrites_left: 2,
@@ -441,6 +444,30 @@ async fn a_common_statement_that_needs_a_source_is_read_as_sourced_by_evidence_i
 }
 
 #[tokio::test]
+async fn a_statement_from_reasoning_still_unproven_on_its_page_goes_to_uncite() -> Result<()> {
+    let policy = StandardPolicy::new();
+    let script = Script::new().says(Reading::Page, &[Outcome::Unproven]);
+    let reasoned = claim("Quillet's commands change nothing.");
+    let given = [(
+        statement(&reasoned, Class::Reasoning, ClassifiedBy::Model),
+        at(&policy, Class::Sourced, &[Class::Reasoning], "s.reread"),
+    )];
+
+    let read = drive(&script, &ClaimChecks::default(), &given).await?;
+
+    let [step] = read[0].steps.as_slice() else {
+        panic!("one reading: {:?}", read[0].steps);
+    };
+    assert_eq!(step.reading, Reading::Page);
+    assert_eq!(step.then, node("s.uncite", Step::Uncite));
+    assert_eq!(
+        read[0].walked,
+        Walked::At(at(&policy, Class::Sourced, &[Class::Reasoning], "s.uncite"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn an_unreadable_answer_is_read_once_more_at_the_same_node() -> Result<()> {
     let policy = StandardPolicy::new();
     let script = Script::new().says(Reading::Parts, &[Outcome::Unjudged, Outcome::Stands]);
@@ -518,7 +545,7 @@ async fn a_statement_whose_specific_nothing_states_waits_at_research() -> Result
 
     assert_eq!(
         read[0].walked,
-        Walked::At(at(&policy, Class::Sourced, false, "s.research"))
+        Walked::At(at(&policy, Class::Sourced, &[], "s.research"))
     );
     assert_eq!(
         replayed(&policy, entry(&policy, Class::Sourced), &read[0]),
@@ -535,7 +562,7 @@ async fn a_statement_handed_in_at_a_remedy_is_not_read() -> Result<()> {
     let policy = StandardPolicy::new();
     let script = Script::new();
     let cited = claim("Quillet was written in 2004.");
-    let position = at(&policy, Class::Sourced, false, "s.research");
+    let position = at(&policy, Class::Sourced, &[], "s.research");
     let given = [(
         statement(&cited, Class::Sourced, ClassifiedBy::Writer),
         position,
@@ -601,7 +628,7 @@ async fn statements_at_two_readings_are_one_call_each_in_the_fixed_order() -> Re
     );
     assert_eq!(
         read[0].walked,
-        Walked::At(at(&policy, Class::Reasoning, false, "r.rewrite"))
+        Walked::At(at(&policy, Class::Reasoning, &[], "r.rewrite"))
     );
     assert_eq!(read[1].walked, Walked::Ended(End::Resolved));
     Ok(())
@@ -614,7 +641,7 @@ async fn an_outcome_the_node_does_not_answer_is_a_fault() -> Result<()> {
     let common = claim("Quillet is a lexer.");
     let given = [(
         statement(&common, Class::Common, ClassifiedBy::Model),
-        at(&policy, Class::Common, false, "c.ground"),
+        at(&policy, Class::Common, &[], "c.ground"),
     )];
 
     let read = drive(&script, &ClaimChecks::default(), &given).await?;
@@ -832,7 +859,7 @@ async fn a_statement_handed_in_at_a_remedy_is_counted_once_when_the_walk_starts(
     let cited = claim("Quillet was written in 2004.");
     let given = [(
         statement(&cited, Class::Sourced, ClassifiedBy::Writer),
-        at(&policy, Class::Sourced, false, "s.research"),
+        at(&policy, Class::Sourced, &[], "s.research"),
     )];
     let retained = ClaimChecks::default();
 

@@ -216,11 +216,14 @@ pub struct Identities {
 /// twice. A claim keeps a prior id when it is in the same unit and has the
 /// same statement or the same quote; failing that, when the prior quote's
 /// span in the same field (where it occurs once now, or else its stored span)
-/// overlaps the new claim's (the largest overlap wins). `prior` is the live
-/// claims of the re-extracted units; `field_text(unit_index, field)` is a
-/// field's current text.
+/// overlaps the new claim's (the largest overlap wins). A claim a narrowing
+/// took out of its sentence (`narrowed`) keeps its id only by the same
+/// statement or quote, since the sentence it stood on now holds the others'
+/// statements. `prior` is the live claims of the re-extracted units;
+/// `field_text(unit_index, field)` is a field's current text.
 pub fn identities<'a>(
     prior: &[&ClaimLedgerEntry],
+    narrowed: &[ClaimId],
     extracted: &[ExtractedClaim],
     field_text: impl Fn(usize, &str) -> Option<&'a str>,
 ) -> Identities {
@@ -263,6 +266,9 @@ pub fn identities<'a>(
             continue;
         };
         for (owner, old) in prior.iter().enumerate() {
+            if narrowed.contains(old.claim_id()) {
+                continue;
+            }
             let old = old.location();
             if old.unit_index != new.location.unit_index || old.field != new.location.field {
                 continue;

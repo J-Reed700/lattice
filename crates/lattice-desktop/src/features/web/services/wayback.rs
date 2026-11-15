@@ -31,6 +31,7 @@ use super::identity;
 use super::page_cache::refusal_is_settled;
 use super::sourcing::HealthBook;
 use super::web::{read_bytes_bounded, MAX_PAGE_BODY_BYTES, MIN_SITE_REQUEST_INTERVAL};
+use lattice_core::shared::error::WithCauses;
 
 /// The availability API, documented at `archive.org/help/wayback_api.php`.
 const AVAILABILITY_API: &str = "https://archive.org/wayback/available";
@@ -430,7 +431,7 @@ impl Wayback {
             .headers(headers)
             .send()
             .await
-            .map_err(|error| FailureCause::Transport(error.to_string()))?;
+            .map_err(|error| FailureCause::Transport(WithCauses(&error).to_string()))?;
         let status = response.status();
         if !status.is_success() {
             return Err(FailureCause::Status {

@@ -6,14 +6,6 @@
 use lattice_core::domain::learning::claim_review::ClaimLocation;
 use lattice_core::shared::text::{claim_sentence, sentences};
 
-/// The quote of a claim extracted from `passage`: the sentence `statement`
-/// restates, else the whole passage.
-pub(crate) fn claim_quote<'p>(passage: &'p str, statement: &str) -> &'p str {
-    claim_sentence(passage, (0, passage.len()), statement)
-        .and_then(|(start, end)| passage.get(start..end))
-        .unwrap_or(passage)
-}
-
 /// `location.quote` narrowed to the claim's sentence in `field_text` when the
 /// stored quote is wider than one; the quote itself otherwise.
 pub(crate) fn located_quote(location: &ClaimLocation, statement: &str, field_text: &str) -> String {

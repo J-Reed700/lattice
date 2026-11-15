@@ -199,7 +199,14 @@ impl ClaimLedger {
         let mut assigned = {
             let prior: Vec<&ClaimLedgerEntry> =
                 prior_ids.iter().filter_map(|id| self.entry(id)).collect();
-            identities(&prior, &claims, |unit, field| {
+            let narrowed: Vec<ClaimId> = self
+                .pending
+                .repairs
+                .iter()
+                .filter(|record| record.narrowing)
+                .map(|record| record.claim_id.clone())
+                .collect();
+            identities(&prior, &narrowed, &claims, |unit, field| {
                 texts.get(&(unit, field.to_owned())).map(String::as_str)
             })
         };
@@ -672,9 +679,11 @@ impl ClaimLedger {
 
     /// The outcome of a narrowing that awaited this pass, for a claim a
     /// statement still continues: not applied. The sentence stands as it was,
-    /// or it changed and still states the claim. Either way the claim takes no
-    /// step: it stays at its cut with its narrowing spent, and the next round
-    /// cuts the sentence whole. Whether the ledger took the event.
+    /// or it changed and the new sentence's statement is the claim's own, word
+    /// for word. Either way the claim takes no step: it stays at its cut with
+    /// its narrowing spent, and the next round's cut takes the sentence whole
+    /// when no other statement stands on it, and is refused when one does.
+    /// Whether the ledger took the event.
     async fn record_narrowing(
         &mut self,
         candidate: &Value,

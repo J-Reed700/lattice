@@ -6,6 +6,7 @@ use crate::infrastructure::extraction::html_text::html_to_text;
 use lattice_core::application::contracts::tools::FunctionResult;
 use lattice_core::application::contracts::tools::*;
 use lattice_core::application::contracts::web::WebSearchInput;
+use lattice_core::shared::error::WithCauses;
 use lattice_core::shared::error::{AppError, Result};
 use reqwest::header::{ACCEPT, ACCEPT_LANGUAGE, USER_AGENT};
 use tracing::{debug, info};
@@ -219,7 +220,9 @@ impl FunctionExecutor {
                 .header(USER_AGENT, WIKIPEDIA_USER_AGENT)
                 .send()
                 .await
-                .map_err(|e| AppError::Network(format!("Failed to call Wikipedia API: {}", e)))?;
+                .map_err(|e| {
+                    AppError::Network(format!("Failed to call Wikipedia API: {}", WithCauses(&e)))
+                })?;
 
             if !response.status().is_success() {
                 return Err(AppError::HttpStatus {
@@ -228,10 +231,12 @@ impl FunctionExecutor {
                 });
             }
 
-            let payload = response
-                .json::<serde_json::Value>()
-                .await
-                .map_err(|e| AppError::Network(format!("Invalid Wikipedia API response: {}", e)))?;
+            let payload = response.json::<serde_json::Value>().await.map_err(|e| {
+                AppError::Network(format!(
+                    "Invalid Wikipedia API response: {}",
+                    WithCauses(&e)
+                ))
+            })?;
 
             let mut results = Vec::new();
             if let Some(items) = payload
@@ -309,7 +314,9 @@ impl FunctionExecutor {
                 .header(USER_AGENT, WIKIPEDIA_USER_AGENT)
                 .send()
                 .await
-                .map_err(|e| AppError::Network(format!("Failed to call Wikipedia API: {}", e)))?;
+                .map_err(|e| {
+                    AppError::Network(format!("Failed to call Wikipedia API: {}", WithCauses(&e)))
+                })?;
 
             if !response.status().is_success() {
                 return Err(AppError::HttpStatus {
@@ -318,10 +325,12 @@ impl FunctionExecutor {
                 });
             }
 
-            let payload = response
-                .json::<serde_json::Value>()
-                .await
-                .map_err(|e| AppError::Network(format!("Invalid Wikipedia API response: {}", e)))?;
+            let payload = response.json::<serde_json::Value>().await.map_err(|e| {
+                AppError::Network(format!(
+                    "Invalid Wikipedia API response: {}",
+                    WithCauses(&e)
+                ))
+            })?;
 
             let page_title = payload
                 .get("title")

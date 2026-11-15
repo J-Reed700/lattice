@@ -55,11 +55,7 @@ impl Model {
             if context["candidate"].get("blocks").is_none() {
                 return Ok(json!({"issues":[]}).to_string());
             }
-            let checks: Vec<_> = context["candidate"]["blocks"].as_array().into_iter().flatten().enumerate().map(|(index, block)|json!({"index":index,"passageId":block["bodyPassages"][0]["id"],"finding":"The comparison and measurement task is consistent with the randomized experiment objective.","hasDefect":false})).collect();
-            return Ok(
-                json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)})
-                    .to_string(),
-            );
+            return Ok(json!({"issues":[],"sectionDefects":[]}).to_string());
         }
         Ok(self.0.clone())
     }
@@ -426,7 +422,7 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
             if prompt.starts_with("Review instructional quality.")
                 && self.fail_review.load(Ordering::Relaxed)
             {
-                return Ok(json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![])}).to_string());
+                return Ok(json!({"sectionDefects":[]}).to_string());
             }
             self.inner.respond(prompt).await
         }
@@ -502,8 +498,8 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
         ),
     )
     .await;
-    let error = first.expect_err("missing section reviews must fail");
-    assert!(error.to_string().contains("still needs a valid check"));
+    let error = first.expect_err("an unreadable review must fail");
+    assert!(error.to_string().contains("could not be read"));
     assert_eq!(llm.authored.load(Ordering::Relaxed), 1);
     JobStore::new(db.clone())
         .fail(&job.id, "generation_failed", &error.to_string())
@@ -595,35 +591,27 @@ pub(crate) fn present(id: &str, quote: &str) -> serde_json::Value {
     json!({"id":id,"quote":quote,"verdict":"present"})
 }
 
-/// A teaching-review reply that reports no issue, finds no defect in the
-/// sections it checks, and gives `verdicts` on the findings it was asked about.
-pub(crate) fn clean_review(sections: &[usize], verdicts: &[serde_json::Value]) -> String {
-    review_reply(
-        &[],
-        sections
-            .iter()
-            .map(|index| section_check(*index, None))
-            .collect(),
-        verdicts,
-    )
+/// A teaching-review reply that reports no issue and no section defect, and
+/// gives `verdicts` on the findings it was asked about.
+pub(crate) fn clean_review(verdicts: &[serde_json::Value]) -> String {
+    review_reply(&[], vec![], verdicts)
 }
 
-/// The check of section `index`: a defect when `defect` is given.
-pub(crate) fn section_check(index: usize, defect: Option<&str>) -> serde_json::Value {
-    let finding = defect.unwrap_or("No defect was found in this section.");
-    json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":finding,"hasDefect":defect.is_some()})
+/// The entry of a section defect in the passage of section `index`: it fails
+/// a lesson concern, named in `concerns`.
+pub(crate) fn section_defect(index: usize, finding: &str) -> serde_json::Value {
+    json!({"passageId":format!("section-{index}-passage-0"),"finding":finding,"concerns":["promise"]})
 }
 
-/// A teaching-review reply as it is written: `checks` are for exactly the
-/// sections the review asks about, `verdicts` for exactly the findings it asks
-/// about (none: no `openFindings`).
+/// A teaching-review reply as it is written: `defects` are the sections that
+/// have one, `verdicts` for exactly the findings it asks about (none: no
+/// `openFindings`).
 pub(crate) fn review_reply(
     issues: &[&str],
-    checks: Vec<serde_json::Value>,
+    defects: Vec<serde_json::Value>,
     verdicts: &[serde_json::Value],
 ) -> String {
-    let mut reply =
-        json!({"issues":issues,"blockChecks":crate::teaching_review::fixture_checks(checks)});
+    let mut reply = json!({"issues":issues,"sectionDefects":defects});
     if !verdicts.is_empty() {
         reply["openFindings"] = json!(verdicts);
     }
@@ -1023,20 +1011,20 @@ async fn instructional_review_repairs_once_and_rejects_unresolved_defects() -> R
 }
 
 #[tokio::test]
-async fn lesson_review_requires_evidence_for_every_section_and_repairs_reported_defects(
-) -> Result<()> {
+async fn lesson_review_repairs_reported_defects() -> Result<()> {
     let body =
         "A running total is initialized to zero and each accepted value is added exactly once. "
             .repeat(10);
     let candidate = json!({"blocks":[{"kind":"explanation","body":body}]});
-    let check = |has_defect, verdicts: &[serde_json::Value]| {
-        review_reply(
-            &[],
+    let check = |has_defect: bool, verdicts: &[serde_json::Value]| {
+        let defects = if has_defect {
             vec![
-                json!({"index":0,"passageId":"section-0-passage-0","finding":"The example contradicts its return value; correct the returned total to match the accumulation.","hasDefect":has_defect}),
-            ],
-            verdicts,
-        )
+                json!({"passageId":"section-0-passage-0","finding":"The example contradicts its return value; correct the returned total to match the accumulation."}),
+            ]
+        } else {
+            vec![]
+        };
+        review_reply(&[], defects, verdicts)
     };
     let model = ScriptedModel {
         outputs: std::sync::Mutex::new(
@@ -1059,25 +1047,6 @@ async fn lesson_review_requires_evidence_for_every_section_and_repairs_reported_
             .lock()
             .map_err(|_| AppError::InternalError("fixture lock".into()))?;
         assert!(prompts[1].contains("Section 1 (candidate blocks-0): The example contradicts"));
-    }
-    for review in [
-        json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![])}),
-        json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![json!({"index":0,"passageId":"section-0-invented-passage","finding":"This unsupported review cannot establish that the passage was inspected.","hasDefect":false})])}),
-    ] {
-        let model = ScriptedModel {
-            outputs: std::sync::Mutex::new(vec![review.to_string()].into()),
-            prompts: std::sync::Mutex::new(vec![]),
-        };
-        assert!(crate::teaching::review_and_repair(
-            &model,
-            "Author",
-            "Context",
-            &json!({}),
-            candidate.to_string(),
-            2000
-        )
-        .await
-        .is_err());
     }
     Ok(())
 }
@@ -1313,7 +1282,7 @@ async fn a_lesson_that_cannot_be_saved_is_refused_before_persistence() -> Result
 #[tokio::test]
 async fn a_written_quiz_item_is_authored_from_lesson_text_without_sources() -> Result<()> {
     use crate::assessment_engine::{LearningBlueprintRequirement, LearningItemFormat};
-    use crate::assessment_generation::{author_items, AuthoringNeed, MaterialPassage};
+    use crate::assessment_generation::{author_items, AuthoringNeed, BankPass, MaterialPassage};
     let passage = "A randomized comparison assigns units to conditions by chance, so differences in outcome can be attributed to the condition.";
     let model = Model(json!({"items":[{"prompt":"Explain how you would design a randomized comparison and identify its limitations.","rubric":task_rubric(),"explanation":"The answer should define the comparison, the measurement, the assumptions and the limits.","blockIndex":0,"quote":"assigns units to conditions by chance","difficulty":3}]}).to_string());
     let need = AuthoringNeed {
@@ -1328,6 +1297,7 @@ async fn a_written_quiz_item_is_authored_from_lesson_text_without_sources() -> R
         outcome_description: "Explain how randomization supports a causal comparison.".into(),
         lesson_id: None,
         count: 1,
+        pass: BankPass::Retakes,
         material: vec![MaterialPassage {
             lesson_title: "Experiments".into(),
             title: "Randomization".into(),

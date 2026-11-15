@@ -75,7 +75,7 @@ fn serialize_reqwest_error<S>(error: &reqwest::Error, serializer: S) -> Result<S
 where
     S: serde::Serializer,
 {
-    serializer.serialize_str(&error.to_string())
+    serializer.serialize_str(&WithCauses(error).to_string())
 }
 
 /// Auto-convert from anyhow::Error to LLMError
@@ -234,7 +234,7 @@ pub struct OllamaChatStreamResponse {
     pub eval_duration: Option<u64>,
 }
 
-use lattice_core::shared::error::{server_cannot_start, AppError};
+use lattice_core::shared::error::{server_cannot_start, AppError, WithCauses};
 
 /// Auto-convert from LLMError to AppError
 impl From<crate::features::llm::engine::types::LLMError> for AppError {
@@ -258,7 +258,7 @@ impl From<crate::features::llm::engine::types::LLMError> for AppError {
                 message: e.to_string(),
                 kind: format!("{:?}", e.kind()),
             },
-            LLMError::Reqwest(e) => AppError::Network(e.to_string()),
+            LLMError::Reqwest(e) => AppError::Network(WithCauses(&e).to_string()),
             LLMError::Other(msg) => AppError::Other(format!("LLM error: {}", msg)),
         }
     }

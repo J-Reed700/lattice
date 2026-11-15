@@ -33,12 +33,9 @@ impl LearningBlockKind {
         Self::ALL.into_iter().find(|kind| kind.as_str() == name)
     }
 
-    /// Explanation, WorkedExample, Contrast.
-    pub(crate) fn teaches(&self) -> bool {
-        matches!(
-            self,
-            Self::Explanation | Self::WorkedExample | Self::Contrast
-        )
+    /// Explanation, WorkedExample: sections that teaching added for an idea, a term, an action or a later use goes into; a contrast holds only the confusion it sets beside an idea.
+    pub(crate) fn takes_teaching(&self) -> bool {
+        matches!(self, Self::Explanation | Self::WorkedExample)
     }
 
     /// Explanation, Contrast, Recap: sections whose sentences cite sources.

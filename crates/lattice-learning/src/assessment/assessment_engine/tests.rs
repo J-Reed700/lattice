@@ -216,3 +216,139 @@ fn choices_a_reader_cannot_tell_apart_are_not_distinct() {
         );
     }
 }
+
+fn requirement_of(
+    outcome: u128,
+    format: LearningItemFormat,
+    count: usize,
+    difficulty_min: u8,
+    difficulty_max: u8,
+) -> LearningBlueprintRequirement {
+    LearningBlueprintRequirement {
+        outcome_id: id(outcome),
+        format,
+        count,
+        difficulty_min,
+        difficulty_max,
+    }
+}
+
+fn candidate_of(
+    seed: u128,
+    outcome: u128,
+    format: LearningItemFormat,
+    difficulty: u8,
+) -> LearningAssessmentCandidate {
+    LearningAssessmentCandidate {
+        outcome_ids: vec![id(outcome)],
+        format,
+        ..candidate(seed, difficulty)
+    }
+}
+
+fn picked(
+    requirements: &[LearningBlueprintRequirement],
+    candidates: &[LearningAssessmentCandidate],
+    exposed: &HashSet<String>,
+) -> std::result::Result<Vec<String>, Shortfall> {
+    let refs: Vec<&LearningAssessmentCandidate> = candidates.iter().collect();
+    form_items(requirements, &refs, exposed)
+        .map(|items| items.iter().map(|item| item.id.clone()).collect())
+}
+
+#[test]
+fn a_requirement_whose_format_has_no_item_takes_an_unused_item_of_its_outcome() -> Result<()> {
+    let requirements = vec![requirement_of(2, LearningItemFormat::TrueFalse, 1, 2, 4)];
+    let candidates = vec![candidate_of(10, 2, LearningItemFormat::SingleChoice, 3)];
+    assert_eq!(
+        picked(&requirements, &candidates, &HashSet::new()),
+        Ok(vec![id(10)])
+    );
+
+    let mut asked = blueprint();
+    asked.requirements = requirements;
+    let form = build_assessment_form(&asked, &candidates, &HashSet::new(), id(30), 40)?;
+    assert_eq!(form.items.len(), 1);
+    assert_eq!(form.items[0].id, id(10));
+    Ok(())
+}
+
+#[test]
+fn a_fallback_never_takes_an_item_a_later_requirement_needs_strictly() {
+    let requirements = vec![
+        requirement_of(2, LearningItemFormat::TrueFalse, 1, 3, 3),
+        requirement_of(2, LearningItemFormat::SingleChoice, 1, 2, 4),
+    ];
+    // Item 10 is the nearest fallback for the first requirement and the only strict item of the second;
+    // item 11 is single choice but outside the second requirement's difficulty range.
+    let candidates = vec![
+        candidate_of(10, 2, LearningItemFormat::SingleChoice, 3),
+        candidate_of(11, 2, LearningItemFormat::SingleChoice, 1),
+    ];
+    assert_eq!(
+        picked(&requirements, &candidates, &HashSet::new()),
+        Ok(vec![id(11), id(10)])
+    );
+}
+
+#[test]
+fn a_shortfall_remains_when_the_outcome_has_too_few_unused_items_in_any_format() {
+    let requirements = vec![requirement_of(2, LearningItemFormat::SingleChoice, 3, 2, 4)];
+    let candidates = vec![
+        candidate_of(10, 2, LearningItemFormat::SingleChoice, 3),
+        candidate_of(11, 2, LearningItemFormat::Ordering, 1),
+        candidate_of(12, 5, LearningItemFormat::SingleChoice, 3),
+    ];
+    assert_eq!(
+        picked(&requirements, &candidates, &HashSet::new()),
+        Err(Shortfall {
+            requirement: requirements[0].clone(),
+            eligible: 2,
+        })
+    );
+}
+
+#[test]
+fn fallback_items_come_unseen_first_then_nearest_the_middle_then_by_id() {
+    let requirements = vec![requirement_of(2, LearningItemFormat::TrueFalse, 2, 3, 3)];
+    let candidates = vec![
+        candidate_of(23, 2, LearningItemFormat::SingleChoice, 5),
+        candidate_of(22, 2, LearningItemFormat::SingleChoice, 2),
+        candidate_of(21, 2, LearningItemFormat::SingleChoice, 4),
+        candidate_of(20, 2, LearningItemFormat::SingleChoice, 3),
+    ];
+    let exposed = HashSet::from([id(20)]);
+    assert_eq!(
+        picked(&requirements, &candidates, &exposed),
+        Ok(vec![id(21), id(22)])
+    );
+
+    let all = vec![requirement_of(2, LearningItemFormat::TrueFalse, 4, 3, 3)];
+    assert_eq!(
+        picked(&all, &candidates, &exposed),
+        Ok(vec![id(21), id(22), id(23), id(20)])
+    );
+}
+
+#[test]
+fn an_item_of_another_outcome_is_never_a_fallback() {
+    let requirements = vec![requirement_of(2, LearningItemFormat::TrueFalse, 1, 3, 3)];
+    // Item 10 is nearer and sorts first, but belongs to another outcome.
+    let candidates = vec![
+        candidate_of(10, 5, LearningItemFormat::SingleChoice, 3),
+        candidate_of(11, 2, LearningItemFormat::SingleChoice, 1),
+    ];
+    assert_eq!(
+        picked(&requirements, &candidates, &HashSet::new()),
+        Ok(vec![id(11)])
+    );
+
+    let two = vec![requirement_of(2, LearningItemFormat::TrueFalse, 2, 3, 3)];
+    assert_eq!(
+        picked(&two, &candidates, &HashSet::new()),
+        Err(Shortfall {
+            requirement: two[0].clone(),
+            eligible: 1,
+        })
+    );
+}

@@ -188,8 +188,8 @@ pub struct NodeId(pub &'static str);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
     Node(NodeId),
-    /// Another class's graph, at its entry: the statement changes class by
-    /// evidence.
+    /// Another class's graph, at its entry: the statement enters the class by
+    /// evidence, once.
     Enter(Class),
     /// Another class's graph, at its post-rewrite node: a rewrite's successor
     /// changes class, and is never rewritten again.
@@ -203,8 +203,8 @@ impl Target {
     }
 }
 
-/// What a statement that has changed class already does where a first change
-/// would move it again.
+/// What a statement that has been in a class already does where a first entry
+/// would move it into that class again.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Otherwise {
     Node(NodeId),
@@ -227,10 +227,11 @@ impl From<End> for Otherwise {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Next {
     Go(Target),
-    /// `change` the first time the evidence moves the statement; `otherwise`
-    /// once it has changed class (no class changes twice).
-    FirstChange {
-        change: Target,
+    /// `by` unless the statement has been in `into`; `otherwise` once it has
+    /// (a statement enters each class at most once).
+    FirstEntry {
+        into: Class,
+        by: Target,
         otherwise: Otherwise,
     },
     End(End),
@@ -252,12 +253,54 @@ impl Next {
         Self::Go(Target::EnterAfterRewrite(class))
     }
 
-    /// `change` the first time, then the node named `otherwise` or the end
-    /// given.
-    pub fn first_change(change: Target, otherwise: impl Into<Otherwise>) -> Self {
-        Self::FirstChange {
-            change,
+    /// Change to `class`, at its graph's entry, unless the statement has been
+    /// in it: then the node named `otherwise` or the end given.
+    pub fn first_entry(class: Class, otherwise: impl Into<Otherwise>) -> Self {
+        Self::FirstEntry {
+            into: class,
+            by: Target::Enter(class),
             otherwise: otherwise.into(),
+        }
+    }
+
+    /// As `first_entry`, by the node named `by` of the same graph, whose step
+    /// leads into `class`.
+    pub fn first_entry_by(by: &'static str, class: Class, otherwise: impl Into<Otherwise>) -> Self {
+        Self::FirstEntry {
+            into: class,
+            by: Target::node(by),
+            otherwise: otherwise.into(),
+        }
+    }
+}
+
+/// A set of classes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Classes(u8);
+
+impl Classes {
+    /// The set of `class` alone.
+    pub const fn of(class: Class) -> Self {
+        Self(Self::bit(class))
+    }
+
+    /// This set and `class`.
+    pub const fn with(self, class: Class) -> Self {
+        Self(self.0 | Self::bit(class))
+    }
+
+    /// Whether `class` is in the set.
+    pub const fn has(self, class: Class) -> bool {
+        self.0 & Self::bit(class) != 0
+    }
+
+    /// The bit of `class` in the set.
+    const fn bit(class: Class) -> u8 {
+        match class {
+            Class::Sourced => 1,
+            Class::Reasoning => 2,
+            Class::Common => 4,
+            Class::Internal => 8,
         }
     }
 }
@@ -266,8 +309,9 @@ impl Next {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Position {
     pub class: Class,
-    /// The evidence has moved the statement to this class.
-    pub changed_class: bool,
+    /// The classes the statement has been in, its current one included: it
+    /// enters each at most once.
+    pub visited: Classes,
     /// The statement's one re-ask of an unreadable answer is spent.
     pub reasked: bool,
     pub node: NodeId,

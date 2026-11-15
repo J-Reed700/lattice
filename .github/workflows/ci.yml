@@ -600,6 +600,7 @@ jobs:
       - run: python3 -m unittest scripts/test_tauri_command_inventory.py
       - run: python3 -m unittest scripts/test_replay_claude.py
       - run: python3 -m unittest scripts/ci/test_rust_packages.py
+      - run: python3 -m unittest scripts/test_lesson_trace.py
       - run: python3 scripts/check-tauri-command-inventory.py
 
   dependency-audit:
