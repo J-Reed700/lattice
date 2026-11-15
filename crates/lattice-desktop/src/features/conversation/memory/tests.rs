@@ -3472,7 +3472,7 @@ async fn a_verdict_without_a_reason_is_corrected_on_its_own_while_the_others_sta
 
 fn review_with_context(text: &str) -> super::verify::Input {
     use super::verify::{Excerpt, Input, Passage, Review, Subject};
-    use lattice_core::application::services::model_contract::shown::{Internal, Told};
+    use lattice_core::application::services::model_contract::shown::Told;
     let harbour = |text: &str| Passage {
         message_id: Told("m3".into()),
         sequence: Told(3),
@@ -3538,7 +3538,7 @@ fn the_surrounding_text_is_cut_to_the_room_the_window_leaves() {
 #[test]
 fn the_review_request_holds_no_identity_of_the_app() {
     use super::verify::{Excerpt, Input, MemoryReview, Passage, Review, Subject};
-    use lattice_core::application::services::model_contract::shown::{Internal, Told};
+    use lattice_core::application::services::model_contract::shown::Told;
     use lattice_core::application::services::model_contract::test_support::taint::{
         holds, Marks,
     };
@@ -3696,7 +3696,7 @@ async fn a_supersede_proposal_retires_the_existing_item_by_its_handle() {
 #[test]
 fn the_extraction_request_holds_no_identity_of_the_app() {
     use super::extract::{Context, Input, Memory, MemoryExtraction, Place, Segment, Sentence};
-    use lattice_core::application::services::model_contract::shown::{Internal, Told};
+    use lattice_core::application::services::model_contract::shown::Told;
     use lattice_core::application::services::model_contract::test_support::taint::{
         holds, Marks,
     };

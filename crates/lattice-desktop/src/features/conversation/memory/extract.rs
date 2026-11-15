@@ -752,7 +752,7 @@ pub async fn extract_segments(
     )
     .await;
     let attempts = transport.sent();
-    let Found { items, rest } = match asked {
+    let Found { items, rest, .. } = match asked {
         Ok(found) => found,
         Err(error) => {
             // A hard limit stops the job; anything else is the model failing.
