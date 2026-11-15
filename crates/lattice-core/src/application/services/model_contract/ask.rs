@@ -51,6 +51,18 @@ pub trait Answered: Contract {
         Ok(())
     }
 
+    /// [`accept`](Self::accept) for one entry of a per-item answer, given the item the entry is about.
+    fn accept_for(
+        input: &Self::Input,
+        _of: &Picked<<Self::Answer as PerItem>::Item>,
+        statement: &<Self::Answer as Shape>::Statement,
+    ) -> std::result::Result<(), Refusal>
+    where
+        Self::Answer: PerItem,
+    {
+        Self::accept(input, statement)
+    }
+
     /// `input` holding only the opening of its material that `room` tokens
     /// hold, for a contract whose request carries material the window may not
     /// hold whole ([`Packed`](super::packed::Packed)). `None`: it carries none.
@@ -195,7 +207,8 @@ where
         Settled::Answered(statement) => Settled::Answered(((), statement)),
         Settled::Unanswered(why) => Settled::Unanswered(why),
     };
-    let settled = alone::<C, ()>(llm, transport, input, request, "", false, read).await?;
+    let accept = |_: &(), statement: &Statement<C>| C::accept(input, statement);
+    let settled = alone::<C, ()>(llm, transport, request, "", false, read, accept).await?;
     Ok(match settled {
         Settled::Answered(((), statement)) => Settled::Answered(statement),
         Settled::Unanswered(why) => Settled::Unanswered(why),
@@ -387,7 +400,7 @@ where
                         continue;
                     }
                     if let Settled::Answered(statement) = settled {
-                        match C::accept(&input, &statement) {
+                        match C::accept_for(&input, &picked, &statement) {
                             Ok(()) => accepted.push((index, (picked, statement))),
                             Err(Refusal(why)) => {
                                 trace::<C>(&picked.handle.written(), "refused");
@@ -693,13 +706,13 @@ async fn correction_for(llm: &dyn LLMPort, sent: &Sent, told: &str) -> Option<Fo
 
 /// `sent` read, and the statement `accept` took, if it was answered.
 fn settle<C: Answered, P>(
-    input: &C::Input,
     sent: &Sent,
     handle: &str,
     read: &impl Fn(&Sent) -> Settled<(P, Statement<C>)>,
+    accept: &impl Fn(&P, &Statement<C>) -> std::result::Result<(), Refusal>,
 ) -> Settled<(P, Statement<C>)> {
     match read(sent) {
-        Settled::Answered((tag, statement)) => match C::accept(input, &statement) {
+        Settled::Answered((tag, statement)) => match accept(&tag, &statement) {
             Ok(()) => Settled::Answered((tag, statement)),
             Err(Refusal(why)) => {
                 trace::<C>(handle, "refused");
@@ -715,19 +728,19 @@ fn settle<C: Answered, P>(
 async fn alone<C: Answered, P>(
     llm: &dyn LLMPort,
     transport: &impl Transport,
-    input: &C::Input,
     request: GroundedRequest,
     handle: &str,
     corrected: bool,
     read: impl Fn(&Sent) -> Settled<(P, Statement<C>)>,
+    accept: impl Fn(&P, &Statement<C>) -> std::result::Result<(), Refusal>,
 ) -> Result<Settled<(P, Statement<C>)>> {
     let asked = request.clone();
     let mut sent = transport.send(llm, request).await?;
-    let mut settled = settle::<C, P>(input, &sent, handle, &read);
+    let mut settled = settle::<C, P>(&sent, handle, &read, &accept);
     if matches!(settled, Settled::Unanswered(Why::CutOff)) {
         if let Some(larger) = larger_if_room(llm, &sent).await {
             sent = transport.follow(llm, larger).await?;
-            settled = settle::<C, P>(input, &sent, handle, &read);
+            settled = settle::<C, P>(&sent, handle, &read, &accept);
         }
     }
     if !corrected {
@@ -738,7 +751,7 @@ async fn alone<C: Answered, P>(
         if let Some(due) = due {
             if let Some(again) = correction_for(llm, &sent, &due).await {
                 let reply = transport.follow(llm, again).await?;
-                settled = settle::<C, P>(input, &reply, handle, &read);
+                settled = settle::<C, P>(&reply, handle, &read, &accept);
             }
         }
     }
@@ -799,5 +812,8 @@ where
             <C::Answer as PerItem>::read(&written(sent), showing),
         )
     };
-    alone::<C, _>(llm, transport, input, request, &handle, corrected, read).await
+    let accept = |picked: &Picked<<C::Answer as PerItem>::Item>, statement: &Statement<C>| {
+        C::accept_for(input, picked, statement)
+    };
+    alone::<C, _>(llm, transport, request, &handle, corrected, read, accept).await
 }

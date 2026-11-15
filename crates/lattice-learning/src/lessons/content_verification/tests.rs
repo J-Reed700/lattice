@@ -5,6 +5,9 @@
     clippy::panic
 )]
 use super::*;
+use crate::lessons::teaching::repair_script::{
+    finding_labels, quote_label, sentence_label, task_of,
+};
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::services::model_contract::{
     Contract as _, CORRECTION_LEAD, CUT_OFF_REFUSAL,
@@ -79,6 +82,9 @@ impl Model {
 }
 /// The task a fixture prompt carries, as JSON: its last paragraph before the correction an ask-again adds.
 pub(crate) fn fixture_task(prompt: &str) -> Option<Value> {
+    if let Some(task) = task_of(prompt) {
+        return Some(task);
+    }
     let task = prompt
         .split_once(&format!("\n\n{CORRECTION_LEAD}"))
         .map_or(prompt, |(task, _)| task);
@@ -225,52 +231,26 @@ pub(crate) fn fixture_completion(
             .map(|reply| part_wise_reply(&reply, user))
             .unwrap_or_default()
     } else {
-        fixture_repair_edits(request, user, replies.concat())
+        fixture_repair_edits(user, replies.concat())
     };
     CompletionResponse::from_text(text)
 }
 
-/// A scripted repair answer made to obey the schema it was asked under: when
-/// the schema asks for an entry for each finding, the changes are put in the
-/// entries of the findings they name or, naming none, the finding sent for
-/// their part; otherwise the names are taken away. Any other reply is
-/// returned as written.
-fn fixture_repair_edits(request: &CompletionRequest, user: &str, text: String) -> String {
+/// A scripted repair answer in the form its request asks for: a teaching
+/// repair's flat answer becomes entries of sentence changes by label; any
+/// other reply is returned as written.
+fn fixture_repair_edits(user: &str, text: String) -> String {
     let Ok(Value::Object(mut answer)) = serde_json::from_str::<Value>(&text) else {
         return text;
     };
-    if !["edits", "citations", "uncite"]
+    if !["edits", "citations", "uncite", "recites"]
         .iter()
         .any(|key| answer.contains_key(*key))
     {
         return text;
     }
-    let entries = request
-        .schema()
-        .map(|schema| schema.as_json())
-        .and_then(|schema| schema.pointer("/properties/answers/items"));
-    let sent: Vec<Value> = serde_json::from_str::<Value>(user)
-        .ok()
-        .and_then(|prompt| prompt.get("issuesToFix").and_then(Value::as_array).cloned())
-        .unwrap_or_default();
-    let finding_for = |path: &str| -> Value {
-        let mut segments = path.split('/').skip(1);
-        let part = match (segments.next(), segments.next()) {
-            (Some(list @ ("blocks" | "questions")), Some(index)) => format!("/{list}/{index}"),
-            _ => String::new(),
-        };
-        let entry = sent
-            .iter()
-            .find(|entry| {
-                entry["part"].as_str() == Some(part.as_str())
-                    || entry["also"].as_str() == Some(part.as_str())
-            })
-            .or_else(|| sent.iter().find(|entry| entry["part"].is_null()))
-            .or_else(|| sent.first());
-        entry.map_or(Value::Null, |entry| entry["id"].clone())
-    };
-    if let Some(entry) = entries {
-        return answered_by_finding(&answer, &sent, entry, &finding_for);
+    if let Some(task) = task_of(user) {
+        return teaching_repair_answer(&task, &Value::Object(answer));
     }
     for key in ["edits", "citations"] {
         let Some(Value::Array(changes)) = answer.get_mut(key) else {
@@ -296,73 +276,292 @@ fn fixture_repair_edits(request: &CompletionRequest, user: &str, text: String) -
 /// What a fixture writes as the plan of an entry it makes.
 pub(crate) const FIXTURE_PLAN: &str = "Make the change the finding asks for.";
 
-/// A flat scripted repair answer as the schema's `answers` ask for it: an
-/// entry for each finding sent, holding the changes that name it or fall in
-/// its part, and no change when none does.
-fn answered_by_finding(
-    answer: &serde_json::Map<String, Value>,
-    sent: &[Value],
-    entry: &Value,
-    finding_for: &dyn Fn(&str) -> Value,
-) -> String {
-    let offered: Vec<&str> = entry
-        .get("required")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .filter(|key| ["edits", "citations", "uncite"].contains(key))
-        .collect();
-    let blank = |id: &str| {
-        let mut fields = serde_json::Map::new();
-        fields.insert("finding".into(), json!(id));
-        fields.insert("plan".into(), json!(FIXTURE_PLAN));
-        for key in &offered {
-            fields.insert((*key).into(), json!([]));
-        }
-        fields
-    };
-    let mut entries: Vec<serde_json::Map<String, Value>> = Vec::new();
-    for id in sent.iter().filter_map(|sent| sent["id"].as_str()) {
-        if !entries.iter().any(|known| known["finding"] == id) {
-            entries.push(blank(id));
-        }
-    }
-    for key in ["edits", "citations", "uncite"] {
-        let Some(Value::Array(changes)) = answer.get(key) else {
+/// The length of the bracketed label that opens `text`, as in `[u12] `.
+fn label_len(text: &str) -> Option<usize> {
+    let body = text.strip_prefix("[u")?;
+    let digits = body.bytes().take_while(u8::is_ascii_digit).count();
+    (digits > 0 && body[digits..].starts_with("] ")).then_some(digits + 4)
+}
+
+/// A marked text as what stands before its first label, then each label with
+/// the text up to the next one.
+fn labelled(marked: &str) -> (String, Vec<(String, String)>) {
+    let mut lead = String::new();
+    let mut pieces: Vec<(String, String)> = Vec::new();
+    let mut at = 0;
+    while at < marked.len() {
+        let rest = &marked[at..];
+        if let Some(len) = label_len(rest) {
+            pieces.push((rest[1..len - 2].to_owned(), String::new()));
+            at += len;
             continue;
+        }
+        let Some(ch) = rest.chars().next() else {
+            break;
         };
-        for change in changes {
-            let mut fields = match change {
-                Value::Object(fields) => fields.clone(),
-                Value::String(path) => std::iter::once(("path".to_owned(), json!(path))).collect(),
-                _ => continue,
-            };
-            let path = fields
-                .get("path")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned();
-            let finding = match fields.remove("finding") {
-                Some(Value::String(named)) => named,
-                _ => finding_for(&path).as_str().unwrap_or("").to_owned(),
-            };
-            let at = match entries
-                .iter()
-                .position(|known| known["finding"] == finding.as_str())
-            {
-                Some(at) => at,
-                None => {
-                    entries.push(blank(&finding));
-                    entries.len() - 1
+        match pieces.last_mut() {
+            Some((_, text)) => text.push(ch),
+            None => lead.push(ch),
+        }
+        at += ch.len_utf8();
+    }
+    (lead, pieces)
+}
+
+/// A marked text as the field was before it was marked.
+pub(crate) fn unmarked(marked: &str) -> String {
+    let (lead, pieces) = labelled(marked);
+    pieces
+        .iter()
+        .fold(lead, |text, (_, piece)| format!("{text}{piece}"))
+}
+
+/// A JSON pointer from a pointer or the dotted form of a path.
+fn pointer_of(path: &str) -> String {
+    if path.starts_with('/') {
+        path.to_owned()
+    } else {
+        format!("/{}", path.replace('.', "/"))
+    }
+}
+
+/// The pointer of the block or question a pointer is in; empty outside every part.
+fn part_of(pointer: &str) -> String {
+    let mut segments = pointer.split('/').skip(1);
+    match (segments.next(), segments.next()) {
+        (Some(list @ ("blocks" | "questions")), Some(index)) => format!("/{list}/{index}"),
+        _ => String::new(),
+    }
+}
+
+/// The pointer of each string of `value` outside its citations.
+fn text_pointers(value: &Value, pointer: &str, found: &mut Vec<String>) {
+    match value {
+        Value::String(_) => found.push(pointer.to_owned()),
+        Value::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                text_pointers(item, &format!("{pointer}/{index}"), found);
+            }
+        }
+        Value::Object(fields) => {
+            for (key, item) in fields {
+                if key != "citations" && key != "citation" {
+                    text_pointers(item, &format!("{pointer}/{key}"), found);
                 }
-            };
-            if let Some(Value::Array(list)) = entries[at].get_mut(key) {
-                list.push(Value::Object(fields));
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The label of the citation a fixture names by the pointer of the citation
+/// or of the part holding its own.
+fn citation_at(task: &Value, path: &str) -> String {
+    let named = task["candidate"].pointer(&pointer_of(path));
+    let at = named.and_then(|named| named.get("at").or_else(|| named.pointer("/citation/at")));
+    match at.and_then(Value::as_str) {
+        Some(at) => at.to_owned(),
+        None => panic!("a scripted repair names no citation at {path}"),
+    }
+}
+
+/// A teaching repair's answer, in the form its request asks for, making the
+/// changes of a flat fixture answer
+/// (`{"edits":[{path,before,after}],"citations":[..],"uncite":[..],"recites":[..]}`):
+/// an entry for each finding sent, each change in the entry of the finding it
+/// names by its place (`"finding": 0`), else of the finding sent for its part.
+/// An answer already in the form of the request (`{"entries":[..]}`) is
+/// returned as written; `"plans"` maps a place to the plan of its entry and
+/// `"only"` lists the places whose entries are given at all.
+pub(crate) fn teaching_repair_answer(task: &Value, flat: &Value) -> String {
+    if flat.get("entries").is_some() {
+        return flat.to_string();
+    }
+    let labels = finding_labels(task);
+    let rows: Vec<Value> = task["issuesToFix"].as_array().cloned().unwrap_or_default();
+    let mut entries: Vec<Value> = labels
+        .iter()
+        .enumerate()
+        .map(|(place, label)| {
+            let plan = flat["plans"][place.to_string()]
+                .as_str()
+                .unwrap_or(FIXTURE_PLAN);
+            json!({"of": label, "plan": plan, "edits": {
+                "sentences": {"replace": [], "insert": [], "remove": [], "move": []},
+                "cite": [], "recite": [], "uncite": []}})
+        })
+        .collect();
+    let routed = |change: &Value, path: &str| -> usize {
+        if let Some(place) = change.get("finding").and_then(Value::as_u64) {
+            return usize::try_from(place).unwrap_or(0);
+        }
+        let part = part_of(&pointer_of(path));
+        let row = rows
+            .iter()
+            .position(|row| {
+                row["part"].as_str() == Some(part.as_str())
+                    || row["also"].as_str() == Some(part.as_str())
+            })
+            .or_else(|| rows.iter().position(|row| row["part"].is_null()))
+            .unwrap_or(0);
+        let named = rows.get(row).and_then(|row| row["finding"].as_str());
+        labels
+            .iter()
+            .position(|label| Some(label.as_str()) == named)
+            .unwrap_or(0)
+    };
+    // (entry, place in its replaces, the text's pointer, the new text)
+    let mut replaced: Vec<(usize, usize, String, String)> = Vec::new();
+    for edit in flat["edits"].as_array().into_iter().flatten() {
+        let path = edit["path"].as_str().unwrap_or_default();
+        let pointer = pointer_of(path);
+        let (Some(marked), Some(before), Some(after)) = (
+            task["candidate"].pointer(&pointer).and_then(Value::as_str),
+            edit["before"].as_str(),
+            edit["after"].as_str(),
+        ) else {
+            panic!(
+                "a scripted repair edits {path}, which is no text of the candidate, with before {}",
+                edit["before"]
+            );
+        };
+        let (lead, pieces) = labelled(marked);
+        let plain = unmarked(marked);
+        let Some(start) = plain.find(before) else {
+            panic!("a scripted repair edit at {path} finds no {before:?} in {plain:?}");
+        };
+        let end = start + before.len();
+        let mut at = lead.len();
+        let mut hit: Vec<(String, usize, usize)> = Vec::new();
+        for (label, text) in &pieces {
+            let stops = at + text.trim_end().len();
+            if at < end && start < stops {
+                hit.push((label.clone(), at, stops));
+            }
+            at += text.len();
+        }
+        let (Some(first), Some(last)) = (hit.first(), hit.last()) else {
+            panic!("a scripted repair edit at {path} reaches no sentence with {before:?}");
+        };
+        let head = if start > first.1 {
+            &plain[first.1..start]
+        } else {
+            ""
+        };
+        let tail = if end < last.2 {
+            &plain[end..last.2]
+        } else {
+            ""
+        };
+        let new = format!("{head}{after}{tail}");
+        let entry = routed(edit, path);
+        let hit_labels: Vec<String> = hit.iter().map(|(label, _, _)| label.clone()).collect();
+        let list = &mut entries[entry]["edits"]["sentences"];
+        if new.trim().is_empty() {
+            for label in &hit_labels {
+                if let Some(removed) = list["remove"].as_array_mut() {
+                    removed.push(json!(label));
+                }
+            }
+            continue;
+        }
+        let mut place = 0;
+        if let Some(replaces) = list["replace"].as_array_mut() {
+            replaces.push(json!({"at": hit_labels[0], "with": {"text": new, "from": []}}));
+            place = replaces.len() - 1;
+        }
+        replaced.push((entry, place, pointer, new));
+        for label in &hit_labels[1..] {
+            if let Some(removed) = list["remove"].as_array_mut() {
+                removed.push(json!(label));
             }
         }
     }
-    json!({ "answers": entries }).to_string()
+    for citation in flat["citations"].as_array().into_iter().flatten() {
+        let path = citation["path"].as_str().unwrap_or_default();
+        let part = part_of(&pointer_of(path));
+        let (Some(sentence), Some(source), Some(words)) = (
+            citation["sentence"].as_str(),
+            citation["sourceIndex"].as_u64(),
+            citation["quote"].as_str(),
+        ) else {
+            panic!("a scripted citation at {path} lacks its sentence, sourceIndex or quote");
+        };
+        let Some(quote) = quote_label(task, source, words) else {
+            panic!(
+                "a scripted citation at {path} quotes {words:?}, which no excerpt sentence holds"
+            );
+        };
+        let inside = format!("{part}/");
+        let writes = replaced
+            .iter()
+            .find(|(_, _, pointer, new)| pointer.starts_with(&inside) && new.contains(sentence));
+        if let Some((entry, place, _, _)) = writes {
+            if let Some(from) = entries[*entry]["edits"]["sentences"]["replace"][*place]["with"]
+                ["from"]
+                .as_array_mut()
+            {
+                from.push(json!(quote));
+            }
+            continue;
+        }
+        let mut pointers = Vec::new();
+        if let Some(value) = task["candidate"].pointer(&part) {
+            text_pointers(value, &part, &mut pointers);
+        }
+        let Some(label) = pointers.iter().find_map(|pointer| {
+            let text = unmarked(task["candidate"].pointer(pointer)?.as_str()?);
+            if !text.contains(sentence) {
+                return None;
+            }
+            sentence_label(task, pointer, sentence)
+        }) else {
+            panic!(
+                "a scripted citation at {path} is for {sentence:?}, which the part does not hold"
+            );
+        };
+        let entry = routed(citation, path);
+        if let Some(cites) = entries[entry]["edits"]["cite"].as_array_mut() {
+            cites.push(json!({"sentence": label, "quote": quote}));
+        }
+    }
+    for recite in flat["recites"].as_array().into_iter().flatten() {
+        let path = recite["path"].as_str().unwrap_or_default();
+        let (Some(source), Some(words)) =
+            (recite["sourceIndex"].as_u64(), recite["quote"].as_str())
+        else {
+            panic!("a scripted recite at {path} lacks its sourceIndex or quote");
+        };
+        let Some(quote) = quote_label(task, source, words) else {
+            panic!("a scripted recite at {path} quotes {words:?}, which no excerpt sentence holds");
+        };
+        let entry = routed(recite, path);
+        if let Some(recites) = entries[entry]["edits"]["recite"].as_array_mut() {
+            recites.push(json!({"citation": citation_at(task, path), "quote": quote}));
+        }
+    }
+    for named in flat["uncite"].as_array().into_iter().flatten() {
+        let path = named
+            .as_str()
+            .or_else(|| named["path"].as_str())
+            .unwrap_or_default();
+        let entry = routed(&Value::Null, path);
+        if let Some(uncites) = entries[entry]["edits"]["uncite"].as_array_mut() {
+            uncites.push(json!(citation_at(task, path)));
+        }
+    }
+    if let Some(only) = flat["only"].as_array() {
+        let kept: Vec<usize> = only
+            .iter()
+            .filter_map(|place| place.as_u64().and_then(|place| usize::try_from(place).ok()))
+            .collect();
+        let mut place = 0;
+        entries.retain(|_| {
+            place += 1;
+            kept.contains(&(place - 1))
+        });
+    }
+    json!({ "entries": entries }).to_string()
 }
 
 /// A fixture's label-first verdict ("supported\nReason: …\nSource passage:
@@ -738,13 +937,19 @@ impl Model {
 }
 
 /// The answer of a model that finds nothing to change in a teaching repair's
-/// request for edits: none.
+/// request for edits: an entry for each finding sent, with no change.
 pub(crate) fn declined_teaching_edits(prompt: &str) -> Option<String> {
     prompt
         .starts_with(
             "You are editing a rejected draft. Correct only the established teaching defects.",
         )
-        .then(|| json!({"edits": []}).to_string())
+        .then(|| {
+            let none = json!({"edits": []});
+            task_of(prompt).map_or_else(
+                || none.to_string(),
+                |task| teaching_repair_answer(&task, &none),
+            )
+        })
 }
 
 fn candidate(statement: &str) -> Value {

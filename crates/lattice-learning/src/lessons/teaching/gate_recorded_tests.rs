@@ -325,8 +325,8 @@ async fn what_the_review_reported_about_a_contradiction_is_ruled_on_by_the_plan_
     assert!(reviewed.set_aside.is_empty());
     let asked = repair_requests(&model);
     assert_eq!(asked.len(), 1);
-    let id = asked[0]["issuesToFix"][0]["id"].as_str().unwrap();
-    assert!(id.starts_with("plan/contradiction"), "{id}");
+    let note = asked[0]["issuesToFix"][0]["note"].as_str().unwrap();
+    assert!(note.starts_with("The lesson contradicts itself"), "{note}");
     Ok(())
 }
 

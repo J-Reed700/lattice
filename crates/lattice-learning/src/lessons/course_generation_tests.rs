@@ -1096,8 +1096,8 @@ async fn a_question_may_cite_a_reference_verification_saved_for_the_program() ->
 #[tokio::test]
 async fn instructional_review_repairs_once_and_rejects_unresolved_defects() -> Result<()> {
     let issue = json!({"issues":["The exercise answer contradicts its stated condition. Correct the comparison."]}).to_string();
-    let repaired = json!({"wrong":false}).to_string();
-    let patch = json!({"edits":[{"path":"/wrong","before":true,"after":false}]}).to_string();
+    let repaired = json!({"wrong":"false"}).to_string();
+    let patch = json!({"edits":[{"path":"/wrong","before":"true","after":"false"}]}).to_string();
     let model = ScriptedModel {
         outputs: std::sync::Mutex::new(
             vec![
@@ -1114,7 +1114,7 @@ async fn instructional_review_repairs_once_and_rejects_unresolved_defects() -> R
         "Author a lesson",
         "Require a correct comparison",
         &json!({"type":"object"}),
-        json!({"wrong":true}).to_string(),
+        json!({"wrong":"true"}).to_string(),
         2000,
     )
     .await?;
@@ -1146,7 +1146,7 @@ async fn instructional_review_repairs_once_and_rejects_unresolved_defects() -> R
         "Author",
         "Context",
         &json!({}),
-        json!({"wrong":true}).to_string(),
+        json!({"wrong":"true"}).to_string(),
         2000
     )
     .await

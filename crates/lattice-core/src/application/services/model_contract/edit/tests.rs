@@ -723,3 +723,152 @@ proptest! {
         }
     }
 }
+
+fn grouped_by_pairs(thing: &usize) -> Option<usize> {
+    (*thing < 4).then_some(thing / 2)
+}
+
+#[test]
+fn map_makes_each_new_content_into_another_and_keeps_the_rest() {
+    let t = picks(3);
+    let mut change = nothing();
+    change.replace.push((t[0].clone(), text("a")));
+    change.insert.push((after(&t[1]), text("bb")));
+    change.remove.push(t[2].clone());
+    let mapped = consistent(change)
+        .expect("consistent")
+        .map(|content| content.len());
+    let change = mapped.change();
+    assert_eq!(change.replace.len(), 1);
+    assert_eq!(change.replace[0].1, 1);
+    assert_eq!(change.insert[0].1, 2);
+    assert_eq!(handles(&change.remove), ["t3"]);
+    assert!(change.moved.is_empty());
+}
+
+#[test]
+fn split_by_gives_one_change_for_each_group_in_the_order_first_named() {
+    let t = picks(4);
+    let mut change = nothing();
+    change.replace.push((t[2].clone(), text("c")));
+    change.replace.push((t[0].clone(), text("a")));
+    change.insert.push((after(&t[1]), text("b")));
+    change.remove.push(t[3].clone());
+    change.moved.push((t[1].clone(), after(&t[0])));
+    let parts = consistent(change)
+        .expect("consistent")
+        .split_by(grouped_by_pairs)
+        .expect("splits");
+    let groups: Vec<usize> = parts.iter().map(|(group, _)| *group).collect();
+    assert_eq!(groups, [1, 0]);
+    let second = parts[0].1.change();
+    assert_eq!(second.replace.len(), 1);
+    assert_eq!(second.replace[0].0.reference, 2);
+    assert_eq!(handles(&second.remove), ["t4"]);
+    assert!(second.insert.is_empty() && second.moved.is_empty());
+    let first = parts[1].1.change();
+    assert_eq!(first.replace[0].0.reference, 0);
+    assert_eq!(first.insert.len(), 1);
+    assert_eq!(first.moved.len(), 1);
+    assert!(first.remove.is_empty());
+}
+
+#[test]
+fn split_by_puts_an_insert_in_the_group_of_its_anchor() {
+    let t = picks(4);
+    let mut change = nothing();
+    change.insert.push((after(&t[3]), text("d")));
+    change.insert.push((after(&t[0]), text("a")));
+    let parts = consistent(change)
+        .expect("consistent")
+        .split_by(grouped_by_pairs)
+        .expect("splits");
+    let groups: Vec<usize> = parts.iter().map(|(group, _)| *group).collect();
+    assert_eq!(groups, [1, 0]);
+    assert_eq!(parts[0].1.change().insert[0].1, "d");
+    assert_eq!(parts[1].1.change().insert[0].1, "a");
+}
+
+#[test]
+fn split_by_refuses_an_anchor_at_the_start() {
+    let t = picks(5);
+    let mut change = nothing();
+    change.remove.push(t[4].clone());
+    change.insert.push((Anchor::Start, text("x")));
+    let told = consistent(change)
+        .expect("consistent")
+        .split_by(grouped_by_pairs)
+        .expect_err("refused");
+    assert_eq!(
+        told,
+        "start does not say which text is meant: give the sentence the new place follows."
+    );
+    let mut change = nothing();
+    change.moved.push((t[0].clone(), Anchor::Start));
+    let told = consistent(change)
+        .expect("consistent")
+        .split_by(grouped_by_pairs)
+        .expect_err("refused");
+    assert!(told.starts_with("start does not say"), "{told}");
+}
+
+#[test]
+fn split_by_refuses_a_move_between_groups() {
+    let t = picks(5);
+    let mut change = nothing();
+    change.moved.push((t[0].clone(), after(&t[2])));
+    let told = consistent(change)
+        .expect("consistent")
+        .split_by(grouped_by_pairs)
+        .expect_err("refused");
+    assert_eq!(
+        told,
+        "t1 cannot move after t3: they are in different texts."
+    );
+}
+
+#[test]
+fn split_by_refuses_a_thing_that_belongs_to_no_group() {
+    let t = picks(5);
+    let mut change = nothing();
+    change.replace.push((t[0].clone(), text("a")));
+    change.remove.push(t[4].clone());
+    let told = consistent(change)
+        .expect("consistent")
+        .split_by(grouped_by_pairs)
+        .expect_err("refused");
+    assert_eq!(told, "t5 cannot be changed here.");
+    let mut change = nothing();
+    change.insert.push((after(&t[4]), text("x")));
+    let told = consistent(change)
+        .expect("consistent")
+        .split_by(grouped_by_pairs)
+        .expect_err("refused");
+    assert_eq!(told, "t5 cannot be changed here.");
+}
+
+#[test]
+fn an_empty_change_splits_into_nothing() {
+    let parts = consistent(nothing())
+        .expect("consistent")
+        .split_by(grouped_by_pairs)
+        .expect("splits");
+    assert!(parts.is_empty());
+}
+
+#[test]
+fn touches_a_thing_an_applied_change_claimed_or_anchored_after() {
+    let t = picks(5);
+    let mut doc = edited(5);
+    assert!(!doc.touches(&0));
+    let mut change = nothing();
+    change.replace.push((t[0].clone(), text("x")));
+    change.insert.push((after(&t[1]), text("y")));
+    change.moved.push((t[2].clone(), after(&t[3])));
+    applied(run(&mut doc, change));
+    assert!(doc.touches(&0), "replaced");
+    assert!(doc.touches(&1), "anchored after");
+    assert!(doc.touches(&2), "moved");
+    assert!(doc.touches(&3), "a move was anchored after it");
+    assert!(!doc.touches(&4));
+}

@@ -806,6 +806,52 @@ async fn a_refused_entry_is_corrected_alone_while_the_others_stand() {
     );
 }
 
+struct EachByItem;
+
+impl Contract for EachByItem {
+    const ID: ContractId = ContractId::new("test-each-by-item");
+    type Input = Input;
+}
+
+impl Answered for EachByItem {
+    type Answer = Verdicts;
+    const ALONE: Alone = Alone::Pending;
+
+    fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
+        says(input, showing)
+    }
+
+    fn accept_for(
+        _input: &Input,
+        of: &Picked<Tile>,
+        statement: &String,
+    ) -> std::result::Result<(), Refusal> {
+        if of.reference == 2 && statement == "x" {
+            Err(Refusal(BAD_REASON.into()))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+each_runner!(run_each_by_item, EachByItem);
+
+#[tokio::test]
+async fn a_rule_that_depends_on_the_item_refuses_that_entry_only() {
+    let script = Script::new(&[
+        (&*rows(&[("t1", "x"), ("t2", "x"), ("t3", "x")]), STOP),
+        (&*rows(&[("t2", "y")]), STOP),
+    ]);
+    let settled = run_each_by_item(&script, &tiles(3), &no_calls(), 0, true)
+        .await
+        .unwrap();
+    assert_eq!(settled, answered(&["x", "y", "x"]));
+    assert_eq!(script.sent(), 2);
+    let alone = script.prompt(1);
+    assert!(alone.contains(BAD_TOLD), "{alone}");
+    assert_eq!(listed(&alone), 1);
+}
+
 #[tokio::test]
 async fn a_refused_entry_refused_again_settles_unanswered_without_a_third_send() {
     let script = Script::new(&[

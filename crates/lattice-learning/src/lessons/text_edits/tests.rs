@@ -340,11 +340,11 @@ fn a_lessons_schema_offers_citations_and_another_schema_does_not() {
         item["required"],
         json!(["path", "sentence", "sourceIndex", "quote"])
     );
-    assert!(instructions(&lesson).contains("Prefer citing it"));
+    assert!(takes_citations(&lesson));
     // An outline's, an assessment's or any other schema gets the edits alone.
     let other = json!({"type":"object"});
     assert_eq!(schema_for(&original, &other), schema(&original));
-    assert_eq!(instructions(&other), INSTRUCTIONS);
+    assert!(!takes_citations(&other));
     assert_eq!(schema(&original)["properties"]["edits"]["minItems"], 1);
 }
 
@@ -360,20 +360,8 @@ fn follows_the_writers_citation_rules(text: &str) {
 }
 
 #[test]
-fn the_teaching_repair_follows_the_writers_citation_rules() {
-    follows_the_writers_citation_rules(&instructions(&crate::generation::lesson_schema(2)));
-}
-
-#[test]
 fn the_claim_repair_follows_the_writers_citation_rules() {
     follows_the_writers_citation_rules(&rewrite_instructions(&crate::generation::lesson_schema(2)));
-}
-
-#[test]
-fn the_teaching_repair_says_what_needs_a_citation_in_one_sentence() {
-    let text = instructions(&crate::generation::lesson_schema(2));
-    let sentence = "A sentence that states a figure, a date, a version, a product's behaviour or quoted wording needs a citation.";
-    assert!(text.contains(sentence), "missing {sentence:?} in {text}");
 }
 
 fn parted() -> Value {
@@ -735,83 +723,6 @@ fn a_citation_and_a_withdrawn_citation_are_refused_outside_their_findings_part()
         ["uncite 1 is outside its finding's part."]
     );
     Ok(())
-}
-
-#[test]
-fn the_schema_for_findings_asks_for_one_answer_for_each_finding() {
-    let mut original = cited_lesson();
-    original["blocks"][0]["citations"] = json!([{"sentence":TIMEOUT,"sourceIndex":0,"quote":"A timeout of 30 seconds applies to each request."}]);
-    let lesson = crate::generation::lesson_schema(2);
-    let ids = vec!["f1".to_owned(), "f2".to_owned()];
-
-    let named = schema_for_findings(&original, &lesson, &ids);
-    assert_eq!(named["required"], json!(["answers"]));
-    assert!(named["properties"].get("edits").is_none());
-    let answers = &named["properties"]["answers"];
-    assert_eq!(answers["minItems"], 2);
-    assert_eq!(answers["maxItems"], 2);
-    let entry = &answers["items"];
-    assert_eq!(entry["additionalProperties"], false);
-    assert_eq!(
-        entry["required"],
-        json!(["finding", "plan", "edits", "citations", "uncite"])
-    );
-    let order: Vec<&str> = entry["properties"]
-        .as_object()
-        .unwrap()
-        .keys()
-        .map(String::as_str)
-        .collect();
-    assert_eq!(order, ["finding", "plan", "edits", "citations", "uncite"]);
-    assert_eq!(
-        entry["properties"]["finding"],
-        json!({"type":"string","enum":ids})
-    );
-    assert_eq!(entry["properties"]["plan"], json!({"type":"string"}));
-    assert_eq!(entry["properties"]["edits"]["minItems"], 0);
-    let edit = &entry["properties"]["edits"]["items"];
-    assert_eq!(edit["required"], json!(["path", "before", "after"]));
-    assert!(edit["properties"].get("finding").is_none());
-    let cite = &entry["properties"]["citations"]["items"];
-    assert!(cite["properties"].get("finding").is_none());
-    assert_eq!(
-        cite["required"],
-        json!(["path", "sentence", "sourceIndex", "quote"])
-    );
-    assert_eq!(
-        entry["properties"]["uncite"]["items"],
-        json!({"type":"object","additionalProperties":false,"required":["path"],"properties":{
-            "path":{"type":"string","enum":["/blocks/0/citations/0"]}}})
-    );
-    assert!(entry["properties"]["citations"].get("maxItems").is_none());
-    assert!(entry["properties"]["uncite"].get("uniqueItems").is_none());
-
-    let plain = schema_for(&original, &lesson);
-    assert!(plain["properties"]["edits"]["items"]["properties"]
-        .get("finding")
-        .is_none());
-    assert_eq!(
-        plain["properties"]["uncite"]["items"],
-        json!({"type":"string","enum":["/blocks/0/citations/0"]})
-    );
-    assert!(plain["properties"]["citations"].get("maxItems").is_none());
-
-    let alone = schema_for_findings(&original, &json!({"type":"object"}), &ids);
-    let entry = &alone["properties"]["answers"]["items"];
-    assert_eq!(entry["required"], json!(["finding", "plan", "edits"]));
-    assert_eq!(entry["properties"]["finding"]["enum"], json!(["f1", "f2"]));
-}
-
-#[test]
-fn a_lesson_with_no_citation_to_take_back_offers_no_uncite() {
-    let original = cited_lesson();
-    let lesson = crate::generation::lesson_schema(2);
-    let named = schema_for_findings(&original, &lesson, &["f1".to_owned()]);
-    let entry = &named["properties"]["answers"]["items"];
-    assert_eq!(
-        entry["required"],
-        json!(["finding", "plan", "edits", "citations"])
-    );
 }
 
 #[test]

@@ -1,7 +1,7 @@
 //! Material that fails closed after its repairs: an outline or other material.
 use super::super::passes::REPAIRS_PER_FINDING;
 use super::super::quotes::{lesson_quote_checks, QuoteCheck};
-use super::super::repair::{self, Repaired};
+use super::super::repair;
 use super::super::standing::Standing;
 use super::super::{
     holds_up_review, quotation_findings, structural_findings, OutlineReviewContext,
@@ -151,17 +151,6 @@ fn closed_decide(attempt: usize, found: Vec<ReviewFinding>) -> Result<Decision> 
     Ok(Decision::Repair(found))
 }
 
-fn closed_settle(
-    previous: &Value,
-    send: &[ReviewFinding],
-    repaired: Repaired,
-    wording: &Wording,
-) -> Result<Settled> {
-    Ok(Settled::Changed(repair::apply(
-        previous, repaired, send, wording,
-    )?))
-}
-
 /// A repair that could not be made fails the material, as the kind of
 /// failure it was.
 fn closed_unmade(class: ErrorClass, reason: String) -> Result<Settled> {
@@ -257,13 +246,22 @@ impl Subject for OutlineSubject<'_> {
         closed_decide(attempt, found)
     }
 
-    fn settle_repair(
+    fn settle_mended(
         &mut self,
-        previous: &Value,
-        send: &[ReviewFinding],
-        repaired: Repaired,
+        _previous: &Value,
+        _send: &[ReviewFinding],
+        mended: repair::Mended,
     ) -> Result<Settled> {
-        closed_settle(previous, send, repaired, &self.wording)
+        Ok(Settled::Changed(mended.candidate.to_string()))
+    }
+
+    fn settle_rewrite(
+        &mut self,
+        _previous: &Value,
+        _send: &[ReviewFinding],
+        text: &str,
+    ) -> Result<Settled> {
+        Ok(Settled::Changed(text.to_owned()))
     }
 
     fn unmade(
@@ -342,13 +340,22 @@ impl Subject for MaterialSubject {
         closed_decide(attempt, found)
     }
 
-    fn settle_repair(
+    fn settle_mended(
         &mut self,
-        previous: &Value,
-        send: &[ReviewFinding],
-        repaired: Repaired,
+        _previous: &Value,
+        _send: &[ReviewFinding],
+        mended: repair::Mended,
     ) -> Result<Settled> {
-        closed_settle(previous, send, repaired, &self.wording)
+        Ok(Settled::Changed(mended.candidate.to_string()))
+    }
+
+    fn settle_rewrite(
+        &mut self,
+        _previous: &Value,
+        _send: &[ReviewFinding],
+        text: &str,
+    ) -> Result<Settled> {
+        Ok(Settled::Changed(text.to_owned()))
     }
 
     fn unmade(

@@ -857,15 +857,11 @@ fn the_writer_is_asked_for_choices_alike_in_form() {
 }
 
 #[test]
-fn the_writer_and_both_repairs_are_told_a_step_starts_from_what_the_steps_before_it_left() {
+fn the_writer_and_the_claim_repair_are_told_a_step_starts_from_what_the_steps_before_it_left() {
     for sources in [0, 2] {
         let schema = lesson_schema(sources);
         for (who, text) in [
             ("writer", writer_requirements()),
-            (
-                "teaching repair",
-                crate::lessons::text_edits::instructions(&schema),
-            ),
             (
                 "claim repair",
                 crate::lessons::text_edits::rewrite_instructions(&schema),

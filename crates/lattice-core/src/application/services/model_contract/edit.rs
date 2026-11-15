@@ -97,6 +97,135 @@ impl<K: Kind, W> Consistent<K, W> {
     pub fn change(&self) -> &Change<K, W> {
         &self.0
     }
+
+    /// The same edits, each new content made into another.
+    pub fn map<V>(self, mut to: impl FnMut(W) -> V) -> Consistent<K, V> {
+        let Change {
+            replace,
+            insert,
+            remove,
+            moved,
+        } = self.0;
+        Consistent(Change {
+            replace: replace
+                .into_iter()
+                .map(|(thing, with)| (thing, to(with)))
+                .collect(),
+            insert: insert
+                .into_iter()
+                .map(|(anchor, with)| (anchor, to(with)))
+                .collect(),
+            remove,
+            moved,
+        })
+    }
+
+    /// One change for each group of the things it names, the groups in the order first named (replace,
+    /// insert, remove, move, as written). For a change over the units of several texts shown in one request.
+    pub fn split_by<G: PartialEq>(
+        self,
+        group: impl Fn(&K::Ref) -> Option<G>,
+    ) -> std::result::Result<Vec<(G, Consistent<K, W>)>, String> {
+        let Change {
+            replace,
+            insert,
+            remove,
+            moved,
+        } = self.0;
+        let after_start = insert
+            .iter()
+            .map(|(anchor, _)| anchor)
+            .chain(moved.iter().map(|(_, anchor)| anchor))
+            .any(|anchor| matches!(anchor, Anchor::Start));
+        if after_start {
+            return Err(
+                "start does not say which text is meant: give the sentence the new place follows."
+                    .to_owned(),
+            );
+        }
+        for (thing, anchor) in &moved {
+            let Some(after) = anchored_on(anchor) else {
+                continue;
+            };
+            if let (Some(of), Some(to)) = (group(&thing.reference), group(&after.reference)) {
+                if of != to {
+                    return Err(format!(
+                        "{} cannot move after {}: they are in different texts.",
+                        thing.handle.written(),
+                        after.handle.written()
+                    ));
+                }
+            }
+        }
+        let named = replace
+            .iter()
+            .map(|(thing, _)| thing)
+            .chain(insert.iter().filter_map(|(anchor, _)| anchored_on(anchor)))
+            .chain(remove.iter())
+            .chain(
+                moved
+                    .iter()
+                    .flat_map(|(thing, anchor)| std::iter::once(thing).chain(anchored_on(anchor))),
+            );
+        for thing in named {
+            if group(&thing.reference).is_none() {
+                return Err(format!(
+                    "{} cannot be changed here.",
+                    thing.handle.written()
+                ));
+            }
+        }
+        let mut parts: Vec<(G, Change<K, W>)> = Vec::new();
+        for (thing, with) in replace {
+            if let Some(part) = part_of(&mut parts, group(&thing.reference)) {
+                part.replace.push((thing, with));
+            }
+        }
+        for (anchor, with) in insert {
+            let of = anchored_on(&anchor).and_then(|thing| group(&thing.reference));
+            if let Some(part) = part_of(&mut parts, of) {
+                part.insert.push((anchor, with));
+            }
+        }
+        for thing in remove {
+            if let Some(part) = part_of(&mut parts, group(&thing.reference)) {
+                part.remove.push(thing);
+            }
+        }
+        for (thing, anchor) in moved {
+            if let Some(part) = part_of(&mut parts, group(&thing.reference)) {
+                part.moved.push((thing, anchor));
+            }
+        }
+        Ok(parts
+            .into_iter()
+            .map(|(of, change)| (of, Consistent(change)))
+            .collect())
+    }
+}
+
+/// The change of `group` among `parts`, added empty when it is the first of its group.
+fn part_of<K: Kind, W, G: PartialEq>(
+    parts: &mut Vec<(G, Change<K, W>)>,
+    group: Option<G>,
+) -> Option<&mut Change<K, W>> {
+    let group = group?;
+    let at = match parts.iter().position(|(held, _)| *held == group) {
+        Some(at) => at,
+        None => {
+            parts.push((
+                group,
+                Change {
+                    replace: Vec::new(),
+                    insert: Vec::new(),
+                    remove: Vec::new(),
+                    moved: Vec::new(),
+                },
+            ));
+            parts.len().saturating_sub(1)
+        }
+    };
+    parts.get_mut(at).map(|(_, change)| change)
 }
 
 /// Why a change contradicts itself, naming the units for the correction.
@@ -278,6 +407,19 @@ impl<K: Kind, W> Edited<K, W> {
             && self.insert.is_empty()
             && self.remove.is_empty()
             && self.moved.is_empty())
+    }
+
+    /// Whether an applied change replaced, removed or moved `thing`, or anchored anything after it.
+    pub fn touches(&self, thing: &K::Ref) -> bool {
+        self.claims(thing)
+            || self
+                .insert
+                .iter()
+                .any(|(anchor, _)| anchor.as_ref() == Some(thing))
+            || self
+                .moved
+                .iter()
+                .any(|(_, anchor)| anchor.as_ref() == Some(thing))
     }
 
     /// Whether an applied change replaced, removed or moved `thing`.

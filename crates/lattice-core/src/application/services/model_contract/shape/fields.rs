@@ -185,7 +185,19 @@ impl<'r, 's> Fields<'r, 's> {
         let Some(Value::Object(object)) = self.value(name) else {
             return self.fail(Why::NotRead);
         };
-        self.change_object(object)
+        self.change_object(object, true)
+    }
+
+    /// A nested change whose inserts and moves never anchor at `"start"`: a written `"start"` is a pointer
+    /// that does not resolve.
+    pub fn change_after<K: Kind, W: Content>(
+        &mut self,
+        name: &'static str,
+    ) -> Option<Consistent<K, W>> {
+        let Some(Value::Object(object)) = self.value(name) else {
+            return self.fail(Why::NotRead);
+        };
+        self.change_object(object, false)
     }
 
     pub fn one_of<U: Union>(&mut self, name: &'static str) -> Option<U> {
@@ -208,6 +220,7 @@ impl<'r, 's> Fields<'r, 's> {
     pub(super) fn change_object<K: Kind, W: Content>(
         &mut self,
         object: &Map<String, Value>,
+        start: bool,
     ) -> Option<Consistent<K, W>> {
         let mut change = Change {
             replace: Vec::new(),
@@ -221,7 +234,7 @@ impl<'r, 's> Fields<'r, 's> {
             change.replace.push((at, with));
         }
         for entry in self.entries(object, "insert")? {
-            let after = self.anchor::<K>(entry, "after")?;
+            let after = self.anchor::<K>(entry, "after", start)?;
             let with = self.content::<W>(entry)?;
             change.insert.push((after, with));
         }
@@ -230,7 +243,7 @@ impl<'r, 's> Fields<'r, 's> {
         }
         for entry in self.entries(object, "move")? {
             let at = self.shown_at::<K>(entry, "at")?;
-            let after = self.anchor::<K>(entry, "after")?;
+            let after = self.anchor::<K>(entry, "after", start)?;
             change.moved.push((at, after));
         }
         match consistent(change) {
@@ -373,11 +386,16 @@ impl<'r, 's> Fields<'r, 's> {
         self.resolved(written)
     }
 
-    fn anchor<K: Kind>(&mut self, entry: &Map<String, Value>, name: &str) -> Option<Anchor<K>> {
+    fn anchor<K: Kind>(
+        &mut self,
+        entry: &Map<String, Value>,
+        name: &str,
+        start: bool,
+    ) -> Option<Anchor<K>> {
         let Some(written) = entry.get(name).and_then(Value::as_str) else {
             return self.fail(Why::NotRead);
         };
-        if written == "start" {
+        if start && written == "start" {
             return Some(Anchor::Start);
         }
         self.resolved(written).map(Anchor::After)

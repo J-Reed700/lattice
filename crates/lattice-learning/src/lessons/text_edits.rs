@@ -18,13 +18,13 @@ mod citations;
 #[cfg(test)]
 use asking::schema;
 pub(super) use asking::{
-    instructions, rewrite_instructions, schema_for, schema_for_findings, INSTRUCTIONS,
-    NEVER_SAY_WHERE, OWN_FIGURES, OWN_SENTENCE, QUOTED_WORDING, STEPS_IN_ORDER, UNQUOTED_REMARKS,
+    rewrite_instructions, schema_for, takes_citations, INSTRUCTIONS, NEVER_SAY_WHERE, OWN_FIGURES,
+    OWN_SENTENCE, QUOTED_WORDING, STEPS_IN_ORDER, UNQUOTED_REMARKS,
 };
+use citations::append;
 #[cfg(test)]
 pub(crate) use citations::NamedUncite;
-use citations::{append, taught_at};
-pub(super) use citations::{citable_texts, citation_entry};
+pub(super) use citations::{citable_texts, citation_entry, cited_sentence, taught_at};
 pub(crate) use citations::{Cite, Patch, Uncite};
 
 fn paths(value: &Value, path: &str, output: &mut Vec<String>) {
@@ -851,6 +851,3 @@ mod locate_tests;
 
 #[cfg(test)]
 mod citation_entry_tests;
-
-#[cfg(test)]
-mod patch_tests;
