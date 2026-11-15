@@ -2,9 +2,11 @@
 use super::*;
 use crate::lessons::course_generation_tests::RequestLog;
 use futures::future::BoxFuture;
-use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};
+use lattice_core::application::ports::llm_port::CompletionResponse;
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
-use lattice_core::application::services::model_contract::test_support::{ScriptedModel, Sent};
+use lattice_core::application::services::model_contract::test_support::{
+    tasks_in, ScriptedModel, Sent,
+};
 use std::sync::{Arc, Mutex};
 
 const ANSWER: &str = "The kiln fires every bowl. The damper is shut before the glaze sets.";
@@ -22,28 +24,11 @@ fn ended(text: &str, finish: &str) -> BoxFuture<'static, Result<CompletionRespon
     })))
 }
 
-/// Every message of the request, system and user, one after another.
-fn prompt_of(sent: &Sent) -> String {
-    sent.request
-        .input()
-        .iter()
-        .filter_map(|item| match item {
-            CompletionInput::Message { content, .. } => Some(content.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
-
 /// The last task a grading prompt carries: a re-ask restates it for the items still open.
 fn task_of(prompt: &str) -> Value {
-    prompt
-        .rsplit("\n\n")
-        .find_map(|chunk| {
-            serde_json::from_str::<Value>(chunk)
-                .ok()
-                .filter(|task| task.get("items").is_some())
-        })
+    tasks_in(prompt)
+        .into_iter()
+        .rfind(|task| task.get("items").is_some())
         .unwrap_or(Value::Null)
 }
 
@@ -86,7 +71,7 @@ fn rows_of(rows: &str) -> Vec<(String, String)> {
 
 fn shown(sent: &Sent) -> Vec<Shows> {
     let text = |value: &Value, key: &str| value[key].as_str().unwrap_or_default().to_owned();
-    task_of(&prompt_of(sent))["items"]
+    task_of(&sent.prompt())["items"]
         .as_array()
         .cloned()
         .unwrap_or_default()
@@ -256,7 +241,7 @@ async fn the_request_names_items_criteria_and_sentences_by_handle_and_asks_for_n
     });
     grade_written(&model, &[written("question-id-100", None)]).await?;
     let sent = model.sent();
-    let prompt = prompt_of(&sent[0]);
+    let prompt = sent[0].prompt();
     for internal in ["question-id-100", "kiln-criterion", "damper-criterion"] {
         assert!(!prompt.contains(internal), "{internal} was shown: {prompt}");
     }
@@ -342,9 +327,11 @@ async fn an_empty_reply_to_a_learners_note_is_corrected_for_its_item_alone() -> 
     assert_eq!(sent.len(), 2);
     assert_eq!(shown(&sent[1]).len(), 1, "the other entry stands");
     assert!(
-        prompt_of(&sent[1]).contains("Answer the learner's note directly in responseToNote."),
+        sent[1]
+            .prompt()
+            .contains("Answer the learner's note directly in responseToNote."),
         "{}",
-        prompt_of(&sent[1])
+        sent[1].prompt()
     );
     Ok(())
 }

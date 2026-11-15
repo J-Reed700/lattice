@@ -5,7 +5,7 @@ use super::super::repair_script::{
 use super::*;
 use crate::lessons::text_edits::{OWN_FIGURES, OWN_SENTENCE};
 use futures::future::BoxFuture;
-use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};
+use lattice_core::application::ports::llm_port::CompletionResponse;
 use lattice_core::application::services::model_contract::test_support::assert_round_trip;
 use lattice_core::application::services::model_contract::test_support::{
     ScriptedModel, Sent as Asked,
@@ -44,20 +44,8 @@ fn reply(text: String) -> BoxFuture<'static, Result<CompletionResponse>> {
     Box::pin(std::future::ready(Ok(CompletionResponse::from_text(text))))
 }
 
-fn prompt_of(sent: &Asked) -> String {
-    sent.request
-        .input()
-        .iter()
-        .filter_map(|item| match item {
-            CompletionInput::Message { content, .. } => Some(content.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
-
 fn task(sent: &Asked) -> Value {
-    task_of(&prompt_of(sent)).unwrap()
+    task_of(&sent.prompt()).unwrap()
 }
 
 /// A model that answers each ask with the entries `answer(task, number of earlier asks)` gives.
@@ -65,7 +53,7 @@ fn scripted(answer: impl Fn(&Value, usize) -> Vec<Value> + Send + Sync + 'static
     let asked = AtomicUsize::new(0);
     ScriptedModel::new().on_request::<TeachingRepair>(move |sent, _| {
         let earlier = asked.fetch_add(1, Ordering::SeqCst);
-        let task = task_of(&prompt_of(sent)).unwrap_or(Value::Null);
+        let task = task_of(&sent.prompt()).unwrap_or(Value::Null);
         reply(json!({"entries": answer(&task, earlier)}).to_string())
     })
 }
@@ -249,7 +237,7 @@ async fn an_entry_outside_its_findings_part_is_asked_for_again_alone_and_then_ap
     let sent = model.sent();
     assert_eq!(sent.len(), 2);
     assert_eq!(finding_labels(&task(&sent[1])).len(), 1);
-    let again = prompt_of(&sent[1]);
+    let again = sent[1].prompt();
     assert!(
         again.contains("These edits change /blocks/0, which is outside this finding's part (/blocks/1). Change only sentences and citations of /blocks/1."),
         "{again}"
@@ -716,7 +704,7 @@ async fn a_key_of_a_question_outside_the_findings_part_is_refused_by_the_reach()
     let made = mended(&model, &findings, Keeps::Anything, &quiz_material()).await?;
     assert_ne!(made.outcomes, [Outcome::Applied]);
     assert_eq!(made.candidate["questions"][1]["correctIndex"], json!(0));
-    let again = prompt_of(&model.sent()[1]);
+    let again = model.sent()[1].prompt();
     assert!(
         again.contains("outside this finding's part (/questions/0)"),
         "{again}"

@@ -691,11 +691,9 @@ pub async fn check(
 /// The last task a review-evidence prompt carries: a re-ask restates it for the findings still open.
 #[cfg(test)]
 pub(crate) fn task_of(prompt: &str) -> Option<Value> {
-    prompt.rsplit("\n\n").find_map(|chunk| {
-        serde_json::from_str::<Value>(chunk)
-            .ok()
-            .filter(|task| task.get("proposals").is_some())
-    })
+    lattice_core::application::services::model_contract::test_support::tasks_in(prompt)
+        .into_iter()
+        .rfind(|task| task.get("proposals").is_some())
 }
 
 /// What a review-evidence request shows about one proposal.

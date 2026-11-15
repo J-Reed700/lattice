@@ -194,8 +194,13 @@ impl Figures {
             } else {
                 figure(repair)
             };
-            let after = body.replace(&statement_in(body).unwrap(), &replacement);
-            return Ok(json!({"edits":[{"path":path,"before":body,"after":after}]}).to_string());
+            let plain = unmarked(body);
+            let statement = statement_in(&plain).unwrap();
+            let start = plain.find(&statement).unwrap();
+            let end = plain.rfind(&statement).unwrap() + statement.len();
+            let before = &plain[start..end];
+            let after = before.replace(&statement, &replacement);
+            return Ok(json!({"edits":[{"path":path,"before":before,"after":after}]}).to_string());
         }
         if prompt.starts_with("Source passages:") {
             let claim = prompt
@@ -226,7 +231,7 @@ impl LLMPort for Figures {
             .iter()
             .any(|prompt| prompt.starts_with("Source passages:"))
         {
-            let correcting = asked_again_with(request).is_some();
+            let correcting = !fixture_correction(request).is_empty();
             let ask = if correcting {
                 self.asks.load(Ordering::Relaxed)
             } else {

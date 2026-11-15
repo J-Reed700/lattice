@@ -1,15 +1,14 @@
 //! Scripted answers to a section repair, written as flat edits and read as the entries its request asks for.
 use super::{labelled, part_of, pointer_of, teaching_repair_answer, unmarked};
 use crate::lessons::teaching::repair_script::sentence_label;
+use lattice_core::application::services::model_contract::test_support::tasks_in;
 use serde_json::{json, Value};
 
 /// The request's task, when `prompt` is a section repair's.
 pub(crate) fn task_of(prompt: &str) -> Option<Value> {
-    prompt.rsplit("\n\n").find_map(|chunk| {
-        serde_json::from_str::<Value>(chunk).ok().filter(|task| {
-            task.get("failedClaims").is_some() && task.get("repairHistory").is_some()
-        })
-    })
+    tasks_in(prompt)
+        .into_iter()
+        .rfind(|task| task.get("failedClaims").is_some() && task.get("repairHistory").is_some())
 }
 
 /// The entries of the failed claims sent, each once, in order.

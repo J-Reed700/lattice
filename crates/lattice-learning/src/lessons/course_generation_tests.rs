@@ -1558,22 +1558,11 @@ impl LLMPort for DelayedOutlineModel {
         let max_output = request.max_output_tokens().unwrap() as usize;
         assert!(max_output + input_tokens <= self.max_context_tokens());
         assert!(max_output + input_tokens >= self.max_context_tokens() * 9 / 10);
-        let prompt = request
-            .input()
-            .iter()
-            .filter_map(|part| match part {
-                CompletionInput::Message { content, .. } => Some(content.as_str()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n");
         let seconds = self.delays.lock().unwrap().pop_front().unwrap();
         tokio::time::pause();
         tokio::time::sleep(std::time::Duration::from_secs(seconds)).await;
         tokio::time::resume();
-        Ok(CompletionResponse::from_text(
-            self.inner.respond(&prompt).await?,
-        ))
+        self.inner.complete(request).await
     }
     fn model_name(&self) -> &str {
         "delayed-outline-fixture"

@@ -1,13 +1,12 @@
 //! What a scripted model reads in a teaching-repair request: the task, and the labels it shows.
+use lattice_core::application::services::model_contract::test_support::tasks_in;
 use serde_json::Value;
 
 /// The task a teaching-repair request carries; `None` for any other request.
 pub(crate) fn task_of(prompt: &str) -> Option<Value> {
-    prompt.rsplit("\n\n").find_map(|chunk| {
-        serde_json::from_str::<Value>(chunk)
-            .ok()
-            .filter(|task| task.get("issuesToFix").is_some() && task.get("instruction").is_none())
-    })
+    tasks_in(prompt)
+        .into_iter()
+        .rfind(|task| task.get("issuesToFix").is_some() && task.get("instruction").is_none())
 }
 
 /// The label that stands before `words` in `marked`, a text with `[label] ` before each sentence.

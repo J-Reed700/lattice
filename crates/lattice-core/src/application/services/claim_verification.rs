@@ -49,7 +49,7 @@ mod field_emphasis_tests;
 #[cfg(test)]
 mod judgment_tests;
 
-pub use batch::{BatchClaim, BatchInput, BatchPassage, ClaimBatch, LocatedClaim};
+pub use batch::{BatchClaim, BatchInput, BatchPassage, ClaimBatch, CountedPast, LocatedClaim};
 pub use bridge::{
     BridgeOutcome, BridgePart, BridgePassage, ClaimParts, PartKind, PartsInput, BRIDGE_SYSTEM,
 };
@@ -379,6 +379,7 @@ pub struct ClaimChecker<'a> {
     sampling: SamplingOverride,
     max_output_tokens: u32,
     policy: CheckPolicy,
+    counted_past: Option<&'a dyn CountedPast>,
 }
 impl<'a> ClaimChecker<'a> {
     pub fn new(
@@ -392,7 +393,13 @@ impl<'a> ClaimChecker<'a> {
             sampling,
             max_output_tokens,
             policy,
+            counted_past: None,
         }
+    }
+    /// This checker, never sending a batch that `kept` holds as counted past the window.
+    pub fn remembering(mut self, kept: &'a dyn CountedPast) -> Self {
+        self.counted_past = Some(kept);
+        self
     }
     /// A checker for `policy` that reserves the policy's own answer room.
     pub fn for_policy(

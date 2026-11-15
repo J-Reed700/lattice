@@ -2,7 +2,9 @@
 
 #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 
-use crate::practice::coding::golden_support::{render_completion, rich_session, Golden, Recorder};
+use crate::practice::coding::golden_support::{
+    assert_golden, render_completion, rich_session, Golden, Recorder,
+};
 use crate::practice::coding::problem::SOLUTION_PATH;
 use crate::practice::kinds::program::observation_tests::{engine_observation, program_kind};
 use crate::practice::kinds::program::parts::part_of;
@@ -67,40 +69,6 @@ async fn given(
     .await
 }
 
-/// What every request of today's hints golden says before its options, with the parts a model server never
-/// receives left out: the history, the closing and the evidence, all empty on a hint request.
-fn without_empty_frame(variant: &str) -> String {
-    let history = variant.find("--- history ---\n").unwrap();
-    let schema = variant.find("--- schema ---\n").unwrap();
-    let options = variant.find("--- options ---\n").unwrap();
-    format!("{}{}", &variant[..history], &variant[schema..options])
-}
-
-fn before_options(sent: &str) -> &str {
-    &sent[..sent.find("--- options ---\n").unwrap()]
-}
-
-/// The bodies of the golden's variants, which are named `names` in the order they were added.
-fn variants(golden: &str, names: &[String]) -> Vec<String> {
-    let golden = golden.replace("\r\n", "\n");
-    let mut found = Vec::new();
-    let mut from = 0;
-    for name in names {
-        let header = format!("=== {name} ===\n");
-        let at = from + golden[from..].find(&header).unwrap();
-        found.push((at, at + header.len()));
-        from = at + header.len();
-    }
-    found
-        .iter()
-        .enumerate()
-        .map(|(index, (_, body))| {
-            let end = found.get(index + 1).map_or(golden.len(), |(at, _)| *at);
-            golden[*body..end].trim_end_matches('\n').to_owned()
-        })
-        .collect()
-}
-
 #[tokio::test]
 async fn the_requests_say_what_the_coding_hints_golden_says() {
     let mut names = Vec::new();
@@ -128,21 +96,15 @@ async fn the_requests_say_what_the_coding_hints_golden_says() {
             sent.push(render_completion(&model.requests()[0]));
         }
     }
-    let golden = variants(include_str!("../../coding/golden/hints.txt"), &names);
     let mut actual = Golden::default();
     for (name, sent) in names.iter().zip(&sent) {
         actual.add(name, sent);
     }
-    for ((name, sent), expected) in names.iter().zip(&sent).zip(&golden) {
-        if before_options(sent) != without_empty_frame(expected) {
-            eprintln!("<<<GOLDEN hints\n{}GOLDEN>>>", actual.text());
-        }
-        assert_eq!(
-            before_options(sent),
-            without_empty_frame(expected),
-            "hint request {name}"
-        );
-    }
+    assert_golden(
+        "hints",
+        include_str!("../../coding/golden/hints.txt"),
+        actual.text(),
+    );
 }
 
 #[tokio::test]

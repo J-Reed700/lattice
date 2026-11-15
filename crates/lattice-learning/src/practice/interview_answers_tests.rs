@@ -305,18 +305,23 @@ async fn review_findings_cite_the_answer_and_cannot_be_overridden_by_acceptance(
     let mut contradictory = issue.clone();
     contradictory["accepted"] = json!(true);
     assert_eq!(reviewed(vec![contradictory]).await?.issues.len(), 1);
+    // A review whose only finding cannot be used is no acceptance: it is
+    // asked for once more, and fails the guide when it comes back the same.
+    let mut unusable = Vec::new();
     for sentences in [json!([]), json!(["u99"]), json!(["r1"]), json!([""])] {
         let mut bad = issue.clone();
         bad["items"][0]["sentences"] = sentences.clone();
-        assert!(reviewed(vec![bad]).await?.issues.is_empty(), "{sentences}");
+        unusable.push((sentences.to_string(), bad));
     }
     for (field, blank) in [("demonstration", ""), ("problem", "  ")] {
         let mut unsupported = issue.clone();
         unsupported["items"][0][field] = json!(blank);
-        assert!(
-            reviewed(vec![unsupported]).await?.issues.is_empty(),
-            "{field}"
-        );
+        unusable.push((field.to_owned(), unsupported));
+    }
+    for (case, bad) in unusable {
+        let corrected = reviewed(vec![bad.clone(), accepted_review()]).await?;
+        assert!(corrected.issues.is_empty(), "{case}");
+        assert!(reviewed(vec![bad.clone(), bad]).await.is_err(), "{case}");
     }
     Ok(())
 }

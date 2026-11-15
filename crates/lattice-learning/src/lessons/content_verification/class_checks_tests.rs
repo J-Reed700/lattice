@@ -167,9 +167,9 @@ impl Classes {
             self.rewrite,
         ) {
             self.asked.lock().unwrap().push("repair");
-            let data = fixture_task(prompt).unwrap();
-            let body = data["candidate"]["blocks"][0]["body"].as_str().unwrap();
-            return Ok(json!({"edits":[{"path":"/blocks/0/body","before":body,"after":body.replace(from, to)}]}).to_string());
+            return Ok(
+                json!({"edits":[{"path":"/blocks/0/body","before":from,"after":to}]}).to_string(),
+            );
         }
         self.inner.respond(prompt).await
     }

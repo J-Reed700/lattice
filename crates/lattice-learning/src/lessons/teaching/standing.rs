@@ -301,9 +301,16 @@ impl Standing {
                 self.about.remove(&verdict.id);
                 continue;
             }
+            let now = self
+                .open
+                .get(position)
+                .and_then(|finding| self.passage_now(candidate, finding));
             let Some(finding) = self.open.get_mut(position) else {
                 continue;
             };
+            if let Some((_, text)) = now {
+                finding.passage = Some(text);
+            }
             crate::lessons::trace::decided_finding(
                 crate::lessons::trace::Stage::TeachingReview,
                 finding,
