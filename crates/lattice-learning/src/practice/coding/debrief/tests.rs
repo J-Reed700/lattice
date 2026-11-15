@@ -1,79 +1,19 @@
 use super::*;
+use crate::lessons::structured_call::task_messages;
 use crate::practice::coding::problem::{
     CaseCompare, CaseStatus, CaseVisibility, Misreading, ProblemCase, ProblemDifficulty,
     ProblemSignature, ProblemSpec, SignatureParam,
 };
 use crate::practice::kinds::program::dto::ExampleVerdict;
 use crate::practice::practical_dto::LearningSimulationSpeaker;
-use lattice_core::application::ports::llm_port::{
-    CompletionInput, CompletionRequest, CompletionResponse,
-};
+use crate::practice::session::debrief::{DebriefAnswer, DebriefStatements};
+use futures::future::BoxFuture;
+use lattice_core::application::ports::llm_port::CompletionResponse;
+use lattice_core::application::services::model_contract::test_support::{ScriptedModel, Sent};
+use lattice_core::application::services::model_contract::Contract;
 use lattice_core::domain::learning::practice::work::Rung;
 use lattice_core::domain::learning::practice::ScoreStatus;
-use std::collections::{BTreeMap, VecDeque};
-use std::sync::Mutex;
-
-struct ScriptedModel {
-    answers: Mutex<VecDeque<String>>,
-    requests: Mutex<Vec<CompletionRequest>>,
-}
-
-impl ScriptedModel {
-    fn new(answers: Vec<String>) -> Self {
-        Self {
-            answers: Mutex::new(answers.into_iter().collect()),
-            requests: Mutex::new(Vec::new()),
-        }
-    }
-
-    /// What each request said, in order.
-    fn said(&self) -> Vec<String> {
-        self.requests
-            .lock()
-            .map(|requests| {
-                requests
-                    .iter()
-                    .map(|request| {
-                        request
-                            .input()
-                            .iter()
-                            .filter_map(|input| match input {
-                                CompletionInput::Message { content, .. } => Some(content.as_str()),
-                                _ => None,
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-}
-
-#[async_trait]
-impl LLMPort for ScriptedModel {
-    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        if let Ok(mut requests) = self.requests.lock() {
-            requests.push(request.clone());
-        }
-        let next = self
-            .answers
-            .lock()
-            .ok()
-            .and_then(|mut answers| answers.pop_front());
-        next.map(CompletionResponse::from_text)
-            .ok_or_else(|| AppError::InternalError("Unexpected extra model call".into()))
-    }
-    fn model_name(&self) -> &str {
-        "scripted-debrief-model"
-    }
-    fn max_context_tokens(&self) -> usize {
-        128_000
-    }
-    async fn is_ready(&self) -> Result<bool> {
-        Ok(true)
-    }
-}
+use std::collections::BTreeMap;
 
 const SOLUTION: &str = "def two_sum(numbers, target):\n    seen = {}\n    for i, n in enumerate(numbers):\n        if target - n in seen:\n            return [seen[target - n], i]\n        seen[n] = i\n";
 
@@ -227,64 +167,98 @@ fn evidence() -> SessionEvidence {
     }
 }
 
-fn quote(turn_id: &str, text: &str) -> Value {
-    json!({"kind": "quote", "ref": turn_id, "text": text, "path": "", "start": 0, "end": 0})
+fn reply(text: String) -> BoxFuture<'static, Result<CompletionResponse>> {
+    Box::pin(std::future::ready(Ok(CompletionResponse::from_text(text))))
 }
 
-fn run_item(run_id: &str) -> Value {
-    json!({"kind": "run", "ref": run_id, "text": "", "path": "", "start": 0, "end": 0})
+/// A model that answers the nth request of each contract with the nth of its texts, and with no entries after them.
+fn scripted(
+    rows: impl Fn(&Sent, usize) -> String + Send + Sync + 'static,
+    statements: impl Fn(&Sent, usize) -> String + Send + Sync + 'static,
+) -> ScriptedModel {
+    ScriptedModel::new()
+        .on_request::<DebriefAnswer>(move |sent, nth| reply(rows(sent, nth)))
+        .on_request::<DebriefStatements>(move |sent, nth| reply(statements(sent, nth)))
 }
 
-fn lines_item(run_id: &str, path: &str, start: i64, end: i64) -> Value {
-    json!({"kind": "lines", "ref": run_id, "text": "", "path": path, "start": start, "end": end})
+fn in_turn(texts: Vec<String>) -> impl Fn(&Sent, usize) -> String + Send + Sync + 'static {
+    move |_, nth| {
+        texts
+            .get(nth)
+            .cloned()
+            .unwrap_or_else(|| json!({"entries": []}).to_string())
+    }
 }
 
-fn example_item(ordinal: &str) -> Value {
-    json!({"kind": "example", "ref": ordinal, "text": "", "path": "", "start": 0, "end": 0})
+fn said_in(sent: &Sent) -> String {
+    let (system, user) = task_messages(&sent.request);
+    format!("{system}\n{user}")
 }
 
-fn hint_item(ordinal: &str) -> Value {
-    json!({"kind": "hint", "ref": ordinal, "text": "", "path": "", "start": 0, "end": 0})
+/// The handle the request gives the thing listed under `label`.
+fn handle_of(sent: &Sent, label: &str) -> String {
+    let text = said_in(sent);
+    let rest = text
+        .split_once(&format!("{label} ["))
+        .map(|(_, rest)| rest)
+        .unwrap_or_default();
+    rest.split(']').next().unwrap_or_default().to_owned()
 }
 
-fn row(id: &str, points: Option<i64>, evidence: Vec<Value>) -> Value {
-    json!({
-        "criterionId": id,
-        "status": if points.is_some() { "observed" } else { "insufficient_evidence" },
-        "points": points,
-        "evidence": evidence,
+fn sent_to<C: Contract>(model: &ScriptedModel) -> Vec<Sent> {
+    model
+        .sent()
+        .into_iter()
+        .filter(|sent| sent.call.id == C::ID)
+        .collect()
+}
+
+fn entry(of: &str, score: &str, cited: Value) -> Value {
+    let mut entry = json!({
+        "of": of,
+        "score": score,
+        "quotes": [],
+        "parts": [],
+        "checks": [],
+        "cases": [],
+        "hints": [],
         "feedback": "What this session showed.",
         "nextStep": "Do one thing next.",
-    })
+    });
+    if let (Some(fields), Some(cited)) = (entry.as_object_mut(), cited.as_object()) {
+        for (key, handles) in cited {
+            fields.insert(key.clone(), handles.clone());
+        }
+    }
+    entry
 }
 
-fn good_rows() -> Vec<Value> {
+fn good_entries() -> Vec<Value> {
     vec![
-        row(
-            "problem_solving",
-            Some(3),
-            vec![quote("t1", "a dictionary of the numbers")],
-        ),
-        row("code", Some(4), vec![run_item("r1")]),
-        row("testing", Some(2), vec![example_item("0")]),
-        row("communication", Some(3), vec![hint_item("0")]),
+        entry("c1", "3", json!({"quotes": ["q1"]})),
+        entry("c2", "4", json!({"checks": ["r1"]})),
+        entry("c3", "2", json!({"cases": ["e1"]})),
+        entry("c4", "3", json!({"hints": ["h1"]})),
     ]
 }
 
-fn answer(rows: Vec<Value>) -> String {
-    json!({
-        "rows": rows,
-        "approach": "Remember what you have seen in a dictionary.",
-        "complexity": "O(n) time, O(n) space",
-    })
+fn answer(entries: Vec<Value>) -> String {
+    json!({"entries": entries}).to_string()
+}
+
+fn statements() -> String {
+    json!({"entries": [
+        {"of": "k1", "text": "Remember what you have seen in a dictionary."},
+        {"of": "k2", "text": "O(n) time, O(n) space"},
+    ]})
     .to_string()
 }
 
 async fn debrief_with(
-    answers: Vec<String>,
+    rows: Vec<String>,
     evidence: &SessionEvidence,
 ) -> (Result<Debrief>, ScriptedModel) {
-    let model = ScriptedModel::new(answers);
+    let model = scripted(in_turn(rows), in_turn(vec![statements()]));
     let result = CodingDebriefer { llm: &model }.debrief(evidence).await;
     (result, model)
 }
@@ -300,10 +274,11 @@ fn row_of<'a>(debrief: &'a Debrief, id: &str) -> &'a ScorecardRow {
 
 #[tokio::test]
 async fn a_clean_answer_is_asked_for_once_and_becomes_the_scorecard() {
-    let (result, model) = debrief_with(vec![answer(good_rows())], &evidence()).await;
+    let (result, model) = debrief_with(vec![answer(good_entries())], &evidence()).await;
     let debrief = result.expect("a debrief");
 
-    assert_eq!(model.said().len(), 1);
+    assert_eq!(model.count::<DebriefAnswer>(), 1);
+    assert_eq!(model.count::<DebriefStatements>(), 1);
     let ids: Vec<&str> = debrief
         .scorecard
         .rows
@@ -329,7 +304,7 @@ async fn a_clean_answer_is_asked_for_once_and_becomes_the_scorecard() {
         solving.evidence,
         [ScorecardEvidence::Quote {
             turn_id: "t1".into(),
-            text: "a dictionary of the numbers".into()
+            text: "I would keep a dictionary of the numbers I have seen so far".into()
         }]
     );
     assert_eq!(
@@ -341,69 +316,20 @@ async fn a_clean_answer_is_asked_for_once_and_becomes_the_scorecard() {
 }
 
 #[tokio::test]
-async fn a_quote_not_in_a_learner_turn_is_refused_then_dropped() {
-    let mut rows = good_rows();
-    rows[0] = row(
-        "problem_solving",
-        Some(3),
-        vec![
-            quote("t1", "a sorted array and two pointers"),
-            quote("t3", "each number is visited once"),
-        ],
-    );
-    let (result, model) = debrief_with(vec![answer(rows.clone()), answer(rows)], &evidence()).await;
+async fn the_second_learner_turn_is_a_quote_and_the_counterpart_is_not() {
+    let mut entries = good_entries();
+    entries[0] = entry("c1", "3", json!({"quotes": ["q2"]}));
+    entries[3] = entry("c4", "3", json!({"quotes": ["q3"]}));
+    let (result, _) = debrief_with(vec![answer(entries)], &evidence()).await;
     let debrief = result.expect("a debrief");
 
-    let said = model.said();
-    assert_eq!(said.len(), 2);
-    assert!(
-        said[1].contains("a sorted array and two pointers"),
-        "the re-ask names the quote that is not there"
-    );
-    let solving = row_of(&debrief, "problem_solving");
-    assert_eq!(solving.status, ScoreStatus::Observed);
-    assert_eq!(
-        solving.evidence,
-        [ScorecardEvidence::Quote {
-            turn_id: "t3".into(),
-            text: "each number is visited once".into()
-        }]
-    );
-}
-
-#[tokio::test]
-async fn a_quote_fixed_on_the_re_ask_is_kept() {
-    let mut bad = good_rows();
-    bad[0] = row(
-        "problem_solving",
-        Some(3),
-        vec![quote("t1", "a sorted array")],
-    );
-    let (result, model) = debrief_with(vec![answer(bad), answer(good_rows())], &evidence()).await;
-    let debrief = result.expect("a debrief");
-
-    assert_eq!(model.said().len(), 2);
     assert_eq!(
         row_of(&debrief, "problem_solving").evidence,
         [ScorecardEvidence::Quote {
-            turn_id: "t1".into(),
-            text: "a dictionary of the numbers".into()
+            turn_id: "t3".into(),
+            text: "Linear time, since each number is visited once".into()
         }]
     );
-}
-
-#[tokio::test]
-async fn words_the_counterpart_said_are_not_the_learners_evidence() {
-    let mut rows = good_rows();
-    rows[3] = row(
-        "communication",
-        Some(3),
-        vec![quote("t2", "What does that cost?")],
-    );
-    let (result, model) = debrief_with(vec![answer(rows.clone()), answer(rows)], &evidence()).await;
-    let debrief = result.expect("a debrief");
-
-    assert_eq!(model.said().len(), 2);
     let communication = row_of(&debrief, "communication");
     assert_eq!(communication.status, ScoreStatus::InsufficientEvidence);
     assert_eq!(communication.points, None);
@@ -411,52 +337,33 @@ async fn words_the_counterpart_said_are_not_the_learners_evidence() {
 }
 
 #[tokio::test]
-async fn a_quote_must_come_from_the_turn_it_names() {
-    let mut rows = good_rows();
-    rows[0] = row(
-        "problem_solving",
-        Some(3),
-        vec![quote("t3", "a dictionary of the numbers")],
-    );
-    let (result, _) = debrief_with(vec![answer(rows.clone()), answer(rows)], &evidence()).await;
-    let debrief = result.expect("a debrief");
-
-    assert_eq!(
-        row_of(&debrief, "problem_solving").status,
-        ScoreStatus::InsufficientEvidence
-    );
-}
-
-#[tokio::test]
 async fn a_row_left_with_no_valid_evidence_becomes_insufficient_evidence() {
-    let mut rows = good_rows();
-    rows[1] = row(
-        "code",
-        Some(4),
-        vec![run_item("r9"), example_item("7"), hint_item("5")],
+    let mut entries = good_entries();
+    entries[1] = entry(
+        "c2",
+        "4",
+        json!({"checks": ["r9"], "cases": ["e7"], "hints": ["h5"]}),
     );
-    let (result, model) = debrief_with(vec![answer(rows.clone()), answer(rows)], &evidence()).await;
+    let (result, model) = debrief_with(vec![answer(entries)], &evidence()).await;
     let debrief = result.expect("a debrief");
 
-    assert_eq!(model.said().len(), 2);
+    assert_eq!(model.count::<DebriefAnswer>(), 1);
     let code = row_of(&debrief, "code");
     assert_eq!(code.status, ScoreStatus::InsufficientEvidence);
     assert_eq!(code.points, None);
     assert!(code.evidence.is_empty());
+    assert_eq!(code.feedback, "What this session showed.");
     assert_eq!(row_of(&debrief, "testing").points, Some(2));
     debrief.scorecard.validate().expect("a valid scorecard");
 }
 
 #[tokio::test]
-async fn points_without_evidence_are_refused_and_never_kept() {
-    let mut rows = good_rows();
-    rows[2] = row("testing", Some(1), vec![]);
-    let (result, model) = debrief_with(vec![answer(rows.clone()), answer(rows)], &evidence()).await;
+async fn points_without_any_evidence_are_never_kept() {
+    let mut entries = good_entries();
+    entries[2] = entry("c3", "1", json!({}));
+    let (result, _) = debrief_with(vec![answer(entries)], &evidence()).await;
     let debrief = result.expect("a debrief");
 
-    let said = model.said();
-    assert_eq!(said.len(), 2);
-    assert!(said[1].contains("testing: an observed row needs evidence"));
     let testing = row_of(&debrief, "testing");
     assert_eq!(testing.status, ScoreStatus::InsufficientEvidence);
     assert_eq!(testing.points, None);
@@ -464,19 +371,15 @@ async fn points_without_evidence_are_refused_and_never_kept() {
 
 #[tokio::test]
 async fn a_row_without_enough_evidence_keeps_neither_points_nor_evidence() {
-    let mut rows = good_rows();
-    rows[3] = json!({
-        "criterionId": "communication",
-        "status": "insufficient_evidence",
-        "points": 0,
-        "evidence": [hint_item("0")],
-        "feedback": "The learner said little.",
-        "nextStep": "Say the plan aloud.",
-    });
-    let (result, model) = debrief_with(vec![answer(rows.clone()), answer(rows)], &evidence()).await;
+    let mut entries = good_entries();
+    entries[3] = entry(
+        "c4",
+        "insufficient_evidence",
+        json!({"hints": ["h1"], "quotes": ["q1"]}),
+    );
+    let (result, _) = debrief_with(vec![answer(entries)], &evidence()).await;
     let debrief = result.expect("a debrief");
 
-    assert_eq!(model.said().len(), 2);
     let communication = row_of(&debrief, "communication");
     assert_eq!(communication.status, ScoreStatus::InsufficientEvidence);
     assert_eq!(communication.points, None);
@@ -488,13 +391,13 @@ async fn silence_is_insufficient_evidence_and_asks_for_nothing_again() {
     let mut quiet = evidence();
     quiet.turns.clear();
     quiet.hints.clear();
-    let mut rows = good_rows();
-    rows[0] = row("problem_solving", None, vec![]);
-    rows[3] = row("communication", None, vec![]);
-    let (result, model) = debrief_with(vec![answer(rows)], &quiet).await;
+    let mut entries = good_entries();
+    entries[0] = entry("c1", "insufficient_evidence", json!({}));
+    entries[3] = entry("c4", "insufficient_evidence", json!({}));
+    let (result, model) = debrief_with(vec![answer(entries)], &quiet).await;
     let debrief = result.expect("a debrief");
 
-    assert_eq!(model.said().len(), 1);
+    assert_eq!(model.count::<DebriefAnswer>(), 1);
     for id in ["problem_solving", "communication"] {
         let silent = row_of(&debrief, id);
         assert_eq!(silent.status, ScoreStatus::InsufficientEvidence);
@@ -503,88 +406,43 @@ async fn silence_is_insufficient_evidence_and_asks_for_nothing_again() {
 }
 
 #[tokio::test]
-async fn every_failure_goes_back_in_the_one_re_ask() {
-    let mut rows = good_rows();
-    rows[0] = row(
-        "problem_solving",
-        Some(3),
-        vec![quote("t1", "words nobody said")],
-    );
-    rows[1] = row(
-        "code",
-        Some(4),
-        vec![lines_item("r1", "solution.py", 1, 99)],
-    );
-    rows[2] = row("testing", Some(2), vec![example_item("42")]);
-    let (result, model) = debrief_with(vec![answer(rows), answer(good_rows())], &evidence()).await;
-    result.expect("a debrief");
-
-    let said = model.said();
-    assert_eq!(said.len(), 2);
-    assert!(said[1].contains("the words are not in turn t1"));
-    assert!(said[1].contains("code, evidence 1"));
-    assert!(said[1].contains("no example 42"));
-}
-
-#[tokio::test]
-async fn it_asks_at_most_twice() {
-    let mut rows = good_rows();
-    rows[0] = row(
-        "problem_solving",
-        Some(3),
-        vec![quote("t1", "nothing like it")],
-    );
-    let (result, model) = debrief_with(
-        vec![answer(rows.clone()), answer(rows.clone()), answer(rows)],
-        &evidence(),
-    )
-    .await;
-    result.expect("a debrief");
-
-    assert_eq!(model.said().len(), 2);
-}
-
-#[tokio::test]
-async fn lines_must_exist_in_the_file_of_that_run() {
-    let mut rows = good_rows();
-    rows[1] = row(
-        "code",
-        Some(4),
-        vec![
-            lines_item("r1", "solution.py", 2, 3),
-            lines_item("r1", "solution.py", 5, 7),
-            lines_item("r1", "other.py", 1, 1),
-            lines_item("r1", "solution.py", 0, 2),
-            lines_item("r1", "solution.py", 4, 2),
-            lines_item("r2", "solution.py", 1, 1),
-        ],
-    );
-    let (result, _) = debrief_with(vec![answer(rows.clone()), answer(rows)], &evidence()).await;
+async fn consecutive_lines_of_one_run_are_one_item_and_the_others_stand_apart() {
+    let mut entries = good_entries();
+    entries[1] = entry("c2", "4", json!({"parts": ["l5", "l2", "l3", "l9"]}));
+    let (result, _) = debrief_with(vec![answer(entries)], &evidence()).await;
     let debrief = result.expect("a debrief");
 
     assert_eq!(
         row_of(&debrief, "code").evidence,
-        [ScorecardEvidence::Lines {
-            run_id: "r1".into(),
-            path: "solution.py".into(),
-            start: 2,
-            end: 3
-        }]
+        [
+            ScorecardEvidence::Lines {
+                run_id: "r1".into(),
+                path: "solution.py".into(),
+                start: 2,
+                end: 3
+            },
+            ScorecardEvidence::Lines {
+                run_id: "r1".into(),
+                path: "solution.py".into(),
+                start: 5,
+                end: 5
+            },
+        ]
     );
 }
 
 #[tokio::test]
 async fn a_run_an_example_and_a_hint_that_exist_are_kept() {
-    let mut rows = good_rows();
-    rows[1] = row(
-        "code",
-        Some(4),
-        vec![run_item("r1"), example_item("0"), hint_item("0")],
+    let mut entries = good_entries();
+    entries[1] = entry(
+        "c2",
+        "4",
+        json!({"checks": ["r1"], "cases": ["e1"], "hints": ["h1"]}),
     );
-    let (result, model) = debrief_with(vec![answer(rows)], &evidence()).await;
+    let (result, model) = debrief_with(vec![answer(entries)], &evidence()).await;
     let debrief = result.expect("a debrief");
 
-    assert_eq!(model.said().len(), 1);
+    assert_eq!(model.count::<DebriefAnswer>(), 1);
     assert_eq!(
         row_of(&debrief, "code").evidence,
         [
@@ -598,44 +456,71 @@ async fn a_run_an_example_and_a_hint_that_exist_are_kept() {
 }
 
 #[tokio::test]
-async fn a_missing_criterion_is_asked_for_again() {
-    let mut short = good_rows();
-    short.pop();
-    let (result, model) = debrief_with(vec![answer(short), answer(good_rows())], &evidence()).await;
+async fn a_missing_criterion_is_asked_for_again_alone() {
+    let model = scripted(
+        |sent, nth| match nth {
+            0 => answer(good_entries()[..3].to_vec()),
+            _ => answer(vec![entry(
+                &handle_of(sent, "Communication"),
+                "3",
+                json!({"hints": ["h1"]}),
+            )]),
+        },
+        in_turn(vec![statements()]),
+    );
+    let result = CodingDebriefer { llm: &model }.debrief(&evidence()).await;
     let debrief = result.expect("a debrief");
 
-    let said = model.said();
-    assert_eq!(said.len(), 2);
-    assert!(said[1].contains("communication"));
+    let asked = sent_to::<DebriefAnswer>(&model);
+    assert_eq!(asked.len(), 2);
+    assert!(said_in(&asked[1]).contains("- Communication ["));
+    assert!(!said_in(&asked[1]).contains("- Code ["));
     assert_eq!(debrief.scorecard.rows.len(), 4);
+    assert_eq!(row_of(&debrief, "communication").points, Some(3));
 }
 
 #[tokio::test]
-async fn a_criterion_written_twice_is_asked_for_again() {
-    let mut twice = good_rows();
-    twice.push(row("code", Some(1), vec![run_item("r1")]));
-    let (result, model) = debrief_with(vec![answer(twice), answer(good_rows())], &evidence()).await;
-    result.expect("a debrief");
+async fn what_the_debrief_states_is_asked_for_again_when_it_comes_back_blank() {
+    let model = scripted(
+        in_turn(vec![answer(good_entries())]),
+        |sent, nth| match nth {
+            0 => json!({"entries": [
+                {"of": "k1", "text": " "},
+                {"of": "k2", "text": "O(n) time, O(n) space"},
+            ]})
+            .to_string(),
+            _ => json!({"entries": [{
+                "of": handle_of(sent, "approach"),
+                "text": "Remember what you have seen in a dictionary.",
+            }]})
+            .to_string(),
+        },
+    );
+    let result = CodingDebriefer { llm: &model }.debrief(&evidence()).await;
+    let debrief = result.expect("a debrief");
 
-    assert_eq!(model.said().len(), 2);
+    assert_eq!(model.count::<DebriefStatements>(), 2);
+    assert_eq!(
+        debrief.approach,
+        "Remember what you have seen in a dictionary."
+    );
+    assert_eq!(debrief.complexity, "O(n) time, O(n) space");
 }
 
 #[tokio::test]
-async fn the_prompt_shows_the_session_and_the_criteria() {
-    let (result, model) = debrief_with(vec![answer(good_rows())], &evidence()).await;
+async fn the_request_shows_the_session_and_the_criteria() {
+    let (result, model) = debrief_with(vec![answer(good_entries())], &evidence()).await;
     result.expect("a debrief");
 
-    let said = model.said();
-    let prompt = said.first().expect("a request");
+    let said = said_in(&sent_to::<DebriefAnswer>(&model)[0]);
     for expected in [
-        "t1",
-        "a dictionary of the numbers",
+        "I would keep a dictionary of the numbers",
         "O(n) time, O(n) space",
         "1: def two_sum(numbers, target):",
-        "problem_solving",
-        "communication",
+        "- Problem solving [c1]",
+        "- Communication [c4]",
     ] {
-        assert!(prompt.contains(expected), "the prompt holds {expected}");
+        assert!(said.contains(expected), "the request holds {expected}");
     }
 }
 
@@ -800,5 +685,3 @@ fn a_bug_fix_lists_its_own_stages() {
         [(Stage::Reproduce, 2_000), (Stage::Locate, 3_000)]
     );
 }
-
-mod golden;

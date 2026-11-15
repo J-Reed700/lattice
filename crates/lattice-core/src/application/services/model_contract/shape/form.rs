@@ -24,6 +24,8 @@ pub enum Among {
 pub enum Field {
     Text,
     Word(Vec<&'static str>),
+    /// A quantity the model judges, such as minutes. Never a position, an id or a count.
+    Number,
     /// A placing pointer. `none` adds the member `"none"`.
     Point {
         prefix: &'static str,
@@ -48,6 +50,8 @@ pub enum Field {
     Change {
         prefix: &'static str,
         with: Box<Field>,
+        /// Whether an insert or a move may anchor at `"start"`.
+        start: bool,
     },
     /// One of several forms, told apart by `kind`.
     OneOf(Vec<(&'static str, Form)>),
@@ -74,6 +78,11 @@ impl Form {
             name,
             Field::Word(W::WORDS.iter().map(|(word, _)| *word).collect()),
         )
+    }
+
+    /// A whole number the model judges.
+    pub fn number(self, name: &'static str) -> Self {
+        self.with(name, Field::Number)
     }
 
     /// A placing pointer at one of the things of kind `K` the request shows.
@@ -146,6 +155,20 @@ impl Form {
             Field::Change {
                 prefix: K::PREFIX,
                 with: Box::new(W::field()),
+                start: true,
+            },
+        )
+    }
+
+    /// A change whose inserts and moves always follow a shown thing: for the units of several texts shown in
+    /// one request, where `"start"` names no place.
+    pub fn change_after<K: Kind, W: Content>(self, name: &'static str) -> Self {
+        self.with(
+            name,
+            Field::Change {
+                prefix: K::PREFIX,
+                with: Box::new(W::field()),
+                start: false,
             },
         )
     }

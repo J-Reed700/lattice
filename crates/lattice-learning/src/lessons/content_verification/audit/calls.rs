@@ -1,82 +1,36 @@
 //! One audit request: measured against the Verifier's window before it is
-//! built into a batch ([`WindowSizer`]), then sent with or without the web
-//! tools ([`ask`]) through the contract driver ([`Audit`]).
+//! built into a batch ([`WindowSizer`]), then sent through the contract
+//! driver ([`Audit`]).
 
 use std::sync::{Mutex, PoisonError};
 
 use async_trait::async_trait;
 
-use lattice_core::application::ports::llm_port::{
-    CompletionResponse, InferencePriority, SamplingOverride, ANSWER_EFFORT,
-};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::context_assembler::budget::{
     BudgetAllocation, BudgetRequest, ModelCapacity,
 };
-use lattice_core::application::services::grounded_generation::{
-    self, CallOptions, GroundedGenerationError,
+use lattice_core::application::services::grounded_generation::{self, GroundedRequest};
+use lattice_core::application::services::model_contract::ask::{
+    Answered, Followup, Sent, Transport,
 };
-#[cfg(any(test, feature = "test-support"))]
-use lattice_core::application::services::model_contract::test_support::RenderAnswer;
-use lattice_core::application::services::model_contract::{
-    legacy, Contract, ContractId, CutOffRemedy, PromptInput, Transport, CORRECTION_LEAD,
-};
-use lattice_core::shared::error::AppError;
+use lattice_core::application::services::model_contract::packed::Packed;
+use lattice_core::application::services::model_contract::shown::Scope;
+use lattice_core::application::services::model_contract::{legacy, Contract, ContractId};
+use lattice_core::shared::error::Result;
 
 use super::batches::{Item, Sizer};
-use super::policy::{self, Rendered, SYSTEM_PROMPT};
-use super::tools::{self, VerifierWeb};
-use super::{AuditClaim, AuditPassage, AuditUnit};
+use super::contract::{Claim, Input};
+use super::policy::{self, SYSTEM_PROMPT};
+use super::tools;
+use super::{AuditClaim, AuditUnit};
 
 /// The audit's one model call.
 pub(super) struct VerifierAudit;
 
 impl Contract for VerifierAudit {
     const ID: ContractId = ContractId::new("verifier-audit");
-    type Input = PromptInput;
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl RenderAnswer for VerifierAudit {
-    type Answer = policy::RawAnswer;
-
-    fn render(answer: &policy::RawAnswer) -> String {
-        serde_json::to_string(answer).unwrap_or_default()
-    }
-
-    fn read(text: &str) -> Result<policy::RawAnswer, AppError> {
-        policy::parse_answer(text).map_err(AppError::InvalidInput)
-    }
-}
-
-/// What one request came back with: the final reply, carrying the tokens of
-/// every round the request took.
-#[derive(Debug, Default)]
-pub(super) struct Answer {
-    pub response: CompletionResponse,
-    /// Pages fetched and saved during the request, by label.
-    pub fetched: Vec<(String, AuditPassage)>,
-    /// Why web search could not be used, when it could not.
-    pub web_note: Option<String>,
-}
-
-#[derive(Debug)]
-pub(super) enum AskError {
-    /// The window cannot hold the request with its answer.
-    TooLarge,
-    Model(AppError),
-}
-
-impl From<AppError> for AskError {
-    /// The backend refusing a prompt its window cannot hold halves the batch
-    /// rather than failing the job: dense batches can be refused though the
-    /// estimate fit them.
-    fn from(error: AppError) -> Self {
-        match error {
-            AppError::PromptExceedsWindow { .. } => Self::TooLarge,
-            error => Self::Model(error),
-        }
-    }
+    type Input = Input;
 }
 
 /// `text`, cut at a character boundary to at most `tokens` as `llm` counts.
@@ -135,9 +89,30 @@ impl<'a> WindowSizer<'a> {
         self.envelope_tokens + items * self.verdict_tokens
     }
 
+    /// What `items` ask of the Verifier, before any page is fetched.
+    pub(super) fn input(&self, items: &[Item]) -> Input {
+        let claims = items
+            .iter()
+            .filter_map(|item| Claim::of(self.claims, self.units, item))
+            .collect();
+        Input::of(
+            claims,
+            self.units,
+            Packed::default(),
+            self.reserve(items.len()),
+        )
+    }
+
+    fn task(&self, items: &[Item]) -> String {
+        let mut scope = Scope::for_question();
+        let mut showing = scope.request();
+        VerifierAudit::says(&self.input(items), &mut showing)
+            .map(|says| says.task)
+            .unwrap_or_default()
+    }
+
     fn task_tokens(&self, items: &[Item]) -> usize {
-        self.llm
-            .count_tokens(&policy::render(self.claims, self.units, items).task)
+        self.llm.count_tokens(&self.task(items))
     }
 }
 
@@ -147,7 +122,7 @@ impl Sizer for WindowSizer<'_> {
     /// be kept whole, not clamped.
     fn fits(&self, items: &[Item]) -> bool {
         let reserve = self.reserve(items.len());
-        let task = policy::render(self.claims, self.units, items).task;
+        let task = self.task(items);
         if self.tool_tokens > 0 {
             return tools::opening_fits(self.llm, SYSTEM_PROMPT, task, self.tool_tokens, reserve);
         }
@@ -165,143 +140,38 @@ impl Sizer for WindowSizer<'_> {
     }
 }
 
-/// Send one batch: with the web tools when `web` is given, else as one
-/// grounded request the planner checks before sending.
-pub(super) async fn ask(
-    llm: &dyn LLMPort,
-    rendered: &Rendered,
-    reserve: usize,
-    web: Option<&dyn VerifierWeb>,
-) -> Result<Answer, AskError> {
-    let schema = policy::schema(rendered, web.is_some());
-    if let Some(web) = web {
-        return tools::ask(
-            llm,
-            SYSTEM_PROMPT,
-            rendered.task.clone(),
-            schema,
-            reserve,
-            web,
-        )
-        .await;
-    }
-    let mut request = legacy::grounded(SYSTEM_PROMPT, rendered.task.clone());
-    let says = legacy::grounded_says(&mut request);
-    *says.output_tokens = reserve;
-    *says.schema = Some(legacy::schema(schema));
-    request.call = CallOptions {
-        priority: InferencePriority::Verification,
-        sampling: Some(SamplingOverride::deterministic()),
-        no_time_limit: true,
-        reasoning_effort: Some(ANSWER_EFFORT.into()),
-        ..Default::default()
-    };
-    match grounded_generation::generate(llm, request).await {
-        Ok(output) => Ok(Answer {
-            response: CompletionResponse {
-                text: output.text,
-                finish_reason: output.finish_reason,
-                input_tokens: output.input_tokens,
-                output_tokens: output.output_tokens,
-                ..Default::default()
-            },
-            ..Answer::default()
-        }),
-        Err(GroundedGenerationError::Budget(_)) => Err(AskError::TooLarge),
-        Err(GroundedGenerationError::Model(error)) => Err(error.into()),
-    }
-}
-
-/// What the rounds of one batch spent, and what the Verifier fetched.
+/// The audit's transport: each request sent as it is, its tokens counted.
 #[derive(Default)]
-pub(super) struct Spent {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub web_note: Option<String>,
-    pub fetched: Vec<(String, AuditPassage)>,
+pub(super) struct Audit {
+    spent: Mutex<(u64, u64)>,
 }
 
-/// The audit's transport: one batch sent with its answer reserved, asked
-/// again once with the refusal quoted.
-pub(super) struct Audit<'a> {
-    pub reserve: usize,
-    pub web: Option<&'a dyn VerifierWeb>,
-    spent: Mutex<Spent>,
-}
-
-impl<'a> Audit<'a> {
-    pub(super) fn new(reserve: usize, web: Option<&'a dyn VerifierWeb>) -> Self {
-        Self {
-            reserve,
-            web,
-            spent: Mutex::default(),
-        }
-    }
-
-    pub(super) fn fetched(&self) -> Vec<(String, AuditPassage)> {
-        self.spent
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .fetched
-            .clone()
-    }
-
-    pub(super) fn into_spent(self) -> Spent {
+impl Audit {
+    /// The input and output tokens the requests sent through this transport cost.
+    pub(super) fn into_spent(self) -> (u64, u64) {
         self.spent
             .into_inner()
             .unwrap_or_else(PoisonError::into_inner)
     }
+
+    async fn generate(&self, llm: &dyn LLMPort, request: GroundedRequest) -> Result<Sent> {
+        let output = grounded_generation::generate(llm, request.clone()).await?;
+        {
+            let mut spent = self.spent.lock().unwrap_or_else(PoisonError::into_inner);
+            spent.0 += output.input_tokens;
+            spent.1 += output.output_tokens;
+        }
+        Ok(Sent::of(request, output))
+    }
 }
 
 #[async_trait]
-impl Transport for Audit<'_> {
-    type Request = Rendered;
-
-    async fn send(
-        &self,
-        llm: &dyn LLMPort,
-        request: &Rendered,
-    ) -> Result<CompletionResponse, AppError> {
-        let answer = ask(llm, request, self.reserve, self.web)
-            .await
-            .map_err(|error| match error {
-                AskError::Model(error) => error,
-                AskError::TooLarge => AppError::WindowTooSmall(format!(
-                    "The Verifier's window of {} tokens cannot hold this statement's section and                      passages with its answer.",
-                    llm.max_context_tokens()
-                )),
-            })?;
-        let mut spent = self.spent.lock().unwrap_or_else(PoisonError::into_inner);
-        spent.input_tokens += answer.response.input_tokens;
-        spent.output_tokens += answer.response.output_tokens;
-        if answer.web_note.is_some() {
-            spent.web_note = answer.web_note;
-        }
-        spent.fetched = answer.fetched;
-        Ok(answer.response)
+impl Transport for Audit {
+    async fn send(&self, llm: &dyn LLMPort, request: GroundedRequest) -> Result<Sent> {
+        self.generate(llm, request).await
     }
 
-    async fn correction(
-        &self,
-        _llm: &dyn LLMPort,
-        request: &Rendered,
-        previous: &CompletionResponse,
-        refusal: &str,
-    ) -> Result<Rendered, AppError> {
-        let mut next = request.clone();
-        next.task = format!(
-            "{}
-
-Your previous answer:
-{}
-
-{CORRECTION_LEAD} {refusal}",
-            request.task, previous.text
-        );
-        Ok(next)
-    }
-
-    async fn cut_off(&self, _: &dyn LLMPort, _: &Rendered) -> CutOffRemedy<Rendered> {
-        CutOffRemedy::Correct
+    async fn follow(&self, llm: &dyn LLMPort, step: Followup) -> Result<Sent> {
+        self.generate(llm, step.into_request()).await
     }
 }

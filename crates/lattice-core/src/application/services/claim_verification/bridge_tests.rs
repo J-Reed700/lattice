@@ -2,8 +2,8 @@
 use super::bridge::ClaimParts;
 use super::classes_tests::{checker, conversation, messages, Reply, Scripted};
 use super::*;
-use crate::application::services::model_contract::test_support::assert_round_trip;
-use crate::application::services::model_contract::CORRECTION_LEAD;
+use crate::application::services::model_contract::test_support::taint::{self, Marks};
+use crate::application::services::model_contract::test_support::RenderAnswer;
 use crate::domain::learning::claim_review::text_sha256;
 use serde_json::{json, Value};
 
@@ -21,19 +21,16 @@ fn passages() -> Vec<String> {
     vec!["Quillet is a lexer shipped with the toolchain.".into()]
 }
 
-fn reply(parts: Value, verdict: &str) -> Reply {
-    Reply::Text(
-        json!({"parts": parts, "verdict": verdict, "reason": "The passage states the first part."})
-            .to_string(),
-    )
+fn reply(parts: Value) -> Reply {
+    Reply::Text(json!({"parts": parts, "reason": "The passage states the first part."}).to_string())
 }
 
 fn stated(part: &str) -> Value {
-    json!({"part": part, "kind": "stated", "passage": "passage-0"})
+    json!({"part": part, "kind": "stated", "passages": ["p1"]})
 }
 
 fn unplaced(part: &str, kind: &str) -> Value {
-    json!({"part": part, "kind": kind, "passage": null})
+    json!({"part": part, "kind": kind, "passages": []})
 }
 
 fn judged(answered: Answered<ClassJudgment<BridgeOutcome>>) -> BridgeOutcome {
@@ -64,20 +61,20 @@ fn names_a_figure(text: &str) -> bool {
 }
 
 #[test]
-fn the_prompt_is_the_prompt_of_record_by_its_text_and_by_its_digest() {
-    assert_eq!(BRIDGE_SYSTEM, recorded_prompt());
+fn the_prompt_is_the_prompt_of_record_but_for_its_sentence_on_the_answers_form() {
+    const FORM: &str = "Answer with JSON";
+    let recorded = recorded_prompt();
+    let before = |text: &str| text.split(FORM).next().unwrap_or_default().to_owned();
+    assert_eq!(before(BRIDGE_SYSTEM), before(&recorded));
     assert_eq!(
-        text_sha256(BRIDGE_SYSTEM),
-        "c8b758da6f11a83720add10eb0b4641855139bb84f2cee840103b676e6ce31fa"
+        text_sha256(&before(BRIDGE_SYSTEM)),
+        "9a6f8929f6975a289bae652614dfa6a09834d9af3cede64adcc14a3e8844f370"
     );
 }
 
 #[tokio::test]
 async fn a_part_wise_check_sends_the_prompt_of_record_and_the_passages_under_their_ids() {
-    let llm = Scripted::new(vec![reply(
-        json!([stated("Quillet is a lexer.")]),
-        "supported",
-    )]);
+    let llm = Scripted::new(vec![reply(json!([stated("Quillet is a lexer.")]))]);
     let outcome = judged(
         checker(&llm, CheckPolicy::Bridge)
             .check_bridge("Quillet is a lexer.", &passages())
@@ -98,7 +95,7 @@ async fn a_part_wise_check_sends_the_prompt_of_record_and_the_passages_under_the
     assert_eq!(system, BRIDGE_SYSTEM);
     assert_eq!(
         user,
-        "Source passages:\n[passage-0]\nQuillet is a lexer shipped with the toolchain.\n\nClaim: Quillet is a lexer."
+        "Source passages:\n[p1]\nQuillet is a lexer shipped with the toolchain.\n\nClaim: Quillet is a lexer."
     );
     assert_eq!(sent[0].sampling, Some(SamplingOverride::deterministic()));
     let schema = sent[0].schema().map(|schema| schema.as_json()).unwrap();
@@ -112,6 +109,33 @@ async fn a_part_wise_check_sends_the_prompt_of_record_and_the_passages_under_the
             "contradicted"
         ])
     );
+    assert!(schema["properties"].get("verdict").is_none(), "{schema}");
+    assert!(
+        schema["properties"]["parts"]["items"]["properties"]
+            .get("passages")
+            .is_some(),
+        "{schema}"
+    );
+}
+
+#[test]
+fn the_part_wise_request_holds_no_written_passage_id_and_no_number_of_the_application() {
+    let mut marks = Marks::new();
+    let input = PartsInput {
+        statement: marks.told("Quillet is a lexer.".to_owned()),
+        passages: vec![
+            BridgePassage {
+                place: marks.reference(123_456_usize),
+                text: marks.told("Quillet is a lexer shipped with the toolchain.".to_owned()),
+            },
+            BridgePassage {
+                place: marks.reference(234_567_usize),
+                text: marks.told("Quillet never parses; it only lexes.".to_owned()),
+            },
+        ],
+        room: marks.internal(7_340_219_u32),
+    };
+    taint::holds::<ClaimParts>(&input, &marks);
 }
 
 #[test]
@@ -168,7 +192,7 @@ async fn the_planted_rows_come_out_as_the_design_measured_them() {
         ),
         (
             "The survey reports that modular document parsing pipelines were introduced by Google in 2019.",
-            json!([{"part": "modular document parsing pipelines were introduced by Google in 2019", "kind": "contradicted", "passage": "passage-0"}]),
+            json!([{"part": "modular document parsing pipelines were introduced by Google in 2019", "kind": "contradicted", "passages": ["p1"]}]),
             Contradicted,
         ),
         (
@@ -183,8 +207,8 @@ async fn the_planted_rows_come_out_as_the_design_measured_them() {
             "Tesseract is an OCR engine written by Microsoft in 2019 that reads pixels into text.",
             json!([
                 stated("Tesseract is an OCR engine"),
-                {"part": "written by Microsoft", "kind": "contradicted", "passage": "passage-0"},
-                {"part": "in 2019", "kind": "contradicted", "passage": "passage-0"},
+                {"part": "written by Microsoft", "kind": "contradicted", "passages": ["p1"]},
+                {"part": "in 2019", "kind": "contradicted", "passages": ["p1"]},
                 unplaced("reads pixels into text", "common"),
             ]),
             Contradicted,
@@ -199,7 +223,7 @@ async fn the_planted_rows_come_out_as_the_design_measured_them() {
         ),
     ];
     for (statement, parts, expected) in rows {
-        let llm = Scripted::new(vec![reply(parts, "unsupported")]);
+        let llm = Scripted::new(vec![reply(parts)]);
         let read = judged(
             checker(&llm, CheckPolicy::Bridge)
                 .check_bridge(statement, &passages())
@@ -210,21 +234,10 @@ async fn the_planted_rows_come_out_as_the_design_measured_them() {
     }
 }
 
-#[tokio::test]
-async fn the_verdict_the_model_writes_beside_the_parts_is_not_read() {
-    let llm = Scripted::new(vec![reply(
-        json!([
-            stated("Quillet is a lexer"),
-            unplaced("it was written in 2004", "specific_missing")
-        ]),
-        "supported",
-    )]);
-    let read = judged(
-        checker(&llm, CheckPolicy::Bridge)
-            .check_bridge("Quillet is a lexer written in 2004.", &passages())
-            .await,
-    );
-    assert_eq!(read.outcome(), Outcome::Unproven);
+#[test]
+fn the_judge_is_not_asked_for_a_verdict_beside_the_parts() {
+    assert!(!BRIDGE_SYSTEM.contains("supported_with_common"));
+    assert!(!BRIDGE_SYSTEM.contains("\"verdict\""));
 }
 
 #[tokio::test]
@@ -232,10 +245,10 @@ async fn a_reply_is_read_where_it_is_unambiguous() {
     let llm = Scripted::new(vec![Reply::Text(
         json!({
             "parts": [
-                {"part": " Quillet is a lexer ", "kind": "Stated", "passage": "[passage-0]"},
-                {"part": "A lexer turns characters into tokens", "kind": "common", "passage": "passage-9"},
+                {"part": " Quillet is a lexer ", "kind": "stated", "passages": ["p1"]},
+                {"part": "A lexer turns characters into tokens", "kind": "common", "passages": ["p9"]},
             ],
-            "verdict": "supported_with_common",
+            "reason": " Both parts were read. ",
         })
         .to_string(),
     )]);
@@ -253,12 +266,12 @@ async fn a_reply_is_read_where_it_is_unambiguous() {
     // A passage that was not shown is no place for a part that needs none.
     assert_eq!(read.parts[1].kind, PartKind::Common);
     assert_eq!(read.parts[1].passage, None);
-    assert_eq!(read.reason, "");
+    assert_eq!(read.reason, "Both parts were read.");
 }
 
 #[tokio::test]
 async fn a_reply_that_cannot_be_read_is_asked_for_once_more_and_then_left_unjudged() {
-    let good = || reply(json!([stated("Quillet is a lexer.")]), "supported");
+    let good = || reply(json!([stated("Quillet is a lexer.")]));
     let llm = Scripted::new(vec![Reply::Text("not json".into()), good()]);
     let answered = checker(&llm, CheckPolicy::Bridge)
         .check_bridge("Quillet is a lexer.", &passages())
@@ -268,9 +281,7 @@ async fn a_reply_that_cannot_be_read_is_asked_for_once_more_and_then_left_unjudg
     assert_eq!(sent.len(), 2);
     let again = conversation(&sent[1]);
     assert!(
-        again.contains(CORRECTION_LEAD)
-            && again.contains("not json")
-            && again.contains("the claim's parts"),
+        again.contains("not json") && again.contains("could not be read"),
         "{again}"
     );
 
@@ -278,22 +289,17 @@ async fn a_reply_that_cannot_be_read_is_asked_for_once_more_and_then_left_unjudg
         vec![
             Reply::Text("{}".into()),
             // No part.
-            reply(json!([]), "supported"),
+            reply(json!([])),
             // A kind that is not one.
-            reply(json!([unplaced("A part.", "plausible")]), "supported"),
+            reply(json!([unplaced("A part.", "plausible")])),
             // A part said to be stated, and not where.
-            reply(json!([unplaced("A part.", "stated")]), "supported"),
+            reply(json!([unplaced("A part.", "stated")])),
             // A part stated by a passage that was never shown.
-            reply(
-                json!([{"part": "A part.", "kind": "stated", "passage": "passage-3"}]),
-                "supported",
-            ),
+            reply(json!([{"part": "A part.", "kind": "stated", "passages": ["p4"]}])),
             // Nothing in it.
-            reply(json!([unplaced("  ", "common")]), "supported"),
-            Reply::Cut(
-                json!({"parts": [stated("A part.")], "verdict": "supported", "reason": "Fine."})
-                    .to_string(),
-            ),
+            reply(json!([unplaced("  ", "common")])),
+            // No reason.
+            Reply::Text(json!({"parts": [stated("A part.")]}).to_string()),
         ]
     };
     for first in bad() {
@@ -309,6 +315,48 @@ async fn a_reply_that_cannot_be_read_is_asked_for_once_more_and_then_left_unjudg
 }
 
 #[tokio::test]
+async fn a_reply_cut_off_twice_is_left_unjudged() {
+    let cut = || Reply::Cut(json!({"parts": [stated("A part.")], "reason": "Fine."}).to_string());
+    let llm = Scripted::new(vec![cut(), cut(), cut()]);
+    let judgment = checker(&llm, CheckPolicy::Bridge)
+        .check_bridge("A part.", &passages())
+        .await
+        .judgments;
+    assert!(matches!(judgment, ClassJudgment::Unusable), "{judgment:?}");
+}
+
+#[tokio::test]
+async fn a_stated_part_that_names_no_shown_passage_is_corrected_naming_the_part() {
+    let llm = Scripted::new(vec![
+        reply(json!([
+            stated("Quillet is a lexer"),
+            unplaced("It ships with the toolchain", "stated")
+        ])),
+        reply(json!([
+            stated("Quillet is a lexer"),
+            stated("It ships with the toolchain")
+        ])),
+    ]);
+    let read = judged(
+        checker(&llm, CheckPolicy::Bridge)
+            .check_bridge(
+                "Quillet is a lexer shipped with the toolchain.",
+                &passages(),
+            )
+            .await,
+    );
+    assert_eq!(read.parts[1].passage, Some(0));
+    let sent = llm.sent();
+    assert_eq!(sent.len(), 2);
+    assert!(
+        conversation(&sent[1])
+            .contains("The part \"It ships with the toolchain\" is marked stated"),
+        "{}",
+        conversation(&sent[1])
+    );
+}
+
+#[tokio::test]
 async fn an_outage_stays_an_error_and_another_policy_makes_no_call() {
     let llm = Scripted::new(vec![Reply::Outage]);
     let answered = checker(&llm, CheckPolicy::Bridge)
@@ -321,7 +369,7 @@ async fn an_outage_stays_an_error_and_another_policy_makes_no_call() {
     );
     assert_eq!(llm.sent().len(), 1);
 
-    let llm = Scripted::new(vec![reply(json!([stated("A part.")]), "supported")]);
+    let llm = Scripted::new(vec![reply(json!([stated("A part.")]))]);
     let wrong = checker(&llm, CheckPolicy::Strict)
         .check_bridge("A part.", &passages())
         .await;
@@ -331,7 +379,7 @@ async fn an_outage_stays_an_error_and_another_policy_makes_no_call() {
 
 #[tokio::test]
 async fn the_output_tokens_of_both_asks_are_counted() {
-    let good = json!({"parts": [stated("A part.")], "verdict": "supported", "reason": "Fine."});
+    let good = json!({"parts": [stated("A part.")], "reason": "Fine."});
     let llm = Scripted::new(vec![
         Reply::Counted("not json".into(), 40),
         Reply::Counted(good.to_string(), 90),
@@ -427,10 +475,7 @@ fn the_part_wise_judge_is_told_what_the_lesson_s_own_figures_are() {
 /// The judgment a scripted model's reply with `parts` comes to, however
 /// many times it is asked.
 async fn judgment_of(parts: Value) -> Answered<ClassJudgment<BridgeOutcome>> {
-    let llm = Scripted::new(vec![
-        reply(parts.clone(), "supported_with_common"),
-        reply(parts, "supported_with_common"),
-    ]);
+    let llm = Scripted::new(vec![reply(parts.clone()), reply(parts)]);
     checker(&llm, CheckPolicy::Bridge)
         .check_bridge("A rule set of 48 checks has 12 that fail.", &passages())
         .await
@@ -553,8 +598,7 @@ async fn a_reason_past_600_characters_is_kept_whole() {
         .to_string();
     assert!(reason.chars().count() > 600);
     let llm = Scripted::new(vec![Reply::Text(
-        json!({"parts": [stated("Quillet is a lexer.")], "verdict": "supported", "reason": reason})
-            .to_string(),
+        json!({"parts": [stated("Quillet is a lexer.")], "reason": reason}).to_string(),
     )]);
     let outcome = judged(
         checker(&llm, CheckPolicy::Bridge)
@@ -564,9 +608,9 @@ async fn a_reason_past_600_characters_is_kept_whole() {
     assert_eq!(outcome.reason, reason);
 }
 
-#[test]
-fn the_part_wise_contract_reads_what_it_renders() {
-    assert_round_trip::<ClaimParts>(&outcome(vec![
+#[tokio::test]
+async fn the_part_wise_contract_reads_what_the_test_double_renders() {
+    let written = outcome(vec![
         BridgePart {
             part: "Quillet is a lexer".into(),
             kind: PartKind::Stated,
@@ -580,5 +624,15 @@ fn the_part_wise_contract_reads_what_it_renders() {
             kind: PartKind::Contradicted,
             passage: Some(1),
         },
-    ]));
+    ]);
+    let llm = Scripted::new(vec![Reply::Text(ClaimParts::render(&written))]);
+    let read = judged(
+        checker(&llm, CheckPolicy::Bridge)
+            .check_bridge(
+                "Quillet is a lexer.",
+                &["One.".to_owned(), "Two.".to_owned()],
+            )
+            .await,
+    );
+    assert_eq!(read, written);
 }

@@ -1,26 +1,29 @@
 //! The Verifier's web tools (lesson claim review §14.5), offered when the
 //! course allows search and a web service is available. `search_web` returns
 //! titles, links and snippets (never evidence); `fetch_page` saves the page as
-//! a learning source before the model sees it, so every quotable page is
+//! a learning source before the model sees it, so every citable page is
 //! reproducible. Rounds are bounded by the window, not a count.
 
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use lattice_core::application::ports::llm_port::{
-    CompletionInput, CompletionResponse, InferencePriority, SamplingOverride, ToolChoice,
-    ToolDefinition,
+    CompletionInput, InferencePriority, SamplingOverride, ToolChoice, ToolDefinition,
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::context_assembler::budget::{
     BudgetAllocation, BudgetRequest, ModelCapacity,
 };
-use lattice_core::application::services::model_contract::legacy;
-use lattice_core::shared::error::Result;
+use lattice_core::application::services::model_contract::shown::{Drawn, Kind, Scope, Shown};
+use lattice_core::application::services::model_contract::tools::{Parameters, View};
+use lattice_core::application::services::model_contract::units::{Grain, Units};
+use lattice_core::application::services::model_contract::{legacy, ContractCall};
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::text::sentences;
 
 use crate::references::web_research::{self, PlannedNeed, Room};
 
-use super::calls::{fit_text, Answer, AskError};
+use super::calls::fit_text;
 use super::AuditPassage;
 
 /// One search result: what the model may choose to fetch.
@@ -44,6 +47,27 @@ pub trait VerifierWeb: Send + Sync {
 const SEARCH: &str = "search_web";
 const FETCH: &str = "fetch_page";
 
+/// A search result the model may fetch, shown with a handle of its own.
+pub(super) struct Hit {
+    title: String,
+    url: String,
+    snippet: String,
+}
+
+impl Kind for Hit {
+    const PREFIX: &'static str = "h";
+    const DRAWN: Drawn = Drawn::Itself;
+    type Ref = String;
+
+    fn reference(&self) -> String {
+        self.url.clone()
+    }
+}
+
+fn fetch_parameters() -> Parameters {
+    Parameters::new().handle::<Hit>("hit", "The handle shown beside a search result.")
+}
+
 pub(super) fn definitions() -> Vec<ToolDefinition> {
     vec![
         ToolDefinition {
@@ -53,44 +77,59 @@ pub(super) fn definitions() -> Vec<ToolDefinition> {
                  only: a snippet is never evidence. {}",
                 web_research::NEED_GUIDE
             ),
-            parameters: web_research::need_schema(None),
+            parameters: web_research::need_schema(),
         },
         ToolDefinition {
             name: FETCH.into(),
             description: "Fetch a page found by search_web. The page is saved to the course's \
-                          sources and returned with a label (W1, W2, ...) you may cite and quote."
+                          sources and returned with its sentences, each beside a handle you may \
+                          cite."
                 .into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {"url": {"type": "string"}},
-                "required": ["url"],
-                "additionalProperties": false
-            }),
+            parameters: fetch_parameters().schema().as_json().clone(),
         },
     ]
 }
 
-/// Ask with the web tools offered, until the model answers.
-pub(super) async fn ask(
+/// What the web tools brought in before the claims were judged.
+#[derive(Debug, Default)]
+pub(super) struct Research {
+    /// The pages fetched and saved, in the order fetched.
+    pub fetched: Vec<AuditPassage>,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub web_note: Option<String>,
+}
+
+/// Lets the model search and fetch until it stops calling tools; what it
+/// answers then is not read: the claims are asked for afterwards, with the
+/// fetched pages shown.
+pub(super) async fn research(
     llm: &dyn LLMPort,
+    scope: &mut Scope,
     system: &str,
     task: String,
-    schema: Value,
     reserve: usize,
+    contract: ContractCall,
     web: &dyn VerifierWeb,
-) -> std::result::Result<Answer, AskError> {
+) -> Result<Research> {
+    let too_large = || {
+        AppError::WindowTooSmall(format!(
+            "The Verifier's window of {} tokens cannot hold this statement's section and \
+             passages with its answer.",
+            llm.max_context_tokens()
+        ))
+    };
     let tools = definitions();
     let tool_tokens = llm.count_tokens(&serde_json::to_string(&tools).unwrap_or_default());
     let mut input = opening(system, task);
-    let mut answer = Answer::default();
-    let (mut input_tokens, mut output_tokens) = (0, 0);
+    let mut research = Research::default();
     loop {
-        let room = room_left(llm, &input, tool_tokens, reserve).ok_or(AskError::TooLarge)?;
+        let room = room_left(llm, &input, tool_tokens, reserve).ok_or_else(too_large)?;
         let offer = room > 0;
         let request = legacy::completion(legacy::Completion {
             input: input.clone(),
             tools: tools.clone(),
-            json_schema: Some(schema.clone()),
+            contract: Some(contract.clone()),
             tool_choice: Some(if offer {
                 ToolChoice::Auto
             } else {
@@ -102,16 +141,11 @@ pub(super) async fn ask(
             no_time_limit: true,
             ..Default::default()
         });
-        let response = llm.complete(&request).await.map_err(AskError::from)?;
-        input_tokens += response.input_tokens;
-        output_tokens += response.output_tokens;
+        let response = llm.complete(&request).await?;
+        research.input_tokens += response.input_tokens;
+        research.output_tokens += response.output_tokens;
         if response.tool_calls.is_empty() || !offer {
-            answer.response = CompletionResponse {
-                input_tokens,
-                output_tokens,
-                ..response
-            };
-            return Ok(answer);
+            return Ok(research);
         }
         input.extend(response.replay.iter().cloned());
         let calls: Vec<(String, String, Value)> = response
@@ -129,7 +163,10 @@ pub(super) async fn ask(
         let share = room / calls.len().max(1);
         let cost = |candidate: &web_research::Candidate| {
             let result = &candidate.result;
-            llm.count_tokens(&hit_json(&result.title, &result.url, &result.snippet).to_string()) + 1
+            llm.count_tokens(&format!(
+                "[h9999] {}\n  Link: {}\n  Snippet: {}",
+                result.title, result.url, result.snippet
+            )) + 1
         };
         let search_room = Room {
             tokens: share,
@@ -137,7 +174,13 @@ pub(super) async fn ask(
         };
         let mut outputs = Vec::with_capacity(calls.len());
         for (_, name, arguments) in &calls {
-            outputs.push(run(name, arguments, web, search_room, &mut answer).await);
+            let tool = Call {
+                llm,
+                web,
+                room: search_room,
+                share,
+            };
+            outputs.push(tool.run(name, arguments, scope, &mut research).await);
         }
         let mut cut: Vec<String> = outputs
             .iter()
@@ -158,7 +201,7 @@ pub(super) async fn ask(
                 break;
             }
             if cut.iter().all(String::is_empty) {
-                return Err(AskError::TooLarge);
+                return Err(too_large());
             }
             cut = cut
                 .iter()
@@ -183,7 +226,7 @@ fn opening(system: &str, task: String) -> Vec<CompletionInput> {
 }
 
 /// Whether a tool-using batch's first request fits with its answer, as
-/// [`ask`] measures each round.
+/// [`research`] measures each round.
 pub(super) fn opening_fits(
     llm: &dyn LLMPort,
     system: &str,
@@ -226,81 +269,139 @@ fn input_tokens(llm: &dyn LLMPort, item: &CompletionInput) -> usize {
     }
 }
 
-/// One tool call's result text. A failure is told to the model (and noted
-/// on the audit) instead of ending the batch: the audit runs without it.
-async fn run(
-    name: &str,
-    arguments: &Value,
-    web: &dyn VerifierWeb,
-    room: Room<'_>,
-    answer: &mut Answer,
-) -> String {
-    let argument = |key: &str| {
-        arguments
-            .get(key)
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .trim()
-            .to_owned()
-    };
-    match name {
-        SEARCH => match serde_json::from_value::<PlannedNeed>(arguments.clone())
-            .ok()
-            .and_then(PlannedNeed::searches)
-        {
-            None => "Search not run: give a query and rewordings that are not blank once any \
-                     site: operators are lifted out, a site that is an address, one of the \
-                     listed kinds, dates as YYYY-MM-DD, and for asOf the page's address as \
-                     identifier."
-                .into(),
-            // A query naming several sites is one search per site, sharing
-            // the room the one call has. The call fails only when every
-            // search did: a site that fails leaves the others' answers.
-            Some(searches) => {
-                let room = room.share(searches.len());
-                let mut hits: Vec<SearchHit> = Vec::new();
-                let mut answered = false;
-                let mut failure = None;
-                for need in &searches {
-                    match web.search(need, room).await {
-                        Ok(found) => {
-                            answered = true;
-                            for hit in found {
-                                if !hits.iter().any(|known| known.url == hit.url) {
-                                    hits.push(hit);
-                                }
-                            }
-                        }
-                        Err(error) => failure = Some(error),
-                    }
-                }
-                if let (false, Some(error)) = (answered, failure) {
-                    answer.web_note = Some(format!("Web search was unavailable: {error}"));
-                    return format!("Search failed: {error}");
-                }
-                json!(hits
-                    .iter()
-                    .map(|hit| hit_json(&hit.title, &hit.url, &hit.snippet))
-                    .collect::<Vec<_>>())
-                .to_string()
-            }
-        },
-        FETCH => match web.save_page(&argument("url")).await {
-            Ok(page) => {
-                let label = format!("W{}", answer.fetched.len() + 1);
-                let text = format!("[{label}] {}\n{}", page.title, page.text);
-                answer.fetched.push((label, page));
-                text
-            }
-            Err(error) => format!("Could not fetch or save that page: {error}"),
-        },
-        other => format!("There is no tool named {other}."),
+/// `page` cut to the whole sentences that fit `tokens`.
+fn cut_page(llm: &dyn LLMPort, page: AuditPassage, tokens: usize) -> AuditPassage {
+    let kept = fit_text(llm, &page.text, tokens);
+    if kept.len() == page.text.len() {
+        return page;
+    }
+    let whole = sentences(&kept)
+        .iter()
+        .rev()
+        .nth(1)
+        .map_or(kept.len(), |(_, stop)| *stop);
+    AuditPassage {
+        text: kept.get(..whole).unwrap_or_default().to_owned(),
+        ..page
     }
 }
 
-/// One search result as the model reads it.
-fn hit_json(title: &str, url: &str, snippet: &str) -> Value {
-    json!({"title": title, "url": url, "snippet": snippet})
+/// The search results as the model reads them: each handle, title, link and snippet.
+fn hits_view(shown: &Shown<'_, Hit>) -> View {
+    shown.iter().fold(View::new(), |view, (handle, hit)| {
+        view.item(handle, &hit.title).nested(
+            View::new()
+                .fact("Link", &hit.url)
+                .fact("Snippet", &hit.snippet),
+        )
+    })
+}
+
+/// What one round's tool calls run against.
+struct Call<'a> {
+    llm: &'a dyn LLMPort,
+    web: &'a dyn VerifierWeb,
+    room: Room<'a>,
+    /// The tokens one call's result may take.
+    share: usize,
+}
+
+impl Call<'_> {
+    /// One tool call's result text. A failure is told to the model (and noted
+    /// on the research) instead of ending the batch: the audit runs without it.
+    async fn run(
+        &self,
+        name: &str,
+        arguments: &Value,
+        scope: &mut Scope,
+        research: &mut Research,
+    ) -> String {
+        match name {
+            SEARCH => self.search(arguments, scope, research).await,
+            FETCH => self.fetch(arguments, scope, research).await,
+            other => format!("There is no tool named {other}."),
+        }
+    }
+
+    async fn search(
+        &self,
+        arguments: &Value,
+        scope: &mut Scope,
+        research: &mut Research,
+    ) -> String {
+        let Some(searches) = serde_json::from_value::<PlannedNeed>(arguments.clone())
+            .ok()
+            .and_then(PlannedNeed::searches)
+        else {
+            return "Search not run: give a query and rewordings that are not blank once any \
+                    site: operators are lifted out, a site that is an address, one of the \
+                    listed kinds, dates as YYYY-MM-DD, and for asOf the page's address as \
+                    identifier."
+                .into();
+        };
+        // A query naming several sites is one search per site, sharing
+        // the room the one call has. The call fails only when every
+        // search did: a site that fails leaves the others' answers.
+        let room = self.room.share(searches.len());
+        let mut hits: Vec<Hit> = Vec::new();
+        let mut answered = false;
+        let mut failure = None;
+        for need in &searches {
+            match self.web.search(need, room).await {
+                Ok(found) => {
+                    answered = true;
+                    for hit in found {
+                        if !hits.iter().any(|known| known.url == hit.url) {
+                            hits.push(Hit {
+                                title: hit.title,
+                                url: hit.url,
+                                snippet: hit.snippet,
+                            });
+                        }
+                    }
+                }
+                Err(error) => failure = Some(error),
+            }
+        }
+        if let (false, Some(error)) = (answered, failure) {
+            research.web_note = Some(format!("Web search was unavailable: {error}"));
+            return format!("Search failed: {error}");
+        }
+        let mut showing = scope.request();
+        let shown = match showing.show(&hits) {
+            Ok(shown) => shown,
+            Err(error) => return format!("Search failed: {error}"),
+        };
+        hits_view(&shown).text()
+    }
+
+    async fn fetch(&self, arguments: &Value, scope: &mut Scope, research: &mut Research) -> String {
+        let parameters = fetch_parameters();
+        let picked = match parameters.read(arguments, scope).handle::<Hit>("hit") {
+            Ok(picked) => picked,
+            Err(error) => return error.0,
+        };
+        let page = match self.web.save_page(&picked.reference).await {
+            Ok(page) => cut_page(self.llm, page, self.share),
+            Err(error) => return format!("Could not fetch or save that page: {error}"),
+        };
+        let units = Units::of(&page.text, Grain::Sentence);
+        let mut showing = scope.request();
+        let rows = match units.shown(&mut showing) {
+            Ok(shown) => units.rows(&shown),
+            Err(error) => return format!("Could not show that page: {error}"),
+        };
+        let text = View::new().line(&page.title).line(rows).text();
+        let known = research.fetched.iter().any(|seen| {
+            seen.source_version_id == page.source_version_id
+                && seen.start_byte == page.start_byte
+                && seen.end_byte == page.end_byte
+        });
+        if !known {
+            research.fetched.push(page);
+        }
+        text
+    }
 }
 
 #[cfg(test)]

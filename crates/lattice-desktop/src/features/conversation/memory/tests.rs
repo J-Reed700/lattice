@@ -193,12 +193,12 @@ fn proposed_supersession(
 
 fn verdict_response(pairs: &[(&str, &str)]) -> String {
     serde_json::json!({
-        "verdicts": pairs
+        "entries": pairs
             .iter()
-            .map(|(id, verdict)| serde_json::json!({
-                "id": id,
-                "verdict": verdict,
+            .map(|(of, verdict)| serde_json::json!({
+                "of": of,
                 "reason": "The quoted passage says this.",
+                "verdict": verdict,
             }))
             .collect::<Vec<_>>(),
     })
@@ -731,21 +731,157 @@ impl ConversationMemoryPort for FakePort {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Task {
     Extract,
-    Repair,
     Review,
     Summarize,
     Shrink,
+    Forgetting,
 }
 
 struct FakeLlm {
     extraction: Mutex<VecDeque<Result<String>>>,
     review: Mutex<VecDeque<Result<String>>>,
     summary: Mutex<VecDeque<Result<String>>>,
+    restating: Mutex<Vec<String>>,
+    existing: Mutex<Vec<String>>,
     calls: Mutex<Vec<Task>>,
     prompts: Mutex<Vec<String>>,
     request_limits: Mutex<Vec<(Option<String>, Option<u32>)>>,
     samplings: Mutex<Vec<Option<SamplingOverride>>>,
     requests: Mutex<Vec<CompletionRequest>>,
+}
+
+/// The labelled sentences of a prompt's passages: each passage's rows as (handle, text).
+fn labelled_rows(payload: &serde_json::Value) -> Vec<Vec<(String, String)>> {
+    ["segments", "context_passages"]
+        .iter()
+        .filter_map(|key| payload.get(*key).and_then(serde_json::Value::as_array))
+        .flatten()
+        .map(|passage| {
+            passage["text"]
+                .as_str()
+                .unwrap_or_default()
+                .lines()
+                .filter_map(|row| {
+                    let (label, words) = row.strip_prefix('[')?.split_once("] ")?;
+                    Some((label.to_string(), words.to_string()))
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// The handles of the sentences a scripted quote lies in.
+fn sentences_of_quote(passages: &[Vec<(String, String)>], quote: &str) -> Vec<String> {
+    let quote = quote.replace(['\r', '\n'], " ");
+    for passage in passages {
+        if let Some((label, _)) = passage.iter().find(|(_, words)| words.contains(&quote)) {
+            return vec![label.clone()];
+        }
+    }
+    for passage in passages {
+        let inside: Vec<String> = passage
+            .iter()
+            .filter(|(_, words)| quote.contains(words.as_str()))
+            .map(|(label, _)| label.clone())
+            .collect();
+        if !inside.is_empty() {
+            return inside;
+        }
+    }
+    Vec::new()
+}
+
+/// An answer scripted in the old patch form, written as the layer's items: each
+/// quote becomes the labelled sentences of the prompt it lies in, each message
+/// id and candidate id goes, and a transition holds the addition it names. Any
+/// other script is returned as it is.
+fn as_items(scripted: &str, prompt: &str, existing: &[String]) -> String {
+    let Ok(old) = serde_json::from_str::<serde_json::Value>(scripted) else {
+        return scripted.to_string();
+    };
+    let Some(add) = old.get("add").and_then(serde_json::Value::as_array) else {
+        return scripted.to_string();
+    };
+    let shown: serde_json::Value = serde_json::Deserializer::from_str(prompt)
+        .into_iter::<serde_json::Value>()
+        .next()
+        .and_then(std::result::Result::ok)
+        .unwrap_or_default();
+    let passages = labelled_rows(&shown);
+    let cited = |evidence: &serde_json::Value, purpose: bool| -> Vec<serde_json::Value> {
+        evidence
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|quote| {
+                let sentences =
+                    sentences_of_quote(&passages, quote["quote"].as_str().unwrap_or_default());
+                if purpose {
+                    serde_json::json!({"purpose": quote["purpose"], "sentences": sentences})
+                } else {
+                    serde_json::json!({"sentences": sentences})
+                }
+            })
+            .collect()
+    };
+    let addition = |item: &serde_json::Value| {
+        serde_json::json!({
+            "evidence": cited(&item["evidence"], true),
+            "kind": item["kind"],
+            "label": item["label"],
+        })
+    };
+    let candidate = |id: &serde_json::Value| add.iter().find(|item| item["candidate_id"] == *id);
+    let handle = |id: &str| {
+        existing
+            .iter()
+            .position(|known| known == id)
+            .map_or_else(|| "none".to_string(), |at| format!("m{}", at + 1))
+    };
+    let transitions = old["transitions"].as_array().cloned().unwrap_or_default();
+    let mut nested: Vec<serde_json::Value> = Vec::new();
+    let mut moves: Vec<serde_json::Value> = Vec::new();
+    for transition in &transitions {
+        let grounds = cited(&transition["evidence"], false);
+        let replacement = candidate(&transition["replacement_candidate_id"]);
+        let superseded = transition["state"] == "superseded";
+        let proposal = match (candidate(&transition["item_id"]), replacement) {
+            (Some(earlier), Some(later)) if superseded => {
+                nested.extend([
+                    earlier["candidate_id"].clone(),
+                    later["candidate_id"].clone(),
+                ]);
+                serde_json::json!({
+                    "kind": "correct",
+                    "evidence": grounds,
+                    "earlier": addition(earlier),
+                    "later": addition(later),
+                })
+            }
+            (_, Some(later)) if superseded => {
+                nested.push(later["candidate_id"].clone());
+                serde_json::json!({
+                    "kind": "supersede",
+                    "evidence": grounds,
+                    "item_id": handle(transition["item_id"].as_str().unwrap_or_default()),
+                    "replacement": addition(later),
+                })
+            }
+            _ => serde_json::json!({
+                "kind": "resolve",
+                "evidence": grounds,
+                "item_id": handle(transition["item_id"].as_str().unwrap_or_default()),
+            }),
+        };
+        moves.push(serde_json::json!({ "proposal": proposal }));
+    }
+    let mut items: Vec<serde_json::Value> = add
+        .iter()
+        .filter(|item| !nested.contains(&item["candidate_id"]))
+        .map(|item| serde_json::json!({"proposal": {"kind": "add", "addition": addition(item)}}))
+        .collect();
+    items.extend(moves);
+    serde_json::json!({ "items": items }).to_string()
 }
 
 impl FakeLlm {
@@ -758,6 +894,8 @@ impl FakeLlm {
             extraction: Mutex::new(extraction.into()),
             review: Mutex::new(review.into()),
             summary: Mutex::new(summary.into()),
+            restating: Mutex::new(Vec::new()),
+            existing: Mutex::new(Vec::new()),
             calls: Mutex::new(Vec::new()),
             prompts: Mutex::new(Vec::new()),
             request_limits: Mutex::new(Vec::new()),
@@ -768,6 +906,10 @@ impl FakeLlm {
 
     fn calls(&self) -> Vec<Task> {
         self.calls.lock().clone()
+    }
+
+    fn knows_items(&self, ids: Vec<String>) {
+        *self.existing.lock() = ids;
     }
 
     fn count(&self, task: Task) -> usize {
@@ -850,9 +992,62 @@ impl FakeLlm {
             .map(|prompt| {
                 let payload: serde_json::Value =
                     serde_json::from_str(prompt).expect("summary prompt JSON");
-                payload["previous_summary"].as_str().map(str::to_string)
+                payload["previous_summary"].as_str().map(|rows| {
+                    rows.lines()
+                        .filter_map(|row| row.split_once("] ").map(|(_, text)| text))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
             })
             .collect()
+    }
+
+    /// Summary lines holding `text` are judged to restate a forgotten fact.
+    fn restating(&self, text: &str) {
+        self.restating.lock().push(text.to_string());
+    }
+
+    /// The scripted summary `text`, written as the edit that makes it the
+    /// whole summary: every line the request shows under `key` removed, the
+    /// text inserted at the start.
+    fn rewriting(prompt: &str, key: &str, text: &str) -> String {
+        let payload: serde_json::Value = serde_json::from_str(prompt).expect("summary prompt JSON");
+        let shown: Vec<&str> = payload[key]
+            .as_str()
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|row| row.strip_prefix('[')?.split_once(']'))
+            .map(|(handle, _)| handle)
+            .collect();
+        serde_json::json!({
+            "insert": [{"after": "start", "with": text}],
+            "move": [],
+            "remove": shown,
+            "replace": [],
+        })
+        .to_string()
+    }
+
+    /// Every line the request shows is clear of the forgotten facts, except
+    /// the ones holding a text of `restating`.
+    fn judged(&self, prompt: &str) -> String {
+        let payload: serde_json::Value =
+            serde_json::from_str(prompt).expect("forgetting prompt JSON");
+        let restating = self.restating.lock().clone();
+        let entries: Vec<serde_json::Value> = payload["lines"]
+            .as_array()
+            .expect("forgetting lines")
+            .iter()
+            .filter_map(|row| row.as_str()?.strip_prefix('[')?.split_once("] "))
+            .map(|(handle, text)| {
+                let restates = restating.iter().any(|fact| text.contains(fact.as_str()));
+                serde_json::json!({
+                    "of": handle,
+                    "verdict": if restates { "restates" } else { "clear" },
+                })
+            })
+            .collect();
+        serde_json::json!({ "entries": entries }).to_string()
     }
 
     fn request_limits(&self) -> Vec<(Option<String>, Option<u32>)> {
@@ -869,11 +1064,10 @@ impl FakeLlm {
             .and_then(|v| v.get("task").and_then(|t| t.as_str()).map(str::to_string));
         let task = match parsed_task.as_deref() {
             Some("extract_memory") => Task::Extract,
-            Some("repair_memory_patch") => Task::Repair,
             Some("review_memory_changes") => Task::Review,
             Some("shrink_working_summary") => Task::Shrink,
+            Some("check_summary_for_forgotten_facts") => Task::Forgetting,
             _ if prompt.contains("\"extract_memory\"") => Task::Extract,
-            _ if prompt.contains("\"repair_memory_patch\"") => Task::Repair,
             _ if prompt.contains("\"review_memory_changes\"") => Task::Review,
             _ if prompt.contains("\"shrink_working_summary\"") => Task::Shrink,
             _ => Task::Summarize,
@@ -881,15 +1075,22 @@ impl FakeLlm {
         self.calls.lock().push(task);
         self.prompts.lock().push(prompt.to_string());
         let queue = match task {
-            Task::Extract | Task::Repair => &self.extraction,
+            Task::Extract => &self.extraction,
             Task::Review => &self.review,
             Task::Summarize | Task::Shrink => &self.summary,
+            Task::Forgetting => return Ok(self.judged(prompt)),
         };
-        queue.lock().pop_front().unwrap_or_else(|| {
+        let scripted = queue.lock().pop_front().unwrap_or_else(|| {
             Err(AppError::Other(format!(
                 "no scripted reply left for {task:?}"
             )))
-        })
+        });
+        match (task, scripted) {
+            (Task::Extract, Ok(text)) => Ok(as_items(&text, prompt, &self.existing.lock())),
+            (Task::Summarize, Ok(text)) => Ok(Self::rewriting(prompt, "previous_summary", &text)),
+            (Task::Shrink, Ok(text)) => Ok(Self::rewriting(prompt, "summary", &text)),
+            (_, other) => other,
+        }
     }
 }
 
@@ -902,7 +1103,7 @@ impl LLMPort for FakeLlm {
         ));
         self.samplings.lock().push(request.sampling);
         self.requests.lock().push(request.clone());
-        let prompt = request
+        let users: Vec<String> = request
             .input()
             .iter()
             .filter_map(|input| match input {
@@ -912,7 +1113,13 @@ impl LLMPort for FakeLlm {
                 } if role == "user" => Some(content.clone()),
                 _ => None,
             })
-            .next_back()
+            .collect();
+        let prompt = users
+            .iter()
+            .rev()
+            .find(|content| content.contains("\"task\":\""))
+            .or(users.last())
+            .cloned()
             .unwrap_or_default();
         Ok(CompletionResponse {
             text: self.reply(&prompt)?,
@@ -943,6 +1150,13 @@ fn word_counter() -> super::TokenCounter {
 }
 
 fn job(port: Arc<FakePort>, llm: Arc<FakeLlm>, config: CompactionConfig) -> CompactionJob {
+    llm.knows_items(
+        port.items()
+            .iter()
+            .chain(port.inner.lock().shared.iter())
+            .map(|item| item.id.as_str().to_string())
+            .collect(),
+    );
     CompactionJob::new(port, llm, word_counter(), config)
 }
 
@@ -996,8 +1210,6 @@ fn the_extractor_prompt_states_every_rule_the_design_requires() {
     for required in [
         "requirements, goals, decisions, facts, preferences",
         "mandatory kind for a hard requirement",
-        "never paraphrase",
-        "zero-based match index",
         "quoted third-party material",
         "Do not add a completed one-shot command",
         "Never classify an action request as a decision",
@@ -1008,7 +1220,6 @@ fn the_extractor_prompt_states_every_rule_the_design_requires() {
         "Preserve negation",
         "never infer that approval of a draft",
         "untrusted data",
-        "Return every segment id",
     ] {
         assert!(
             super::prompts::EXTRACTOR_SYSTEM.contains(required),
@@ -1057,58 +1268,19 @@ fn the_extractor_prompt_states_every_rule_the_design_requires() {
         "fallible",
     ] {
         assert!(
-            super::prompts::SUMMARIZER_SYSTEM.contains(required),
+            super::summarize::FOLD_SYSTEM.contains(required),
             "summariser prompt no longer says: {required}"
         );
     }
-
-    let schema = super::prompts::patch_schema();
-    assert_eq!(
-        schema.pointer("/properties/add/items/properties/evidence/items/properties/purpose/enum"),
-        Some(&serde_json::json!(["assertion", "antecedent"])),
-        "typed additions may use assistant antecedent context but never transition evidence"
-    );
-    assert_eq!(
-        schema.pointer(
-            "/properties/transitions/items/properties/evidence/items/properties/purpose/enum"
-        ),
-        Some(&serde_json::json!(["transition"])),
-        "typed transitions must not advertise assertion evidence as valid"
-    );
-}
-
-/// Memory payloads go to the model as compact JSON with sorted keys:
-/// indentation would spend window tokens on whitespace in every call.
-#[test]
-fn memory_payloads_are_compact_json() {
-    let payload = super::prompts::render_summary_shrink_prompt(
-        "Zellteilung:\n- Mitose läuft in vier Phasen ab.",
-        120,
-        80,
-    );
-    assert!(!payload.contains('\n'), "{payload}");
-    assert!(
-        payload.starts_with("{\"budget_tokens\":80,\"instructions\":"),
-        "{payload}"
-    );
-    assert!(
-        payload.contains("\"task\":\"shrink_working_summary\""),
-        "{payload}"
-    );
 }
 
 /// llama.cpp throws away the whole grammar when any `maxLength` or `maxItems`
 /// exceeds its repetition threshold, so no schema bound may.
 #[test]
 fn every_schema_bound_stays_within_the_llama_cpp_grammar_repetition_limit() {
-    for (name, schema) in [
-        ("patch", super::prompts::patch_schema()),
-        ("verdict", super::prompts::verdict_schema()),
-        (
-            "turn intent",
-            crate::features::conversation::chat::intent::intent_schema(),
-        ),
-    ] {
+    {
+        let name = "turn intent";
+        let schema = crate::features::conversation::chat::intent::intent_schema();
         let (bound, path) =
             lattice_core::application::ports::llm_port::largest_repetition_bound(&schema);
         assert!(
@@ -1119,49 +1291,6 @@ fn every_schema_bound_stays_within_the_llama_cpp_grammar_repetition_limit() {
     }
 }
 
-/// Every `maxLength`, and every `minLength` above 1, anywhere in `schema`,
-/// with its JSON pointer.
-fn text_length_bounds(schema: &serde_json::Value) -> Vec<String> {
-    fn walk(value: &serde_json::Value, path: &str, found: &mut Vec<String>) {
-        match value {
-            serde_json::Value::Object(map) => {
-                for (key, child) in map {
-                    let at = format!("{path}/{key}");
-                    let past_one = child.as_u64().is_some_and(|bound| bound > 1);
-                    if key.as_str() == "maxLength" || (key.as_str() == "minLength" && past_one) {
-                        found.push(at.clone());
-                    }
-                    walk(child, &at, found);
-                }
-            }
-            serde_json::Value::Array(items) => {
-                for (index, child) in items.iter().enumerate() {
-                    walk(child, &format!("{path}/{index}"), found);
-                }
-            }
-            _ => {}
-        }
-    }
-    let mut found = Vec::new();
-    walk(schema, "", &mut found);
-    found
-}
-
-/// Claude's structured outputs accept a `maxLength` and do not enforce it, and
-/// a llama.cpp grammar does, so a bound on what the model writes is a different
-/// rule for each provider. The labels and reasons are the model's to write at
-/// the length they need.
-#[test]
-fn no_memory_schema_bounds_the_length_of_what_the_model_writes() {
-    for (name, schema) in [
-        ("patch", super::prompts::patch_schema()),
-        ("verdict", super::prompts::verdict_schema()),
-    ] {
-        let bounds = text_length_bounds(&schema);
-        assert!(bounds.is_empty(), "{name} schema bounds text at {bounds:?}");
-    }
-}
-
 fn object_keys(value: Option<&serde_json::Value>) -> Vec<String> {
     value
         .and_then(serde_json::Value::as_object)
@@ -1169,36 +1298,47 @@ fn object_keys(value: Option<&serde_json::Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// llama.cpp builds the grammar in schema order. Sorted keys ask for an item's
-/// evidence before its kind and label and for a reason before its verdict;
-/// the workspace's `preserve_order` must not turn that around.
+/// The first `properties` object holding `key`, anywhere in `schema`.
+fn properties_holding<'a>(
+    schema: &'a serde_json::Value,
+    key: &str,
+) -> Option<&'a serde_json::Value> {
+    match schema {
+        serde_json::Value::Object(map) => map
+            .get("properties")
+            .filter(|properties| properties.get(key).is_some())
+            .or_else(|| {
+                map.values()
+                    .find_map(|child| properties_holding(child, key))
+            }),
+        serde_json::Value::Array(items) => items
+            .iter()
+            .find_map(|child| properties_holding(child, key)),
+        _ => None,
+    }
+}
+
+/// llama.cpp builds the grammar in schema order. An addition asks for its
+/// evidence before its kind and label, as the sorted keys did.
 #[test]
-fn memory_grammars_ask_for_the_grounds_before_the_decision() {
-    let patch = super::prompts::patch_schema();
-    assert_eq!(
-        object_keys(patch.pointer("/properties")),
-        [
-            "add",
-            "processed_segment_ids",
-            "schema_version",
-            "transitions"
-        ]
-    );
-    assert_eq!(
-        object_keys(patch.pointer("/properties/add/items/properties")),
-        ["candidate_id", "evidence", "kind", "label"]
-    );
-    let verdict = super::prompts::verdict_schema();
-    assert_eq!(
-        object_keys(verdict.pointer("/properties/verdicts/items/properties")),
-        ["id", "reason", "verdict"]
-    );
+fn the_extraction_grammar_asks_for_the_grounds_before_the_decision() {
+    use lattice_core::application::services::model_contract::shape::{Pointers, Shape};
+    let mut scope =
+        lattice_core::application::services::model_contract::shown::Scope::for_question();
+    let showing = scope.request();
+    type Answer = <super::extract::MemoryExtraction as lattice_core::application::services::model_contract::ask::Answered>::Answer;
+    let schema =
+        <Answer as Shape>::schema(&showing, Pointers::Plain).expect("the extraction schema");
+    let addition = properties_holding(schema.as_json(), "label").expect("an addition");
+    assert_eq!(object_keys(Some(addition)), ["evidence", "kind", "label"]);
 }
 
 /// The passages to extract are the last thing the extractor reads before it
-/// answers, after the coverage manifest and the rules.
+/// answers, after the rules.
 #[test]
 fn the_extraction_request_ends_with_the_passages_to_extract() {
+    use super::extract::{Input, MemoryExtraction};
+    use lattice_core::application::services::model_contract::ask::Answered;
     let source = message(
         "m1",
         1,
@@ -1206,9 +1346,13 @@ fn the_extraction_request_ends_with_the_passages_to_extract() {
         "Never deploy to production on a Friday.",
     );
     let segments = segment_message(&source, 512, 32);
-    let rendered = super::prompts::render_extractor_prompt(&segments, &[], &[]);
+    let input = Input::of(&segments, &[source], &[], &[]);
+    let mut scope =
+        lattice_core::application::services::model_contract::shown::Scope::for_question();
+    let mut showing = scope.request();
+    let says = MemoryExtraction::says(&input, &mut showing).expect("the extraction request");
     let payload: serde_json::Value =
-        serde_json::from_str(&rendered).expect("extraction payload JSON");
+        serde_json::from_str(&says.task).expect("extraction payload JSON");
 
     let keys = object_keys(Some(&payload));
     let mut sorted = keys.clone();
@@ -1222,25 +1366,12 @@ fn the_extraction_request_ends_with_the_passages_to_extract() {
     let mut sorted_segment_keys = segment_keys.clone();
     sorted_segment_keys.sort_unstable();
     assert_eq!(segment_keys, sorted_segment_keys);
-}
-
-#[test]
-fn a_repair_request_resends_the_original_passages_instead_of_asking_the_model_to_remember_them() {
-    let original = r#"{"segments":[{"message_id":"m1","text":"Use port 8443."}]}"#;
-    let rendered = super::prompts::render_repair_prompt(
-        "missing segment id",
-        "incomplete_coverage",
-        &["m1"],
-        &["m1:s0".to_string()],
-        original,
-        r#"{"processed_segment_ids":[]}"#,
+    assert_eq!(
+        payload
+            .pointer("/segments/0/text")
+            .and_then(serde_json::Value::as_str),
+        Some("[s1] Never deploy to production on a Friday.")
     );
-    let payload: serde_json::Value = serde_json::from_str(&rendered).expect("repair payload JSON");
-
-    assert_eq!(payload["original_extraction_request"], original);
-    assert!(payload["instructions"]
-        .as_str()
-        .is_some_and(|text| text.contains("does not require proposing an addition")));
 }
 
 #[test]
@@ -1367,14 +1498,14 @@ async fn a_timeout_or_cancellation_leaves_the_committed_state_usable_and_the_wat
 }
 
 #[tokio::test]
-async fn invalid_json_exhausts_bounded_repairs_and_commits_nothing() {
+async fn an_unreadable_answer_is_asked_for_once_more_and_then_commits_nothing() {
     let messages = four_turns();
     let port = FakePort::new(messages, Vec::new(), 0);
     let llm = FakeLlm::new(
         vec![
             Ok("I could not produce JSON, sorry.".to_string()),
             Ok("{ still not valid".to_string()),
-            Ok("{ still not valid either".to_string()),
+            Ok("{ never asked for".to_string()),
         ],
         vec![],
         vec![],
@@ -1387,8 +1518,11 @@ async fn invalid_json_exhausts_bounded_repairs_and_commits_nothing() {
         .expect_err("an unparseable patch cannot be committed");
     assert!(error.to_string().contains("rejected"), "{error}");
 
-    assert_eq!(llm.count(Task::Extract), 1);
-    assert_eq!(llm.count(Task::Repair), 2, "exactly two repair attempts");
+    assert_eq!(
+        llm.count(Task::Extract),
+        2,
+        "the answer and its one correction"
+    );
     assert_eq!(
         llm.count(Task::Summarize),
         0,
@@ -1417,7 +1551,7 @@ async fn a_repair_that_validates_is_committed_and_reported_as_repaired() {
                 &PREFIX_SEGMENTS,
             )),
         ],
-        vec![Ok(verdict_response(&[("addition:c1", "supported")]))],
+        vec![Ok(verdict_response(&[("r1", "supported")]))],
         vec![Ok("Approval gate discussed; staging allowed.".to_string())],
     );
     let job = job(port.clone(), llm.clone(), small_config());
@@ -1510,10 +1644,7 @@ async fn a_correction_here_reaches_a_fact_from_another_chat() {
             )],
             &PREFIX_SEGMENTS,
         ))],
-        vec![Ok(verdict_response(&[(
-            "transition:item-shared",
-            "supported",
-        )]))],
+        vec![Ok(verdict_response(&[("r1", "supported")]))],
         vec![Ok("Deployment is now allowed on staging.".to_string())],
     );
     let job = job(port.clone(), llm.clone(), small_config());
@@ -1560,10 +1691,7 @@ async fn an_unclear_correction_to_a_shared_item_quotes_only_this_chat() {
             )],
             &PREFIX_SEGMENTS,
         ))],
-        vec![Ok(verdict_response(&[(
-            "transition:item-shared",
-            "ambiguous",
-        )]))],
+        vec![Ok(verdict_response(&[("r1", "ambiguous")]))],
         vec![Ok("Deployment may have changed.".to_string())],
     );
     let job = job(port.clone(), llm.clone(), small_config());
@@ -1629,10 +1757,7 @@ async fn an_unsupported_retirement_is_dropped_without_stalling_source_coverage()
             )],
             &PREFIX_SEGMENTS,
         ))],
-        vec![Ok(verdict_response(&[(
-            "transition:item-old",
-            "unsupported",
-        )]))],
+        vec![Ok(verdict_response(&[("r1", "unsupported")]))],
         vec![Ok("Staging exception raised but unresolved.".to_string())],
     );
     let job = job(port.clone(), llm.clone(), small_config());
@@ -1684,9 +1809,9 @@ async fn reviewed_retirements() -> String {
             &PREFIX_SEGMENTS,
         ))],
         vec![Ok(verdict_response(&[
-            ("addition:c1", "supported"),
-            ("transition:item-old", "supported"),
-            ("transition:item-hold", "supported"),
+            ("r1", "supported"),
+            ("r2", "supported"),
+            ("r3", "supported"),
         ]))],
         vec![Ok("Staging may be deployed.".to_string())],
     );
@@ -1715,7 +1840,7 @@ fn review_of(prompt: &str, id: &str) -> serde_json::Value {
 async fn a_superseding_change_is_reviewed_as_proposing_its_replacement_not_the_item_it_retires() {
     let prompt = reviewed_retirements().await;
 
-    let transition = review_of(&prompt, "transition:item-old");
+    let transition = review_of(&prompt, "r2");
     assert_eq!(
         transition["proposed_label"],
         "Staging deploys need no approval"
@@ -1729,7 +1854,7 @@ async fn a_superseding_change_is_reviewed_as_proposing_its_replacement_not_the_i
         "Do not deploy until I approve."
     );
 
-    let addition = review_of(&prompt, "addition:c1");
+    let addition = review_of(&prompt, "r1");
     assert_eq!(
         addition["proposed_label"],
         "Staging deploys need no approval"
@@ -1741,7 +1866,7 @@ async fn a_superseding_change_is_reviewed_as_proposing_its_replacement_not_the_i
 async fn a_retirement_with_no_replacement_is_reviewed_with_no_proposed_label() {
     let prompt = reviewed_retirements().await;
 
-    let transition = review_of(&prompt, "transition:item-hold");
+    let transition = review_of(&prompt, "r3");
     assert_eq!(
         transition.get("proposed_label"),
         Some(&serde_json::Value::Null)
@@ -1777,8 +1902,8 @@ async fn an_unsupported_addition_is_filtered_without_poisoning_supported_memory(
             &PREFIX_SEGMENTS,
         ))],
         vec![Ok(verdict_response(&[
-            ("addition:c1", "supported"),
-            ("addition:c2", "unsupported"),
+            ("r1", "supported"),
+            ("r2", "unsupported"),
         ]))],
         vec![Ok("Approval gate discussed; staging allowed.".to_string())],
     );
@@ -1902,28 +2027,6 @@ async fn a_summary_that_fits_after_one_regeneration_is_committed() {
     assert!(outcome.summary_regenerated);
     assert_eq!(outcome.summary_tokens, 4);
     assert_eq!(port.commits(), 1);
-}
-
-#[tokio::test]
-async fn a_response_echoing_fewer_segment_ids_than_submitted_is_rejected_as_incomplete() {
-    let messages = four_turns();
-    let port = FakePort::new(messages, Vec::new(), 0);
-    let short = extraction_response(vec![], vec![], &["m1:s0"]);
-    let llm = FakeLlm::new(
-        vec![Ok(short.clone()), Ok(short.clone()), Ok(short)],
-        vec![],
-        vec![],
-    );
-    let job = job(port.clone(), llm.clone(), small_config());
-
-    job.run(CONVERSATION, CompactionRequest::default())
-        .await
-        .expect_err("an incomplete coverage report cannot be committed");
-
-    assert_eq!(llm.count(Task::Repair), 2);
-    assert_eq!(port.commits(), 0);
-    assert_eq!(port.watermark(), 0);
-    assert_eq!(port.errors(), vec!["incomplete_coverage".to_string()]);
 }
 
 #[tokio::test]
@@ -2061,7 +2164,7 @@ async fn a_failed_assistant_output_is_not_offered_as_extraction_source() {
         .into_iter()
         .next()
         .expect("an extraction prompt");
-    assert!(!prompt.contains("m2:s0"));
+    assert!(!prompt.contains("Understood, I will wait."));
     assert_eq!(
         outcome.processed_through_sequence, 4,
         "it is still covered by the watermark, not skipped forever"
@@ -2129,7 +2232,7 @@ async fn maintenance_consolidates_the_first_completed_turn_without_waiting_for_o
             vec![],
             &["m1:s0", "m2:s0"],
         ))],
-        vec![Ok(verdict_response(&[("addition:c1", "supported")]))],
+        vec![Ok(verdict_response(&[("r1", "supported")]))],
         vec![Ok("Deployment discussed.".into())],
     );
     let outcome = job(port.clone(), llm, small_config())
@@ -2223,14 +2326,17 @@ async fn a_regenerated_answer_refolds_the_turns_the_dropped_summary_covered() {
     );
     // Only the new answer is extracted: the ledger already covers the rest.
     assert_eq!(llm.count(Task::Extract), 2);
-    let second = llm.prompts_for(Task::Extract).pop().unwrap();
-    assert!(second.contains("m4b:s0"));
-    for covered in ["m1:s0", "m2:s0", "m3:s0"] {
-        assert!(
-            !second.contains(covered),
-            "{covered} must not be re-extracted"
-        );
-    }
+    let second: serde_json::Value =
+        serde_json::from_str(&llm.prompts_for(Task::Extract).pop().unwrap()).unwrap();
+    let segments = second["segments"].as_array().expect("segments");
+    assert_eq!(
+        segments.len(),
+        1,
+        "the covered turns must not be re-extracted"
+    );
+    assert!(segments[0]["text"]
+        .as_str()
+        .is_some_and(|text| text.contains("Noted again: staging only.")));
     assert_eq!(port.watermark(), 5);
     assert_eq!(
         port.summary().as_deref(),
@@ -2738,6 +2844,59 @@ async fn a_restated_forgotten_value_is_named_for_the_summariser_to_leave_out() {
     assert!(prompt.contains("Leave each of them out of the summary"));
 }
 
+/// The forgotten value comes back in words no span marks, and the summariser
+/// writes it down: the line is left out, the others stand.
+#[tokio::test]
+async fn a_summary_line_restating_a_forgotten_value_is_not_kept() {
+    let messages = private_turns();
+    let port = FakePort::new(
+        messages.clone(),
+        vec![fact_quoting("item-locker", &messages[0], "4471")],
+        4,
+    );
+    port.forget("item-locker");
+    port.append(message(
+        "k5",
+        5,
+        SourceRole::User,
+        "Scratch 4471, the locker was rekeyed.",
+    ));
+    port.append(message("k6", 6, SourceRole::Assistant, "Understood."));
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(vec![], vec![], &["k5:s0", "k6:s0"]))],
+        vec![],
+        vec![Ok("The locker was rekeyed, scratch 4471.
+The rekeying is noted."
+            .to_string())],
+    );
+    llm.restating("4471");
+    let job = job(port.clone(), llm.clone(), small_config());
+
+    job.run(CONVERSATION, refolding(6)).await.unwrap();
+
+    assert_eq!(llm.count(Task::Forgetting), 1);
+    assert_eq!(port.summary().as_deref(), Some("The rekeying is noted."));
+}
+
+/// Nothing was forgotten, so no line of the summary is checked against it.
+#[tokio::test]
+async fn a_summary_is_not_checked_when_nothing_was_forgotten() {
+    let port = FakePort::new(four_turns(), Vec::new(), 0);
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(vec![], vec![], &PREFIX_SEGMENTS))],
+        vec![],
+        summary_reply(),
+    );
+
+    job(port.clone(), llm.clone(), small_config())
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .unwrap();
+
+    assert_eq!(llm.count(Task::Forgetting), 0);
+    assert_eq!(port.summary().as_deref(), Some("Approval gate recorded."));
+}
+
 /// A rebuild discards the ledger and summarises from sequence zero; the
 /// user's forget outlives the items it was recorded against.
 #[tokio::test]
@@ -2797,7 +2956,7 @@ async fn a_rebuild_does_not_extract_a_forgotten_span_again() {
             vec![],
             &PRIVATE_SEGMENTS,
         ))],
-        vec![Ok(verdict_response(&[("addition:c2", "supported")]))],
+        vec![Ok(verdict_response(&[("r1", "supported")]))],
         summaries(1),
     );
     let job = job(port.clone(), llm.clone(), small_config());
@@ -2970,8 +3129,8 @@ async fn a_refold_never_runs_past_what_extraction_accepted() {
 
 /// What a model answers now and then in place of a review: the first id,
 /// "supported", and a reason that says nothing.
-fn hollow_reply(id: &str, reason: &str) -> String {
-    serde_json::json!({"verdicts": [{"id": id, "reason": reason, "verdict": "supported"}]})
+fn hollow_reply(of: &str, reason: &str) -> String {
+    serde_json::json!({"entries": [{"of": of, "reason": reason, "verdict": "supported"}]})
         .to_string()
 }
 
@@ -3030,8 +3189,8 @@ async fn a_verdict_that_gives_no_reason_is_not_a_review() {
         let llm = FakeLlm::new(
             deployment_constraint(),
             vec![
-                Ok(hollow_reply("addition:c1", reason)),
-                Ok(hollow_reply("addition:c1", reason)),
+                Ok(hollow_reply("r1", reason)),
+                Ok(hollow_reply("r1", reason)),
             ],
             summary_reply(),
         );
@@ -3057,8 +3216,8 @@ async fn a_hollow_reply_is_asked_for_again_and_the_real_reading_stands() {
     let llm = FakeLlm::new(
         deployment_constraint(),
         vec![
-            Ok(hollow_reply("addition:c1", "")),
-            Ok(verdict_response(&[("addition:c1", "unsupported")])),
+            Ok(hollow_reply("r1", "")),
+            Ok(verdict_response(&[("r1", "unsupported")])),
         ],
         summary_reply(),
     );
@@ -3084,8 +3243,8 @@ async fn reviews_a_reply_left_out_are_asked_for_again_on_their_own() {
     let llm = FakeLlm::new(
         two_constraints(),
         vec![
-            Ok(verdict_response(&[("addition:c1", "supported")])),
-            Ok(verdict_response(&[("addition:c2", "supported")])),
+            Ok(verdict_response(&[("r1", "supported")])),
+            Ok(verdict_response(&[("r2", "supported")])),
         ],
         summary_reply(),
     );
@@ -3098,8 +3257,8 @@ async fn reviews_a_reply_left_out_are_asked_for_again_on_their_own() {
 
     let prompts = llm.prompts_for(Task::Review);
     assert_eq!(prompts.len(), 2);
-    assert_eq!(reviewed_ids(&prompts[0]), ["addition:c1", "addition:c2"]);
-    assert_eq!(reviewed_ids(&prompts[1]), ["addition:c2"]);
+    assert_eq!(reviewed_ids(&prompts[0]), ["r1", "r2"]);
+    assert_eq!(reviewed_ids(&prompts[1]), ["r2"]);
     assert!(!outcome.review_degraded);
     assert_eq!(outcome.commit.inserts.len(), 2);
     assert!(outcome
@@ -3110,13 +3269,14 @@ async fn reviews_a_reply_left_out_are_asked_for_again_on_their_own() {
 }
 
 #[tokio::test]
-async fn a_review_still_left_out_after_the_second_ask_stays_ambiguous() {
+async fn a_review_still_unread_after_its_correction_stays_ambiguous() {
     let port = FakePort::new(four_turns(), Vec::new(), 0);
     let llm = FakeLlm::new(
         two_constraints(),
         vec![
-            Ok(verdict_response(&[("addition:c1", "supported")])),
-            Ok(hollow_reply("addition:c2", "")),
+            Ok(verdict_response(&[("r1", "supported")])),
+            Ok(hollow_reply("r2", "")),
+            Ok(hollow_reply("r2", "")),
         ],
         summary_reply(),
     );
@@ -3127,7 +3287,11 @@ async fn a_review_still_left_out_after_the_second_ask_stays_ambiguous() {
         .await
         .unwrap();
 
-    assert_eq!(llm.count(Task::Review), 2, "one more ask, and no further");
+    assert_eq!(
+        llm.count(Task::Review),
+        3,
+        "the left-out review is asked for once, corrected once, and no further"
+    );
     assert!(outcome.review_degraded);
     let review_of = |label: &str| {
         outcome
@@ -3154,7 +3318,7 @@ async fn a_review_reply_that_cannot_be_read_is_asked_for_again() {
         deployment_constraint(),
         vec![
             Ok("not the answer".to_string()),
-            Ok(verdict_response(&[("addition:c1", "supported")])),
+            Ok(verdict_response(&[("r1", "supported")])),
         ],
         summary_reply(),
     );
@@ -3177,7 +3341,7 @@ async fn a_provider_failure_is_not_asked_for_again() {
         deployment_constraint(),
         vec![
             Err(AppError::ServiceNotAvailable("no model".into())),
-            Ok(verdict_response(&[("addition:c1", "supported")])),
+            Ok(verdict_response(&[("r1", "supported")])),
         ],
         summary_reply(),
     );
@@ -3202,7 +3366,7 @@ async fn a_reason_in_a_script_written_without_spaces_is_a_reason() {
     let port = FakePort::new(four_turns(), Vec::new(), 0);
     let llm = FakeLlm::new(
         deployment_constraint(),
-        vec![Ok(hollow_reply("addition:c1", "用户明确说明了这一要求。"))],
+        vec![Ok(hollow_reply("r1", "用户明确说明了这一要求。"))],
         summary_reply(),
     );
     let job = job(port, llm.clone(), small_config());
@@ -3218,15 +3382,15 @@ async fn a_reason_in_a_script_written_without_spaces_is_a_reason() {
 }
 
 #[tokio::test]
-async fn a_second_ask_cannot_change_a_reading_it_did_not_ask_for() {
+async fn a_later_ask_cannot_change_a_reading_it_did_not_ask_for() {
     let port = FakePort::new(four_turns(), Vec::new(), 0);
     let llm = FakeLlm::new(
         two_constraints(),
         vec![
-            Ok(verdict_response(&[("addition:c1", "supported")])),
+            Ok(verdict_response(&[("r1", "supported")])),
             Ok(verdict_response(&[
-                ("addition:c1", "unsupported"),
-                ("addition:c2", "supported"),
+                ("r1", "unsupported"),
+                ("r2", "supported"),
             ])),
         ],
         summary_reply(),
@@ -3244,6 +3408,417 @@ async fn a_second_ask_cannot_change_a_reading_it_did_not_ask_for() {
         .inserts
         .iter()
         .all(|item| item.review == MemoryReview::Supported));
+}
+
+#[tokio::test]
+async fn the_review_request_names_each_change_by_its_handle_alone() {
+    let prompt = reviewed_retirements().await;
+
+    assert_eq!(reviewed_ids(&prompt), ["r1", "r2", "r3"]);
+    for identity in ["item-old", "item-hold", "addition:", "transition:", "c1\""] {
+        assert!(!prompt.contains(identity), "{identity} reached {prompt}");
+    }
+}
+
+#[tokio::test]
+async fn a_verdict_for_a_change_the_request_did_not_show_is_not_read() {
+    let port = FakePort::new(four_turns(), Vec::new(), 0);
+    let llm = FakeLlm::new(
+        two_constraints(),
+        vec![
+            Ok(verdict_response(&[
+                ("r1", "supported"),
+                ("r9", "supported"),
+            ])),
+            Ok(verdict_response(&[("r2", "unsupported")])),
+        ],
+        summary_reply(),
+    );
+    let job = job(port, llm.clone(), small_config());
+
+    let outcome = job
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .unwrap();
+
+    let prompts = llm.prompts_for(Task::Review);
+    assert_eq!(prompts.len(), 2);
+    assert_eq!(reviewed_ids(&prompts[1]), ["r2"]);
+    assert!(!outcome.review_degraded);
+    let [kept] = outcome.commit.inserts.as_slice() else {
+        panic!(
+            "expected the supported addition alone: {:?}",
+            outcome.commit.inserts
+        );
+    };
+    assert_eq!(kept.label, "Deployment requires approval");
+}
+
+#[tokio::test]
+async fn a_verdict_without_a_reason_is_corrected_on_its_own_while_the_others_stand() {
+    let port = FakePort::new(four_turns(), Vec::new(), 0);
+    let both = serde_json::json!({"entries": [
+        {"of": "r1", "reason": "The quoted passage says this.", "verdict": "supported"},
+        {"of": "r2", "reason": "", "verdict": "supported"},
+    ]})
+    .to_string();
+    let llm = FakeLlm::new(
+        two_constraints(),
+        vec![Ok(both), Ok(verdict_response(&[("r2", "supported")]))],
+        summary_reply(),
+    );
+    let job = job(port, llm.clone(), small_config());
+
+    let outcome = job
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .unwrap();
+
+    let prompts = llm.prompts_for(Task::Review);
+    assert_eq!(prompts.len(), 2);
+    assert_eq!(reviewed_ids(&prompts[1]), ["r2"]);
+    assert!(!outcome.review_degraded);
+    assert!(outcome
+        .commit
+        .inserts
+        .iter()
+        .all(|item| item.review == MemoryReview::Supported));
+}
+
+fn review_with_context(text: &str) -> super::verify::Input {
+    use super::verify::{Excerpt, Input, Passage, Review, Subject};
+    use lattice_core::application::services::model_contract::shown::{Internal, Told};
+    let harbour = |text: &str| Passage {
+        message_id: Told("m3".into()),
+        sequence: Told(3),
+        role: Told("user".into()),
+        text: Some(Told(text.into())),
+    };
+    let review = Review {
+        subject: Subject::Addition("c1".into()),
+        change: Told("add_mandatory_item".into()),
+        kind: Told("constraint".into()),
+        label: Some(Told("Tide tables are posted".into())),
+        proposed: vec![harbour("The tide table is posted.")],
+        existing: Vec::new(),
+        existing_label: None,
+        context: vec![Excerpt {
+            message_id: Told("m3".into()),
+            sequence: Told(3),
+            role: Told("user".into()),
+            text: Told(text.into()),
+            quoted: Internal::of(Some((0, 25))),
+        }],
+    };
+    Input::of(&[&review], 4.0)
+}
+
+fn surrounding_shown(input: &super::verify::Input) -> Vec<serde_json::Value> {
+    use super::verify::MemoryReview;
+    use lattice_core::application::services::model_contract::ask::Answered;
+    use lattice_core::application::services::model_contract::shown::Scope;
+    let mut scope = Scope::for_question();
+    let mut showing = scope.request();
+    let says = MemoryReview::says(input, &mut showing).expect("the review request");
+    let task: serde_json::Value = serde_json::from_str(&says.task).expect("review task JSON");
+    task["reviews"][0]["surrounding_original_text"]
+        .as_array()
+        .expect("surrounding text")
+        .clone()
+}
+
+#[test]
+fn the_surrounding_text_is_cut_to_the_room_the_window_leaves() {
+    use super::verify::MemoryReview;
+    use lattice_core::application::services::model_contract::ask::Answered;
+    let long = "The tide table is posted at the quay. ".repeat(20);
+    let input = review_with_context(&long);
+
+    let whole = surrounding_shown(&input);
+    assert_eq!(whole[0]["text"], long.as_str());
+    assert_eq!(whole[0]["truncated"], false);
+
+    let none = MemoryReview::within(&input, 0).expect("a cut input");
+    assert!(surrounding_shown(&none).is_empty());
+
+    let cut = MemoryReview::within(&input, 1).expect("a cut input");
+    let shown = surrounding_shown(&cut);
+    assert_eq!(shown[0]["truncated"], true);
+    assert_eq!(shown[0]["text"], "The tide table is posted.");
+
+    let roomy = MemoryReview::within(&input, 100_000).expect("a cut input");
+    assert_eq!(surrounding_shown(&roomy)[0]["truncated"], false);
+}
+
+#[test]
+fn the_review_request_holds_no_identity_of_the_app() {
+    use super::verify::{Excerpt, Input, MemoryReview, Passage, Review, Subject};
+    use lattice_core::application::services::model_contract::shown::Told;
+    use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
+    let mut marks = Marks::new();
+    let passage = Passage {
+        message_id: marks.told("message-quay-3".to_owned()),
+        sequence: Told(3),
+        role: marks.told("assistant".to_owned()),
+        text: Some(marks.told("The kiln closes at dusk.".to_owned())),
+    };
+    let excerpt = Excerpt {
+        message_id: marks.told("message-quay-3".to_owned()),
+        sequence: Told(3),
+        role: marks.told("assistant".to_owned()),
+        text: marks.told("The kiln closes at dusk, and the quay with it.".to_owned()),
+        quoted: marks.internal(Some((120_000_usize, 120_500_usize))),
+    };
+    let review = Review {
+        subject: marks.reference(Subject::Transition("candidate-kiln-9".to_owned())),
+        change: marks.told("supersede_item".to_owned()),
+        kind: marks.told("constraint".to_owned()),
+        label: Some(marks.told("The kiln closes at dusk".to_owned())),
+        proposed: vec![passage.clone()],
+        existing: vec![passage],
+        existing_label: Some(marks.told("The kiln closes at noon".to_owned())),
+        context: vec![excerpt],
+    };
+    let input = Input {
+        reviews: vec![review],
+        ..Input::of(&[], 4.0)
+    };
+    holds::<MemoryReview>(&input, &marks);
+}
+
+fn add_item(kind: &str, label: &str, sentence: &str) -> serde_json::Value {
+    serde_json::json!({"proposal": {"kind": "add", "addition": {
+        "evidence": [{"purpose": "assertion", "sentences": [sentence]}],
+        "kind": kind,
+        "label": label,
+    }}})
+}
+
+fn items_answer(items: Vec<serde_json::Value>) -> String {
+    serde_json::json!({ "items": items }).to_string()
+}
+
+#[tokio::test]
+async fn a_proposal_the_rules_refuse_is_left_out_and_the_others_stand() {
+    let port = FakePort::new(four_turns(), Vec::new(), 0);
+    let llm = FakeLlm::new(
+        vec![Ok(items_answer(vec![
+            add_item("constraint", "Deployment requires approval", "s1"),
+            add_item("constraint", "The assistant will wait", "s2"),
+        ]))],
+        vec![Ok(verdict_response(&[("r1", "supported")]))],
+        vec![Ok("Approval gate recorded.".to_string())],
+    );
+
+    let outcome = job(port.clone(), llm, small_config())
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.commit.inserts.len(), 1);
+    assert_eq!(
+        outcome.commit.inserts[0].label,
+        "Deployment requires approval"
+    );
+    assert!(port.errors().is_empty());
+    assert_eq!(port.watermark(), 4);
+}
+
+#[tokio::test]
+async fn an_answer_whose_proposals_cannot_be_read_leaves_the_batch_unprocessed() {
+    let port = FakePort::new(four_turns(), Vec::new(), 0);
+    let llm = FakeLlm::new(
+        vec![Ok(items_answer(vec![add_item(
+            "constraint",
+            "Deployment requires approval",
+            "s99",
+        )]))],
+        vec![],
+        vec![],
+    );
+
+    job(port.clone(), llm, small_config())
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .expect_err("an answer with no proposal that stands cannot be committed");
+
+    assert_eq!(port.commits(), 0);
+    assert_eq!(port.watermark(), 0);
+    assert_eq!(port.errors(), vec!["malformed_json".to_string()]);
+}
+
+#[tokio::test]
+async fn an_answer_whose_proposals_the_rules_all_refuse_leaves_the_batch_unprocessed() {
+    let port = FakePort::new(four_turns(), Vec::new(), 0);
+    let llm = FakeLlm::new(
+        vec![Ok(items_answer(vec![add_item(
+            "constraint",
+            "The assistant will wait",
+            "s2",
+        )]))],
+        vec![],
+        vec![],
+    );
+
+    job(port.clone(), llm, small_config())
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .expect_err("an answer with no proposal that stands cannot be committed");
+
+    assert_eq!(port.commits(), 0);
+    assert_eq!(port.watermark(), 0);
+    assert_eq!(port.errors(), vec!["malformed_json".to_string()]);
+}
+
+#[tokio::test]
+async fn an_answer_with_no_proposals_is_an_empty_patch() {
+    let port = FakePort::new(four_turns(), Vec::new(), 0);
+    let llm = FakeLlm::new(
+        vec![Ok(items_answer(Vec::new()))],
+        vec![],
+        vec![Ok("Nothing new to record.".to_string())],
+    );
+
+    let outcome = job(port.clone(), llm.clone(), small_config())
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .unwrap();
+
+    assert!(outcome.commit.updates.is_empty() && outcome.commit.inserts.is_empty());
+    assert_eq!(llm.count(Task::Review), 0, "nothing to review");
+    assert!(port.errors().is_empty());
+}
+
+#[tokio::test]
+async fn an_answer_that_does_not_end_leaves_the_batch_unprocessed() {
+    let whole = items_answer(vec![add_item(
+        "constraint",
+        "Deployment requires approval",
+        "s1",
+    )]);
+    let cut = whole.trim_end_matches("]}").to_string();
+    let port = FakePort::new(four_turns(), Vec::new(), 0);
+    let llm = FakeLlm::new(vec![Ok(cut)], vec![], vec![]);
+
+    job(port.clone(), llm.clone(), small_config())
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .expect_err("an answer that did not end cannot be committed");
+
+    assert_eq!(llm.count(Task::Extract), 1);
+    assert_eq!(port.commits(), 0);
+    assert_eq!(port.watermark(), 0);
+    assert_eq!(port.errors(), vec!["malformed_json".to_string()]);
+}
+
+#[tokio::test]
+async fn the_quoted_span_is_the_pointed_sentence_found_by_the_app_among_repeats() {
+    let mut messages = four_turns();
+    messages[0] = message("m1", 1, SourceRole::User, "Hold the kiln. Hold the kiln.");
+    let port = FakePort::new(messages, Vec::new(), 0);
+    let llm = FakeLlm::new(
+        vec![Ok(items_answer(vec![add_item(
+            "constraint",
+            "The kiln is held",
+            "s2",
+        )]))],
+        vec![Ok(verdict_response(&[("r1", "supported")]))],
+        vec![Ok("Kiln held.".to_string())],
+    );
+
+    let outcome = job(port, llm, small_config())
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .unwrap();
+
+    let span = &outcome.commit.inserts[0].evidence[0];
+    assert_eq!(span.message_id, "m1");
+    assert_eq!((span.start_byte, span.end_byte), (15, 29));
+}
+
+#[tokio::test]
+async fn a_supersede_proposal_retires_the_existing_item_by_its_handle() {
+    let messages = four_turns();
+    let port = FakePort::new(
+        messages.clone(),
+        vec![committed_constraint("item-old", &messages[0])],
+        0,
+    );
+    let llm = FakeLlm::new(
+        vec![Ok(items_answer(vec![serde_json::json!({"proposal": {
+            "kind": "supersede",
+            "evidence": [{"sentences": ["s3"]}],
+            "item_id": "m1",
+            "replacement": {
+                "evidence": [{"purpose": "assertion", "sentences": ["s3"]}],
+                "kind": "constraint",
+                "label": "Staging may be deployed",
+            },
+        }})]))],
+        vec![Ok(verdict_response(&[
+            ("r1", "supported"),
+            ("r2", "supported"),
+        ]))],
+        vec![Ok("Staging may be deployed.".to_string())],
+    );
+
+    let outcome = job(port.clone(), llm, small_config())
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.commit.inserts.len(), 1);
+    assert_eq!(
+        port.item("item-old").map(|item| item.state),
+        Some(MemoryState::Superseded)
+    );
+}
+
+#[test]
+fn the_extraction_request_holds_no_identity_of_the_app() {
+    use super::extract::{Context, Input, Memory, MemoryExtraction, Place, Segment, Sentence};
+    use lattice_core::application::services::model_contract::shown::{Internal, Told};
+    use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
+    let mut marks = Marks::new();
+    let sentence = |marks: &mut Marks, passage: usize, words: &str| Sentence {
+        place: marks.internal(Place {
+            message_id: "message-quay-3".to_owned(),
+            passage,
+            index: 0,
+            start: 120_000,
+            end: 120_040,
+        }),
+        text: marks.told(words.to_owned()),
+    };
+    let segment = Segment {
+        sequence: Told(3),
+        role: marks.told("user".to_owned()),
+        whole_message: Told(true),
+        context_before: marks.told("The tide table was posted at the quay.".to_owned()),
+        context_after: marks.told("The kiln was cold by evening.".to_owned()),
+        sentences: vec![sentence(&mut marks, 0, "The kiln closes at dusk.")],
+    };
+    let context = Context {
+        sequence: Told(2),
+        role: marks.told("assistant".to_owned()),
+        truncated: Told(false),
+        sentences: vec![sentence(&mut marks, 1, "The quay is open until noon.")],
+    };
+    let memory = Memory {
+        id: marks.internal(MemoryId::from_string("memory-kiln-77").unwrap()),
+        kind: marks.told("constraint".to_owned()),
+        label: marks.told("The harbour gate stays shut".to_owned()),
+        first_stated_at_sequence: Told(1),
+        last_changed_at_sequence: Told(2),
+    };
+    let input = Input {
+        segments: vec![segment],
+        context: vec![context],
+        memories: vec![memory],
+        messages: Internal::of(Vec::new()),
+        active: Internal::of(Vec::new()),
+    };
+    holds::<MemoryExtraction>(&input, &marks);
 }
 
 // ---------------------------------------------------------------------------
@@ -3301,9 +3876,9 @@ async fn snapshot_pass() -> Arc<FakeLlm> {
             &PREFIX_SEGMENTS,
         ))],
         vec![Ok(verdict_response(&[
-            ("addition:c1", "supported"),
-            ("transition:item-old", "supported"),
-            ("transition:item-hold", "supported"),
+            ("r1", "supported"),
+            ("r2", "supported"),
+            ("r3", "supported"),
         ]))],
         vec![Ok("Staging may be deployed.".to_string())],
     );
@@ -3327,6 +3902,11 @@ async fn prompt_snapshot_memory_review() {
 #[tokio::test]
 async fn prompt_snapshot_memory_fold() {
     assert_snapshot(snapshot_pass().await.as_ref(), "memory-fold");
+}
+
+#[tokio::test]
+async fn prompt_snapshot_memory_forgetting() {
+    assert_snapshot(snapshot_pass().await.as_ref(), "memory-forgetting");
 }
 
 #[tokio::test]

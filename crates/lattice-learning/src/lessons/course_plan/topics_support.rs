@@ -65,15 +65,18 @@ impl Topics {
     pub(super) fn task(&self, index: usize) -> Value {
         let request = self.request(index);
         let (_, user) = crate::lessons::structured_call::task_messages(&request);
-        serde_json::from_str(user).unwrap()
+        super::task_in(user).unwrap()
     }
 }
 
-/// An answer that gives `lessons` the idea `idea`.
-pub(super) fn change_answer(lessons: &[&str], idea: &str) -> String {
-    json!({"lessons":lessons.iter().map(|id| json!({
-        "lessonId":id,"ideas":[format!("{idea} of {id}")],"terms":["a changed term"],
-        "actions":[],"contrast":"a changed confusion"
+/// An answer that changes the ideas, terms and contrast of the lessons shown as `handles`, giving each the idea `idea`.
+pub(super) fn change_answer(handles: &[&str], idea: &str) -> String {
+    json!({"entries":handles.iter().map(|handle| json!({
+        "of":handle,"changes":[
+            {"to":{"kind":"ideas","topics":[{"topic":format!("{idea} of {handle}")}]}},
+            {"to":{"kind":"terms","topics":[{"topic":"a changed term"}]}},
+            {"to":{"kind":"contrast","contrast":"a changed confusion"}}
+        ]
     })).collect::<Vec<_>>()})
     .to_string()
 }
@@ -87,7 +90,7 @@ impl LLMPort for Topics {
         if let Some(plan) = fixture_response(user) {
             return Ok(CompletionResponse::from_text(plan));
         }
-        let task: Value = serde_json::from_str(user).unwrap();
+        let task = super::task_in(user).unwrap();
         assert_eq!(task["task"], CHANGE_TASK, "not a request this model knows");
         let hook = self.meanwhile.lock().unwrap().take();
         if let Some((pool, sql, program_id)) = hook {
@@ -99,13 +102,13 @@ impl LLMPort for Topics {
         }
         let given = self.answers.lock().unwrap().pop();
         let text = given.unwrap_or_else(|| {
-            let ids: Vec<&str> = task["lessonsToChange"]
+            let handles: Vec<&str> = task["lessonsToChange"]
                 .as_array()
                 .unwrap()
                 .iter()
                 .map(|id| id.as_str().unwrap())
                 .collect();
-            change_answer(&ids, "a changed idea")
+            change_answer(&handles, "a changed idea")
         });
         Ok(CompletionResponse::from_text(text))
     }

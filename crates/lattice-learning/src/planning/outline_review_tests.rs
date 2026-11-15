@@ -74,7 +74,7 @@ async fn an_open_finding_without_a_verdict_stays_open_and_is_asked_about_again()
     // The third review still asked about finding-1.
     assert_eq!(
         fixture_task(&prompts[5]).unwrap()["openFindings"][0]["id"],
-        "finding-1"
+        "f1"
     );
     Ok(())
 }
@@ -162,7 +162,7 @@ async fn verdicts_close_or_refresh_findings_and_the_reviewer_sees_current_text()
     let second_review = fixture_task(&prompts[3]).unwrap();
     assert_eq!(second_review["openFindings"][0]["claim"], first);
     let third_review = fixture_task(&prompts[5]).unwrap();
-    assert_eq!(third_review["openFindings"][0]["id"], "finding-1");
+    assert_eq!(third_review["openFindings"][0]["id"], "f1");
     assert_eq!(third_review["openFindings"][0]["claim"], second);
     assert_eq!(
         third_review["openFindings"][0]["reason"],
@@ -366,7 +366,7 @@ async fn a_verified_assertion_is_listed_to_the_reviewer_and_a_repeat_is_dropped_
     let recheck = fixture_task(&prompts[4]).unwrap();
     assert_eq!(recheck["verifiedAssertions"], json!([ADDITIONAL]));
     assert_eq!(recheck["openFindings"].as_array().unwrap().len(), 1);
-    assert_eq!(recheck["openFindings"][0]["id"], "finding-2");
+    assert_eq!(recheck["openFindings"][0]["id"], "f1");
     assert!(prompts[4].contains("do not raise them again"));
     // Two findings were raised by the first review; the repeat got no id.
     let saved = repo.outline_draft(&program.summary.id).await?.unwrap();

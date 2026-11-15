@@ -115,7 +115,9 @@ impl LLMPort for Searching {
 
 /// A plan of one search, for the gap of the claim the round is for.
 fn one_search() -> Value {
-    json!({"needs":[{"gap":0,"kind":"web","query":"random assignment confounding official guidance"}]})
+    crate::references::web_research::needs_answer(
+        json!([{"gap":0,"kind":"web","query":"random assignment confounding official guidance"}]),
+    )
 }
 
 type Scope<'a> = (&'a LearningCurriculumRepository, &'a str, &'a str);
@@ -451,7 +453,7 @@ async fn a_hint_whose_round_saved_nothing_is_answered_by_its_research_alone_and_
     let model = Searching::new(&[CLAIM]);
     // The search runs, and the selector finds no result worth saving.
     model.plans(Some(one_search()));
-    model.selects(json!({"decisions":[]}));
+    model.selects(json!({"marks":[]}));
     let raw = hinted(&db, scope, CLAIM).await?;
     let before = held(&db, &lesson_id).await?;
 

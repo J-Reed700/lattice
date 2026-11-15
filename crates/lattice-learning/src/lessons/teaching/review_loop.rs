@@ -1,14 +1,11 @@
 //! The review of generated material, one loop over a subject: fit, review,
 //! decide, repair, confine, save.
-use std::collections::VecDeque;
-
 use super::repair;
 use super::subject::{Decision, Pass, Settled, Step, Subject};
 use super::{json_or_text, ReviewSchema};
 use crate::lessons::structured_call::refusal;
 use crate::lessons::trace::{self, Cause, Stage};
 use crate::model_call::ErrorClass;
-use crate::outline_progress::OutlineStage;
 use crate::review_findings::{ReviewFinding, SetAside};
 use lattice_core::{
     application::ports::LLMPort,
@@ -46,13 +43,6 @@ pub(super) async fn review_material(
     subject.given(llm, &authoring);
     subject.save(&candidate).await?;
     for attempt in 0usize.. {
-        if let Some(progress) = subject.progress() {
-            progress.stage(if attempt == 0 {
-                OutlineStage::Reviewing
-            } else {
-                OutlineStage::CheckingRepair
-            });
-        }
         // fit
         let mut value = json_or_text(&candidate);
         if subject.settle_quotes(&mut value, &authoring, attempt) {
@@ -61,7 +51,6 @@ pub(super) async fn review_material(
             trace::changed(Stage::TeachingReview, &Cause::none(), &before, &candidate);
             subject.save(&candidate).await?;
         }
-        subject.select_sources(llm, &mut authoring, &value).await?;
         let quote_checks = subject.quote_checks(&value, &authoring);
         // review
         let pass = Pass {
@@ -110,9 +99,6 @@ pub(super) async fn review_material(
                     &format!("after review pass {attempt}"),
                 );
             }
-            if let Some(progress) = subject.progress() {
-                progress.stage(OutlineStage::Repairing);
-            }
             subject.step(Step::Repairing);
             let repairs = Repairs {
                 llm,
@@ -143,91 +129,74 @@ struct Repairs<'a> {
 }
 
 impl Repairs<'_> {
-    /// Repairs `send` in groups: a group whose repair cannot be made is
-    /// repaired as its two halves, the second against what the first made.
-    /// Returns whether the candidate changed.
+    /// Repairs `send` in one call. Returns whether the candidate changed.
     async fn make(
         &self,
         subject: &mut dyn Subject,
         candidate: &mut String,
         send: Vec<ReviewFinding>,
     ) -> Result<bool> {
-        let mut changed = false;
-        let mut groups = VecDeque::from([send]);
-        while let Some(group) = groups.pop_front() {
-            let previous = json_or_text(candidate);
-            let quote_checks = subject.quote_checks(&previous, self.authoring);
-            let request = repair::Request {
-                system: self.system,
-                schema: self.schema.value(),
-                authoring: self.authoring,
-                candidate: &previous,
-                quote_checks: &quote_checks,
-                issues: group
-                    .iter()
-                    .map(|finding| repair::Issue {
-                        finding,
-                        last_attempt: subject.last_attempt(finding),
-                    })
-                    .collect(),
-                edits: self.edits,
-                wording: subject.wording(),
-                output_tokens: self.output_tokens,
-            };
-            let made = repair::ask(self.llm, &request, subject.progress())
-                .await
-                .and_then(|repaired| subject.settle_repair(&previous, &group, repaired));
-            let settled = match made {
-                Ok(settled) => settled,
-                Err(error) => match ErrorClass::of(&error) {
-                    ErrorClass::Outage | ErrorClass::Unavailable | ErrorClass::Fault => {
-                        return Err(error)
-                    }
-                    _ if self.edits && group.len() > 1 => {
-                        let (first, second) = group.split_at(group.len() / 2);
-                        tracing::info!(%error, findings = group.len(), "The teaching repair could not be made for these findings together; each half is repaired on its own");
-                        trace::decided(
-                            Stage::TeachingRepair,
-                            &trace::group(&group),
-                            "split",
-                            &format!("the repair could not be made together; each half is repaired on its own: {error}"),
-                        );
-                        Settled::Split(first.to_vec(), second.to_vec())
-                    }
-                    class => {
-                        let reason = refusal(&error);
-                        trace::refused(Stage::TeachingRepair, &trace::group(&group), &reason, None);
-                        subject.unmade(&group, class, reason)?
-                    }
-                },
-            };
-            match settled {
-                Settled::Changed(text) => {
-                    trace::changed(
-                        Stage::TeachingRepair,
-                        &Cause::none().findings(&group),
-                        candidate.as_str(),
-                        &text,
-                    );
-                    *candidate = text;
-                    changed = true;
-                    subject.save(candidate).await?;
+        let previous = json_or_text(candidate);
+        let quote_checks = subject.quote_checks(&previous, self.authoring);
+        let request = repair::Request {
+            system: self.system,
+            schema: self.schema.value(),
+            authoring: self.authoring,
+            candidate: &previous,
+            quote_checks: &quote_checks,
+            issues: send
+                .iter()
+                .map(|finding| repair::Issue {
+                    finding,
+                    last_attempt: subject.last_attempt(finding),
+                })
+                .collect(),
+            wording: subject.wording(),
+            keeps: subject.keeps(),
+            output_tokens: self.output_tokens,
+        };
+        let made = if self.edits {
+            let mended = repair::mend(self.llm, &request).await;
+            mended.and_then(|mended| subject.settle_mended(&previous, &send, mended))
+        } else {
+            let text = repair::rewrite(self.llm, &request).await;
+            text.and_then(|text| subject.settle_rewrite(&previous, &send, &text))
+        };
+        let settled = match made {
+            Ok(settled) => settled,
+            Err(error) => match ErrorClass::of(&error) {
+                ErrorClass::Outage | ErrorClass::Unavailable | ErrorClass::Fault => {
+                    return Err(error)
                 }
-                Settled::Unchanged => {
-                    trace::decided(
-                        Stage::TeachingRepair,
-                        &trace::group(&group),
-                        "left the material unchanged",
-                        "the repair's edits changed nothing that could stay",
-                    );
-                    subject.save(candidate).await?
+                class => {
+                    let reason = refusal(&error);
+                    trace::refused(Stage::TeachingRepair, &trace::group(&send), &reason, None);
+                    subject.unmade(&send, class, reason)?
                 }
-                Settled::Split(first, second) => {
-                    groups.push_front(second);
-                    groups.push_front(first);
-                }
+            },
+        };
+        match settled {
+            Settled::Changed(text) => {
+                trace::changed(
+                    Stage::TeachingRepair,
+                    &Cause::none().findings(&send),
+                    candidate.as_str(),
+                    &text,
+                );
+                *candidate = text;
+                subject.save(candidate).await?;
+                Ok(true)
+            }
+            Settled::Unchanged => {
+                trace::decided(
+                    Stage::TeachingRepair,
+                    &trace::group(&send),
+                    "left the material unchanged",
+                    "the repair's edits changed nothing that could stay",
+                );
+                subject.save(candidate).await?;
+                Ok(false)
             }
         }
-        Ok(changed)
     }
 }

@@ -8,12 +8,13 @@ use crate::reference_collection::ReferenceCollection;
 use crate::review_findings::{FindingKind, FindingSite, ReviewFinding, Rule};
 use lattice_core::shared::text::same_text::{find, fold};
 use lattice_core::shared::text::{code_spans, sentences};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Source wording as folded runs of words, each long enough to be quoted in
 /// the words that are compared: a copy of a shorter span is no copy of the
 /// source. Folded once, when built.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Wording(Vec<Vec<String>>);
 
 impl Wording {

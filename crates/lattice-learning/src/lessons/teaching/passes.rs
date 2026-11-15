@@ -45,11 +45,10 @@ pub(in crate::lessons::teaching) const REPAIRS_PER_FINDING: u8 = 2;
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(super) enum Outcome {
     /// A change naming it was applied and stands.
+    #[serde(alias = "Reverted")]
     Applied,
     /// It was named, and none of its changes could be applied.
     NotApplied(Vec<String>),
-    /// Its changes were applied and put back: they touched a sentence that must stay.
-    Reverted,
     /// Its correction as a whole was refused: it changed what must stay or what it was not asked to change.
     Refused(Vec<String>),
     /// No change named it.
@@ -77,9 +76,6 @@ impl Outcome {
             Self::Applied => "its edits were applied and the defect was still found".to_owned(),
             Self::NotApplied(reasons) => {
                 format!("its edits could not be applied: {}", reasons.join(" "))
-            }
-            Self::Reverted => {
-                "its edits were put back: they touched a sentence that must stay".to_owned()
             }
             Self::Refused(reasons) => {
                 format!("its correction was refused: {}", reasons.join(" "))
@@ -372,7 +368,6 @@ impl Passes {
                 "The last repair's edits for this finding could not be applied: {}",
                 reasons.join(" ")
             ),
-            Outcome::Reverted => "The last repair's edits for this finding changed a sentence that must stay as it is; they were put back.".to_owned(),
             Outcome::Refused(reasons) => format!(
                 "The last repair's correction for this finding was refused, and none of its edits were applied: {}",
                 reasons.join(" ")

@@ -1,14 +1,23 @@
-//! Bounded strict-JSON prompts for the grounded practice tutor and grader.
+//! The grounded practice tutor, reference solution and grader.
 use crate::dto::*;
-use crate::lessons::structured_call::{complete_checked, complete_json};
+use crate::lessons::structured_call::Asking;
+use crate::reference_collection::{item_tokens, ReferenceCollection};
 use lattice_core::{
     application::{
         ports::LLMPort,
-        services::model_contract::{Contract, ContractCall, ContractId, PromptInput},
+        services::model_contract::{
+            ask::{self, ask, ask_each, Alone, Answered, Refusal, Says, Settled},
+            packed::Packed,
+            shape::{self, Authored, Each, Fields, Form, Vocabulary},
+            shown::{Drawn, Internal, Kind, Picked, Scope, Showing, Told},
+            units::{Grain, Quoted, Texts, Unit, Units},
+            Contract, ContractId,
+        },
     },
     shared::error::{AppError, Result},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 /// The task of a lesson with no written exercise of its own: its objective, and what the learner said they are
 /// preparing for when they said anything.
@@ -27,162 +36,401 @@ fn invalid(message: &str) -> AppError {
     AppError::InvalidInput(message.into())
 }
 
-struct TutorReply;
+/// What a criterion's result says when the grader never judged it.
+pub const NOT_JUDGED: &str =
+    "Evidence could not be graded reliably; review this response with a person.";
+
+pub(crate) struct TutorReply;
 
 impl Contract for TutorReply {
     const ID: ContractId = ContractId::new("practice-tutor-reply");
-    type Input = PromptInput;
+    type Input = TutorInput;
 }
 
-struct ReferenceSolution;
+pub(crate) struct ReferenceSolution;
 
 impl Contract for ReferenceSolution {
     const ID: ContractId = ContractId::new("practice-reference-solution");
-    type Input = PromptInput;
+    type Input = SolutionInput;
 }
 
-struct PracticeGrade;
+pub(crate) struct PracticeGrade;
 
 impl Contract for PracticeGrade {
     const ID: ContractId = ContractId::new("practice-grade");
-    type Input = PromptInput;
+    type Input = GradeInput;
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug)]
 pub struct TutorJson {
     pub response: String,
-    #[serde(default)]
     pub citations: Vec<LearningPracticeCitationDto>,
-    #[serde(default)]
     pub proposals: Vec<ProposalJson>,
 }
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[serde(rename_all = "camelCase")]
+
+#[derive(Debug)]
 pub struct ProposalJson {
     pub kind: LearningPracticeProposalKind,
     pub text: String,
     pub evidence_quote: Option<String>,
 }
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+
+#[derive(Debug)]
 pub struct SolutionJson {
     pub solution: String,
-    #[serde(default)]
     pub citations: Vec<LearningPracticeCitationDto>,
 }
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GradeJson {
-    pub status: LearningPracticeGradeStatus,
-    pub criteria: Vec<GradeCriterionJson>,
-}
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GradeCriterionJson {
-    pub criterion_id: String,
-    pub score: Option<i64>,
-    pub observation: String,
-    pub evidence_quote: Option<String>,
-}
 
-const TUTOR_SYSTEM: &str = "You are a subject-neutral learning tutor. Do not write or replace the learner's artifact. Keep feedback actionable and tied to the visible rubric. Respond to the learner's actual work and previous tutor turns. Prefer making the learner retrieve or explain before telling: ask what they remember about the relevant idea, or why their last step works. For an orienting hint ask one question about where to start; for a concept hint point to the relevant idea; for a partial strategy give only the next step. Never give the final answer in Practice mode, hints or critiques. A critique should identify the first specific reasoning gap, name the misconception behind it when one shows, and ask the learner to revise it. Acknowledge correct steps without praising unsupported conclusions. Cite only exact source passages from the supplied frozen snapshots. If none are supplied, tutor from the task and general knowledge, acknowledge uncertainty, and return empty citations. Never claim mastery.";
-const SOLUTION_SYSTEM: &str = "Give a concise worked reference solution for the learning task. Show each step with the reason it is taken, name the mistake learners most often make at the hardest step and why it fails, and end with one short variation of the task for the learner to try from memory, without its answer. When source snapshots are supplied, use them for factual claims. Without sources, use the stated task and general knowledge, acknowledge uncertainty, and return no citations. Cite exact quotations and do not imply that viewing this solution is evidence of learner ability.";
+const TUTOR_SYSTEM: &str = "You are a subject-neutral learning tutor. Do not write or replace the learner's artifact. Keep feedback actionable and tied to the visible rubric. Respond to the learner's actual work and previous tutor turns. Prefer making the learner retrieve or explain before telling: ask what they remember about the relevant idea, or why their last step works. For an orienting hint ask one question about where to start; for a concept hint point to the relevant idea; for a partial strategy give only the next step. Never give the final answer in Practice mode, hints or critiques. A critique should identify the first specific reasoning gap, name the misconception behind it when one shows, and ask the learner to revise it. Acknowledge correct steps without praising unsupported conclusions. Cite only sentences of the supplied frozen snapshots, each by the id in square brackets before it. If none are supplied, tutor from the task and general knowledge, acknowledge uncertainty, and return empty citations. Never claim mastery.";
+const TUTOR_FORM: &str = " Write response, then citations, the ids of the snapshot sentences you cite, then proposals; each proposal has a kind, its text, and evidence, the ids of the sentences of the learner's artifact it rests on, empty when it rests on none.";
+const SOLUTION_SYSTEM: &str = "Give a concise worked reference solution for the learning task. Show each step with the reason it is taken, name the mistake learners most often make at the hardest step and why it fails, and end with one short variation of the task for the learner to try from memory, without its answer. When source snapshots are supplied, use them for factual claims. Without sources, use the stated task and general knowledge, acknowledge uncertainty, and return no citations. Cite snapshot sentences by the id in square brackets before each, and do not imply that viewing this solution is evidence of learner ability.";
+const SOLUTION_FORM: &str =
+    " Write solution, then citations, the ids of the snapshot sentences you cite.";
+const GRADE_SYSTEM: &str = "Evaluate the learner artifact against each visible criterion. Scores are limited, provisional evidence, not mastery claims. For each criterion, identify what the learner did, the specific gap if any, and one actionable next revision. Each evidence cites the sentences of the submitted artifact that show what you observed, by the ids in square brackets before them; cite only sentences shown. Do not reward length or confident wording. A correct answer with flawed reasoning must lose reasoning credit. Give an observation tied to artifact text. Use none, never a score of zero, when there is no assessable work for a criterion. Zero means an observed incorrect attempt. Use none for every criterion when the artifact lacks enough evidence to judge. Return an entries array with one entry for each criterion in rubric, and set each entry's of to that criterion's id. In each entry write evidence, then observation, then score: the id of one of that criterion's scores, or none.";
 
-/// Tokens a practice call may still add to `prompt`: what its model's window
-/// leaves for material once `system`, `prompt` and the answer are paid for.
-fn window_room(
-    llm: &dyn LLMPort,
-    system: &str,
-    prompt: &serde_json::Value,
-    output_tokens: usize,
-) -> usize {
-    crate::reference_collection::snapshot_room(llm, system, prompt, output_tokens)
+/// A passage of a frozen source snapshot that a search found.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct Passage {
+    pub(crate) at: usize,
+    pub(crate) source_id: Internal<String>,
+    pub(crate) version_id: Internal<String>,
+    pub(crate) title: Told<String>,
+    pub(crate) text: Told<String>,
 }
 
-/// `prompt` with the newest whole tutor turns, newest first, while they fit
-/// half the room the tutor call's window leaves (the snapshots take the
-/// rest), and a line saying how many earlier turns are not shown.
-pub(crate) fn with_recent_turns(
-    llm: &dyn LLMPort,
-    mut prompt: serde_json::Value,
-    turns: &[LearningPracticeTutorTurnDto],
-) -> serde_json::Value {
-    let room = window_room(llm, TUTOR_SYSTEM, &prompt, 1400) / 2;
-    let mut shown = Vec::new();
-    let mut used = 0;
-    for turn in turns.iter().rev() {
-        let entry = serde_json::json!({"request":turn.prompt,"response":turn.response,"hintLevel":turn.hint_level});
-        let cost = llm.count_tokens(&entry.to_string()) + 1;
-        if used + cost > room {
-            break;
-        }
-        used += cost;
-        shown.push(entry);
+/// A tutor turn as the model is shown it, with the tokens showing it takes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct Turn {
+    pub(crate) entry: Told<serde_json::Value>,
+    pub(crate) tokens: usize,
+}
+
+/// What a tutor request says.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct TutorInput {
+    pub(crate) task_prompt: Told<String>,
+    pub(crate) objective: Told<String>,
+    pub(crate) artifact: Told<String>,
+    pub(crate) rubric: Told<serde_json::Value>,
+    pub(crate) mode: Told<serde_json::Value>,
+    pub(crate) revision_context: Told<Vec<serde_json::Value>>,
+    pub(crate) request_kind: Told<serde_json::Value>,
+    pub(crate) hint_level: Told<serde_json::Value>,
+    pub(crate) learner_request: Told<String>,
+    pub(crate) turns: Packed<Turn>,
+    pub(crate) turns_held: usize,
+    pub(crate) passages: Packed<Passage>,
+}
+
+/// What a reference-solution request says.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SolutionInput {
+    pub(crate) task_prompt: Told<String>,
+    pub(crate) objective: Told<String>,
+    pub(crate) passages: Packed<Passage>,
+}
+
+/// What a tutor proposal is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum ProposalWord {
+    Misconception,
+    FollowUp,
+}
+
+impl Vocabulary for ProposalWord {
+    const WORDS: &'static [(&'static str, Self)] = &[
+        ("misconception", Self::Misconception),
+        ("follow_up", Self::FollowUp),
+    ];
+}
+
+/// One proposal the tutor made, with the sentences of the learner's artifact it rests on.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Proposal {
+    kind: ProposalWord,
+    text: String,
+    evidence: Vec<Picked<Unit>>,
+}
+
+impl Authored for Proposal {
+    fn form() -> Form {
+        Form::new()
+            .word::<ProposalWord>("kind")
+            .text("text")
+            .cite::<Unit>("evidence")
     }
-    let earlier = turns.len() - shown.len();
-    if let Some(fields) = prompt.as_object_mut() {
-        fields.insert("recentTurns".into(), serde_json::Value::Array(shown));
-        fields.insert(
-            "earlierTurns".into(),
-            serde_json::json!(if earlier == 0 {
-                String::new()
-            } else {
-                format!("{earlier} earlier turns not shown")
-            }),
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(Self {
+            kind: fields.word("kind")?,
+            text: fields.text("text")?,
+            evidence: fields.cite("evidence"),
+        })
+    }
+}
+
+/// The tutor's reply.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct TutorSays {
+    response: String,
+    citations: Vec<Picked<Quoted>>,
+    proposals: Vec<Proposal>,
+}
+
+impl Authored for TutorSays {
+    fn form() -> Form {
+        Form::new()
+            .text("response")
+            .cite::<Quoted>("citations")
+            .list::<Proposal>("proposals")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(Self {
+            response: fields.text("response")?,
+            citations: fields.cite("citations"),
+            proposals: fields.list("proposals")?,
+        })
+    }
+}
+
+/// The worked solution.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct SolutionSays {
+    solution: String,
+    citations: Vec<Picked<Quoted>>,
+}
+
+impl Authored for SolutionSays {
+    fn form() -> Form {
+        Form::new().text("solution").cite::<Quoted>("citations")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(Self {
+            solution: fields.text("solution")?,
+            citations: fields.cite("citations"),
+        })
+    }
+}
+
+/// The passages as texts of sentences, each a text of its place in the search.
+fn passage_texts<'a>(passages: impl Iterator<Item = &'a Passage>) -> Texts<usize> {
+    let mut texts = Texts::new();
+    for passage in passages {
+        texts.push(
+            passage.at,
+            &passage.at.to_string(),
+            &passage.text.0,
+            Grain::Sentence,
         );
     }
-    prompt
+    texts
 }
 
-/// `prompt` with the snapshot passages `query` retrieves, as many as the
-/// request's window leaves room for, under `sourceSnapshots`.
-async fn with_snapshots(
+/// The snapshots as the request shows them: per source version, its passages' sentences as rows.
+fn snapshots(passages: &Packed<Passage>, showing: &mut Showing<'_>) -> Result<serde_json::Value> {
+    let texts = passage_texts(passages.iter());
+    let mut groups: Vec<(String, String, Vec<String>)> = Vec::new();
+    for (passage, (_, units)) in passages.iter().zip(texts.iter()) {
+        let quotable = units.quoted();
+        let shown = showing.show(&quotable)?;
+        let rows = units.rows(&shown);
+        let version = passage.version_id.value();
+        match groups.iter_mut().find(|(held, _, _)| held == version) {
+            Some((_, _, rows_of)) => rows_of.push(rows),
+            None => groups.push((version.clone(), passage.title.0.clone(), vec![rows])),
+        }
+    }
+    Ok(serde_json::Value::Array(
+        groups
+            .into_iter()
+            .map(|(_, title, rows)| json!({"title": title, "passages": rows}))
+            .collect(),
+    ))
+}
+
+impl Answered for TutorReply {
+    type Answer = shape::Value<TutorSays>;
+    const ALONE: Alone = Alone::Fails;
+
+    fn within(input: &TutorInput, room: usize) -> Option<TutorInput> {
+        let turns = input.turns.within(room / 2);
+        let used: usize = turns.iter().map(|turn| turn.tokens).sum();
+        Some(TutorInput {
+            turns,
+            passages: input.passages.within(room.saturating_sub(used)),
+            ..input.clone()
+        })
+    }
+
+    fn says(input: &TutorInput, showing: &mut Showing<'_>) -> Result<Says> {
+        let units = Units::of(&input.artifact.0, Grain::Sentence);
+        let artifact = units.shown(showing)?;
+        let snapshots = snapshots(&input.passages, showing)?;
+        let turns: Vec<serde_json::Value> = input
+            .turns
+            .iter()
+            .map(|turn| turn.entry.0.clone())
+            .collect();
+        let earlier = input.turns_held.saturating_sub(turns.len());
+        let earlier_note = if earlier == 0 {
+            String::new()
+        } else {
+            format!("{earlier} earlier turns not shown")
+        };
+        let task = json!({"taskPrompt":input.task_prompt,"objective":input.objective,"learnerArtifact":units.rows(&artifact),"rubric":input.rubric,"mode":input.mode,"recentTurns":turns,"earlierTurns":earlier_note,"revisionContext":input.revision_context,"requestKind":input.request_kind,"hintLevel":input.hint_level,"learnerRequest":input.learner_request,"sourceSnapshots":snapshots});
+        let mut says = Says::new(format!("{TUTOR_SYSTEM}{TUTOR_FORM}"), task.to_string());
+        says.output_tokens = 1400;
+        Ok(says)
+    }
+
+    fn accept(_input: &TutorInput, said: &TutorSays) -> std::result::Result<(), Refusal> {
+        if said.response.trim().is_empty() {
+            return Err(Refusal("Write the tutor's reply in response.".into()));
+        }
+        if said.proposals.iter().any(|p| p.text.trim().is_empty()) {
+            return Err(Refusal("Write the text of every proposal.".into()));
+        }
+        Ok(())
+    }
+}
+
+impl Answered for ReferenceSolution {
+    type Answer = shape::Value<SolutionSays>;
+    const ALONE: Alone = Alone::Fails;
+
+    fn within(input: &SolutionInput, room: usize) -> Option<SolutionInput> {
+        Some(SolutionInput {
+            passages: input.passages.within(room),
+            ..input.clone()
+        })
+    }
+
+    fn says(input: &SolutionInput, showing: &mut Showing<'_>) -> Result<Says> {
+        let snapshots = snapshots(&input.passages, showing)?;
+        let task = json!({"taskPrompt":input.task_prompt,"objective":input.objective,"sourceSnapshots":snapshots});
+        let mut says = Says::new(
+            format!("{SOLUTION_SYSTEM}{SOLUTION_FORM}"),
+            task.to_string(),
+        );
+        says.output_tokens = 1400;
+        Ok(says)
+    }
+
+    fn accept(_input: &SolutionInput, said: &SolutionSays) -> std::result::Result<(), Refusal> {
+        if said.solution.trim().is_empty() {
+            return Err(Refusal("Write the worked solution in solution.".into()));
+        }
+        Ok(())
+    }
+}
+
+/// The passages of the frozen snapshots that `query` retrieves, best first, while the first `room` tokens hold them all.
+async fn found_passages(
     llm: &dyn LLMPort,
-    system: &str,
-    mut prompt: serde_json::Value,
     sources: &[LearningSourceVersionDto],
     query: &str,
-    output_tokens: usize,
-) -> Result<String> {
-    let room = window_room(llm, system, &prompt, output_tokens);
-    let passages =
-        crate::reference_collection::snapshot_passages(llm, sources, query, room).await?;
-    if let Some(fields) = prompt.as_object_mut() {
-        fields.insert("sourceSnapshots".into(), passages);
+    room: usize,
+) -> Result<Vec<Passage>> {
+    let documents: Vec<LearningSourceDto> = sources
+        .iter()
+        .map(|source| LearningSourceDto {
+            id: source.version.id.clone(),
+            title: source.version.title.clone(),
+            url: None,
+            excerpt: source.full_text.clone(),
+            acquired_at: 0,
+        })
+        .collect();
+    let collection = ReferenceCollection::lexical(&documents)?;
+    let found = collection
+        .retrieve_within(query, |passages| {
+            passages
+                .iter()
+                .map(|passage| item_tokens(llm, &json!(passage.text)))
+                .sum::<usize>()
+                <= room
+        })
+        .await?;
+    Ok(found
+        .into_iter()
+        .enumerate()
+        .filter_map(|(at, passage)| {
+            let source = sources
+                .iter()
+                .find(|source| source.version.id == passage.source_id)?;
+            Some(Passage {
+                at,
+                source_id: Internal::of(source.source_id.clone()),
+                version_id: Internal::of(source.version.id.clone()),
+                title: Told(source.version.title.clone()),
+                text: Told(passage.text),
+            })
+        })
+        .collect())
+}
+
+/// The passages as material a request packs, the best first.
+fn packed(llm: &dyn LLMPort, passages: &[Passage]) -> Packed<Passage> {
+    Packed::new(passages.to_vec(), |passage| {
+        item_tokens(llm, &json!(passage.text))
+    })
+}
+
+/// The tutor turns, the newest first, as material a request packs.
+fn recent(llm: &dyn LLMPort, turns: &[LearningPracticeTutorTurnDto]) -> Packed<Turn> {
+    let shown = turns
+        .iter()
+        .rev()
+        .map(|turn| {
+            let entry =
+                json!({"request":turn.prompt,"response":turn.response,"hintLevel":turn.hint_level});
+            let tokens = llm.count_tokens(&entry.to_string()) + 1;
+            Turn {
+                entry: Told(entry),
+                tokens,
+            }
+        })
+        .collect();
+    Packed::new(shown, |turn| turn.tokens)
+}
+
+/// The citations the cited sentences make, each with the source version its passage is of.
+fn citations(passages: &[Passage], cited: &[Picked<Quoted>]) -> Vec<LearningPracticeCitationDto> {
+    let texts = passage_texts(passages.iter());
+    cited
+        .iter()
+        .filter_map(|picked| {
+            let (at, quote) = texts.found(picked.reference)?;
+            let passage = passages.iter().find(|passage| passage.at == *at)?;
+            Some(LearningPracticeCitationDto {
+                source_id: passage.source_id.value().clone(),
+                version_id: passage.version_id.value().clone(),
+                quote: quote.to_owned(),
+            })
+        })
+        .collect()
+}
+
+/// The words of the cited sentences of the learner's artifact, or none when it cites none.
+fn quoted(units: &Units, evidence: &[Picked<Unit>]) -> Option<String> {
+    let words: Vec<&str> = evidence
+        .iter()
+        .filter_map(|picked| units.text_of(picked.reference))
+        .collect();
+    (!words.is_empty()).then(|| words.join(" "))
+}
+
+fn asking() -> Asking<'static> {
+    Asking {
+        progress: None,
+        reasoning: None,
     }
-    Ok(prompt.to_string())
 }
-fn tutor_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type":"object", "additionalProperties":false,
-        "required":["response","citations","proposals"],
-        "properties": {
-            "response":{"type":"string","minLength":1},
-            "citations":{"type":"array","items":{
-                "type":"object","additionalProperties":false,
-                "required":["sourceId","versionId","quote"],
-                "properties":{"sourceId":{"type":"string"},"versionId":{"type":"string"},"quote":{"type":"string","minLength":1}}
-            }},
-            "proposals":{"type":"array","items":{
-                "type":"object","additionalProperties":false,
-                "required":["kind","text","evidenceQuote"],
-                "properties":{"kind":{"enum":["misconception","follow_up"]},"text":{"type":"string","minLength":1},"evidenceQuote":{"type":["string","null"]}}
-            }}
-        }
-    })
-}
-fn solution_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type":"object", "additionalProperties":false,
-        "required":["solution","citations"],
-        "properties":{"solution":{"type":"string","minLength":1},"citations":{"type":"array","items":{
-            "type":"object","additionalProperties":false,
-            "required":["sourceId","versionId","quote"],
-            "properties":{"sourceId":{"type":"string"},"versionId":{"type":"string"},"quote":{"type":"string","minLength":1}}
-        }}}
-    })
+
+fn unusable(what: &str) -> AppError {
+    AppError::ModelAnswerUnusable(format!("The {what} could not be used."))
 }
 
 pub async fn tutor(
@@ -191,31 +439,60 @@ pub async fn tutor(
     request: &RequestLearningTutorResponseRequestDto,
     sources: &[LearningSourceVersionDto],
 ) -> Result<TutorJson> {
-    let prompt = serde_json::json!({"taskPrompt":session.task_prompt,"objective":session.lesson_objective,"learnerArtifact":session.artifact.text,"rubric":session.rubric,"mode":session.summary.mode,"recentTurns":[],"earlierTurns":"","revisionContext":session.assistance.iter().filter(|a|a.details.get("revisesSessionId").is_some()).map(|a|&a.details).collect::<Vec<_>>(),"requestKind":request.request_kind,"hintLevel":request.hint_level,"learnerRequest":request.prompt,"sourceSnapshots":[]});
+    let call = crate::model_call::answer_options();
+    let revision_context = session
+        .assistance
+        .iter()
+        .filter(|a| a.details.get("revisesSessionId").is_some())
+        .map(|a| a.details.clone())
+        .collect();
+    let mut input = TutorInput {
+        task_prompt: Told(session.task_prompt.clone()),
+        objective: Told(session.lesson_objective.clone()),
+        artifact: Told(session.artifact.text.clone()),
+        rubric: Told(json!(session.rubric)),
+        mode: Told(json!(session.summary.mode)),
+        revision_context: Told(revision_context),
+        request_kind: Told(json!(request.request_kind)),
+        hint_level: Told(json!(request.hint_level)),
+        learner_request: Told(request.prompt.clone()),
+        turns: recent(llm, &session.tutor_turns),
+        turns_held: session.tutor_turns.len(),
+        passages: Packed::default(),
+    };
+    let room = ask::room::<TutorReply>(
+        llm,
+        &TutorInput {
+            turns: Packed::default(),
+            ..input.clone()
+        },
+        &call,
+    )?;
     let query = format!("{} {}", session.task_prompt, request.prompt);
-    let prompt = with_recent_turns(llm, prompt, &session.tutor_turns);
-    let prompt = with_snapshots(llm, TUTOR_SYSTEM, prompt, sources, &query, 1400).await?;
-    let call = ContractCall::of::<TutorReply>(&PromptInput {
-        system: TUTOR_SYSTEM.to_owned(),
-        prompt: prompt.clone(),
-    })?;
-    let raw = complete_json(llm, &call, TUTOR_SYSTEM, prompt, tutor_schema(), 1400).await?;
-    let parsed: TutorJson = serde_json::from_str(&raw)
-        .map_err(|_| invalid("The tutor returned malformed structured feedback."))?;
-    if parsed.response.trim().is_empty() {
-        return Err(invalid("The tutor returned an empty response."));
-    }
-    validate_citations(&parsed.citations, sources)?;
-    for p in &parsed.proposals {
-        if p.text.trim().is_empty()
-            || p.evidence_quote
-                .as_ref()
-                .is_some_and(|q| !q.is_empty() && !session.artifact.text.contains(q))
-        {
-            return Err(invalid("Tutor proposal contains invalid evidence."));
-        }
-    }
-    Ok(parsed)
+    let found = found_passages(llm, sources, &query, room).await?;
+    input.passages = packed(llm, &found);
+    let settled =
+        ask::<TutorReply>(llm, &asking(), &mut Scope::for_question(), &input, &call).await?;
+    let Settled::Answered(said) = settled else {
+        return Err(unusable("tutor's answer"));
+    };
+    let units = Units::of(&session.artifact.text, Grain::Sentence);
+    Ok(TutorJson {
+        response: said.response,
+        citations: citations(&found, &said.citations),
+        proposals: said
+            .proposals
+            .into_iter()
+            .map(|proposal| ProposalJson {
+                kind: match proposal.kind {
+                    ProposalWord::Misconception => LearningPracticeProposalKind::Misconception,
+                    ProposalWord::FollowUp => LearningPracticeProposalKind::FollowUp,
+                },
+                text: proposal.text,
+                evidence_quote: quoted(&units, &proposal.evidence),
+            })
+            .collect(),
+    })
 }
 
 /// A worked solution, its snapshots sized from the model's window as the
@@ -225,21 +502,25 @@ pub async fn solution(
     session: &LearningPracticeSessionDto,
     sources: &[LearningSourceVersionDto],
 ) -> Result<SolutionJson> {
-    let prompt = serde_json::json!({"taskPrompt":session.task_prompt,"objective":session.lesson_objective,"sourceSnapshots":[]});
+    let call = crate::model_call::answer_options();
+    let mut input = SolutionInput {
+        task_prompt: Told(session.task_prompt.clone()),
+        objective: Told(session.lesson_objective.clone()),
+        passages: Packed::default(),
+    };
+    let room = ask::room::<ReferenceSolution>(llm, &input, &call)?;
     let query = format!("{} {}", session.task_prompt, session.lesson_objective);
-    let prompt = with_snapshots(llm, SOLUTION_SYSTEM, prompt, sources, &query, 1400).await?;
-    let call = ContractCall::of::<ReferenceSolution>(&PromptInput {
-        system: SOLUTION_SYSTEM.to_owned(),
-        prompt: prompt.clone(),
-    })?;
-    let raw = complete_json(llm, &call, SOLUTION_SYSTEM, prompt, solution_schema(), 1400).await?;
-    let parsed: SolutionJson = serde_json::from_str(&raw)
-        .map_err(|_| invalid("The model returned a malformed reference solution."))?;
-    if parsed.solution.trim().is_empty() {
-        return Err(invalid("The reference solution was empty."));
-    }
-    validate_citations(&parsed.citations, sources)?;
-    Ok(parsed)
+    let found = found_passages(llm, sources, &query, room).await?;
+    input.passages = packed(llm, &found);
+    let settled =
+        ask::<ReferenceSolution>(llm, &asking(), &mut Scope::for_question(), &input, &call).await?;
+    let Settled::Answered(said) = settled else {
+        return Err(unusable("reference solution"));
+    };
+    Ok(SolutionJson {
+        solution: said.solution,
+        citations: citations(&found, &said.citations),
+    })
 }
 
 pub fn validate_citations(
@@ -263,38 +544,109 @@ pub fn validate_citations(
     Ok(())
 }
 
-/// The grounds come before the decision: a constrained decoder writes these
-/// fields in this order, and with the score first it commits to a number, or to
-/// `uncertain`, before it has read the answer back.
-pub(crate) fn grade_schema(rubric: &[LearningPracticeCriterionDto]) -> serde_json::Value {
-    serde_json::json!({
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["criteria", "status"],
-        "properties": {
-            "criteria": {
-                "type": "array",
-                "minItems": rubric.len(),
-                "maxItems": rubric.len(),
-                "items": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": ["criterion_id", "evidence_quote", "observation", "score"],
-                    "properties": {
-                        "criterion_id": { "type": "string" },
-                        "evidence_quote": { "type": ["string", "null"] },
-                        "observation": { "type": "string", "minLength": 1 },
-                        "score": {
-                            "type": ["integer", "null"],
-                            "minimum": 0,
-                            "maximum": rubric.iter().map(|c| c.max_points).max().unwrap_or(4)
-                        }
-                    }
-                }
-            },
-            "status": { "enum": ["provisional", "uncertain"] }
+/// A criterion of the rubric: what a grade entry is about.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct Criterion {
+    pub(crate) criterion: LearningPracticeCriterionDto,
+}
+
+impl Kind for Criterion {
+    const PREFIX: &'static str = "c";
+    const DRAWN: Drawn = Drawn::Itself;
+    type Ref = String;
+
+    fn reference(&self) -> String {
+        self.criterion.id.clone()
+    }
+}
+
+/// A score a criterion may be given: its own points, from zero to its own maximum.
+#[derive(Debug, Clone)]
+pub(crate) struct Level {
+    points: i64,
+}
+
+impl Kind for Level {
+    const PREFIX: &'static str = "l";
+    const DRAWN: Drawn = Drawn::Number;
+    type Ref = i64;
+
+    fn reference(&self) -> i64 {
+        self.points
+    }
+}
+
+/// What a grade request says: the criteria still to grade.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct GradeInput {
+    pub(crate) task_prompt: Told<String>,
+    pub(crate) artifact: Told<String>,
+    pub(crate) criteria: Vec<Criterion>,
+}
+
+/// What the grader decided for one criterion: the sentences it rests on, what it saw, and the score, none when it cannot tell.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Verdict {
+    evidence: Vec<Picked<Unit>>,
+    observation: String,
+    score: Option<Picked<Level>>,
+}
+
+impl Authored for Verdict {
+    fn form() -> Form {
+        Form::new()
+            .cite::<Unit>("evidence")
+            .text("observation")
+            .own_or_none::<Level>("score")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(Self {
+            evidence: fields.cite("evidence"),
+            observation: fields.text("observation")?,
+            score: fields.own_or_none("score")?,
+        })
+    }
+}
+
+impl Answered for PracticeGrade {
+    type Answer = Each<Criterion, Verdict>;
+    const ALONE: Alone = Alone::Pending;
+
+    fn says(input: &GradeInput, showing: &mut Showing<'_>) -> Result<Says> {
+        let units = Units::of(&input.artifact.0, Grain::Sentence);
+        let artifact = units.shown(showing)?;
+        let criteria = showing.show(&input.criteria)?;
+        let mut rubric = Vec::new();
+        for (handle, item) in criteria.iter() {
+            let c = &item.criterion;
+            let levels: Vec<Level> = (0..=c.max_points).map(|points| Level { points }).collect();
+            let shown = showing.under(handle, &levels)?;
+            let scores: Vec<serde_json::Value> = shown
+                .iter()
+                .map(|(level, held)| json!({"id": level.written(), "points": held.points}))
+                .collect();
+            rubric.push(json!({"id":handle.written(),"dimension":c.dimension,"title":c.title,"description":c.description,"maxPoints":c.max_points,"scores":scores}));
         }
-    })
+        let task = json!({"taskPrompt":input.task_prompt,"artifact":units.rows(&artifact),"rubric":rubric});
+        let mut says = Says::new(GRADE_SYSTEM, task.to_string());
+        says.output_tokens = input.criteria.len().saturating_mul(500).saturating_add(800);
+        Ok(says)
+    }
+
+    fn accept(_input: &GradeInput, verdict: &Verdict) -> std::result::Result<(), Refusal> {
+        if verdict.observation.trim().is_empty() {
+            return Err(Refusal(
+                "Give the observation for this criterion in observation.".into(),
+            ));
+        }
+        if verdict.score.is_some() && verdict.evidence.is_empty() {
+            return Err(Refusal(
+                "A criterion with a score cites at least one sentence of the artifact in evidence. Naming text in observation does not cite it.".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 pub async fn grade(
@@ -304,261 +656,57 @@ pub async fn grade(
     LearningPracticeGradeStatus,
     Vec<LearningPracticeCriterionResultDto>,
 )> {
-    let rubric:Vec<_>=session.rubric.iter().map(|c|serde_json::json!({"id":c.id,"dimension":c.dimension,"title":c.title,"description":c.description,"maxPoints":c.max_points})).collect();
-    let task = serde_json::json!({"taskPrompt":session.task_prompt,"artifact":session.artifact.text,"rubric":rubric});
-    let schema = grade_schema(&session.rubric);
-    let system = "Evaluate the learner artifact against each visible criterion. Scores are limited, provisional evidence, not mastery claims. For each criterion, identify what the learner did, the specific gap if any, and one actionable next revision. Each evidence_quote must be one continuous exact substring of the submitted artifact, preserving spaces and line breaks; never use ellipses, join separate excerpts, or reformat code. Choose a shorter exact quote if needed. Do not reward length or confident wording. A correct answer with flawed reasoning must lose reasoning credit. Give an observation tied to artifact text. Use null, never zero, when there is no assessable work for a criterion. Zero means an observed incorrect attempt. Use uncertain status when the artifact lacks enough evidence to judge; all scores must then be null.";
-    let prompt = task.to_string();
-    let budget = session.rubric.len().saturating_mul(500).saturating_add(800);
-    let call = ContractCall::of::<PracticeGrade>(&PromptInput {
-        system: system.to_owned(),
-        prompt: prompt.clone(),
-    })?;
-    complete_checked(
-        llm,
-        &call,
-        system,
-        prompt,
-        schema,
-        budget,
-        None,
-        None,
-        |raw| validate_grade(raw, session),
-    )
-    .await
-}
-
-fn validate_grade(
-    raw: &str,
-    session: &LearningPracticeSessionDto,
-) -> Result<(
-    LearningPracticeGradeStatus,
-    Vec<LearningPracticeCriterionResultDto>,
-)> {
-    let parsed: GradeJson = serde_json::from_str(raw)
-        .map_err(|_| invalid("The grader returned malformed structured feedback."))?;
-    let mut out = Vec::new();
-    if parsed.criteria.len() != session.rubric.len() {
-        return Err(invalid("The grader did not return every criterion."));
-    }
-    for mut result in parsed.criteria {
-        // An uncertainty judgment cannot produce a numeric failure or success.
-        if parsed.status == LearningPracticeGradeStatus::Uncertain {
-            result.score = None;
-        }
-        let criterion = session
-            .rubric
-            .iter()
-            .find(|c| c.id == result.criterion_id)
-            .ok_or_else(|| invalid("The grader returned an unknown criterion."))?;
-        if result
-            .score
-            .is_some_and(|s| s < 0 || s > criterion.max_points)
-            || (result.score.is_some()
-                && result
-                    .evidence_quote
-                    .as_ref()
-                    .is_none_or(|q| q.trim().is_empty()))
-            || result.observation.trim().is_empty()
-            || result
-                .evidence_quote
-                .as_ref()
-                .is_some_and(|q| !q.is_empty() && !session.artifact.text.contains(q))
-        {
-            return Err(invalid("The grader returned invalid rubric evidence."));
-        }
-        out.push(LearningPracticeCriterionResultDto {
-            criterion_id: criterion.id.clone(),
-            dimension: criterion.dimension.clone(),
-            score: result.score,
-            max_points: criterion.max_points,
-            observation: result.observation,
-            evidence_quote: result.evidence_quote,
-        });
-    }
-    if out
+    let call = crate::model_call::answer_options();
+    let criteria: Vec<Criterion> = session
+        .rubric
         .iter()
-        .map(|r| &r.criterion_id)
-        .collect::<std::collections::HashSet<_>>()
-        .len()
-        != out.len()
-    {
-        return Err(invalid("The grader returned duplicate criteria."));
-    }
-    Ok((parsed.status, out))
-}
-
-#[cfg(test)]
-mod window_tests {
-    use super::*;
-    use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-
-    struct Words;
-
-    #[async_trait::async_trait]
-    impl LLMPort for Words {
-        async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
-            Ok(CompletionResponse::from_text("{}"))
-        }
-        fn model_name(&self) -> &str {
-            "words"
-        }
-        fn max_context_tokens(&self) -> usize {
-            131_072
-        }
-        fn count_tokens(&self, text: &str) -> usize {
-            text.split_whitespace().count()
-        }
-        async fn is_ready(&self) -> Result<bool> {
-            Ok(true)
-        }
-    }
-
-    /// Cuts its first answer off and completes the second.
-    struct CutOnce(std::sync::Mutex<Vec<Option<u32>>>);
-
-    #[async_trait::async_trait]
-    impl LLMPort for CutOnce {
-        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-            let mut budgets = self.0.lock().unwrap();
-            budgets.push(request.max_output_tokens());
-            if budgets.len() == 1 {
-                return Ok(CompletionResponse {
-                    finish_reason: "length".into(),
-                    ..CompletionResponse::from_text("{\"response\":\"The")
-                });
-            }
-            Ok(CompletionResponse::from_text("{}"))
-        }
-        fn model_name(&self) -> &str {
-            "cut-once"
-        }
-        fn max_context_tokens(&self) -> usize {
-            131_072
-        }
-        async fn is_ready(&self) -> Result<bool> {
-            Ok(true)
-        }
-    }
-
-    #[tokio::test]
-    async fn a_cut_off_practice_answer_is_asked_again_with_twice_the_room() {
-        let llm = CutOnce(std::sync::Mutex::new(Vec::new()));
-        let call = ContractCall::of::<TutorReply>(&PromptInput {
-            system: "system".to_owned(),
-            prompt: "prompt".to_owned(),
+        .map(|criterion| Criterion {
+            criterion: criterion.clone(),
         })
-        .expect("the call is built");
-        let raw = complete_json(
-            &llm,
-            &call,
-            "system",
-            "prompt".into(),
-            serde_json::json!({"type":"object"}),
-            1400,
-        )
-        .await
-        .expect("the doubled request completes");
-        assert_eq!(raw, "{}");
-        let budgets = llm.0.lock().unwrap().clone();
-        assert_eq!(budgets.len(), 2);
-        assert_eq!(
-            budgets.get(1).copied().flatten(),
-            budgets.first().copied().flatten().map(|b| b * 2)
-        );
-    }
-
-    fn turns(count: usize) -> Vec<LearningPracticeTutorTurnDto> {
-        (0..count)
-            .map(|turn| LearningPracticeTutorTurnDto {
-                id: format!("turn-{turn}"),
-                prompt: format!("turn {turn}"),
-                response: "word ".repeat(200),
-                request_kind: LearningTutorRequestKind::Question,
-                hint_level: None,
-                citations: vec![],
-                proposal_ids: vec![],
-                model_name: "words".into(),
-                created_at: turn as i64,
-            })
-            .collect()
-    }
-
-    fn shown(prompt: &serde_json::Value) -> usize {
-        prompt["recentTurns"].as_array().map_or(0, Vec::len)
-    }
-
-    /// The tutor's history is sized from its model's window alone: the
-    /// newest whole turns that fit half the room the window leaves, the older
-    /// ones counted, not cut. No reading-speed estimate shrinks it.
-    #[test]
-    fn tutor_history_fills_half_the_window_room() {
-        let turns = turns(1_000);
-        let skeleton =
-            serde_json::json!({"taskPrompt":"fixed prompt","recentTurns":[],"earlierTurns":""});
-        let window_half =
-            crate::reference_collection::snapshot_room(&Words, TUTOR_SYSTEM, &skeleton, 1400) / 2;
-        let shown_prompt = with_recent_turns(&Words, skeleton, &turns);
-        let kept = shown(&shown_prompt);
-        assert!(kept > 0 && kept < turns.len());
-        assert_eq!(
-            shown_prompt["earlierTurns"],
-            format!("{} earlier turns not shown", turns.len() - kept)
-        );
-        let turn_cost = |turn: &serde_json::Value| Words.count_tokens(&turn.to_string()) + 1;
-        let cost: usize = shown_prompt["recentTurns"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(turn_cost)
-            .sum();
-        assert!(cost <= window_half, "{cost} of a {window_half}-token half");
-        // The next older turn would not have fit: the window, not a pace,
-        // is what stopped the walk.
-        let next =
-            serde_json::json!({"request":"turn","response":"word ".repeat(200),"hintLevel":null});
-        assert!(cost + turn_cost(&next) > window_half);
-    }
-
-    /// The snapshots take what the window leaves, so a long source fills the
-    /// window rather than a fraction of it.
-    #[tokio::test]
-    async fn snapshots_fill_the_window_room() {
-        let text = (0..20_000)
-            .map(|word| format!("passage w{word}"))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let sources = vec![LearningSourceVersionDto {
-            source_id: "source".into(),
-            version: LearningSourceVersionSummaryDto {
-                id: "version".into(),
-                version_number: 1,
-                title: "Long source".into(),
-                publisher: None,
-                resolved_url: None,
-                excerpt: String::new(),
-                content_sha256: String::new(),
-                word_count: 20_000,
-                truncated: false,
-                extraction_version: "test".into(),
-                acquired_at: 0,
-                snapshot_hash: None,
-            },
-            full_text: text,
-            usage: vec![],
-        }];
-        let skeleton = serde_json::json!({"taskPrompt":"fixed prompt","sourceSnapshots":[]});
-        let room = window_room(&Words, TUTOR_SYSTEM, &skeleton, 1400);
-        let prompt = with_snapshots(&Words, TUTOR_SYSTEM, skeleton, &sources, "passage", 1400)
-            .await
-            .unwrap();
-        let sent = Words.count_tokens(TUTOR_SYSTEM) + Words.count_tokens(&prompt);
-        assert!(
-            sent + 1400 <= Words.max_context_tokens(),
-            "{sent} tokens sent"
-        );
-        // A 131K window leaves room for the 40,000-word source.
-        assert!(room > 40_000);
-        assert!(sent > Words.max_context_tokens() / 4, "{sent} tokens sent");
-    }
+        .collect();
+    let task_prompt = Told(session.task_prompt.clone());
+    let artifact = Told(session.artifact.text.clone());
+    let settled = ask_each::<PracticeGrade>(
+        llm,
+        &asking(),
+        &mut Scope::for_question(),
+        &criteria,
+        |open, _| GradeInput {
+            task_prompt: task_prompt.clone(),
+            artifact: artifact.clone(),
+            criteria: open.iter().map(|item| (*item).clone()).collect(),
+        },
+        &call,
+    )
+    .await?;
+    let units = Units::of(&session.artifact.text, Grain::Sentence);
+    let results: Vec<LearningPracticeCriterionResultDto> = criteria
+        .iter()
+        .zip(settled)
+        .map(|(item, settled)| {
+            let c = &item.criterion;
+            let (score, observation, evidence_quote) = match settled {
+                Settled::Answered(verdict) => (
+                    verdict.score.map(|picked| picked.reference),
+                    verdict.observation,
+                    quoted(&units, &verdict.evidence),
+                ),
+                Settled::Unanswered(_) => (None, NOT_JUDGED.to_owned(), None),
+            };
+            LearningPracticeCriterionResultDto {
+                criterion_id: c.id.clone(),
+                dimension: c.dimension.clone(),
+                score,
+                max_points: c.max_points,
+                observation,
+                evidence_quote,
+            }
+        })
+        .collect();
+    let status = if results.iter().any(|result| result.score.is_some()) {
+        LearningPracticeGradeStatus::Provisional
+    } else {
+        LearningPracticeGradeStatus::Uncertain
+    };
+    Ok((status, results))
 }

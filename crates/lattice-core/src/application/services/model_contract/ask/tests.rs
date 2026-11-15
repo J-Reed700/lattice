@@ -191,6 +191,11 @@ impl Listed for Names {
             .filter_map(|line| line.strip_prefix("+ "))
             .map(str::to_owned)
             .collect();
+        let left_out = written
+            .text
+            .lines()
+            .filter(|line| line.starts_with("- "))
+            .count();
         let rest = match written.ended {
             Ended::Complete if items.is_empty() && !written.text.trim().is_empty() => {
                 Some(Why::NotRead)
@@ -199,7 +204,11 @@ impl Listed for Names {
             Ended::CutOff => Some(Why::CutOff),
             Ended::Declined => Some(Why::Declined),
         };
-        Found { items, rest }
+        Found {
+            items,
+            rest,
+            left_out,
+        }
     }
 }
 
@@ -806,6 +815,52 @@ async fn a_refused_entry_is_corrected_alone_while_the_others_stand() {
     );
 }
 
+struct EachByItem;
+
+impl Contract for EachByItem {
+    const ID: ContractId = ContractId::new("test-each-by-item");
+    type Input = Input;
+}
+
+impl Answered for EachByItem {
+    type Answer = Verdicts;
+    const ALONE: Alone = Alone::Pending;
+
+    fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
+        says(input, showing)
+    }
+
+    fn accept_for(
+        _input: &Input,
+        of: &Picked<Tile>,
+        statement: &String,
+    ) -> std::result::Result<(), Refusal> {
+        if of.reference == 2 && statement == "x" {
+            Err(Refusal(BAD_REASON.into()))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+each_runner!(run_each_by_item, EachByItem);
+
+#[tokio::test]
+async fn a_rule_that_depends_on_the_item_refuses_that_entry_only() {
+    let script = Script::new(&[
+        (&*rows(&[("t1", "x"), ("t2", "x"), ("t3", "x")]), STOP),
+        (&*rows(&[("t2", "y")]), STOP),
+    ]);
+    let settled = run_each_by_item(&script, &tiles(3), &no_calls(), 0, true)
+        .await
+        .unwrap();
+    assert_eq!(settled, answered(&["x", "y", "x"]));
+    assert_eq!(script.sent(), 2);
+    let alone = script.prompt(1);
+    assert!(alone.contains(BAD_TOLD), "{alone}");
+    assert_eq!(listed(&alone), 1);
+}
+
 #[tokio::test]
 async fn a_refused_entry_refused_again_settles_unanswered_without_a_third_send() {
     let script = Script::new(&[
@@ -862,6 +917,195 @@ async fn a_single_item_that_cannot_fit_is_a_fault_of_sending() {
     let result = run_each(&script, &tiles(1), &no_calls(), 4_000, false).await;
     assert!(result.is_err());
     assert_eq!(script.sent(), 0);
+}
+
+const HEAVY: u32 = 90;
+const CAPACITY: usize = 2;
+
+/// The opening of the open tiles the request holds: none from a heavy tile on,
+/// at most `CAPACITY`, and none while facts stand beside them.
+fn held_within(input: &Input) -> Option<Input> {
+    let room = if input.settled.is_empty() {
+        CAPACITY
+    } else {
+        0
+    };
+    let open = input
+        .open
+        .iter()
+        .copied()
+        .take_while(|number| *number < HEAVY)
+        .take(room)
+        .collect();
+    Some(Input {
+        open,
+        ..input.clone()
+    })
+}
+
+macro_rules! packing {
+    ($name:ident, $id:literal, $alone:expr) => {
+        struct $name;
+
+        impl Contract for $name {
+            const ID: ContractId = ContractId::new($id);
+            type Input = Input;
+        }
+
+        impl Answered for $name {
+            type Answer = Verdicts;
+            const ALONE: Alone = $alone;
+
+            fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
+                says(input, showing)
+            }
+
+            fn accept(_input: &Input, statement: &String) -> std::result::Result<(), Refusal> {
+                refuse(statement)
+            }
+
+            fn within(input: &Input, _room: usize) -> Option<Input> {
+                held_within(input)
+            }
+        }
+    };
+}
+
+packing!(Packing, "test-packing", Alone::Pending);
+packing!(PackingFails, "test-packing-fails", Alone::Fails);
+
+async fn run_packing<C>(
+    script: &Script,
+    noting: &Noting,
+    numbers: &[u32],
+    facts: bool,
+) -> Result<Vec<Settled<String>>>
+where
+    C: Answered<Answer = Verdicts, Input = Input>,
+{
+    let things: Vec<Tile> = numbers.iter().map(|number| Tile(*number)).collect();
+    let mut scope = Scope::for_question();
+    ask_each::<C>(
+        script,
+        noting,
+        &mut scope,
+        &things,
+        |open: &[&Tile], entries: &[Entry<C>]| Input {
+            settled: if facts {
+                entries
+                    .iter()
+                    .map(|(picked, word)| (picked.reference, word.clone()))
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            ..Input::of(&open.iter().map(|tile| tile.0).collect::<Vec<u32>>())
+        },
+        &CallOptions::default(),
+    )
+    .await
+}
+
+fn no_room() -> Settled<String> {
+    Settled::Unanswered(Why::NoRoom)
+}
+
+fn ok() -> Settled<String> {
+    Settled::Answered("ok".to_owned())
+}
+
+#[tokio::test]
+async fn a_batch_whose_request_shows_none_of_its_items_is_not_sent_but_split() {
+    let script = Script::new(&[]).responding(answer_all);
+    let noting = Noting::new();
+    let settled = run_packing::<Packing>(&script, &noting, &[91, 92, 1, 2], false)
+        .await
+        .unwrap();
+    assert_eq!(settled, vec![no_room(), no_room(), ok(), ok()]);
+    assert_eq!(script.sent(), 1, "only the half that shows something");
+    let prompt = script.prompt(0);
+    assert_eq!(listed(&prompt), 2);
+    assert!(
+        prompt.contains("tile 1") && prompt.contains("tile 2"),
+        "{prompt}"
+    );
+    assert!(noting.told().is_empty());
+}
+
+#[tokio::test]
+async fn an_item_whose_material_never_fits_is_unanswered_for_want_of_room_and_not_asked() {
+    let script = Script::new(&[]).responding(answer_all);
+    let settled = run_packing::<Packing>(&script, &Noting::new(), &[1, 91, 2], false)
+        .await
+        .unwrap();
+    assert_eq!(settled, vec![ok(), no_room(), ok()]);
+    assert_eq!(script.sent(), 2);
+    for at in 0..script.sent() {
+        assert!(
+            !script.prompt(at).contains("tile 91"),
+            "{}",
+            script.prompt(at)
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_item_that_does_not_fit_fails_a_contract_whose_item_cannot_stay_open() {
+    let script = Script::new(&[]).responding(answer_all);
+    let error = run_packing::<PackingFails>(&script, &Noting::new(), &[1, 91], false)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        crate::shared::error::ErrorClass::of(&error),
+        crate::shared::error::ErrorClass::DoesNotFit,
+        "{error:?}"
+    );
+    assert_eq!(script.sent(), 1);
+}
+
+#[tokio::test]
+async fn a_batch_answered_for_every_item_it_showed_is_not_reported_and_the_rest_is_asked_next() {
+    let script = Script::new(&[]).responding(answer_all);
+    let noting = Noting::new();
+    let settled = run_packing::<Packing>(&script, &noting, &[1, 2, 3], false)
+        .await
+        .unwrap();
+    assert_eq!(settled, vec![ok(), ok(), ok()]);
+    assert_eq!(script.sent(), 2);
+    assert_eq!(listed(&script.prompt(0)), 2);
+    let next = script.prompt(1);
+    assert_eq!(listed(&next), 1);
+    assert!(next.contains("tile 3"), "{next}");
+    assert!(noting.told().is_empty(), "{:?}", noting.told());
+}
+
+#[tokio::test]
+async fn a_batch_that_leaves_a_shown_item_unanswered_is_reported_once() {
+    let script = Script::new(&[(&*rows(&[("t1", "a")]), STOP)]).responding(answer_all);
+    let noting = Noting::new();
+    let settled = run_packing::<Packing>(&script, &noting, &[1, 2, 3], false)
+        .await
+        .unwrap();
+    assert_eq!(settled, vec![Settled::Answered("a".to_owned()), ok(), ok()]);
+    let told = noting.told();
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert!(
+        told[0].contains("tile 1") && told[0].contains("tile 2"),
+        "{}",
+        told[0]
+    );
+    assert!(!told[0].contains("tile 3"), "{}", told[0]);
+}
+
+#[tokio::test]
+async fn an_item_refused_in_a_batch_and_no_longer_shown_alone_is_unanswered_for_want_of_room() {
+    let script =
+        Script::new(&[(&*rows(&[("t1", "a"), ("t2", "bad")]), STOP)]).responding(answer_all);
+    let settled = run_packing::<Packing>(&script, &Noting::new(), &[1, 2], true)
+        .await
+        .unwrap();
+    assert_eq!(settled, vec![Settled::Answered("a".to_owned()), no_room()]);
+    assert_eq!(script.sent(), 1, "the restated request was not sent");
 }
 
 /// The smallest window (in steps of 50 tokens) in which `n` tiles padded by `pad` fit.
@@ -1006,7 +1250,8 @@ async fn items_of_a_cut_off_reply_stand_and_the_next_request_is_built_from_them(
         found,
         Found {
             items: vec!["a".to_owned(), "b".to_owned(), "c".to_owned()],
-            rest: None
+            rest: None,
+            left_out: 0
         }
     );
     assert_eq!(script.sent(), 2);
@@ -1034,7 +1279,8 @@ async fn no_input_stops_the_asking() {
         found,
         Found {
             items: vec!["a".to_owned()],
-            rest: Some(Why::CutOff)
+            rest: Some(Why::CutOff),
+            left_out: 0
         }
     );
     assert_eq!(script.sent(), 1);
@@ -1046,6 +1292,34 @@ async fn a_refused_item_is_left_out() {
     let found = run_new(&script, 10).await.unwrap();
     assert_eq!(found.items, vec!["a".to_owned(), "c".to_owned()]);
     assert_eq!(found.rest, None);
+    assert_eq!(found.left_out, 1);
+}
+
+#[tokio::test]
+async fn an_unread_item_is_counted_and_a_clean_answer_counts_none() {
+    let script = Script::new(&[(
+        "+ a
+- x
++ b",
+        STOP,
+    )]);
+    let found = run_new(&script, 10).await.unwrap();
+    assert_eq!(found.items, vec!["a".to_owned(), "b".to_owned()]);
+    assert_eq!(found.left_out, 1);
+
+    let script = Script::new(&[("+ a", STOP)]);
+    assert_eq!(run_new(&script, 10).await.unwrap().left_out, 0);
+}
+
+#[tokio::test]
+async fn an_item_left_in_a_cut_off_tail_is_not_counted() {
+    let script = Script::new(&[(
+        "+ a
++ b", LENGTH,
+    )]);
+    let found = run_new(&script, 1).await.unwrap();
+    assert_eq!(found.rest, Some(Why::CutOff));
+    assert_eq!(found.left_out, 0);
 }
 
 #[tokio::test]
@@ -1072,7 +1346,8 @@ async fn nothing_read_and_nothing_standing_gets_one_correction() {
         found,
         Found {
             items: Vec::new(),
-            rest: Some(Why::NotRead)
+            rest: Some(Why::NotRead),
+            left_out: 0
         }
     );
     assert_eq!(script.sent(), 2);
@@ -1564,5 +1839,90 @@ mod fitting {
         assert!(smaller > 0, "{smaller}");
         assert!(normal > smaller, "{normal} {smaller}");
         assert_eq!(room_in(40), 0);
+    }
+}
+
+mod metering {
+    use super::*;
+
+    /// A model that reports 7 input and 3 output tokens for every reply.
+    struct Counting {
+        replies: Mutex<VecDeque<&'static str>>,
+    }
+
+    impl Counting {
+        fn new(replies: &[&'static str]) -> Self {
+            Self {
+                replies: Mutex::new(replies.iter().copied().collect()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LLMPort for Counting {
+        async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
+            let text = self.replies.lock().unwrap().pop_front().unwrap_or("red");
+            Ok(CompletionResponse {
+                input_tokens: 7,
+                output_tokens: 3,
+                finish_reason: STOP.into(),
+                ..CompletionResponse::from_text(text)
+            })
+        }
+
+        fn model_name(&self) -> &str {
+            "counting"
+        }
+
+        fn max_context_tokens(&self) -> usize {
+            32_768
+        }
+
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_plain_send_carries_the_tokens_the_model_reported() {
+        let llm = Counting::new(&["red"]);
+        let request = GroundedRequest::of("You judge tiles.".into(), "Say a word.".into());
+        let sent = Plain.send(&llm, request).await.unwrap();
+        assert_eq!(
+            sent.usage,
+            Usage {
+                sends: 1,
+                input: 7,
+                output: 3
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_metered_transport_adds_up_every_send_and_follow() {
+        let llm = Counting::new(&["bad", "red"]);
+        let plain = Plain;
+        let metered = Metered::new(&plain);
+        assert_eq!(metered.used(), Usage::default());
+        let settled = ask::<One>(
+            &llm,
+            &metered,
+            &mut Scope::for_question(),
+            &Input::of(&[]),
+            &CallOptions::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(settled, Settled::Answered("red".to_owned()));
+        assert_eq!(llm.replies.lock().unwrap().len(), 0);
+        assert_eq!(
+            metered.used(),
+            Usage {
+                sends: 2,
+                input: 14,
+                output: 6
+            },
+            "the send and its correction"
+        );
     }
 }

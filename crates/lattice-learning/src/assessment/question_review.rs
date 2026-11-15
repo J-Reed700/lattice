@@ -7,7 +7,10 @@ use crate::dto::{LessonAnswerKey, LessonQuestion, LessonQuestionKind};
 use crate::lessons::teaching::contract;
 use crate::review_findings::ReviewFinding;
 use lattice_core::shared::hash::sha256_hex;
-use lattice_core::{application::ports::LLMPort, shared::error::Result};
+use lattice_core::{
+    application::ports::LLMPort,
+    shared::error::{AppError, Result},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -239,7 +242,13 @@ async fn review(
         outcome_description: &outcome.description,
         learner_has,
     };
-    item_review::review(llm, &entries, &context).await
+    let found = item_review::review(llm, &entries, &context).await?;
+    if found.iter().any(|findings| findings.unreviewed) {
+        return Err(AppError::ModelAnswerUnusable(
+            item_review::UNREVIEWED.into(),
+        ));
+    }
+    Ok(found)
 }
 
 /// The finding for question `index`, placed at it; none when review found

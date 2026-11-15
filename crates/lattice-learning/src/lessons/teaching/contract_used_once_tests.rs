@@ -3,10 +3,10 @@
 use super::*;
 use crate::review_findings::{FindingSite, ReviewFinding};
 
-const FLAT: &str = "Press the fold flat";
-const SHARP: &str = "Crease the fold sharply";
-const KNOT: &str = "Tie the knot twice";
-const DEFINED: &str = "A fold is a crease made by bending the sheet back on itself";
+const FLAT: &str = "Press the fold flat.";
+const SHARP: &str = "Crease the fold sharply.";
+const KNOT: &str = "Tie the knot twice.";
+const DEFINED: &str = "A fold is a crease made by bending the sheet back on itself.";
 
 fn entry(what: &str, uses: &[&str], later: &str) -> Value {
     json!({"what":what,"uses":uses,"taughtLater":later})
@@ -14,10 +14,6 @@ fn entry(what: &str, uses: &[&str], later: &str) -> Value {
 
 fn read_as(asked: bool, taught: bool, quote: &str) -> Value {
     json!({"asked":asked,"taught":taught,"where":"thisLesson","quote":quote})
-}
-
-fn words(quote: &str) -> String {
-    format!("\"words\":\"{quote}\"")
 }
 
 async fn found(
@@ -70,7 +66,7 @@ async fn a_thing_used_in_three_parts_is_one_finding_at_the_first_in_lesson_order
     assert_eq!(findings.len(), 1, "{findings:?}");
     let finding = &findings[0];
     assert_eq!(finding.site, Some(FindingSite::Section(0)));
-    assert_eq!(finding.passage.as_deref(), Some("Fold the sheet in half"));
+    assert_eq!(finding.passage.as_deref(), Some("Fold the sheet in half."));
     assert!(finding.also.is_none());
     assert!(
         finding.note.ends_with(
@@ -230,8 +226,8 @@ async fn a_later_teaching_in_guarded_words_gives_the_teach_here_note_and_no_seco
 async fn the_confirming_read_goes_use_by_use_and_the_second_use_carries_the_finding() {
     let inner = scripted(vec![]);
     let model = model_answering(&inner, vec![entry("the fold", &[FLAT, SHARP], "")])
-        .confirming(&words(FLAT), read_as(false, false, ""))
-        .confirming(&words(SHARP), read_as(true, false, ""));
+        .confirming_use(FLAT, read_as(false, false, ""))
+        .confirming_use(SHARP, read_as(true, false, ""));
     let candidate = lesson(["Press the fold flat.", "Crease the fold sharply.", "Done."]);
     let findings = found(&model, &candidate, &[]).await;
     assert_eq!(findings.len(), 1, "{findings:?}");
@@ -244,28 +240,15 @@ async fn the_confirming_read_goes_use_by_use_and_the_second_use_carries_the_find
 async fn a_use_read_as_taught_ends_the_thing_and_the_later_uses_are_not_read() {
     let inner = scripted(vec![]);
     let model = model_answering(&inner, vec![entry("the fold", &[FLAT, SHARP], "")])
-        .confirming(&words(FLAT), read_as(true, true, FLAT));
+        .confirming_use(FLAT, read_as(true, true, FLAT));
     let candidate = lesson(["Press the fold flat.", "Crease the fold sharply.", "Done."]);
     let findings = found(&model, &candidate, &[]).await;
     assert!(findings.is_empty(), "{findings:?}");
     assert_eq!(model.confirmed().len(), 1);
 }
 
-#[tokio::test]
-async fn an_entry_none_of_whose_quotes_is_in_the_lesson_is_neither_read_nor_a_finding() {
-    let inner = scripted(vec![]);
-    let model = model_answering(
-        &inner,
-        vec![entry("the knot", &["Knot the cord thrice"], "")],
-    );
-    let candidate = lesson(["Press the fold flat.", "Crease the fold sharply.", "Done."]);
-    let findings = found(&model, &candidate, &[]).await;
-    assert!(findings.is_empty(), "{findings:?}");
-    assert!(model.confirmed().is_empty());
-}
-
-const HANG: &str = "Hang the kettle on the hook";
-const TIE_ROPE: &str = "Coil the rope around the shelf post";
+const HANG: &str = "Hang the kettle on the hook.";
+const TIE_ROPE: &str = "Coil the rope around the shelf post.";
 
 fn of_kinds(parts: &[(&str, &str)], questions: Value) -> Value {
     let blocks: Vec<Value> = parts

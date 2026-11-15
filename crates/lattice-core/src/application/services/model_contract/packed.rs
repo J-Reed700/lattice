@@ -50,6 +50,66 @@ impl<T> Packed<T> {
         Self { items }
     }
 
+    /// Which owners are shown, and with which places of this material. `needs[i]` are the places (positions
+    /// in this material) owner `i` needs. Owners are taken in order: one is kept when what it needs, and no
+    /// owner kept before it brought, fits in what is left of `room`; one that does not fit is passed over
+    /// and later owners are still tried. When none is kept whole, the first owner is kept alone with the
+    /// opening of its own needs that fits (possibly none). Each kept owner comes back with the places it
+    /// is shown with.
+    pub fn for_owners(&self, room: usize, needs: &[Vec<usize>]) -> Vec<(usize, Vec<usize>)> {
+        let mut brought: Vec<usize> = Vec::new();
+        let mut left = room;
+        let mut kept: Vec<(usize, Vec<usize>)> = Vec::new();
+        for (owner, wanted) in needs.iter().enumerate() {
+            let places = self.places(wanted);
+            let mut fresh: Vec<usize> = Vec::new();
+            for place in &places {
+                if !brought.contains(place) {
+                    fresh.push(*place);
+                }
+            }
+            let cost: usize = fresh.iter().map(|place| self.cost_of(*place)).sum();
+            if let Some(rest) = left.checked_sub(cost) {
+                left = rest;
+                brought.extend(fresh);
+                kept.push((owner, places));
+            }
+        }
+        if kept.is_empty() {
+            if let Some(first) = needs.first() {
+                let mut left = room;
+                let opening: Vec<usize> = self
+                    .places(first)
+                    .into_iter()
+                    .take_while(|place| match left.checked_sub(self.cost_of(*place)) {
+                        Some(rest) => {
+                            left = rest;
+                            true
+                        }
+                        None => false,
+                    })
+                    .collect();
+                kept.push((0, opening));
+            }
+        }
+        kept
+    }
+
+    /// The places of `wanted` this material has, each once, in the order given.
+    fn places(&self, wanted: &[usize]) -> Vec<usize> {
+        let mut places: Vec<usize> = Vec::new();
+        for place in wanted {
+            if *place < self.items.len() && !places.contains(place) {
+                places.push(*place);
+            }
+        }
+        places
+    }
+
+    fn cost_of(&self, place: usize) -> usize {
+        self.items.get(place).map_or(0, |(_, cost)| *cost)
+    }
+
     /// The things held, the most wanted first.
     pub fn iter(&self) -> impl Iterator<Item = &T> {
         self.items.iter().map(|(item, _)| item)
@@ -96,6 +156,43 @@ mod tests {
         assert!(costed(&[3, 4]).within(0).is_empty());
         assert_eq!(held(&costed(&[0, 0, 2]).within(0)), [0, 1]);
         assert_eq!(held(&costed(&[0]).within(5)), [0]);
+    }
+
+    #[test]
+    fn material_two_owners_share_is_counted_once() {
+        let packed = costed(&[4, 3, 2]);
+        let needs = vec![vec![0, 1], vec![1, 2], vec![0, 2]];
+        assert_eq!(
+            packed.for_owners(9, &needs),
+            [(0, vec![0, 1]), (1, vec![1, 2]), (2, vec![0, 2])]
+        );
+        assert_eq!(packed.for_owners(7, &needs), [(0, vec![0, 1])]);
+    }
+
+    #[test]
+    fn an_owner_that_does_not_fit_is_passed_over_and_later_ones_are_tried() {
+        let packed = costed(&[2, 9, 1]);
+        let needs = vec![vec![0], vec![1], vec![2]];
+        assert_eq!(packed.for_owners(4, &needs), [(0, vec![0]), (2, vec![2])]);
+    }
+
+    #[test]
+    fn an_owner_with_no_needs_always_fits() {
+        let packed = costed(&[5]);
+        assert_eq!(packed.for_owners(0, &[vec![0], vec![]]), [(1, vec![])]);
+    }
+
+    #[test]
+    fn when_no_owner_fits_the_first_is_kept_with_the_opening_of_its_needs() {
+        let packed = costed(&[3, 4, 5]);
+        let needs = vec![vec![0, 1, 2], vec![2]];
+        assert_eq!(packed.for_owners(4, &needs), [(0, vec![0])]);
+        assert_eq!(packed.for_owners(2, &needs), [(0, vec![])]);
+    }
+
+    #[test]
+    fn no_owners_keep_nothing() {
+        assert!(costed(&[1]).for_owners(10, &[]).is_empty());
     }
 
     #[test]

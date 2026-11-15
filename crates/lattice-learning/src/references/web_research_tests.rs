@@ -245,15 +245,11 @@ fn a_site_the_planner_set_is_the_scope_and_is_written_as_an_address() {
 }
 
 #[test]
-fn only_a_plan_for_gaps_names_the_gap_each_search_serves() {
-    let course = need_schema(None);
+fn a_planned_search_may_ask_for_the_kinds_the_planner_is_told_of() {
+    let course = need_schema();
     assert_eq!(course["required"], json!(["query", "kind"]));
     assert!(course["properties"].get("gap").is_none());
-
-    let lesson = need_schema(Some(3));
-    assert_eq!(lesson["required"], json!(["query", "kind", "gap"]));
-    assert_eq!(lesson["properties"]["gap"]["maximum"], json!(2));
-    let kinds = lesson["properties"]["kind"]["enum"].as_array().unwrap();
+    let kinds = course["properties"]["kind"]["enum"].as_array().unwrap();
     assert!(kinds.contains(&json!("official_docs")));
     assert!(kinds.contains(&json!("leads")));
     assert!(!kinds.contains(&json!("archive")));
@@ -261,29 +257,23 @@ fn only_a_plan_for_gaps_names_the_gap_each_search_serves() {
 
 #[test]
 fn every_planner_may_ask_for_rewordings_and_dates() {
-    for schema in [need_schema(None), need_schema(Some(2))] {
-        let properties = &schema["properties"];
-        let rewording = &properties["alternatives"]["items"];
-        assert_eq!(rewording["minLength"], json!(1));
-        assert!(rewording.get("maxLength").is_none());
-        assert!(
-            properties["alternatives"].get("maxItems").is_none(),
-            "no fixed count of rewordings"
-        );
-        assert_eq!(properties["after"]["format"], "date");
-        assert_eq!(properties["asOf"]["format"], "date");
-    }
+    let schema = need_schema();
+    let properties = &schema["properties"];
+    let rewording = &properties["alternatives"]["items"];
+    assert_eq!(rewording["minLength"], json!(1));
+    assert!(rewording.get("maxLength").is_none());
+    assert!(
+        properties["alternatives"].get("maxItems").is_none(),
+        "no fixed count of rewordings"
+    );
+    assert_eq!(properties["after"]["format"], "date");
+    assert_eq!(properties["asOf"]["format"], "date");
 }
 
 #[test]
 fn a_planned_search_schema_bounds_no_text_but_a_blank_one() {
-    for (what, schema) in [
-        ("a course plan", need_schema(None)),
-        ("a lesson plan", need_schema(Some(2))),
-    ] {
-        let caps = crate::content_caps_tests::text_caps(&schema);
-        assert!(caps.is_empty(), "{what}: {caps:?}");
-    }
+    let caps = crate::content_caps_tests::text_caps(&need_schema());
+    assert!(caps.is_empty(), "{caps:?}");
 }
 
 #[test]
@@ -329,11 +319,11 @@ async fn a_need_takes_its_subject_from_the_gap_it_serves_and_no_host_it_was_not_
         json!({"claim": "Self-attention cost grows with the square of the sequence length",
                "missingEvidence": "a paper", "kind": "measurement", "subject": "Transformer"}),
     ];
-    let llm = scripted(vec![json!({"needs": [
+    let llm = scripted(vec![crate::references::web_research::needs_answer(json!([
         {"gap": 0, "query": "ExecutionContext flow across await", "kind": "official_docs", "site": "learn.microsoft.com"},
         {"gap": 0, "query": "ExecutionContext AsyncLocal flow analysis", "kind": "web"},
         {"gap": 1, "query": "self-attention quadratic sequence length", "kind": "paper", "subject": "attention"}
-    ]})
+    ]))
     .to_string()]);
     let needs = plan_needs(&llm, "async .NET", &gaps, json!([]), &[]).await?;
     let served: Vec<usize> = needs.iter().map(|served| served.gap).collect();
@@ -366,12 +356,12 @@ async fn a_gap_asking_for_newer_material_dates_the_searches_that_name_no_date() 
         json!({"claim": "The current stable Python is 3.13.", "missingEvidence": "stale",
                        "needsNewerThan": "2024-10-07"}),
     ];
-    let llm = scripted(vec![json!({"needs": [
+    let llm = scripted(vec![crate::references::web_research::needs_answer(json!([
         {"gap": 0, "query": "Python stable release", "kind": "official_docs"},
         {"gap": 0, "query": "Python release schedule", "kind": "web", "after": "2025-01-01"},
         {"gap": 0, "query": "python.org downloads page", "kind": "web",
          "identifier": "https://www.python.org/downloads/", "asOf": "2024-10-07"}
-    ]})
+    ]))
     .to_string()]);
     let needs = plan_needs(&llm, "Python", &gaps, json!([]), &[]).await?;
     let dates: Vec<_> = needs
@@ -706,15 +696,33 @@ fn a_subtopic_the_planner_covered_with_existing_sources_has_no_searches() {
 }
 
 #[tokio::test]
-async fn a_search_for_a_gap_the_planner_was_not_given_is_refused() {
+async fn a_search_for_a_gap_the_planner_was_not_given_is_left_out() -> Result<()> {
     let gaps = [json!({"claim": "c", "missingEvidence": "m"})];
-    let llm = scripted(vec![json!({"needs": [
-        {"gap": 1, "query": "some public search", "kind": "web"}
-    ]})
+    let llm = scripted(vec![crate::references::web_research::needs_answer(json!([
+        {"gap": 1, "query": "some public search", "kind": "web"},
+        {"gap": 0, "query": "another public search", "kind": "web"}
+    ]))
     .to_string()]);
-    assert!(plan_needs(&llm, "topic", &gaps, json!([]), &[])
+    let planned = plan_needs(&llm, "topic", &gaps, json!([]), &[]).await?;
+    assert_eq!(
+        planned
+            .iter()
+            .map(|served| served.need.query.as_str())
+            .collect::<Vec<_>>(),
+        ["another public search"]
+    );
+    let alone = scripted(vec![crate::references::web_research::needs_answer(json!([
+        {"gap": 1, "query": "some public search", "kind": "web"}
+    ]))
+    .to_string()]);
+    let error = plan_needs(&alone, "topic", &gaps, json!([]), &[])
         .await
-        .is_err());
+        .unwrap_err();
+    assert!(
+        matches!(error, AppError::ModelAnswerUnusable(_)),
+        "{error:?}"
+    );
+    Ok(())
 }
 
 #[tokio::test]
@@ -805,10 +813,10 @@ async fn prompt_snapshot_reference_needs() -> Result<()> {
         json!({"claim": "Wool shrinks when washed hot",
                "missingEvidence": "a textile study", "kind": "measurement", "subject": "Wool"}),
     ];
-    let scripted = scripted(vec![json!({"needs": [
+    let scripted = scripted(vec![crate::references::web_research::needs_answer(json!([
         {"gap": 0, "query": "hand loom tension", "kind": "official_docs", "site": "looms.example.org"},
         {"gap": 1, "query": "wool shrinkage hot wash", "kind": "paper"}
-    ]})
+    ]))
     .to_string()]);
     let log = crate::lessons::course_generation_tests::RequestLog::new(&scripted);
     plan_needs(

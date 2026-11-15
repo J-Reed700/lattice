@@ -1,11 +1,12 @@
 ######## request 1 of 2 ########
 === input 1: message (system) ===
 Review instructional quality.
+Answer with items. Each item holds one entry, and the entry's kind says what it is. An entry of kind issue is a defect of the whole material, as the issues described above: its note says what is wrong, and continues is the id of the open finding it continues, or none. An entry of kind sectionDefect is a defect in a section in review, as the sectionDefects described above: passageId is the passage where it shows, finding says what is wrong, and continues is as for an issue. An entry of kind resolved gives in openFinding the id of an open finding whose defect is no longer in the candidate; an open finding that no entry names stays open.
 
-Answer in two steps. Step 1, now: work through the task in prose. Go through the candidate part by part: for a lesson, every section listed in sectionIndicesToReview and every question; for an outline, every module. Solve each exercise and question yourself and check each worked example against its stated premises and result. For each part say what you checked, what you found and whether it has a material defect. For each entry of openFindings, read the part it names as the candidate now has it, whether or not sectionIndicesToReview lists that part. Quote the exact words of that part that still show the defect, or, for something left out, the words it should follow. When no words of the part show it any more, leave the quote empty and answer resolved. An open finding's id is never used for a different defect: report that as a new issue. Write out everything the final answer needs, in full. Step 2 is requested separately and turns this draft into the final answer.
+Answer in two steps. Step 1, now: work through the task in prose. Go through the candidate part by part: for a lesson, every section whose inReview is true and every question; for an outline, every module. Solve each exercise and question yourself and check each worked example against its stated premises and result. For each part say what you checked, what you found and whether it has a material defect. For each entry of openFindings, read the part it names as the candidate now has it, whether or not that part is in review. Find the words of that part that still show the defect, or, for something left out, the words it should follow. When no words of the part show it any more, the finding is resolved. An open finding's id is never used for a different defect: report that as a new issue. Write out everything the final answer needs, in full. Step 2 is requested separately and turns this draft into the final answer.
 
 === input 2: message (user) ===
-{"priorKnowledge":"The learner has seen a map of the town.","openFindings":[{"id":"reviewer/1","part":"Section 1","note":"A defect."},{"id":"reviewer/2","part":"Section 1","note":"A defect."}],"candidate":{"blocks":[{"index":0,"label":"Section 1","bodyPassages":[{"id":"section-0-passage-0","text":"Alpha holds the line."}]},{"index":1,"label":"Section 2","bodyPassages":[{"id":"section-1-passage-0","text":"Beta follows alpha."}]}],"questions":[]},"sectionIndicesToReview":[0]}
+{"priorKnowledge":"The learner has seen a map of the town.","candidate":{"blocks":[{"inReview":true,"label":"Section 1","bodyPassages":[{"text":"Alpha holds the line.","id":"p1"}]},{"inReview":false,"label":"Section 2","bodyPassages":[{"text":"Beta holds another."}]}]},"openFindings":[{"id":"f1","part":"Section 1","passageId":"p1","note":"Alpha 1 fails."},{"id":"f2","part":"Section 1","passageId":"p1","note":"Alpha 2 fails."}]}
 
 === sent with ===
 {
@@ -23,14 +24,15 @@ Answer in two steps. Step 1, now: work through the task in prose. Go through the
 ######## request 2 of 2 ########
 === input 1: message (system) ===
 Review instructional quality.
+Answer with items. Each item holds one entry, and the entry's kind says what it is. An entry of kind issue is a defect of the whole material, as the issues described above: its note says what is wrong, and continues is the id of the open finding it continues, or none. An entry of kind sectionDefect is a defect in a section in review, as the sectionDefects described above: passageId is the passage where it shows, finding says what is wrong, and continues is as for an issue. An entry of kind resolved gives in openFinding the id of an open finding whose defect is no longer in the candidate; an open finding that no entry names stays open.
 
-Answer in two steps. Step 1, now: work through the task in prose. Go through the candidate part by part: for a lesson, every section listed in sectionIndicesToReview and every question; for an outline, every module. Solve each exercise and question yourself and check each worked example against its stated premises and result. For each part say what you checked, what you found and whether it has a material defect. For each entry of openFindings, read the part it names as the candidate now has it, whether or not sectionIndicesToReview lists that part. Quote the exact words of that part that still show the defect, or, for something left out, the words it should follow. When no words of the part show it any more, leave the quote empty and answer resolved. An open finding's id is never used for a different defect: report that as a new issue. Write out everything the final answer needs, in full. Step 2 is requested separately and turns this draft into the final answer.
+Answer in two steps. Step 1, now: work through the task in prose. Go through the candidate part by part: for a lesson, every section whose inReview is true and every question; for an outline, every module. Solve each exercise and question yourself and check each worked example against its stated premises and result. For each part say what you checked, what you found and whether it has a material defect. For each entry of openFindings, read the part it names as the candidate now has it, whether or not that part is in review. Find the words of that part that still show the defect, or, for something left out, the words it should follow. When no words of the part show it any more, the finding is resolved. An open finding's id is never used for a different defect: report that as a new issue. Write out everything the final answer needs, in full. Step 2 is requested separately and turns this draft into the final answer.
 
 === input 2: message (user) ===
-{"priorKnowledge":"The learner has seen a map of the town.","openFindings":[{"id":"reviewer/1","part":"Section 1","note":"A defect."},{"id":"reviewer/2","part":"Section 1","note":"A defect."}],"candidate":{"blocks":[{"index":0,"label":"Section 1","bodyPassages":[{"id":"section-0-passage-0","text":"Alpha holds the line."}]},{"index":1,"label":"Section 2","bodyPassages":[{"id":"section-1-passage-0","text":"Beta follows alpha."}]}],"questions":[]},"sectionIndicesToReview":[0]}
+{"priorKnowledge":"The learner has seen a map of the town.","candidate":{"blocks":[{"inReview":true,"label":"Section 1","bodyPassages":[{"text":"Alpha holds the line.","id":"p1"}]},{"inReview":false,"label":"Section 2","bodyPassages":[{"text":"Beta holds another."}]}]},"openFindings":[{"id":"f1","part":"Section 1","passageId":"p1","note":"Alpha 1 fails."},{"id":"f2","part":"Section 1","passageId":"p1","note":"Alpha 2 fails."}]}
 
 === input 3: message (assistant) ===
-Fixture draft: the task worked through in prose.
+The candidate reads as written.
 
 === input 4: message (user) ===
 Step 2: give the final answer from your draft. Keep its content, wording, numbers, citations and answers. Copy quotations and identifiers exactly as the task supplies them. Where the draft left something out or stopped early, complete it from the task.
@@ -38,115 +40,97 @@ Step 2: give the final answer from your draft. Keep its content, wording, number
 === schema ===
 {
   "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "openFindings",
-    "issues",
-    "blockChecks"
-  ],
   "properties": {
-    "openFindings": {
-      "type": "array",
-      "minItems": 2,
-      "maxItems": 2,
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "id",
-          "quote",
-          "verdict"
-        ],
-        "properties": {
-          "id": {
-            "type": "string",
-            "enum": [
-              "reviewer/1",
-              "reviewer/2"
-            ]
-          },
-          "quote": {
-            "type": "string"
-          },
-          "verdict": {
-            "type": "string",
-            "enum": [
-              "present",
-              "resolved"
-            ]
-          }
-        }
-      }
-    },
-    "issues": {
+    "items": {
       "type": "array",
       "items": {
         "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "note",
-          "continues"
-        ],
         "properties": {
-          "note": {
-            "type": "string",
-            "minLength": 1
-          },
-          "continues": {
-            "type": "string",
-            "enum": [
-              "reviewer/1",
-              "reviewer/2",
-              "none"
+          "entry": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "issue"
+                    ]
+                  },
+                  "note": {
+                    "type": "string"
+                  },
+                  "continues": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "note",
+                  "continues"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "sectionDefect"
+                    ]
+                  },
+                  "passageId": {
+                    "type": "string"
+                  },
+                  "finding": {
+                    "type": "string"
+                  },
+                  "continues": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "passageId",
+                  "finding",
+                  "continues"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "resolved"
+                    ]
+                  },
+                  "openFinding": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "openFinding"
+                ],
+                "additionalProperties": false
+              }
             ]
           }
-        }
-      }
-    },
-    "blockChecks": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
+        },
         "required": [
-          "sectionId",
-          "passageId",
-          "finding",
-          "hasDefect",
-          "continues"
+          "entry"
         ],
-        "properties": {
-          "sectionId": {
-            "type": "string",
-            "enum": [
-              "section-0"
-            ]
-          },
-          "passageId": {
-            "type": "string",
-            "enum": [
-              "section-0-passage-0"
-            ]
-          },
-          "finding": {
-            "type": "string",
-            "minLength": 1
-          },
-          "hasDefect": {
-            "type": "boolean"
-          },
-          "continues": {
-            "type": "string",
-            "enum": [
-              "reviewer/1",
-              "reviewer/2",
-              "none"
-            ]
-          }
-        }
+        "additionalProperties": false
       }
     }
-  }
+  },
+  "required": [
+    "items"
+  ],
+  "additionalProperties": false
 }
 
 === sent with ===

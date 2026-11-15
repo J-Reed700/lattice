@@ -177,7 +177,7 @@ impl Script {
         } else {
             ""
         };
-        json!({"index":unit["index"],"claims":claims,"nonFactualReason":reason})
+        json!({"of":unit["id"],"claims":claims,"nonFactualReason":reason})
     }
 
     /// The next scripted correction of the section `request` sends, or the end

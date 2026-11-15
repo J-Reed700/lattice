@@ -271,3 +271,19 @@ fn a_quotation_that_matches_no_saved_reference_is_named_by_its_part() {
         ]
     );
 }
+
+#[test]
+fn the_teaching_repair_is_told_the_writer_s_citing_rules_when_its_material_takes_citations() {
+    use crate::lessons::text_edits::STEPS_IN_ORDER;
+    let with = repair::system(true);
+    assert!(with.contains(STEPS_IN_ORDER));
+    assert!(with.contains("double quotation marks"));
+    assert!(with.contains("never put wording in single quotation marks"));
+    assert!(with.contains("never paste the quote as the sentence"));
+    assert!(with.contains(
+        "The lesson's own figures are the quantities its own example, scenario or exercise sets, and the results calculated from them."
+    ));
+    let without = repair::system(false);
+    assert!(!without.contains(STEPS_IN_ORDER));
+    assert!(!without.contains("double quotation marks"));
+}

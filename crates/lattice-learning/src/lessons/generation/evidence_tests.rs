@@ -1,7 +1,14 @@
 use super::*;
 use crate::content_verification::research::{self, tests as research_tests};
 use crate::lessons::course_generation_tests::ScriptedModel;
+use crate::lessons::structured_call::is_draft_request;
 use crate::repository::LearningRepository;
+use futures::future::BoxFuture;
+use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};
+use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
+use lattice_core::application::services::model_contract::test_support::{
+    ScriptedModel as Scripted, Sent,
+};
 use lattice_core::shared::persistence::Database;
 use std::sync::Mutex;
 
@@ -31,6 +38,54 @@ fn passage(source_id: &str, start: usize, text: &str) -> ReferencePassage {
         retrieval_kind: "lexical_fallback".into(),
         score: 1.0,
     }
+}
+
+fn reply(text: String) -> BoxFuture<'static, Result<CompletionResponse>> {
+    Box::pin(std::future::ready(Ok(CompletionResponse::from_text(text))))
+}
+
+/// The task of a coverage request: its topics and passages.
+fn task_of(sent: &Sent) -> Value {
+    let prompt = sent
+        .request
+        .input()
+        .iter()
+        .filter_map(|item| match item {
+            CompletionInput::Message { content, .. } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    prompt
+        .split("\n\n")
+        .find_map(|chunk| {
+            serde_json::from_str::<Value>(chunk)
+                .ok()
+                .filter(|task| task.get("topics").is_some())
+        })
+        .unwrap_or(Value::Null)
+}
+
+/// The names of the topics a coverage request lists.
+fn topics_of(task: &Value) -> Vec<String> {
+    task["topics"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|topic| topic["id"].as_str().map(str::to_owned))
+        .collect()
+}
+
+/// A model that answers each coverage ask with `answer(task, number of earlier asks)`, and a draft step with prose.
+fn judging(answer: impl Fn(&Value, usize) -> String + Send + Sync + 'static) -> Scripted {
+    let asked = std::sync::atomic::AtomicUsize::new(0);
+    Scripted::new().on_request::<EvidenceCoverage>(move |sent, _| {
+        if is_draft_request(&sent.request) {
+            return reply("The topics are weighed.".to_owned());
+        }
+        let earlier = asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        reply(answer(&task_of(sent), earlier))
+    })
 }
 
 fn topic(name: &str) -> Topic {
@@ -79,7 +134,7 @@ async fn a_plan_cut_off_falls_back_to_one_topic_and_coverage_to_none() -> Result
     assert_eq!(topics[0].topic, lesson.title);
     let store = vec![passage("s1", 0, "Aggregate roots enforce invariants.")];
     let covering = judge(&CutOff, &topics, &store, &[vec![0]], &references).await?;
-    assert_eq!(covering, vec![Vec::<usize>::new()]);
+    assert_eq!(covering, vec![None]);
     Ok(())
 }
 
@@ -117,9 +172,8 @@ async fn an_unusable_plan_falls_back_to_one_topic_from_the_lesson() -> Result<()
     Ok(())
 }
 
-#[tokio::test]
-async fn coverage_ignores_unknown_ids_and_a_missing_topic_is_uncovered() -> Result<()> {
-    let sources = vec![
+fn two_sources() -> Vec<LearningSourceDto> {
+    vec![
         source(
             "a",
             "Aggregates protect invariants inside one consistency boundary.",
@@ -128,7 +182,12 @@ async fn coverage_ignores_unknown_ids_and_a_missing_topic_is_uncovered() -> Resu
             "b",
             "Command handlers change state; query handlers only read it.",
         ),
-    ];
+    ]
+}
+
+#[tokio::test]
+async fn coverage_ignores_unknown_handles_and_a_missing_topic_is_asked_again_alone() -> Result<()> {
+    let sources = two_sources();
     let references = ReferenceCollection::lexical(&sources)?;
     let store = vec![
         passage("a", 0, &sources[0].excerpt),
@@ -136,21 +195,76 @@ async fn coverage_ignores_unknown_ids_and_a_missing_topic_is_uncovered() -> Resu
     ];
     let topics = vec![topic("Aggregates"), topic("CQRS")];
     let lists = vec![vec![0], vec![1]];
-    // t2 is left out; unknown topic and passage ids are ignored, and a
-    // passage listed for the other topic still counts.
-    let answer = json!({"topics":[
-        {"id":"t1","covering":["p9","p2","bogus","p1"]},
-        {"id":"t7","covering":["p2"]}
-    ]});
-    let llm = scripted(vec![answer.to_string()]);
+    // t2 is never answered; an entry that names nothing shown is no entry, an
+    // unknown passage is only a lost cite, and a passage listed for the other
+    // topic still counts.
+    let llm = judging(|task, _| {
+        let mut entries = vec![json!({"of":"t7","covering":["p2"]})];
+        if topics_of(task).contains(&"t1".to_owned()) {
+            entries.push(json!({"of":"t1","covering":["p9","p2","bogus","p1"]}));
+        }
+        json!({ "entries": entries }).to_string()
+    });
 
     let covering = judge(&llm, &topics, &store, &lists, &references).await?;
 
-    assert_eq!(covering, vec![vec![1, 0], vec![]]);
-    // An unreadable answer leaves every topic uncovered and never fails.
-    let llm = scripted(vec!["not a judgement".into()]);
+    assert_eq!(covering, vec![Some(vec![1, 0]), None]);
+    let asked: Vec<Vec<String>> = llm
+        .sent()
+        .iter()
+        .filter(|sent| !is_draft_request(&sent.request))
+        .map(|sent| topics_of(&task_of(sent)))
+        .collect();
+    assert_eq!(asked[0], ["t1", "t2"]);
+    assert!(asked.len() > 1 && asked[1..].iter().all(|topics| topics == &["t2"]));
+    // An unreadable answer leaves every topic unjudged and never fails.
+    let llm = judging(|_, _| "not a judgement".to_owned());
     let covering = judge(&llm, &topics, &store, &lists, &references).await?;
-    assert_eq!(covering, vec![Vec::<usize>::new(), Vec::new()]);
+    assert_eq!(covering, vec![None, None]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_topic_decided_twice_differently_is_asked_again_alone_and_the_others_stand() -> Result<()>
+{
+    let sources = two_sources();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let store = vec![
+        passage("a", 0, &sources[0].excerpt),
+        passage("b", 0, &sources[1].excerpt),
+    ];
+    let topics = vec![topic("Aggregates"), topic("CQRS")];
+    let lists = vec![vec![0], vec![1]];
+    let llm = judging(|task, _| {
+        if topics_of(task) == ["t2"] {
+            return json!({"entries":[{"of":"t2","covering":["p2"]}]}).to_string();
+        }
+        json!({"entries":[
+            {"of":"t1","covering":["p1"]},
+            {"of":"t2","covering":["p2"]},
+            {"of":"t2","covering":[]}
+        ]})
+        .to_string()
+    });
+
+    let covering = judge(&llm, &topics, &store, &lists, &references).await?;
+
+    assert_eq!(covering, vec![Some(vec![0]), Some(vec![1])]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_topic_with_no_candidate_is_uncovered_without_being_asked() -> Result<()> {
+    let sources = two_sources();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let store = vec![passage("a", 0, &sources[0].excerpt)];
+    let topics = vec![topic("Aggregates"), topic("CQRS")];
+    let llm = judging(|_, _| json!({"entries":[{"of":"t1","covering":["p1"]}]}).to_string());
+
+    let covering = judge(&llm, &topics, &store, &[vec![0], vec![]], &references).await?;
+
+    assert_eq!(covering, vec![Some(vec![0]), Some(vec![])]);
+    assert_eq!(llm.sent().len(), 1);
     Ok(())
 }
 
@@ -170,11 +284,11 @@ async fn an_uncovered_topic_triggers_one_research_round_before_writing() -> Resu
     }];
     let llm = scripted(vec![
         // The saved lottery passage does not cover the topic.
-        json!({"topics":[{"id":"t1","covering":[]}]}).to_string(),
-        json!({"needs":[{"gap":0,"query":"random assignment confounding official guidance","kind":"web"}]}).to_string(),
+        json!({"entries":[{"of":"t1","covering":[]}]}).to_string(),
+        crate::references::web_research::needs_answer(json!([{"gap":0,"query":"random assignment confounding official guidance","kind":"web"}])).to_string(),
         research_tests::selection(&[0]),
         // Only the newly captured passage is judged again, and covers it.
-        json!({"topics":[{"id":"t1","covering":["p1"]}]}).to_string(),
+        json!({"entries":[{"of":"t1","covering":["p1"]}]}).to_string(),
     ]);
 
     let gathered = research::run(
@@ -243,9 +357,9 @@ async fn prompt_snapshot_evidence_coverage() -> Result<()> {
     ];
     let topics = vec![topic("Aggregates"), topic("CQRS")];
     let lists = vec![vec![0, 1], vec![1]];
-    let answer = json!({"topics":[
-        {"id":"t1","covering":["p1"]},
-        {"id":"t2","covering":["p2"]}
+    let answer = json!({"entries":[
+        {"of":"t1","covering":["p1"]},
+        {"of":"t2","covering":["p2"]}
     ]});
     let inner = scripted(vec![answer.to_string()]);
     let llm = crate::lessons::course_generation_tests::RequestLog::new(&inner);
@@ -388,17 +502,72 @@ fn the_evidence_plan_contract_reads_what_it_renders() {
 }
 
 #[test]
-fn the_evidence_coverage_contract_reads_what_it_renders() {
-    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
-        EvidenceCoverage,
-    >(&vec![
-        CoverageEntry {
-            id: "t1".into(),
-            covering: vec!["p1".into(), "p2".into()],
+fn the_coverage_request_shows_what_the_model_is_told_and_nothing_internal() {
+    let mut marks = Marks::new();
+    let at = ("source-harbour".to_owned(), 100_001_usize, 100_002_usize);
+    let input = Input {
+        topics: vec![Subject {
+            at: marks.reference(100_003_usize),
+            name: marks.told("Tide tables".to_owned()),
+            candidates: marks.internal(vec![at.clone()]),
+        }],
+        passages: Packed::new(
+            vec![Passage {
+                at: marks.reference(at),
+                title: marks.told("Harbour almanac".to_owned()),
+                text: marks.told("Tide tables are revised each spring.".to_owned()),
+            }],
+            |_| 1,
+        ),
+    };
+    holds::<EvidenceCoverage>(&input, &marks);
+}
+
+#[tokio::test]
+async fn an_unjudged_topic_is_not_researched_on_a_guess() -> Result<()> {
+    let db = Database::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(db.clone());
+    let mut program = crate::tests::fixture();
+    program.summary.status = crate::dto::LearningProgramStatus::Active;
+    program.sources[0].excerpt = "Random numbers decide the lottery draws in this course.".into();
+    repo.create(&program).await?;
+    let sources = repo.verification_sources(&program.summary.id).await?;
+    let references = ReferenceCollection::lexical(&sources)?;
+    let topics = vec![
+        Topic {
+            topic: "Random assignment".into(),
+            queries: vec!["random assignment confounding".into()],
         },
-        CoverageEntry {
-            id: "t2".into(),
-            covering: vec![],
+        Topic {
+            topic: "Allocation concealment".into(),
+            queries: vec!["random allocation concealment".into()],
         },
+    ];
+    let llm = scripted(vec![
+        // The first topic is judged uncovered; the second is never answered,
+        // not when asked again alone and not when corrected.
+        json!({"entries":[{"of":"t1","covering":[]}]}).to_string(),
+        json!({"entries":[]}).to_string(),
+        json!({"entries":[]}).to_string(),
+        crate::references::web_research::needs_answer(json!([{"gap":0,"query":"random assignment confounding official guidance","kind":"web"}])).to_string(),
+        research_tests::selection(&[0]),
+        json!({"entries":[{"of":"t1","covering":["p1"]}]}).to_string(),
     ]);
+
+    let gathered = research::run(
+        db.clone(),
+        program.summary.id.clone(),
+        program.summary.goal.clone(),
+        Some(research_tests::web(false)),
+        gather(&llm, &references, &topics, 50_000),
+    )
+    .await?;
+
+    assert!(!gathered.covering[0].is_empty());
+    assert!(gathered.covering[1].is_empty());
+    let prompts = llm.prompts.lock().unwrap();
+    let planner = &prompts[3];
+    assert!(planner.contains("Random assignment"));
+    assert!(!planner.contains("Allocation concealment"));
+    Ok(())
 }

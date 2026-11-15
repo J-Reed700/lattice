@@ -57,4 +57,13 @@ impl Parts for ProgramParts {
         let (path, line) = line_of(part)?;
         Ok(format!("{path} line {line}"))
     }
+
+    fn continues(&self, before: &PartRef, next: &PartRef) -> bool {
+        match (line_of(before), line_of(next)) {
+            (Ok((path, line)), Ok((next_path, next_line))) => {
+                path == next_path && line.checked_add(1) == Some(next_line)
+            }
+            _ => false,
+        }
+    }
 }

@@ -176,7 +176,7 @@ async fn live_coverage_mapping_recovers_existing_claims_without_inventing_missin
             cases.push((serde_json::json!({"units":[{"index":0,"kind":"teaching",
                 "passages":[{"id":"target","field":"/body","text":text}],
                 "claims":[{"id":"selected","statement":selected},{"id":"unselected","statement":if complete { omitted } else { unrelated }}]}],
-                "mapping":{"target":{"claimIds":["selected"],"nonFactualReason":"","missingClaims":[]}}}), complete));
+                "judged":["target"]}), complete));
         }
     }
     // An optional recorded teaching passage reproduces a real mapping omission.
@@ -672,7 +672,6 @@ async fn live_teaching_review_evidence_scope() -> Result<()> {
         message("system"),
         crate::features::learning::teaching::LESSON_REVIEW_EVIDENCE_SCOPE
     );
-    let progress = crate::features::learning::outline_progress::OutlineProgress::default();
     let prompt: serde_json::Value = serde_json::from_str(&message("user"))?;
     let mut candidate = prompt["candidate"].clone();
     for block in candidate["blocks"].as_array_mut().unwrap() {
@@ -693,7 +692,6 @@ async fn live_teaching_review_evidence_scope() -> Result<()> {
         &candidate,
         crate::features::learning::teaching_review::Scope::default(),
         crate::features::learning::teaching_review::Remit::Open,
-        Some(&progress),
     )
     .await?
     .reported;
@@ -721,7 +719,7 @@ async fn live_teaching_review_evidence_scope() -> Result<()> {
 
     // Evidence scope must not excuse a demonstrably wrong worked result.
     let wrong = serde_json::json!({"blocks":[{"kind":"explanation","title":"Adding whole numbers","body":"To add two whole numbers, combine their quantities. Worked example: start with two apples and add two more apples. The total is five apples, so 2 + 2 = 5. This is ordinary integer addition, with no rounding or special convention.","rubric":[]}],"questions":[]});
-    let issues = crate::features::learning::teaching_review::review(&model, &system, serde_json::json!({"task":"Review instructional quality","authoringContext":{"goal":"Learn ordinary whole-number addition","sources":[]}}), &wrong, crate::features::learning::teaching_review::Scope::default(), crate::features::learning::teaching_review::Remit::Open, Some(&progress)).await?.reported;
+    let issues = crate::features::learning::teaching_review::review(&model, &system, serde_json::json!({"task":"Review instructional quality","authoringContext":{"goal":"Learn ordinary whole-number addition","sources":[]}}), &wrong, crate::features::learning::teaching_review::Scope::default(), crate::features::learning::teaching_review::Remit::Open).await?.reported;
     std::fs::write(
         directory.join("incorrect-example-issues.json"),
         serde_json::to_vec_pretty(&issues)?,

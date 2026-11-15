@@ -411,7 +411,11 @@ struct BrokenJudge {
 impl LLMPort for BrokenJudge {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let (_, user) = crate::lessons::structured_call::task_messages(request);
-        if user.contains("Claim: ") || user.contains("\"sourcePassages\"") {
+        if user.contains("Claim: ")
+            || request.contract().is_some_and(|call| {
+                call.id == lattice_core::application::services::claim_verification::ClaimBatch::ID
+            })
+        {
             if self.outage {
                 return Err(AppError::ServiceNotAvailable("503: loading model".into()));
             }

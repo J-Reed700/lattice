@@ -121,7 +121,12 @@ impl Figures {
     /// A research planner that plans one web search for the first gap.
     pub(super) fn planning(query: &str) -> Self {
         Self {
-            plan: Some(json!({"needs":[{"gap":0,"kind":"web","query":query}]}).to_string()),
+            plan: Some(
+                crate::references::web_research::needs_answer(
+                    json!([{"gap":0,"kind":"web","query":query}]),
+                )
+                .to_string(),
+            ),
             ..Self::new()
         }
     }
@@ -139,7 +144,7 @@ impl Figures {
             self.extracted
                 .lock()
                 .unwrap()
-                .push(serde_json::from_value(data["requestedIndices"].clone())?);
+                .push(extracted_sections_of(prompt));
             return Ok(inventory::fixture_response(
                 units
                     .iter()
@@ -152,8 +157,8 @@ impl Figures {
                             .unwrap();
                         let statement = statement_in(&passage_text(passage));
                         match statement {
-                            Some(statement) => json!({"index":unit["index"],"claims":[{"sentenceId":sentence_id(passage, &statement),"statement":statement}],"nonFactualReason":""}),
-                            None => json!({"index":unit["index"],"claims":[],"nonFactualReason":NOTHING_TO_CHECK}),
+                            Some(statement) => json!({"of":unit["id"],"claims":[{"sentenceId":sentence_id(passage, &statement),"statement":statement}],"nonFactualReason":""}),
+                            None => json!({"of":unit["id"],"claims":[],"nonFactualReason":NOTHING_TO_CHECK}),
                         }
                     })
                     .collect(),

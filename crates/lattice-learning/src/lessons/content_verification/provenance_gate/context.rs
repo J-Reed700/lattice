@@ -250,9 +250,7 @@ impl Judgements {
             .map(|(unit_title, statements)| async move {
                 let to_profile: Vec<ClaimToProfile> = statements
                     .iter()
-                    .enumerate()
-                    .map(|(index, statement)| ClaimToProfile {
-                        id: format!("claim-{index}"),
+                    .map(|statement| ClaimToProfile {
                         statement: statement.clone(),
                     })
                     .collect();

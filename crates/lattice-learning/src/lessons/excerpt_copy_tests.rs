@@ -3,7 +3,6 @@
 //! stands only in double quotation marks, whether or not the lesson cites it.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::copied_wording::{findings, Wording};
-use super::text_edits::apply_in;
 use crate::review_findings::{FindingKind, FindingSite};
 use serde_json::{json, Value};
 
@@ -100,35 +99,6 @@ fn the_review_and_the_draft_check_find_the_copy_once() {
     cited["blocks"][0]["citations"] =
         json!([{"sentence":SENTENCE,"sourceIndex":0,"quote":SENTENCE}]);
     assert_eq!(teaching(&cited), 1, "a cited quote is not reported twice");
-}
-
-fn edit(after: &str) -> lattice_core::shared::error::Result<Value> {
-    let patch = json!({"edits":[{"path":"/blocks/0/body","before":"Opening.","after":after}]});
-    apply_in(
-        &lesson("Opening."),
-        &patch.to_string(),
-        &Value::Null,
-        &wording(),
-    )
-}
-
-#[test]
-fn a_repair_edit_adding_a_copied_sentence_is_refused() {
-    let refused = edit(&format!("Opening. {SENTENCE}"));
-    assert!(refused.is_err(), "{refused:?}");
-    let message = refused.unwrap_err().to_string();
-    assert!(message.contains(SENTENCE), "{message}");
-    assert!(message.contains("the lesson's own words"), "{message}");
-    assert!(!message.contains("double quotation marks"), "{message}");
-}
-
-#[test]
-fn a_repair_edit_in_the_lessons_own_words_is_applied() {
-    let applied = edit("Opening. The widget empties its ledger when it is swept.").unwrap();
-    assert_eq!(
-        applied["blocks"][0]["body"],
-        "Opening. The widget empties its ledger when it is swept."
-    );
 }
 
 #[test]

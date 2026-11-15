@@ -39,6 +39,14 @@ impl LLMPort for Model {
 }
 impl Model {
     async fn respond(&self, prompt: &str) -> Result<String> {
+        if let Some(reply) = crate::generation::outline::fixture::prerequisites_answer(prompt) {
+            return Ok(reply);
+        }
+        if let Some(reply) =
+            crate::generation::outline::fixture::description_answer(prompt, &self.0)
+        {
+            return Ok(reply);
+        }
         if let Some(reply) = crate::content_verification::tests::fixture_response(prompt) {
             return Ok(reply);
         }
@@ -46,16 +54,10 @@ impl Model {
             return Ok("supported\nReason: The fixture reference supports the experimental design.\nSource quote: A randomized comparison isolates the intervention.\nSource passage: passage-0".into());
         }
         if prompt.starts_with("Review instructional quality.") {
-            let context: serde_json::Value = fixture_task(prompt).expect("a JSON task");
-            // Only the outline plan review numbers the modules it shows;
-            // the teaching reviews keep their own response shape.
-            if context.get("moduleNumbering").is_some() {
-                return Ok(json!({"newFindings":[]}).to_string());
-            }
-            if context["candidate"].get("blocks").is_none() {
-                return Ok(json!({"issues":[]}).to_string());
-            }
-            return Ok(json!({"issues":[],"sectionDefects":[]}).to_string());
+            return Ok(json!({"items":[]}).to_string());
+        }
+        if prompt.starts_with("Teach one rigorous, accessible lesson") {
+            return Ok(crate::generation::scripted_lesson(&self.0, prompt));
         }
         Ok(self.0.clone())
     }
@@ -71,18 +73,22 @@ pub(crate) fn request(depth: LearningCourseDepth) -> GenerateLearningProgramRequ
         course_depth: Some(depth),
     }
 }
+/// Prefix of a scripted module-repair answer. The model answers with its
+/// changes to the module it was shown, so the answer is built from the prompt:
+/// the sentinel holds the module the scripted model wants and, for each of its
+/// lessons, the position of the shown lesson it revises (`null`: a new one).
+pub(crate) const REPAIR_SENTINEL: &str = "{\"@repair\":";
+
+/// What a repair prompt starts with.
+const REPAIR_PROMPT: &str = "Repair a saved curriculum module.";
+
 /// A repair answer whose lessons revise the existing lessons at `froms`
 /// (`None` for a new lesson), in answer order.
 pub(crate) fn repair_answer_with(
-    mut module: serde_json::Value,
+    module: serde_json::Value,
     froms: &[Option<usize>],
 ) -> serde_json::Value {
-    if let Some(lessons) = module["lessons"].as_array_mut() {
-        for (lesson, from) in lessons.iter_mut().zip(froms) {
-            lesson["from"] = json!(from);
-        }
-    }
-    json!({"module":module})
+    json!({"@repair":{"module":module,"froms":froms}})
 }
 
 /// A repair answer that keeps every lesson of `module` where it is.
@@ -90,6 +96,135 @@ pub(crate) fn repair_answer(module: serde_json::Value) -> serde_json::Value {
     let count = module["lessons"].as_array().map_or(0, Vec::len);
     let froms: Vec<_> = (0..count).map(Some).collect();
     repair_answer_with(module, &froms)
+}
+
+/// The repair task the latest repair prompt carries. A correction repeats the
+/// system text only, so its task is the one of the prompt it follows.
+fn repair_task(prompts: &[String]) -> Option<serde_json::Value> {
+    prompts.iter().rev().find_map(|prompt| {
+        fixture_task(prompt)
+            .filter(|task| task.get("courseSequence").is_some() && task.get("module").is_some())
+    })
+}
+
+/// The answer in the form the repair asks for that turns the module of `task`
+/// into the one `sentinel` wants. Supports reworded texts, rows added to or
+/// removed from the end of a list, new lessons placed after the kept lesson
+/// before them, new estimates and prerequisites added or removed; anything else
+/// panics.
+fn repair_reply(task: &serde_json::Value, sentinel: &str) -> String {
+    let wanted: serde_json::Value = serde_json::from_str(sentinel).expect("repair sentinel");
+    let wanted = &wanted["@repair"];
+    let module = &wanted["module"];
+    let froms: Vec<Option<usize>> = wanted["froms"]
+        .as_array()
+        .expect("froms")
+        .iter()
+        .map(|from| from.as_u64().and_then(|from| usize::try_from(from).ok()))
+        .collect();
+    let shown = &task["module"];
+    let mut replace = Vec::new();
+    let mut insert = Vec::new();
+    let mut remove = Vec::new();
+    let mut reword = |row: &serde_json::Value, text: &serde_json::Value| {
+        if row["text"] != *text {
+            replace.push(json!({"at":row["at"],"with":text}));
+        }
+    };
+    reword(&shown["title"], &module["title"]);
+    reword(&shown["summary"], &module["summary"]["text"]);
+    reword(&shown["project"]["title"], &module["project"]["title"]);
+    reword(&shown["project"]["brief"], &module["project"]["brief"]);
+    let mut lists: Vec<(Vec<serde_json::Value>, Vec<serde_json::Value>)> = Vec::new();
+    let rows = |value: &serde_json::Value| value.as_array().cloned().unwrap_or_default();
+    lists.push((
+        rows(&shown["outcomes"]),
+        rows(&module["outcomes"])
+            .iter()
+            .map(|outcome| outcome["text"].clone())
+            .collect(),
+    ));
+    lists.push((
+        rows(&shown["project"]["deliverables"]),
+        rows(&module["project"]["deliverables"]),
+    ));
+    lists.push((
+        rows(&shown["project"]["successCriteria"]),
+        rows(&module["project"]["successCriteria"]),
+    ));
+    for (saved, wanted) in &lists {
+        for (row, text) in saved.iter().zip(wanted) {
+            reword(row, text);
+        }
+        for row in saved.iter().skip(wanted.len()) {
+            remove.push(row["at"].clone());
+        }
+        let after = saved.last().map(|row| row["at"].clone());
+        for text in wanted.iter().skip(saved.len()) {
+            let anchor = after.clone().expect("a list that has a row to add after");
+            insert.push(json!({"after":anchor,"with":text}));
+        }
+    }
+    let shown_lessons = shown["lessons"].as_array().cloned().unwrap_or_default();
+    let mut new_lessons = Vec::new();
+    let mut minutes = Vec::new();
+    let mut previous = json!("none");
+    for (lesson, from) in module["lessons"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .zip(&froms)
+    {
+        match from.and_then(|from| shown_lessons.get(from)) {
+            Some(saved) => {
+                reword(&saved["title"], &lesson["title"]);
+                reword(&saved["objective"], &lesson["objective"]);
+                if saved["estimatedMinutes"] != lesson["estimatedMinutes"] {
+                    minutes.push(json!({"lesson":saved["lesson"],"minutes":lesson["estimatedMinutes"]}));
+                }
+                previous = saved["lesson"].clone();
+            }
+            None => new_lessons.push(json!({"after":previous,"title":lesson["title"],"objective":lesson["objective"],"minutes":lesson["estimatedMinutes"]})),
+        }
+    }
+    let handle_of_module = |position: usize| -> serde_json::Value {
+        task["courseSequence"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|entry| entry["moduleNumber"] == position + 1)
+            .and_then(|entry| entry.get("module").cloned())
+            .unwrap_or_else(|| panic!("module {position} has no handle: only earlier modules do"))
+    };
+    let saved_prerequisites: Vec<serde_json::Value> = shown["prerequisites"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let wanted_positions: Vec<usize> = module["prerequisiteIndices"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|position| position.as_u64().and_then(|n| usize::try_from(n).ok()))
+        .collect();
+    let wanted_handles: Vec<serde_json::Value> = wanted_positions
+        .iter()
+        .map(|position| handle_of_module(*position))
+        .collect();
+    let add: Vec<_> = wanted_handles
+        .iter()
+        .filter(|handle| !saved_prerequisites.contains(handle))
+        .collect();
+    let dropped: Vec<_> = saved_prerequisites
+        .iter()
+        .filter(|handle| !wanted_handles.contains(handle))
+        .collect();
+    json!({
+        "text":{"replace":replace,"insert":insert,"remove":remove,"move":[]},
+        "newLessons":new_lessons,
+        "minutes":minutes,
+        "prerequisites":{"add":add,"remove":dropped},
+    })
+    .to_string()
 }
 
 pub(crate) fn outline(modules: usize, lessons: usize) -> Model {
@@ -259,48 +394,26 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
     assert!(!frozen.summary.source_version_ids.is_empty());
     let mut uncertain_session = frozen.clone();
     uncertain_session.artifact.text = "I am not sure how to start.".into();
-    let uncertain = Model(json!({"status":"uncertain","criteria":frozen.rubric.iter().map(|criterion| json!({"criterion_id":criterion.id,"score":0,"observation":"No assessable reasoning is present. Try identifying the comparison groups first.","evidence_quote":"I am not sure how to start."})).collect::<Vec<_>>()} ).to_string());
+    let uncertain = Model(json!({"entries":[{"of":"c1","evidence":[],"observation":"No assessable reasoning is present. Try identifying the comparison groups first.","score":"none"},{"of":"c2","evidence":[],"observation":"No assessable reasoning is present. Try identifying the comparison groups first.","score":"none"}]}).to_string());
     let (status, criteria) =
         crate::practice_generation::grade(&uncertain, &uncertain_session).await?;
     assert_eq!(status, LearningPracticeGradeStatus::Uncertain);
     assert!(criteria.iter().all(|criterion| criterion.score.is_none()));
 
     let mut attempted = frozen.clone();
-    attempted.artifact.text =
-        "I assigned groups randomly.\nI measured the outcome before comparing the groups.".into();
-    let feedback = |quote: &str| {
-        json!({"status":"provisional","criteria":frozen.rubric.iter().map(|criterion|json!({"criterion_id":criterion.id,"score":2,"observation":"The design includes random assignment; explain the remaining limitations.","evidence_quote":quote})).collect::<Vec<_>>()} ).to_string()
-    };
-    let shortened = feedback("I assigned groups randomly ... I measured the outcome");
-    let exact = feedback("I assigned groups randomly.");
-    let repair_model = ScriptedModel {
-        outputs: std::sync::Mutex::new(vec![shortened.clone(), exact].into()),
-        prompts: std::sync::Mutex::new(vec![]),
-    };
-    let (_, repaired) = crate::practice_generation::grade(&repair_model, &attempted).await?;
-    assert!(repaired.iter().all(
+    attempted.artifact.text = "I assigned groups randomly.
+I measured the outcome before comparing the groups."
+        .into();
+    let entry = |of: &str| json!({"of":of,"evidence":["u1"],"observation":"The design includes random assignment; explain the remaining limitations.","score":"l3"});
+    let scored = Model(json!({"entries":[entry("c1"),entry("c2")]}).to_string());
+    let (_, graded) = crate::practice_generation::grade(&scored, &attempted).await?;
+    assert!(graded.iter().all(
         |criterion| criterion.evidence_quote.as_deref() == Some("I assigned groups randomly.")
     ));
-    assert_eq!(
-        repair_model
-            .prompts
-            .lock()
-            .map_err(|_| AppError::InternalError("fixture lock".into()))?
-            .len(),
-        2
-    );
-    let still_invalid = ScriptedModel {
-        outputs: std::sync::Mutex::new(vec![shortened.clone(), shortened].into()),
-        prompts: std::sync::Mutex::new(vec![]),
-    };
-    assert!(matches!(
-        crate::practice_generation::grade(&still_invalid, &attempted).await,
-        Err(AppError::ModelAnswerUnusable(_))
-    ));
 
-    let recall = Model(json!({"cards":[
-        {"question":"When should the outcome be defined?","answer":"Before collecting data.","explanation":"Define it when designing the experiment.","sourceIds":[prepared.sources[0].id],"quote":"A randomized comparison isolates the intervention."},
-        {"question":"What should a concrete example show?","answer":"The result and its limitations.","explanation":"Interpret the result within its limits.","sourceIds":[prepared.sources[0].id],"quote":"A randomized comparison isolates the intervention."}
+    let recall = Model(json!({"items":[
+        {"question":"When should the outcome be defined?","answer":"Before collecting data.","explanation":"Define it when designing the experiment.","cites":["u1"]},
+        {"question":"What should a concrete example show?","answer":"The result and its limitations.","explanation":"Interpret the result within its limits.","cites":["u1"]}
     ]}).to_string());
     let cards = generation::generate_recall_drafts(&recall, &prepared, &lesson_id, 2).await?;
     assert_eq!(cards.len(), 2);
@@ -358,26 +471,6 @@ pub(crate) fn length_bounds(schema: &serde_json::Value) -> Vec<String> {
     let mut found = Vec::new();
     walk(schema, "", &mut found);
     found
-}
-
-/// How many entries the `properties` of `schema` hold in all, at any depth.
-pub(crate) fn property_count(schema: &serde_json::Value) -> usize {
-    match schema {
-        serde_json::Value::Object(fields) => fields
-            .iter()
-            .map(|(key, inner)| {
-                let own = match inner {
-                    serde_json::Value::Object(properties) if key == "properties" => {
-                        properties.len()
-                    }
-                    _ => 0,
-                };
-                own + property_count(inner)
-            })
-            .sum(),
-        serde_json::Value::Array(items) => items.iter().map(property_count).sum(),
-        _ => 0,
-    }
 }
 
 #[tokio::test]
@@ -620,6 +713,9 @@ pub(crate) fn review_reply(
 
 impl ScriptedModel {
     async fn respond(&self, prompt: &str) -> Result<String> {
+        if let Some(reply) = crate::generation::outline::fixture::prerequisites_answer(prompt) {
+            return Ok(reply);
+        }
         self.prompts
             .lock()
             .map_err(|_| AppError::InternalError("fixture lock".into()))?
@@ -642,10 +738,33 @@ impl ScriptedModel {
         let front = outputs
             .front()
             .ok_or_else(|| AppError::InvalidInput("Unexpected extra model call".into()))?;
+        if prompt.starts_with(REPAIR_PROMPT) && front.starts_with(REPAIR_SENTINEL) {
+            let prompts = self
+                .prompts
+                .lock()
+                .map_err(|_| AppError::InternalError("fixture lock".into()))?;
+            let task = repair_task(&prompts).expect("a repair task");
+            let reply = repair_reply(&task, front);
+            drop(prompts);
+            outputs.pop_front();
+            return Ok(reply);
+        }
         if linking && front.starts_with(LINKS_SENTINEL) {
             return Ok(link_reply(prompt, front));
         }
-        Ok(outputs.pop_front().unwrap_or_default())
+        if let Some(reply) = crate::outline_review::scripted::reply(prompt, front) {
+            outputs.pop_front();
+            return Ok(reply);
+        }
+        if let Some(reply) = crate::teaching_review::scripted::reply(prompt, front) {
+            outputs.pop_front();
+            return Ok(reply);
+        }
+        let reply = outputs.pop_front().unwrap_or_default();
+        Ok(
+            crate::generation::outline::fixture::description_answer(prompt, &reply)
+                .unwrap_or(reply),
+        )
     }
 }
 
@@ -782,7 +901,7 @@ impl LLMPort for Windowed<'_> {
 
 /// Prefix of a scripted evidence-linking reply. How many batches a run makes
 /// and which items each holds depend on retrieval, so the reply is built from
-/// the prompt: the sentinel maps item paths to the passage text to choose and
+/// the prompt: the sentinel maps item texts to the passage text to choose and
 /// every other item gets `none`.
 pub(crate) const LINKS_SENTINEL: &str = "{\"@links\":";
 
@@ -803,23 +922,24 @@ fn link_reply(prompt: &str, sentinel: &str) -> String {
         .flatten()
         .map(|item| {
             let id = item["id"].as_str().unwrap_or_default();
+            let text = item["item"].as_str().unwrap_or_default();
             let candidates: Vec<&str> = item["candidates"]
                 .as_array()
                 .into_iter()
                 .flatten()
                 .filter_map(|c| c.as_str())
                 .collect();
-            let chosen = picks["@links"][id].as_str().and_then(|wanted| {
+            let chosen = picks["@links"][text].as_str().and_then(|wanted| {
                 candidates
                     .iter()
                     .find(|c| text_of(c) == wanted)
                     .or_else(|| candidates.iter().find(|c| text_of(c).contains(wanted)))
                     .copied()
             });
-            json!({"id":id,"candidate":chosen.unwrap_or("none"),"reason":if chosen.is_some() {"The passage addresses this item."} else {"No candidate addresses this item."}})
+            json!({"of":id,"candidate":chosen.unwrap_or("none"),"reason":if chosen.is_some() {"The passage addresses this item."} else {"No candidate addresses this item."}})
         })
         .collect();
-    json!({"links":links}).to_string()
+    json!({"entries":links}).to_string()
 }
 
 #[tokio::test]
@@ -858,7 +978,7 @@ async fn a_question_may_cite_a_reference_verification_saved_for_the_program() ->
                 return Ok(json!({"topics":[{"id":"t1","covering":["p1"]}]}).to_string());
             }
             if prompt.starts_with("Plan focused reference searches") {
-                return Ok(json!({"needs":[{"gap":0,"query":"random assignment confounding official guidance","kind":"web"}]}).to_string());
+                return Ok(crate::references::web_research::needs_answer(json!([{"gap":0,"query":"random assignment confounding official guidance","kind":"web"}])).to_string());
             }
             if prompt.starts_with("Select trustworthy references") {
                 return Ok(research_tests::selection(&[0]));
@@ -952,8 +1072,8 @@ async fn a_question_may_cite_a_reference_verification_saved_for_the_program() ->
 #[tokio::test]
 async fn instructional_review_repairs_once_and_rejects_unresolved_defects() -> Result<()> {
     let issue = json!({"issues":["The exercise answer contradicts its stated condition. Correct the comparison."]}).to_string();
-    let repaired = json!({"wrong":false}).to_string();
-    let patch = json!({"edits":[{"path":"/wrong","before":true,"after":false}]}).to_string();
+    let repaired = json!({"wrong":"false"}).to_string();
+    let patch = json!({"edits":[{"path":"/wrong","before":"true","after":"false"}]}).to_string();
     let model = ScriptedModel {
         outputs: std::sync::Mutex::new(
             vec![
@@ -970,7 +1090,7 @@ async fn instructional_review_repairs_once_and_rejects_unresolved_defects() -> R
         "Author a lesson",
         "Require a correct comparison",
         &json!({"type":"object"}),
-        json!({"wrong":true}).to_string(),
+        json!({"wrong":"true"}).to_string(),
         2000,
     )
     .await?;
@@ -1002,7 +1122,7 @@ async fn instructional_review_repairs_once_and_rejects_unresolved_defects() -> R
         "Author",
         "Context",
         &json!({}),
-        json!({"wrong":true}).to_string(),
+        json!({"wrong":"true"}).to_string(),
         2000
     )
     .await
@@ -1057,9 +1177,8 @@ async fn disputed_answer_keys_are_blinded_repaired_and_checked_again() -> Result
     let mut repaired = candidate.clone();
     repaired["questions"][0]["correctIndex"] = json!(1);
     repaired["questions"][0]["explanation"] = json!("Two plus two is four.");
-    let solved = json!({"answers":[{"index":0,"reason":"Adding two pairs produces four items.","correctIndices":[1],"answer":"","blankAnswers":[],"matches":[],"orderedValues":[]}]}).to_string();
-    let judged =
-        json!({"checks":[{"id":"new-0","finding":"","hasDefect":false,"repeats":[]}]}).to_string();
+    let solved = crate::key_review::scripted::solved_static(1, 4, 1).to_string();
+    let judged = crate::assessment::item_review::scripted::sound_static(1).to_string();
     let model = ScriptedModel {
         outputs: std::sync::Mutex::new(
             vec![
@@ -1100,7 +1219,7 @@ async fn disputed_answer_keys_are_blinded_repaired_and_checked_again() -> Result
         assert!(prompts[4].starts_with("Solve quiz questions independently"));
     }
     let incomplete = ScriptedModel {
-        outputs: std::sync::Mutex::new(vec![json!({"answers":[]}).to_string()].into()),
+        outputs: std::sync::Mutex::new(vec![json!({"entries":[]}).to_string()].into()),
         prompts: std::sync::Mutex::new(vec![]),
     };
     assert!(crate::teaching::review_and_repair(
@@ -1225,15 +1344,24 @@ async fn placement_tasks_keep_keys_private_and_save_answers_with_replay_and_conf
 #[tokio::test]
 async fn depth_is_enforced_and_failed_source_acquisition_cannot_become_a_topic_course() -> Result<()>
 {
-    assert!(generation::generate_outline(
-        &outline(2, 2),
-        &request(LearningCourseDepth::Course),
-        &[]
-    )
-    .await
-    .is_err());
+    let drafted = |model: Model, depth: LearningCourseDepth| async move {
+        let request = request(depth);
+        generation::draft_outline(
+            &model,
+            &request,
+            &[],
+            &[],
+            &crate::outline_progress::OutlineProgress::default(),
+            |raw| generation::decode_outline(raw, &request, &[]),
+        )
+        .await
+        .map(|(modules, _, _)| modules)
+    };
+    assert!(drafted(outline(2, 2), LearningCourseDepth::Course)
+        .await
+        .is_err());
     assert_eq!(
-        generation::generate_outline(&outline(6, 4), &request(LearningCourseDepth::DeepDive), &[])
+        drafted(outline(6, 4), LearningCourseDepth::DeepDive)
             .await?
             .len(),
         6
@@ -1284,7 +1412,7 @@ async fn a_written_quiz_item_is_authored_from_lesson_text_without_sources() -> R
     use crate::assessment_engine::{LearningBlueprintRequirement, LearningItemFormat};
     use crate::assessment_generation::{author_items, AuthoringNeed, BankPass, MaterialPassage};
     let passage = "A randomized comparison assigns units to conditions by chance, so differences in outcome can be attributed to the condition.";
-    let model = Model(json!({"items":[{"prompt":"Explain how you would design a randomized comparison and identify its limitations.","rubric":task_rubric(),"explanation":"The answer should define the comparison, the measurement, the assumptions and the limits.","blockIndex":0,"quote":"assigns units to conditions by chance","difficulty":3}]}).to_string());
+    let model = Model(json!({"items":[{"prompt":"Explain how you would design a randomized comparison and identify its limitations.","rubric":task_rubric(),"explanation":"The answer should define the comparison, the measurement, the assumptions and the limits.","quote":["u1"],"difficulty":"3"}]}).to_string());
     let need = AuthoringNeed {
         requirement: LearningBlueprintRequirement {
             outcome_id: uuid::Uuid::new_v4().to_string(),
@@ -1309,10 +1437,7 @@ async fn a_written_quiz_item_is_authored_from_lesson_text_without_sources() -> R
     let authored = author_items(&model, &need).await?;
     assert_eq!(authored.items.len(), 1, "{:?}", authored.dropped);
     assert!(authored.items[0].candidate.source_version_ids.is_empty());
-    assert_eq!(
-        authored.items[0].source_quote,
-        "assigns units to conditions by chance"
-    );
+    assert_eq!(authored.items[0].source_quote, passage);
     Ok(())
 }
 
@@ -1524,6 +1649,10 @@ async fn outline_citations_are_optional_and_unmatched_ones_are_stripped_not_repo
 {
     let quote = "A randomized comparison isolates the intervention.";
     let mut candidate: serde_json::Value = serde_json::from_str(&outline(4, 3).0)?;
+    let outcome = candidate["modules"][0]["outcomes"][0]["text"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
     // One citation quotes the capture exactly; one does not. Neither is a finding.
     candidate["modules"][0]["outcomes"][0]["sourceIndex"] = json!(0);
     candidate["modules"][0]["outcomes"][0]["quote"] = json!(quote);
@@ -1560,7 +1689,7 @@ async fn outline_citations_are_optional_and_unmatched_ones_are_stripped_not_repo
         outputs: std::sync::Mutex::new(
             vec![
                 candidate.to_string(),
-                json!({"@links":{"/modules/0/outcomes/0":quote}}).to_string(),
+                json!({"@links":{outcome:quote}}).to_string(),
                 json!({"newFindings":[]}).to_string(),
             ]
             .into(),
@@ -1949,176 +2078,4 @@ fn program_request_goal_and_prior_knowledge_have_no_character_limit() -> Result<
     input.goal = "Detailed learning goal. ".repeat(1_000);
     input.prior_knowledge = "Relevant experience and context. ".repeat(1_000);
     service::validate_request(&input)
-}
-
-#[tokio::test]
-async fn a_drafts_citation_list_is_gone_before_review_and_verification_read_it() -> Result<()> {
-    use crate::{
-        curriculum::LearningGenerationJobKind, curriculum_repository::LearningCurriculumRepository,
-        plan_dto::*,
-    };
-    use std::sync::Mutex;
-    struct Recording {
-        inner: Model,
-        drafted: Mutex<bool>,
-        later: Mutex<Vec<String>>,
-    }
-    #[async_trait::async_trait]
-    impl LLMPort for Recording {
-        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-            let mut replies = Vec::new();
-            for prompt in fixture_prompts(request) {
-                replies.push(self.respond(&prompt).await?);
-            }
-            Ok(fixture_completion(request, replies))
-        }
-        fn model_name(&self) -> &str {
-            self.inner.model_name()
-        }
-        fn count_tokens(&self, text: &str) -> usize {
-            self.inner.count_tokens(text)
-        }
-        fn max_context_tokens(&self) -> usize {
-            self.inner.max_context_tokens()
-        }
-        async fn is_ready(&self) -> Result<bool> {
-            Ok(true)
-        }
-    }
-    impl Recording {
-        async fn respond(&self, prompt: &str) -> Result<String> {
-            {
-                let mut drafted = self
-                    .drafted
-                    .lock()
-                    .map_err(|_| AppError::InternalError("fixture lock".into()))?;
-                if *drafted {
-                    self.later
-                        .lock()
-                        .map_err(|_| AppError::InternalError("fixture lock".into()))?
-                        .push(prompt.into());
-                }
-                if prompt.starts_with("Teach one rigorous, accessible lesson") {
-                    *drafted = true;
-                }
-            }
-            self.inner.respond(prompt).await
-        }
-    }
-
-    let pool = crate::tests::pool().await?;
-    let db = Database::new(pool.clone());
-    let repo = LearningRepository::new(db.clone());
-    let drafts = crate::outline_draft::DraftRunRegistry::new();
-    let draft = service::generate(
-        &repo,
-        &drafts,
-        &outline(4, 3),
-        request(LearningCourseDepth::Course),
-        vec![],
-    )
-    .await?;
-    let accepted = service::accept(
-        &repo,
-        &drafts,
-        AcceptLearningProgramRequestDto {
-            program_id: draft.summary.id.clone(),
-            expected_revision: draft.summary.revision,
-            title: "Experimental design".into(),
-        },
-    )
-    .await?;
-    let quote = "A randomized comparison isolates the intervention.";
-    crate::content_verification::tests::install_source(&db, &draft.summary.id, REFERENCE).await?;
-    let mut program = repo.get(&draft.summary.id).await?;
-    program.sources = repo.verification_sources(&draft.summary.id).await?;
-    let lesson = &program.modules[0].lessons[0];
-    let mut candidate = lesson_response();
-    for item in candidate["blocks"].as_array_mut().unwrap() {
-        let body = item["body"].as_str().unwrap_or_default().to_owned();
-        item["body"] = json!(format!(
-            "{body}\n\n**Citations:**\n*   \"{quote}\" (SourceIndex: 0)\n*   \"A controlled experiment states its limitations.\" (SourceIndex: 0)"
-        ));
-    }
-    for field in ["blocks", "questions"] {
-        for item in candidate[field].as_array_mut().unwrap() {
-            item["sourceIndex"] = json!(0);
-            item["quote"] = json!(quote);
-        }
-    }
-    let llm = Recording {
-        inner: Model(candidate.to_string()),
-        drafted: Mutex::new(false),
-        later: Mutex::new(Vec::new()),
-    };
-    let jobs = LearningCurriculumRepository::new(db.clone());
-    jobs.plan(&program.summary.id).await?;
-    let job = jobs
-        .start_job(&StartLearningGenerationJobRequestDto {
-            operation_id: uuid::Uuid::new_v4().to_string(),
-            program_id: program.summary.id.clone(),
-            expected_revision: accepted.summary.revision,
-            kind: LearningGenerationJobKind::LessonPreparation,
-            request_json: json!({"lessonIds":[lesson.id]}).to_string(),
-            progress_total: 1,
-        })
-        .await?;
-    JobStore::new(db.clone()).claim(&job.id).await?;
-    let runtimes = crate::embedded_runtime::BuiltinRuntimes::for_tests();
-    let prepared = crate::lesson_progress::run(
-        &JobContext::detached(&JobStore::new(db.clone()), &job.id).await?,
-        crate::lesson_drafts::run(
-            &db,
-            &jobs,
-            &job.id,
-            &lesson.id,
-            generation::prepare_lesson(
-                &llm,
-                &runtimes,
-                &program,
-                lesson,
-                &CoursePlan::blank(&program),
-            ),
-        ),
-    )
-    .await?;
-
-    assert_eq!(prepared.blocks.len(), LESSON_SHAPE.len());
-    for block in &prepared.blocks {
-        assert!(!block.body.contains("SourceIndex"), "{}", block.body);
-        assert!(!block.body.contains("Citations:"), "{}", block.body);
-    }
-    let later = llm
-        .later
-        .lock()
-        .map_err(|_| AppError::InternalError("fixture lock".into()))?;
-    assert!(!later.is_empty(), "review and verification made no calls");
-    let injected = [
-        "(SourceIndex:",
-        "Citations:",
-        "\"A randomized comparison isolates the intervention.\" (SourceIndex",
-        "\"A controlled experiment states its limitations.\" (SourceIndex",
-    ];
-    let leak = later.iter().find_map(|prompt| {
-        injected.iter().find_map(|needle| {
-            prompt.find(needle).map(|at| {
-                let mut from = at.saturating_sub(40);
-                while !prompt.is_char_boundary(from) {
-                    from -= 1;
-                }
-                let mut to = (at + 40).min(prompt.len());
-                while !prompt.is_char_boundary(to) {
-                    to += 1;
-                }
-                let head: String = prompt.chars().take(80).collect();
-                format!("{head:?} holds {:?}", &prompt[from..to])
-            })
-        })
-    });
-    assert!(
-        leak.is_none(),
-        "a prompt after the draft still holds the citation apparatus: {}",
-        leak.unwrap_or_default()
-    );
-    Ok(())
 }

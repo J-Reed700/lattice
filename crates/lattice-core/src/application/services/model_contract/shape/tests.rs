@@ -123,6 +123,7 @@ impl Union for Choice {
 struct Rich {
     text: String,
     verdict: Verdict,
+    amount: u32,
     sheet: Picked<Sheet>,
     maybe: Option<Picked<Sheet>>,
     opt: Picked<Opt>,
@@ -141,6 +142,7 @@ impl Authored for Rich {
         Form::new()
             .text("text")
             .word::<Verdict>("verdict")
+            .number("amount")
             .point::<Sheet>("sheet")
             .point_or_none::<Sheet>("maybe")
             .own::<Opt>("opt")
@@ -158,6 +160,7 @@ impl Authored for Rich {
         Some(Rich {
             text: fields.text("text")?,
             verdict: fields.word("verdict")?,
+            amount: fields.number("amount")?,
             sheet: fields.point("sheet")?,
             maybe: fields.point_or_none("maybe")?,
             opt: fields.own("opt")?,
@@ -169,6 +172,24 @@ impl Authored for Rich {
             per_opt: fields.each_own("per_opt")?,
             edit: fields.change("edit")?,
             choice: fields.one_of("choice")?,
+        })
+    }
+}
+
+/// A statement of one whole number.
+#[derive(Debug, PartialEq)]
+struct Amount {
+    amount: u32,
+}
+
+impl Authored for Amount {
+    fn form() -> Form {
+        Form::new().number("amount")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(Amount {
+            amount: fields.number("amount")?,
         })
     }
 }
@@ -389,6 +410,7 @@ fn assert_dialect(schema: &Value) {
                 assert!(members.iter().all(Value::is_string));
             }
         }
+        "integer" => assert_eq!(object.len(), 1),
         "array" => {
             assert_eq!(object.len(), 2);
             assert_dialect(&object["items"]);
@@ -431,6 +453,7 @@ fn validate(schema: &Value, value: &Value) -> bool {
                     .any(|member| member.as_str() == Some(text))
             })
         }),
+        "integer" => value.as_u64().is_some(),
         "array" => value.as_array().is_some_and(|elements| {
             elements
                 .iter()
@@ -692,6 +715,38 @@ fn value_reasons() {
     });
 }
 
+#[test]
+fn a_number_is_read_as_written() {
+    with_showing(1, 0, |showing| {
+        let read =
+            <Whole<Amount> as Single>::read(&written(r#"{"amount":30}"#, Ended::Complete), showing);
+        assert_eq!(read, Settled::Answered(Amount { amount: 30 }));
+    });
+}
+
+#[test]
+fn a_number_written_as_text_a_fraction_or_a_negative_is_not_read() {
+    with_showing(1, 0, |showing| {
+        for broken in [
+            r#"{"amount":"30"}"#,
+            r#"{"amount":1.5}"#,
+            r#"{"amount":-1}"#,
+        ] {
+            let read = <Whole<Amount> as Single>::read(&written(broken, Ended::Complete), showing);
+            assert_eq!(read, Settled::Unanswered(Why::NotRead), "{broken}");
+        }
+    });
+}
+
+#[test]
+fn a_number_field_is_an_integer_schema_without_a_range() {
+    with_showing(1, 0, |showing| {
+        let schema = schema_of::<Whole<Amount>>(showing, Pointers::Enum);
+        assert_eq!(schema["properties"]["amount"], json!({"type": "integer"}));
+        assert_dialect(&schema);
+    });
+}
+
 // ---- Pick ----
 
 proptest! {
@@ -940,6 +995,26 @@ fn new_reasons() {
     });
 }
 
+#[test]
+fn new_counts_the_items_it_leaves_out_and_not_a_cut_off_tail() {
+    let bad = r#"{"verdict":"maybe","text":"x","cites":[]}"#;
+    with_showing(2, 0, |showing| {
+        let found = via_new(&format!(r#"{{"items":[{bad}]}}"#), Ended::Complete, showing);
+        assert_eq!(
+            (found.items.len(), found.left_out, found.rest),
+            (0, 1, None)
+        );
+        let found = via_new("{\"items\":[]}", Ended::Complete, showing);
+        assert_eq!(found.left_out, 0);
+        let found = via_new(
+            &format!(r#"{{"items":[{bad},{{"verdict":"sup"#),
+            Ended::CutOff,
+            showing,
+        );
+        assert_eq!((found.left_out, found.rest), (1, Some(Why::CutOff)));
+    });
+}
+
 // ---- Each ----
 
 proptest! {
@@ -1066,6 +1141,7 @@ fn rich_entry(number: usize, stray: bool) -> String {
         "of": handle_of(number),
         "text": "words",
         "verdict": "yes",
+        "amount": 30,
         "sheet": "s2",
         "maybe": "none",
         "opt": "o1",
@@ -1102,6 +1178,7 @@ fn each_reads_a_statement_with_a_field_of_every_kind() {
                 let Settled::Answered(rich) = settled else {
                     panic!("{settled:?}");
                 };
+                assert_eq!(rich.amount, 30);
                 assert_eq!(rich.cites.len(), 1);
                 assert_eq!(rich.own_cites.len(), 1);
                 assert_eq!(rich.maybe, None);
@@ -1127,7 +1204,7 @@ fn each_reads_a_statement_with_a_field_of_every_kind() {
 fn an_inner_list_that_lacks_an_own_thing_leaves_the_entry_unanswered() {
     with_showing(1, 2, |showing| {
         let entry = json!({
-            "of": "s1", "text": "w", "verdict": "no", "sheet": "s1", "maybe": "none",
+            "of": "s1", "text": "w", "verdict": "no", "amount": 5, "sheet": "s1", "maybe": "none",
             "opt": "o1", "maybe_opt": "none", "cites": [], "own_cites": [],
             "inner": { "label": "a" }, "inners": [],
             "per_opt": [{ "of": "o1", "label": "x" }],
@@ -1558,4 +1635,87 @@ proptest! {
             );
         });
     }
+}
+
+// ---- a change that never anchors at the start ----
+
+/// A statement of one change whose places always follow a shown sheet.
+#[derive(Debug, PartialEq)]
+struct After {
+    edit: Consistent<Sheet, String>,
+}
+
+impl Authored for After {
+    fn form() -> Form {
+        Form::new().change_after::<Sheet, String>("edit")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(After {
+            edit: fields.change_after("edit")?,
+        })
+    }
+}
+
+fn via_after(text: &str, showing: &Showing<'_>) -> Settled<After> {
+    <Whole<After> as Single>::read(&written(text, Ended::Complete), showing)
+}
+
+#[test]
+fn a_change_after_has_no_start_in_either_anchor() {
+    with_showing(3, 0, |showing| {
+        for pointers in [Pointers::Enum, Pointers::Plain] {
+            let schema = schema_of::<Whole<After>>(showing, pointers);
+            let edit = &schema["properties"]["edit"]["properties"];
+            let anchors = [
+                &edit["insert"]["items"]["properties"]["after"],
+                &edit["move"]["items"]["properties"]["after"],
+            ];
+            for anchor in anchors {
+                match pointers {
+                    Pointers::Enum => assert_eq!(anchor["enum"], json!(["s1", "s2", "s3"])),
+                    Pointers::Plain => assert_eq!(anchor, &json!({"type": "string"})),
+                }
+            }
+            assert_dialect(&schema);
+        }
+    });
+}
+
+#[test]
+fn a_change_still_offers_start() {
+    with_showing(3, 0, |showing| {
+        let schema = schema_of::<Change<Sheet, String>>(showing, Pointers::Enum);
+        let edit = &schema["properties"];
+        assert_eq!(
+            edit["insert"]["items"]["properties"]["after"]["enum"],
+            json!(["s1", "s2", "s3", "start"])
+        );
+        assert_eq!(
+            edit["move"]["items"]["properties"]["after"]["enum"],
+            json!(["s1", "s2", "s3", "start"])
+        );
+    });
+}
+
+#[test]
+fn an_answer_anchoring_a_change_after_at_the_start_is_unanswered() {
+    with_showing(3, 0, |showing| {
+        for text in [
+            r#"{"edit":{"replace":[],"insert":[{"after":"start","with":"x"}],"remove":[],"move":[]}}"#,
+            r#"{"edit":{"replace":[],"insert":[],"remove":[],"move":[{"at":"s2","after":"start"}]}}"#,
+        ] {
+            assert_eq!(
+                via_after(text, showing),
+                Settled::Unanswered(Why::Unplaced),
+                "{text}"
+            );
+        }
+        let placed = r#"{"edit":{"replace":[],"insert":[{"after":"s1","with":"x"}],"remove":[],"move":[{"at":"s2","after":"s3"}]}}"#;
+        let Settled::Answered(read) = via_after(placed, showing) else {
+            panic!("an answer that follows shown sheets is read");
+        };
+        assert_eq!(read.edit.change().insert.len(), 1);
+        assert_eq!(read.edit.change().moved.len(), 1);
+    });
 }

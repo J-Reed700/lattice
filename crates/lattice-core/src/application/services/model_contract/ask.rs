@@ -11,6 +11,7 @@
 //! answer's content is an `Err`.
 
 use std::collections::VecDeque;
+use std::sync::{Mutex, PoisonError};
 
 use async_trait::async_trait;
 
@@ -20,7 +21,7 @@ use super::shown::{Kind, Picked, Scope, Showing};
 use super::{tagged, Contract, ContractCall};
 use crate::application::ports::llm_port::{Finish, LLMPort};
 use crate::application::services::grounded_generation::{
-    self, CallOptions, EvidencePassage, EvidenceSelection, HistoryItem,
+    self, CallOptions, EvidencePassage, EvidenceSelection, GroundedOutput, HistoryItem,
 };
 use crate::shared::error::{AppError, Result};
 
@@ -49,6 +50,18 @@ pub trait Answered: Contract {
         _statement: &<Self::Answer as Shape>::Statement,
     ) -> std::result::Result<(), Refusal> {
         Ok(())
+    }
+
+    /// [`accept`](Self::accept) for one entry of a per-item answer, given the item the entry is about.
+    fn accept_for(
+        input: &Self::Input,
+        _of: &Picked<<Self::Answer as PerItem>::Item>,
+        statement: &<Self::Answer as Shape>::Statement,
+    ) -> std::result::Result<(), Refusal>
+    where
+        Self::Answer: PerItem,
+    {
+        Self::accept(input, statement)
     }
 
     /// `input` holding only the opening of its material that `room` tokens
@@ -108,6 +121,14 @@ impl Says {
     }
 }
 
+/// The sends of a reply and the tokens the model reported for them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Usage {
+    pub sends: u64,
+    pub input: u64,
+    pub output: u64,
+}
+
 /// A reply and the step it answers.
 #[derive(Debug, Clone)]
 pub struct Sent {
@@ -115,6 +136,25 @@ pub struct Sent {
     pub request: GroundedRequest,
     pub text: String,
     pub finish: Finish,
+    pub usage: Usage,
+}
+
+impl Sent {
+    /// `output` as the reply to `request`.
+    pub fn of(request: GroundedRequest, output: GroundedOutput) -> Self {
+        let finish = output.finish();
+        let usage = Usage {
+            sends: 1,
+            input: output.input_tokens,
+            output: output.output_tokens,
+        };
+        Self {
+            request,
+            text: output.text,
+            finish,
+            usage,
+        }
+    }
 }
 
 /// One step derived from a reply: the step it answers with more room, or
@@ -159,16 +199,56 @@ pub struct Plain;
 impl Transport for Plain {
     async fn send(&self, llm: &dyn LLMPort, request: GroundedRequest) -> Result<Sent> {
         let output = grounded_generation::generate(llm, request.clone()).await?;
-        let finish = output.finish();
-        Ok(Sent {
-            request,
-            text: output.text,
-            finish,
-        })
+        Ok(Sent::of(request, output))
     }
 
     async fn follow(&self, llm: &dyn LLMPort, step: Followup) -> Result<Sent> {
         self.send(llm, step.0).await
+    }
+}
+
+/// A transport that adds up the usage of every reply it passes through.
+pub struct Metered<'a, T: Transport> {
+    inner: &'a T,
+    used: Mutex<Usage>,
+}
+
+impl<'a, T: Transport> Metered<'a, T> {
+    pub fn new(inner: &'a T) -> Self {
+        Self {
+            inner,
+            used: Mutex::new(Usage::default()),
+        }
+    }
+
+    /// What the replies passed through so far used.
+    pub fn used(&self) -> Usage {
+        *self.used.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn counted(&self, sent: Sent) -> Sent {
+        let mut used = self.used.lock().unwrap_or_else(PoisonError::into_inner);
+        used.sends = used.sends.saturating_add(sent.usage.sends);
+        used.input = used.input.saturating_add(sent.usage.input);
+        used.output = used.output.saturating_add(sent.usage.output);
+        sent
+    }
+}
+
+#[async_trait]
+impl<T: Transport> Transport for Metered<'_, T> {
+    async fn send(&self, llm: &dyn LLMPort, request: GroundedRequest) -> Result<Sent> {
+        let sent = self.inner.send(llm, request).await?;
+        Ok(self.counted(sent))
+    }
+
+    async fn follow(&self, llm: &dyn LLMPort, step: Followup) -> Result<Sent> {
+        let sent = self.inner.follow(llm, step).await?;
+        Ok(self.counted(sent))
+    }
+
+    async fn unanswered(&self, llm: &dyn LLMPort, request: &GroundedRequest) -> Result<()> {
+        self.inner.unanswered(llm, request).await
     }
 }
 
@@ -195,7 +275,8 @@ where
         Settled::Answered(statement) => Settled::Answered(((), statement)),
         Settled::Unanswered(why) => Settled::Unanswered(why),
     };
-    let settled = alone::<C, ()>(llm, transport, input, request, "", false, read).await?;
+    let accept = |_: &(), statement: &Statement<C>| C::accept(input, statement);
+    let settled = alone::<C, ()>(llm, transport, request, "", false, read, accept).await?;
     Ok(match settled {
         Settled::Answered(((), statement)) => Settled::Answered(statement),
         Settled::Unanswered(why) => Settled::Unanswered(why),
@@ -219,6 +300,7 @@ where
     C::Answer: Listed,
 {
     let mut standing: Vec<Statement<C>> = Vec::new();
+    let mut left_out = 0;
     loop {
         if let Some(cut) = fitted::<C>(llm, scope, &input, call).await? {
             input = cut;
@@ -229,12 +311,12 @@ where
         let (showing, request) = render::<C>(llm, scope, &input, call)?;
         let asked = request.clone();
         let sent = transport.send(llm, request).await?;
-        let mut outcome = new_round::<C>(&input, sent, &showing, &mut standing);
+        let mut outcome = new_round::<C>(&input, sent, &showing, &mut standing, &mut left_out);
         if outcome.added == 0 && outcome.rest.is_some() {
             if outcome.rest == Some(Why::CutOff) {
                 if let Some(larger) = larger_if_room(llm, &outcome.sent).await {
                     let sent = transport.follow(llm, larger).await?;
-                    outcome = new_round::<C>(&input, sent, &showing, &mut standing);
+                    outcome = new_round::<C>(&input, sent, &showing, &mut standing, &mut left_out);
                 }
             }
             if outcome.added == 0 && standing.is_empty() {
@@ -242,7 +324,8 @@ where
                 if let Some(told) = told {
                     if let Some(again) = correction_for(llm, &outcome.sent, &told).await {
                         let sent = transport.follow(llm, again).await?;
-                        outcome = new_round::<C>(&input, sent, &showing, &mut standing);
+                        outcome =
+                            new_round::<C>(&input, sent, &showing, &mut standing, &mut left_out);
                     }
                 }
             }
@@ -252,11 +335,11 @@ where
             transport.unanswered(llm, &asked).await?;
         }
         if rest.is_none() || added == 0 {
-            return found::<C>(standing, rest);
+            return found::<C>(standing, rest, left_out);
         }
         match rest_for(&standing) {
             Some(next) => input = next,
-            None => return found::<C>(standing, rest),
+            None => return found::<C>(standing, rest, left_out),
         }
     }
 }
@@ -274,17 +357,26 @@ fn new_round<C>(
     sent: Sent,
     showing: &Showing<'_>,
     standing: &mut Vec<Statement<C>>,
+    left_out: &mut usize,
 ) -> Round
 where
     C: Answered,
     C::Answer: Listed,
 {
-    let Found { items, rest } = <C::Answer as Listed>::read(&written(&sent), showing);
+    let Found {
+        items,
+        rest,
+        left_out: unread,
+    } = <C::Answer as Listed>::read(&written(&sent), showing);
+    *left_out += unread;
     let before = standing.len();
     for statement in items {
         match C::accept(input, &statement) {
             Ok(()) => standing.push(statement),
-            Err(Refusal(_)) => trace::<C>("", "refused"),
+            Err(Refusal(_)) => {
+                *left_out += 1;
+                trace::<C>("", "refused");
+            }
         }
     }
     let added = standing.len().saturating_sub(before);
@@ -292,7 +384,11 @@ where
 }
 
 /// What `ask_new` returns: an outcome with no item whose answer never ended fails when [`Alone::Fails`].
-fn found<C: Answered>(items: Vec<Statement<C>>, rest: Option<Why>) -> Result<Found<Statement<C>>> {
+fn found<C: Answered>(
+    items: Vec<Statement<C>>,
+    rest: Option<Why>,
+    left_out: usize,
+) -> Result<Found<Statement<C>>> {
     if let Some(why) = &rest {
         if !matches!(why, Why::Refused(_)) {
             trace::<C>("", reason(why));
@@ -301,7 +397,11 @@ fn found<C: Answered>(items: Vec<Statement<C>>, rest: Option<Why>) -> Result<Fou
             return Err(failed(why));
         }
     }
-    Ok(Found { items, rest })
+    Ok(Found {
+        items,
+        rest,
+        left_out,
+    })
 }
 
 /// One item of an [`ask_each`] and how it settled.
@@ -340,6 +440,14 @@ where
         let open: Vec<&<C::Answer as PerItem>::Item> =
             batch.iter().filter_map(|&index| items.get(index)).collect();
         let input = input_for(&open, &entries);
+        if let [only] = batch.as_slice() {
+            if let Some(item) = items.get(*only) {
+                let at = (*only, item);
+                let settled = ask_alone::<C>(llm, transport, scope, input, call, at, None).await?;
+                record::<C>(&mut slots, &mut owners, &mut entries, *only, settled);
+            }
+            continue;
+        }
         let input = match fitted::<C>(llm, scope, &input, call).await? {
             Some(cut) => cut,
             None => input,
@@ -353,22 +461,15 @@ where
         let mut split = false;
         {
             let (showing, request) = render::<C>(batch_llm, scope, &input, call)?;
-            if let [only] = batch.as_slice() {
-                if let Some(item) = items.get(*only) {
-                    let settled = settle_item::<C>(
-                        batch_llm, transport, &showing, &input, request, item, false,
-                    )
-                    .await?;
-                    match settled {
-                        Settled::Answered(entry) => accepted.push((*only, entry)),
-                        Settled::Unanswered(why) => {
-                            if let Some(slot) = slots.get_mut(*only) {
-                                *slot = Some(Settled::Unanswered(why));
-                            }
-                        }
-                    }
-                }
-            } else if !fits(batch_llm, &request).await {
+            let shown = batch
+                .iter()
+                .filter(|&&index| {
+                    items
+                        .get(index)
+                        .is_some_and(|item| handle_of(&showing, item).is_some())
+                })
+                .count();
+            if shown == 0 || !fits(batch_llm, &request).await {
                 split = true;
             } else {
                 let asked = request.clone();
@@ -387,7 +488,7 @@ where
                         continue;
                     }
                     if let Settled::Answered(statement) = settled {
-                        match C::accept(&input, &statement) {
+                        match C::accept_for(&input, &picked, &statement) {
                             Ok(()) => accepted.push((index, (picked, statement))),
                             Err(Refusal(why)) => {
                                 trace::<C>(&picked.handle.written(), "refused");
@@ -396,7 +497,7 @@ where
                         }
                     }
                 }
-                if accepted.len() < batch.len() {
+                if accepted.len() < shown {
                     transport.unanswered(batch_llm, &asked).await?;
                 }
             }
@@ -427,39 +528,10 @@ where
                 continue;
             };
             let alone_input = input_for(&[item], &entries);
-            let alone_input = match fitted::<C>(llm, scope, &alone_input, call).await? {
-                Some(cut) => cut,
-                None => alone_input,
-            };
-            let alone_contract = ContractCall::of::<C>(&alone_input)?;
-            let alone_tagging = tagged(llm, &alone_contract);
-            let alone_llm: &dyn LLMPort = &alone_tagging;
-            let (showing, request) = render::<C>(alone_llm, scope, &alone_input, call)?;
-            let request = match told(&Why::Refused(why), &handle_of(&showing, item)) {
-                Some(told) => request.restated(&told),
-                None => request,
-            };
-            let settled = settle_item::<C>(
-                alone_llm,
-                transport,
-                &showing,
-                &alone_input,
-                request,
-                item,
-                true,
-            )
-            .await?;
-            match settled {
-                Settled::Answered(entry) => {
-                    owners.push(index);
-                    entries.push(entry);
-                }
-                Settled::Unanswered(why) => {
-                    if let Some(slot) = slots.get_mut(index) {
-                        *slot = Some(Settled::Unanswered(why));
-                    }
-                }
-            }
+            let at = (index, item);
+            let settled =
+                ask_alone::<C>(llm, transport, scope, alone_input, call, at, Some(why)).await?;
+            record::<C>(&mut slots, &mut owners, &mut entries, index, settled);
         }
         if rest.is_empty() {
             continue;
@@ -500,6 +572,9 @@ pub fn failed(why: &Why) -> AppError {
         Why::Contradicted(what) => AppError::ModelAnswerUnusable(what.clone()),
         Why::Declined => AppError::ModelAnswerUnusable("The model declined to answer.".into()),
         Why::Refused(reason) => AppError::ModelAnswerUnusable(reason.clone()),
+        Why::NoRoom => AppError::WindowTooSmall(
+            "What was asked about, with the material it needs, does not fit in this model's context window".into(),
+        ),
     }
 }
 
@@ -521,7 +596,7 @@ fn told(why: &Why, handle: &str) -> Option<String> {
         Why::Unplaced => Some(UNPLACED.to_owned()),
         Why::Contradicted(what) => Some(format!("{what} Answer again and say one thing.")),
         Why::Refused(reason) => Some(format!("{reason} Answer again.")),
-        Why::Declined => None,
+        Why::Declined | Why::NoRoom => None,
     }
 }
 
@@ -535,6 +610,7 @@ fn reason(why: &Why) -> &'static str {
         Why::Contradicted(_) => "contradicted",
         Why::Declined => "declined",
         Why::Refused(_) => "refused",
+        Why::NoRoom => "no_room",
     }
 }
 
@@ -693,13 +769,13 @@ async fn correction_for(llm: &dyn LLMPort, sent: &Sent, told: &str) -> Option<Fo
 
 /// `sent` read, and the statement `accept` took, if it was answered.
 fn settle<C: Answered, P>(
-    input: &C::Input,
     sent: &Sent,
     handle: &str,
     read: &impl Fn(&Sent) -> Settled<(P, Statement<C>)>,
+    accept: &impl Fn(&P, &Statement<C>) -> std::result::Result<(), Refusal>,
 ) -> Settled<(P, Statement<C>)> {
     match read(sent) {
-        Settled::Answered((tag, statement)) => match C::accept(input, &statement) {
+        Settled::Answered((tag, statement)) => match accept(&tag, &statement) {
             Ok(()) => Settled::Answered((tag, statement)),
             Err(Refusal(why)) => {
                 trace::<C>(handle, "refused");
@@ -715,19 +791,19 @@ fn settle<C: Answered, P>(
 async fn alone<C: Answered, P>(
     llm: &dyn LLMPort,
     transport: &impl Transport,
-    input: &C::Input,
     request: GroundedRequest,
     handle: &str,
     corrected: bool,
     read: impl Fn(&Sent) -> Settled<(P, Statement<C>)>,
+    accept: impl Fn(&P, &Statement<C>) -> std::result::Result<(), Refusal>,
 ) -> Result<Settled<(P, Statement<C>)>> {
     let asked = request.clone();
     let mut sent = transport.send(llm, request).await?;
-    let mut settled = settle::<C, P>(input, &sent, handle, &read);
+    let mut settled = settle::<C, P>(&sent, handle, &read, &accept);
     if matches!(settled, Settled::Unanswered(Why::CutOff)) {
         if let Some(larger) = larger_if_room(llm, &sent).await {
             sent = transport.follow(llm, larger).await?;
-            settled = settle::<C, P>(input, &sent, handle, &read);
+            settled = settle::<C, P>(&sent, handle, &read, &accept);
         }
     }
     if !corrected {
@@ -738,7 +814,7 @@ async fn alone<C: Answered, P>(
         if let Some(due) = due {
             if let Some(again) = correction_for(llm, &sent, &due).await {
                 let reply = transport.follow(llm, again).await?;
-                settled = settle::<C, P>(input, &reply, handle, &read);
+                settled = settle::<C, P>(&reply, handle, &read, &accept);
             }
         }
     }
@@ -754,15 +830,14 @@ async fn alone<C: Answered, P>(
     Ok(settled)
 }
 
-/// The written handle `showing` gives `item`; empty when it shows none.
-fn handle_of<K: Kind>(showing: &Showing<'_>, item: &K) -> String {
+/// The written handle `showing` gives `item`; `None` when it shows none.
+fn handle_of<K: Kind>(showing: &Showing<'_>, item: &K) -> Option<String> {
     let reference = item.reference();
     showing
         .shown::<K>()
         .into_iter()
         .find(|picked| picked.reference == reference)
         .map(|picked| picked.handle.written())
-        .unwrap_or_default()
 }
 
 /// What a reply said about the item `reference` names.
@@ -777,27 +852,76 @@ fn lone<K: Kind, S>(reference: &K::Ref, rows: Rows<K, S>) -> Settled<(Picked<K>,
     }
 }
 
-/// One item of an `ask_each` asked alone, as `request` shows it.
-async fn settle_item<C>(
+/// Files what `settled` says of the item at `index` of an `ask_each`.
+fn record<C>(
+    slots: &mut [Option<Settled<Statement<C>>>],
+    owners: &mut Vec<usize>,
+    entries: &mut Vec<Entry<C>>,
+    index: usize,
+    settled: Settled<Entry<C>>,
+) where
+    C: Answered,
+    C::Answer: PerItem,
+{
+    match settled {
+        Settled::Answered(entry) => {
+            owners.push(index);
+            entries.push(entry);
+        }
+        Settled::Unanswered(why) => {
+            if let Some(slot) = slots.get_mut(index) {
+                *slot = Some(Settled::Unanswered(why));
+            }
+        }
+    }
+}
+
+/// `at`, an item of an `ask_each` and its place in the items, asked alone
+/// about `input`. A request that does not show the item is not sent. After a
+/// refusal, the request restates why and the item gets no further correction.
+async fn ask_alone<C>(
     llm: &dyn LLMPort,
     transport: &impl Transport,
-    showing: &Showing<'_>,
-    input: &C::Input,
-    request: GroundedRequest,
-    item: &<C::Answer as PerItem>::Item,
-    corrected: bool,
+    scope: &mut Scope,
+    input: C::Input,
+    call: &CallOptions,
+    at: (usize, &<C::Answer as PerItem>::Item),
+    refusal: Option<String>,
 ) -> Result<Settled<Entry<C>>>
 where
     C: Answered,
     C::Answer: PerItem,
 {
-    let handle = handle_of(showing, item);
+    let (index, item) = at;
+    let input = match fitted::<C>(llm, scope, &input, call).await? {
+        Some(cut) => cut,
+        None => input,
+    };
+    let contract = ContractCall::of::<C>(&input)?;
+    let tagging = tagged(llm, &contract);
+    let llm: &dyn LLMPort = &tagging;
+    let (showing, request) = render::<C>(llm, scope, &input, call)?;
+    let Some(handle) = handle_of(&showing, item) else {
+        trace::<C>(&index.to_string(), reason(&Why::NoRoom));
+        if C::ALONE == Alone::Fails {
+            return Err(failed(&Why::NoRoom));
+        }
+        return Ok(Settled::Unanswered(Why::NoRoom));
+    };
+    let corrected = refusal.is_some();
+    let request = match refusal.and_then(|why| told(&Why::Refused(why), &handle)) {
+        Some(told) => request.restated(&told),
+        None => request,
+    };
     let reference = item.reference();
     let read = |sent: &Sent| {
         lone(
             &reference,
-            <C::Answer as PerItem>::read(&written(sent), showing),
+            <C::Answer as PerItem>::read(&written(sent), &showing),
         )
     };
-    alone::<C, _>(llm, transport, input, request, &handle, corrected, read).await
+    let accept = |picked: &Picked<<C::Answer as PerItem>::Item>, statement: &Statement<C>| {
+        C::accept_for(&input, picked, statement)
+    };
+    alone::<C, _>(llm, transport, request, &handle, corrected, read, accept).await
 }

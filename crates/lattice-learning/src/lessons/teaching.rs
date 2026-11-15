@@ -14,12 +14,13 @@ use lattice_core::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-mod answers;
 pub(crate) mod contract;
 mod passes;
 mod protected;
 pub(crate) mod quotes;
-mod repair;
+pub(in crate::lessons) mod repair;
+#[cfg(test)]
+pub(crate) mod repair_script;
 mod review_loop;
 mod standing;
 mod subject;
@@ -28,7 +29,7 @@ use passes::Passes;
 use quotes::QuoteCheck;
 use review_loop::{review_material, Reviewed};
 pub(crate) use standing::{references_hold, versions};
-use subject::{LessonSubject, MaterialSubject, OutlineSubject};
+use subject::{LessonSubject, MaterialSubject};
 pub(crate) use waiting::record as record_waiting;
 pub(crate) use waiting::waiting_part_texts;
 
@@ -375,11 +376,6 @@ async fn review_and_repair_under(
     Ok(candidate)
 }
 
-pub struct OutlineReviewContext<'a> {
-    pub progress: &'a crate::outline_progress::OutlineProgress,
-    pub sources: &'a [crate::dto::LearningSourceDto],
-}
-
 pub(crate) async fn review_lesson<'s>(
     llm: &dyn LLMPort,
     system: &str,
@@ -436,30 +432,6 @@ pub(crate) async fn review_lesson<'s>(
     Ok(candidate)
 }
 
-pub async fn review_and_repair_with_progress(
-    llm: &dyn LLMPort,
-    system: &str,
-    prompt: &str,
-    schema: &Value,
-    candidate: String,
-    output_tokens: usize,
-    outline: OutlineReviewContext<'_>,
-) -> Result<String> {
-    review_material(
-        llm,
-        system,
-        prompt,
-        ReviewSchema::Other(schema),
-        candidate,
-        output_tokens,
-        &mut OutlineSubject::new(outline)?,
-    )
-    .await
-    .map(|reviewed| reviewed.candidate)
-}
-
-#[cfg(test)]
-mod answers_tests;
 #[cfg(test)]
 mod citation_tests;
 #[cfg(test)]

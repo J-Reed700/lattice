@@ -33,11 +33,9 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use lattice_core::application::ports::conversation_memory::{MemoryCommitError, SourceReadLimits};
-use lattice_core::application::ports::llm_port::{
-    CompletionInput, InferencePriority, SamplingOverride,
-};
+use lattice_core::application::ports::llm_port::{InferencePriority, SamplingOverride};
 use lattice_core::application::ports::LLMPort;
-use lattice_core::application::services::model_contract::{legacy, tagged, ContractCall};
+use lattice_core::application::services::grounded_generation::CallOptions;
 use lattice_core::domain::conversation::memory::{
     MemoryCommit, MemorySnapshot, MemoryValidationError, SummaryRefold,
 };
@@ -244,6 +242,21 @@ impl Deadline {
         }
     }
 
+    /// How this run queues and times one model call.
+    pub(super) fn call_options(&self) -> std::result::Result<CallOptions, CompactionError> {
+        let remaining = self.slice()?;
+        Ok(CallOptions {
+            priority: self.priority,
+            cancel: self.cancellation.clone(),
+            cache_key: self.cache_key.clone(),
+            // Greedy decoding, so the same input always yields the same answer.
+            sampling: Some(SamplingOverride::deterministic()),
+            time_budget: remaining,
+            no_time_limit: remaining.is_none(),
+            reasoning_effort: None,
+        })
+    }
+
     fn exceeded(&self) -> CompactionError {
         CompactionError::DeadlineExceeded(self.total.unwrap_or_default())
     }
@@ -258,108 +271,6 @@ impl Deadline {
     fn left(&self) -> Option<Duration> {
         self.expires_at
             .map(|expires_at| expires_at.saturating_duration_since(Instant::now()))
-    }
-}
-
-/// Run one prompt against the utility model inside the shared deadline.
-///
-/// The request carries the JSON schema, which lets a provider reject a
-/// malformed response one round trip before the parser would; the
-/// deterministic validator is what actually enforces it.
-async fn complete_json(
-    llm: &dyn LLMPort,
-    call: &ContractCall,
-    deadline: &Deadline,
-    system: &str,
-    prompt: String,
-    schema: Option<serde_json::Value>,
-    max_output_tokens: usize,
-) -> std::result::Result<String, CompactionError> {
-    let remaining = deadline.slice()?;
-    let phase = call.id.as_str();
-    let started = std::time::Instant::now();
-    tracing::info!(
-        phase,
-        provider = llm.provider_name(),
-        timeout_ms = remaining.map(|remaining| remaining.as_millis() as u64),
-        max_output_tokens,
-        "Memory utility model call started"
-    );
-    let request = legacy::completion(legacy::Completion {
-        input: vec![
-            CompletionInput::Message {
-                role: "system".into(),
-                content: system.to_string(),
-            },
-            CompletionInput::Message {
-                role: "user".into(),
-                content: prompt,
-            },
-        ],
-        json_schema: schema,
-        // Greedy decoding, so the same passages always yield the
-        // same patch rather than depending on the chat temperature.
-        sampling: Some(SamplingOverride::deterministic()),
-        // The deterministic parser applies the tighter byte and
-        // operation bounds after generation. This provider-side cap
-        // prevents a malformed or uncooperative response from using
-        // the model's much larger configured chat-output allowance.
-        max_output_tokens: Some(u32::try_from(max_output_tokens).unwrap_or(u32::MAX)),
-        time_budget: remaining,
-        no_time_limit: remaining.is_none(),
-        priority: deadline.priority,
-        cancel: deadline.cancellation.clone(),
-        cache_key: deadline.cache_key.clone(),
-        ..Default::default()
-    });
-    let tagged_llm = tagged(llm, call);
-    let call = tagged_llm.complete(&request);
-
-    let bounded = async {
-        match remaining {
-            Some(remaining) => tokio::time::timeout(remaining, call).await,
-            None => Ok(call.await),
-        }
-    };
-    let outcome = match deadline.cancellation.clone() {
-        Some(token) => tokio::select! {
-            biased;
-            _ = token.cancelled() => return Err(CompactionError::Cancelled),
-            outcome = bounded => outcome,
-        },
-        None => bounded.await,
-    };
-    match outcome {
-        Ok(Ok(response)) => {
-            tracing::info!(
-                phase,
-                outcome = "completed",
-                provider = llm.provider_name(),
-                finish_reason = %response.finish_reason,
-                output_tokens = response.output_tokens,
-                elapsed_ms = started.elapsed().as_millis() as u64,
-                "Memory utility model call finished"
-            );
-            Ok(response.text)
-        }
-        Ok(Err(error)) => {
-            tracing::warn!(
-                phase,
-                outcome = "provider_error",
-                elapsed_ms = started.elapsed().as_millis() as u64,
-                "Memory utility model call failed"
-            );
-            Err(CompactionError::Model(error.to_string()))
-        }
-        Err(_) => {
-            tracing::warn!(
-                phase,
-                outcome = "deadline_timeout",
-                elapsed_ms = started.elapsed().as_millis() as u64,
-                "Memory utility model call timed out"
-            );
-            Err(deadline.exceeded())
-        }
     }
 }
 

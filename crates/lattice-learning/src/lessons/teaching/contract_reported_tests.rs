@@ -1,15 +1,12 @@
 //! What the plan check is given of the review's reports.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+use super::scripted::{ask_of, nothing, task_of, Ask};
 use super::*;
-use crate::content_verification::tests::{fixture_completion, CONTRACT_NOTHING};
+use crate::content_verification::tests::fixture_completion;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
 use std::sync::Mutex;
-
-fn prompt() -> Value {
-    json!({"task":"Check","sections":[],"questions":[]})
-}
 
 fn report(site: Option<FindingSite>, note: &str, passage: Option<&str>) -> ReviewFinding {
     let mut finding =
@@ -19,72 +16,31 @@ fn report(site: Option<FindingSite>, note: &str, passage: Option<&str>) -> Revie
     finding
 }
 
-#[test]
-fn without_reports_the_request_and_the_system_text_are_as_they_were() {
-    let plain = prompt();
-    assert_eq!(with_reported(plain.clone(), &[]), plain);
-    assert!(with_reported(plain, &[]).get("reported").is_none());
-    assert_eq!(system_for(&[]), SYSTEM);
-}
-
-#[test]
-fn a_report_gives_its_part_its_defect_and_its_words() {
-    let first = report(
-        Some(FindingSite::Section(1)),
-        "The beads are counted twice.",
-        Some("counted twice"),
-    );
-    let asked = with_reported(prompt(), &[&first]);
-    assert_eq!(
-        asked["reported"],
-        json!([{"id":"report-0","part":"Section 2","defect":"The beads are counted twice.","words":"counted twice"}])
-    );
-}
-
-#[test]
-fn a_report_without_a_site_or_about_the_whole_lesson_names_no_part_and_one_without_a_passage_no_words(
-) {
-    let whole = report(Some(FindingSite::Lesson), "The rope is cut twice.", None);
-    let unplaced = report(None, "The shelf is full.", Some("full"));
-    let asked = with_reported(prompt(), &[&whole, &unplaced]);
-    assert_eq!(
-        asked["reported"],
-        json!([
-            {"id":"report-0","defect":"The rope is cut twice."},
-            {"id":"report-1","defect":"The shelf is full.","words":"full"}
-        ])
-    );
-}
-
-#[test]
-fn the_system_text_with_reports_is_the_plain_one_followed_by_the_sentence() {
-    let one = report(None, "The kettle is cold.", None);
-    let system = system_for(&[&one]);
-    assert_eq!(system, format!("{SYSTEM}{REPORTED}"));
-}
-
-const NEW_REPORTED: &str = " reported lists defects a review of this lesson described, each with its id. A report is a pointer where to read again, not evidence. Read the parts each one names again. For every report give in reports its id and about: true when the defect it describes is of a kind these four checks decide, whether or not it holds; false when it is of any other kind. Rule on each report whose about is true by the rules above: when it holds, give it in the list it belongs to exactly as any other entry, with the words copied exactly; when it does not hold by these rules, leave it out.";
-
-const REPORT_BRIEF: &str = " For each report, say whether the defect it describes is of a kind these four checks decide and, when it is, whether it holds by their rules.";
-
-/// The check's model: answers every ask with `reply` and keeps what it was sent.
+/// The check's model: rules on the reports it is shown as `about` says, position by position, and keeps what it was sent.
 struct Asked {
-    reply: String,
-    systems: Mutex<Vec<String>>,
-    users: Mutex<Vec<Value>>,
-    schemas: Mutex<Vec<Value>>,
+    about: Vec<bool>,
+    asks: Mutex<Vec<(Ask, String, Value)>>,
     drafting: Mutex<Vec<String>>,
 }
 
 impl Asked {
-    fn new(reply: String) -> Self {
+    fn new(about: Vec<bool>) -> Self {
         Self {
-            reply,
-            systems: Mutex::new(Vec::new()),
-            users: Mutex::new(Vec::new()),
-            schemas: Mutex::new(Vec::new()),
+            about,
+            asks: Mutex::new(Vec::new()),
             drafting: Mutex::new(Vec::new()),
         }
+    }
+
+    /// The system text and the task of each request of the ask `ask`.
+    fn of(&self, ask: Ask) -> Vec<(String, Value)> {
+        self.asks
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(kind, _, _)| *kind == ask)
+            .map(|(_, system, user)| (system.clone(), user.clone()))
+            .collect()
     }
 }
 
@@ -106,19 +62,27 @@ impl LLMPort for Asked {
             return Ok(fixture_completion(request, Vec::new()));
         }
         let (system, user) = crate::lessons::structured_call::task_messages(request);
-        self.systems.lock().unwrap().push(system.to_owned());
-        self.users
+        let ask = ask_of(system, user).unwrap();
+        self.asks
             .lock()
             .unwrap()
-            .push(serde_json::from_str(user).unwrap());
-        self.schemas.lock().unwrap().push(
-            request
-                .schema()
-                .map(|schema| schema.as_json())
-                .cloned()
-                .unwrap(),
-        );
-        Ok(CompletionResponse::from_text(self.reply.as_str()))
+            .push((ask, system.to_owned(), task_of(user)));
+        let reply = if ask == Ask::Reports {
+            let entries: Vec<Value> = task_of(user)["reported"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .enumerate()
+                .map(|(at, shown)| {
+                    let decided = self.about.get(at).copied().unwrap_or(false);
+                    json!({"of": shown["id"], "about": if decided { "decided" } else { "other" }})
+                })
+                .collect();
+            json!({ "entries": entries }).to_string()
+        } else {
+            nothing(ask, user)
+        };
+        Ok(CompletionResponse::from_text(reply.as_str()))
     }
     fn model_name(&self) -> &str {
         "scripted-review"
@@ -132,11 +96,6 @@ impl LLMPort for Asked {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
-}
-
-fn replying(reports: Value) -> String {
-    json!({"planned":[],"usedBeforeTaught":[],"contradictions":[],"unseen":[],"reports":reports})
-        .to_string()
 }
 
 fn two() -> (ReviewFinding, ReviewFinding) {
@@ -159,95 +118,98 @@ async fn ruled(model: &Asked, reported: &[&ReviewFinding]) -> Result<Ruled> {
 }
 
 #[tokio::test]
-async fn a_reported_ask_sends_each_report_with_its_id_and_requires_a_ruling_on_each() -> Result<()>
-{
-    let (first, second) = two();
-    let model = Asked::new(replying(json!([
-        {"report":"report-0","about":true},
-        {"report":"report-1","about":true}
-    ])));
-    ruled(&model, &[&first, &second]).await?;
-    let users = model.users.lock().unwrap();
-    let ids: Vec<_> = users[0]["reported"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|entry| entry["id"].as_str().unwrap())
-        .collect();
-    assert_eq!(ids, ["report-0", "report-1"]);
-    let systems = model.systems.lock().unwrap();
-    assert!(systems[0].starts_with(SYSTEM));
-    assert!(systems[0].ends_with(NEW_REPORTED));
-    let schema = &model.schemas.lock().unwrap()[0];
-    assert!(schema["required"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("reports")));
-    assert_eq!(
-        schema["properties"]["reports"],
-        json!({"type":"array","minItems":2,"maxItems":2,"items":{"type":"object","additionalProperties":false,"required":["report","about"],"properties":{"report":{"type":"string","enum":["report-0","report-1"]},"about":{"type":"boolean"}}}})
-    );
+async fn without_reports_the_find_ask_has_none_and_its_texts_are_the_plain_ones() -> Result<()> {
+    let model = Asked::new(Vec::new());
+    let found = ruled(&model, &[]).await?;
+    assert!(found.outside.is_empty());
+    let finds = model.of(Ask::Find);
+    assert_eq!(finds.len(), 1);
+    assert_eq!(finds[0].0, FIND_SYSTEM);
+    assert!(finds[0].1.get("reported").is_none());
+    assert!(model.of(Ask::Reports).is_empty());
     let drafting = model.drafting.lock().unwrap();
-    assert!(
-        drafting[0].contains(&format!("{BRIEF}{REPORT_BRIEF}")),
-        "{}",
-        drafting[0]
+    assert!(drafting[0].contains(FIND_BRIEF));
+    assert!(!drafting[0].contains("For each report"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_report_gives_its_part_its_defect_and_its_words() -> Result<()> {
+    let first = report(
+        Some(FindingSite::Section(1)),
+        "The beads are counted twice.",
+        Some("counted twice"),
+    );
+    let model = Asked::new(vec![true]);
+    ruled(&model, &[&first]).await?;
+    assert_eq!(
+        model.of(Ask::Find)[0].1["reported"],
+        json!([{"part":"Section 2","defect":"The beads are counted twice.","words":"counted twice"}])
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn a_first_ask_has_no_reports_in_its_schema_and_its_brief_is_as_before() -> Result<()> {
-    let model = Asked::new(replying(json!([])));
-    let found = ruled(&model, &[]).await?;
-    assert!(found.outside.is_empty());
-    let schema = &model.schemas.lock().unwrap()[0];
-    assert!(schema["properties"].get("reports").is_none());
-    assert!(!schema["required"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("reports")));
-    assert_eq!(*model.systems.lock().unwrap(), [SYSTEM]);
-    assert_eq!(brief_for(&[]), BRIEF);
-    let drafting = model.drafting.lock().unwrap();
-    assert!(drafting[0].contains(BRIEF));
-    assert!(!drafting[0].contains("For each report"));
+async fn a_report_without_a_site_or_about_the_whole_lesson_names_no_part_and_one_without_a_passage_no_words(
+) -> Result<()> {
+    let whole = report(Some(FindingSite::Lesson), "The rope is cut twice.", None);
+    let unplaced = report(None, "The shelf is full.", Some("full"));
+    let model = Asked::new(vec![true, true]);
+    ruled(&model, &[&whole, &unplaced]).await?;
+    assert_eq!(
+        model.of(Ask::Find)[0].1["reported"],
+        json!([
+            {"defect":"The rope is cut twice."},
+            {"defect":"The shelf is full.","words":"full"}
+        ])
+    );
     Ok(())
 }
 
-#[test]
-fn a_saved_first_ask_answer_serializes_without_reports() {
-    let saved: Answer = serde_json::from_str(CONTRACT_NOTHING).unwrap();
-    assert!(saved.reports.is_empty());
-    assert!(serde_json::to_value(&saved)
-        .unwrap()
-        .get("reports")
-        .is_none());
+#[tokio::test]
+async fn the_find_ask_with_reports_is_told_how_to_rule_on_them() -> Result<()> {
+    let (first, second) = two();
+    let model = Asked::new(vec![true, true]);
+    ruled(&model, &[&first, &second]).await?;
+    let finds = model.of(Ask::Find);
+    assert_eq!(finds[0].0, format!("{FIND_SYSTEM}{REPORTED}"));
+    let drafting = model.drafting.lock().unwrap();
+    assert!(
+        drafting
+            .iter()
+            .any(|said| said.contains(&format!("{FIND_BRIEF}{REPORTED_FIND_BRIEF}"))),
+        "{drafting:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_reports_ask_sends_each_report_under_a_name_of_its_own() -> Result<()> {
+    let (first, second) = two();
+    let model = Asked::new(vec![true, true]);
+    ruled(&model, &[&first, &second]).await?;
+    let reports = model.of(Ask::Reports);
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].0, REPORTS_SYSTEM);
+    let shown = reports[0].1["reported"].as_array().unwrap();
+    assert_eq!(shown.len(), 2);
+    assert_ne!(shown[0]["id"], shown[1]["id"]);
+    assert_eq!(shown[0]["defect"], "The kettle is cold.");
+    assert_eq!(shown[1]["words"], "cut twice");
+    let drafting = model.drafting.lock().unwrap();
+    assert!(
+        drafting.iter().any(|said| said.contains(REPORTS_BRIEF)),
+        "{drafting:?}"
+    );
+    Ok(())
 }
 
 #[tokio::test]
 async fn the_reports_about_a_kind_the_checks_do_not_decide_are_the_outside_ones() -> Result<()> {
     let (first, second) = two();
-    let model = Asked::new(replying(json!([
-        {"report":"report-0","about":true},
-        {"report":"report-1","about":false}
-    ])));
+    let model = Asked::new(vec![true, false]);
     assert_eq!(ruled(&model, &[&first, &second]).await?.outside, [1]);
-    let model = Asked::new(replying(json!([
-        {"report":"report-0","about":true},
-        {"report":"report-1","about":true}
-    ])));
+    let model = Asked::new(vec![true, true]);
     assert!(ruled(&model, &[&first, &second]).await?.outside.is_empty());
-    Ok(())
-}
-
-#[tokio::test]
-async fn the_first_entry_for_a_report_counts_and_a_report_with_none_is_outside() -> Result<()> {
-    let (first, second) = two();
-    let model = Asked::new(replying(json!([
-        {"report":"report-0","about":true},
-        {"report":"report-0","about":false}
-    ])));
-    assert_eq!(ruled(&model, &[&first, &second]).await?.outside, [1]);
     Ok(())
 }

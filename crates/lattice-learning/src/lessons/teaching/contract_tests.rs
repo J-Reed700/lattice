@@ -3,11 +3,12 @@
 //! itself nor points at what the learner cannot see.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
-use crate::content_verification::tests::{fixture_completion, CONTRACT_NOTHING};
+use crate::content_verification::tests::fixture_completion;
 use crate::lessons::content_verification::Protected;
 use crate::lessons::course_generation_tests::{clean_review, verdict, ScriptedModel};
 use crate::reference_collection::ReferenceCollection;
-use crate::review_findings::{subject_of, Held, PlanCheck};
+use crate::review_findings::Held;
+use contract::scripted::{self, ask_of, Ask, Script};
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
@@ -20,12 +21,12 @@ const OPEN_TERMINAL: &str = "Opening the terminal application";
 /// from `contract` and every question put to it kept.
 struct Routed<'a> {
     inner: &'a ScriptedModel,
-    contract: Mutex<std::collections::VecDeque<String>>,
-    asked: Mutex<Vec<String>>,
+    script: Script,
+    asked: Mutex<Vec<(Ask, String)>>,
     drafting: Mutex<Vec<String>>,
     confirming: Mutex<Vec<(String, String)>>,
+    uses: Mutex<Vec<(String, String)>>,
     confirmed: Mutex<Vec<String>>,
-    confirmed_schemas: Mutex<Vec<Value>>,
 }
 
 /// A confirming read nobody scripted: not taught, and an item belongs in
@@ -36,7 +37,7 @@ fn not_confirmed(user: &str) -> String {
     } else if user.contains(contract::confirm::CLASH_TASK) {
         json!({"case":"","contradict":false}).to_string()
     } else {
-        json!({"asked":true,"taught":false,"where":"thisLesson","quote":""}).to_string()
+        json!({"asked":true,"taught":false,"quote":""}).to_string()
     }
 }
 
@@ -44,12 +45,12 @@ impl<'a> Routed<'a> {
     fn new(inner: &'a ScriptedModel, answers: Vec<String>) -> Self {
         Self {
             inner,
-            contract: Mutex::new(answers.into()),
+            script: Script::new(answers),
             asked: Mutex::new(Vec::new()),
             drafting: Mutex::new(Vec::new()),
             confirming: Mutex::new(Vec::new()),
+            uses: Mutex::new(Vec::new()),
             confirmed: Mutex::new(Vec::new()),
-            confirmed_schemas: Mutex::new(Vec::new()),
         }
     }
 
@@ -62,12 +63,17 @@ impl<'a> Routed<'a> {
         self
     }
 
-    fn confirmed(&self) -> Vec<String> {
-        self.confirmed.lock().unwrap().clone()
+    /// Answer the confirming read of the use in the sentence `words` with `reply`.
+    fn confirming_use(self, words: &str, reply: Value) -> Self {
+        self.uses
+            .lock()
+            .unwrap()
+            .push((words.to_owned(), reply.to_string()));
+        self
     }
 
-    fn confirmed_schemas(&self) -> Vec<Value> {
-        self.confirmed_schemas.lock().unwrap().clone()
+    fn confirmed(&self) -> Vec<String> {
+        self.confirmed.lock().unwrap().clone()
     }
 
     fn drafting(&self) -> Vec<String> {
@@ -75,7 +81,23 @@ impl<'a> Routed<'a> {
     }
 
     fn asked(&self) -> Vec<String> {
-        self.asked.lock().unwrap().clone()
+        self.asked
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, user)| user.clone())
+            .collect()
+    }
+
+    /// What was asked of the ask `ask`, in the order it was asked.
+    fn asked_of(&self, ask: Ask) -> Vec<String> {
+        self.asked
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(kind, _)| *kind == ask)
+            .map(|(_, user)| user.clone())
+            .collect()
     }
 }
 
@@ -83,24 +105,36 @@ impl<'a> Routed<'a> {
 impl LLMPort for Routed<'_> {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let (system, user) = crate::lessons::structured_call::task_messages(request);
-        if system.starts_with(contract::confirm::SYSTEM)
-            && !crate::lessons::structured_call::is_draft_request(request)
+        let ask = ask_of(system, user);
+        if matches!(
+            ask,
+            Some(Ask::ConfirmPlanned | Ask::ConfirmUse | Ask::ConfirmClash)
+        ) && !crate::lessons::structured_call::is_draft_request(request)
         {
             self.confirmed.lock().unwrap().push(user.to_owned());
-            if let Some(schema) = request.schema().map(|schema| schema.as_json()) {
-                self.confirmed_schemas.lock().unwrap().push(schema.clone());
-            }
-            let reply = self
-                .confirming
+            let sentence = scripted::use_sentence(user);
+            let of_use = self
+                .uses
                 .lock()
                 .unwrap()
                 .iter()
-                .find(|(needle, _)| user.contains(needle.as_str()))
-                .map_or_else(|| not_confirmed(user), |(_, reply)| reply.clone());
-            return Ok(CompletionResponse::from_text(reply.as_str()));
+                .find(|(words, _)| sentence.as_deref() == Some(words.as_str()))
+                .map(|(_, reply)| reply.clone());
+            let old = of_use.unwrap_or_else(|| {
+                self.confirming
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .find(|(needle, _)| user.contains(needle.as_str()))
+                    .map_or_else(|| not_confirmed(user), |(_, reply)| reply.clone())
+            });
+            let kind = ask.unwrap_or(Ask::ConfirmUse);
+            return Ok(CompletionResponse::from_text(
+                scripted::confirm(kind, &old, user).as_str(),
+            ));
         }
-        let is_contract = system.starts_with(contract::SYSTEM);
-        if is_contract && crate::lessons::structured_call::is_draft_request(request) {
+        let checking = matches!(ask, Some(Ask::Planned | Ask::Find | Ask::Reports));
+        if checking && crate::lessons::structured_call::is_draft_request(request) {
             let said = request.input().iter().filter_map(|item| match item {
                 CompletionInput::Message { role, content } if role == "system" => {
                     Some(content.as_str())
@@ -115,16 +149,12 @@ impl LLMPort for Routed<'_> {
 ",
                 ));
         }
-        if !is_contract || crate::lessons::structured_call::is_draft_request(request) {
+        if !checking || crate::lessons::structured_call::is_draft_request(request) {
             return self.inner.complete(request).await;
         }
-        self.asked.lock().unwrap().push(user.to_owned());
-        let reply = self
-            .contract
-            .lock()
-            .unwrap()
-            .pop_front()
-            .unwrap_or_else(|| CONTRACT_NOTHING.to_owned());
+        let kind = ask.unwrap_or(Ask::Find);
+        self.asked.lock().unwrap().push((kind, user.to_owned()));
+        let reply = self.script.reply(kind, user);
         Ok(fixture_completion(request, vec![reply]))
     }
     fn model_name(&self) -> &str {
@@ -368,14 +398,14 @@ async fn a_planned_action_the_lesson_does_not_teach_is_a_finding_at_its_section(
     assert!(repair.contains("Teach it in the lesson's own words"));
     assert!(!repair.contains("Teach it here"));
     drop(prompts);
-    let asked = model.asked();
+    let asked = model.asked_of(Ask::Planned);
     assert_eq!(asked.len(), 3);
     for expected in [
-        "action-0",
+        "action",
         OPEN_TERMINAL,
         "Listing the files in a folder",
         "The learner has used a graphical file manager.",
-        "section-2",
+        "Read the names.",
     ] {
         assert!(asked[0].contains(expected), "{expected}");
     }
@@ -430,61 +460,6 @@ async fn a_use_before_it_is_taught_is_a_finding_only_when_its_words_are_in_the_l
 }
 
 #[tokio::test]
-async fn a_planned_item_reported_taught_with_words_not_in_the_lesson_is_not_taught() -> Result<()> {
-    let scripted = scripted(vec![
-        reviewed(),
-        retitle_at(1),
-        reviewed_of(&[]),
-        retitle_again_at(1),
-        reviewed_of(&[]),
-    ]);
-    let reported = answer(
-        json!([
-            taught("idea-0", "A terminal takes typed commands."),
-            taught("action-0", "Press the terminal icon in the dock")
-        ]),
-        json!([]),
-        json!([]),
-        json!([]),
-    );
-    let model = Routed::new(
-        &scripted,
-        vec![reported.clone(), reported.clone(), reported],
-    );
-    let candidate = lesson([
-        "A terminal takes typed commands.",
-        "The list shows names.",
-        "Read the names.",
-    ]);
-    let ctx = context(&["Typing commands"], &[OPEN_TERMINAL]);
-    let result = run(&model, &candidate, &ctx, &[]).await?;
-    assert_eq!(waiting(&result), [("teaching:section-1".to_owned(), None)]);
-    assert!(result.set_aside[0].finding.note.contains(OPEN_TERMINAL));
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_planned_item_missing_from_the_answer_is_not_taught() -> Result<()> {
-    let scripted = scripted(vec![
-        reviewed(),
-        retitle_at(1),
-        reviewed_of(&[]),
-        retitle_again_at(1),
-        reviewed_of(&[]),
-    ]);
-    let model = Routed::new(&scripted, vec![]);
-    let candidate = lesson([
-        "A terminal takes typed commands.",
-        "The list shows names.",
-        "Read the names.",
-    ]);
-    let result = run(&model, &candidate, &context(&[], &[OPEN_TERMINAL]), &[]).await?;
-    assert_eq!(result.set_aside.len(), 1);
-    assert!(result.set_aside[0].finding.note.contains(OPEN_TERMINAL));
-    Ok(())
-}
-
-#[tokio::test]
 async fn a_contradiction_is_sited_at_the_statement_that_is_not_protected() -> Result<()> {
     let scripted = scripted(vec![reviewed(), retitle(), retitle(), retitle(), retitle()]);
     let clash = answer(
@@ -514,7 +489,7 @@ async fn a_contradiction_is_sited_at_the_statement_that_is_not_protected() -> Re
         waiting(&result),
         [(
             "teaching:section-2".to_owned(),
-            Some("Type ls Documents to list that folder".to_owned())
+            Some("Type ls Documents to list that folder.".to_owned())
         )]
     );
     assert_eq!(result.set_aside[0].finding.also, None);
@@ -780,13 +755,8 @@ async fn two_defects_in_one_section_are_two_entries_for_the_repair() -> Result<(
         .iter()
         .find(|prompt| prompt.contains("issuesToFix"))
         .unwrap();
-    let key = "\"issuesToFix\":";
-    let start = repair.find(key).unwrap() + key.len();
-    let issues: Value = serde_json::Deserializer::from_str(&repair[start..])
-        .into_iter::<Value>()
-        .next()
-        .unwrap()
-        .unwrap();
+    let issues =
+        crate::lessons::teaching::repair_script::task_of(repair).unwrap()["issuesToFix"].clone();
     assert_eq!(issues.as_array().unwrap().len(), 2, "{issues}");
     Ok(())
 }
@@ -833,10 +803,9 @@ async fn one_fixed_defect_does_not_charge_the_other_in_its_section() -> Result<(
     Ok(())
 }
 
-/// A repair of the second section's body for `finding`.
-fn replace_for(finding: &ReviewFinding, before: &str, after: &str) -> String {
+/// A repair of the second section's body.
+fn replace_for(before: &str, after: &str) -> String {
     edits(json!([{
-        "finding": finding.id().as_str(),
         "path": "/blocks/1/body",
         "before": before,
         "after": after
@@ -853,29 +822,13 @@ async fn a_defect_in_words_a_repair_wrote_continues_the_count_of_its_own_kind_of
     let first = "Sorting the list with the second tool leaves names unchanged.";
     let second = "Sorting the list with the third tool leaves names unchanged.";
     let third = "Sorting the list with the third tool always leaves names unchanged.";
-    let mut digests = [subject_of(one), subject_of(other)];
-    digests.sort();
-    let clash = ReviewFinding::plan(
-        PlanCheck::Contradiction,
-        digests.join("-"),
-        FindingSite::Section(0),
-        "",
-    );
-    let use_of = |tool: &str| {
-        ReviewFinding::plan(
-            PlanCheck::Used,
-            subject_of(tool),
-            FindingSite::Section(1),
-            "",
-        )
-    };
     let scripted = scripted(vec![
         reviewed(),
-        replace_for(&clash, other, first),
+        replace_for(other, first),
         reviewed_of(&[]),
-        replace_for(&use_of("the second tool"), first, second),
+        replace_for(first, second),
         reviewed_of(&[]),
-        replace_for(&use_of("the third tool"), second, third),
+        replace_for(second, third),
         reviewed_of(&[]),
     ]);
     let contradiction = answer(
@@ -908,10 +861,7 @@ async fn a_defect_in_words_a_repair_wrote_continues_the_count_of_its_own_kind_of
     assert_eq!(repairs_asked(&scripted), 3);
     assert_eq!(result.set_aside.len(), 1, "{:?}", waiting(&result));
     assert_eq!(result.set_aside[0].repairs, 2);
-    assert_eq!(
-        result.set_aside[0].finding.passage.as_deref(),
-        Some("the third tool")
-    );
+    assert_eq!(result.set_aside[0].finding.passage.as_deref(), Some(third));
     assert_eq!(
         body(&result, 1),
         format!("{third} The list shows names in order.")
@@ -948,37 +898,25 @@ async fn words_that_point_at_what_the_learner_never_sees_are_a_finding() -> Resu
         waiting(&result),
         [(
             "teaching:section-2".to_owned(),
-            Some("which the excerpt does not describe".to_owned())
+            Some("The sort order is one which the excerpt does not describe.".to_owned())
         )]
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn an_outline_review_never_checks_against_a_course_plan() -> Result<()> {
+async fn a_material_review_never_checks_against_a_course_plan() -> Result<()> {
     let scripted = scripted(vec![json!({"issues":[]}).to_string()]);
     let model = Routed::new(&scripted, vec![]);
     let outline = json!({"modules":[{"title":"A module","lessons":[]}]});
     let schema = json!({"type":"object","properties":{"modules":{"type":"array"}}});
-    let progress = crate::outline_progress::OutlineProgress::default();
-    let sources = vec![crate::dto::LearningSourceDto {
-        id: "saved-reference".into(),
-        title: "Example reference".into(),
-        url: None,
-        acquired_at: 0,
-        excerpt: EXCERPT.into(),
-    }];
-    review_and_repair_with_progress(
+    review_and_repair(
         &model,
         "Author a curriculum outline",
         &context(&[], &[OPEN_TERMINAL]),
         &schema,
         outline.to_string(),
         4000,
-        OutlineReviewContext {
-            progress: &progress,
-            sources: &sources,
-        },
     )
     .await?;
     assert!(model.asked().is_empty());
@@ -991,7 +929,7 @@ fn defect_in_first_section() -> String {
 }
 
 fn actionable() -> String {
-    json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"internal_conflict","evidenceIds":["blocks-0"],"partId":"blocks-0","requirementId":null,"reason":"The section promises expert certification."}]}).to_string()
+    json!({"entries":[{"of":"i1","verdict":"actionable","basis":"internal_conflict","candidateIds":["p1"],"referenceIds":[],"partId":"p1","leftTo":"none","reason":"The section promises expert certification."}]}).to_string()
 }
 
 const LEARNER_SEES_ONLY_THE_LESSON: &str = "never mentions the course plan";
@@ -1134,26 +1072,26 @@ async fn the_check_is_told_what_later_lessons_teach() -> Result<()> {
 
 #[test]
 fn the_check_s_rule_lets_a_lesson_say_what_a_later_one_teaches() {
-    assert!(contract::SYSTEM.contains("neither is saying what a later lesson will teach"));
+    assert!(contract::FIND_SYSTEM.contains("neither is saying what a later lesson will teach"));
 }
 
 #[test]
 fn pointing_at_the_outline_or_an_earlier_lesson_is_not_unseen() {
-    assert!(contract::SYSTEM
+    assert!(contract::FIND_SYSTEM
         .contains("Pointing at the course outline or at an earlier lesson is not unseen"));
 }
 
 #[test]
 fn the_contract_check_looks_for_unseen_words_in_questions_too() {
-    assert!(contract::SYSTEM.contains(
+    assert!(contract::FIND_SYSTEM.contains(
         "words in any part, a question's choices, rationales and explanation included, that point the learner at something they never see"
     ));
 }
 
 #[test]
 fn the_unseen_check_names_the_whole_outline_and_scopes_its_qualifier() {
-    assert!(contract::SYSTEM.contains("courseOutline"));
-    assert!(contract::SYSTEM
+    assert!(contract::FIND_SYSTEM.contains("courseOutline"));
+    assert!(contract::FIND_SYSTEM
         .contains("text above or below or a step number that this lesson does not contain"));
 }
 
@@ -1216,11 +1154,10 @@ async fn finding_note_in(
 
 #[tokio::test]
 async fn the_contract_check_describes_learner_actions_in_no_subjects_terms() -> Result<()> {
-    let system = contract::SYSTEM;
-    let start = system.find("1. planned:").unwrap();
-    let end = system.find("3. contradictions:").unwrap();
-    let checks = &system[start..end];
-    assert_no_software_words("checks 1 and 2", checks);
+    let system = contract::FIND_SYSTEM;
+    let end = system.find("2. contradictions:").unwrap();
+    let checks = format!("{}{}", contract::PLANNED_SYSTEM, &system[..end]);
+    assert_no_software_words("the planned and used checks", &checks);
     for expected in [
         "the exact steps, and the result the learner should get",
         "anything a part asks the learner to do or use that they need to be shown how to do (an action, a technique, a tool, a setting, or a variant of something taught)",
@@ -1309,9 +1246,9 @@ const SHOWN: &str = "what it is for, exactly how to do it, and the result the le
 
 #[tokio::test]
 async fn check_two_counts_teaching_where_a_step_asks_for_it() -> Result<()> {
-    let system = contract::SYSTEM;
-    let start = system.find("2. usedBeforeTaught").unwrap();
-    let end = system.find("3. contradictions:").unwrap();
+    let system = contract::FIND_SYSTEM;
+    let start = system.find("1. usedBeforeTaught").unwrap();
+    let end = system.find("2. contradictions:").unwrap();
     let check = &system[start..end];
     let criterion = format!(
         "or that it treats as known, which the lesson has not taught by the words that ask for it and which priorKnowledge and the actions and terms of earlierLessons do not cover. The lesson has taught something the learner does or uses when an earlier part, or this part before or in those words, says {SHOWN}: words that ask for it and say all of this teach it where it is used."
@@ -1336,10 +1273,10 @@ async fn check_two_counts_teaching_where_a_step_asks_for_it() -> Result<()> {
 
 #[test]
 fn check_two_asks_for_a_noun_phrase_never_a_sentence() {
-    let system = contract::SYSTEM;
+    let system = contract::FIND_SYSTEM;
     assert!(
         system.contains(
-            "Give one entry for each such thing, however many parts use it: in what, its name, a noun phrase, never a sentence; in uses, the words copied exactly of every place that asks the learner to use it before the lesson has taught it; in taughtLater, the words copied exactly with which the lesson first teaches it after those places, empty when it never does."
+            "Give one entry of kind usedBeforeTaught for each such thing, however many parts use it: in what, its name, a noun phrase, never a sentence; in uses, cite every sentence that asks the learner to use it before the lesson has taught it; in taughtLater, cite the sentences with which the lesson first teaches it after those places, empty when it never does."
         ),
         "{system}"
     );
@@ -1357,7 +1294,11 @@ async fn the_check_and_the_note_define_shown_how_in_the_same_words() -> Result<(
     let (_, rest) = note.split_once("where it is first used (").unwrap();
     let (phrase, _) = rest.split_once(')').unwrap();
     assert_eq!(phrase, EACH_SHOWN, "{note}");
-    assert!(contract::SYSTEM.contains(SHOWN), "{}", contract::SYSTEM);
+    assert!(
+        contract::FIND_SYSTEM.contains(SHOWN),
+        "{}",
+        contract::FIND_SYSTEM
+    );
     Ok(())
 }
 
@@ -1365,7 +1306,7 @@ const EACH_SHOWN: &str = "for something the learner does or uses, what it is for
 
 #[test]
 fn the_check_says_when_a_term_has_been_taught() {
-    let system = contract::SYSTEM;
+    let system = contract::FIND_SYSTEM;
     assert!(
         system.contains("It has taught a term when an earlier part, or this part before or in those words, says what it means."),
         "{system}"
@@ -1380,9 +1321,9 @@ fn the_check_says_when_a_term_has_been_taught() {
 
 #[test]
 fn the_confirming_read_says_what_a_part_only_mentions_is_not_used() {
-    let system = contract::confirm::SYSTEM;
+    let system = contract::confirm::USE_SYSTEM;
     assert!(
-        system.contains("A part uses something when its words ask the learner to do or use it, when its practice deliverable needs it, or when it treats it as known. What a part only mentions, and does not ask of the learner, it does not use; then asked is false and quote is empty."),
+        system.contains("A part uses something when its words ask the learner to do or use it, when its practice deliverable needs it, or when it treats it as known. What a part only mentions, and does not ask of the learner, it does not use; then asked is no and units is empty."),
         "{system}"
     );
     assert!(system.contains("It has taught a term when"), "{system}");
@@ -1447,7 +1388,7 @@ async fn a_use_is_a_finding_at_the_part_that_holds_its_words() -> Result<()> {
         waiting(&result),
         [(
             "teaching:section-1".to_owned(),
-            Some("Type ls -l to see sizes".to_owned())
+            Some("Type ls -l to see sizes in the list.".to_owned())
         )]
     );
     Ok(())
@@ -1533,11 +1474,11 @@ async fn an_item_found_taught_is_not_asked_again_until_its_sentence_changes() ->
     ]);
     let ctx = context(&["Typing commands"], &[]);
     let result = run(&model, &candidate, &ctx, &[]).await?;
-    let asked = model.asked();
-    assert_eq!(asked.len(), 3);
+    let asked = model.asked_of(Ask::Planned);
+    assert_eq!(asked.len(), 2);
     assert!(asked[0].contains("Typing commands"), "{}", asked[0]);
-    assert!(!asked[1].contains("Typing commands"), "{}", asked[1]);
-    assert!(asked[2].contains("Typing commands"), "{}", asked[2]);
+    assert!(asked[1].contains("Typing commands"), "{}", asked[1]);
+    assert_eq!(model.asked_of(Ask::Find).len(), 3);
     assert!(result.set_aside.is_empty(), "{:?}", waiting(&result));
     Ok(())
 }
@@ -1595,7 +1536,7 @@ async fn a_planned_item_the_confirming_read_does_not_find_is_a_finding_where_it_
 
 async fn waiting_after_planned_contrast(
     reply: Value,
-) -> Result<(Vec<(String, Option<String>)>, Vec<Value>)> {
+) -> Result<(Vec<(String, Option<String>)>, Vec<String>)> {
     let scripted = scripted(vec![
         reviewed(),
         retitle_at(1),
@@ -1618,21 +1559,27 @@ async fn waiting_after_planned_contrast(
     ],"questions":[]});
     let ctx = context_planning(&[], &[], &[], "A planned confusion");
     let result = run(&model, &candidate, &ctx, &[]).await?;
-    Ok((waiting(&result), model.confirmed_schemas()))
+    Ok((waiting(&result), model.confirmed()))
 }
 
 #[tokio::test]
 async fn a_planned_contrast_is_placed_only_in_a_contrast_section() -> Result<()> {
-    let (found, schemas) =
+    let (found, confirmed) =
         waiting_after_planned_contrast(json!({"taught":false,"quote":"","belongs":"section-1"}))
             .await?;
     assert_eq!(found, [("teaching:section-1".to_owned(), None)]);
-    assert!(!schemas.is_empty());
-    for schema in &schemas {
-        assert_eq!(
-            schema["properties"]["belongs"]["enum"],
-            json!(["section-1"])
-        );
+    assert!(!confirmed.is_empty());
+    for prompt in &confirmed {
+        let task: Value = serde_json::from_str(prompt).unwrap();
+        let named: Vec<usize> = task["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .filter(|(_, section)| section.get("id").is_some())
+            .map(|(at, _)| at)
+            .collect();
+        assert_eq!(named, [1], "{prompt}");
     }
     Ok(())
 }
@@ -1696,7 +1643,7 @@ async fn a_confirming_read_settles_a_use_when_its_words_check_out() -> Result<()
 async fn a_confirming_read_that_does_not_check_out_leaves_the_finding_standing() -> Result<()> {
     let standing = vec![(
         "teaching:section-1".to_owned(),
-        Some("Type ls -l to see sizes".to_owned()),
+        Some("Type ls -l to see sizes.".to_owned()),
     )];
     for (place, quote) in [
         ("thisLesson", "Then read the list."),
@@ -1731,7 +1678,7 @@ async fn a_use_the_part_asked_for_and_nothing_taught_stands() -> Result<()> {
         left,
         [(
             "teaching:section-1".to_owned(),
-            Some("Type ls -l to see sizes".to_owned())
+            Some("Type ls -l to see sizes.".to_owned())
         )]
     );
     Ok(())
@@ -1808,9 +1755,15 @@ async fn every_negative_is_read_again_once_and_a_use_is_shown_only_the_parts_up_
         .iter()
         .find(|prompt| prompt.contains("the -l option of ls"))
         .unwrap();
-    assert!(about_the_use.contains("section-1"), "{about_the_use}");
-    assert!(!about_the_use.contains("section-2"), "{about_the_use}");
-    assert_eq!(confirmed.len(), 3 * model.asked().len());
+    assert!(
+        about_the_use.contains("Type ls -l to see sizes."),
+        "{about_the_use}"
+    );
+    assert!(
+        !about_the_use.contains("Read the names."),
+        "{about_the_use}"
+    );
+    assert_eq!(confirmed.len(), 3 * model.asked_of(Ask::Find).len());
     Ok(())
 }
 
@@ -1845,11 +1798,11 @@ async fn words_pointing_at_what_is_never_seen_are_a_finding_in_every_part_that_h
         [
             (
                 "teaching:section-1".to_owned(),
-                Some("see the excerpt above".to_owned())
+                Some("For sizes, see the excerpt above.".to_owned())
             ),
             (
                 "teaching:section-2".to_owned(),
-                Some("see the excerpt above".to_owned())
+                Some("For names, see the excerpt above.".to_owned())
             )
         ]
     );
@@ -1882,8 +1835,10 @@ async fn an_unseen_entry_the_check_says_the_learner_sees_is_no_finding() -> Resu
 #[test]
 fn the_check_and_the_confirming_read_define_taught_in_the_same_words() {
     let definition = "An action is taught when the lesson shows the learner how to perform it: the exact steps, and the result the learner should get.";
-    for system in [contract::SYSTEM, contract::confirm::SYSTEM] {
+    for system in [contract::PLANNED_SYSTEM, contract::confirm::PLANNED_SYSTEM] {
         assert!(system.contains(definition), "{system}");
+    }
+    for system in [contract::FIND_SYSTEM, contract::confirm::USE_SYSTEM] {
         assert!(system.contains(SHOWN), "{system}");
         assert!(system.contains("A variant is a new thing"), "{system}");
     }

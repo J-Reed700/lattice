@@ -376,8 +376,11 @@ fn uncited_lesson() -> Value {
     candidate
 }
 
-fn patch(patch: Value) -> Value {
-    crate::lessons::text_edits::apply(&uncited_lesson(), &patch.to_string()).unwrap()
+/// The uncited lesson with a citation of `TIMEOUT` listed in its first block.
+fn citing(quote: &str) -> Value {
+    let mut revised = uncited_lesson();
+    revised["blocks"][0]["citations"] = json!([{"sentence":TIMEOUT,"sourceIndex":0,"quote":quote}]);
+    revised
 }
 
 /// Uncited wording the supplied excerpt holds ends cited, its sentence
@@ -387,8 +390,7 @@ fn uncited_wording_a_source_contains_is_settled_by_citing_it() {
     let before = uncited_lesson();
     assert_eq!(lesson_rules(&before).len(), 1);
 
-    let revised = patch(json!({"edits":[],"citations":[
-        {"path":"/blocks/0","sentence":TIMEOUT,"sourceIndex":0,"quote":SOURCE_SAYS}]}));
+    let revised = citing(SOURCE_SAYS);
 
     assert_eq!(revised["blocks"][0]["body"], before["blocks"][0]["body"]);
     assert_eq!(
@@ -401,9 +403,9 @@ fn uncited_wording_a_source_contains_is_settled_by_citing_it() {
 /// Wording no excerpt holds ends as the lesson's own sentence, with nothing cited.
 #[test]
 fn uncited_wording_no_source_contains_is_settled_by_removing_the_quotation_marks() {
-    let revised = patch(json!({"edits":[
-        {"path":"/blocks/0/body","before":TIMEOUT,"after":"The default timeout is set by the caller."}],
-        "citations":[]}));
+    let mut revised = uncited_lesson();
+    revised["blocks"][0]["body"] =
+        json!("The default timeout is set by the caller. It is set for each request.");
 
     assert!(lesson_rules(&revised).is_empty());
     assert_eq!(revised["blocks"][0]["citations"], json!([]));
@@ -413,9 +415,7 @@ fn uncited_wording_no_source_contains_is_settled_by_removing_the_quotation_marks
 /// has to contain what the sentence states, whoever appended it.
 #[test]
 fn a_citation_appended_with_a_quote_that_lacks_the_wording_settles_nothing() {
-    let revised = patch(json!({"edits":[],"citations":[
-        {"path":"/blocks/0","sentence":TIMEOUT,"sourceIndex":0,
-         "quote":"A timeout applies to each request, in seconds."}]}));
+    let revised = citing("A timeout applies to each request, in seconds.");
 
     let findings = lesson_rules(&revised);
 

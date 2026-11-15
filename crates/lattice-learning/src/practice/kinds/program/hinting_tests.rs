@@ -25,15 +25,15 @@ const RUNGS: [(Rung, &str); 4] = [
     (Rung::Point, "Line"),
 ];
 
-const NUDGE_WITH_A_BLOCK: &str = r#"{"text":"Remember them:\n```python\nx\n```","reason":"It shows the step.","lines":[],"path":null}"#;
+const NUDGE_WITH_A_BLOCK: &str =
+    r#"{"text":"Remember them:\n```python\nx\n```","reason":"It shows the step.","lines":[]}"#;
 
 fn written(rung: Rung) -> String {
     if rung == Rung::Point {
         serde_json::json!({
             "text": "This return ends the loop on the first pass.",
             "reason": "It points at the return.",
-            "lines": [3],
-            "path": "solution.py",
+            "lines": ["l3"],
         })
         .to_string()
     } else {
@@ -41,7 +41,6 @@ fn written(rung: Rung) -> String {
             "text": "What should the loop do with each value?",
             "reason": "It points at the accumulation.",
             "lines": [],
-            "path": null,
         })
         .to_string()
     }
@@ -161,8 +160,7 @@ async fn a_line_hints_lines_come_back_as_parts() {
     let model = Recorder::new([serde_json::json!({
         "text": "These lines end the loop early.",
         "reason": "They return on the first pass.",
-        "lines": [2, 3],
-        "path": "solution.py",
+        "lines": ["l2", "l3"],
     })
     .to_string()]);
     let hint = given(&model, Form::Build, Setting::Coached, Rung::Point, false)
@@ -180,8 +178,7 @@ async fn a_hint_of_another_rung_has_no_parts() {
     let model = Recorder::new([serde_json::json!({
         "text": "What should the loop do with each value?",
         "reason": "It points at the accumulation.",
-        "lines": [2],
-        "path": "solution.py",
+        "lines": ["l2"],
     })
     .to_string()]);
     let hint = given(&model, Form::Build, Setting::Coached, Rung::Nudge, false)

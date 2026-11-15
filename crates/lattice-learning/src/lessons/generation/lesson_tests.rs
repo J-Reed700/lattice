@@ -2,6 +2,7 @@
 use super::*;
 use crate::lessons::course_generation_tests::length_bounds;
 use crate::review_findings::{FindingSite, Rule};
+use lattice_core::application::services::model_contract::Contract;
 use serde_json::{json, Value};
 
 const STEPS_IN_ORDER: &str = "The learner does the lesson's steps in order, with their own tools and materials, so each step starts from what the steps before it left: a later step uses what an earlier one made or set up, and never has the learner make or set it up again.";
@@ -530,7 +531,10 @@ fn writer_requirements() -> String {
 
 #[test]
 fn the_writer_writes_a_cases_own_values_plainly_and_is_not_asked_for_hypotheticals() {
-    for text in [writer_requirements(), lesson_system(true)] {
+    for text in [
+        writer_requirements(),
+        lesson_system_with(writer_grounding()),
+    ] {
         assert!(!text.contains("explicit hypotheticals"), "{text}");
         assert!(!text.contains("Suppose…"), "{text}");
         assert!(
@@ -857,26 +861,9 @@ fn the_writer_is_asked_for_choices_alike_in_form() {
 }
 
 #[test]
-fn the_writer_and_both_repairs_are_told_a_step_starts_from_what_the_steps_before_it_left() {
-    for sources in [0, 2] {
-        let schema = lesson_schema(sources);
-        for (who, text) in [
-            ("writer", writer_requirements()),
-            (
-                "teaching repair",
-                crate::lessons::text_edits::instructions(&schema),
-            ),
-            (
-                "claim repair",
-                crate::lessons::text_edits::rewrite_instructions(&schema),
-            ),
-        ] {
-            assert!(
-                text.contains(STEPS_IN_ORDER),
-                "{who} with {sources} sources: {text}"
-            );
-        }
-    }
+fn the_writer_is_told_a_step_starts_from_what_the_steps_before_it_left() {
+    let text = writer_requirements();
+    assert!(text.contains(STEPS_IN_ORDER), "{text}");
 }
 
 #[test]
@@ -1278,29 +1265,8 @@ fn lesson_drafts_are_keyed_by_versioned_protocols() {
     );
     assert_eq!(
         json!({"policy": DRAFT_POLICY})["policy"],
-        json!("lesson-draft-v1")
+        json!("lesson-draft-v2")
     );
-}
-
-#[test]
-fn the_lesson_writer_contract_reads_what_it_renders() {
-    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
-        LessonWriter,
-    >(
-        &serde_json::from_value(json!({
-            "blocks": ([
-                "explanation", "worked_example", "contrast", "check", "guided_practice",
-                "independent_practice", "recap", "reflection"
-            ].map(|kind| block(kind, "A section", "Its body.", true))),
-            "questions": (["practice", "quiz", "test"].map(|kind| question(kind, "Which one?", true)))
-        }))
-        .unwrap(),
-    );
-}
-
-#[test]
-fn a_draft_without_sections_is_refused_by_the_lesson_reader() {
-    assert!(read_lesson(&json!({"blocks":[],"questions":[]}).to_string()).is_err());
 }
 
 #[test]
@@ -1337,7 +1303,7 @@ fn a_rendered_lesson_meets_the_writers_schema() {
         .collect();
     let lesson: GeneratedLesson =
         serde_json::from_value(json!({"blocks":blocks,"questions":questions})).unwrap();
-    let rendered: Value = serde_json::from_str(&<LessonWriter as lattice_core::application::services::model_contract::test_support::RenderAnswer>::render(&lesson)).unwrap();
+    let rendered = json!(lesson);
     let schema = lesson_schema_counting(1, (1, 20), (1, 20));
     let validator = jsonschema::JSONSchema::compile(&schema).unwrap();
     let errors: Vec<String> = validator

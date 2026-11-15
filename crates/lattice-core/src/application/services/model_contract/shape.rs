@@ -76,6 +76,8 @@ pub enum Why {
     Declined,
     /// The contract's `accept` refused what the model authored, for this reason.
     Refused(String),
+    /// The item, with what it needs, does not fit the model's window: it was not asked.
+    NoRoom,
 }
 
 /// How the text of an answer ended.
@@ -164,6 +166,8 @@ pub struct Found<S> {
     /// `None` when the answer was read to its end: only then is it known that
     /// there are no others. Otherwise why it is not known.
     pub rest: Option<Why>,
+    /// How many items the model wrote that are not in `items`, whatever the cause.
+    pub left_out: usize,
 }
 
 /// `V`: judgement and text about the one subject of the call. No identity exists to get wrong.

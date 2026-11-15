@@ -12,11 +12,11 @@ fn outcome() -> Outcome<'static> {
 }
 
 fn solved(chosen: usize) -> String {
-    json!({"answers":[{"index":0,"reason":"The source identifies that option as correct.","correctIndices":[chosen],"answer":"","blankAnswers":[],"matches":[],"orderedValues":[]}]}).to_string()
+    crate::key_review::scripted::solved_static(1, 2, chosen).to_string()
 }
 
 fn judged() -> String {
-    json!({"checks":[{"id":"new-0","finding":"","hasDefect":false,"repeats":[]}]}).to_string()
+    crate::assessment::item_review::scripted::sound_static(1).to_string()
 }
 
 #[tokio::test]
@@ -60,7 +60,6 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
                     &candidate,
                     Scope::default(),
                     Remit::Open,
-                    None,
                 )
                 .await?
                 .reported
@@ -87,7 +86,6 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
             &candidate,
             Scope::default(),
             Remit::Open,
-            None,
         )
         .await?;
         assert_eq!(
@@ -106,7 +104,6 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
             &candidate,
             Scope::default(),
             Remit::Open,
-            None,
         )
         .await?;
         assert_eq!(model.prompts.lock().unwrap().len(), 7);
@@ -139,7 +136,6 @@ async fn incomplete_reviews_are_never_saved_as_completed() -> Result<()> {
                 &candidate,
                 Scope::default(),
                 Remit::Open,
-                None,
             )
             .await
             .is_err());

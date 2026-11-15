@@ -6,6 +6,7 @@ use crate::repository::LearningRepository;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
+use serde_json::Value;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -81,68 +82,114 @@ fn ids(program: &LearningProgramDto) -> Vec<String> {
     lesson_ids(program).into_iter().map(str::to_owned).collect()
 }
 
-fn answer(lessons: &[&str]) -> String {
-    answer_of(lessons, "an idea")
+/// The handles the four lessons of the fixture course are shown under.
+const HANDLES: [&str; 4] = ["l1", "l2", "l3", "l4"];
+
+fn answer(handles: &[&str]) -> String {
+    answer_of(handles, "an idea")
 }
 
-fn answer_of(lessons: &[&str], idea: &str) -> String {
-    json!({"lessons":lessons.iter().map(|id| json!({
-        "lessonId":id,"ideas":[idea],"terms":[],"actions":[],"contrast":""
+fn answer_of(handles: &[&str], idea: &str) -> String {
+    json!({"entries":handles.iter().map(|handle| json!({
+        "of":handle,"ideas":[{"topic":idea}],"terms":[],"actions":[],"contrast":""
     })).collect::<Vec<_>>()})
     .to_string()
 }
 
+fn task_of(user: &str) -> Value {
+    task_in(user).unwrap()
+}
+
+fn plan_input(program: &LearningProgramDto) -> PlanInput {
+    PlanInput {
+        goal: Told(program.summary.goal.clone()),
+        prior_knowledge: Told(program.prior_knowledge.clone()),
+        modules: outline::modules_of(program),
+        lessons: program
+            .modules
+            .iter()
+            .flat_map(|module| module.lessons.iter())
+            .map(|lesson| outline::lesson_of(lesson, true))
+            .collect(),
+        others: Vec::new(),
+        planned: Vec::new(),
+    }
+}
+
 #[test]
-fn the_schema_lists_every_lesson_id_as_a_choice() {
+fn the_schema_names_every_lesson_by_its_handle() {
+    use lattice_core::application::services::model_contract::shape::Pointers;
+    use lattice_core::application::services::model_contract::test_support::samples::schema_of;
     let program = crate::tests::fixture();
-    let schema = plan_schema(&program);
-    let choices = &schema["properties"]["lessons"]["items"]["properties"]["lessonId"]["enum"];
-    assert_eq!(*choices, json!(ids(&program)));
+    let schema = schema_of::<PlanCourse>(&plan_input(&program), Pointers::Enum).unwrap();
+    let item = &schema.as_json()["properties"]["entries"]["items"];
+    assert_eq!(item["properties"]["of"]["enum"], json!(HANDLES));
+    assert_eq!(item["properties"]["ideas"]["type"], "array");
+    assert_eq!(
+        item["properties"]["ideas"]["items"]["required"],
+        json!(["topic"])
+    );
     assert_eq!(
         ids(&program).len(),
         4,
         "the fixture course has four lessons"
     );
-    let item = &schema["properties"]["lessons"]["items"];
-    assert_eq!(
-        item["required"],
-        json!(["lessonId", "ideas", "terms", "actions", "contrast"])
-    );
 }
 
 #[test]
-fn a_plan_names_every_lesson_once_and_comes_back_in_course_order() {
-    let program = crate::tests::fixture();
-    let order = ids(&program);
-    let shuffled: Vec<&str> = order.iter().rev().map(String::as_str).collect();
-    let plan = parse_plan(&answer(&shuffled), &program).unwrap();
+fn the_plan_request_shows_what_the_model_is_told_and_nothing_internal() {
+    use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
+    let mut marks = Marks::new();
+    let lesson = |marks: &mut Marks, id: &str, title: &str| outline::Lesson {
+        id: marks.reference(id.to_owned()),
+        title: marks.told(title.to_owned()),
+        objective: marks.told(format!("Explain {title} at the harbour.")),
+        minutes: Some(marks.told(20_i64)),
+        taught: Some(outline::Taught {
+            sections: vec![marks.told("Reading the tide tables".to_owned())],
+            recap: vec![marks.told("Takeaway: the tide turns twice a day.".to_owned())],
+        }),
+    };
+    let first = lesson(&mut marks, "lesson-uuid-0001", "Reading the tide tables");
+    let second = lesson(&mut marks, "lesson-uuid-0002", "Mooring a small boat");
+    let input = PlanInput {
+        goal: marks.told("Run the harbour office.".to_owned()),
+        prior_knowledge: marks.told("Some time on the water.".to_owned()),
+        modules: vec![outline::Module {
+            title: marks.told("The harbour basics".to_owned()),
+            milestone: None,
+            lessons: vec![
+                marks.internal(first.id.clone()),
+                marks.internal(second.id.clone()),
+            ],
+        }],
+        lessons: vec![first],
+        others: vec![outline::Other(second.clone())],
+        planned: vec![outline::Held {
+            lesson: marks.internal(second.id.clone()),
+            ideas: marks.told(vec!["How a mooring holds a boat".to_owned()]),
+            terms: marks.told(vec!["Cleat and bollard fittings".to_owned()]),
+            actions: marks.told(vec!["Tying a bowline knot".to_owned()]),
+            contrast: marks.told("Mooring against anchoring at sea.".to_owned()),
+        }],
+    };
+    holds::<PlanCourse>(&input, &marks);
+}
+
+#[tokio::test]
+async fn a_plan_comes_back_in_course_order_whatever_order_the_entries_were_written_in() {
+    let pool = crate::tests::pool().await.unwrap();
+    let db = Database::new(pool.clone());
+    let program = saved_program(&db).await;
+    let llm = Planner::answering(vec![answer(&["l4", "l3", "l2", "l1"])]);
+
+    let plan = ensure(&db, &llm, &program, 1, &Default::default())
+        .await
+        .unwrap();
+
+    assert_eq!(llm.calls(), 1);
     let planned: Vec<_> = plan.lessons.iter().map(|l| l.lesson_id.clone()).collect();
-    assert_eq!(planned, order);
-}
-
-#[test]
-fn a_plan_that_leaves_out_or_repeats_a_lesson_is_refused_naming_it() {
-    let program = crate::tests::fixture();
-    let order = ids(&program);
-    let all: Vec<&str> = order.iter().map(String::as_str).collect();
-
-    let missing = parse_plan(&answer(&all[1..]), &program).unwrap_err();
-    assert!(matches!(missing, AppError::InvalidInput(_)), "{missing:?}");
-    assert!(missing.to_string().contains(&order[0]), "{missing}");
-
-    let mut twice = all.clone();
-    twice.push(all[2]);
-    let repeated = parse_plan(&answer(&twice), &program).unwrap_err();
-    assert!(
-        matches!(repeated, AppError::InvalidInput(_)),
-        "{repeated:?}"
-    );
-    assert!(repeated.to_string().contains(&order[2]), "{repeated}");
-
-    let mut stranger = all.clone();
-    stranger.push("not-a-lesson");
-    let unknown = parse_plan(&answer(&stranger), &program).unwrap_err();
-    assert!(unknown.to_string().contains("not-a-lesson"), "{unknown}");
+    assert_eq!(planned, ids(&program));
 }
 
 #[tokio::test]
@@ -150,10 +197,8 @@ async fn two_overlapping_calls_with_different_answers_save_one_plan_and_both_ret
     let pool = crate::tests::pool().await.unwrap();
     let db = Database::new(pool.clone());
     let program = saved_program(&db).await;
-    let order = ids(&program);
-    let all: Vec<&str> = order.iter().map(String::as_str).collect();
-    let first = Planner::answering(vec![answer_of(&all, "an idea from the first model")]);
-    let second = Planner::answering(vec![answer_of(&all, "an idea from the second model")]);
+    let first = Planner::answering(vec![answer_of(&HANDLES, "an idea from the first model")]);
+    let second = Planner::answering(vec![answer_of(&HANDLES, "an idea from the second model")]);
 
     let (one_lock, other_lock) = (CourseSetups::default(), CourseSetups::default());
     let database = db.clone();
@@ -186,7 +231,7 @@ async fn two_overlapping_calls_with_different_answers_save_one_plan_and_both_ret
 }
 
 #[tokio::test]
-async fn the_call_is_background_work_asked_under_the_plans_schema() {
+async fn the_call_is_background_work_that_shows_lessons_by_handle() {
     let pool = crate::tests::pool().await.unwrap();
     let db = Database::new(pool.clone());
     let program = saved_program(&db).await;
@@ -198,16 +243,16 @@ async fn the_call_is_background_work_asked_under_the_plans_schema() {
 
     let sent = llm.request(0);
     assert_eq!(sent.priority, InferencePriority::Background);
-    assert_eq!(
-        sent.schema().map(|schema| schema.as_json()),
-        Some(&plan_schema(&program))
-    );
     let (_, user) = crate::lessons::structured_call::task_messages(&sent);
-    let task: Value = serde_json::from_str(user).unwrap();
+    assert!(
+        ids(&program).iter().all(|id| !user.contains(id.as_str())),
+        "no lesson id reaches the model: {user}"
+    );
+    let task = task_of(user);
     assert_eq!(task["goal"], program.summary.goal.as_str());
     assert_eq!(task["priorKnowledge"], program.prior_knowledge.as_str());
     let lessons = task["modules"][0]["lessons"].as_array().unwrap();
-    assert_eq!(lessons[0]["lessonId"], ids(&program)[0].as_str());
+    assert_eq!(lessons[0]["lessonId"], "l1");
     assert_eq!(lessons[0]["objective"], "Explain the central idea");
     assert_eq!(lessons[0]["estimatedMinutes"], 20);
 }
@@ -251,23 +296,8 @@ async fn after_a_restart_the_plan_is_read_from_the_database_with_no_call() {
     assert_eq!(read, made);
 }
 
-#[tokio::test]
-async fn a_gap_in_the_plan_is_asked_for_again_with_the_lesson_it_left_out() {
-    let pool = crate::tests::pool().await.unwrap();
-    let db = Database::new(pool.clone());
-    let program = saved_program(&db).await;
-    let order = ids(&program);
-    let gap: Vec<&str> = order[1..].iter().map(String::as_str).collect();
-    let llm = Planner::answering(vec![answer(&gap)]);
-
-    let plan = ensure(&db, &llm, &program, 1, &Default::default())
-        .await
-        .unwrap();
-
-    assert_eq!(llm.calls(), 2);
-    assert_eq!(plan.lessons.len(), 4);
-    let asked = llm.request(1);
-    let said = asked
+fn said_in(request: &CompletionRequest) -> String {
+    request
         .input()
         .iter()
         .filter_map(|item| match item {
@@ -275,21 +305,51 @@ async fn a_gap_in_the_plan_is_asked_for_again_with_the_lesson_it_left_out() {
             _ => None,
         })
         .collect::<Vec<_>>()
-        .join("\n");
+        .join("\n")
+}
+
+#[tokio::test]
+async fn a_lesson_left_out_is_asked_for_again_alone_with_the_others_shown_as_planned() {
+    let pool = crate::tests::pool().await.unwrap();
+    let db = Database::new(pool.clone());
+    let program = saved_program(&db).await;
+    let llm = Planner::answering(vec![answer(&HANDLES[1..])]);
+
+    let plan = ensure(&db, &llm, &program, 1, &Default::default())
+        .await
+        .unwrap();
+
+    assert_eq!(llm.calls(), 2);
+    assert_eq!(plan.lessons.len(), 4);
+    let request = llm.request(1);
+    let (system, user) = crate::lessons::structured_call::task_messages(&request);
+    let task = task_of(user);
+    let lessons: Vec<&Value> = task["modules"][0]["lessons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .collect();
+    assert_eq!(lessons[0]["lessonId"], "l1");
+    assert!(lessons[1..]
+        .iter()
+        .all(|lesson| lesson.get("lessonId").is_none() && lesson.get("otherLessonId").is_some()));
+    assert_eq!(task["planned"].as_array().unwrap().len(), 3);
+    assert!(system.contains("otherLessonId"), "{system}");
     assert!(
-        said.contains(&order[0]) && said.contains("exactly once"),
-        "{said}"
+        ids(&program)
+            .iter()
+            .all(|id| !said_in(&llm.request(1)).contains(id.as_str())),
+        "no lesson id reaches the model"
     );
 }
 
 #[tokio::test]
-async fn a_plan_that_stays_wrong_is_not_saved_and_the_next_caller_asks_again() {
+async fn a_lesson_that_stays_unanswered_fails_the_plan_and_saves_nothing() {
     let pool = crate::tests::pool().await.unwrap();
     let db = Database::new(pool.clone());
     let program = saved_program(&db).await;
-    let order = ids(&program);
-    let gap: Vec<&str> = order[1..].iter().map(String::as_str).collect();
-    let llm = Planner::answering(vec![answer(&gap), answer(&gap)]);
+    let gap = answer(&HANDLES[1..]);
+    let llm = Planner::answering(vec![gap.clone(), gap.clone(), gap]);
 
     let error = ensure(&db, &llm, &program, 1, &Default::default())
         .await
@@ -298,12 +358,50 @@ async fn a_plan_that_stays_wrong_is_not_saved_and_the_next_caller_asks_again() {
         matches!(error, AppError::ModelAnswerUnusable(_)),
         "{error:?}"
     );
-    assert_eq!(llm.calls(), 2);
+    assert_eq!(llm.calls(), 3);
+    let saved: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_course_plan_lessons")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(saved, 0);
 
     ensure(&db, &llm, &program, 1, &Default::default())
         .await
         .unwrap();
-    assert_eq!(llm.calls(), 3);
+    assert_eq!(llm.calls(), 4);
+}
+
+#[tokio::test]
+async fn an_entry_with_a_blank_topic_is_corrected_for_that_lesson_alone() {
+    let pool = crate::tests::pool().await.unwrap();
+    let db = Database::new(pool.clone());
+    let program = saved_program(&db).await;
+    let blank = json!({"entries":HANDLES.iter().map(|handle| json!({
+        "of":handle,"ideas":[{"topic":if *handle == "l2" { "  " } else { "an idea" }}],
+        "terms":[],"actions":[],"contrast":""
+    })).collect::<Vec<_>>()})
+    .to_string();
+    let llm = Planner::answering(vec![blank]);
+
+    let plan = ensure(&db, &llm, &program, 1, &Default::default())
+        .await
+        .unwrap();
+
+    assert_eq!(llm.calls(), 2);
+    assert!(said_in(&llm.request(1)).contains("cannot be blank"));
+    let request = llm.request(1);
+    let (_, user) = crate::lessons::structured_call::task_messages(&request);
+    let task = task_of(user);
+    let asked: Vec<&Value> = task["modules"][0]["lessons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|lesson| lesson.get("lessonId").is_some())
+        .collect();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0]["lessonId"], "l2");
+    assert_eq!(plan.lessons[0].ideas, ["an idea"], "the others stand");
+    assert_eq!(plan.lessons[1].ideas, ["the central idea"]);
 }
 
 #[tokio::test]
@@ -486,7 +584,7 @@ async fn a_written_lesson_is_planned_from_what_it_taught() {
 
     let sent = llm.request(0);
     let (system, user) = crate::lessons::structured_call::task_messages(&sent);
-    let task: Value = serde_json::from_str(user).unwrap();
+    let task = task_of(user);
     let lessons = task["modules"][0]["lessons"].as_array().unwrap();
     assert_eq!(
         lessons[0]["taught"]["sections"],
@@ -579,26 +677,4 @@ fn the_course_plan_names_actions_in_no_subjects_terms() {
         rule,
         "actions, the things the learner does (procedures, techniques, operations) that this lesson teaches"
     );
-}
-
-fn a_plan_to_round_trip() -> CoursePlan {
-    CoursePlan {
-        lessons: ["lesson-1", "lesson-2"]
-            .into_iter()
-            .map(|id| PlannedLesson {
-                lesson_id: id.into(),
-                ideas: vec!["an idea".into()],
-                terms: vec!["a term".into()],
-                actions: vec![],
-                contrast: "a confusion".into(),
-            })
-            .collect(),
-    }
-}
-
-#[test]
-fn the_course_plan_contract_reads_what_it_renders() {
-    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
-        PlanCourse,
-    >(&a_plan_to_round_trip());
 }

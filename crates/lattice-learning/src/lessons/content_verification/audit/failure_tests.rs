@@ -165,13 +165,12 @@ async fn a_claim_too_large_for_one_request_is_judged_in_parts_by_passage() {
         })
         .unwrap();
     assert!(!fits_at(&harness, window, &[part(vec![0, 1])]));
-    let llm = ScriptedVerifier::answering(window, |_, passages| {
-        let supporting = passages
+    let llm = ScriptedVerifier::answering(window, |_, sentences| {
+        let supporting = sentences
             .iter()
             .find(|(_, text)| text.starts_with("Water boils"));
         match supporting {
-            Some((label, _)) => json!({"verdict": "supported",
-                "passagesUsed": [{"passage": label, "quote": "Water boils at 100 °C at sea level."}]}),
+            Some((handle, _)) => json!({"verdict": "supported", "sentencesUsed": [handle]}),
             None => json!({"verdict": "unsupported"}),
         }
     });

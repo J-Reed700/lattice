@@ -5,13 +5,14 @@ use crate::practice::kinds::program::parts::part_of;
 use crate::practice::kinds::program::shape::{
     files_of, problem_case_of, problem_of, run_result_of,
 };
+use crate::practice::session::debrief::Names;
 use crate::practice::session::kind::{Account, Citation};
 use crate::practice::session::record::SessionCheck;
 use lattice_core::domain::learning::practice::work::{
-    CaseStatus, CheckScope, Exercise, Form, PartRef, Piece,
+    CaseStatus, CheckScope, Exercise, Form, Piece,
 };
 use lattice_core::shared::error::{AppError, Result};
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
 /// The word the debrief's model reads for the cases a run covered.
 fn scope_word(scope: CheckScope) -> &'static str {
@@ -42,6 +43,31 @@ fn files_json(files: &[LearningLabFile]) -> Value {
         files
             .iter()
             .map(|file| json!({"path": file.path, "numbered": numbered(&file.content)}))
+            .collect(),
+    )
+}
+
+/// The files of a run, one line to a row: the name of the line, its number in the file, then the line.
+fn named_files_json(files: &[LearningLabFile], names: &Names) -> Value {
+    Value::Array(
+        files
+            .iter()
+            .map(|file| {
+                let lines = file
+                    .content
+                    .lines()
+                    .enumerate()
+                    .filter_map(|(at, line)| {
+                        let number = u32::try_from(at + 1).ok()?;
+                        Some(format!(
+                            "{} {number}: {line}",
+                            names.part(&part_of(&file.path, number))
+                        ))
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                json!({"path": file.path, "lines": lines})
+            })
             .collect(),
     )
 }
@@ -86,12 +112,7 @@ impl Account for ProgramAccount {
         "runs".to_owned()
     }
 
-    fn check(
-        &self,
-        exercise: &Exercise,
-        check: &SessionCheck,
-        before: Option<&SessionCheck>,
-    ) -> Result<Value> {
+    fn check(&self, exercise: &Exercise, check: &SessionCheck, names: &Names) -> Result<Value> {
         let mut failing = Vec::new();
         for result in &check.report.results {
             if matches!(result.status, CaseStatus::Passed | CaseStatus::Ran) {
@@ -113,14 +134,12 @@ impl Account for ProgramAccount {
                 "error": ran.error,
             }));
         }
-        let files = match before {
-            Some(before) if before.piece == check.piece => {
-                Value::String(format!("the same files as run {}", before.id))
-            }
-            _ => files_json(&files_of(&check.piece)?),
+        let files = match names.same_as() {
+            Some(before) => Value::String(format!("the same files as run {before}")),
+            None => named_files_json(&files_of(&check.piece)?, names),
         };
         Ok(json!({
-            "runId": check.id,
+            "runId": names.check(),
             "scope": scope_word(check.scope),
             "passed": check.report.results.iter().filter(|result| result.status == CaseStatus::Passed).count(),
             "total": check.report.results.len(),
@@ -135,61 +154,14 @@ impl Account for ProgramAccount {
 
     fn cites_parts(&self) -> Citation {
         Citation {
-            tag: "lines".to_owned(),
-            sentence: "Lines: ref is a run id, path is a file of that run, start and end are the first and last line, counted from 1 as the files are numbered below.".to_owned(),
+            sentence: "Lines: parts holds the names of the lines of a run's files it cites."
+                .to_owned(),
         }
     }
 
     fn cites_check(&self) -> Citation {
         Citation {
-            tag: "run".to_owned(),
-            sentence: "A run: ref is a run id.".to_owned(),
-        }
-    }
-
-    fn fields(&self) -> Vec<(String, Value)> {
-        vec![
-            ("path".to_owned(), json!({"type": "string"})),
-            ("start".to_owned(), json!({"type": "integer"})),
-            ("end".to_owned(), json!({"type": "integer"})),
-        ]
-    }
-
-    fn leave_empty(&self) -> String {
-        "Leave the fields a kind does not use empty, or 0 for start and end.".to_owned()
-    }
-
-    fn parts(
-        &self,
-        _exercise: &Exercise,
-        check: &SessionCheck,
-        fields: &Map<String, Value>,
-    ) -> Result<Vec<PartRef>> {
-        let path = fields
-            .get("path")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let number = |name: &str| fields.get(name).and_then(Value::as_i64).unwrap_or(0);
-        let (start, end) = (number("start"), number("end"));
-        let files = files_of(&check.piece)?;
-        let file = files.iter().find(|file| file.path == path).ok_or_else(|| {
-            AppError::InvalidInput(format!("lines: run {} has no file {path}.", check.id))
-        })?;
-        let total = file.content.lines().count();
-        match (u32::try_from(start), u32::try_from(end)) {
-            (Ok(first), Ok(last))
-                if first >= 1
-                    && first <= last
-                    && usize::try_from(last).is_ok_and(|last| last <= total) =>
-            {
-                Ok((first..=last)
-                    .map(|line| part_of(&file.path, line))
-                    .collect())
-            }
-            _ => Err(AppError::InvalidInput(format!(
-                "lines: {start} to {end} is not within the {total} lines of {} in run {}.",
-                file.path, check.id
-            ))),
+            sentence: "A run: checks holds the names of the runs it cites.".to_owned(),
         }
     }
 }

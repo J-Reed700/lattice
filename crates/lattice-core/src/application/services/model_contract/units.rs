@@ -5,6 +5,8 @@
 //! unlabelled, as context. `shared/text/segmentation` stays the single owner
 //! of where a unit starts and ends.
 
+use std::ops::Range;
+
 use serde::{Deserialize, Serialize};
 
 use super::edit::{Applied, Consistent, Edited, Laid};
@@ -51,6 +53,13 @@ pub struct UnitRef {
     index: usize,
 }
 
+impl UnitRef {
+    /// The unit's place in the text as shown, counting from zero.
+    pub fn index(&self) -> usize {
+        self.index
+    }
+}
+
 impl Kind for Unit {
     const PREFIX: &'static str = "u";
     const DRAWN: Drawn = Drawn::Itself;
@@ -58,6 +67,44 @@ impl Kind for Unit {
 
     fn reference(&self) -> UnitRef {
         self.at
+    }
+}
+
+/// A unit of a text shown to be quoted: named apart from the units of the material a request works on,
+/// so an answer cannot give one where the other is asked for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Quoted(Unit);
+
+impl Quoted {
+    pub fn text(&self) -> &str {
+        &self.0.text
+    }
+}
+
+impl Kind for Quoted {
+    const PREFIX: &'static str = "q";
+    const DRAWN: Drawn = Drawn::Itself;
+    type Ref = UnitRef;
+
+    fn reference(&self) -> UnitRef {
+        self.0.at
+    }
+}
+
+/// A kind a unit is shown as.
+pub trait Held: Kind<Ref = UnitRef> {
+    fn unit(&self) -> &Unit;
+}
+
+impl Held for Unit {
+    fn unit(&self) -> &Unit {
+        self
+    }
+}
+
+impl Held for Quoted {
+    fn unit(&self) -> &Unit {
+        &self.0
     }
 }
 
@@ -72,13 +119,24 @@ pub struct Units {
     gaps: Vec<String>,
 }
 
+type Laying = (String, Vec<(Option<UnitRef>, Range<usize>)>);
+
 impl Units {
     pub fn of(text: &str, grain: Grain) -> Self {
+        Self::cut(text, grain, sha256_prefix(text))
+    }
+
+    /// [`Units::of`] for a text that is one of several shown in one request: `place` says which (a JSON
+    /// pointer, a field name), so units of equal texts in two places are not one thing.
+    pub fn of_at(text: &str, grain: Grain, place: &str) -> Self {
+        Self::cut(text, grain, sha256_prefix(format!("{place}\u{0}{text}")))
+    }
+
+    fn cut(text: &str, grain: Grain, of: u64) -> Self {
         let (pieces, gaps) = match grain {
             Grain::Sentence => Self::cut_sentences(text),
             Grain::Line => Self::cut_lines(text),
         };
-        let of = sha256_prefix(text);
         let shown: Vec<Unit> = pieces
             .into_iter()
             .enumerate()
@@ -133,11 +191,17 @@ impl Units {
         showing.show(&self.shown)
     }
 
+    /// The units as things to quote, in order.
+    pub fn quoted(&self) -> Vec<Quoted> {
+        self.shown.iter().cloned().map(Quoted).collect()
+    }
+
     /// The units as rows for a prompt, one to a row: the handle, then the text.
-    pub fn rows(&self, shown: &Shown<'_, Unit>) -> String {
+    pub fn rows<K: Held>(&self, shown: &Shown<'_, K>) -> String {
         shown
             .iter()
-            .map(|(handle, unit)| {
+            .map(|(handle, held)| {
+                let unit = held.unit();
                 let text = match self.grain {
                     Grain::Sentence => unit.text.replace(['\r', '\n'], " "),
                     Grain::Line => unit.text.clone(),
@@ -164,6 +228,84 @@ impl Units {
     /// The text as it stands after the changes applied so far. New content is
     /// segmented again by `shared/text/segmentation`, never by a change.
     pub fn text(&self) -> String {
+        self.laid(&[]).0
+    }
+
+    /// The units as shown, in order.
+    pub fn units(&self) -> &[Unit] {
+        &self.shown
+    }
+
+    /// [`Units::text`] with the shown units at `positions` (their places in
+    /// [`Units::units`]) left out.
+    pub fn text_without(&self, positions: &[usize]) -> String {
+        self.laid(positions).0
+    }
+
+    /// Whether `unit` is one of this text's units as shown.
+    pub fn holds(&self, unit: UnitRef) -> bool {
+        self.text_of(unit).is_some()
+    }
+
+    /// Each unit as shown and the bytes of the text as shown that it takes, in order.
+    pub fn spans(&self) -> Vec<(UnitRef, Range<usize>)> {
+        let mut at = self.gaps.first().map_or(0, String::len);
+        let mut spans = Vec::with_capacity(self.shown.len());
+        for (index, unit) in self.shown.iter().enumerate() {
+            let end = at.saturating_add(unit.text.len());
+            spans.push((unit.at, at..end));
+            let gap = self
+                .gaps
+                .get(index.saturating_add(1))
+                .map_or(0, String::len);
+            at = end.saturating_add(gap);
+        }
+        spans
+    }
+
+    /// The text as shown with each unit's bracketed handle and a space before it; everything between
+    /// units as it is. A unit `shown` lacks is written without a handle.
+    pub fn marked<K: Held>(&self, shown: &Shown<'_, K>) -> String {
+        let mut out = self.gaps.first().cloned().unwrap_or_default();
+        for (index, unit) in self.shown.iter().enumerate() {
+            if let Some((handle, _)) = shown.iter().find(|(_, held)| held.unit().at == unit.at) {
+                out.push_str(&handle.bracketed());
+                out.push(' ');
+            }
+            out.push_str(&unit.text);
+            out.push_str(
+                self.gaps
+                    .get(index.saturating_add(1))
+                    .map_or("", String::as_str),
+            );
+        }
+        out
+    }
+
+    /// Whether an applied change replaced, removed or moved one of `units`, or anchored anything after one.
+    pub fn touched(&self, units: &[UnitRef]) -> bool {
+        units.iter().any(|unit| self.edited.touches(unit))
+    }
+
+    /// The text that now stands where `units` stood: from the first to the last place that holds one of
+    /// them, kept or replaced, and whatever lies between. `None` when none of them is left.
+    pub fn stands(&self, units: &[UnitRef]) -> Option<String> {
+        let (out, lays) = self.laid(&[]);
+        let mut from: Option<usize> = None;
+        let mut to: Option<usize> = None;
+        for (held, range) in &lays {
+            if !held.is_some_and(|held| units.contains(&held)) {
+                continue;
+            }
+            from = Some(from.map_or(range.start, |at| at.min(range.start)));
+            to = Some(to.map_or(range.end, |at| at.max(range.end)));
+        }
+        out.get(from?..to?).map(str::to_owned)
+    }
+
+    /// The text as it stands without the shown units at `positions`, and for each place the shown unit
+    /// it holds and its bytes of that text.
+    fn laid(&self, positions: &[usize]) -> Laying {
         // A text with no unit has one gap, its whole content.
         let (lead, tail) = match self.gaps.as_slice() {
             [lead, .., tail] => (lead.as_str(), tail.as_str()),
@@ -171,19 +313,32 @@ impl Units {
             [] => ("", ""),
         };
         let mut out = String::from(lead);
-        let mut previous: Option<Option<usize>> = None;
+        let mut lays = Vec::new();
+        let mut previous: Option<(Option<usize>, bool)> = None;
         for place in self.edited.places() {
-            if let Some(before) = previous {
-                out.push_str(self.between(before, place.at));
+            let (held, text, wrote) = match place.laid {
+                Laid::Kept(unit) if positions.contains(&unit.index) => continue,
+                Laid::Kept(unit) => (Some(*unit), self.text_of(*unit).unwrap_or_default(), false),
+                Laid::Wrote { content, replaces } => (replaces.copied(), content.as_str(), true),
+            };
+            if let Some((before, ended)) = previous {
+                let begins = wrote && (text.starts_with('\n') || text.starts_with("\r\n"));
+                if !begins && !ended {
+                    out.push_str(self.between(before, place.at));
+                }
             }
-            match place.laid {
-                Laid::Kept(unit) => out.push_str(self.text_of(*unit).unwrap_or_default()),
-                Laid::Wrote { content, .. } => out.push_str(content),
-            }
-            previous = Some(place.at);
+            let start = out.len();
+            out.push_str(text);
+            lays.push((held, start..out.len()));
+            previous = Some((place.at, wrote && text.ends_with('\n')));
         }
         out.push_str(tail);
-        out
+        (out, lays)
+    }
+
+    /// Makes the text `text` whole, as one change that replaces every change applied before.
+    pub fn rewrite(&mut self, text: &str) {
+        self.edited.rewrite(text.to_owned());
     }
 
     /// Whether any change has been applied.
@@ -225,6 +380,41 @@ impl Units {
             }
         }
         strongest.unwrap_or_else(|| self.joiner())
+    }
+}
+
+/// Several texts shown in one request, each as units, and what each is a text of.
+#[derive(Debug, Clone)]
+pub struct Texts<P> {
+    texts: Vec<(P, Units)>,
+}
+
+impl<P> Texts<P> {
+    pub fn new() -> Self {
+        Self { texts: Vec::new() }
+    }
+
+    /// Adds a text of `of`. `place` tells this text from an equal text elsewhere in the request.
+    pub fn push(&mut self, of: P, place: &str, text: &str, grain: Grain) {
+        self.texts.push((of, Units::of_at(text, grain, place)));
+    }
+
+    /// Each text and what it is a text of, in the order added.
+    pub fn iter(&self) -> impl Iterator<Item = (&P, &Units)> {
+        self.texts.iter().map(|(of, units)| (of, units))
+    }
+
+    /// What `unit` is a unit of, and its words. `None` when no text here holds it.
+    pub fn found(&self, unit: UnitRef) -> Option<(&P, &str)> {
+        self.texts
+            .iter()
+            .find_map(|(of, units)| units.text_of(unit).map(|text| (of, text)))
+    }
+}
+
+impl<P> Default for Texts<P> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

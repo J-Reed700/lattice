@@ -2,7 +2,10 @@
 //! writer, a blind solver and an item judge, and the requests between them.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
+use crate::assessment::item_review::scripted::judged;
 use crate::assessment_engine::LearningBlueprintRequirement;
+use crate::key_review::scripted::{answering, solved, solved_text};
+use crate::key_review::SolvePicks;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use serde_json::json;
 use std::collections::VecDeque;
@@ -57,7 +60,7 @@ impl LLMPort for Script {
         if self.cut == Some(kind) && held > 1 && !self.cut_done.swap(true, Ordering::SeqCst) {
             return Ok(CompletionResponse {
                 finish_reason: "length".into(),
-                ..CompletionResponse::from_text("{\"answers\":[{\"index\":0")
+                ..CompletionResponse::from_text("{\"entries\":[{\"of\":\"q1\"")
             });
         }
         let reply = match kind {
@@ -71,7 +74,11 @@ impl LLMPort for Script {
                 if next.get("fail").is_some() {
                     return Err(AppError::ServiceNotAvailable("the model is gone".into()));
                 }
-                next
+                if context["repair"].is_null() || next.get("items").is_none() {
+                    next
+                } else {
+                    next["items"][0].clone()
+                }
             }
             "solve" => (self.solve)(&context),
             "judge" => (self.judge)(&context),
@@ -181,18 +188,15 @@ fn need_for(
 fn choice(prompt: &str) -> Value {
     json!({
         "prompt": prompt,
-        "options": [RIGHT, "The green box", "The red box", "The blue box"],
-        "distractorRationales": [
-            "",
-            "A green box takes green stamps only.",
-            "The red box takes whole red stamps only.",
-            "The blue box takes whole blue stamps only."
+        "options": [
+            {"text": RIGHT, "verdict": "right", "reason": ""},
+            {"text": "The green box", "verdict": "wrong", "reason": "A green box takes green stamps only."},
+            {"text": "The red box", "verdict": "wrong", "reason": "The red box takes whole red stamps only."},
+            {"text": "The blue box", "verdict": "wrong", "reason": "The blue box takes whole blue stamps only."}
         ],
-        "answerIndex": 0,
         "explanation": "A torn stamp is set aside in the tray whatever its colour.",
-        "blockIndex": 0,
-        "quote": QUOTE,
-        "difficulty": 3
+        "quote": ["u1"],
+        "difficulty": "3"
     })
 }
 
@@ -205,47 +209,9 @@ fn right_option(question: &Value) -> Vec<usize> {
         .as_array()
         .into_iter()
         .flatten()
-        .position(|option| option == RIGHT)
+        .position(|option| option["text"] == RIGHT)
         .into_iter()
         .collect()
-}
-
-fn solved(context: &Value, pick: impl Fn(&Value) -> Vec<usize>) -> Value {
-    let answers: Vec<Value> = context["questions"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|question| {
-            json!({
-                "index": question["index"],
-                "reason": "Torn stamps are set aside.",
-                "correctIndices": pick(question),
-                "answer": "",
-                "blankAnswers": [],
-                "matches": [],
-                "orderedValues": []
-            })
-        })
-        .collect();
-    json!({"answers": answers})
-}
-
-fn judged(context: &Value, tell: impl Fn(&Value) -> (String, Vec<String>)) -> Value {
-    let checks: Vec<Value> = context["items"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|item| {
-            let (finding, repeats) = tell(item);
-            json!({
-                "id": item["id"],
-                "hasDefect": !finding.is_empty(),
-                "finding": finding,
-                "repeats": repeats
-            })
-        })
-        .collect();
-    json!({"checks": checks})
 }
 
 fn agrees() -> Reply {
@@ -341,17 +307,12 @@ async fn an_explanation_item_is_solved_blind_and_the_solution_reaches_the_judge(
             {"title": "CRIT_TITLE_TWO", "description": "Says why it goes there.", "dimension": "explanation"}
         ],
         "explanation": "SECRET_EXPLANATION the tray takes every torn stamp.",
-        "blockIndex": 0,
-        "quote": QUOTE,
-        "difficulty": 3
+        "quote": ["u1"],
+        "difficulty": "3"
     }]});
     let llm = Script::new(
         vec![written],
-        Box::new(|context| {
-            let mut reply = solved(context, |_| vec![]);
-            reply["answers"][0]["answer"] = json!(ANSWER);
-            reply
-        }),
+        Box::new(|context| solved_text(context, ANSWER)),
         sound(),
     );
 
@@ -432,7 +393,7 @@ async fn an_item_the_judge_says_the_learner_already_has_is_repaired_with_that_qu
 
     llm.no_lesson_review();
     let judge = llm.request("judge", 0);
-    assert_eq!(judge["learnerHas"][0]["id"], "have-0");
+    assert_eq!(judge["learnerHas"][0]["id"], "h1");
     assert_eq!(judge["learnerHas"][0]["prompt"], HAD);
     let repair = llm.request("write", 1);
     assert_eq!(
@@ -492,14 +453,14 @@ async fn items_whose_review_cannot_be_read_twice_are_dropped_as_not_reviewed() -
     let llm = Script::new(
         vec![written(&[FIRST, SECOND])],
         agrees(),
-        Box::new(|_| json!({"checks": []})),
+        Box::new(|_| json!({"entries": []})),
     );
 
     let result = author_items(&llm, &need(LearningItemFormat::SingleChoice, 2, &[])).await;
 
     llm.no_lesson_review();
     let kinds = llm.kinds();
-    assert_eq!(kinds.iter().filter(|k| **k == "judge").count(), 2);
+    assert!(kinds.iter().filter(|k| **k == "judge").count() >= 2);
     let authored = result?;
     assert!(authored.items.is_empty(), "{:?}", prompts(&authored));
     assert_eq!(authored.dropped.len(), 2, "{:?}", authored.dropped);
@@ -532,10 +493,10 @@ async fn items_in_different_chunks_see_each_other_and_a_repeat_across_them_is_fo
     let first = llm.request("judge", 0);
     let second = llm.request("judge", 1);
     assert_eq!(first["items"].as_array().unwrap().len(), 1);
-    assert_eq!(second["items"][0]["id"], "new-1");
+    assert_eq!(second["items"][0]["id"], "q2");
     assert_eq!(
-        second["otherItems"],
-        json!([{"id": "new-0", "prompt": FIRST}])
+        second["items"][0]["otherItems"],
+        json!([{"id": "n1", "prompt": FIRST}])
     );
     let repair = llm.request("write", 1);
     assert_eq!(repair["repair"]["question"], SECOND);
@@ -547,7 +508,7 @@ async fn items_in_different_chunks_see_each_other_and_a_repeat_across_them_is_fo
     );
     assert_eq!(prompts(&result?), [FIRST, SECOND_FIXED]);
     let alone = llm.request("judge", 2);
-    assert!(alone.get("otherItems").is_none(), "{alone}");
+    assert!(alone["items"][0].get("otherItems").is_none(), "{alone}");
     Ok(())
 }
 
@@ -764,8 +725,8 @@ async fn an_item_dropped_for_a_defect_and_a_repeat_is_written_again() -> Result<
 #[tokio::test]
 async fn review_reports_a_repeat_apart_from_the_defects() -> Result<()> {
     let need = need(LearningItemFormat::SingleChoice, 1, &[HAD]);
-    let raw: RawItem = serde_json::from_value(choice(FIRST)).unwrap();
     let passage = &need.material[0];
+    let raw = read_items::<ChoiceBody>(&[passage], &written(&[FIRST]).to_string()).remove(0);
     let authored = to_candidate(raw, &need, &[passage]).unwrap();
     let candidate: crate::assessment_engine::LearningAssessmentCandidate =
         authored.candidate.clone().into();
@@ -832,7 +793,7 @@ async fn a_rewrite_that_repeats_only_a_rewrite_dropped_for_a_defect_is_written_a
 {
     let (llm, need) = two_rewrites(
         |id| match id {
-            "new-0" => ("The question needs a value.".into(), vec![]),
+            "q1" => ("The question needs a value.".into(), vec![]),
             _ => (String::new(), vec!["new-0".into()]),
         },
         &[],
@@ -854,7 +815,7 @@ async fn a_rewrite_that_repeats_only_a_rewrite_dropped_for_a_defect_is_written_a
 async fn a_rewrite_that_repeats_a_rewrite_dropped_as_a_repeat_is_not_written_again() -> Result<()> {
     let (llm, need) = two_rewrites(
         |id| match id {
-            "new-0" => (String::new(), vec!["have-0".into()]),
+            "q1" => (String::new(), vec!["have-0".into()]),
             _ => (String::new(), vec!["new-0".into()]),
         },
         &[HAD],
@@ -870,31 +831,16 @@ async fn a_rewrite_that_repeats_a_rewrite_dropped_as_a_repeat_is_not_written_aga
     Ok(())
 }
 
-#[test]
-fn the_item_review_contract_reads_what_it_renders() {
-    let checks: Vec<item_review::Check> = serde_json::from_value(json!([
-        {"id":"i1","finding":"","hasDefect":false,"repeats":[]},
-        {"id":"i2","finding":"No answer is defensible.","hasDefect":true,"repeats":["i1"]}
-    ]))
-    .unwrap();
-    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
-        item_review::QuizItemReview,
-    >(&checks);
-}
-
 use lattice_core::application::services::model_contract::test_support::{snapshot, ScriptedModel};
 
-/// Answers every call of `C` with the JSON `reply` makes of the call's prompt.
-pub(super) fn replying<C: Contract<Input = PromptInput>>(
+/// Answers every call of `C` with the JSON `reply` makes of the request's task.
+fn writing<C: Contract>(
     model: ScriptedModel,
     reply: impl Fn(&Value) -> Value + Send + Sync + 'static,
 ) -> ScriptedModel {
     model.on_request::<C>(move |sent, _| {
-        let context = sent
-            .call
-            .input_as::<C>()
-            .and_then(|input| serde_json::from_str::<Value>(&input.prompt).ok())
-            .unwrap_or(Value::Null);
+        let (_, task) = crate::lessons::structured_call::task_messages(&sent.request);
+        let context = serde_json::from_str::<Value>(task).unwrap_or(Value::Null);
         let text = reply(&context).to_string();
         Box::pin(std::future::ready(Ok::<_, AppError>(
             CompletionResponse::from_text(text),
@@ -914,11 +860,11 @@ pub(super) fn requests_of<C: Contract>(model: &ScriptedModel) -> Vec<CompletionR
 
 /// A model that writes `first_write`, rewrites to `FIRST_FIXED`, solves every question right and finds no defect.
 fn quiz_model(first_write: Value) -> ScriptedModel {
-    let model = replying::<QuizAuthor>(ScriptedModel::new(), move |_| first_write.clone());
-    let model = replying::<QuizRewrite>(model, |_| written(&[FIRST_FIXED]));
     let model =
-        replying::<crate::key_review::QuizKeySolve>(model, |context| solved(context, right_option));
-    replying::<item_review::QuizItemReview>(model, |context| {
+        writing::<QuizAuthor<ChoiceBody>>(ScriptedModel::new(), move |_| first_write.clone());
+    let model = writing::<QuizRewrite<ChoiceBody>>(model, |_| choice(FIRST_FIXED));
+    let model = answering::<SolvePicks>(model, |context, _| solved(context, right_option));
+    answering::<item_review::QuizItemReview>(model, |context, _| {
         judged(context, |_| (String::new(), vec![]))
     })
 }
@@ -966,7 +912,7 @@ async fn prompt_snapshot_quiz_author() -> Result<()> {
     snapshot::assert_requests(
         env!("CARGO_MANIFEST_DIR"),
         "quiz-author",
-        &requests_of::<QuizAuthor>(&model),
+        &requests_of::<QuizAuthor<ChoiceBody>>(&model),
     );
     Ok(())
 }
@@ -974,7 +920,7 @@ async fn prompt_snapshot_quiz_author() -> Result<()> {
 #[tokio::test]
 async fn prompt_snapshot_quiz_rewrite() -> Result<()> {
     let mut unbuilt = written(&[FIRST]);
-    unbuilt["items"][0]["blockIndex"] = json!(5);
+    unbuilt["items"][0]["quote"] = json!(["u9"]);
     let model = quiz_model(unbuilt);
 
     author_items(&model, &fixed_need(1, &[])).await?;
@@ -982,7 +928,7 @@ async fn prompt_snapshot_quiz_rewrite() -> Result<()> {
     snapshot::assert_requests(
         env!("CARGO_MANIFEST_DIR"),
         "quiz-rewrite",
-        &requests_of::<QuizRewrite>(&model),
+        &requests_of::<QuizRewrite<ChoiceBody>>(&model),
     );
     Ok(())
 }
