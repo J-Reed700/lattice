@@ -57,7 +57,7 @@ Step 2: give the final answer from your draft. Keep its content, wording, number
                 "type": "array",
                 "items": {
                   "type": "string",
-                  "description": "One name shown in square brackets, written without the brackets, such as p1."
+                  "description": "One of the names the request shows, such as p1."
                 }
               }
             },
@@ -79,7 +79,7 @@ Step 2: give the final answer from your draft. Keep its content, wording, number
                   "type": "array",
                   "items": {
                     "type": "string",
-                    "description": "One name shown in square brackets, written without the brackets, such as p1."
+                    "description": "One of the names the request shows, such as p1."
                   }
                 }
               },
@@ -156,7 +156,7 @@ Step 2: give the final answer from your draft. Keep its content, wording, number
                   "type": "array",
                   "items": {
                     "type": "string",
-                    "description": "One name shown in square brackets, written without the brackets, such as p1."
+                    "description": "One of the names the request shows, such as p1."
                   }
                 }
               },

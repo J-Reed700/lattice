@@ -16,11 +16,11 @@ For each item, choose the one candidate passage that directly addresses the spec
         "properties": {
           "of": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as i1."
+            "description": "One of the names the request shows, such as i1."
           },
           "candidate": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as p1, or the word none."
+            "description": "One of the names the request shows, such as p1, or the word none."
           },
           "reason": {
             "type": "string"

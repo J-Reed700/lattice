@@ -88,7 +88,7 @@ Step 2: give the final answer from your draft. Keep its content, wording, number
                   },
                   "place": {
                     "type": "string",
-                    "description": "One name shown in square brackets, written without the brackets, such as p1."
+                    "description": "One of the names the request shows, such as p1."
                   },
                   "category": {
                     "type": "string",
@@ -202,7 +202,7 @@ Step 2: give the final answer from your draft. Keep its content, wording, number
                   },
                   "at": {
                     "type": "string",
-                    "description": "One name shown in square brackets, written without the brackets, such as f1."
+                    "description": "One of the names the request shows, such as f1."
                   },
                   "status": {
                     "type": "string",
@@ -234,7 +234,7 @@ Step 2: give the final answer from your draft. Keep its content, wording, number
                   },
                   "place": {
                     "type": "string",
-                    "description": "One name shown in square brackets, written without the brackets, such as p1."
+                    "description": "One of the names the request shows, such as p1."
                   },
                   "category": {
                     "type": "string",

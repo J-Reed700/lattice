@@ -22,7 +22,7 @@ When a statement mixes kinds, answer sourced if any part needs a source. Answer 
         "properties": {
           "of": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as s1."
+            "description": "One of the names the request shows, such as s1."
           },
           "class": {
             "type": "string",

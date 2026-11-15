@@ -13,7 +13,7 @@ Solve quiz questions independently, without any answer key. Answer each question
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as v1."
+        "description": "One of the names the request shows, such as v1."
       }
     }
   },

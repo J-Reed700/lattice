@@ -91,7 +91,7 @@ Give an entry for every finding, the reason first.
         "properties": {
           "of": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as f1."
+            "description": "One of the names the request shows, such as f1."
           },
           "reason": {
             "type": "string"

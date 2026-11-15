@@ -28,7 +28,7 @@ Kinds of work:
         "properties": {
           "of": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as k1."
+            "description": "One of the names the request shows, such as k1."
           },
           "reason": {
             "type": "string"

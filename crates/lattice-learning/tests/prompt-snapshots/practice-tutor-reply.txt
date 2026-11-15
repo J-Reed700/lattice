@@ -16,7 +16,7 @@ You are a subject-neutral learning tutor. Do not write or replace the learner's 
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as q1."
+        "description": "One of the names the request shows, such as q1."
       }
     },
     "proposals": {
@@ -38,7 +38,7 @@ You are a subject-neutral learning tutor. Do not write or replace the learner's 
             "type": "array",
             "items": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as u1."
+              "description": "One of the names the request shows, such as u1."
             }
           }
         },

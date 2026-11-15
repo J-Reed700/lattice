@@ -16,7 +16,7 @@ Plan a whole course before any of its lessons is written, so lessons written sep
         "properties": {
           "of": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as l1."
+            "description": "One of the names the request shows, such as l1."
           },
           "ideas": {
             "type": "array",

@@ -183,13 +183,13 @@ Passages: [p2]
         "properties": {
           "of": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as c1."
+            "description": "One of the names the request shows, such as c1."
           },
           "sentencesUsed": {
             "type": "array",
             "items": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as u1."
+              "description": "One of the names the request shows, such as u1."
             }
           },
           "verdict": {

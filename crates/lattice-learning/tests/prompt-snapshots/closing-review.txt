@@ -19,14 +19,14 @@ Close the interview. Return referenceApproach, nextPracticeStep, answered and so
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as q1."
+        "description": "One of the names the request shows, such as q1."
       }
     },
     "sources": {
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as e1."
+        "description": "One of the names the request shows, such as e1."
       }
     }
   },

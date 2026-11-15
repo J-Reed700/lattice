@@ -116,7 +116,7 @@ Return the standing, the publisher, the editorial process, the nature of the con
         "properties": {
           "flag": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as f1."
+            "description": "One of the names the request shows, such as f1."
           },
           "code": {
             "type": "string",

@@ -16,7 +16,7 @@ Change what some lessons of a course teach, as the learner asks. The learner's r
         "properties": {
           "of": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as l1."
+            "description": "One of the names the request shows, such as l1."
           },
           "changes": {
             "type": "array",

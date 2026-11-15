@@ -36,7 +36,7 @@ Parts of the learner's work you may point at, each under its handle:
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as l1."
+        "description": "One of the names the request shows, such as l1."
       }
     },
     "clarification": {

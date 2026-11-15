@@ -16,7 +16,7 @@ Review quiz questions one at a time. Each entry of items is one question with it
         "properties": {
           "of": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as q1."
+            "description": "One of the names the request shows, such as q1."
           },
           "defects": {
             "type": "array",
@@ -37,14 +37,14 @@ Review quiz questions one at a time. Each entry of items is one question with it
             "type": "array",
             "items": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as h1."
+              "description": "One of the names the request shows, such as h1."
             }
           },
           "repeatsNew": {
             "type": "array",
             "items": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as n1."
+              "description": "One of the names the request shows, such as n1."
             }
           }
         },

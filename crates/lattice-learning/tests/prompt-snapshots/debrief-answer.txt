@@ -92,7 +92,7 @@ Answer with an entries list, one entry for each criterion listed above. In an en
         "properties": {
           "of": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as c1."
+            "description": "One of the names the request shows, such as c1."
           },
           "score": {
             "type": "string",
@@ -109,35 +109,35 @@ Answer with an entries list, one entry for each criterion listed above. In an en
             "type": "array",
             "items": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as q1."
+              "description": "One of the names the request shows, such as q1."
             }
           },
           "parts": {
             "type": "array",
             "items": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as l1."
+              "description": "One of the names the request shows, such as l1."
             }
           },
           "checks": {
             "type": "array",
             "items": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as r1."
+              "description": "One of the names the request shows, such as r1."
             }
           },
           "cases": {
             "type": "array",
             "items": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as e1."
+              "description": "One of the names the request shows, such as e1."
             }
           },
           "hints": {
             "type": "array",
             "items": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as h1."
+              "description": "One of the names the request shows, such as h1."
             }
           },
           "feedback": {

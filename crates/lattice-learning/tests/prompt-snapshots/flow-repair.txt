@@ -16,7 +16,7 @@ Sentences were taken out of this lesson section because they were shown to be wr
         "properties": {
           "of": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as g1."
+            "description": "One of the names the request shows, such as g1."
           },
           "edits": {
             "type": "object",
@@ -31,7 +31,7 @@ Sentences were taken out of this lesson section because they were shown to be wr
                       "properties": {
                         "at": {
                           "type": "string",
-                          "description": "One name shown in square brackets, written without the brackets, such as u1."
+                          "description": "One of the names the request shows, such as u1."
                         },
                         "with": {
                           "type": "object",
@@ -67,7 +67,7 @@ Sentences were taken out of this lesson section because they were shown to be wr
                       "properties": {
                         "after": {
                           "type": "string",
-                          "description": "One name shown in square brackets, written without the brackets, such as u1."
+                          "description": "One of the names the request shows, such as u1."
                         },
                         "with": {
                           "type": "object",
@@ -100,7 +100,7 @@ Sentences were taken out of this lesson section because they were shown to be wr
                     "type": "array",
                     "items": {
                       "type": "string",
-                      "description": "One name shown in square brackets, written without the brackets, such as u1."
+                      "description": "One of the names the request shows, such as u1."
                     }
                   },
                   "move": {
@@ -110,11 +110,11 @@ Sentences were taken out of this lesson section because they were shown to be wr
                       "properties": {
                         "at": {
                           "type": "string",
-                          "description": "One name shown in square brackets, written without the brackets, such as u1."
+                          "description": "One of the names the request shows, such as u1."
                         },
                         "after": {
                           "type": "string",
-                          "description": "One name shown in square brackets, written without the brackets, such as u1."
+                          "description": "One of the names the request shows, such as u1."
                         }
                       },
                       "required": [
@@ -140,7 +140,7 @@ Sentences were taken out of this lesson section because they were shown to be wr
                   "properties": {
                     "sentence": {
                       "type": "string",
-                      "description": "One name shown in square brackets, written without the brackets, such as u1."
+                      "description": "One of the names the request shows, such as u1."
                     },
                     "quote": {
                       "type": "string"
@@ -185,7 +185,7 @@ Sentences were taken out of this lesson section because they were shown to be wr
                   "properties": {
                     "right": {
                       "type": "string",
-                      "description": "One name shown in square brackets, written without the brackets, such as u1."
+                      "description": "One of the names the request shows, such as u1."
                     },
                     "wasWrong": {
                       "type": "string"

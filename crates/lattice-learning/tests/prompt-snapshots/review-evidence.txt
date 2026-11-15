@@ -16,7 +16,7 @@ Check whether proposed lesson-review findings are justified BEFORE they may trig
         "properties": {
           "of": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as i1."
+            "description": "One of the names the request shows, such as i1."
           },
           "verdict": {
             "type": "string",
@@ -37,14 +37,14 @@ Check whether proposed lesson-review findings are justified BEFORE they may trig
             "type": "array",
             "items": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as p1."
+              "description": "One of the names the request shows, such as p1."
             }
           },
           "referenceIds": {
             "type": "array",
             "items": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as r1."
+              "description": "One of the names the request shows, such as r1."
             }
           },
           "reason": {
@@ -52,11 +52,11 @@ Check whether proposed lesson-review findings are justified BEFORE they may trig
           },
           "partId": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as p1, or the word none."
+            "description": "One of the names the request shows, such as p1, or the word none."
           },
           "leftTo": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as k1, or the word none."
+            "description": "One of the names the request shows, such as k1, or the word none."
           }
         },
         "required": [

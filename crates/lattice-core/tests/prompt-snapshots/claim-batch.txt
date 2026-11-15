@@ -20,14 +20,14 @@ The three-line response instructions apply separately to EACH claim. Return JSON
         "properties": {
           "of": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as c1."
+            "description": "One of the names the request shows, such as c1."
           },
           "reason": {
             "type": "string"
           },
           "source": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as p1, or the word none."
+            "description": "One of the names the request shows, such as p1, or the word none."
           },
           "verdict": {
             "type": "string",

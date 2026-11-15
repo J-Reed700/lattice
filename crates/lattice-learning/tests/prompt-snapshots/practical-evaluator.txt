@@ -16,7 +16,7 @@ Author only independent evaluator files for this public practical brief and exac
         "properties": {
           "of": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as e1."
+            "description": "One of the names the request shows, such as e1."
           },
           "content": {
             "type": "string"

@@ -16,7 +16,7 @@ Give a concise worked reference solution for the learning task. Show each step w
       "type": "array",
       "items": {
         "type": "string",
-        "description": "One name shown in square brackets, written without the brackets, such as q1."
+        "description": "One of the names the request shows, such as q1."
       }
     }
   },

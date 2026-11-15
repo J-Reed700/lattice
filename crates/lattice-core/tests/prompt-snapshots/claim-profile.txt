@@ -19,7 +19,7 @@ Return an entries array with one entry for each claim, naming it in of by its id
         "properties": {
           "of": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as c1."
+            "description": "One of the names the request shows, such as c1."
           },
           "kind": {
             "type": "string",

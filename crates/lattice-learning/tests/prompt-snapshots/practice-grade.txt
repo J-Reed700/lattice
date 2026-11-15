@@ -16,13 +16,13 @@ Evaluate the learner artifact against each visible criterion. Scores are limited
         "properties": {
           "of": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as c1."
+            "description": "One of the names the request shows, such as c1."
           },
           "evidence": {
             "type": "array",
             "items": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as u1."
+              "description": "One of the names the request shows, such as u1."
             }
           },
           "observation": {
@@ -30,7 +30,7 @@ Evaluate the learner artifact against each visible criterion. Scores are limited
           },
           "score": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as l1, or the word none."
+            "description": "One of the names the request shows, such as l1, or the word none."
           }
         },
         "required": [

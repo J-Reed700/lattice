@@ -58,7 +58,7 @@ CHUNK SYNTHESIS 2
             "type": "array",
             "items": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as n1."
+              "description": "One of the names the request shows, such as n1."
             }
           }
         },
@@ -81,7 +81,7 @@ CHUNK SYNTHESIS 2
             "type": "array",
             "items": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as n1."
+              "description": "One of the names the request shows, such as n1."
             }
           }
         },
@@ -104,7 +104,7 @@ CHUNK SYNTHESIS 2
             "type": "array",
             "items": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as n1."
+              "description": "One of the names the request shows, such as n1."
             }
           }
         },
@@ -127,7 +127,7 @@ CHUNK SYNTHESIS 2
             "type": "array",
             "items": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as n1."
+              "description": "One of the names the request shows, such as n1."
             }
           }
         },
@@ -150,7 +150,7 @@ CHUNK SYNTHESIS 2
             "type": "array",
             "items": {
               "type": "string",
-              "description": "One name shown in square brackets, written without the brackets, such as n1."
+              "description": "One of the names the request shows, such as n1."
             }
           }
         },

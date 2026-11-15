@@ -106,7 +106,7 @@ Keep every name and signature the suite uses, and change only how the code is wr
             "properties": {
               "at": {
                 "type": "string",
-                "description": "One name shown in square brackets, written without the brackets, such as u1."
+                "description": "One of the names the request shows, such as u1."
               },
               "with": {
                 "type": "string"
@@ -126,7 +126,7 @@ Keep every name and signature the suite uses, and change only how the code is wr
             "properties": {
               "after": {
                 "type": "string",
-                "description": "One name shown in square brackets, written without the brackets, such as u1, or the word start."
+                "description": "One of the names the request shows, such as u1, or the word start."
               },
               "with": {
                 "type": "string"
@@ -143,7 +143,7 @@ Keep every name and signature the suite uses, and change only how the code is wr
           "type": "array",
           "items": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as u1."
+            "description": "One of the names the request shows, such as u1."
           }
         },
         "move": {
@@ -153,11 +153,11 @@ Keep every name and signature the suite uses, and change only how the code is wr
             "properties": {
               "at": {
                 "type": "string",
-                "description": "One name shown in square brackets, written without the brackets, such as u1."
+                "description": "One of the names the request shows, such as u1."
               },
               "after": {
                 "type": "string",
-                "description": "One name shown in square brackets, written without the brackets, such as u1, or the word start."
+                "description": "One of the names the request shows, such as u1, or the word start."
               }
             },
             "required": [

@@ -19,7 +19,7 @@ Repair a saved curriculum module. Apply each listed finding exactly as its instr
             "properties": {
               "at": {
                 "type": "string",
-                "description": "One name shown in square brackets, written without the brackets, such as t1."
+                "description": "One of the names the request shows, such as t1."
               },
               "with": {
                 "type": "string"
@@ -39,7 +39,7 @@ Repair a saved curriculum module. Apply each listed finding exactly as its instr
             "properties": {
               "after": {
                 "type": "string",
-                "description": "One name shown in square brackets, written without the brackets, such as t1, or the word start."
+                "description": "One of the names the request shows, such as t1, or the word start."
               },
               "with": {
                 "type": "string"
@@ -56,7 +56,7 @@ Repair a saved curriculum module. Apply each listed finding exactly as its instr
           "type": "array",
           "items": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as t1."
+            "description": "One of the names the request shows, such as t1."
           }
         },
         "move": {
@@ -66,11 +66,11 @@ Repair a saved curriculum module. Apply each listed finding exactly as its instr
             "properties": {
               "at": {
                 "type": "string",
-                "description": "One name shown in square brackets, written without the brackets, such as t1."
+                "description": "One of the names the request shows, such as t1."
               },
               "after": {
                 "type": "string",
-                "description": "One name shown in square brackets, written without the brackets, such as t1, or the word start."
+                "description": "One of the names the request shows, such as t1, or the word start."
               }
             },
             "required": [
@@ -96,7 +96,7 @@ Repair a saved curriculum module. Apply each listed finding exactly as its instr
         "properties": {
           "after": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as l1, or the word none."
+            "description": "One of the names the request shows, such as l1, or the word none."
           },
           "title": {
             "type": "string"
@@ -124,7 +124,7 @@ Repair a saved curriculum module. Apply each listed finding exactly as its instr
         "properties": {
           "lesson": {
             "type": "string",
-            "description": "One name shown in square brackets, written without the brackets, such as l1."
+            "description": "One of the names the request shows, such as l1."
           },
           "minutes": {
             "type": "integer"
