@@ -3,8 +3,6 @@
 //! the keyring except for their finder.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::io::Write;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -338,36 +336,11 @@ async fn a_url_contact_leaves_unpaywall_off_and_says_it_needs_an_email() {
     );
 }
 
-#[derive(Clone, Default)]
-struct Captured(Arc<parking_lot::Mutex<Vec<u8>>>);
-
-impl Write for Captured {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
 #[tokio::test]
 async fn no_status_or_log_line_carries_a_key() {
-    let captured = Captured::default();
-    let writer = captured.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::TRACE)
-        .with_ansi(false)
-        .with_writer(move || writer.clone())
-        .finish();
-    let _logs = tracing::subscriber::set_default(subscriber);
+    let logs = lattice_core::shared::testing::logs::capture_logs(tracing::Level::TRACE);
 
     let f = fixture(SettingsDto::default());
-    // Tests running alongside call `reload` too. A callsite first hit on
-    // their threads while this subscriber was being installed can keep the
-    // "nobody listens" interest it computed then; recompute it now that this
-    // thread's subscriber is in place.
-    tracing::callsite::rebuild_interest_cache();
     let saved = save_key(
         &f.web,
         &f.settings,
@@ -387,7 +360,7 @@ async fn no_status_or_log_line_carries_a_key() {
         let json = serde_json::to_string(dto).unwrap();
         assert!(!json.contains(SECRET), "{json}");
     }
-    let logs = String::from_utf8(captured.0.lock().clone()).unwrap();
+    let logs = logs.text();
     assert!(logs.contains("Source finders registered"), "{logs}");
     assert!(!logs.contains(SECRET), "{logs}");
 }

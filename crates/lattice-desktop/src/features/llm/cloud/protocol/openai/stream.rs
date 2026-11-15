@@ -11,6 +11,7 @@ use crate::features::llm::cloud::streaming::{invalid, Callback, ReasoningParts};
 pub(super) struct Events {
     completed: Option<Value>,
     reasoning: ReasoningParts,
+    begun: bool,
 }
 
 impl EventDecoder for Events {
@@ -22,11 +23,13 @@ impl EventDecoder for Events {
         on_reasoning: Callback<'_>,
     ) -> Result<()> {
         match kind {
+            "response.output_item.added" => self.begun = true,
             "response.output_text.delta" | "response.refusal.delta" => {
                 if let Some(text) = field(event, "delta")
                     .as_str()
                     .filter(|text| !text.is_empty())
                 {
+                    self.begun = true;
                     on_text(text.to_owned())?;
                 }
             }
@@ -35,6 +38,7 @@ impl EventDecoder for Events {
                     .as_str()
                     .filter(|text| !text.is_empty())
                 {
+                    self.begun = true;
                     let part = (
                         field(event, "item_id").as_str().unwrap_or("").to_owned(),
                         field(event, "summary_index").as_u64().unwrap_or(0),
@@ -66,6 +70,10 @@ impl EventDecoder for Events {
 
     fn has_tool_output(&self) -> bool {
         false
+    }
+
+    fn answer_begun(&self) -> bool {
+        self.begun
     }
 
     fn finish(self: Box<Self>) -> Result<Option<Value>> {

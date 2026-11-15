@@ -8,10 +8,12 @@ use crate::shared::persistence::transactions::CHANGED_ROWS;
 use std::future::Future;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Arc, OnceLock,
+    Arc,
 };
-use tracing::{field::Visit, Instrument, Subscriber};
-use tracing_subscriber::{layer::Context, prelude::*, registry::LookupSpan, Layer, Registry};
+use tracing::{field::Visit, subscriber::Interest, Instrument, Subscriber};
+use tracing_subscriber::{
+    filter::dynamic_filter_fn, layer::Context, registry::LookupSpan, Layer, Registry,
+};
 
 #[derive(Clone, Default)]
 struct QueryCount {
@@ -19,6 +21,24 @@ struct QueryCount {
     writes: Arc<AtomicUsize>,
 }
 struct Reads;
+
+pub(super) fn layer<S>() -> impl Layer<S>
+where
+    S: Subscriber + for<'lookup> LookupSpan<'lookup>,
+{
+    Reads.with_filter(
+        dynamic_filter_fn(|metadata, cx| {
+            (metadata.is_span() && metadata.name() == "count_reads") || current_count(cx).is_some()
+        })
+        .with_callsite_filter(|metadata| {
+            if metadata.is_span() || metadata.target() == "sqlx::query" {
+                Interest::sometimes()
+            } else {
+                Interest::never()
+            }
+        }),
+    )
+}
 
 fn current_count<S: Subscriber + for<'lookup> LookupSpan<'lookup>>(
     ctx: &Context<'_, S>,
@@ -49,19 +69,6 @@ impl Visit for Statement {
 }
 
 impl<S: Subscriber + for<'lookup> LookupSpan<'lookup>> Layer<S> for Reads {
-    fn register_callsite(
-        &self,
-        metadata: &'static tracing::Metadata<'static>,
-    ) -> tracing::subscriber::Interest {
-        if metadata.is_span() || metadata.target() == "sqlx::query" {
-            tracing::subscriber::Interest::sometimes()
-        } else {
-            tracing::subscriber::Interest::never()
-        }
-    }
-    fn enabled(&self, metadata: &tracing::Metadata<'_>, ctx: Context<'_, S>) -> bool {
-        (metadata.is_span() && metadata.name() == "count_reads") || current_count(&ctx).is_some()
-    }
     fn on_new_span(
         &self,
         attrs: &tracing::span::Attributes<'_>,
@@ -116,11 +123,7 @@ pub async fn count_writes<F: Future>(operation: F) -> (F::Output, usize) {
 }
 
 async fn count_queries<F: Future>(operation: F) -> (F::Output, QueryCount) {
-    static INSTALLED: OnceLock<()> = OnceLock::new();
-    INSTALLED.get_or_init(|| {
-        tracing::subscriber::set_global_default(tracing_subscriber::registry().with(Reads))
-            .expect("query budgets install the library test subscriber once");
-    });
+    super::subscriber::install();
     let span = tracing::info_span!(parent: None, "count_reads");
     let count = span
         .with_subscriber(|(id, dispatch)| {
