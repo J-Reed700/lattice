@@ -20,15 +20,15 @@ mod standing_judgement;
 mod tests;
 
 pub use claim_profile::{
-    claim_profile_key, profile_claims, profile_input, profile_schema, ClaimToProfile,
-    ProfileRequest, CLAIM_PROFILE_POLICY, CLAIM_PROFILE_SYSTEM,
+    claim_profile_key, profile_claims, ClaimToProfile, ProfileRequest, CLAIM_PROFILE_POLICY,
+    CLAIM_PROFILE_SYSTEM,
 };
 pub use ownership_judgement::{
     judge_ownership, ownership_input, ownership_key, ownership_schema, OwnershipRequest,
     OWNERSHIP_POLICY, OWNERSHIP_SYSTEM,
 };
 pub use standing_judgement::{
-    judge_standing, standing_input, standing_key, standing_schema, STANDING_POLICY, STANDING_SYSTEM,
+    judge_standing, standing_input, standing_key, STANDING_POLICY, STANDING_SYSTEM,
 };
 
 use std::sync::{Mutex, PoisonError};

@@ -699,7 +699,7 @@ impl LLMPort for SecondUnitFails {
             return Err(AppError::InternalError("the model went away".into()));
         }
         Ok(CompletionResponse {
-            text: r#"{"claims":[{"id":"claim-0","kind":"general","subject":null,"temporal":{"scope":"timeless","version":null,"date":null},"measurement_origin":null,"attributed_to":null}]}"#.into(),
+            text: r#"{"entries":[{"of":"c1","kind":"general","subject":{"kind":"none"},"temporal":{"scope":"timeless","version":"","date":""},"measurement_origin":"","attributed_to":""}]}"#.into(),
             finish_reason: "stop".into(),
             ..Default::default()
         })
@@ -820,11 +820,17 @@ impl LLMPort for Judges {
                 .split_once(PROFILE_PROMPT)
                 .map_or("", |(_, tail)| tail);
             let input = tail.find('{').map_or("", |start| &tail[start..]);
-            let title = serde_json::Deserializer::from_str(input)
+            let data = serde_json::Deserializer::from_str(input)
                 .into_iter::<Value>()
                 .next()
-                .and_then(|value| value.ok())
+                .and_then(|value| value.ok());
+            let title = data
+                .as_ref()
                 .and_then(|value| value["unit_title"].as_str().map(str::to_owned));
+            let claim = data
+                .as_ref()
+                .and_then(|value| value["claims"][0]["id"].as_str().map(str::to_owned))
+                .unwrap_or_default();
             self.titles.lock().unwrap().extend(title);
             let subject = if prompt.contains("Section 2") {
                 self.second_subject
@@ -832,7 +838,7 @@ impl LLMPort for Judges {
                 "Alpha"
             };
             format!(
-                r#"{{"claims":[{{"id":"claim-0","kind":"general","subject":{{"name":"{subject}","kind":"product","aliases":[],"classes":[]}},"temporal":{{"scope":"timeless","version":null,"date":null}},"measurement_origin":null,"attributed_to":null}}]}}"#
+                r#"{{"entries":[{{"of":"{claim}","kind":"general","subject":{{"kind":"named","name":"{subject}","subject_kind":"product","aliases":[],"classes":[]}},"temporal":{{"scope":"timeless","version":"","date":""}},"measurement_origin":"","attributed_to":""}}]}}"#
             )
         } else {
             self.standing_calls.fetch_add(1, Ordering::SeqCst);
@@ -848,7 +854,7 @@ impl LLMPort for Judges {
             )
             .await;
             self.standing_now.fetch_sub(1, Ordering::SeqCst);
-            r#"{"standing":"institutional","publisher":{"name":"Acme","kind":"vendor"},"editorial":"editorial","nature":"documentation","flags":[],"reasons":[{"code":"publisher_metadata","text":"Acme publishes it."}]}"#.to_owned()
+            r#"{"standing":"institutional","publisher":{"kind":"named","name":"Acme","publisher_kind":"vendor"},"editorial":"editorial","nature":"documentation","flags":[],"reasons":[{"code":"publisher_metadata","text":"Acme publishes it."}]}"#.to_owned()
         };
         Ok(CompletionResponse::from_text(text))
     }

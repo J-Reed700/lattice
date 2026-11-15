@@ -1566,3 +1566,80 @@ mod fitting {
         assert_eq!(room_in(40), 0);
     }
 }
+
+mod metering {
+    use super::*;
+
+    /// A model that reports 7 input and 3 output tokens for every reply.
+    struct Counting {
+        replies: Mutex<VecDeque<&'static str>>,
+    }
+
+    impl Counting {
+        fn new(replies: &[&'static str]) -> Self {
+            Self {
+                replies: Mutex::new(replies.iter().copied().collect()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LLMPort for Counting {
+        async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
+            let text = self.replies.lock().unwrap().pop_front().unwrap_or("red");
+            Ok(CompletionResponse {
+                input_tokens: 7,
+                output_tokens: 3,
+                finish_reason: STOP.into(),
+                ..CompletionResponse::from_text(text)
+            })
+        }
+
+        fn model_name(&self) -> &str {
+            "counting"
+        }
+
+        fn max_context_tokens(&self) -> usize {
+            32_768
+        }
+
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_plain_send_carries_the_tokens_the_model_reported() {
+        let llm = Counting::new(&["red"]);
+        let request = GroundedRequest::of("You judge tiles.", "Say a word.");
+        let sent = Plain.send(&llm, request).await.unwrap();
+        assert_eq!(sent.usage, Usage { input: 7, output: 3 });
+    }
+
+    #[tokio::test]
+    async fn a_metered_transport_adds_up_every_send_and_follow() {
+        let llm = Counting::new(&["bad", "red"]);
+        let plain = Plain;
+        let metered = Metered::new(&plain);
+        assert_eq!(metered.used(), Usage::default());
+        let settled = ask::<One>(
+            &llm,
+            &metered,
+            &mut Scope::for_question(),
+            &Input::of(&[]),
+            &CallOptions::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(settled, Settled::Answered("red".to_owned()));
+        assert_eq!(llm.replies.lock().unwrap().len(), 0);
+        assert_eq!(
+            metered.used(),
+            Usage {
+                input: 14,
+                output: 6
+            },
+            "the send and its correction"
+        );
+    }
+}

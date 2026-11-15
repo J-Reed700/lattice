@@ -710,7 +710,7 @@ impl EvalLlm {
             "review"
         } else if system.contains(prompts::EXTRACTOR_SYSTEM) {
             "extract"
-        } else if system.contains(prompts::SUMMARIZER_SYSTEM) {
+        } else if system.contains(lattice::features::conversation::memory::summarize::FOLD_SYSTEM) {
             "summarize"
         } else {
             "other"
@@ -741,10 +741,10 @@ impl EvalLlm {
         let verdicts: Vec<serde_json::Value> = ids
             .into_iter()
             .map(|id| {
-                serde_json::json!({ "id": id, "verdict": "supported", "reason": "reviewer ablated" })
+                serde_json::json!({ "of": id, "reason": "reviewer ablated", "verdict": "supported" })
             })
             .collect();
-        serde_json::json!({ "verdicts": verdicts }).to_string()
+        serde_json::json!({ "entries": verdicts }).to_string()
     }
 
     async fn intercept(&self, kind: &'static str, prompt: &str) -> Option<Result<String>> {

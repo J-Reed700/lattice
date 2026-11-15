@@ -49,20 +49,18 @@ mod field_emphasis_tests;
 #[cfg(test)]
 mod judgment_tests;
 
-#[cfg(any(test, feature = "test-support"))]
-pub use batch::BatchReply;
-pub use batch::{
-    render_batch_evidence, BatchClaim, BatchInput, BatchPassage, ClaimBatch, LocatedClaim,
+pub use batch::{BatchClaim, BatchInput, BatchPassage, ClaimBatch, LocatedClaim};
+pub use bridge::{
+    BridgeOutcome, BridgePart, BridgePassage, ClaimParts, PartKind, PartsInput, BRIDGE_SYSTEM,
 };
-pub use bridge::{BridgeOutcome, BridgePart, ClaimParts, PartKind, PartsInput, BRIDGE_SYSTEM};
 pub use classes::{
     ClassJudgment, Consistency, ConsistencyInput, ConsistencyOutcome, ConsistencyVerdict,
     Knowledge, KnowledgeInput, KnowledgeOutcome, KnowledgeSample, KnowledgeVerdict,
     CONSISTENCY_POLICY, CONSISTENCY_SYSTEM, KNOWLEDGE_CASE, KNOWLEDGE_POLICY, KNOWLEDGE_SYSTEM,
 };
 use reading::{
-    final_verdict, is_empty_quote, judge_reply, labeled_value, located_quote,
-    normalize_reasoned_fields, read_reasoned, strip_wrapping_quotes, without_field_emphasis,
+    final_verdict, labeled_value, located_quote, normalize_reasoned_fields,
+    read_reasoned, strip_wrapping_quotes, without_field_emphasis,
 };
 pub use reading::{
     parse_judge_explanation, parse_verdict_word, verdict_from_logprobs, JudgeExplanation,
@@ -420,10 +418,16 @@ impl<'a> ClaimChecker<'a> {
         (self.llm.max_context_tokens()).saturating_sub(prompts + self.max_output_tokens as usize)
     }
 
-    /// Judge `claim` against `evidence` with the quote protocol. No clock
-    /// bounds the call: the adapter's liveness checks catch a dead server,
-    /// and the caller's cancellation stops a live one.
+    /// Judge `claim` against `evidence` with the quote protocol; a strict
+    /// policy judges it against the evidence as the one located passage. No
+    /// clock bounds the call: the adapter's liveness checks catch a dead
+    /// server, and the caller's cancellation stops a live one.
     pub async fn check(&self, claim: &str, evidence: &ClaimEvidence) -> ClaimJudgment {
+        if self.policy.strict() {
+            return self
+                .check_located(claim, std::slice::from_ref(&evidence.text), None)
+                .await;
+        }
         self.check_inner(claim, evidence, None, None).await
     }
 
@@ -561,7 +565,6 @@ impl<'a> ClaimChecker<'a> {
         if let Some(passages) = locations.filter(|_| self.policy.strict()) {
             return read_reasoned(text, passages);
         }
-        let strict = self.policy.strict();
         let text = without_field_emphasis(text);
         let written = parse_verdict_word(&text);
         let decided = logprobs
@@ -572,50 +575,14 @@ impl<'a> ClaimChecker<'a> {
         let Some((verdict, confidence)) = decided else {
             return Err(unreadable("the reply holds no verdict"));
         };
-        let reason = labeled_value(&text, &["Reason", "Explanation"])
-            .map(|reason| strip_wrapping_quotes(&reason))
-            .filter(|reason| !reason.trim().is_empty());
-        if strict && written.is_none() {
-            return Err(unreadable("the reply's verdict is missing or misplaced"));
-        }
-        if strict && reason.is_none() {
-            return Err(unreadable("the reply gives no reason"));
-        }
-        if strict
-            && (written != Some(verdict)
-                || confidence.is_some_and(|p| !p.is_finite() || p < MIN_VERDICT_CONFIDENCE))
-        {
-            // Uncertain evidence cannot approve or assert a contradiction. It
-            // needs research/repair, rather than being a broken checker call.
-            return Ok(JudgeOutcome {
-                verdict: ClaimVerdict::Unsupported,
-                quote: None,
-                reason: Some(format!("The checker could not confidently establish a factual finding from these passages. {}", reason.unwrap_or_default())),
-                confidence,
-                uncertain: true,
-            });
-        }
         let mut explanation = parse_judge_explanation(&text, evidence, verdict);
         if let Some(passages) = locations {
             explanation.quote = located_quote(&text, passages);
-        } else if strict {
-            // Display truncation appends an ellipsis and destroys an otherwise
-            // exact quotation. Keep the complete evidence words for publication;
-            // chat can still use its short display excerpt.
-            explanation.quote = labeled_value(&text, &["Source quote", "Quote", "Evidence"])
-                .map(|quote| strip_wrapping_quotes(&quote))
-                .filter(|quote| !is_empty_quote(quote))
-                .and_then(|quote| quote_in(&evidence.text, &quote).map(str::to_owned));
         }
         let cites = matches!(
             verdict,
             ClaimVerdict::Supported | ClaimVerdict::Contradicted
         );
-        if strict && cites && explanation.quote.is_none() {
-            return Err(unreadable(
-                "the reply names no valid supporting evidence location",
-            ));
-        }
         if verdict == ClaimVerdict::Contradicted && explanation.reason.is_none() {
             return Err(unreadable("a contradiction needs a factual explanation"));
         }

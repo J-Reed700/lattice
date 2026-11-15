@@ -164,6 +164,17 @@ impl Units {
     /// The text as it stands after the changes applied so far. New content is
     /// segmented again by `shared/text/segmentation`, never by a change.
     pub fn text(&self) -> String {
+        self.text_without(&[])
+    }
+
+    /// The units as shown, in order.
+    pub fn units(&self) -> &[Unit] {
+        &self.shown
+    }
+
+    /// [`Units::text`] with the shown units at `positions` (their places in
+    /// [`Units::units`]) left out.
+    pub fn text_without(&self, positions: &[usize]) -> String {
         // A text with no unit has one gap, its whole content.
         let (lead, tail) = match self.gaps.as_slice() {
             [lead, .., tail] => (lead.as_str(), tail.as_str()),
@@ -173,13 +184,15 @@ impl Units {
         let mut out = String::from(lead);
         let mut previous: Option<Option<usize>> = None;
         for place in self.edited.places() {
+            let content = match place.laid {
+                Laid::Kept(unit) if positions.contains(&unit.index) => continue,
+                Laid::Kept(unit) => self.text_of(*unit).unwrap_or_default(),
+                Laid::Wrote { content, .. } => content.as_str(),
+            };
             if let Some(before) = previous {
                 out.push_str(self.between(before, place.at));
             }
-            match place.laid {
-                Laid::Kept(unit) => out.push_str(self.text_of(*unit).unwrap_or_default()),
-                Laid::Wrote { content, .. } => out.push_str(content),
-            }
+            out.push_str(content);
             previous = Some(place.at);
         }
         out.push_str(tail);

@@ -92,7 +92,7 @@ pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
     if let Some(batch) = fixture_batch(user) {
         return batch
             .into_iter()
-            .map(|(claim, passages, _)| {
+            .map(|(claim, passages, _, _)| {
                 let evidence = passages
                     .iter()
                     .enumerate()
@@ -173,15 +173,12 @@ pub(crate) fn fixture_completion(
         });
     }
     let text = if let Some(batch) = fixture_batch(user) {
-        let checks: Vec<Value> = batch
+        let entries: Vec<Value> = batch
             .iter()
-            .enumerate()
             .zip(replies)
-            .map(|((index, (_, _, evidence_ids)), reply)| {
-                json!({"id": json!(format!("claim-{index}")), "response": verdict_last(&reply, evidence_ids)})
-            })
+            .map(|((_, _, passage_ids, of), reply)| batch_entry(of, &reply, passage_ids))
             .collect();
-        json!({ "checks": checks }).to_string()
+        json!({ "entries": entries }).to_string()
     } else if is_claim_check(user) && system.contains("End with a third line: Verdict") {
         let local: Vec<String> = (0..64).map(|index| format!("passage-{index}")).collect();
         replies
@@ -351,15 +348,16 @@ fn part_wise_reply(reply: &str, user: &str) -> String {
     else {
         return reply.to_owned();
     };
-    let (mut reason, mut passage) = (String::new(), Value::Null);
+    let (mut reason, mut passage) = (String::new(), None);
     for line in lines {
         if let Some(value) = line.strip_prefix("Reason:") {
             reason = value.trim().to_owned();
         } else if let Some(value) = line.strip_prefix("Source passage:") {
             let value = value.trim();
-            if value.starts_with("passage-") {
-                passage = json!(value);
-            }
+            passage = value
+                .strip_prefix("passage-")
+                .and_then(|place| place.parse::<usize>().ok())
+                .map(|place| format!("p{}", place + 1));
         }
     }
     let claim = user
@@ -370,11 +368,10 @@ fn part_wise_reply(reply: &str, user: &str) -> String {
     let (kind, passage) = match label.as_str() {
         "supported" => ("stated", passage),
         "contradicted" => ("contradicted", passage),
-        _ => ("specific_missing", Value::Null),
+        _ => ("specific_missing", None),
     };
     json!({
-        "parts": [{"part": claim, "kind": kind, "passage": passage}],
-        "verdict": label,
+        "parts": [{"part": claim, "kind": kind, "passages": passage.into_iter().collect::<Vec<_>>()}],
         "reason": reason,
     })
     .to_string()
@@ -441,38 +438,47 @@ fn is_claim_check(user: &str) -> bool {
     user.starts_with("Source passages:") || user.starts_with("Audit claim fidelity.")
 }
 
-/// One claim of a batched check: its text, its permitted passages and their
-/// bank identifiers.
-type FixtureClaim = (String, Vec<String>, Vec<String>);
+/// One claim of a batched check: its text, its own passages, their handles and its own handle.
+type FixtureClaim = (String, Vec<String>, Vec<String>, String);
 
 fn fixture_batch(user: &str) -> Option<Vec<FixtureClaim>> {
     let batch: Value = serde_json::from_str(user).ok()?;
-    let bank = batch["sourcePassages"].as_array()?;
-    let text_of = |id: &str| {
-        bank.iter()
-            .find(|passage| passage["id"] == id)
-            .and_then(|passage| passage["text"].as_str())
-            .unwrap_or_default()
-            .to_owned()
+    let claims = batch["claims"].as_array()?;
+    claims
+        .iter()
+        .map(|claim| {
+            let passages = claim["passages"].as_array()?;
+            let text_of = |key: &str| {
+                passages
+                    .iter()
+                    .map(|passage| passage[key].as_str().unwrap_or_default().to_owned())
+                    .collect::<Vec<_>>()
+            };
+            Some((
+                claim["claim"].as_str()?.to_owned(),
+                text_of("text"),
+                text_of("id"),
+                claim["id"].as_str()?.to_owned(),
+            ))
+        })
+        .collect()
+}
+
+/// A fixture reply as the batch's entry for the claim `of`: its fields when the reply
+/// states a reason, a source and a verdict, else the entry with the reply as its reason.
+fn batch_entry(of: &str, reply: &str, passage_ids: &[String]) -> Value {
+    let text = verdict_last(reply, passage_ids);
+    let line = |label: &str| {
+        text.lines()
+            .find_map(|line| line.trim().strip_prefix(label))
+            .map(|value| value.trim().to_owned())
     };
-    batch["claims"].as_array().map(|claims| {
-        claims
-            .iter()
-            .map(|claim| {
-                let ids: Vec<String> = claim["evidenceIds"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|id| id.as_str().map(str::to_owned))
-                    .collect();
-                (
-                    claim["claim"].as_str().unwrap_or_default().to_owned(),
-                    ids.iter().map(|id| text_of(id)).collect(),
-                    ids,
-                )
-            })
-            .collect()
-    })
+    match (line("Reason:"), line("Source passage:"), line("Verdict:")) {
+        (Some(reason), Some(source), Some(verdict)) => {
+            json!({"of": of, "reason": reason, "source": source, "verdict": verdict})
+        }
+        _ => json!({"of": of, "reason": text}),
+    }
 }
 
 /// A label-first fixture verdict ("supported\nReason: …\nSource passage:
@@ -2374,7 +2380,7 @@ async fn malformed_verdict_gets_one_format_correction_without_approving_missing_
     use crate::lessons::course_generation_tests::ScriptedModel;
     let malformed="The passages describe Rust tools but do not mention Visual Studio.\nReason: Visual Studio is absent.\nSource quote: none";
     for corrected in [
-        "unsupported\nReason: Visual Studio is absent.\nSource quote: none",
+        "Reason: Visual Studio is absent.\nSource passage: none\nVerdict: unsupported",
         malformed,
     ] {
         let model = ScriptedModel {
@@ -2393,7 +2399,7 @@ async fn malformed_verdict_gets_one_format_correction_without_approving_missing_
         )
         .check("Visual Studio includes a package manager.", &evidence)
         .await;
-        if corrected.starts_with("unsupported") {
+        if corrected != malformed {
             assert!(
                 matches!(result,ClaimJudgment::Judged(outcome) if outcome.verdict==ClaimVerdict::Unsupported)
             );
@@ -2417,7 +2423,7 @@ async fn malformed_verdict_gets_one_format_correction_without_approving_missing_
 }
 
 #[tokio::test]
-async fn strict_checker_records_a_long_or_reflowed_quote_as_the_sources_exact_text() {
+async fn strict_checker_records_the_one_evidence_text_it_is_given_as_the_passage_it_cites() {
     let quote = format!(
         "{} The field contains two spaces: a  b.",
         "A factual reference sentence. ".repeat(20)
@@ -2426,67 +2432,60 @@ async fn strict_checker_records_a_long_or_reflowed_quote_as_the_sources_exact_te
         text: quote.clone(),
         quote: None,
     };
-    for cited in [quote.clone(), quote.replace("a  b", "a b")] {
-        let model=TypedModel {response:CompletionResponse {
-            text:format!("supported\nReason: The exact reference contains the statement.\nSource quote: {cited}"),
-            finish_reason:"stop".into(),..Default::default()
-        }};
-        let checker = ClaimChecker::new(
-            &model,
-            SamplingOverride::deterministic(),
-            512,
-            CheckPolicy::Strict,
-        );
-        let result = checker
-            .check("The field contains two spaces.", &evidence)
-            .await;
-        assert!(
-            matches!(result,ClaimJudgment::Judged(outcome) if outcome.quote.as_deref()==Some(quote.as_str()))
-        );
-    }
+    let model = TypedModel {
+        response: CompletionResponse {
+            text: "Reason: The exact reference contains the statement.\nSource passage: passage-0\nVerdict: supported".into(),
+            finish_reason: "stop".into(),
+            ..Default::default()
+        },
+    };
+    let checker = ClaimChecker::new(
+        &model,
+        SamplingOverride::deterministic(),
+        512,
+        CheckPolicy::Strict,
+    );
+    let result = checker
+        .check("The field contains two spaces.", &evidence)
+        .await;
+    assert!(
+        matches!(result, ClaimJudgment::Judged(outcome) if outcome.quote.as_deref() == Some(quote.as_str()))
+    );
 }
 
 #[tokio::test]
-async fn strict_checker_rejects_missing_invented_quotes_and_truncated_replies() {
+async fn strict_checker_rejects_missing_invented_passages_and_truncated_replies() {
     let evidence = ClaimEvidence {
         text: SOURCE.into(),
         quote: Some(GOOD.into()),
     };
-    for (text, finish) in [("supported","stop"),("supported\nReason: a match\nSource quote: fabricated", "stop"),("supported\nReason: a match\nSource quote: DictReader preserves field-name whitespace by default.","length")] {
-        let model=TypedModel { response:CompletionResponse { text:text.into(),finish_reason:finish.into(), ..Default::default() } };
-        let strict=ClaimChecker::new(&model,SamplingOverride::deterministic(),512,CheckPolicy::Strict).check(GOOD,&evidence).await;
-        assert!(matches!(strict,ClaimJudgment::Unusable));
-    }
-    for alternatives in [
-        vec![
-            ("contradicted".into(), 0.9_f32.ln()),
-            ("supported".into(), 0.1_f32.ln()),
-        ],
-        vec![
-            ("supported".into(), 0.5_f32.ln()),
-            ("contradicted".into(), 0.5_f32.ln()),
-        ],
+    for (text, finish) in [
+        ("Verdict: supported", "stop"),
+        (
+            "Reason: a match\nSource passage: passage-7\nVerdict: supported",
+            "stop",
+        ),
+        (
+            "Reason: a match\nSource passage: passage-0\nVerdict: supported",
+            "length",
+        ),
     ] {
         let model = TypedModel {
             response: CompletionResponse {
-                text: format!(
-                    "supported\nReason: The source preserves spaces.\nSource quote: {GOOD}"
-                ),
-                finish_reason: "stop".into(),
-                first_token_logprobs: Some(alternatives),
+                text: text.into(),
+                finish_reason: finish.into(),
                 ..Default::default()
             },
         };
-        let checker = ClaimChecker::new(
+        let strict = ClaimChecker::new(
             &model,
             SamplingOverride::deterministic(),
             512,
             CheckPolicy::Strict,
-        );
-        assert!(matches!(
-            checker.check(GOOD, &evidence).await,
-            ClaimJudgment::Judged(outcome) if outcome.verdict == ClaimVerdict::Unsupported && outcome.quote.is_none()
-        ));
+        )
+        .check(GOOD, &evidence)
+        .await;
+        assert!(matches!(strict, ClaimJudgment::Unusable));
     }
 }
 
