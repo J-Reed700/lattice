@@ -31,6 +31,11 @@ impl LessonBrief {
     /// The brief as a model is shown it: the course, module and lesson, then the evidence under a heading for the
     /// lesson's own teaching or for each source, every unit numbered L1, L2, .... A value that is blank is left out.
     pub fn render(&self) -> String {
+        self.render_with(|number| format!("L{number}"))
+    }
+
+    /// [`Self::render`] with `label` writing the name of each evidence unit from its number (1-based).
+    pub fn render_with(&self, label: impl Fn(usize) -> String) -> String {
         fn line(shown: &mut String, label: &str, value: &str) {
             if !value.trim().is_empty() {
                 shown.push_str(&format!("{label}: {}\n", value.trim()));
@@ -68,6 +73,7 @@ impl LessonBrief {
                     .iter()
                     .enumerate()
                     .map(|(index, unit)| (index + 1, unit)),
+                &label,
             );
         }
         shown.push_str("</brief>");
@@ -85,7 +91,7 @@ impl LessonBrief {
             .map(|&number| Some((number, self.evidence.get(number.checked_sub(1)?)?)))
             .collect::<Option<Vec<_>>>()?;
         let mut shown = String::new();
-        write_evidence(&mut shown, units.into_iter());
+        write_evidence(&mut shown, units.into_iter(), &|number| format!("L{number}"));
         if shown.ends_with('\n') {
             shown.pop();
         }
@@ -110,10 +116,11 @@ impl LessonBrief {
 }
 
 /// Writes the numbered `units` as the evidence of a brief: a heading wherever the source changes, then each unit
-/// under its number.
+/// under its label.
 fn write_evidence<'a>(
     shown: &mut String,
     units: impl Iterator<Item = (usize, &'a LessonSentence)>,
+    label: &dyn Fn(usize) -> String,
 ) {
     let mut heading: Option<Option<&str>> = None;
     for (number, unit) in units {
@@ -126,7 +133,7 @@ fn write_evidence<'a>(
             }
         }
         let separator = if unit.text.contains('\n') { '\n' } else { ' ' };
-        shown.push_str(&format!("L{number}{separator}{}\n", unit.text));
+        shown.push_str(&format!("{}{separator}{}\n", label(number), unit.text));
     }
 }
 

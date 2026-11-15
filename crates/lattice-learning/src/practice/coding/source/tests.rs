@@ -7,6 +7,10 @@ use crate::practice::kinds::program::toolchain::FakeToolchains;
 use crate::practice::kinds::program::{kind, KIND};
 use crate::practice::session::author::Failed;
 use crate::practice::session::builder::{BuildSteps, MAX_PROOF_REASKS, STEP_PROVING, STEP_WRITING};
+use lattice_core::application::services::model_contract::ask::Answered;
+use lattice_core::application::services::model_contract::shape::{Pointers, Shape};
+use lattice_core::application::services::model_contract::shown::Scope;
+use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use lattice_core::domain::learning::practice::work::{Draft as ExerciseDraft, Form};
 use std::sync::Mutex;
 
@@ -72,7 +76,7 @@ fn killers() -> Vec<(&'static str, Vec<&'static str>)> {
 }
 
 fn literal_case(category: &str) -> Value {
-    json!({"category": category, "args": ["[1, 2, 3]", "5"], "expected": "[1, 2]"})
+    json!({"category": category, "args": [{"text": "[1, 2, 3]"}, {"text": "5"}], "expected": "[1, 2]"})
 }
 
 /// An answer that proves against `killers()` with the reference `REF`.
@@ -86,12 +90,12 @@ fn answer() -> Value {
             {"name": "target", "annotation": "int"}
         ],
         "returns": "list[int]",
-        "constraints": ["There is exactly one pair."],
+        "constraints": [{"text": "There is exactly one pair."}],
         "clarifications": [],
         "targetComplexity": "O(n) time, O(n) space",
-        "patterns": ["hash_map_lookup"],
+        "patterns": [],
         "compare": "exact",
-        "tolerance": 0,
+        "tolerance": "0",
         "reference": "REF",
         "misreadings": [
             {"description": "Uses a number twice.", "code": "LATE"},
@@ -104,7 +108,7 @@ fn answer() -> Value {
             literal_case("negative numbers"),
             literal_case("the pair at the end")
         ],
-        "scale": [{"category": "a long list", "args": ["list(range(50000))", "99997"]}]
+        "scale": [{"category": "a long list", "args": [{"text": "list(range(50000))"}, {"text": "99997"}]}]
     })
 }
 
@@ -226,7 +230,7 @@ async fn the_function_is_read_from_function_name_and_the_schema_asks_for_that_ke
     let runner = runner(killers());
     let (problem, _) = built(build(vec![answer()], &runner, &request(Form::Build)).await);
     assert_eq!(problem.spec.signature.function, "pair_positions");
-    let schema = schema();
+    let schema = answer_schema(&input_of(&request(Form::Build)));
     let required: Vec<&str> = schema["required"]
         .as_array()
         .unwrap()
@@ -425,7 +429,7 @@ async fn a_case_with_the_wrong_number_of_arguments_is_asked_for_again() {
         answer(),
         "examples",
         json!([
-            {"category": "one argument", "args": ["[1, 2]"], "expected": "[0, 1]"},
+            {"category": "one argument", "args": [{"text": "[1, 2]"}], "expected": "[0, 1]"},
             literal_case("a pair in the middle")
         ]),
     );
@@ -436,19 +440,177 @@ async fn a_case_with_the_wrong_number_of_arguments_is_asked_for_again() {
 }
 
 #[tokio::test]
-async fn every_requested_pattern_must_be_listed() {
+async fn a_requested_pattern_is_recorded_without_the_model_listing_it() {
     let mut wanted = request(Form::Build);
     wanted.patterns = vec!["hash_map_lookup".into(), "binary_search".into()];
-    let both = with(
-        answer(),
-        "patterns",
-        json!(["hash_map_lookup", "binary_search"]),
-    );
     let runner = runner(killers());
-    let (problem, model) = built(build(vec![answer(), both], &runner, &wanted).await);
-    assert_eq!(model.calls(), 2);
-    assert!(model.texts()[1].contains("binary_search"));
+    let (problem, model) = built(build(vec![answer()], &runner, &wanted).await);
+    assert_eq!(model.calls(), 1);
     assert_eq!(problem.spec.patterns, ["hash_map_lookup", "binary_search"]);
+}
+
+#[tokio::test]
+async fn a_pattern_the_model_adds_by_its_handle_follows_the_requested_ones() {
+    let extra = other_than(&["hash_map_lookup"])[0];
+    let adding = with(answer(), "patterns", json!(["t1"]));
+    let runner = runner(killers());
+    let (problem, model) = built(build(vec![adding], &runner, &request(Form::Build)).await);
+    assert_eq!(model.calls(), 1);
+    assert_eq!(problem.spec.patterns, ["hash_map_lookup", extra]);
+}
+
+#[tokio::test]
+async fn a_pattern_handle_that_names_nothing_costs_only_that_pattern() {
+    let adding = with(answer(), "patterns", json!(["t1", "t99", "x3"]));
+    let runner = runner(killers());
+    let (problem, model) = built(build(vec![adding], &runner, &request(Form::Build)).await);
+    assert_eq!(model.calls(), 1);
+    assert_eq!(problem.spec.patterns.len(), 2);
+}
+
+#[tokio::test]
+async fn a_problem_asked_for_no_pattern_must_name_one_and_is_asked_again_alone() {
+    let mut open = request(Form::Build);
+    open.patterns = Vec::new();
+    let first = PROBLEM_PATTERNS[0].id;
+    let named = with(answer(), "patterns", json!(["t1"]));
+    let runner = runner(killers());
+    let (problem, model) = built(build(vec![answer(), named], &runner, &open).await);
+    assert_eq!(model.calls(), 2);
+    assert!(model.texts()[1].contains("at least one pattern"));
+    assert_eq!(problem.spec.patterns, [first]);
+}
+
+#[tokio::test]
+async fn the_request_names_the_requested_pattern_and_offers_the_others_by_handle() {
+    let runner = runner(killers());
+    let (_, model) = built(build(vec![answer()], &runner, &request(Form::Build)).await);
+    let sent = &model.texts()[0];
+    let asked = &PROBLEM_PATTERNS[0];
+    assert!(
+        sent.contains(&format!("{}: {}", asked.name, asked.cue)),
+        "{sent}"
+    );
+    let offered = other_than(&["hash_map_lookup"]);
+    assert!(sent.contains("[t1]"), "{sent}");
+    assert!(sent.contains(&format!("[t{}]", offered.len())), "{sent}");
+    assert!(!sent.contains(&format!("[t{}]", offered.len() + 1)), "{sent}");
+    assert!(
+        PROBLEM_PATTERNS
+            .iter()
+            .filter(|pattern| pattern.id.contains('_'))
+            .all(|pattern| !sent.contains(pattern.id)),
+        "{sent}"
+    );
+}
+
+#[tokio::test]
+async fn a_float_comparison_needs_a_tolerance_above_zero_and_is_asked_again() {
+    let loose = with(with(answer(), "compare", json!("float_within")), "tolerance", json!("0"));
+    let fine = with(with(answer(), "compare", json!("float_within")), "tolerance", json!("0.001"));
+    let runner = runner(killers());
+    let (problem, model) = built(build(vec![loose, fine], &runner, &request(Form::Build)).await);
+    assert_eq!(model.calls(), 2);
+    assert!(model.texts()[1].contains("needs a tolerance greater than zero"));
+    assert!(problem
+        .cases
+        .iter()
+        .filter(|case| !case.scale)
+        .all(|case| case.compare == CaseCompare::FloatWithin { tolerance: 0.001 }));
+}
+
+#[tokio::test]
+async fn an_answer_missing_a_field_is_asked_for_again() {
+    let mut partial = answer();
+    partial.as_object_mut().unwrap().remove("reference");
+    let runner = runner(killers());
+    let (_, model) = built(build(vec![partial, answer()], &runner, &request(Form::Build)).await);
+    assert_eq!(model.calls(), 2);
+}
+
+#[test]
+fn the_problem_request_shows_what_the_model_is_told_and_nothing_internal() {
+    let mut marks = Marks::new();
+    let input = Input {
+        difficulty: Told(ProblemDifficulty::Medium),
+        language: Told("python".into()),
+        runtime: marks.told("Python 3.12, standard library only.".to_owned()),
+        lesson: Some(Brief {
+            title: marks.told("Reading the tide tables".to_owned()),
+            objective: marks.told("Find the gate opening in a harbour almanac.".to_owned()),
+        }),
+        focus: Some(marks.told("Questions about kiln schedules".to_owned())),
+        details: Some(marks.told("A harbour logistics interview".to_owned())),
+        wanted: vec![Wanted {
+            id: marks.internal("pattern-key-0001".to_owned()),
+            name: marks.told("Tide windows".to_owned()),
+            cue: marks.told("Something repeats on a cycle of the moon.".to_owned()),
+        }],
+        others: vec![Pattern {
+            id: marks.reference("pattern-key-0002".to_owned()),
+            name: marks.told("Mooring order".to_owned()),
+            cue: marks.told("Boats are taken in the order they arrive.".to_owned()),
+        }],
+        repair: true,
+        earlier: vec![Earlier {
+            answer: marks.told("the first draft of the harbour problem".to_owned()),
+            reason: marks.told("The reference failed the case hidden-1.".to_owned()),
+        }],
+    };
+    holds::<AuthorProblem>(&input, &marks);
+}
+
+/// The ids of the catalogue other than `asked`, in catalogue order.
+fn other_than(asked: &[&str]) -> Vec<&'static str> {
+    PROBLEM_PATTERNS
+        .iter()
+        .map(|pattern| pattern.id)
+        .filter(|id| !asked.contains(id))
+        .collect()
+}
+
+/// What the author's request shows for `request`, without a transport.
+fn input_of(request: &ProblemRequest) -> Input {
+    Input {
+        difficulty: Told(request.difficulty),
+        language: Told(request.language.clone()),
+        runtime: Told("Python.".into()),
+        lesson: None,
+        focus: None,
+        details: None,
+        wanted: request
+            .patterns
+            .iter()
+            .filter_map(|id| problem_pattern(id))
+            .map(|pattern| Wanted {
+                id: Internal::of(pattern.id.to_owned()),
+                name: Told(pattern.name.to_owned()),
+                cue: Told(pattern.cue.to_owned()),
+            })
+            .collect(),
+        others: PROBLEM_PATTERNS
+            .iter()
+            .filter(|pattern| !request.patterns.iter().any(|id| id == pattern.id))
+            .map(|pattern| Pattern {
+                id: pattern.id.to_owned(),
+                name: Told(pattern.name.to_owned()),
+                cue: Told(pattern.cue.to_owned()),
+            })
+            .collect(),
+        repair: false,
+        earlier: Vec::new(),
+    }
+}
+
+/// The schema of the author's answer, with the patterns shown by handle.
+fn answer_schema(input: &Input) -> Value {
+    let mut scope = Scope::for_question();
+    let mut showing = scope.request();
+    showing.show(&input.others).unwrap();
+    <<AuthorProblem as Answered>::Answer as Shape>::schema(&showing, Pointers::Plain)
+        .unwrap()
+        .as_json()
+        .clone()
 }
 
 #[tokio::test]
@@ -465,7 +627,7 @@ async fn a_request_for_an_unknown_pattern_is_refused_before_asking() {
 }
 
 #[test]
-fn the_schema_keeps_every_item_to_six_properties_and_offers_the_catalogue_as_an_enum() {
+fn the_schema_keeps_every_item_to_six_properties_and_offers_the_other_patterns_by_handle() {
     fn items(schema: &Value, found: &mut Vec<usize>) {
         match schema {
             Value::Object(map) => {
@@ -480,19 +642,21 @@ fn the_schema_keeps_every_item_to_six_properties_and_offers_the_catalogue_as_an_
             _ => {}
         }
     }
-    let schema = schema();
+    let input = input_of(&request(Form::Build));
+    let schema = answer_schema(&input);
     let mut sizes = Vec::new();
     items(&schema, &mut sizes);
     assert!(!sizes.is_empty());
     assert!(sizes.iter().all(|size| *size <= 6), "{sizes:?}");
-    let offered: Vec<&str> = schema["properties"]["patterns"]["items"]["enum"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(Value::as_str)
-        .collect();
-    let catalogue: Vec<&str> = PROBLEM_PATTERNS.iter().map(|pattern| pattern.id).collect();
-    assert_eq!(offered, catalogue);
+    let text = schema.to_string();
+    assert!(
+        PROBLEM_PATTERNS
+            .iter()
+            .filter(|pattern| pattern.id.contains('_'))
+            .all(|pattern| !text.contains(pattern.id)),
+        "{text}"
+    );
+    assert!(schema["properties"].get("tolerance").is_some());
 }
 
 async fn authored(
@@ -532,7 +696,7 @@ async fn a_build_draft_is_the_answer_in_the_core_vocabulary_with_the_signature_a
     let (drafted, model) = authored(Form::Build, &[], &request(Form::Build), vec![answer()]).await;
     let (draft, raw) = draft_of(drafted);
     assert_eq!(model.calls(), 1);
-    assert_eq!(raw, answer().to_string());
+    assert_eq!(serde_json::from_str::<Value>(&raw).unwrap(), answer());
     assert_eq!(draft.kind.as_str(), KIND);
     assert_eq!(draft.form, Form::Build);
     assert_eq!(draft.reference, solution_piece("REF").unwrap());

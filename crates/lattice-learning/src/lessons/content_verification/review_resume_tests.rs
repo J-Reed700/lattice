@@ -12,11 +12,11 @@ fn outcome() -> Outcome<'static> {
 }
 
 fn solved(chosen: usize) -> String {
-    json!({"answers":[{"index":0,"reason":"The source identifies that option as correct.","correctIndices":[chosen],"answer":"","blankAnswers":[],"matches":[],"orderedValues":[]}]}).to_string()
+    crate::key_review::scripted::solved_static(1, 2, chosen).to_string()
 }
 
 fn judged() -> String {
-    json!({"checks":[{"id":"new-0","finding":"","hasDefect":false,"repeats":[]}]}).to_string()
+    crate::assessment::item_review::scripted::sound_static(1).to_string()
 }
 
 #[tokio::test]

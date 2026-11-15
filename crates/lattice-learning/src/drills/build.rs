@@ -34,6 +34,8 @@ pub(crate) mod ask;
 mod blind_review;
 #[path = "stages/clean_code.rs"]
 mod clean_code;
+#[path = "stages/code_units.rs"]
+pub(crate) mod code_units;
 #[path = "stages/clean_review.rs"]
 mod clean_review;
 #[path = "stages/lesson_check.rs"]

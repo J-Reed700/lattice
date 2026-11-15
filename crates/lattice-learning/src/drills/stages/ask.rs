@@ -74,24 +74,30 @@ pub(crate) async fn ask_until_suite_passes<V>(
         };
         let outcome = runner.run(&files, &test, cancel.clone()).await?;
         trail.run(what_runs, &outcome);
-        let why = match outcome {
-            RunOutcome::Passed => return Ok(asked.value),
-            RunOutcome::Failed { output } => {
-                format!("{what_runs} failed. The runner's output follows.\n{output}")
-            }
-            RunOutcome::TimedOut { output } => did_not_finish(what_runs, &output),
-            RunOutcome::Cancelled => return Err(cancelled()),
-            RunOutcome::Unavailable { why } => {
-                return Err(AppError::ServiceNotAvailable(format!(
-                    "{what_runs} could not be run: {why}"
-                )))
-            }
+        let Some(why) = suite_failure(what_runs, outcome)? else {
+            return Ok(asked.value);
         };
         if again {
             return Err(AppError::ModelAnswerUnusable(why));
         }
         request = reask(request, &asked.raw, &why);
         again = true;
+    }
+}
+
+/// What to tell the model about a suite run that did not pass; `None` when it passed. A runtime that is not
+/// there is an unavailable service, never a bad answer, and a cancelled run is a cancelled build.
+pub(crate) fn suite_failure(what_runs: &str, outcome: RunOutcome) -> Result<Option<String>> {
+    match outcome {
+        RunOutcome::Passed => Ok(None),
+        RunOutcome::Failed { output } => Ok(Some(format!(
+            "{what_runs} failed. The runner's output follows.\n{output}"
+        ))),
+        RunOutcome::TimedOut { output } => Ok(Some(did_not_finish(what_runs, &output))),
+        RunOutcome::Cancelled => Err(cancelled()),
+        RunOutcome::Unavailable { why } => Err(AppError::ServiceNotAvailable(format!(
+            "{what_runs} could not be run: {why}"
+        ))),
     }
 }
 

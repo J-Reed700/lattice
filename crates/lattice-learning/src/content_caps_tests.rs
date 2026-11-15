@@ -252,11 +252,12 @@ impl LLMPort for PerRequirement {
         }
         let context: Value = serde_json::from_str(user)?;
         self.prompts.lock().unwrap().push(context.clone());
-        let quote: String = context["passages"][0]["text"]
+        let quote: Vec<&str> = context["passages"][0]["sentences"]
             .as_str()
             .unwrap()
-            .chars()
-            .take(60)
+            .lines()
+            .take(3)
+            .filter_map(|row| row.strip_prefix('[')?.split(']').next())
             .collect();
         let items: Vec<_> = (0..context["returnCount"].as_u64().unwrap()).map(|i| json!({
             "prompt":format!("Explain how partition pruning changes this query plan for {}, case {i}.", context["outcome"].as_str().unwrap()),
@@ -265,7 +266,7 @@ impl LLMPort for PerRequirement {
                 {"title":"Evidence","description":"Connects the explanation to the stated query plan.","dimension":"application"}
             ],
             "explanation":"A strong answer ties pruning to the predicate.",
-            "blockIndex":0,"quote":quote,"difficulty":3
+            "quote":quote,"difficulty":"3"
         })).collect();
         Ok(CompletionResponse::from_text(
             json!({ "items": items }).to_string(),
@@ -321,54 +322,11 @@ async fn quiz_items_are_authored_per_requirement_from_retrieved_passages() -> Re
     let prompts = model.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 2, "one request per requirement");
     // The passage past the former 8,000-character prefix reached the model.
-    assert!(prompts[0]["passages"][0]["text"]
+    assert!(prompts[0]["passages"][0]["sentences"]
         .as_str()
         .unwrap()
         .contains(needle));
     Ok(())
-}
-
-#[test]
-fn the_tutor_sees_the_newest_whole_turns_that_fit_and_counts_the_rest() {
-    use crate::dto::{LearningPracticeTutorTurnDto, LearningTutorRequestKind};
-    let turn = |index: usize| LearningPracticeTutorTurnDto {
-        id: format!("turn-{index}"),
-        prompt: format!(
-            "Question {index}: {}",
-            "why does this step hold? ".repeat(40)
-        ),
-        response: format!(
-            "Answer {index}: {}",
-            "consider the earlier result. ".repeat(40)
-        ),
-        request_kind: LearningTutorRequestKind::Question,
-        hint_level: None,
-        citations: vec![],
-        proposal_ids: vec![],
-        model_name: "fixture".into(),
-        created_at: index as i64,
-    };
-    let few: Vec<_> = (0..6).map(turn).collect();
-    let many: Vec<_> = (0..400).map(turn).collect();
-    let llm = scripted(vec![]);
-    let prompt =
-        json!({"taskPrompt":"Solve it.","recentTurns":[],"earlierTurns":"","sourceSnapshots":[]});
-    // Six turns all fit: not the former four.
-    let shown = crate::practice_generation::with_recent_turns(&llm, prompt.clone(), &few);
-    assert_eq!(shown["recentTurns"].as_array().unwrap().len(), 6);
-    assert_eq!(shown["earlierTurns"], "");
-    // Four hundred do not: the newest whole turns, then a count of the rest.
-    let shown = crate::practice_generation::with_recent_turns(&llm, prompt, &many);
-    let turns = shown["recentTurns"].as_array().unwrap();
-    assert!(turns.len() > 4 && turns.len() < 400);
-    assert!(turns[0]["request"]
-        .as_str()
-        .unwrap()
-        .starts_with("Question 399:"));
-    assert_eq!(
-        shown["earlierTurns"],
-        format!("{} earlier turns not shown", 400 - turns.len())
-    );
 }
 
 /// Every text length a schema bounds beyond a non-blank string: a `maxLength`

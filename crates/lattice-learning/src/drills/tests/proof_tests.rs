@@ -1,7 +1,7 @@
 //! Proof is a Strategy: the table of strategies cell by cell, and each strategy on its own.
 
 use super::support::{
-    files, judge_answer, last, literals_edit, literals_mutation, messages, operator_edit,
+    files, handle_of, judge_answer, last, literals_edit, literals_mutation, messages, operator_edit,
     operator_mutation, FakeRunner, ScriptedModel, KILLING_TEST, LITERALS, LITERALS_AFTER,
     LITERALS_BEFORE, OPERATOR, OPERATOR_AFTER, SUITE,
 };
@@ -530,9 +530,14 @@ fn failing_when_inlined() -> FakeRunner {
     })
 }
 
-fn replacement(path: &str, before: &str, after: &str) -> String {
+/// A new change that replaces the line of `file` that reads `line` with `with`.
+fn replacement(file: &str, line: &str, with: &str) -> String {
     json!({
-        "path": path, "before": before, "after": after, "severity": "minor",
+        "change": {
+            "replace": [{"at": handle_of(&files(), file, line), "with": with}],
+            "insert": [], "remove": [], "move": []
+        },
+        "severity": "minor",
         "consequence": "A local variable hides which constant is used.",
         "explanation": "The constant is copied to a local for no reason. Use the constant directly."
     })
@@ -541,13 +546,16 @@ fn replacement(path: &str, before: &str, after: &str) -> String {
 
 const RESHAPED: &str =
     "    limit = DEFAULT_LIMIT\n    return RateLimiter(limit, DEFAULT_WINDOW, clock)\n";
+const LITERALS_LINE: &str = "    return RateLimiter(DEFAULT_LIMIT, DEFAULT_WINDOW, clock)";
+const RESHAPED_LINES: &str =
+    "    limit = DEFAULT_LIMIT\n    return RateLimiter(limit, DEFAULT_WINDOW, clock)";
 
 #[tokio::test]
 async fn a_smell_that_fails_the_suite_is_sent_back_once_for_a_new_edit_that_keeps_every_name(
 ) -> Result<()> {
     let world = World::new();
     let model = ScriptedModel::new([
-        replacement("src/config.py", LITERALS_BEFORE, RESHAPED),
+        replacement("src/config.py", LITERALS_LINE, RESHAPED_LINES),
         judge_answer(true),
     ]);
     let runner = failing_when_inlined();
@@ -579,10 +587,7 @@ async fn a_smell_that_fails_the_suite_is_sent_back_once_for_a_new_edit_that_keep
     );
     assert!(text_length_rules(requests[0].schema().unwrap().as_json()).is_empty());
     let reask = last(&requests[0]);
-    assert!(
-        reask.starts_with("That answer could not be used:"),
-        "{reask}"
-    );
+    assert!(reask.contains("The change that was proposed"), "{reask}");
     assert!(
         reask.contains("AssertionError: the defaults changed"),
         "{reask}"
@@ -605,7 +610,7 @@ async fn a_lesson_issue_whose_edit_is_replaced_keeps_the_sentences_it_cites() ->
     let mut world = World::new();
     world.literals.lesson_sentences = vec![2];
     let model = ScriptedModel::new([
-        replacement("src/config.py", LITERALS_BEFORE, RESHAPED),
+        replacement("src/config.py", LITERALS_LINE, RESHAPED_LINES),
         judge_answer(true),
     ]);
     let runner = failing_when_inlined();
@@ -625,7 +630,7 @@ async fn a_lesson_issue_whose_edit_is_replaced_keeps_the_sentences_it_cites() ->
 #[tokio::test]
 async fn a_smell_that_fails_the_suite_again_is_unproven_without_asking_the_judge() -> Result<()> {
     let world = World::new();
-    let model = ScriptedModel::new([replacement("src/config.py", LITERALS_BEFORE, RESHAPED)]);
+    let model = ScriptedModel::new([replacement("src/config.py", LITERALS_LINE, RESHAPED_LINES)]);
     let runner = FakeRunner::new(|_, _| RunOutcome::Failed {
         output: "boom".into(),
     });
@@ -647,13 +652,13 @@ async fn a_new_edit_must_apply_beside_the_others() -> Result<()> {
     let world = World::new();
     let overlapping = replacement(
         "src/limiter.py",
-        "        if len(recent) >= self.limit:\n",
-        "        if len(recent) >= self.limit and recent:\n",
+        "        if len(recent) >= self.limit:",
+        "        if len(recent) >= self.limit and recent:",
     );
-    let missing = replacement("src/config.py", "    return nothing\n", RESHAPED);
+    let missing = replacement("src/config.py", "    return nothing", RESHAPED_LINES);
     let model = ScriptedModel::new([
         missing,
-        replacement("src/config.py", LITERALS_BEFORE, RESHAPED),
+        replacement("src/config.py", LITERALS_LINE, RESHAPED_LINES),
         judge_answer(true),
     ]);
     let runner = failing_when_inlined();
@@ -670,7 +675,7 @@ async fn a_new_edit_must_apply_beside_the_others() -> Result<()> {
     assert_eq!(model.purposes(), ["new edit", "new edit", "judge"]);
     let refusal = last(&requests[1]);
     assert!(
-        refusal.contains("The new change: `before` is not in src/config.py"),
+        refusal.contains("Your answer pointed at something that is not shown"),
         "{refusal}"
     );
 
@@ -688,6 +693,93 @@ async fn a_new_edit_must_apply_beside_the_others() -> Result<()> {
         last(&model.requests()[1]).contains("Another change and The new change overlap"),
         "{}",
         last(&model.requests()[1])
+    );
+    Ok(())
+}
+
+/// The strategy asks for a new edit, and the model answers `first` before it answers well.
+async fn refused_once_then_placed(first: String, fragment: &str) -> Result<()> {
+    let world = World::new();
+    let model = ScriptedModel::new([
+        first,
+        replacement("src/config.py", LITERALS_LINE, RESHAPED_LINES),
+        judge_answer(true),
+    ]);
+    let runner = failing_when_inlined();
+    let cancel = CancellationToken::new();
+    let verdict = strategy(
+        StrategyKind::BehaviourKeptThenJudged,
+        tools(&model, Some(&runner), &cancel),
+    )
+    .prove(&world.literals_case())
+    .await?;
+    let (_, mutation, _) = proven(verdict);
+    assert_eq!(mutation.edit.after, RESHAPED, "{fragment}");
+    let requests = model.requests();
+    assert_eq!(model.purposes(), ["new edit", "new edit", "judge"], "{fragment}");
+    let told = last(&requests[1]);
+    assert!(told.contains(fragment), "{fragment} in {told}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_new_edit_names_the_lines_of_one_file_and_changes_something() -> Result<()> {
+    let at_config = handle_of(&files(), "src/config.py", LITERALS_LINE);
+    let at_limiter = handle_of(&files(), "src/limiter.py", "        self.limit = limit");
+    let across = json!({
+        "change": {
+            "replace": [
+                {"at": at_config, "with": RESHAPED_LINES},
+                {"at": at_limiter, "with": "        self.limit = limit + 0"}
+            ],
+            "insert": [], "remove": [], "move": []
+        },
+        "severity": "minor",
+        "consequence": "A local variable hides which constant is used.",
+        "explanation": "The constant is copied to a local for no reason."
+    })
+    .to_string();
+    refused_once_then_placed(across, "lines of one file").await?;
+    refused_once_then_placed(
+        replacement("src/config.py", LITERALS_LINE, LITERALS_LINE),
+        "leaves the code as it is",
+    )
+    .await?;
+    let at_start = json!({
+        "change": {
+            "replace": [],
+            "insert": [{"after": "start", "with": "import os"}],
+            "remove": [], "move": []
+        },
+        "severity": "minor",
+        "consequence": "An import nothing uses.",
+        "explanation": "The module is imported and never used."
+    })
+    .to_string();
+    refused_once_then_placed(at_start, "not at the start").await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_snapshot_drill_new_edit() -> Result<()> {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let world = World::new();
+    let model = ScriptedModel::new([
+        replacement("src/config.py", LITERALS_LINE, RESHAPED_LINES),
+        judge_answer(true),
+    ]);
+    let runner = failing_when_inlined();
+    let cancel = CancellationToken::new();
+    strategy(
+        StrategyKind::BehaviourKeptThenJudged,
+        tools(&model, Some(&runner), &cancel),
+    )
+    .prove(&world.literals_case())
+    .await?;
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "drill-new-edit",
+        &model.requests()[..1],
     );
     Ok(())
 }

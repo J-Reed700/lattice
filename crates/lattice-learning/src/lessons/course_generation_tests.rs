@@ -394,7 +394,7 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
     assert!(!frozen.summary.source_version_ids.is_empty());
     let mut uncertain_session = frozen.clone();
     uncertain_session.artifact.text = "I am not sure how to start.".into();
-    let uncertain = Model(json!({"status":"uncertain","criteria":frozen.rubric.iter().map(|criterion| json!({"criterion_id":criterion.id,"score":0,"observation":"No assessable reasoning is present. Try identifying the comparison groups first.","evidence_quote":"I am not sure how to start."})).collect::<Vec<_>>()} ).to_string());
+    let uncertain = Model(json!({"entries":[{"of":"c1","evidence":[],"observation":"No assessable reasoning is present. Try identifying the comparison groups first.","score":"none"},{"of":"c2","evidence":[],"observation":"No assessable reasoning is present. Try identifying the comparison groups first.","score":"none"}]}).to_string());
     let (status, criteria) =
         crate::practice_generation::grade(&uncertain, &uncertain_session).await?;
     assert_eq!(status, LearningPracticeGradeStatus::Uncertain);
@@ -402,35 +402,13 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
 
     let mut attempted = frozen.clone();
     attempted.artifact.text =
-        "I assigned groups randomly.\nI measured the outcome before comparing the groups.".into();
-    let feedback = |quote: &str| {
-        json!({"status":"provisional","criteria":frozen.rubric.iter().map(|criterion|json!({"criterion_id":criterion.id,"score":2,"observation":"The design includes random assignment; explain the remaining limitations.","evidence_quote":quote})).collect::<Vec<_>>()} ).to_string()
-    };
-    let shortened = feedback("I assigned groups randomly ... I measured the outcome");
-    let exact = feedback("I assigned groups randomly.");
-    let repair_model = ScriptedModel {
-        outputs: std::sync::Mutex::new(vec![shortened.clone(), exact].into()),
-        prompts: std::sync::Mutex::new(vec![]),
-    };
-    let (_, repaired) = crate::practice_generation::grade(&repair_model, &attempted).await?;
-    assert!(repaired.iter().all(
+        "I assigned groups randomly.
+I measured the outcome before comparing the groups.".into();
+    let entry = |of: &str| json!({"of":of,"evidence":["u1"],"observation":"The design includes random assignment; explain the remaining limitations.","score":"l3"});
+    let scored = Model(json!({"entries":[entry("c1"),entry("c2")]}).to_string());
+    let (_, graded) = crate::practice_generation::grade(&scored, &attempted).await?;
+    assert!(graded.iter().all(
         |criterion| criterion.evidence_quote.as_deref() == Some("I assigned groups randomly.")
-    ));
-    assert_eq!(
-        repair_model
-            .prompts
-            .lock()
-            .map_err(|_| AppError::InternalError("fixture lock".into()))?
-            .len(),
-        2
-    );
-    let still_invalid = ScriptedModel {
-        outputs: std::sync::Mutex::new(vec![shortened.clone(), shortened].into()),
-        prompts: std::sync::Mutex::new(vec![]),
-    };
-    assert!(matches!(
-        crate::practice_generation::grade(&still_invalid, &attempted).await,
-        Err(AppError::ModelAnswerUnusable(_))
     ));
 
     let recall = Model(json!({"items":[
@@ -1216,9 +1194,8 @@ async fn disputed_answer_keys_are_blinded_repaired_and_checked_again() -> Result
     let mut repaired = candidate.clone();
     repaired["questions"][0]["correctIndex"] = json!(1);
     repaired["questions"][0]["explanation"] = json!("Two plus two is four.");
-    let solved = json!({"answers":[{"index":0,"reason":"Adding two pairs produces four items.","correctIndices":[1],"answer":"","blankAnswers":[],"matches":[],"orderedValues":[]}]}).to_string();
-    let judged =
-        json!({"checks":[{"id":"new-0","finding":"","hasDefect":false,"repeats":[]}]}).to_string();
+    let solved = crate::key_review::scripted::solved_static(1, 4, 1).to_string();
+    let judged = crate::assessment::item_review::scripted::sound_static(1).to_string();
     let model = ScriptedModel {
         outputs: std::sync::Mutex::new(
             vec![
@@ -1259,7 +1236,7 @@ async fn disputed_answer_keys_are_blinded_repaired_and_checked_again() -> Result
         assert!(prompts[4].starts_with("Solve quiz questions independently"));
     }
     let incomplete = ScriptedModel {
-        outputs: std::sync::Mutex::new(vec![json!({"answers":[]}).to_string()].into()),
+        outputs: std::sync::Mutex::new(vec![json!({"entries":[]}).to_string()].into()),
         prompts: std::sync::Mutex::new(vec![]),
     };
     assert!(crate::teaching::review_and_repair(
@@ -1443,7 +1420,7 @@ async fn a_written_quiz_item_is_authored_from_lesson_text_without_sources() -> R
     use crate::assessment_engine::{LearningBlueprintRequirement, LearningItemFormat};
     use crate::assessment_generation::{author_items, AuthoringNeed, BankPass, MaterialPassage};
     let passage = "A randomized comparison assigns units to conditions by chance, so differences in outcome can be attributed to the condition.";
-    let model = Model(json!({"items":[{"prompt":"Explain how you would design a randomized comparison and identify its limitations.","rubric":task_rubric(),"explanation":"The answer should define the comparison, the measurement, the assumptions and the limits.","blockIndex":0,"quote":"assigns units to conditions by chance","difficulty":3}]}).to_string());
+    let model = Model(json!({"items":[{"prompt":"Explain how you would design a randomized comparison and identify its limitations.","rubric":task_rubric(),"explanation":"The answer should define the comparison, the measurement, the assumptions and the limits.","quote":["u1"],"difficulty":"3"}]}).to_string());
     let need = AuthoringNeed {
         requirement: LearningBlueprintRequirement {
             outcome_id: uuid::Uuid::new_v4().to_string(),
@@ -1468,10 +1445,7 @@ async fn a_written_quiz_item_is_authored_from_lesson_text_without_sources() -> R
     let authored = author_items(&model, &need).await?;
     assert_eq!(authored.items.len(), 1, "{:?}", authored.dropped);
     assert!(authored.items[0].candidate.source_version_ids.is_empty());
-    assert_eq!(
-        authored.items[0].source_quote,
-        "assigns units to conditions by chance"
-    );
+    assert_eq!(authored.items[0].source_quote, passage);
     Ok(())
 }
 

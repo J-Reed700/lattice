@@ -53,6 +53,13 @@ pub struct UnitRef {
     index: usize,
 }
 
+impl UnitRef {
+    /// The unit's place in the text as shown, counting from zero.
+    pub fn index(&self) -> usize {
+        self.index
+    }
+}
+
 impl Kind for Unit {
     const PREFIX: &'static str = "u";
     const DRAWN: Drawn = Drawn::Itself;

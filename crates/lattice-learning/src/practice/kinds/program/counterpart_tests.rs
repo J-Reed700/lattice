@@ -52,15 +52,14 @@ fn cases() -> Vec<(&'static str, Setting, Cue)> {
     ]
 }
 
-fn reply(cue: &Cue, lines: &[u32]) -> String {
+fn reply(cue: &Cue, content: &str) -> String {
     let mut answer = serde_json::json!({
-        "content": "Say more about what you plan to do.",
-        "lines": lines,
-        "path": "solution.py",
-        "clarification": "none",
+        "content": content,
+        "parts": [],
+        "clarification": {"kind": "none"},
     });
     if *cue == Cue::Checkpoint {
-        answer["speak"] = serde_json::json!(true);
+        answer["speak"] = serde_json::json!("true");
     }
     answer.to_string()
 }
@@ -100,7 +99,7 @@ async fn golden_counterpart() {
     let mut golden = Golden::default();
     for task in [Form::Build, Form::Repair] {
         for (name, setting, cue) in cases() {
-            let model = asked(task, setting, &cue, vec![reply(&cue, &[])]).await;
+            let model = asked(task, setting, &cue, vec![reply(&cue, "Say more about what you plan to do.")]).await;
             add_requests(
                 &mut golden,
                 &format!("{} {setting:?} {name}", ProgramWording.form_label(task)),
@@ -112,7 +111,7 @@ async fn golden_counterpart() {
             task,
             Setting::Coached,
             &cue,
-            vec![reply(&cue, &[99]), reply(&cue, &[])],
+            vec![reply(&cue, ""), reply(&cue, "Say more about what you plan to do.")],
         )
         .await;
         add_requests(
@@ -148,9 +147,8 @@ fn passing_kind() -> (Kind, Arc<FakeToolchains>) {
 fn raw(fields: serde_json::Value) -> String {
     let mut base = serde_json::json!({
         "content": "Look at it again.",
-        "lines": [],
-        "path": null,
-        "clarification": "none",
+        "parts": [],
+        "clarification": {"kind": "none"},
     });
     if let (Some(base), Some(fields)) = (base.as_object_mut(), fields.as_object()) {
         for (key, value) in fields {
@@ -176,46 +174,23 @@ async fn refused(fields: serde_json::Value) -> String {
 }
 
 #[tokio::test]
-async fn line_zero_and_a_line_past_the_end_are_refused() {
-    for line in [0, 4] {
-        assert_eq!(
-            refused(serde_json::json!({"lines": [line], "path": "solution.py"})).await,
-            format!("Line {line} is not in solution.py, which has 3 lines. Refer only to lines that exist.")
-        );
-    }
-}
+async fn a_clarification_is_answered_in_the_apps_words_and_your_call_adds_its_line() {
+    let (kind, _) = passing_kind();
+    let covered = raw(serde_json::json!({
+        "content": "Yes, it may.",
+        "clarification": {"kind": "from", "which": "k1"},
+    }));
+    let reply = answered(&kind, &[covered]).await.unwrap().unwrap();
+    assert_eq!(reply.content, "Yes, it may.\n\nYes, and its total is 0.");
 
-#[tokio::test]
-async fn a_path_that_is_not_a_learners_file_is_refused() {
+    let open = raw(serde_json::json!({
+        "content": "It is up to you.",
+        "clarification": {"kind": "your_call"},
+    }));
+    let reply = answered(&kind, &[open]).await.unwrap().unwrap();
     assert_eq!(
-        refused(serde_json::json!({"lines": [1], "path": "other.py"})).await,
-        "other.py is not one of the learner's files."
-    );
-}
-
-#[tokio::test]
-async fn your_call_without_its_line_is_refused() {
-    assert_eq!(
-        refused(serde_json::json!({"content": "It is up to you.", "clarification": "your_call"}))
-            .await,
-        "With clarification your_call the reply must contain \"Your call: state your assumption\"."
-    );
-}
-
-#[tokio::test]
-async fn a_clarification_out_of_range_is_refused() {
-    assert_eq!(
-        refused(serde_json::json!({"clarification": "7"})).await,
-        "7 is not a clarification of this problem. Use a clarification's number, your_call or none."
-    );
-}
-
-#[tokio::test]
-async fn a_missing_clarification_answer_is_refused() {
-    assert_eq!(
-        refused(serde_json::json!({"content": "Yes, it can be empty.", "clarification": "0"}))
-            .await,
-        "The reply must contain the answer to clarification 0 word for word: Yes, and its total is 0."
+        reply.content,
+        "It is up to you.\n\nYour call: state your assumption."
     );
 }
 
@@ -231,14 +206,14 @@ async fn a_named_technique_is_refused() {
 }
 
 #[tokio::test]
-async fn the_clarification_answered_verbatim_is_accepted() {
+async fn a_clarification_answered_without_restating_it_is_accepted() {
     let (kind, _) = passing_kind();
     let good = raw(serde_json::json!({
-        "content": "Yes, and its total is 0. Anything else?",
-        "clarification": "0",
+        "content": "Anything else?",
+        "clarification": {"kind": "from", "which": "k1"},
     }));
     let reply = answered(&kind, &[good]).await.unwrap().unwrap();
-    assert_eq!(reply.content, "Yes, and its total is 0. Anything else?");
+    assert_eq!(reply.content, "Anything else?\n\nYes, and its total is 0.");
     assert!(reply.parts.is_empty());
 }
 
@@ -275,9 +250,9 @@ async fn a_reply_without_a_block_runs_nothing() {
 }
 
 #[tokio::test]
-async fn lines_without_a_path_point_into_the_solution() {
+async fn pointing_at_lines_gives_their_parts_in_the_solution() {
     let (kind, _) = passing_kind();
-    let pointing = raw(serde_json::json!({"content": "Check these two.", "lines": [2, 3]}));
+    let pointing = raw(serde_json::json!({"content": "Check these two.", "parts": ["l2", "l3"]}));
     let reply = answered(&kind, &[pointing]).await.unwrap().unwrap();
     assert_eq!(
         reply.parts,
