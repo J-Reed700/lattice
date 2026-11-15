@@ -29,8 +29,8 @@ use quotes::QuoteCheck;
 use review_loop::{review_material, Reviewed};
 pub(crate) use standing::{references_hold, versions};
 use subject::{LessonSubject, MaterialSubject, OutlineSubject};
-pub(crate) use waiting::waiting_part_texts;
 pub(crate) use waiting::record as record_waiting;
+pub(crate) use waiting::waiting_part_texts;
 
 pub fn project_schema() -> Value {
     let list = json!({"type":"array","minItems":1,"items":{"type":"string","minLength":1}});
