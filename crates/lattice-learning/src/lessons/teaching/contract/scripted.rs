@@ -64,11 +64,15 @@ pub(crate) fn rows(task: &Value) -> Vec<(String, String)> {
         match value {
             Value::String(text) => {
                 for line in text.lines() {
-                    if let Some((number, words)) = line
-                        .strip_prefix("[u")
+                    let Some((name, words)) = line
+                        .strip_prefix('[')
                         .and_then(|rest| rest.split_once("] "))
-                    {
-                        found.push((format!("u{number}"), words.to_owned()));
+                    else {
+                        continue;
+                    };
+                    let number = name.strip_prefix(['u', 'e']).unwrap_or_default();
+                    if !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()) {
+                        found.push((name.to_owned(), words.to_owned()));
                     }
                 }
             }
@@ -247,7 +251,8 @@ fn found(rows: &[(String, String)], old: &Value) -> String {
             first(rows, quote_of(&clash["otherQuote"])),
         );
         if let (Some(one), Some(other)) = (one.first(), other.first()) {
-            items.push(json!({"finding": {"kind": "contradiction", "first": one, "second": other}}));
+            items
+                .push(json!({"finding": {"kind": "contradiction", "first": one, "second": other}}));
         }
     }
     for unseen in old["unseen"].as_array().into_iter().flatten() {
@@ -301,7 +306,11 @@ pub(crate) fn confirm(ask: Ask, old: &str, user: &str) -> String {
                 .as_str()
                 .and_then(|part| {
                     let (list, number) = part.split_once('-')?;
-                    let list = if list == "section" { "sections" } else { "questions" };
+                    let list = if list == "section" {
+                        "sections"
+                    } else {
+                        "questions"
+                    };
                     task[list].get(number.parse::<usize>().ok()?)?["id"]
                         .as_str()
                         .map(str::to_owned)
@@ -315,16 +324,19 @@ pub(crate) fn confirm(ask: Ask, old: &str, user: &str) -> String {
             .to_string()
         }
         Ask::ConfirmUse => {
-            let units = if old["taught"] == json!(true) {
+            let named = if old["taught"] == json!(true) {
                 holding(&rows, said)
             } else {
                 Vec::new()
             };
+            let (given, units): (Vec<String>, Vec<String>) =
+                named.into_iter().partition(|name| name.starts_with('e'));
             let mark = |yes: bool| if yes { "yes" } else { "no" };
             json!({
                 "asked": mark(old["asked"] == json!(true)),
-                "taught": mark(!units.is_empty()),
+                "taught": mark(!units.is_empty() || !given.is_empty()),
                 "units": units,
+                "given": given,
             })
             .to_string()
         }
@@ -350,7 +362,9 @@ pub(crate) fn nothing(ask: Ask, user: &str) -> String {
         Ask::ConfirmPlanned => {
             json!({"taught": "not_taught", "units": [], "belongs": "none"}).to_string()
         }
-        Ask::ConfirmUse => json!({"asked": "yes", "taught": "no", "units": []}).to_string(),
+        Ask::ConfirmUse => {
+            json!({"asked": "yes", "taught": "no", "units": [], "given": []}).to_string()
+        }
         Ask::ConfirmClash => json!({"case": "", "contradict": false}).to_string(),
     }
 }

@@ -1025,7 +1025,10 @@ async fn a_batch_whose_request_shows_none_of_its_items_is_not_sent_but_split() {
     assert_eq!(script.sent(), 1, "only the half that shows something");
     let prompt = script.prompt(0);
     assert_eq!(listed(&prompt), 2);
-    assert!(prompt.contains("tile 1") && prompt.contains("tile 2"), "{prompt}");
+    assert!(
+        prompt.contains("tile 1") && prompt.contains("tile 2"),
+        "{prompt}"
+    );
     assert!(noting.told().is_empty());
 }
 
@@ -1038,7 +1041,11 @@ async fn an_item_whose_material_never_fits_is_unanswered_for_want_of_room_and_no
     assert_eq!(settled, vec![ok(), no_room(), ok()]);
     assert_eq!(script.sent(), 2);
     for at in 0..script.sent() {
-        assert!(!script.prompt(at).contains("tile 91"), "{}", script.prompt(at));
+        assert!(
+            !script.prompt(at).contains("tile 91"),
+            "{}",
+            script.prompt(at)
+        );
     }
 }
 
@@ -1082,14 +1089,18 @@ async fn a_batch_that_leaves_a_shown_item_unanswered_is_reported_once() {
     assert_eq!(settled, vec![Settled::Answered("a".to_owned()), ok(), ok()]);
     let told = noting.told();
     assert_eq!(told.len(), 1, "{told:?}");
-    assert!(told[0].contains("tile 1") && told[0].contains("tile 2"), "{}", told[0]);
+    assert!(
+        told[0].contains("tile 1") && told[0].contains("tile 2"),
+        "{}",
+        told[0]
+    );
     assert!(!told[0].contains("tile 3"), "{}", told[0]);
 }
 
 #[tokio::test]
 async fn an_item_refused_in_a_batch_and_no_longer_shown_alone_is_unanswered_for_want_of_room() {
-    let script = Script::new(&[(&*rows(&[("t1", "a"), ("t2", "bad")]), STOP)])
-        .responding(answer_all);
+    let script =
+        Script::new(&[(&*rows(&[("t1", "a"), ("t2", "bad")]), STOP)]).responding(answer_all);
     let settled = run_packing::<Packing>(&script, &Noting::new(), &[1, 2], true)
         .await
         .unwrap();
@@ -1880,6 +1891,7 @@ mod metering {
         assert_eq!(
             sent.usage,
             Usage {
+                sends: 1,
                 input: 7,
                 output: 3
             }
@@ -1906,6 +1918,7 @@ mod metering {
         assert_eq!(
             metered.used(),
             Usage {
+                sends: 2,
                 input: 14,
                 output: 6
             },

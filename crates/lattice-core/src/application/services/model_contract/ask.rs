@@ -121,9 +121,10 @@ impl Says {
     }
 }
 
-/// The tokens a model reported for the sends of one reply.
+/// The sends of a reply and the tokens the model reported for them.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Usage {
+    pub sends: u64,
     pub input: u64,
     pub output: u64,
 }
@@ -143,6 +144,7 @@ impl Sent {
     pub fn of(request: GroundedRequest, output: GroundedOutput) -> Self {
         let finish = output.finish();
         let usage = Usage {
+            sends: 1,
             input: output.input_tokens,
             output: output.output_tokens,
         };
@@ -226,6 +228,7 @@ impl<'a, T: Transport> Metered<'a, T> {
 
     fn counted(&self, sent: Sent) -> Sent {
         let mut used = self.used.lock().unwrap_or_else(PoisonError::into_inner);
+        used.sends = used.sends.saturating_add(sent.usage.sends);
         used.input = used.input.saturating_add(sent.usage.input);
         used.output = used.output.saturating_add(sent.usage.output);
         sent
@@ -321,7 +324,8 @@ where
                 if let Some(told) = told {
                     if let Some(again) = correction_for(llm, &outcome.sent, &told).await {
                         let sent = transport.follow(llm, again).await?;
-                        outcome = new_round::<C>(&input, sent, &showing, &mut standing, &mut left_out);
+                        outcome =
+                            new_round::<C>(&input, sent, &showing, &mut standing, &mut left_out);
                     }
                 }
             }

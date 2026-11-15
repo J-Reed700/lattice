@@ -549,7 +549,7 @@ fn raw_json(raw: &RawGrade, rubric: &[LearningRubricCriterion], version: Option<
             let criterion = rubric.iter().find(|r| r.id == c.criterion_id);
             json!({
                 "criterion_id": c.criterion_id, "title": criterion.map(|r| r.title.as_str()),
-                "verdict": verdict_name(c.verdict), "points": c.points,
+                "verdict": verdict_name(c.verdict),
                 "max_points": criterion.map(|r| r.max_points),
                 "what_was_missing": c.what_was_missing, "your_words": c.your_words,
                 "full_credit_includes": c.full_credit_includes,

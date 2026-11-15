@@ -4,11 +4,11 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
 use crate::content_verification::tests::fixture_completion;
-use contract::scripted::{self, ask_of, Ask, Script};
 use crate::lessons::content_verification::Protected;
 use crate::lessons::course_generation_tests::{clean_review, verdict, ScriptedModel};
 use crate::reference_collection::ReferenceCollection;
 use crate::review_findings::Held;
+use contract::scripted::{self, ask_of, Ask, Script};
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
@@ -861,10 +861,7 @@ async fn a_defect_in_words_a_repair_wrote_continues_the_count_of_its_own_kind_of
     assert_eq!(repairs_asked(&scripted), 3);
     assert_eq!(result.set_aside.len(), 1, "{:?}", waiting(&result));
     assert_eq!(result.set_aside[0].repairs, 2);
-    assert_eq!(
-        result.set_aside[0].finding.passage.as_deref(),
-        Some(third)
-    );
+    assert_eq!(result.set_aside[0].finding.passage.as_deref(), Some(third));
     assert_eq!(
         body(&result, 1),
         format!("{third} The list shows names in order.")
@@ -908,30 +905,18 @@ async fn words_that_point_at_what_the_learner_never_sees_are_a_finding() -> Resu
 }
 
 #[tokio::test]
-async fn an_outline_review_never_checks_against_a_course_plan() -> Result<()> {
+async fn a_material_review_never_checks_against_a_course_plan() -> Result<()> {
     let scripted = scripted(vec![json!({"issues":[]}).to_string()]);
     let model = Routed::new(&scripted, vec![]);
     let outline = json!({"modules":[{"title":"A module","lessons":[]}]});
     let schema = json!({"type":"object","properties":{"modules":{"type":"array"}}});
-    let progress = crate::outline_progress::OutlineProgress::default();
-    let sources = vec![crate::dto::LearningSourceDto {
-        id: "saved-reference".into(),
-        title: "Example reference".into(),
-        url: None,
-        acquired_at: 0,
-        excerpt: EXCERPT.into(),
-    }];
-    review_and_repair_with_progress(
+    review_and_repair(
         &model,
         "Author a curriculum outline",
         &context(&[], &[OPEN_TERMINAL]),
         &schema,
         outline.to_string(),
         4000,
-        OutlineReviewContext {
-            progress: &progress,
-            sources: &sources,
-        },
     )
     .await?;
     assert!(model.asked().is_empty());
@@ -1774,7 +1759,10 @@ async fn every_negative_is_read_again_once_and_a_use_is_shown_only_the_parts_up_
         about_the_use.contains("Type ls -l to see sizes."),
         "{about_the_use}"
     );
-    assert!(!about_the_use.contains("Read the names."), "{about_the_use}");
+    assert!(
+        !about_the_use.contains("Read the names."),
+        "{about_the_use}"
+    );
     assert_eq!(confirmed.len(), 3 * model.asked_of(Ask::Find).len());
     Ok(())
 }

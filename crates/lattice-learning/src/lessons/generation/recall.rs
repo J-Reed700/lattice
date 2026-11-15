@@ -16,12 +16,12 @@ use lattice_core::application::services::model_contract::ask::{
 use lattice_core::application::services::model_contract::packed::Packed;
 use lattice_core::application::services::model_contract::shape::{Authored, Fields, Form, New};
 use lattice_core::application::services::model_contract::shown::{
-    Drawn, Internal, Kind, Picked, Scope, Showing, Told,
+    Internal, Picked, Scope, Showing, Told,
 };
+use lattice_core::application::services::model_contract::units::{Grain, Texts, Unit};
 use lattice_core::application::services::model_contract::{Contract, ContractId};
 use lattice_core::shared::error::Result;
 use lattice_core::shared::text::same_text::fold;
-use lattice_core::shared::text::sentences;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -65,28 +65,17 @@ pub(super) struct Passage {
     text: Told<String>,
 }
 
-/// Where a sentence lies: in a source, or in a section of the lesson.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(super) enum Spot {
-    Source { id: String, at: usize },
-    Lesson { block: usize, at: usize },
-}
-
-/// A sentence of the material a card may rest on.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct Sentence {
-    spot: Spot,
-    text: Told<String>,
-}
-
-impl Kind for Sentence {
-    const PREFIX: &'static str = "s";
-    const DRAWN: Drawn = Drawn::Itself;
-    type Ref = Spot;
-
-    fn reference(&self) -> Spot {
-        self.spot.clone()
-    }
+/// What a text of the material is a text of: a source, or a section of the lesson.
+#[derive(Debug, Clone, PartialEq)]
+enum Spot {
+    Source {
+        id: String,
+        rank: usize,
+        title: String,
+    },
+    Lesson {
+        block: usize,
+    },
 }
 
 /// What one request says about the cards still wanted.
@@ -105,7 +94,7 @@ pub(super) struct Draft {
     question: String,
     answer: String,
     explanation: String,
-    cites: Vec<Picked<Sentence>>,
+    cites: Vec<Picked<Unit>>,
 }
 
 impl Authored for Draft {
@@ -114,7 +103,7 @@ impl Authored for Draft {
             .text("question")
             .text("answer")
             .text("explanation")
-            .cite::<Sentence>("cites")
+            .cite::<Unit>("cites")
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
@@ -143,64 +132,43 @@ const REQUIREMENTS: [&str; 8] = [
     "Do not add outside facts, answer choices, URLs, or citations beyond the cites field.",
 ];
 
-/// One sentence per row: the name, then the sentence.
-fn rows<'a>(sentences: &[Sentence], names: &mut impl Iterator<Item = &'a String>) -> String {
-    sentences
-        .iter()
-        .map(|sentence| {
-            format!(
-                "{} {}",
-                names.next().map_or("", String::as_str),
-                sentence.text.0
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+/// Every text the request shows, in the order shown: the passages grouped by source in the lesson's
+/// order, each source's in document order, then the lesson's bodies when there are no sources.
+fn texts_of(input: &Input) -> Texts<Spot> {
+    let mut held: Vec<&Passage> = input.passages.iter().collect();
+    held.sort_by_key(|passage| (*passage.rank.value(), *passage.start.value()));
+    let mut texts = Texts::new();
+    for passage in held {
+        let (rank, start) = (*passage.rank.value(), *passage.start.value());
+        texts.push(
+            Spot::Source {
+                id: passage.source.value().clone(),
+                rank,
+                title: passage.title.0.clone(),
+            },
+            &format!("source:{rank}:{start}"),
+            &passage.text.0,
+            Grain::Sentence,
+        );
+    }
+    if !*input.sourced.value() {
+        for (block, section) in input.blocks.iter().enumerate() {
+            texts.push(
+                Spot::Lesson { block },
+                &format!("block:{block}"),
+                &section.body.0,
+                Grain::Sentence,
+            );
+        }
+    }
+    texts
 }
 
-/// The sentences of `text`, each at the place `spot` makes of where it starts.
-fn cut(text: &str, spot: impl Fn(usize) -> Spot) -> Vec<Sentence> {
-    sentences(text)
-        .into_iter()
-        .filter_map(|(start, stop)| {
-            let piece = text.get(start..stop)?;
-            Some(Sentence {
-                spot: spot(start),
-                text: Told(piece.replace("\r\n", " ").replace('\n', " ")),
-            })
-        })
-        .collect()
-}
-
-/// What the request shows of one source: its title and its passages' sentences, passages apart.
+/// What the request shows of one source: its title and its passages' rows, passages apart.
 struct Excerpt {
     rank: usize,
     title: String,
-    passages: Vec<Vec<Sentence>>,
-}
-
-/// The shown passages grouped by source in the lesson's order, each source's in document order.
-fn excerpts_of(input: &Input) -> Vec<Excerpt> {
-    let mut held: Vec<&Passage> = input.passages.iter().collect();
-    held.sort_by_key(|passage| (*passage.rank.value(), *passage.start.value()));
-    let mut excerpts: Vec<Excerpt> = Vec::new();
-    for passage in held {
-        let sentences = cut(&passage.text.0, |at| Spot::Source {
-            id: passage.source.value().clone(),
-            at: passage.start.value().saturating_add(at),
-        });
-        match excerpts.last_mut() {
-            Some(excerpt) if excerpt.rank == *passage.rank.value() => {
-                excerpt.passages.push(sentences);
-            }
-            _ => excerpts.push(Excerpt {
-                rank: *passage.rank.value(),
-                title: passage.title.0.clone(),
-                passages: vec![sentences],
-            }),
-        }
-    }
-    excerpts
+    passages: Vec<String>,
 }
 
 impl Answered for RecallDrafts {
@@ -215,47 +183,35 @@ impl Answered for RecallDrafts {
     }
 
     fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
-        let excerpts = excerpts_of(input);
-        let bodies: Vec<Vec<Sentence>> = if *input.sourced.value() {
-            Vec::new()
-        } else {
-            input
-                .blocks
-                .iter()
-                .enumerate()
-                .map(|(block, section)| cut(&section.body.0, |at| Spot::Lesson { block, at }))
-                .collect()
-        };
-        let every: Vec<Sentence> = excerpts
-            .iter()
-            .flat_map(|excerpt| excerpt.passages.iter().flatten())
-            .chain(bodies.iter().flatten())
-            .cloned()
-            .collect();
-        let shown = showing.show(&every)?;
-        let written: Vec<String> = shown
-            .iter()
-            .map(|(handle, _)| handle.bracketed())
-            .collect();
-        let mut names = written.iter();
+        let texts = texts_of(input);
+        let mut excerpts: Vec<Excerpt> = Vec::new();
+        let mut lessons: Vec<(usize, String)> = Vec::new();
+        for (spot, units) in texts.iter() {
+            let shown = units.shown(showing)?;
+            let rows = units.rows(&shown);
+            match spot {
+                Spot::Source { rank, title, .. } => match excerpts.last_mut() {
+                    Some(excerpt) if excerpt.rank == *rank => excerpt.passages.push(rows),
+                    _ => excerpts.push(Excerpt {
+                        rank: *rank,
+                        title: title.clone(),
+                        passages: vec![rows],
+                    }),
+                },
+                Spot::Lesson { block } => lessons.push((*block, rows)),
+            }
+        }
         let sources: Vec<Value> = excerpts
             .iter()
-            .map(|excerpt| {
-                let passages: Vec<String> = excerpt
-                    .passages
-                    .iter()
-                    .map(|sentences| rows(sentences, &mut names))
-                    .collect();
-                json!({"title":excerpt.title,"excerpt":passages.join("\n\n")})
-            })
+            .map(|excerpt| json!({"title":excerpt.title,"excerpt":excerpt.passages.join("\n\n")}))
             .collect();
-        let mut lessons = bodies.iter();
         let blocks: Vec<Value> = input
             .blocks
             .iter()
-            .map(|block| {
-                let body = match lessons.next() {
-                    Some(sentences) => rows(sentences, &mut names),
+            .enumerate()
+            .map(|(index, block)| {
+                let body = match lessons.iter().find(|(at, _)| *at == index) {
+                    Some((_, rows)) => rows.clone(),
                     None => block.body.0.clone(),
                 };
                 json!({"kind":block.kind,"title":block.title,"body":body})
@@ -295,10 +251,10 @@ impl Answered for RecallDrafts {
 }
 
 /// The sources a card's cites lie in, each once, in the order cited.
-fn source_ids_of(cites: &[Picked<Sentence>]) -> Vec<String> {
+fn source_ids_of(texts: &Texts<Spot>, cites: &[Picked<Unit>]) -> Vec<String> {
     let mut ids: Vec<String> = Vec::new();
     for cite in cites {
-        if let Spot::Source { id, .. } = &cite.reference {
+        if let Some((Spot::Source { id, .. }, _)) = texts.found(cite.reference) {
             if !ids.contains(id) {
                 ids.push(id.clone());
             }
@@ -472,6 +428,7 @@ pub async fn generate_recall_drafts(
         passages: Packed::new(held, |passage| *passage.tokens.value()),
         ..bare
     };
+    let texts = texts_of(&input);
     let found = ask_new::<RecallDrafts>(
         llm,
         &Asking {
@@ -507,7 +464,7 @@ pub async fn generate_recall_drafts(
             question: draft.question.trim().to_owned(),
             answer: draft.answer.trim().to_owned(),
             explanation: draft.explanation.trim().to_owned(),
-            source_ids: source_ids_of(&draft.cites),
+            source_ids: source_ids_of(&texts, &draft.cites),
         })
         .collect();
     if drafts.is_empty() {

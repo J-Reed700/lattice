@@ -3,21 +3,20 @@
 //! against itself or points at that the learner cannot see, and which of a
 //! review's reports are of a kind the check decides. The model points at the
 //! sentences it was shown; the app reads the words from its own copy.
-use super::sentence::{Lesson, Sentence};
+use super::sentence::{self, Lesson};
 use super::{
     Item, ANSWER_TOKENS, CHECK_TASK, FIND_SYSTEM, FIND_TASK, PLANNED_SYSTEM, REPORTED,
     REPORTS_SYSTEM, REPORTS_TASK,
 };
 use crate::review_findings::{FindingSite, ReviewFinding};
-use lattice_core::application::services::model_contract::ask::{
-    Alone, Answered, Refusal, Says,
-};
+use lattice_core::application::services::model_contract::ask::{Alone, Answered, Refusal, Says};
 use lattice_core::application::services::model_contract::shape::{
     Authored, Each, Fields, Form, New, Union, Vocabulary,
 };
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Internal, Kind, Picked, Showing, Told,
 };
+use lattice_core::application::services::model_contract::units::Unit;
 use lattice_core::application::services::model_contract::{Contract, ContractId};
 use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
@@ -151,14 +150,12 @@ impl Vocabulary for Verdict {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Taught {
     pub(super) verdict: Verdict,
-    pub(super) units: Vec<Picked<Sentence>>,
+    pub(super) units: Vec<Picked<Unit>>,
 }
 
 impl Authored for Taught {
     fn form() -> Form {
-        Form::new()
-            .word::<Verdict>("taught")
-            .cite::<Sentence>("units")
+        Form::new().word::<Verdict>("taught").cite::<Unit>("units")
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
@@ -174,15 +171,15 @@ impl Authored for Taught {
 pub(crate) enum Finding {
     Used {
         what: String,
-        uses: Vec<Picked<Sentence>>,
-        later: Vec<Picked<Sentence>>,
+        uses: Vec<Picked<Unit>>,
+        later: Vec<Picked<Unit>>,
     },
     Clash {
-        first: Picked<Sentence>,
-        second: Picked<Sentence>,
+        first: Picked<Unit>,
+        second: Picked<Unit>,
     },
     Unseen {
-        words: Picked<Sentence>,
+        words: Picked<Unit>,
         what: String,
         never_shown: Mark,
     },
@@ -195,19 +192,17 @@ impl Union for Finding {
                 "usedBeforeTaught",
                 Form::new()
                     .text("what")
-                    .cite::<Sentence>("uses")
-                    .cite::<Sentence>("taughtLater"),
+                    .cite::<Unit>("uses")
+                    .cite::<Unit>("taughtLater"),
             ),
             (
                 "contradiction",
-                Form::new()
-                    .point::<Sentence>("first")
-                    .point::<Sentence>("second"),
+                Form::new().point::<Unit>("first").point::<Unit>("second"),
             ),
             (
                 "unseen",
                 Form::new()
-                    .point::<Sentence>("words")
+                    .point::<Unit>("words")
                     .text("what")
                     .word::<Mark>("neverShown"),
             ),
@@ -330,9 +325,9 @@ impl Answered for LessonContractCheck {
 
     fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
         let planned = showing.show(&input.planned)?;
-        let flat = input.lesson.sentences();
-        let sentences = showing.show(&flat)?;
-        let lesson = input.lesson.said(Some(sentences.handles()), &[]);
+        let texts = input.lesson.texts();
+        let shown = sentence::show(&texts, showing)?;
+        let lesson = input.lesson.said(&sentence::labelled(&texts, &shown), &[]);
         let listed: Vec<Value> = planned
             .iter()
             .map(|(handle, item)| json!({"id": handle.written(), "kind": item.kind, "text": item.text}))
@@ -358,9 +353,9 @@ impl Answered for LessonContractFind {
     const ALONE: Alone = Alone::Fails;
 
     fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
-        let flat = input.lesson.sentences();
-        let sentences = showing.show(&flat)?;
-        let lesson = input.lesson.said(Some(sentences.handles()), &[]);
+        let texts = input.lesson.texts();
+        let shown = sentence::show(&texts, showing)?;
+        let lesson = input.lesson.said(&sentence::labelled(&texts, &shown), &[]);
         let mut fields = task_of(FIND_TASK, input, None, lesson);
         if !input.reported.is_empty() {
             let reported = input.reported.iter().map(|report| report.said(None));
@@ -403,7 +398,9 @@ impl Answered for LessonContractReports {
 
     fn says(input: &ReportsInput, showing: &mut Showing<'_>) -> Result<Says> {
         let reports = showing.show(&input.reported)?;
-        let lesson = input.lesson.said(None, &[]);
+        let lesson = input
+            .lesson
+            .said(&sentence::plain(&input.lesson.texts()), &[]);
         let listed: Vec<Value> = reports
             .iter()
             .map(|(handle, report)| report.said(Some(handle.written())))

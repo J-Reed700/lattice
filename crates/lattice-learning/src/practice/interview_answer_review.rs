@@ -15,11 +15,12 @@ use lattice_core::{
             ask::{ask_new, Alone, Answered, Refusal, Says},
             legacy,
             shape::{Authored, Fields, Form, New},
-            shown::{Drawn, Internal, Kind, Picked, Scope, Showing, Told},
+            shown::{Internal, Picked, Scope, Showing, Told},
+            units::{Grain, Texts, Unit},
             Contract, ContractCall, ContractId, PromptInput,
         },
     },
-    shared::{error::Result, text::sentences},
+    shared::error::Result,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -60,29 +61,11 @@ impl Contract for GuideReview {
     type Input = Input;
 }
 
-/// One sentence of the guide's authored prose, and the field it belongs to.
+/// One field of the guide's authored prose, and its role.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct Sentence {
-    pub(super) at: Place,
+pub(super) struct Field {
     pub(super) role: Told<String>,
     pub(super) text: Told<String>,
-}
-
-/// Where a sentence lies: the field in `fields(standard)` and its place in that field.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct Place {
-    pub(super) field: usize,
-    pub(super) sentence: usize,
-}
-
-impl Kind for Sentence {
-    const PREFIX: &'static str = "s";
-    const DRAWN: Drawn = Drawn::Itself;
-    type Ref = Place;
-
-    fn reference(&self) -> Place {
-        self.at
-    }
 }
 
 /// What the app verified about one key point, and the field its sentences are shown under.
@@ -98,7 +81,7 @@ pub(super) struct Support {
 pub(super) struct Input {
     pub(super) question: Told<Value>,
     pub(super) independent_solution: Told<String>,
-    pub(super) sentences: Vec<Sentence>,
+    pub(super) fields: Vec<Field>,
     pub(super) support: Vec<Support>,
     pub(super) cited_passages: Told<Vec<Value>>,
 }
@@ -107,7 +90,7 @@ pub(super) struct Input {
 #[derive(Debug, Clone)]
 pub(super) struct Finding {
     pub(super) demonstration: String,
-    pub(super) sentences: Vec<Picked<Sentence>>,
+    pub(super) sentences: Vec<Picked<Unit>>,
     pub(super) problem: String,
 }
 
@@ -115,7 +98,7 @@ impl Authored for Finding {
     fn form() -> Form {
         Form::new()
             .text("demonstration")
-            .cite::<Sentence>("sentences")
+            .cite::<Unit>("sentences")
             .text("problem")
     }
 
@@ -133,25 +116,24 @@ impl Answered for GuideReview {
     const ALONE: Alone = Alone::Fails;
 
     fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
-        let shown = showing.show(&input.sentences)?;
-        let mut grouped: Vec<(usize, &Told<String>, Vec<Value>)> = Vec::new();
+        let texts = texts_of(input);
+        let mut proposed: Vec<Value> = Vec::new();
         let mut handles: Vec<(usize, Vec<String>)> = Vec::new();
-        for (handle, sentence) in shown.iter() {
-            let entry = json!({"id": handle.written(), "text": sentence.text});
-            let field = sentence.at.field;
-            match grouped.last_mut().filter(|group| group.0 == field) {
-                Some(group) => group.2.push(entry),
-                None => grouped.push((field, &sentence.role, vec![entry])),
+        for (field, units) in texts.iter() {
+            let shown = units.shown(showing)?;
+            let mut listed = Vec::new();
+            let mut written = Vec::new();
+            for (handle, unit) in shown.iter() {
+                listed.push(json!({"id": handle.written(), "text": unit.text()}));
+                written.push(handle.written());
             }
-            match handles.iter_mut().find(|held| held.0 == field) {
-                Some(held) => held.1.push(handle.written()),
-                None => handles.push((field, vec![handle.written()])),
+            if listed.is_empty() {
+                continue;
             }
+            let role = input.fields.get(*field).map(|part| &part.role);
+            proposed.push(json!({"field": role, "sentences": listed}));
+            handles.push((*field, written));
         }
-        let proposed: Vec<Value> = grouped
-            .into_iter()
-            .map(|(_, role, listed)| json!({"field": role, "sentences": listed}))
-            .collect();
         let support: Vec<Value> = input
             .support
             .iter()
@@ -234,6 +216,7 @@ pub async fn review(
     let input = input_of(question, solution, standard, &guide, sources);
     let mut call = model_call::answer_options();
     call.sampling = Some(SamplingOverride::deterministic());
+    let texts = texts_of(&input);
     let found = ask_new::<GuideReview>(
         llm,
         &Asking {
@@ -254,7 +237,7 @@ pub async fn review(
     // Deduplication never turns a nonempty review into acceptance.
     let mut issues = Vec::new();
     for finding in &found.items {
-        if let Some(issue) = issue_of(finding, &guide) {
+        if let Some(issue) = issue_of(finding, &guide, &texts) {
             if !issues.contains(&issue) {
                 issues.push(issue);
             }
@@ -335,28 +318,25 @@ pub(super) fn input_of(
     Input {
         question: Told(question.clone()),
         independent_solution: Told(solution.to_owned()),
-        sentences: sentences_of(guide),
+        fields: guide
+            .iter()
+            .map(|part| Field {
+                role: Told(part.role.to_owned()),
+                text: Told(part.text.to_owned()),
+            })
+            .collect(),
         support: point_support(standard, guide),
         cited_passages: Told(cited_passages(standard, sources)),
     }
 }
 
-/// Every sentence of every field, in the order the fields are written.
-pub(super) fn sentences_of(guide: &[GuideField<'_>]) -> Vec<Sentence> {
-    let mut all = Vec::new();
-    for (field, part) in guide.iter().enumerate() {
-        for (at, (from, to)) in sentences(part.text).into_iter().enumerate() {
-            all.push(Sentence {
-                at: Place {
-                    field,
-                    sentence: at,
-                },
-                role: Told(part.role.to_owned()),
-                text: Told(part.text.get(from..to).unwrap_or_default().to_owned()),
-            });
-        }
+/// The guide's fields as texts, each of the field it is.
+pub(super) fn texts_of(input: &Input) -> Texts<usize> {
+    let mut texts = Texts::new();
+    for (field, part) in input.fields.iter().enumerate() {
+        texts.push(field, &field.to_string(), &part.text.0, Grain::Sentence);
     }
-    all
+    texts
 }
 
 /// What the app verified about each key point, joined to the field that holds it.
@@ -384,19 +364,25 @@ pub(super) fn point_support(standard: &AnswerStandard, guide: &[GuideField<'_>])
 
 /// The issue a finding is, anchored in the field of its first cited sentence:
 /// the field's own words from the first to the last sentence cited there.
-fn issue_of(finding: &Finding, guide: &[GuideField<'_>]) -> Option<ReviewIssue> {
-    let first = finding.sentences.first()?.reference;
-    let field = guide.get(first.field)?;
+fn issue_of(
+    finding: &Finding,
+    guide: &[GuideField<'_>],
+    texts: &Texts<usize>,
+) -> Option<ReviewIssue> {
+    let (first, _) = texts.found(finding.sentences.first()?.reference)?;
+    let field = guide.get(*first)?;
     let held: Vec<usize> = finding
         .sentences
         .iter()
-        .map(|picked| picked.reference)
-        .filter(|place| place.field == first.field)
-        .map(|place| place.sentence)
+        .filter_map(|picked| {
+            let (of, _) = texts.found(picked.reference)?;
+            (of == first).then(|| picked.reference.index())
+        })
         .collect();
-    let spans = sentences(field.text);
-    let from = spans.get(*held.iter().min()?)?.0;
-    let to = spans.get(*held.iter().max()?)?.1;
+    let (_, units) = texts.iter().find(|(of, _)| *of == first)?;
+    let spans = units.spans();
+    let from = spans.get(*held.iter().min()?)?.1.start;
+    let to = spans.get(*held.iter().max()?)?.1.end;
     Some(ReviewIssue {
         demonstration: finding.demonstration.clone(),
         path: field.path.clone(),

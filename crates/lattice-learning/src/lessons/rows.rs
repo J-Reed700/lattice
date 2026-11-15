@@ -11,10 +11,11 @@ use lattice_core::application::services::model_contract::shape::{
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Handle, Kind, Picked, Showing, Shown,
 };
-use lattice_core::application::services::model_contract::units::{Grain, Unit, UnitRef, Units};
+use lattice_core::application::services::model_contract::units::{
+    Grain, Quoted, Texts, Unit, UnitRef, Units,
+};
 use lattice_core::shared::error::Result;
-use lattice_core::shared::hash::sha256_prefix;
-use lattice_core::shared::text::{same_text, sentences};
+use lattice_core::shared::text::same_text;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
@@ -73,108 +74,80 @@ impl Citation {
     }
 }
 
-/// A source sentence by its source and its text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct QuotableRef {
-    source: u64,
-    text: u64,
-}
-
-/// A sentence of a source's excerpt long enough to quote.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Quotable {
-    source_index: u64,
-    text: String,
-}
-
-impl Kind for Quotable {
-    const PREFIX: &'static str = "q";
-    const DRAWN: Drawn = Drawn::Itself;
-    type Ref = QuotableRef;
-
-    fn reference(&self) -> QuotableRef {
-        QuotableRef {
-            source: self.source_index,
-            text: sha256_prefix(&self.text),
-        }
-    }
-}
-
-impl Quotable {
-    #[cfg(test)]
-    pub(crate) fn source_index(&self) -> u64 {
-        self.source_index
-    }
-
-    pub(crate) fn text(&self) -> &str {
-        &self.text
-    }
-}
-
-/// The quotable sentences of the excerpts a request may show.
+/// The excerpts a request may show, and the sentences of them a citation may quote.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct Quotes(Vec<Quotable>);
+pub(crate) struct Quotes {
+    texts: Texts<u64>,
+    quotable: Vec<Quoted>,
+}
+
+/// Where the excerpt of a source stands among the texts of a request.
+fn place_of(source_index: u64) -> String {
+    source_index.to_string()
+}
 
 impl Quotes {
-    /// From source entries shaped `{"sourceIndex": n, "excerpt": "…", …}`: every sentence of an excerpt
-    /// that `generation::long_enough_quote` passes, each distinct `(source, sentence)` once, in order.
+    /// From source entries shaped `{"sourceIndex": n, "excerpt": "…", …}`.
     pub(crate) fn of<'a>(sources: impl IntoIterator<Item = &'a Value>) -> Self {
-        let mut all: Vec<Quotable> = Vec::new();
+        let mut quotes = Self::default();
         for source in sources {
-            let (Some(source_index), Some(excerpt)) = (
+            if let (Some(source_index), Some(excerpt)) = (
                 source.get("sourceIndex").and_then(Value::as_u64),
                 source.get("excerpt").and_then(Value::as_str),
-            ) else {
-                continue;
-            };
-            for (from, to) in sentences(excerpt) {
-                let Some(text) = excerpt.get(from..to).filter(|text| long_enough_quote(text))
-                else {
-                    continue;
-                };
-                if all
-                    .iter()
-                    .any(|held| held.source_index == source_index && held.text == text)
-                {
-                    continue;
-                }
-                all.push(Quotable {
-                    source_index,
-                    text: text.to_owned(),
-                });
+            ) {
+                quotes.push(source_index, excerpt);
             }
         }
-        Self(all)
+        quotes
     }
 
-    pub(crate) fn all(&self) -> &[Quotable] {
-        &self.0
-    }
-
-    pub(crate) fn get(&self, at: &QuotableRef) -> Option<&Quotable> {
-        self.0.iter().find(|held| held.reference() == *at)
-    }
-
-    /// `excerpt` (of source `source_index`) with the bracketed handle of each quotable `shown` holds before
-    /// its sentence, everything else as it is.
-    pub(crate) fn marked(source_index: u64, excerpt: &str, shown: &Shown<'_, Quotable>) -> String {
-        let mut out = String::new();
-        let mut end = 0;
-        for (from, to) in sentences(excerpt) {
-            out.push_str(excerpt.get(end..from).unwrap_or_default());
-            let text = excerpt.get(from..to).unwrap_or_default();
-            let held = shown.iter().find(|(_, quotable)| {
-                quotable.source_index == source_index && quotable.text == text
-            });
-            if let Some((handle, _)) = held {
-                out.push_str(&handle.bracketed());
-                out.push(' ');
-            }
-            out.push_str(text);
-            end = to;
+    /// Adds an excerpt of source `source_index`. One already held for that source is not added again.
+    pub(crate) fn push(&mut self, source_index: u64, excerpt: &str) {
+        let held = self
+            .texts
+            .iter()
+            .any(|(of, units)| *of == source_index && units.text() == excerpt);
+        if held {
+            return;
         }
-        out.push_str(excerpt.get(end..).unwrap_or_default());
-        out
+        self.texts.push(
+            source_index,
+            &place_of(source_index),
+            excerpt,
+            Grain::Sentence,
+        );
+        if let Some((_, units)) = self.texts.iter().last() {
+            self.quotable.extend(
+                units
+                    .quoted()
+                    .into_iter()
+                    .filter(|sentence| long_enough_quote(sentence.text())),
+            );
+        }
+    }
+
+    /// The sentences a citation may quote, in the order added.
+    pub(crate) fn all(&self) -> &[Quoted] {
+        &self.quotable
+    }
+
+    /// The source a quotable sentence is of, and its words. `None` for a sentence that is not quotable.
+    pub(crate) fn get(&self, at: UnitRef) -> Option<(u64, &str)> {
+        if !self.quotable.iter().any(|held| held.reference() == at) {
+            return None;
+        }
+        self.texts.found(at).map(|(source, text)| (*source, text))
+    }
+
+    /// `excerpt` (of source `source_index`) as it is, the bracketed handle of each quotable `shown` holds
+    /// before its sentence.
+    pub(crate) fn marked(
+        &self,
+        source_index: u64,
+        excerpt: &str,
+        shown: &Shown<'_, Quoted>,
+    ) -> String {
+        Units::of_at(excerpt, Grain::Sentence, &place_of(source_index)).marked(shown)
     }
 }
 
@@ -182,17 +155,17 @@ impl Quotes {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Statement {
     pub text: String,
-    pub from: Vec<Picked<Quotable>>,
+    pub from: Vec<Picked<Quoted>>,
 }
 
 impl Authored for Statement {
     fn form() -> Form {
-        Form::new().text("text").cite::<Quotable>("from")
+        Form::new().text("text").cite::<Quoted>("from")
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
         let text = fields.text("text")?;
-        let from = fields.cite::<Quotable>("from");
+        let from = fields.cite::<Quoted>("from");
         Some(Self { text, from })
     }
 }
@@ -201,19 +174,19 @@ impl Authored for Statement {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Cite {
     pub sentence: Picked<Unit>,
-    pub quote: Picked<Quotable>,
+    pub quote: Picked<Quoted>,
 }
 
 impl Authored for Cite {
     fn form() -> Form {
         Form::new()
             .point::<Unit>("sentence")
-            .point::<Quotable>("quote")
+            .point::<Quoted>("quote")
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
         let sentence = fields.point::<Unit>("sentence")?;
-        let quote = fields.point::<Quotable>("quote")?;
+        let quote = fields.point::<Quoted>("quote")?;
         Some(Self { sentence, quote })
     }
 }
@@ -222,19 +195,19 @@ impl Authored for Cite {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Recite {
     pub citation: Picked<Citation>,
-    pub quote: Picked<Quotable>,
+    pub quote: Picked<Quoted>,
 }
 
 impl Authored for Recite {
     fn form() -> Form {
         Form::new()
             .point::<Citation>("citation")
-            .point::<Quotable>("quote")
+            .point::<Quoted>("quote")
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
         let citation = fields.point::<Citation>("citation")?;
-        let quote = fields.point::<Quotable>("quote")?;
+        let quote = fields.point::<Quoted>("quote")?;
         Some(Self { citation, quote })
     }
 }
@@ -581,7 +554,7 @@ impl Rows {
     /// The text of the quotes `edits` brings for `part`: those of its cites, recites and sources of new text.
     fn brought<'q>(&self, edits: &Edits, quotes: &'q Quotes, part: &str) -> Vec<&'q str> {
         let change = edits.sentences.change();
-        let mut brought: Vec<&Picked<Quotable>> = Vec::new();
+        let mut brought: Vec<&Picked<Quoted>> = Vec::new();
         for cite in &edits.cite {
             if self
                 .field_of(&cite.sentence.reference)
@@ -615,8 +588,8 @@ impl Rows {
         }
         brought
             .into_iter()
-            .filter_map(|picked| quotes.get(&picked.reference))
-            .map(Quotable::text)
+            .filter_map(|picked| quotes.get(picked.reference))
+            .map(|(_, text)| text)
             .collect()
     }
 
@@ -748,7 +721,7 @@ impl Rows {
                     .flat_map(|(_, with)| with.0.from.iter()),
             );
         for quote in quoted {
-            if quotes.get(&quote.reference).is_none() {
+            if quotes.get(quote.reference).is_none() {
                 push_once(
                     &mut problems,
                     format!(
@@ -854,10 +827,10 @@ impl Rows {
         }
         written.extend(self.move_keys(moves));
         for recite in &edits.recite {
-            if let Some(quote) = quotes.get(&recite.quote.reference) {
+            if let Some((source, text)) = quotes.get(recite.quote.reference) {
                 self.recited.push((
                     recite.citation.reference.clone(),
-                    Some((quote.source_index, quote.text.clone())),
+                    Some((source, text.to_owned())),
                 ));
             }
         }
@@ -868,12 +841,12 @@ impl Rows {
             let part = self
                 .field_of(&cite.sentence.reference)
                 .map(|field| field.part.clone());
-            if let (Some(part), Some(quote)) = (part, quotes.get(&cite.quote.reference)) {
+            if let (Some(part), Some((source, text))) = (part, quotes.get(cite.quote.reference)) {
                 self.added.push(Added::Cite {
                     unit: cite.sentence.reference,
                     part,
-                    source: quote.source_index,
-                    quote: quote.text.clone(),
+                    source,
+                    quote: text.to_owned(),
                 });
             }
         }
@@ -895,12 +868,12 @@ impl Rows {
                 continue;
             };
             for from in &with.0.from {
-                if let Some(quote) = quotes.get(&from.reference) {
+                if let Some((source, text)) = quotes.get(from.reference) {
                     self.added.push(Added::Text {
                         part: part.clone(),
                         sentence: trimmed(&with.0).to_owned(),
-                        source: quote.source_index,
-                        quote: quote.text.clone(),
+                        source,
+                        quote: text.to_owned(),
                     });
                 }
             }

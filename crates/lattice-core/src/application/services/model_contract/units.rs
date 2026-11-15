@@ -70,6 +70,44 @@ impl Kind for Unit {
     }
 }
 
+/// A unit of a text shown to be quoted: named apart from the units of the material a request works on,
+/// so an answer cannot give one where the other is asked for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Quoted(Unit);
+
+impl Quoted {
+    pub fn text(&self) -> &str {
+        &self.0.text
+    }
+}
+
+impl Kind for Quoted {
+    const PREFIX: &'static str = "q";
+    const DRAWN: Drawn = Drawn::Itself;
+    type Ref = UnitRef;
+
+    fn reference(&self) -> UnitRef {
+        self.0.at
+    }
+}
+
+/// A kind a unit is shown as.
+pub trait Held: Kind<Ref = UnitRef> {
+    fn unit(&self) -> &Unit;
+}
+
+impl Held for Unit {
+    fn unit(&self) -> &Unit {
+        self
+    }
+}
+
+impl Held for Quoted {
+    fn unit(&self) -> &Unit {
+        &self.0
+    }
+}
+
 /// A text as units, with what the app keeps between them.
 #[derive(Debug, Clone)]
 pub struct Units {
@@ -153,11 +191,17 @@ impl Units {
         showing.show(&self.shown)
     }
 
+    /// The units as things to quote, in order.
+    pub fn quoted(&self) -> Vec<Quoted> {
+        self.shown.iter().cloned().map(Quoted).collect()
+    }
+
     /// The units as rows for a prompt, one to a row: the handle, then the text.
-    pub fn rows(&self, shown: &Shown<'_, Unit>) -> String {
+    pub fn rows<K: Held>(&self, shown: &Shown<'_, K>) -> String {
         shown
             .iter()
-            .map(|(handle, unit)| {
+            .map(|(handle, held)| {
+                let unit = held.unit();
                 let text = match self.grain {
                     Grain::Sentence => unit.text.replace(['\r', '\n'], " "),
                     Grain::Line => unit.text.clone(),
@@ -221,10 +265,10 @@ impl Units {
 
     /// The text as shown with each unit's bracketed handle and a space before it; everything between
     /// units as it is. A unit `shown` lacks is written without a handle.
-    pub fn marked(&self, shown: &Shown<'_, Unit>) -> String {
+    pub fn marked<K: Held>(&self, shown: &Shown<'_, K>) -> String {
         let mut out = self.gaps.first().cloned().unwrap_or_default();
         for (index, unit) in self.shown.iter().enumerate() {
-            if let Some((handle, _)) = shown.iter().find(|(_, held)| held.at == unit.at) {
+            if let Some((handle, _)) = shown.iter().find(|(_, held)| held.unit().at == unit.at) {
                 out.push_str(&handle.bracketed());
                 out.push(' ');
             }

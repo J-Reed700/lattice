@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-use super::evaluation::{DiagnosticEvaluation, Input as EvaluationInput, Key, Prompt, Sentence};
+use super::evaluation::{DiagnosticEvaluation, Input as EvaluationInput, Key, Prompt};
 use super::tasks::{DiagnosticTasks, Input as TasksInput, Outcome, Passage};
 use super::*;
 use crate::dto::{LearningOutcomeDefinitionDto, LearningProgramDto, LearningSourceDto};
@@ -311,7 +311,9 @@ fn harbour_prompt() -> Prompt {
             expected_answer: Told("The column the join compares.".into()),
             criteria: Told("Names the join column and says why.".into()),
         }),
-        response: Sentence::of("I would index the join column first. It lets the planner skip a scan."),
+        response: Told(
+            "I would index the join column first. It lets the planner skip a scan.".into(),
+        ),
     }
 }
 
@@ -329,10 +331,7 @@ fn the_evaluation_request_shows_what_the_model_is_told_and_nothing_internal() {
                     .told("The table for the harbour mouth, since it sets the gate.".to_owned()),
                 criteria: marks.told("Names the harbour mouth table and says why.".to_owned()),
             }),
-            response: vec![Sentence {
-                span: marks.reference((100_001_usize, 100_062_usize)),
-                text: marks.told("I would read the harbour mouth table first.".to_owned()),
-            }],
+            response: marks.told("I would read the harbour mouth table first.".to_owned()),
         }],
     };
 
@@ -351,7 +350,10 @@ fn the_evaluator_writes_its_grounds_before_its_signal() {
         json!(["of", "evidence", "feedback", "signal"])
     );
     assert_eq!(items["properties"]["of"]["enum"], json!(["p1"]));
-    assert_eq!(items["properties"]["evidence"]["items"]["enum"], json!(["s1", "s2"]));
+    assert_eq!(
+        items["properties"]["evidence"]["items"]["enum"],
+        json!(["u1", "u2"])
+    );
 }
 
 #[test]
@@ -494,7 +496,13 @@ fn sentence_handles(prompt: &str, shown: &str) -> Vec<String> {
                 .as_str()
                 .unwrap()
                 .lines()
-                .map(|row| row.trim_start_matches('[').split(']').next().unwrap().to_owned())
+                .map(|row| {
+                    row.trim_start_matches('[')
+                        .split(']')
+                        .next()
+                        .unwrap()
+                        .to_owned()
+                })
                 .collect()
         })
         .unwrap()
@@ -519,9 +527,7 @@ fn finding_entry(of: &str, evidence: &[&str], signal: &str) -> Value {
 }
 
 /// A model that answers each evaluation request with `entries(prompt, number of earlier asks)`.
-fn judging(
-    entries: impl Fn(&str, usize) -> Vec<Value> + Send + Sync + 'static,
-) -> ScriptedModel {
+fn judging(entries: impl Fn(&str, usize) -> Vec<Value> + Send + Sync + 'static) -> ScriptedModel {
     ScriptedModel::new().on_request::<DiagnosticEvaluation>(move |sent, earlier| {
         let entries = entries(&prompt_of(&sent.request), earlier);
         reply(json!({ "entries": entries }).to_string())
@@ -535,7 +541,8 @@ async fn the_app_names_the_prompt_and_outcome_of_each_finding() -> Result<()> {
         let mut entries: Vec<Value> = shown_prompts(prompt)
             .iter()
             .map(|handle| {
-                let mut entry = finding_entry(handle, &["s1"], "ready_for_challenge");
+                let first = sentence_handles(prompt, handle).remove(0);
+                let mut entry = finding_entry(handle, &[&first], "ready_for_challenge");
                 entry["promptId"] = json!("invented");
                 entry["outcomeId"] = json!("invented");
                 entry
@@ -567,14 +574,11 @@ async fn the_cited_sentences_are_the_quote() -> Result<()> {
     let responses = responses_of(HARBOUR, HARBOUR);
     let model = judging(|prompt, _| {
         let handles = shown_prompts(prompt);
-        let sentences = sentence_handles(prompt, &handles[0]);
+        let first = sentence_handles(prompt, &handles[0]);
+        let second = sentence_handles(prompt, &handles[1]);
         vec![
-            finding_entry(&handles[0], &[&sentences[1]], "ready_for_challenge"),
-            finding_entry(
-                &handles[1],
-                &[&sentences[2], &sentences[0]],
-                "needs_practice",
-            ),
+            finding_entry(&handles[0], &[&first[1]], "ready_for_challenge"),
+            finding_entry(&handles[1], &[&second[2], &second[0]], "needs_practice"),
         ]
     });
 
@@ -596,7 +600,10 @@ async fn a_cite_that_names_no_shown_sentence_costs_only_that_cite() -> Result<()
     let model = judging(|prompt, _| {
         shown_prompts(prompt)
             .iter()
-            .map(|handle| finding_entry(handle, &["s9", "s2"], "ready_for_challenge"))
+            .map(|handle| {
+                let second = sentence_handles(prompt, handle).remove(1);
+                finding_entry(handle, &["u99", second.as_str()], "ready_for_challenge")
+            })
             .collect()
     });
 
@@ -619,7 +626,8 @@ async fn a_signal_other_than_uncertain_needs_evidence() -> Result<()> {
                 if earlier == 0 && handle == "p2" {
                     finding_entry(handle, &[], "needs_practice")
                 } else {
-                    finding_entry(handle, &["s1"], "needs_practice")
+                    let first = sentence_handles(prompt, handle).remove(0);
+                    finding_entry(handle, &[&first], "needs_practice")
                 }
             })
             .collect()
@@ -660,7 +668,10 @@ async fn a_prompt_missing_from_the_answer_is_asked_for_again_alone() -> Result<(
         shown_prompts(prompt)
             .iter()
             .filter(|handle| earlier > 0 || handle.as_str() != "p2")
-            .map(|handle| finding_entry(handle, &["s1"], "ready_for_challenge"))
+            .map(|handle| {
+                let first = sentence_handles(prompt, handle).remove(0);
+                finding_entry(handle, &[&first], "ready_for_challenge")
+            })
             .collect()
     });
 
@@ -733,7 +744,7 @@ async fn prompt_snapshot_diagnostic_evaluation() -> Result<()> {
         "I am not sure which column matters here.",
     );
     let reply = json!({"entries": [
-        {"of": "p1", "evidence": ["s1"], "feedback": "You chose the join column and said why. The join column is the right first index, since the planner can then skip a scan. Next, check the plan.", "signal": "ready_for_challenge"},
+        {"of": "p1", "evidence": ["u1"], "feedback": "You chose the join column and said why. The join column is the right first index, since the planner can then skip a scan. Next, check the plan.", "signal": "ready_for_challenge"},
         {"of": "p2", "evidence": [], "feedback": "You were unsure. The join column is the right first index, since the planner can then skip a scan. Next, read a plan.", "signal": "uncertain"}
     ]});
     let llm = Model(reply.to_string());

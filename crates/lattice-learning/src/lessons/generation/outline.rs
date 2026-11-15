@@ -1,9 +1,9 @@
-//! Program outlines: the outline schema, drafting one from the goal and its
-//! references, and decoding a drafted outline into modules and lessons.
+//! Program outlines: drafting one from the goal and its references, and
+//! decoding a drafted outline into modules and lessons.
 
 use super::{
-    invalid, optional_citation, optional_source_index_schema, parse_json, validate_outline_request,
-    validate_text, OUTLINE_OUTPUT_RESERVE,
+    invalid, optional_citation, parse_json, validate_outline_request, validate_text,
+    OUTLINE_OUTPUT_RESERVE,
 };
 use crate::dto::{
     GenerateLearningProgramRequestDto, LearningCourseDepth, LearningLessonDto, LearningModuleDto,
@@ -36,10 +36,6 @@ pub(crate) use prerequisites::OutlinePrerequisites;
 const OUTLINE_DRAFT_BRIEF: &str = "Decide the final capstone and what evidence each of its deliverables needs. Then lay out the modules in order: each module's title and two-sentence summary, its outcomes, its project milestone with deliverables and success criteria, the earlier modules it builds on, and its lessons with their objectives and estimated minutes.";
 
 #[derive(Debug, Deserialize)]
-#[cfg_attr(
-    any(test, feature = "test-support"),
-    derive(serde::Serialize, PartialEq)
-)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GeneratedOutline {
     modules: Vec<GeneratedModule>,
@@ -80,72 +76,6 @@ pub(crate) struct GeneratedOutlineLesson {
 /// The outline a reply holds, before it is held to the depth asked for.
 fn read_outline(raw: &str) -> Result<GeneratedOutline> {
     parse_json(raw)
-}
-
-pub(crate) fn outline_schema(
-    depth: Option<LearningCourseDepth>,
-    source_count: usize,
-) -> serde_json::Value {
-    let (min_modules, max_modules, min_lessons, max_lessons) = LearningCourseDepth::bounds(depth);
-    json!({
-        "type":"object","additionalProperties":false,"required":["modules"],
-        "properties":{"modules":{"type":"array","minItems":min_modules,"maxItems":max_modules,"items":{
-            "type":"object","additionalProperties":false,
-            "required":["title","summary","outcomes","lessons","prerequisiteIndices","project"],"properties":{
-                "prerequisiteIndices":{"type":"array","maxItems":max_modules.saturating_sub(1),"items":{"type":"integer","minimum":0,"maximum":max_modules.saturating_sub(2)}},"project":crate::teaching::project_schema(),"title":{"type":"string"},"summary":{"type":"object","additionalProperties":false,"required":["text","sourceIndex","quote"],"properties":{"text":{"type":"string"},"sourceIndex":optional_source_index_schema(source_count),"quote":{"type":"string"}}},
-                "outcomes":{"type":"array","minItems":1,"items":{
-                    "type":"object","additionalProperties":false,"required":["text","sourceIndex","quote"],"properties":{
-                        "text":{"type":"string"},"sourceIndex":optional_source_index_schema(source_count),"quote":{"type":"string"}
-                    }
-                }},
-                "lessons":{"type":"array","minItems":min_lessons,"maxItems":max_lessons,"items":{
-                    "type":"object","additionalProperties":false,"required":["title","objective","estimatedMinutes","sourceIndex","quote"],"properties":{
-                    "title":{"type":"string"},"objective":{"type":"string"},"estimatedMinutes":{"type":"integer","minimum":1},"sourceIndex":optional_source_index_schema(source_count),"quote":{"type":"string"}
-                    }
-                }}
-            }
-        }}}
-    })
-}
-
-/// Generate an outline at the requested depth, using supplied sources when present.
-/// Topic-only content cannot claim citations. IDs are assigned after validation.
-pub async fn generate_outline(
-    llm: &dyn LLMPort,
-    request: &GenerateLearningProgramRequestDto,
-    sources: &[LearningSourceDto],
-) -> Result<Vec<LearningModuleDto>> {
-    generate_outline_with_progress(
-        llm,
-        request,
-        sources,
-        &crate::outline_progress::OutlineProgress::default(),
-    )
-    .await
-}
-
-pub async fn generate_outline_with_progress(
-    llm: &dyn LLMPort,
-    request: &GenerateLearningProgramRequestDto,
-    sources: &[LearningSourceDto],
-    progress: &crate::outline_progress::OutlineProgress,
-) -> Result<Vec<LearningModuleDto>> {
-    let (raw, context, output_tokens) =
-        draft_outline(llm, request, sources, &[], progress, |raw| {
-            decode_outline(raw, request, sources).map(|_| raw.to_owned())
-        })
-        .await?;
-    let raw = crate::teaching::review_and_repair_with_progress(
-        llm,
-        "Design a rigorous curriculum.",
-        &context.to_string(),
-        &outline_schema(request.course_depth, sources.len()),
-        raw,
-        output_tokens,
-        crate::teaching::OutlineReviewContext { progress, sources },
-    )
-    .await?;
-    decode_outline(&raw, request, sources)
 }
 
 /// Draft the outline. `subtopics` are the reference plan's subtopic titles;
@@ -208,8 +138,7 @@ pub(crate) async fn draft_outline<T>(
         Settled::Unanswered(why) => return Err(ask::failed(&why)),
     };
     let mut modules = input.stored(&outline);
-    let prerequisites =
-        prerequisites::asked(llm, progress, &request.goal, &modules).await?;
+    let prerequisites = prerequisites::asked(llm, progress, &request.goal, &modules).await?;
     for (module, builds) in modules.iter_mut().zip(prerequisites) {
         module.prerequisite_indices = builds;
     }

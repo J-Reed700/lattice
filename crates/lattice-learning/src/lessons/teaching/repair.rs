@@ -10,7 +10,6 @@ use crate::lessons::text_edits::{
     self, NEVER_SAY_WHERE, QUOTED_WORDING, STEPS_IN_ORDER, UNQUOTED_REMARKS,
 };
 use crate::lessons::writer_excerpts::{self, WriterExcerpts};
-use crate::outline_progress::OutlineProgress;
 use crate::review_findings::{FindingSite, ReviewFinding};
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{
@@ -303,7 +302,7 @@ impl Answered for TeachingRepair {
                     let index = entry.get("sourceIndex").and_then(Value::as_u64);
                     let text = entry.get("excerpt").and_then(Value::as_str);
                     if let (Some(index), Some(text)) = (index, text) {
-                        let marked = Quotes::marked(index, text, &quotables);
+                        let marked = quotes.marked(index, text, &quotables);
                         if let Some(slot) = entry.get_mut("excerpt") {
                             *slot = Value::String(marked);
                         }
@@ -552,11 +551,7 @@ impl Taking<'_, '_> {
 }
 
 /// Asks for the edits that correct `request`'s findings, and takes the entries that stand.
-pub(super) async fn mend(
-    llm: &dyn LLMPort,
-    request: &Request<'_>,
-    progress: Option<&OutlineProgress>,
-) -> Result<Mended> {
+pub(super) async fn mend(llm: &dyn LLMPort, request: &Request<'_>) -> Result<Mended> {
     let sents = sents_of(&request.issues);
     let mut requirements = request.authoring.clone();
     let excerpts = excerpts_of(llm, &mut requirements, request.candidate);
@@ -564,7 +559,7 @@ pub(super) async fn mend(
     let settled = ask_each::<TeachingRepair>(
         llm,
         &Asking {
-            progress,
+            progress: None,
             reasoning: None,
         },
         &mut Scope::for_question(),
@@ -660,11 +655,7 @@ fn rewrite_prompt(request: &Request<'_>, requirements: Value) -> Map<String, Val
 
 /// Asks the model for the whole corrected material, unless the job already holds its answer
 /// (or its refusal) for these inputs.
-pub(super) async fn rewrite(
-    llm: &dyn LLMPort,
-    request: &Request<'_>,
-    progress: Option<&OutlineProgress>,
-) -> Result<String> {
+pub(super) async fn rewrite(llm: &dyn LLMPort, request: &Request<'_>) -> Result<String> {
     let system = rewrite_system(request);
     let schema = request.schema.clone();
     let key = format!(
@@ -698,16 +689,9 @@ pub(super) async fn rewrite(
         system: system.clone(),
         prompt: Value::Object(prompt.clone()).to_string(),
     })?;
-    let result = writer_excerpts::complete(
-        llm,
-        &call,
-        &wr,
-        excerpts.as_ref(),
-        progress,
-        None,
-        read_rewrite,
-    )
-    .await;
+    let result =
+        writer_excerpts::complete(llm, &call, &wr, excerpts.as_ref(), None, None, read_rewrite)
+            .await;
     match &result {
         Ok(raw) => crate::lesson_drafts::record_checkpoint(&key, json!({"answer": raw})).await?,
         Err(AppError::ModelAnswerUnusable(reason) | AppError::AnswerCutOff(reason)) => {

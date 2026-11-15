@@ -454,48 +454,43 @@ impl Answered for OutlineLinking {
     const ALONE: Alone = Alone::Pending;
 
     fn within(input: &Input, room: usize) -> Option<Input> {
-        let held: Vec<usize> = input
-            .passages
-            .within(room)
-            .iter()
-            .map(|passage| passage.at)
-            .collect();
-        let mut items: Vec<Item> = input
+        let list: Vec<&Passage> = input.passages.iter().collect();
+        let needs: Vec<Vec<usize>> = input
             .items
             .iter()
-            .filter(|item| {
-                let own = item.candidates.value();
-                !own.is_empty() && own.iter().all(|at| held.contains(at))
+            .map(|item| {
+                item.candidates
+                    .value()
+                    .iter()
+                    .filter_map(|at| list.iter().position(|passage| passage.at == *at))
+                    .collect()
             })
-            .cloned()
             .collect();
-        if items.is_empty() {
-            items = input
-                .items
-                .iter()
-                .find(|item| item.candidates.value().iter().any(|at| held.contains(at)))
-                .map(|item| Item {
-                    candidates: Internal::of(
-                        item.candidates
-                            .value()
-                            .iter()
-                            .copied()
-                            .filter(|at| held.contains(at))
-                            .collect(),
-                    ),
+        let items: Vec<Item> = input
+            .passages
+            .for_owners(room, &needs)
+            .into_iter()
+            .filter_map(|(owner, places)| {
+                if places.is_empty() {
+                    return None;
+                }
+                let item = input.items.get(owner)?;
+                let candidates = places
+                    .iter()
+                    .filter_map(|place| list.get(*place).map(|passage| passage.at))
+                    .collect();
+                Some(Item {
+                    candidates: Internal::of(candidates),
                     ..item.clone()
                 })
-                .into_iter()
-                .collect();
-        }
+            })
+            .collect();
         let named: Vec<usize> = items
             .iter()
             .flat_map(|item| item.candidates.value().iter().copied())
             .collect();
-        let kept: Vec<Passage> = input
-            .passages
-            .within(room)
-            .iter()
+        let kept: Vec<Passage> = list
+            .into_iter()
             .filter(|passage| named.contains(&passage.at))
             .cloned()
             .collect();
@@ -539,9 +534,7 @@ impl Answered for OutlineLinking {
 
     fn accept(_input: &Input, choice: &Choice) -> std::result::Result<(), Refusal> {
         if choice.reason.trim().is_empty() {
-            return Err(Refusal(
-                "Give the reason for this choice in reason.".into(),
-            ));
+            return Err(Refusal("Give the reason for this choice in reason.".into()));
         }
         Ok(())
     }

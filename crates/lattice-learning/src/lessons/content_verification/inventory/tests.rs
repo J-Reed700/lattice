@@ -67,7 +67,10 @@ fn shown(sent: &Sent) -> Vec<(String, Vec<(String, String)>)> {
 }
 
 /// An answer that gives each section the request shows the claims `claims_of` makes of its sentences, and none to a section it gives none.
-fn answering(sent: &Sent, claims_of: impl Fn(&[(String, String)]) -> Option<Vec<Value>>) -> String {
+fn answering(
+    sent: &Sent,
+    claims_of: impl Fn(&[(String, String)]) -> Option<Vec<Value>>,
+) -> String {
     let entries: Vec<Value> = shown(sent)
         .iter()
         .filter_map(|(of, sentences)| {
@@ -99,13 +102,12 @@ fn at_the_first(sentences: &[(String, String)]) -> Option<Vec<Value>> {
 #[test]
 fn the_extraction_request_shows_what_it_tells_and_hides_the_internal_ids() {
     let mut marks = Marks::new();
-    let sentences = |marks: &mut Marks, ids: [&str; 2], texts: [&str; 2]| -> Vec<Sentence> {
+    let passages = |marks: &mut Marks, ids: [&str; 2], texts: [&str; 2]| -> Vec<Passage> {
         ids.iter()
             .zip(texts)
-            .map(|(id, text)| Sentence {
-                id: marks.reference((*id).to_owned()),
-                passage: Internal::of(0),
-                field: marks.told("/body".to_owned()),
+            .map(|(id, text)| Passage {
+                id: marks.internal((*id).to_owned()),
+                field: marks.told("/explanation".to_owned()),
                 text: marks.told(text.to_owned()),
             })
             .collect()
@@ -117,12 +119,9 @@ fn the_extraction_request_shows_what_it_tells_and_hides_the_internal_ids() {
         check_role: None,
         context: Vec::new(),
         context_role: None,
-        sentences: sentences(
+        passages: passages(
             &mut marks,
-            [
-                "unit-7340219-passage-0-sentence-0",
-                "unit-7340219-passage-0-sentence-1",
-            ],
+            ["unit-7340219-passage-0", "unit-7340219-passage-1"],
             [
                 "The harbour kiln heats before a firing.",
                 "Tide tables list high water.",
@@ -135,16 +134,13 @@ fn the_extraction_request_shows_what_it_tells_and_hides_the_internal_ids() {
         correct_index: Some(marks.told(2_u64)),
         check_role: Some(marks.told("A check poses a case first.".to_owned())),
         context: vec![Part {
-            field: marks.told("/prompt".to_owned()),
+            field: marks.told("/options/0".to_owned()),
             text: marks.told("Which kiln heats the glaze fastest?".to_owned()),
         }],
         context_role: Some(marks.told("The question and its options.".to_owned())),
-        sentences: sentences(
+        passages: passages(
             &mut marks,
-            [
-                "unit-7340220-passage-0-sentence-0",
-                "unit-7340220-passage-0-sentence-1",
-            ],
+            ["unit-7340220-passage-0", "unit-7340220-passage-1"],
             ["The glaze kiln is the fastest.", "The salt kiln is slower."],
         ),
     };
@@ -155,6 +151,28 @@ fn the_extraction_request_shows_what_it_tells_and_hides_the_internal_ids() {
         &marks,
     );
 }
+#[test]
+fn equal_sentences_of_a_section_are_two_places_a_claim_can_name() {
+    let body = format!(
+        "{}\n\n{}",
+        "Tides follow the moon.", "Tides follow the moon."
+    );
+    let section = Section::of(0, &inputs(&[json!({"body":body})])[0]);
+    let texts = section.texts();
+    let units: Vec<_> = texts
+        .iter()
+        .flat_map(|(_, units)| units.units().iter().map(Unit::reference))
+        .collect();
+    assert_eq!(units.len(), 2);
+    assert_ne!(units[0], units[1]);
+    for unit in units {
+        assert_eq!(
+            texts.found(unit).map(|(_, text)| text),
+            Some("Tides follow the moon.")
+        );
+    }
+}
+
 #[tokio::test]
 async fn an_unreadable_inventory_fails_the_job_instead_of_deferring() -> Result<()> {
     let pool = crate::tests::pool().await?;
@@ -241,7 +259,9 @@ async fn a_fact_mixed_with_example_names_is_extracted_without_them() -> Result<(
     assert!(!statement.contains("IOrderRepository"), "{statement}");
     let prompts = llm.prompts.lock().unwrap();
     assert!(prompts[0].contains("names this lesson invented for its examples"));
-    assert!(prompts[0].contains("extract the real-world fact in general terms without those names"));
+    assert!(
+        prompts[0].contains("extract the real-world fact in general terms without those names")
+    );
     Ok(())
 }
 

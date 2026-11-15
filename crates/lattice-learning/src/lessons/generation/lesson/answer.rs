@@ -3,6 +3,7 @@
 
 use crate::assessment::assessment_engine::{option_order, LearningItemFormat};
 use crate::dto::LearningSourceDto;
+use crate::lessons::rows::Quotes;
 use crate::lessons::structured_call::{Asking, CallKind, ReasonFirst};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::model_contract::ask::{
@@ -14,7 +15,7 @@ use lattice_core::application::services::model_contract::shape::{
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Internal, Kind, Picked, Scope, Showing, Told,
 };
-use lattice_core::application::services::model_contract::units::{Grain, Unit, Units};
+use lattice_core::application::services::model_contract::units::Quoted;
 use lattice_core::application::services::model_contract::{Contract, ContractId};
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
@@ -219,12 +220,12 @@ impl Dimension {
 #[derive(Debug, Clone, PartialEq)]
 struct Cited {
     sentence: String,
-    cites: Vec<Picked<Unit>>,
+    cites: Vec<Picked<Quoted>>,
 }
 
 impl Authored for Cited {
     fn form() -> Form {
-        Form::new().text("sentence").cite::<Unit>("cites")
+        Form::new().text("sentence").cite::<Quoted>("cites")
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
@@ -240,7 +241,7 @@ impl Authored for Cited {
 struct Part {
     title: String,
     body: String,
-    cites: Vec<Picked<Unit>>,
+    cites: Vec<Picked<Quoted>>,
     cited: Vec<Cited>,
 }
 
@@ -259,7 +260,7 @@ impl Authored for Part {
         Form::new()
             .text("title")
             .text("body")
-            .cite::<Unit>("cites")
+            .cite::<Quoted>("cites")
             .list::<Cited>("citations")
     }
 
@@ -280,7 +281,7 @@ impl Authored for Section {
             .word::<Teaching>("kind")
             .text("title")
             .text("body")
-            .cite::<Unit>("cites")
+            .cite::<Quoted>("cites")
             .list::<Cited>("citations")
     }
 
@@ -347,7 +348,7 @@ impl Authored for Practice {
             .text("title")
             .text("body")
             .list::<Criterion>("rubric")
-            .cite::<Unit>("cites")
+            .cite::<Quoted>("cites")
             .list::<Cited>("citations")
     }
 
@@ -386,7 +387,7 @@ struct Question {
     right: String,
     wrong: Vec<Wrong>,
     explanation: String,
-    cites: Vec<Picked<Unit>>,
+    cites: Vec<Picked<Quoted>>,
     cited: Vec<Cited>,
 }
 
@@ -398,7 +399,7 @@ impl Authored for Question {
             .text("right")
             .list::<Wrong>("wrong")
             .text("explanation")
-            .cite::<Unit>("cites")
+            .cite::<Quoted>("cites")
             .list::<Cited>("citations")
     }
 
@@ -455,17 +456,13 @@ impl Answered for LessonWriter {
 
     fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
         let sources = showing.show(&input.sources)?;
-        let excerpts: Vec<Units> = input
-            .sources
-            .iter()
-            .map(|source| Units::of(&source.excerpt.0, Grain::Sentence))
-            .collect();
+        let quotes = quotes_of(input);
+        let quoted = showing.show(quotes.all())?;
         let mut shown = Vec::with_capacity(input.sources.len());
-        for ((handle, source), units) in sources.iter().zip(&excerpts) {
-            let rows = units.shown(showing)?;
+        for (at, (handle, source)) in sources.iter().enumerate() {
             shown.push(json!({
                 "id": handle.written(), "title": source.title, "url": source.url,
-                "excerpt": units.rows(&rows)
+                "excerpt": quotes.marked(at as u64, &source.excerpt.0, &quoted)
             }));
         }
         let topics: Vec<Value> = input
@@ -509,124 +506,117 @@ impl Answered for LessonWriter {
     }
 }
 
-/// The sentences of every source's excerpt, as the request showed them.
-struct Excerpts(Vec<Units>);
-
-impl Excerpts {
-    fn of(input: &Input) -> Self {
-        Self(
-            input
-                .sources
-                .iter()
-                .map(|source| Units::of(&source.excerpt.0, Grain::Sentence))
-                .collect(),
-        )
+/// The sentences of every source's excerpt a citation may quote.
+fn quotes_of(input: &Input) -> Quotes {
+    let mut quotes = Quotes::default();
+    for (at, source) in input.sources.iter().enumerate() {
+        quotes.push(at as u64, &source.excerpt.0);
     }
+    quotes
+}
 
-    /// The number of the source whose excerpt holds the cited sentence, and its words.
-    fn found(&self, cite: &Picked<Unit>) -> Option<(usize, &str)> {
-        self.0
-            .iter()
-            .enumerate()
-            .find_map(|(at, units)| Some((at, units.text_of(cite.reference)?)))
-    }
-
-    /// A part's source and quotation, and the sentences it cites, as a saved draft holds them.
-    fn cite_into(&self, part: &mut Map<String, Value>, cites: &[Picked<Unit>], cited: &[Cited]) {
-        let first = cites.iter().find_map(|cite| self.found(cite));
-        part.insert(
-            "sourceIndex".into(),
-            first.map_or(Value::Null, |(at, _)| json!(at)),
-        );
-        part.insert(
-            "quote".into(),
-            json!(first.map_or("", |(_, words)| words)),
-        );
-        let mut entries = Vec::new();
-        for sentence in cited {
-            for cite in &sentence.cites {
-                if let Some((at, words)) = self.found(cite) {
-                    entries.push(json!({
-                        "sentence": sentence.sentence, "sourceIndex": at, "quote": words
-                    }));
-                }
+/// A part's source and quotation, and the sentences it cites, as a saved draft holds them.
+fn cite_into(
+    quotes: &Quotes,
+    part: &mut Map<String, Value>,
+    cites: &[Picked<Quoted>],
+    cited: &[Cited],
+) {
+    let first = cites.iter().find_map(|cite| quotes.get(cite.reference));
+    part.insert(
+        "sourceIndex".into(),
+        first.map_or(Value::Null, |(at, _)| json!(at)),
+    );
+    part.insert("quote".into(), json!(first.map_or("", |(_, words)| words)));
+    let mut entries = Vec::new();
+    for sentence in cited {
+        for cite in &sentence.cites {
+            if let Some((at, words)) = quotes.get(cite.reference) {
+                entries.push(json!({
+                    "sentence": sentence.sentence, "sourceIndex": at, "quote": words
+                }));
             }
         }
-        part.insert("citations".into(), Value::Array(entries));
     }
+    part.insert("citations".into(), Value::Array(entries));
+}
 
-    fn block(&self, kind: &str, part: &Part, rubric: Vec<Value>) -> Value {
-        let mut block = Map::new();
-        block.insert("kind".into(), json!(kind));
-        block.insert("title".into(), json!(part.title));
-        block.insert("body".into(), json!(part.body));
-        block.insert("rubric".into(), Value::Array(rubric));
-        self.cite_into(&mut block, &part.cites, &part.cited);
-        Value::Object(block)
-    }
+fn block(quotes: &Quotes, kind: &str, part: &Part, rubric: Vec<Value>) -> Value {
+    let mut block = Map::new();
+    block.insert("kind".into(), json!(kind));
+    block.insert("title".into(), json!(part.title));
+    block.insert("body".into(), json!(part.body));
+    block.insert("rubric".into(), Value::Array(rubric));
+    cite_into(quotes, &mut block, &part.cites, &part.cited);
+    Value::Object(block)
+}
 
-    fn practice(&self, kind: &str, practice: &Practice) -> Value {
-        let rubric = practice
-            .rubric
-            .iter()
-            .map(|criterion| {
-                json!({
-                    "title": criterion.title, "description": criterion.description,
-                    "dimension": criterion.dimension.word()
-                })
+fn practice(quotes: &Quotes, kind: &str, practice: &Practice) -> Value {
+    let rubric = practice
+        .rubric
+        .iter()
+        .map(|criterion| {
+            json!({
+                "title": criterion.title, "description": criterion.description,
+                "dimension": criterion.dimension.word()
             })
-            .collect();
-        self.block(kind, &practice.part, rubric)
-    }
+        })
+        .collect();
+    block(quotes, kind, &practice.part, rubric)
+}
 
-    fn question(&self, question: &Question) -> Value {
-        let authored: Vec<(&str, &str)> = std::iter::once((question.right.as_str(), ""))
-            .chain(
-                question
-                    .wrong
-                    .iter()
-                    .map(|wrong| (wrong.option.as_str(), wrong.reason.as_str())),
-            )
-            .collect();
-        let order = option_order(
-            LearningItemFormat::SingleChoice,
-            authored.len(),
-            &question.prompt,
-        );
-        let correct = order.iter().position(|at| *at == 0).unwrap_or(0);
-        let laid_out: Vec<&(&str, &str)> = order.iter().filter_map(|at| authored.get(*at)).collect();
-        let options: Vec<Value> = laid_out.iter().map(|(option, _)| json!(option)).collect();
-        let rationales: Vec<Value> = laid_out.iter().map(|(_, reason)| json!(reason)).collect();
-        let mut stored = Map::new();
-        stored.insert("kind".into(), json!(question.kind.word()));
-        stored.insert("prompt".into(), json!(question.prompt));
-        stored.insert("options".into(), Value::Array(options));
-        stored.insert("correctIndex".into(), json!(correct));
-        stored.insert("rationales".into(), Value::Array(rationales));
-        stored.insert("explanation".into(), json!(question.explanation));
-        self.cite_into(&mut stored, &question.cites, &question.cited);
-        Value::Object(stored)
-    }
+fn question(quotes: &Quotes, question: &Question) -> Value {
+    let authored: Vec<(&str, &str)> = std::iter::once((question.right.as_str(), ""))
+        .chain(
+            question
+                .wrong
+                .iter()
+                .map(|wrong| (wrong.option.as_str(), wrong.reason.as_str())),
+        )
+        .collect();
+    let order = option_order(
+        LearningItemFormat::SingleChoice,
+        authored.len(),
+        &question.prompt,
+    );
+    let correct = order.iter().position(|at| *at == 0).unwrap_or(0);
+    let laid_out: Vec<&(&str, &str)> = order.iter().filter_map(|at| authored.get(*at)).collect();
+    let options: Vec<Value> = laid_out.iter().map(|(option, _)| json!(option)).collect();
+    let rationales: Vec<Value> = laid_out.iter().map(|(_, reason)| json!(reason)).collect();
+    let mut stored = Map::new();
+    stored.insert("kind".into(), json!(question.kind.word()));
+    stored.insert("prompt".into(), json!(question.prompt));
+    stored.insert("options".into(), Value::Array(options));
+    stored.insert("correctIndex".into(), json!(correct));
+    stored.insert("rationales".into(), Value::Array(rationales));
+    stored.insert("explanation".into(), json!(question.explanation));
+    cite_into(quotes, &mut stored, &question.cites, &question.cited);
+    Value::Object(stored)
 }
 
 impl Draft {
     /// The lesson as the saved draft later stages read: sections in the order the lesson is laid out, the choices laid out by the assessment engine's seeded order.
     fn stored(&self, input: &Input) -> String {
-        let excerpts = Excerpts::of(input);
+        let quotes = quotes_of(input);
         let mut blocks = Vec::new();
         for idea in &self.ideas {
             for section in &idea.sections {
-                blocks.push(excerpts.block(section.kind.word(), &section.part, Vec::new()));
+                blocks.push(block(
+                    &quotes,
+                    section.kind.word(),
+                    &section.part,
+                    Vec::new(),
+                ));
             }
         }
-        blocks.push(excerpts.practice("guided_practice", &self.guided));
-        blocks.push(excerpts.practice("independent_practice", &self.independent));
-        blocks.push(excerpts.block("reflection", &self.reflection, Vec::new()));
-        blocks.push(excerpts.block("recap", &self.recap, Vec::new()));
+        blocks.push(practice(&quotes, "guided_practice", &self.guided));
+        blocks.push(practice(&quotes, "independent_practice", &self.independent));
+        blocks.push(block(&quotes, "reflection", &self.reflection, Vec::new()));
+        blocks.push(block(&quotes, "recap", &self.recap, Vec::new()));
         let questions: Vec<Value> = self
             .questions
             .iter()
-            .map(|question| excerpts.question(question))
+            .map(|item| question(&quotes, item))
             .collect();
         json!({"blocks": blocks, "questions": questions}).to_string()
     }
@@ -705,10 +695,15 @@ pub(crate) fn scripted_lesson(saved: &str, prompt: &str) -> String {
             .get(at)
             .and_then(|source| source["excerpt"].as_str())
             .unwrap_or_default();
-        rows.lines()
-            .filter_map(|row| row.strip_prefix('[')?.split_once("] "))
-            .find(|(_, words)| {
-                !quote.is_empty() && !words.is_empty() && (words.contains(quote) || quote.contains(words))
+        rows.split('[')
+            .skip(1)
+            .filter_map(|marked| marked.split_once("] "))
+            .map(|(handle, words)| (handle, words.trim()))
+            .find(|(handle, words)| {
+                handle.starts_with('q')
+                    && !quote.is_empty()
+                    && !words.is_empty()
+                    && (words.contains(quote) || quote.contains(words))
             })
             .map(|(handle, _)| vec![json!(handle)])
             .unwrap_or_default()

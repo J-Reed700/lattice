@@ -24,7 +24,6 @@ async fn lesson(answer: impl Fn(&Value) -> Vec<Value> + Send + Sync + 'static) -
         &kinds(),
         Scope::default(),
         Remit::Lesson,
-        None,
     )
     .await
     .unwrap()
@@ -35,10 +34,15 @@ fn the_issue_vocabulary_is_the_concerns_no_section_holds() {
     let words: Vec<LessonConcern> = IssueConcern::WORDS.iter().map(|(_, c)| c.0).collect();
     let expected: Vec<LessonConcern> = LessonConcern::ALL
         .into_iter()
-        .filter(|concern| !LearningBlockKind::ALL.iter().any(|k| concern.applies_to(k)) || LearningBlockKind::ALL.iter().all(|k| concern.applies_to(k)))
+        .filter(|concern| {
+            !LearningBlockKind::ALL.iter().any(|k| concern.applies_to(k))
+                || LearningBlockKind::ALL.iter().all(|k| concern.applies_to(k))
+        })
         .collect();
     assert_eq!(words, expected);
-    assert!(IssueConcern::WORDS.iter().all(|(word, c)| *word == c.0.id()));
+    assert!(IssueConcern::WORDS
+        .iter()
+        .all(|(word, c)| *word == c.0.id()));
 }
 
 #[test]
@@ -49,7 +53,9 @@ fn the_check_vocabulary_is_the_concerns_some_section_kind_takes() {
         .filter(|concern| LearningBlockKind::ALL.iter().any(|k| concern.applies_to(k)))
         .collect();
     assert_eq!(words, expected);
-    assert!(CheckConcern::WORDS.iter().all(|(word, c)| *word == c.0.id()));
+    assert!(CheckConcern::WORDS
+        .iter()
+        .all(|(word, c)| *word == c.0.id()));
 }
 
 #[tokio::test]
@@ -90,7 +96,11 @@ async fn an_open_review_form_has_no_concern_field() {
     let sent = model.sent();
     let schema = sent
         .iter()
-        .find_map(|s| s.request.schema().map(|schema| schema.as_json().to_string()))
+        .find_map(|s| {
+            s.request
+                .schema()
+                .map(|schema| schema.as_json().to_string())
+        })
         .unwrap();
     assert!(!schema.contains("concern"));
 }

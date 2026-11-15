@@ -37,6 +37,7 @@ use lattice_core::application::ports::llm_port::{
     CompletionInput, InferencePriority, SamplingOverride,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::grounded_generation::CallOptions;
 use lattice_core::application::services::model_contract::{legacy, tagged, ContractCall};
 use lattice_core::domain::conversation::memory::{
     MemoryCommit, MemorySnapshot, MemoryValidationError, SummaryRefold,
@@ -242,6 +243,21 @@ impl Deadline {
             Some(left) if left < MIN_CALL_SLICE => Err(self.exceeded()),
             left => Ok(left),
         }
+    }
+
+    /// How this run queues and times one model call.
+    pub(super) fn call_options(&self) -> std::result::Result<CallOptions, CompactionError> {
+        let remaining = self.slice()?;
+        Ok(CallOptions {
+            priority: self.priority,
+            cancel: self.cancellation.clone(),
+            cache_key: self.cache_key.clone(),
+            // Greedy decoding, so the same input always yields the same answer.
+            sampling: Some(SamplingOverride::deterministic()),
+            time_budget: remaining,
+            no_time_limit: remaining.is_none(),
+            reasoning_effort: None,
+        })
     }
 
     fn exceeded(&self) -> CompactionError {

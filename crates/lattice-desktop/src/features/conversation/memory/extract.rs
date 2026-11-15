@@ -10,17 +10,12 @@
 //! domain's rules leave out. The model points at labelled sentences; the quote,
 //! its message and its occurrence are the app's own.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
-use lattice_core::application::ports::llm_port::SamplingOverride;
 use lattice_core::application::ports::LLMPort;
-use lattice_core::application::services::grounded_generation::{CallOptions, GroundedRequest};
 use lattice_core::application::services::model_contract::ask::{
-    ask_new, Alone, Answered, Followup, Plain, Refusal, Says, Sent, Transport, Why,
+    ask_new, Alone, Answered, Metered, Plain, Refusal, Says, Why,
 };
 use lattice_core::application::services::model_contract::shape::{
     Authored, Fields, Form, Found, New, Union, Vocabulary,
@@ -670,53 +665,6 @@ fn unread(why: &Why) -> MemoryValidationError {
     )
 }
 
-/// Sends each request as it is and counts the sends.
-struct Counting {
-    inner: Plain,
-    sent: AtomicUsize,
-}
-
-impl Counting {
-    fn new() -> Self {
-        Self {
-            inner: Plain,
-            sent: AtomicUsize::new(0),
-        }
-    }
-
-    fn sent(&self) -> usize {
-        self.sent.load(Ordering::Relaxed)
-    }
-}
-
-#[async_trait]
-impl Transport for Counting {
-    async fn send(&self, llm: &dyn LLMPort, request: GroundedRequest) -> Result<Sent> {
-        self.sent.fetch_add(1, Ordering::Relaxed);
-        self.inner.send(llm, request).await
-    }
-
-    async fn follow(&self, llm: &dyn LLMPort, step: Followup) -> Result<Sent> {
-        self.sent.fetch_add(1, Ordering::Relaxed);
-        self.inner.follow(llm, step).await
-    }
-}
-
-/// How the run's deadline queues and times an extraction call.
-fn call_options(deadline: &Deadline) -> std::result::Result<CallOptions, CompactionError> {
-    let remaining = deadline.slice()?;
-    Ok(CallOptions {
-        priority: deadline.priority,
-        cancel: deadline.cancellation.clone(),
-        cache_key: deadline.cache_key.clone(),
-        // Greedy decoding, so the same passages always yield the same patch.
-        sampling: Some(SamplingOverride::deterministic()),
-        time_budget: remaining,
-        no_time_limit: remaining.is_none(),
-        reasoning_effort: None,
-    })
-}
-
 /// Extract memory from one batch of segments.
 ///
 /// `quotable` is every message the batch is allowed to cite: the segments' own
@@ -740,8 +688,8 @@ pub async fn extract_segments(
 ) -> std::result::Result<ExtractionOutcome, CompactionError> {
     let manifest = segment_ids(segments);
     let input = Input::of(segments, quotable, context, existing);
-    let options = call_options(deadline)?;
-    let transport = Counting::new();
+    let options = deadline.call_options()?;
+    let transport = Metered::new(&Plain);
     let asked = ask_new::<MemoryExtraction>(
         llm,
         &transport,
@@ -751,7 +699,7 @@ pub async fn extract_segments(
         &options,
     )
     .await;
-    let attempts = transport.sent();
+    let attempts = usize::try_from(transport.used().sends).unwrap_or(usize::MAX);
     let Found { items, rest, .. } = match asked {
         Ok(found) => found,
         Err(error) => {

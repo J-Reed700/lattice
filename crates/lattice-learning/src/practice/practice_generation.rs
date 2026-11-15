@@ -2,7 +2,6 @@
 use crate::dto::*;
 use crate::lessons::structured_call::Asking;
 use crate::reference_collection::{item_tokens, ReferenceCollection};
-use lattice_core::shared::text::sentences;
 use lattice_core::{
     application::{
         ports::LLMPort,
@@ -11,7 +10,7 @@ use lattice_core::{
             packed::Packed,
             shape::{self, Authored, Each, Fields, Form, Vocabulary},
             shown::{Drawn, Internal, Kind, Picked, Scope, Showing, Told},
-            units::{Grain, Unit, Units},
+            units::{Grain, Quoted, Texts, Unit, Units},
             Contract, ContractId,
         },
     },
@@ -99,30 +98,6 @@ pub(crate) struct Passage {
     pub(crate) text: Told<String>,
 }
 
-/// Where a sentence of a snapshot passage is: the passage by its place in the search, and its place in the passage.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Place {
-    passage: usize,
-    index: usize,
-}
-
-/// A sentence of a snapshot passage: what a citation points at.
-#[derive(Debug, Clone)]
-pub(crate) struct Sentence {
-    place: Place,
-    text: String,
-}
-
-impl Kind for Sentence {
-    const PREFIX: &'static str = "s";
-    const DRAWN: Drawn = Drawn::Itself;
-    type Ref = Place;
-
-    fn reference(&self) -> Place {
-        self.place.clone()
-    }
-}
-
 /// A tutor turn as the model is shown it, with the tokens showing it takes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Turn {
@@ -198,7 +173,7 @@ impl Authored for Proposal {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TutorSays {
     response: String,
-    citations: Vec<Picked<Sentence>>,
+    citations: Vec<Picked<Quoted>>,
     proposals: Vec<Proposal>,
 }
 
@@ -206,7 +181,7 @@ impl Authored for TutorSays {
     fn form() -> Form {
         Form::new()
             .text("response")
-            .cite::<Sentence>("citations")
+            .cite::<Quoted>("citations")
             .list::<Proposal>("proposals")
     }
 
@@ -223,14 +198,12 @@ impl Authored for TutorSays {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SolutionSays {
     solution: String,
-    citations: Vec<Picked<Sentence>>,
+    citations: Vec<Picked<Quoted>>,
 }
 
 impl Authored for SolutionSays {
     fn form() -> Form {
-        Form::new()
-            .text("solution")
-            .cite::<Sentence>("citations")
+        Form::new().text("solution").cite::<Quoted>("citations")
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
@@ -241,41 +214,28 @@ impl Authored for SolutionSays {
     }
 }
 
-/// The sentences of `passage`, each with its place.
-fn sentences_of(passage: &Passage) -> Vec<Sentence> {
-    let text = passage.text.0.as_str();
-    sentences(text)
-        .into_iter()
-        .enumerate()
-        .filter_map(|(index, (start, end))| {
-            Some(Sentence {
-                place: Place {
-                    passage: passage.at,
-                    index,
-                },
-                text: text.get(start..end)?.to_owned(),
-            })
-        })
-        .collect()
+/// The passages as texts of sentences, each a text of its place in the search.
+fn passage_texts<'a>(passages: impl Iterator<Item = &'a Passage>) -> Texts<usize> {
+    let mut texts = Texts::new();
+    for passage in passages {
+        texts.push(
+            passage.at,
+            &passage.at.to_string(),
+            &passage.text.0,
+            Grain::Sentence,
+        );
+    }
+    texts
 }
 
 /// The snapshots as the request shows them: per source version, its passages' sentences as rows.
 fn snapshots(passages: &Packed<Passage>, showing: &mut Showing<'_>) -> Result<serde_json::Value> {
+    let texts = passage_texts(passages.iter());
     let mut groups: Vec<(String, String, Vec<String>)> = Vec::new();
-    for passage in passages.iter() {
-        let sentences = sentences_of(passage);
-        let shown = showing.show(&sentences)?;
-        let rows = shown
-            .iter()
-            .map(|(handle, sentence)| {
-                format!(
-                    "{} {}",
-                    handle.bracketed(),
-                    sentence.text.replace(['\r', '\n'], " ")
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+    for (passage, (_, units)) in passages.iter().zip(texts.iter()) {
+        let quotable = units.quoted();
+        let shown = showing.show(&quotable)?;
+        let rows = units.rows(&shown);
         let version = passage.version_id.value();
         match groups.iter_mut().find(|(held, _, _)| held == version) {
             Some((_, _, rows_of)) => rows_of.push(rows),
@@ -308,8 +268,11 @@ impl Answered for TutorReply {
         let units = Units::of(&input.artifact.0, Grain::Sentence);
         let artifact = units.shown(showing)?;
         let snapshots = snapshots(&input.passages, showing)?;
-        let turns: Vec<serde_json::Value> =
-            input.turns.iter().map(|turn| turn.entry.0.clone()).collect();
+        let turns: Vec<serde_json::Value> = input
+            .turns
+            .iter()
+            .map(|turn| turn.entry.0.clone())
+            .collect();
         let earlier = input.turns_held.saturating_sub(turns.len());
         let earlier_note = if earlier == 0 {
             String::new()
@@ -347,7 +310,10 @@ impl Answered for ReferenceSolution {
     fn says(input: &SolutionInput, showing: &mut Showing<'_>) -> Result<Says> {
         let snapshots = snapshots(&input.passages, showing)?;
         let task = json!({"taskPrompt":input.task_prompt,"objective":input.objective,"sourceSnapshots":snapshots});
-        let mut says = Says::new(format!("{SOLUTION_SYSTEM}{SOLUTION_FORM}"), task.to_string());
+        let mut says = Says::new(
+            format!("{SOLUTION_SYSTEM}{SOLUTION_FORM}"),
+            task.to_string(),
+        );
         says.output_tokens = 1400;
         Ok(says)
     }
@@ -418,7 +384,8 @@ fn recent(llm: &dyn LLMPort, turns: &[LearningPracticeTutorTurnDto]) -> Packed<T
         .iter()
         .rev()
         .map(|turn| {
-            let entry = json!({"request":turn.prompt,"response":turn.response,"hintLevel":turn.hint_level});
+            let entry =
+                json!({"request":turn.prompt,"response":turn.response,"hintLevel":turn.hint_level});
             let tokens = llm.count_tokens(&entry.to_string()) + 1;
             Turn {
                 entry: Told(entry),
@@ -430,23 +397,17 @@ fn recent(llm: &dyn LLMPort, turns: &[LearningPracticeTutorTurnDto]) -> Packed<T
 }
 
 /// The citations the cited sentences make, each with the source version its passage is of.
-fn citations(
-    passages: &[Passage],
-    cited: &[Picked<Sentence>],
-) -> Vec<LearningPracticeCitationDto> {
+fn citations(passages: &[Passage], cited: &[Picked<Quoted>]) -> Vec<LearningPracticeCitationDto> {
+    let texts = passage_texts(passages.iter());
     cited
         .iter()
         .filter_map(|picked| {
-            let passage = passages
-                .iter()
-                .find(|passage| passage.at == picked.reference.passage)?;
-            let sentence = sentences_of(passage)
-                .into_iter()
-                .find(|sentence| sentence.place == picked.reference)?;
+            let (at, quote) = texts.found(picked.reference)?;
+            let passage = passages.iter().find(|passage| passage.at == *at)?;
             Some(LearningPracticeCitationDto {
                 source_id: passage.source_id.value().clone(),
                 version_id: passage.version_id.value().clone(),
-                quote: sentence.text,
+                quote: quote.to_owned(),
             })
         })
         .collect()

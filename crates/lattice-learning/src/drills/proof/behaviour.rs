@@ -5,7 +5,7 @@
 use super::{judge, unproven, ProofCase, ProofStrategy, ProofVerdict, Tools};
 use crate::drills::budget;
 use crate::drills::build::ask::describe_fault;
-use crate::drills::build::code_units::{describe_edit, CodeFile, CodeUnits, Weight};
+use crate::drills::build::code_units::{describe_edit, placed, CodeFile, CodeUnits, Weight};
 use crate::drills::build::{Mutation, Trail, Verification};
 use crate::drills::runner::RunOutcome;
 use crate::lessons::structured_call::Asking;
@@ -19,7 +19,7 @@ use lattice_core::application::services::model_contract::shape::{Authored, Field
 use lattice_core::application::services::model_contract::shown::{Internal, Scope, Showing, Told};
 use lattice_core::application::services::model_contract::units::Unit;
 use lattice_core::application::services::model_contract::{Contract, ContractId};
-use lattice_core::domain::learning::drills::{apply, DrillFile, Edit, EditFault, Severity};
+use lattice_core::domain::learning::drills::{DrillFile, Edit, Severity};
 use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
 
@@ -114,68 +114,9 @@ impl Answered for NewEdit {
                 "Say something in `consequence` and in `explanation`.".into(),
             ));
         }
-        placed(input, replacement).map(|_| ())
+        let others: Vec<Edit> = input.others.iter().map(|edit| edit.0.clone()).collect();
+        placed(&input.files, &others, &replacement.change).map(|_| ())
     }
-}
-
-/// The edit a replacement makes when it applies beside the other edits and can be undone, and the files it
-/// gives alone. The edit takes in as many lines around the change as it needs to occur once in its file and be
-/// undone.
-fn placed(
-    input: &ReplaceInput,
-    replacement: &Replacement,
-) -> std::result::Result<(Edit, Vec<DrillFile>), Refusal> {
-    let clean: Vec<DrillFile> = input
-        .files
-        .iter()
-        .map(|file| DrillFile {
-            path: file.path.0.clone(),
-            text: file.text.0.clone(),
-        })
-        .collect();
-    let others: Vec<Edit> = input.others.iter().map(|edit| edit.0.clone()).collect();
-    let units = CodeUnits::of(&input.files);
-    units.file_of(replacement.change.change())?;
-    let nothing = || Refusal("The change leaves the code as it is. Change the code.".into());
-    let rewrite = CodeUnits::of(&input.files)
-        .rewrite(replacement.change.clone())
-        .ok_or_else(nothing)?;
-    let paths: Vec<String> = clean.iter().map(|file| file.path.clone()).collect();
-    let mut labels: Vec<String> = others.iter().map(|_| "Another change".to_owned()).collect();
-    labels.push("The new change".to_owned());
-    for extra in 0..=rewrite.lines() {
-        let new = rewrite.edit(extra).ok_or_else(nothing)?;
-        if new.before == new.after {
-            return Err(nothing());
-        }
-        if new.after.trim().is_empty() {
-            continue;
-        }
-        let mut edits = others.clone();
-        edits.push(new.clone());
-        let changed = match apply(&clean, &edits) {
-            Ok((changed, _)) => changed,
-            Err(EditFault::Ambiguous { edit, .. }) if edit == others.len() => continue,
-            Err(fault) => {
-                return Err(Refusal(describe_fault(fault, &edits, &labels, &paths)));
-            }
-        };
-        let fix = Edit {
-            path: new.path.clone(),
-            before: new.after.clone(),
-            after: new.before.clone(),
-        };
-        if apply(&changed, std::slice::from_ref(&fix)).is_err() {
-            continue;
-        }
-        let (alone, _) = apply(&clean, std::slice::from_ref(&new)).map_err(|_| {
-            Refusal("The new change does not apply to the code on its own.".into())
-        })?;
-        return Ok((new, alone));
-    }
-    Err(Refusal(
-        "The new change cannot be placed so that it can be undone. Change other lines.".into(),
-    ))
 }
 
 /// A smell changes form, not behaviour: the suite must still pass with only this mutation applied, so an edit that
@@ -231,7 +172,8 @@ impl<'a> BehaviourKept<'a> {
         let Settled::Answered(replacement) = asked? else {
             return Ok(None);
         };
-        let Ok((edit, alone)) = placed(&input, &replacement) else {
+        let others: Vec<Edit> = input.others.iter().map(|edit| edit.0.clone()).collect();
+        let Ok((edit, alone)) = placed(&input.files, &others, &replacement.change) else {
             return Ok(None);
         };
         Ok(Some((

@@ -537,11 +537,9 @@ async fn a_tutor_reply_is_read_at_any_length() -> Result<()> {
     let session = started_session(&evidence).await?;
     let passage = "The passage states one condition after another. ".repeat(20);
     let sources = [passage_source(&passage)];
-    let cited = json!(["s1", "s2", "s3"]);
+    let cited = json!(["q1", "q2", "q3"]);
     let every_sentence: Vec<String> = (1..=18).map(|at| format!("u{at}")).collect();
-    let proposal = |text: &str, evidence: &[String]| {
-        json!([{"kind": "misconception", "text": text, "evidence": evidence}])
-    };
+    let proposal = |text: &str, evidence: &[String]| json!([{"kind": "misconception", "text": text, "evidence": evidence}]);
     let short = "Which step carries the weight?";
     let small = tutor_reply(short, json!([]), json!([]));
     let padded = format!("{small}{}", " ".repeat(20_001));
@@ -585,7 +583,7 @@ async fn a_reference_solution_is_read_at_any_length() -> Result<()> {
     for (what, text) in [
         ("a short solution", reply(short, json!([]))),
         ("solution", reply(&long, json!([]))),
-        ("citations", reply(short, json!(["s1", "s2", "s3"]))),
+        ("citations", reply(short, json!(["q1", "q2", "q3"]))),
         ("whitespace around the reply", padded),
     ] {
         let llm = Reply::new(text);
@@ -733,12 +731,8 @@ mod contracts {
     use lattice_core::application::services::model_contract::shape::{Each, Pointers, Shape};
     use lattice_core::application::services::model_contract::shown::{Scope, Told};
     use lattice_core::application::services::model_contract::test_support::snapshot::rendered;
-    use lattice_core::application::services::model_contract::test_support::taint::{
-        holds, Marks,
-    };
-    use lattice_core::application::services::model_contract::test_support::{
-        ScriptedModel, Sent,
-    };
+    use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
+    use lattice_core::application::services::model_contract::test_support::{ScriptedModel, Sent};
 
     const STEP: &str = "The first step is to hold the damper shut.";
     const TIDE: &str = "The second step holds when the tide turns.";
@@ -757,10 +751,7 @@ mod contracts {
         let at = prompt.find(text).expect("the text is shown");
         let head = &prompt[..at];
         let open = head.rfind('[').expect("a handle stands before the text");
-        head[open + 1..]
-            .trim_end()
-            .trim_end_matches(']')
-            .to_owned()
+        head[open + 1..].trim_end().trim_end_matches(']').to_owned()
     }
 
     /// The task a request carries: the last user message, a JSON object.
@@ -883,7 +874,7 @@ mod contracts {
         let model = tutoring(|prompt, _| {
             tutor_reply(
                 "Which step carries the weight?",
-                json!([handle_before(prompt, TIDE), "s99", "u1"]),
+                json!([handle_before(prompt, TIDE), "q99", "u1"]),
                 json!([]),
             )
         });
@@ -891,6 +882,69 @@ mod contracts {
         assert_eq!(said.citations.len(), 1);
         assert_eq!(said.citations[0].quote, TIDE);
         assert_eq!(model.count::<TutorReply>(), 1);
+        Ok(())
+    }
+
+    fn handles_under(schema: &serde_json::Value, property: &str, found: &mut Vec<String>) {
+        match schema {
+            serde_json::Value::Object(map) => {
+                for (key, value) in map {
+                    if key == "properties" {
+                        if let Some(inner) = value.get(property) {
+                            strings_of(inner, found);
+                        }
+                    }
+                    handles_under(value, property, found);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    handles_under(item, property, found);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn strings_of(value: &serde_json::Value, found: &mut Vec<String>) {
+        match value {
+            serde_json::Value::String(text) => found.push(text.clone()),
+            serde_json::Value::Object(map) => map.values().for_each(|v| strings_of(v, found)),
+            serde_json::Value::Array(items) => items.iter().for_each(|v| strings_of(v, found)),
+            _ => {}
+        }
+    }
+
+    #[tokio::test]
+    async fn citations_name_only_passage_sentences_and_evidence_only_the_artifact() -> Result<()> {
+        let session = started_session("I tried the second approach first.").await?;
+        let sources = [passage_source(&format!("{STEP} {TIDE}"))];
+        let model =
+            tutoring(|_, _| tutor_reply("Which step carries the weight?", json!([]), json!([])));
+        tutor(&model, &session, &tutor_request(), &sources).await?;
+        let sent = model.sent();
+        let schema = sent[0]
+            .request
+            .schema()
+            .expect("a schema")
+            .as_json()
+            .clone();
+        let (mut cited, mut resting) = (Vec::new(), Vec::new());
+        handles_under(&schema, "citations", &mut cited);
+        handles_under(&schema, "evidence", &mut resting);
+        let handles = |found: &[String], prefix: &str| {
+            found
+                .iter()
+                .filter(|text| text.len() > 1 && text[1..].chars().all(|c| c.is_ascii_digit()))
+                .all(|text| text.starts_with(prefix))
+        };
+        assert!(cited.iter().any(|text| text.starts_with('q')), "{cited:?}");
+        assert!(handles(&cited, "q"), "{cited:?}");
+        assert!(
+            resting.iter().any(|text| text.starts_with('u')),
+            "{resting:?}"
+        );
+        assert!(handles(&resting, "u"), "{resting:?}");
         Ok(())
     }
 

@@ -23,10 +23,10 @@ mod lesson_rules;
 pub(crate) mod outline;
 mod recall;
 
-pub use lesson::{lesson_schema, prepare_lesson, prepare_lesson_with_references};
-pub(crate) use lesson::{lesson_schema_counting, reads_as_lesson, reads_as_part};
 #[cfg(test)]
 pub(crate) use lesson::scripted_lesson;
+pub use lesson::{lesson_schema, prepare_lesson, prepare_lesson_with_references};
+pub(crate) use lesson::{lesson_schema_counting, reads_as_lesson, reads_as_part};
 pub use lesson_rules::lesson_rule_notes;
 pub(crate) use lesson_rules::{
     lesson_rules, prose_sentences, split_check, teaching_sentences, CHECK_REVEAL,
@@ -35,7 +35,6 @@ pub(crate) use outline::{
     decode_outline, draft_outline, module_rules, GeneratedEvidenceText, GeneratedModule,
     GeneratedOutlineLesson, Titles,
 };
-pub use outline::{generate_outline, generate_outline_with_progress};
 pub(crate) use recall::recall_output_tokens;
 pub use recall::{generate_recall_drafts, GeneratedLearningCardDraft};
 
@@ -108,15 +107,6 @@ fn source_index_schema(source_count: usize) -> serde_json::Value {
         json!({"type":"null"})
     } else {
         json!({"type":"integer","minimum":0,"maximum":source_count - 1})
-    }
-}
-
-/// Outline items are plan decisions: a citation is allowed, never required.
-fn optional_source_index_schema(source_count: usize) -> serde_json::Value {
-    if source_count == 0 {
-        json!({"type":"null"})
-    } else {
-        json!({"anyOf":[{"type":"null"},{"type":"integer","minimum":0,"maximum":source_count - 1}]})
     }
 }
 

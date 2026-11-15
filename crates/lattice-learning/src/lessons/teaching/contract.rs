@@ -7,15 +7,18 @@ use crate::dto::LearningBlockKind;
 use crate::lessons::content_verification::{unit_fields, Protected};
 use crate::lessons::structured_call::{Asking, CallKind, ReasonFirst};
 use crate::review_findings::{subject_of, FindingSite, PlanCheck, ReviewFinding};
+use asks::{
+    About, Course, Decides, Finding, Input, Mark, Planned, Reported, ReportsInput, Taught, Verdict,
+};
 use lattice_core::application::services::model_contract::ask::{ask_each, ask_new, Settled};
+use lattice_core::application::services::model_contract::shown::Picked;
 use lattice_core::application::services::model_contract::shown::{Scope, Told};
+use lattice_core::application::services::model_contract::units::{Texts, Unit, UnitRef};
 use lattice_core::{
     application::ports::LLMPort, protocol, shared::error::Result, shared::protocol::Protocol,
 };
+use sentence::{Lesson, Whose};
 use serde_json::{json, Value};
-use asks::{About, Course, Decides, Finding, Input, Mark, Planned, ReportsInput, Reported, Taught, Verdict};
-use lattice_core::application::services::model_contract::shown::Picked;
-use sentence::{Lesson, Place, Sentence};
 
 /// What it takes to have been shown how: the one definition the check, its brief and the note share.
 macro_rules! shown {
@@ -60,7 +63,10 @@ macro_rules! use_taught {
 /// What the check decides about the plan's items: the one definition the asks that name it share.
 macro_rules! planned_check {
     () => {
-        concat!("planned: for every item of thisLesson.planned, say whether the lesson teaches it. ", taught!())
+        concat!(
+            "planned: for every item of thisLesson.planned, say whether the lesson teaches it. ",
+            taught!()
+        )
     };
 }
 
@@ -95,9 +101,9 @@ macro_rules! intro {
 mod asks;
 pub(crate) mod confirm;
 mod receipts;
-mod sentence;
 #[cfg(test)]
 pub(crate) mod scripted;
+mod sentence;
 pub(super) use receipts::Receipts;
 
 /// What this check decides, in the words the evidence gate is given.
@@ -130,7 +136,8 @@ const PLANNED_BRIEF: &str = "Go through the lesson part by part in order. For ea
 
 const FIND_BRIEF: &str = concat!("Go through the lesson part by part in order. For each thing a part asks the learner to do or use that they need to be shown how to do, each variant of it, and each step its practice deliverable needs, including how the learner records or saves the work anywhere but their own notes, say where the lesson, the earlier lessons or the learner's prior knowledge taught it: an earlier part, or the same part up to and including the words that ask for it, and whether that place says ", shown!(), ". Compare statements that may conflict, including every example and every answer. Note each reference to something the learner cannot see. Note every place that uses a thing before it is taught, and where the lesson teaches it afterwards if it does.");
 
-const REPORTS_BRIEF: &str = "For each report, say whether the defect it describes is of a kind these four checks decide.";
+const REPORTS_BRIEF: &str =
+    "For each report, say whether the defect it describes is of a kind these four checks decide.";
 
 /// The room an answer of the check is given.
 const ANSWER_TOKENS: usize = 6000;
@@ -339,31 +346,29 @@ struct Hit<'a> {
     found: Located,
 }
 
-/// The sentence of the lesson `place` names, when it names one.
-fn hit_at<'a>(parts: &'a [Part], place: &Place) -> Option<Hit<'a>> {
-    let Place::Lesson { part, text, index } = place else {
+/// The sentence of the lesson `unit` is, when it is one.
+fn hit_at<'a>(parts: &'a [Part], texts: &Texts<Whose>, unit: UnitRef) -> Option<Hit<'a>> {
+    let (Whose::Lesson { part, text }, words) = texts.found(unit)? else {
         return None;
     };
-    let owner = parts.get(*part)?;
-    let words = owner.texts.get(*text)?;
-    let (start, end) = sentence::spans(words).into_iter().nth(*index)?;
+    let span = sentence::span_of(texts, unit)?;
     Some(Hit {
         order: *part,
-        part: owner,
+        part: parts.get(*part)?,
         found: Located {
             text: *text,
-            start,
-            end,
-            exact: words.get(start..end)?.to_owned(),
+            start: span.start,
+            end: span.end,
+            exact: words.to_owned(),
         },
     })
 }
 
 /// The sentences `cited` name in the lesson, in the order the learner meets them, each once.
-fn hits_of<'a>(parts: &'a [Part], cited: &[Picked<Sentence>]) -> Vec<Hit<'a>> {
+fn hits_of<'a>(parts: &'a [Part], texts: &Texts<Whose>, cited: &[Picked<Unit>]) -> Vec<Hit<'a>> {
     let mut hits: Vec<Hit> = cited
         .iter()
-        .filter_map(|unit| hit_at(parts, &unit.reference))
+        .filter_map(|unit| hit_at(parts, texts, unit.reference))
         .collect();
     hits.sort_by_key(|hit| place_of(hit));
     hits.dedup_by_key(|hit| place_of(hit));
@@ -424,6 +429,7 @@ fn read<'a>(
     planned: Vec<Settled<Taught>>,
     found: &'a [Finding],
     parts: &'a [Part],
+    texts: &Texts<Whose>,
 ) -> (Reading<'a>, Vec<Unseen<'a>>) {
     let mut reading = Reading {
         taught: Vec::new(),
@@ -437,7 +443,7 @@ fn read<'a>(
                 verdict: Verdict::Taught,
                 units,
             }) => {
-                let hits = hits_of(parts, &units);
+                let hits = hits_of(parts, texts, &units);
                 if hits.is_empty() {
                     tracing::warn!(item = %item.id, "The check against the course plan cited no sentence of the lesson for a planned item; it is put to the confirming read");
                     reading.untaught.push(item);
@@ -455,25 +461,21 @@ fn read<'a>(
     let mut unseen = Vec::new();
     for finding in found {
         match finding {
-            Finding::Used {
-                what,
-                uses,
-                later,
-            } => {
-                let uses = hits_of(parts, uses);
+            Finding::Used { what, uses, later } => {
+                let uses = hits_of(parts, texts, uses);
                 if uses.is_empty() {
                     continue;
                 }
                 reading.uses.push(Use {
                     what,
                     uses,
-                    taught_later: hits_of(parts, later).into_iter().next(),
+                    taught_later: hits_of(parts, texts, later).into_iter().next(),
                 });
             }
             Finding::Clash { first, second } => {
                 if let (Some(first), Some(second)) = (
-                    hit_at(parts, &first.reference),
-                    hit_at(parts, &second.reference),
+                    hit_at(parts, texts, first.reference),
+                    hit_at(parts, texts, second.reference),
                 ) {
                     reading.clashes.push(Clash { first, second });
                 }
@@ -483,7 +485,7 @@ fn read<'a>(
                 what,
                 never_shown: Mark::Yes,
             } => {
-                if let Some(hit) = hit_at(parts, &words.reference) {
+                if let Some(hit) = hit_at(parts, texts, words.reference) {
                     unseen.push(Unseen { hit, what });
                 }
             }
@@ -876,7 +878,7 @@ pub(super) async fn check(
         ask_findings(llm, &course, &lesson, &reports),
         ask_reports(llm, &lesson, &reports),
     )?;
-    let (reading, unseen) = read(&items, taught, &found, &parts);
+    let (reading, unseen) = read(&items, taught, &found, &parts, &lesson.texts());
     let settled = confirm::settle(
         llm,
         reading,

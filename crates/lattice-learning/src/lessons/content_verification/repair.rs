@@ -23,7 +23,9 @@ use lattice_core::application::services::model_contract::ask::{
 };
 use lattice_core::application::services::model_contract::edit::{consistent, Anchor, Change};
 use lattice_core::application::services::model_contract::packed::Packed;
-use lattice_core::application::services::model_contract::shape::{Authored, Each, Fields, Form, Why};
+use lattice_core::application::services::model_contract::shape::{
+    Authored, Each, Fields, Form, Why,
+};
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Internal, Kind, Picked, Scope, Showing, Told,
 };
@@ -451,10 +453,7 @@ impl Answered for SectionRepair {
             .zip(passages.iter())
             .map(|((place, _), (handle, _))| (*place, handle.written()))
             .collect();
-        let excerpts: Vec<Value> = shown_passages
-            .iter()
-            .filter_map(Passage::excerpt)
-            .collect();
+        let excerpts: Vec<Value> = shown_passages.iter().filter_map(Passage::excerpt).collect();
         let quotes = Quotes::of(excerpts.iter());
         let quotables = showing.show(quotes.all())?;
         let part = input.part.value();
@@ -501,7 +500,7 @@ impl Answered for SectionRepair {
             .iter()
             .map(|(handle, passage)| {
                 let text = match *passage.source_index.value() {
-                    Some(index) => Quotes::marked(index, &passage.text.0, &quotables),
+                    Some(index) => quotes.marked(index, &passage.text.0, &quotables),
                     None => passage.text.0.clone(),
                 };
                 json!({"passage": handle.written(), "sourceTitle": passage.title, "text": text})
@@ -843,13 +842,11 @@ impl Taking<'_> {
         } else {
             json!({"blocks": held, "questions": []})
         };
-        let validator = match jsonschema::JSONSchema::compile(&section_schema(
-            self.schema,
-            self.field,
-        )) {
-            Ok(validator) => validator,
-            Err(error) => return Some(format!("Invalid repair schema: {error}")),
-        };
+        let validator =
+            match jsonschema::JSONSchema::compile(&section_schema(self.schema, self.field)) {
+                Ok(validator) => validator,
+                Err(error) => return Some(format!("Invalid repair schema: {error}")),
+            };
         if !validator.is_valid(&shaped) {
             return Some(
                 "The edited section does not match the lesson schema. Its prior draft is saved."

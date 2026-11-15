@@ -42,7 +42,7 @@ impl LLMPort for Sweep {
         if crate::lessons::structured_call::is_draft_request(request) {
             return Ok(fixture_completion(request, Vec::new()));
         }
-        if system.starts_with(confirm::SYSTEM) {
+        if system.starts_with(confirm::CLASH_SYSTEM) {
             if let Ok(asked) = serde_json::from_str::<Value>(user) {
                 self.requests.lock().unwrap().push(asked);
             }
@@ -276,9 +276,7 @@ async fn a_contradiction_the_reported_ask_lists_is_confirmed_the_same_way() -> R
 
 #[test]
 fn the_confirming_read_says_when_two_statements_contradict() {
-    assert!(confirm::SYSTEM.contains(concat!(
-        " are taught too.\n",
-        "Two statements contradict each other when there is a case in which one says something happens or holds and the other says it cannot; statements that can both be true, read with their conditions, do not.",
-        "\nCopy every quotation exactly"
-    )));
+    assert!(confirm::CLASH_SYSTEM.contains(
+        "Two statements contradict each other when there is a case in which one says something happens or holds and the other says it cannot; statements that can both be true, read with their conditions, do not."
+    ));
 }

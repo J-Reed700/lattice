@@ -9,9 +9,8 @@
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
-use lattice_core::application::ports::llm_port::{chars_within_tokens, SamplingOverride};
+use lattice_core::application::ports::llm_port::chars_within_tokens;
 use lattice_core::application::ports::LLMPort;
-use lattice_core::application::services::grounded_generation::CallOptions;
 use lattice_core::application::services::model_contract::ask::{
     ask, ask_each, Alone, Answered, Plain, Says, Settled,
 };
@@ -314,21 +313,6 @@ impl Answered for MemoryForgetting {
     }
 }
 
-/// How the run's deadline queues and times a summariser call.
-fn call_options(deadline: &Deadline) -> std::result::Result<CallOptions, CompactionError> {
-    let remaining = deadline.slice()?;
-    Ok(CallOptions {
-        priority: deadline.priority,
-        cancel: deadline.cancellation.clone(),
-        cache_key: deadline.cache_key.clone(),
-        // Greedy decoding, so the same passages always yield the same summary.
-        sampling: Some(SamplingOverride::deterministic()),
-        time_budget: remaining,
-        no_time_limit: remaining.is_none(),
-        reasoning_effort: None,
-    })
-}
-
 /// A provider fault ends the run as a model failure, unless the run's own
 /// deadline or cancellation is what ended it.
 fn model_failure(
@@ -353,7 +337,7 @@ async fn edit_summary<C>(
 where
     C: Answered<Answer = Change<Unit, String>>,
 {
-    let options = call_options(deadline)?;
+    let options = deadline.call_options()?;
     let settled = ask::<C>(llm, &Plain, &mut Scope::for_question(), input, &options)
         .await
         .map_err(|error| model_failure(deadline, error))?;
@@ -399,7 +383,7 @@ async fn without_restatements(
         return Ok(written);
     }
     let forgotten: Vec<Told<String>> = forgotten_labels.iter().cloned().map(Told).collect();
-    let options = call_options(deadline)?;
+    let options = deadline.call_options()?;
     let judged = ask_each::<MemoryForgetting>(
         llm,
         &Plain,

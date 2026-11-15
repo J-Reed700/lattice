@@ -6,8 +6,11 @@ const OWN_NOTES: &str = "Writing in the learner's own notes, on paper or whereve
 #[test]
 fn the_check_and_the_confirming_read_share_the_own_notes_sentence() {
     assert!(FIND_SYSTEM.contains(OWN_NOTES), "{FIND_SYSTEM}");
-    assert!(confirm::USE_SYSTEM.contains(OWN_NOTES), "{}", confirm::USE_SYSTEM);
-    assert!(confirm::SYSTEM.contains(OWN_NOTES), "{}", confirm::SYSTEM);
+    assert!(
+        confirm::USE_SYSTEM.contains(OWN_NOTES),
+        "{}",
+        confirm::USE_SYSTEM
+    );
 }
 
 #[test]
@@ -16,7 +19,10 @@ fn the_check_excepts_the_learners_own_notes_from_a_recorded_use() {
         !FIND_SYSTEM.contains("records or saves the work)"),
         "{FIND_SYSTEM}"
     );
-    assert!(!FIND_BRIEF.contains("records or saves the work,"), "{FIND_BRIEF}");
+    assert!(
+        !FIND_BRIEF.contains("records or saves the work,"),
+        "{FIND_BRIEF}"
+    );
     assert!(FIND_SYSTEM.contains("records or saves the work anywhere but their own notes)"));
     assert!(FIND_BRIEF.contains("records or saves the work anywhere but their own notes,"));
 }

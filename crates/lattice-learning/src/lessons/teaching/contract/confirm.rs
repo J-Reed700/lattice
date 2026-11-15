@@ -4,7 +4,7 @@
 //! statements it found contradicting is put to the model once more as a single
 //! question about that one thing.
 use super::asks::{Mark, Verdict};
-use super::sentence::{self, rows, Lesson, Place, Sentence, Spot};
+use super::sentence::{self, Lesson, Spot, Whose};
 use super::{
     follows, hit_at, hits_of, shown_parts, Clash, Hit, Item, Part, Reading, Use, ANSWER_TOKENS,
     POLICY,
@@ -17,8 +17,9 @@ use lattice_core::application::services::model_contract::shape::{
     Authored, Fields, Form, Value as One,
 };
 use lattice_core::application::services::model_contract::shown::{
-    Handle, Internal, Picked, Scope, Showing, Told,
+    Drawn, Internal, Kind, Picked, Scope, Showing, Told,
 };
+use lattice_core::application::services::model_contract::units::{Grain, Texts, Unit, UnitRef};
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{
     application::ports::LLMPort,
@@ -77,13 +78,13 @@ macro_rules! answer_intro {
 #[cfg(test)]
 pub(crate) const INTRO: &str = answer_intro!();
 
-pub(crate) const SYSTEM: &str = concat!(answer_intro!(), "A planned item is taught when the lesson teaches it. ", taught!(), "\nA part uses something when its words ask the learner to do or use it, when its practice deliverable needs it, or when it treats it as known. What a part only mentions, and does not ask of the learner, it does not use; then asked is false and quote is empty.\nA use is taught when what the part uses has been taught before it or in it. ", use_taught!(), " What the actions and terms of earlierLessons cover, and the learner's priorKnowledge, are taught too.\nTwo statements contradict each other when there is a case in which one says something happens or holds and the other says it cannot; statements that can both be true, read with their conditions, do not.\nCopy every quotation exactly from the text it comes from; a quotation is empty when nothing teaches it.");
+pub(crate) const CLASH_SYSTEM: &str = concat!(answer_intro!(), "Two statements contradict each other when there is a case in which one says something happens or holds and the other says it cannot; statements that can both be true, read with their conditions, do not.");
 
 /// The confirming read of a planned item.
 pub(crate) const PLANNED_SYSTEM: &str = concat!(answer_intro!(), "A planned item is taught when the lesson teaches it. ", taught!(), "\nCite in units the sentences that teach it, by the names they are shown under; units is empty when nothing teaches it.");
 
 /// The confirming read of a use.
-pub(crate) const USE_SYSTEM: &str = concat!(answer_intro!(), "A part uses something when its words ask the learner to do or use it, when its practice deliverable needs it, or when it treats it as known. What a part only mentions, and does not ask of the learner, it does not use; then asked is no and units is empty.\nA use is taught when what the part uses has been taught before it or in it. ", use_taught!(), " What the actions and terms of earlierLessons cover, and the learner's priorKnowledge, are taught too.\nCite in units the sentences that teach it, by the names they are shown under, whether they are in the lesson, in earlierLessons or in priorKnowledge.");
+pub(crate) const USE_SYSTEM: &str = concat!(answer_intro!(), "A part uses something when its words ask the learner to do or use it, when its practice deliverable needs it, or when it treats it as known. What a part only mentions, and does not ask of the learner, it does not use; then asked is no and units is empty.\nA use is taught when what the part uses has been taught before it or in it. ", use_taught!(), " What the actions and terms of earlierLessons cover, and the learner's priorKnowledge, are taught too.\nCite in units the sentences of the lesson or of priorKnowledge that teach it, and in given the actions and terms of earlierLessons that teach it, by the names they are shown under.");
 
 const PLANNED_BRIEF: &str = "Go through the lesson part by part in order and find the words that teach the item. If there are none, note the part where the item belongs.";
 
@@ -126,7 +127,7 @@ pub(crate) struct PlannedInput {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Belongs {
     pub(super) verdict: Verdict,
-    pub(super) units: Vec<Picked<Sentence>>,
+    pub(super) units: Vec<Picked<Unit>>,
     pub(super) belongs: Option<Picked<Spot>>,
 }
 
@@ -134,7 +135,7 @@ impl Authored for Belongs {
     fn form() -> Form {
         Form::new()
             .word::<Verdict>("taught")
-            .cite::<Sentence>("units")
+            .cite::<Unit>("units")
             .point_or_none::<Spot>("belongs")
     }
 
@@ -160,13 +161,13 @@ impl Answered for ConfirmPlanned {
     const ALONE: Alone = Alone::Fails;
 
     fn says(input: &PlannedInput, showing: &mut Showing<'_>) -> Result<Says> {
-        let flat = input.lesson.sentences();
-        let sentences = showing.show(&flat)?;
+        let texts = input.lesson.texts();
+        let shown = sentence::show(&texts, showing)?;
         let places = input.lesson.spots();
         let spots = showing.show(&places)?;
         let (sections, questions) = input
             .lesson
-            .said(Some(sentences.handles()), spots.handles());
+            .said(&sentence::labelled(&texts, &shown), spots.handles());
         let question = if places.is_empty() {
             format!(
                 "Does this lesson teach the {} '{}'? If it does, cite in units the sentences that teach it.",
@@ -200,22 +201,64 @@ impl Answered for ConfirmPlanned {
     }
 }
 
-/// What an earlier lesson gives, one sentence to a thing.
+/// Where a thing an earlier lesson gives stands: the earlier lesson, and which of everything the earlier lessons give.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Gave {
+    pub(super) lesson: usize,
+    pub(super) given: usize,
+}
+
+/// One thing an earlier lesson gives, as the model may cite it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Given {
-    pub(super) title: Option<Sentence>,
-    pub(super) actions: Vec<Sentence>,
-    pub(super) terms: Vec<Sentence>,
+    pub(super) at: Gave,
+    pub(super) words: Told<String>,
+}
+
+impl Kind for Given {
+    const PREFIX: &'static str = "e";
+    const DRAWN: Drawn = Drawn::Itself;
+    type Ref = Gave;
+
+    fn reference(&self) -> Gave {
+        self.at.clone()
+    }
+}
+
+/// What an earlier lesson gives: its title, its actions and its terms.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct Earlier {
+    pub(super) title: Option<Given>,
+    pub(super) actions: Vec<Given>,
+    pub(super) terms: Vec<Given>,
+}
+
+impl Earlier {
+    fn all(&self) -> impl Iterator<Item = &Given> {
+        self.title.iter().chain(&self.actions).chain(&self.terms)
+    }
 }
 
 /// The confirming read of a use: the lesson up to it, what the learner knows and what earlier lessons gave.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct UseInput {
     pub(super) lesson: Lesson,
-    pub(super) prior: Vec<Sentence>,
-    pub(super) earlier: Vec<Given>,
-    pub(super) at: Internal<Place>,
+    pub(super) prior: Option<Told<String>>,
+    pub(super) earlier: Vec<Earlier>,
+    pub(super) at: Internal<UnitRef>,
     pub(super) what: Told<String>,
+}
+
+impl UseInput {
+    /// The learner's prior knowledge, then the lesson.
+    fn texts(&self) -> Texts<Whose> {
+        let mut texts = Texts::new();
+        if let Some(prior) = &self.prior {
+            texts.push(Whose::Prior, "prior", &prior.0, Grain::Sentence);
+        }
+        self.lesson.add_to(&mut texts);
+        texts
+    }
 }
 
 /// What the model decided about one use.
@@ -223,7 +266,8 @@ pub(crate) struct UseInput {
 pub(crate) struct Standing {
     pub(super) asked: Mark,
     pub(super) taught: Mark,
-    pub(super) units: Vec<Picked<Sentence>>,
+    pub(super) units: Vec<Picked<Unit>>,
+    pub(super) given: Vec<Picked<Given>>,
 }
 
 impl Authored for Standing {
@@ -231,7 +275,8 @@ impl Authored for Standing {
         Form::new()
             .word::<Mark>("asked")
             .word::<Mark>("taught")
-            .cite::<Sentence>("units")
+            .cite::<Unit>("units")
+            .cite::<Given>("given")
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
@@ -239,6 +284,7 @@ impl Authored for Standing {
             asked: fields.word("asked")?,
             taught: fields.word("taught")?,
             units: fields.cite("units"),
+            given: fields.cite("given"),
         })
     }
 }
@@ -251,77 +297,53 @@ impl Contract for ConfirmUse {
     type Input = UseInput;
 }
 
-/// The names of the `count` sentences from `from` on; `from` moves past them.
-fn held<'a>(
-    all: &'a [Handle<Sentence>],
-    from: &mut usize,
-    count: usize,
-) -> &'a [Handle<Sentence>] {
-    let held = all
-        .get(*from..from.saturating_add(count))
-        .unwrap_or_default();
-    *from = from.saturating_add(count);
-    held
-}
-
 impl Answered for ConfirmUse {
     type Answer = One<Standing>;
     const ALONE: Alone = Alone::Fails;
 
     fn says(input: &UseInput, showing: &mut Showing<'_>) -> Result<Says> {
-        let mut flat: Vec<Sentence> = input.prior.clone();
-        for given in &input.earlier {
-            flat.extend(given.title.iter().cloned());
-            flat.extend(given.actions.iter().cloned());
-            flat.extend(given.terms.iter().cloned());
-        }
-        let before = flat.len();
-        flat.extend(input.lesson.sentences());
-        let shown = showing.show(&flat)?;
-        let all = shown.handles();
-        let mut from = 0;
-        let prior = if input.prior.is_empty() {
-            Value::Null
-        } else {
-            Value::String(rows(
-                Some(held(all, &mut from, input.prior.len())),
-                &input.prior,
-            ))
+        let texts = input.texts();
+        let shown = sentence::show(&texts, showing)?;
+        let rows = sentence::labelled(&texts, &shown);
+        let skip = usize::from(input.prior.is_some());
+        let prior = rows
+            .first()
+            .filter(|rows| input.prior.is_some() && !rows.is_empty())
+            .map_or(Value::Null, |rows| Value::String(rows.clone()));
+        let flat: Vec<Given> = input
+            .earlier
+            .iter()
+            .flat_map(Earlier::all)
+            .cloned()
+            .collect();
+        let given = showing.show(&flat)?;
+        let mut names = given.iter();
+        let mut row = || {
+            names
+                .next()
+                .map(|(handle, thing)| format!("{} {}", handle.bracketed(), thing.words.0))
+                .unwrap_or_default()
         };
         let mut earlier = Vec::new();
-        for given in &input.earlier {
-            let title = given.title.as_ref().map(|title| {
-                rows(
-                    Some(held(all, &mut from, 1)),
-                    std::slice::from_ref(title),
-                )
-            });
-            let listed = |from: &mut usize, sentences: &[Sentence]| -> Vec<String> {
-                sentences
-                    .iter()
-                    .map(|sentence| {
-                        rows(
-                            Some(held(all, from, 1)),
-                            std::slice::from_ref(sentence),
-                        )
-                    })
-                    .collect()
-            };
-            let actions = listed(&mut from, &given.actions);
-            let terms = listed(&mut from, &given.terms);
+        for gave in &input.earlier {
+            let title = gave.title.as_ref().map(|_| row());
+            let actions: Vec<String> = gave.actions.iter().map(|_| row()).collect();
+            let terms: Vec<String> = gave.terms.iter().map(|_| row()).collect();
             earlier.push(json!({"title": title, "actions": actions, "terms": terms}));
         }
-        let (sections, questions) = input.lesson.said(all.get(before..), &[]);
-        let at = flat
+        let (sections, questions) = input.lesson.said(rows.get(skip..).unwrap_or_default(), &[]);
+        let at = shown
             .iter()
-            .zip(all)
-            .find(|(sentence, _)| sentence.place == *input.at.value())
-            .map(|(_, handle)| handle.written())
+            .flat_map(|shown| shown.iter())
+            .find(|(_, unit)| unit.reference() == *input.at.value())
+            .map(|(handle, _)| handle.written())
             .ok_or_else(|| {
-                AppError::InternalError("The use the confirming read asks about is not shown.".into())
+                AppError::InternalError(
+                    "The use the confirming read asks about is not shown.".into(),
+                )
             })?;
         let question = format!(
-            concat!("Does the sentence {at} ask the learner to do or use {what}, need it for its practice deliverable, or treat it as known? If it does, has the lesson at or before that sentence, or the earlier lessons' actions and terms, or the learner's prior knowledge, taught it: ", each_shown!(), "? Cite in units the sentences that say so; units is empty when nothing does."),
+            concat!("Does the sentence {at} ask the learner to do or use {what}, need it for its practice deliverable, or treat it as known? If it does, has the lesson at or before that sentence, or the earlier lessons' actions and terms, or the learner's prior knowledge, taught it: ", each_shown!(), "? Cite in units the sentences that say so, and in given the earlier lessons' actions and terms that do; both are empty when nothing does."),
             at = at,
             what = input.what.0
         );
@@ -340,9 +362,9 @@ impl Answered for ConfirmUse {
     }
 
     fn accept(_input: &UseInput, standing: &Standing) -> std::result::Result<(), Refusal> {
-        if standing.taught == Mark::Yes && standing.units.is_empty() {
+        if standing.taught == Mark::Yes && standing.units.is_empty() && standing.given.is_empty() {
             return Err(Refusal(
-                "Cite in units at least one sentence that teaches it. Naming words in your answer does not cite them.".into(),
+                "Cite in units or in given at least one sentence that teaches it. Naming words in your answer does not cite them.".into(),
             ));
         }
         Ok(())
@@ -491,16 +513,12 @@ async fn read_planned<'a>(
         Answer::Unanswered(why) => return Err(layer::failed(&why)),
     };
     let hits = if belongs.verdict == Verdict::Taught {
-        hits_of(parts, &belongs.units)
+        hits_of(parts, &input.lesson.texts(), &belongs.units)
     } else {
         Vec::new()
     };
     Ok(if hits.is_empty() {
-        Verdicts::Belongs(
-            belongs
-                .belongs
-                .and_then(|spot| parts.get(spot.reference)),
-        )
+        Verdicts::Belongs(belongs.belongs.and_then(|spot| parts.get(spot.reference)))
     } else {
         Verdicts::Taught(hits)
     })
@@ -545,30 +563,23 @@ async fn first_unmet<'a>(
     Ok(None)
 }
 
-/// The sentences of `prior`, the learner's prior knowledge, and of what the earlier lessons give.
-fn known(prior: Option<&Value>, earlier: &[Value]) -> (Vec<Sentence>, Vec<Given>) {
-    let sentences = prior.map_or_else(Vec::new, |prior| {
-        let text = prior
-            .as_str()
-            .map_or_else(|| prior.to_string(), str::to_owned);
-        sentence::spans(&text)
-            .into_iter()
-            .filter_map(|(start, end)| text.get(start..end))
-            .enumerate()
-            .map(|(index, words)| Sentence::new(Place::Prior { index }, words))
-            .collect()
+/// The learner's prior knowledge, and what the earlier lessons give.
+fn known(prior: Option<&Value>, earlier: &[Value]) -> (Option<Told<String>>, Vec<Earlier>) {
+    let prior = prior.filter(|prior| !prior.is_null()).map(|prior| {
+        Told(
+            prior
+                .as_str()
+                .map_or_else(|| prior.to_string(), str::to_owned),
+        )
     });
     let mut given = 0;
     let mut one = |lesson: usize, words: &str| {
-        let sentence = Sentence::new(
-            Place::Earlier {
-                lesson,
-                given,
-            },
-            words,
-        );
+        let thing = Given {
+            at: Gave { lesson, given },
+            words: Told(words.to_owned()),
+        };
         given += 1;
-        sentence
+        thing
     };
     let gave = earlier
         .iter()
@@ -584,7 +595,7 @@ fn known(prior: Option<&Value>, earlier: &[Value]) -> (Vec<Sentence>, Vec<Given>
                     .map(str::to_owned)
                     .collect()
             };
-            Given {
+            Earlier {
                 title: entry
                     .get("title")
                     .and_then(Value::as_str)
@@ -600,7 +611,7 @@ fn known(prior: Option<&Value>, earlier: &[Value]) -> (Vec<Sentence>, Vec<Given>
             }
         })
         .collect();
-    (sentences, gave)
+    (prior, gave)
 }
 
 /// What the confirming read says of one use of `what`.
@@ -612,27 +623,24 @@ async fn read_use(
     prior: Option<&Value>,
     earlier: &[Value],
 ) -> Result<Read> {
-    let text = used.part.texts.get(used.found.text);
-    let index = text.and_then(|text| {
-        sentence::spans(text)
-            .into_iter()
-            .position(|span| span == (used.found.start, used.found.end))
-    });
-    let Some(index) = index else {
+    let lesson = Lesson::of(parts, used.order + 1, |_| false);
+    let at = sentence::unit_at(
+        &lesson.texts(),
+        used.order,
+        used.found.text,
+        (used.found.start, used.found.end),
+    );
+    let Some(at) = at else {
         return Err(AppError::InternalError(
             "The use the confirming read asks about is not a sentence of the lesson.".into(),
         ));
     };
     let (prior, earlier) = known(prior, earlier);
     let input = UseInput {
-        lesson: Lesson::of(parts, used.order + 1, |_| false),
+        lesson,
         prior,
         earlier,
-        at: Internal::of(Place::Lesson {
-            part: used.order,
-            text: used.found.text,
-            index,
-        }),
+        at: Internal::of(at),
         what: Told(what.to_owned()),
     };
     let settled = layer::ask::<ConfirmUse>(
@@ -649,19 +657,26 @@ async fn read_use(
     };
     Ok(if answer.asked == Mark::No {
         Read::NotAsked
-    } else if answer.taught == Mark::Yes && counts(&answer.units, used, parts) {
+    } else if answer.taught == Mark::Yes && counts(&answer, &input.texts(), used, parts) {
         Read::Taught
     } else {
         Read::Stands
     })
 }
 
-/// Whether one of `units` bears out that the use is taught: a sentence before the use or in its own words, one of the earlier lessons' given, or one of what the learner already knows.
-fn counts(units: &[Picked<Sentence>], used: &Hit<'_>, parts: &[Part]) -> bool {
-    units.iter().any(|unit| match &unit.reference {
-        Place::Lesson { .. } => hit_at(parts, &unit.reference).is_some_and(|hit| !follows(&hit, used)),
-        Place::Earlier { .. } | Place::Prior { .. } => true,
-    })
+/// Whether one of what `standing` cites bears out that the use is taught: a sentence before the use or in its own words, one of the earlier lessons' given, or one of what the learner already knows.
+fn counts(standing: &Standing, texts: &Texts<Whose>, used: &Hit<'_>, parts: &[Part]) -> bool {
+    !standing.given.is_empty()
+        || standing
+            .units
+            .iter()
+            .any(|unit| match texts.found(unit.reference).map(|(of, _)| of) {
+                Some(Whose::Lesson { .. }) => {
+                    hit_at(parts, texts, unit.reference).is_some_and(|hit| !follows(&hit, used))
+                }
+                Some(Whose::Prior) => true,
+                None => false,
+            })
 }
 
 /// One checkpointed, schema-held question.
@@ -676,7 +691,7 @@ async fn ask<T: ConfirmQuestion>(
     let key = format!(
         "lesson-contract-confirm:{}",
         sha256_hex(
-            json!({"policy":POLICY,"model":llm.model_name(),"context":llm.max_context_tokens(),"system":SYSTEM,"prompt":prompt,"schema":schema}).to_string()
+            json!({"policy":POLICY,"model":llm.model_name(),"context":llm.max_context_tokens(),"system":CLASH_SYSTEM,"prompt":prompt,"schema":schema}).to_string()
         )
     );
     if let Some(saved) = crate::lesson_drafts::checkpoint(&key)
@@ -686,13 +701,13 @@ async fn ask<T: ConfirmQuestion>(
         return Ok(saved);
     }
     let call = ContractCall::of::<Confirm<T>>(&PromptInput {
-        system: SYSTEM.to_owned(),
+        system: CLASH_SYSTEM.to_owned(),
         prompt: prompt.clone(),
     })?;
     let answer = structured_call::complete_checked(
         llm,
         &call,
-        SYSTEM,
+        CLASH_SYSTEM,
         prompt,
         schema,
         ANSWER_TOKENS,
