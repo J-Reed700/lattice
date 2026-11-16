@@ -12,6 +12,10 @@ pub struct HuggingFaceAdapter {
     client: Client,
 }
 
+/// Catalog listings are of GGUF repositories, the only weights the bundled
+/// llama.cpp runs. The fields are named because `full=true` leaves out `gguf`.
+const LISTING_FIELDS: &str = "expand[]=author&expand[]=downloads&expand[]=gated&expand[]=gguf&expand[]=lastModified&expand[]=library_name&expand[]=likes&expand[]=pipeline_tag&expand[]=siblings&expand[]=tags";
+
 impl HuggingFaceAdapter {
     /// Create a new Hugging Face adapter.
     ///
@@ -36,13 +40,13 @@ impl HuggingFaceAdapter {
     pub(super) fn search_url(query: &str, limit: usize) -> String {
         if let Some(filter) = query.strip_prefix("filter:") {
             format!(
-                "https://huggingface.co/api/models?filter={}&limit={}&full=true&sort=downloads&direction=-1",
+                "https://huggingface.co/api/models?filter={}&filter=gguf&limit={}&sort=downloads&direction=-1&{LISTING_FIELDS}",
                 urlencoding::encode(filter),
                 limit
             )
         } else {
             format!(
-                "https://huggingface.co/api/models?search={}&limit={}&full=true&sort=downloads&direction=-1",
+                "https://huggingface.co/api/models?search={}&filter=gguf&limit={}&sort=downloads&direction=-1&{LISTING_FIELDS}",
                 urlencoding::encode(query),
                 limit
             )
