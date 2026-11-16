@@ -30,9 +30,8 @@ mod transcription;
 
 pub use chat::{
     chat_model_file_supports_tool_calling, chat_model_uses_mtp_draft, chat_model_vision,
-    curated_chat_model_for_file, curated_chat_models, curated_chat_models_matching,
-    get_curated_llm_models, ChatModelVision, CuratedChatModel, CuratedVision, CHAT_PROJECTOR_FILE,
-    TOOL_CALLING_CAPABILITY,
+    curated_chat_model_for_file, curated_chat_models, get_curated_llm_models, ChatModelVision,
+    CuratedChatModel, CuratedVision, CHAT_PROJECTOR_FILE, TOOL_CALLING_CAPABILITY,
 };
 pub use embedding::{
     curated_embedding_pinned, embedding_model_supports_matryoshka, get_curated_embedding_models,
@@ -89,6 +88,35 @@ pub fn curated_gguf_files() -> Vec<CuratedGguf> {
         pinned: CURATED_RERANKER.pinned(),
     };
     chat.chain(embedding).chain([reranker]).collect()
+}
+
+/// The catalog entries the model catalog lists beside Hugging Face's rows.
+pub fn listed_curated_models() -> Vec<ModelMetadata> {
+    get_curated_llm_models()
+}
+
+/// The listed catalog entries a catalog search for `query` should show.
+///
+/// Every whitespace-separated term has to appear in the entry's name,
+/// repository or id. An empty query, and a search for `gguf` (every listed
+/// entry is a GGUF), match every entry.
+pub fn curated_models_matching(query: &str) -> Vec<ModelMetadata> {
+    let query = query.trim().to_lowercase();
+    let terms: Vec<&str> = query.split_whitespace().collect();
+    let browse_all = terms.is_empty() || terms == ["gguf"];
+    listed_curated_models()
+        .into_iter()
+        .filter(|model| {
+            let haystack = format!(
+                "{} {} {}",
+                model.name,
+                model.model_id.as_deref().unwrap_or_default(),
+                model.id
+            )
+            .to_lowercase();
+            browse_all || terms.iter().all(|term| haystack.contains(term))
+        })
+        .collect()
 }
 
 /// Get all curated models across all categories.

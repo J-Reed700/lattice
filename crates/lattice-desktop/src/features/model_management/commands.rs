@@ -21,6 +21,7 @@ use crate::interfaces::di::Container;
 use crate::interfaces::dto::{
     FitVerdictDto, ModelFileRefDto, ModelRecommendationDto, ModelSearchResultDto, RecommendationDto,
 };
+use lattice_core::domain::models::curated::{curated_models_matching, listed_curated_models};
 use lattice_core::domain::{
     ModelCatalogService, ModelCategory, ModelSource, SearchFilters, SystemCapabilities,
 };
@@ -104,14 +105,15 @@ pub async fn get_compatible_models(
 ) -> Result<Vec<ModelRecommendationDto>> {
     let category = parse_model_category(&category)?;
 
-    let models = if category == ModelCategory::Embedding {
+    let listing = if category == ModelCategory::Embedding {
         fetch_embedding_hf_models(container.inner(), 500).await?
     } else {
-        fetch_downloadable_hf_models(container.inner(), "gguf", 200).await?
-    }
-    .into_iter()
-    .filter(|entry| entry.model.category == category)
-    .collect::<Vec<_>>();
+        fetch_hf_models(container.inner(), "gguf", 200, true).await?
+    };
+    let models = catalog_listing(vec![listing], listed_curated_models())
+        .into_iter()
+        .filter(|entry| entry.model.category == category)
+        .collect::<Vec<_>>();
 
     let context = FitContext::new(container.inner()).await?;
     let mut rows = context.rows(models).await;
@@ -145,10 +147,12 @@ pub async fn recommend_chat_models(
 pub async fn get_all_recommended_models(
     container: State<'_, Container>,
 ) -> Result<Vec<ModelRecommendationDto>> {
-    let mut models = fetch_downloadable_hf_models(container.inner(), "gguf", 200).await?;
-    merge_unique_models(
-        &mut models,
-        fetch_embedding_hf_models(container.inner(), 500).await?,
+    let models = catalog_listing(
+        vec![
+            fetch_hf_models(container.inner(), "gguf", 200, true).await?,
+            fetch_embedding_hf_models(container.inner(), 500).await?,
+        ],
+        listed_curated_models(),
     );
     tracing::info!(
         "get_all_recommended_models: returning {} models",
@@ -340,32 +344,27 @@ fn merge_unique_models(
     }
 }
 
-async fn fetch_downloadable_hf_models(
-    container: &Container,
-    query: &str,
-    limit: usize,
-) -> Result<Vec<DownloadableHfModel>> {
-    let mut models = fetch_hf_models(container, query, limit, true).await?;
-    merge_curated_chat_models(&mut models, query);
-    Ok(models)
-}
-
-/// Put the catalog's chat entries into a Hugging Face listing.
+/// One catalog listing from Hugging Face's listings, each model once, with the
+/// catalog's entries in it.
 ///
 /// A row for a catalog repository becomes the catalog entry, keeping the
 /// repository's download and like counts: its footprint is pinned from the
 /// GGUF header, its download is checked against
 /// a pinned digest, and it is the id first run installs, so the catalog and
-/// first run never offer the same file twice. Entries the search matched but
-/// Hugging Face did not return are added, so a 22 GB model outside the top
-/// results is still one click away.
-fn merge_curated_chat_models(models: &mut Vec<DownloadableHfModel>, query: &str) {
-    use lattice_core::domain::models::curated::{
-        curated_chat_models_matching, get_curated_llm_models,
-    };
-
-    let catalog = get_curated_llm_models();
-    let mut unlisted = curated_chat_models_matching(query);
+/// first run never offer the same file twice. `entries` Hugging Face did not
+/// return are added, so a 22 GB model outside the top results is still one
+/// click away. The entries go in once, after the listings are combined, so a
+/// repository's row is replaced wherever it was listed.
+fn catalog_listing(
+    listings: Vec<Vec<DownloadableHfModel>>,
+    entries: Vec<ModelMetadata>,
+) -> Vec<DownloadableHfModel> {
+    let mut models = Vec::new();
+    for listing in listings {
+        merge_unique_models(&mut models, listing);
+    }
+    let catalog = listed_curated_models();
+    let mut unlisted = entries;
     for entry in models.iter_mut() {
         let Some(repo) = entry.model.model_id.as_deref() else {
             continue;
@@ -389,6 +388,7 @@ fn merge_curated_chat_models(models: &mut Vec<DownloadableHfModel>, query: &str)
     // Two rows of one catalog repository would now share an id.
     let mut seen = HashSet::new();
     models.retain(|entry| seen.insert(entry.model.id.clone()));
+    models
 }
 
 async fn fetch_hf_models(
@@ -585,12 +585,18 @@ pub async fn search_model_catalog(
         Some(request.query.clone()),
     )?;
 
-    let discovered_models = fetch_downloadable_hf_models(
-        container.inner(),
-        &request.query,
-        request.limit.saturating_mul(2).max(20),
-    )
-    .await?;
+    let discovered_models = catalog_listing(
+        vec![
+            fetch_hf_models(
+                container.inner(),
+                &request.query,
+                request.limit.saturating_mul(2).max(20),
+                true,
+            )
+            .await?,
+        ],
+        curated_models_matching(&request.query),
+    );
     let downloads_by_model_id: HashMap<String, u64> = discovered_models
         .iter()
         .map(|entry| (entry.model.id.clone(), entry.downloads))

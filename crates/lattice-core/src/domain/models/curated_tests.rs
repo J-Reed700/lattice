@@ -231,7 +231,7 @@ fn a_catalog_file_in_the_version_list_is_the_catalog_entry() {
 #[test]
 fn catalog_search_matches_every_term() {
     let ids = |query: &str| -> Vec<String> {
-        curated_chat_models_matching(query)
+        curated_models_matching(query)
             .into_iter()
             .map(|model| model.id)
             .collect()

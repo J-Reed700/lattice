@@ -146,25 +146,6 @@ pub fn curated_chat_model_for_file(repo: &str, file: &str) -> Option<ModelMetada
         .map(CuratedChatModel::metadata)
 }
 
-/// Catalog chat entries a catalog search for `query` should show.
-///
-/// Every whitespace-separated term has to appear in the entry's name,
-/// repository or id. An empty query, and the broad `gguf` query the catalog
-/// overview runs, match every entry.
-pub fn curated_chat_models_matching(query: &str) -> Vec<ModelMetadata> {
-    let query = query.trim().to_lowercase();
-    let terms: Vec<&str> = query.split_whitespace().collect();
-    let browse_all = terms.is_empty() || terms == ["gguf"];
-    CURATED_CHAT_MODELS
-        .iter()
-        .filter(|model| {
-            let haystack = format!("{} {} {}", model.name, model.repo, model.id).to_lowercase();
-            browse_all || terms.iter().all(|term| haystack.contains(term))
-        })
-        .map(CuratedChatModel::metadata)
-        .collect()
-}
-
 /// One chat model the catalog vouches for: a single GGUF file, pinned by the
 /// size and SHA-256 Hugging Face reports for it, so the download is verified
 /// rather than trusted.

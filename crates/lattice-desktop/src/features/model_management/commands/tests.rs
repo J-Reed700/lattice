@@ -42,11 +42,13 @@ fn hf_row(repo: &str, file: &str, downloads: u64) -> DownloadableHfModel {
 
 #[test]
 fn a_catalog_repository_row_becomes_the_catalog_entry() {
-    let mut models = vec![
-        hf_row("unsloth/Qwen3.5-9B-GGUF", "Qwen3.5-9B-Q4_K_M.gguf", 1_000),
-        hf_row("someone/Other-GGUF", "Other-Q4_K_M.gguf", 5),
-    ];
-    merge_curated_chat_models(&mut models, "qwen3.5 9b");
+    let models = catalog_listing(
+        vec![vec![
+            hf_row("unsloth/Qwen3.5-9B-GGUF", "Qwen3.5-9B-Q4_K_M.gguf", 1_000),
+            hf_row("someone/Other-GGUF", "Other-Q4_K_M.gguf", 5),
+        ]],
+        curated_models_matching("qwen3.5 9b"),
+    );
 
     let catalog: Vec<_> = models
         .iter()
@@ -70,12 +72,14 @@ fn a_catalog_repository_row_becomes_the_catalog_entry() {
 
 #[test]
 fn the_catalog_overview_lists_every_chat_entry_once() {
-    let mut models = vec![hf_row(
-        "unsloth/Qwen3.6-35B-A3B-GGUF",
-        "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
-        50,
-    )];
-    merge_curated_chat_models(&mut models, "gguf");
+    let models = catalog_listing(
+        vec![vec![hf_row(
+            "unsloth/Qwen3.6-35B-A3B-GGUF",
+            "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+            50,
+        )]],
+        listed_curated_models(),
+    );
     let catalog = lattice_core::domain::models::curated::get_curated_llm_models();
     assert_eq!(models.len(), catalog.len());
     for model in catalog {
