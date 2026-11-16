@@ -5,6 +5,7 @@ use crate::features::download::download_repository::mock::MockDownloadRepository
 use crate::features::download::download_repository::DownloadRepository;
 use crate::features::download::engine::mock::MockDownloadEngine;
 use crate::features::download::manager::DownloadManagerService;
+use crate::infrastructure::adapters::fs::model_paths::ModelPaths;
 use lattice_core::application::ports::download_manager::{DownloadManager, DownloadRequest};
 use lattice_core::domain::download::DownloadError;
 use lattice_core::domain::download::{DownloadSession, DownloadState};
@@ -121,6 +122,73 @@ async fn test_download_accepts_a_canonicalized_destination_under_the_root(
     );
 
     Ok(())
+}
+
+const WITHOUT_HOME_ROLE: &str = "LATTICE_DOWNLOAD_TEST_WITHOUT_HOME";
+
+/// Windows gives an app started from the Start menu no `HOME`, so the models
+/// folder comes from `USERPROFILE`; its files must still be accepted.
+#[cfg(windows)]
+#[test]
+fn a_model_file_is_accepted_when_home_is_unset() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "features::download::manager::tests::failure_modes::model_file_destination_role",
+            "--nocapture",
+        ])
+        .env(WITHOUT_HOME_ROLE, "1")
+        .env_remove("HOME")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
+async fn model_file_destination_role() {
+    if std::env::var_os(WITHOUT_HOME_ROLE).is_some() {
+        assert_a_model_file_is_accepted().await;
+    }
+}
+
+#[tokio::test]
+async fn a_model_file_is_accepted() {
+    assert_a_model_file_is_accepted().await;
+}
+
+async fn assert_a_model_file_is_accepted() {
+    let destination = ModelPaths::new("home-unset-probe")
+        .unwrap()
+        .file_path("probe.gguf")
+        .unwrap();
+    let engine = Arc::new(MockDownloadEngine::new());
+    engine.set_network_error("no transfer in this test".to_string());
+    let manager = DownloadManagerService::new(
+        Arc::new(MockDownloadRepository::new()),
+        engine,
+        temp_root(),
+        Arc::default(),
+    );
+    let request = DownloadRequest {
+        url: "https://example.com/probe.gguf".to_string(),
+        destination,
+        checksum: None,
+        auth_token: None,
+        model_name: None,
+        model_id: None,
+        model_file_name: None,
+    };
+
+    let result = manager.start_download(request).await;
+    assert!(
+        !matches!(result, Err(DownloadError::InvalidDestination(_))),
+        "a destination under the models folder was refused: {result:?}"
+    );
 }
 
 #[tokio::test]
