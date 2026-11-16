@@ -141,11 +141,15 @@ fn a_model_file_is_accepted_when_home_is_unset() {
         .env_remove("HOME")
         .output()
         .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success(),
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
+        "{stdout}{}",
         String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("running 1 test"),
+        "the child ran no test: {stdout}"
     );
 }
 
