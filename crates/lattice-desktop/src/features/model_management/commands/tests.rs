@@ -71,7 +71,7 @@ fn a_catalog_repository_row_becomes_the_catalog_entry() {
 }
 
 #[test]
-fn the_catalog_overview_lists_every_chat_entry_once() {
+fn the_catalog_overview_lists_every_catalog_entry_once() {
     let models = catalog_listing(
         vec![vec![hf_row(
             "unsloth/Qwen3.6-35B-A3B-GGUF",
@@ -80,7 +80,8 @@ fn the_catalog_overview_lists_every_chat_entry_once() {
         )]],
         listed_curated_models(),
     );
-    let catalog = lattice_core::domain::models::curated::get_curated_llm_models();
+    let mut catalog = lattice_core::domain::models::curated::get_curated_llm_models();
+    catalog.extend(lattice_core::domain::models::curated::get_curated_embedding_models());
     assert_eq!(models.len(), catalog.len());
     for model in catalog {
         assert_eq!(
@@ -93,6 +94,74 @@ fn the_catalog_overview_lists_every_chat_entry_once() {
             model.id
         );
     }
+}
+
+/// A Hub embedding repository's row as the task listings return it: no file.
+fn hub_embedding_row(repo: &str, downloads: u64) -> DownloadableHfModel {
+    let mut model = lattice_core::domain::models::curated::get_curated_embedding_models()
+        .into_iter()
+        .next()
+        .expect("catalog has an embedding entry");
+    model.id = format!("hf::{repo}");
+    model.name = repo.into();
+    model.model_id = Some(repo.into());
+    model.files.clear();
+    DownloadableHfModel {
+        model,
+        downloads,
+        likes: 7,
+    }
+}
+
+/// The Hub's Qwen embedding repository has no GGUF, so a search drops its row.
+#[test]
+fn a_search_for_qwen_finds_the_catalog_embedding_model() {
+    let models = catalog_listing(vec![vec![]], curated_models_matching("Qwen"));
+    let ids: Vec<_> = models.iter().map(|entry| entry.model.id.as_str()).collect();
+    assert!(
+        models
+            .iter()
+            .any(|entry| entry.model.id == "qwen3-embedding-0.6b"
+                && entry.model.category == ModelCategory::Embedding),
+        "{ids:?}"
+    );
+}
+
+#[test]
+fn the_embedding_repository_row_becomes_the_catalog_entry() {
+    let models = catalog_listing(
+        vec![
+            vec![hf_row("someone/Other-GGUF", "Other-Q4_K_M.gguf", 5)],
+            vec![
+                hub_embedding_row("BAAI/bge-m3", 9_000_000),
+                hub_embedding_row("Qwen/Qwen3-Embedding-0.6B", 8_138_659),
+            ],
+        ],
+        listed_curated_models(),
+    );
+
+    let qwen: Vec<_> = models
+        .iter()
+        .filter(|entry| {
+            entry
+                .model
+                .model_id
+                .as_deref()
+                .is_some_and(|repo| repo.eq_ignore_ascii_case("Qwen/Qwen3-Embedding-0.6B"))
+        })
+        .collect();
+    assert_eq!(qwen.len(), 1, "one row for the repository");
+    assert_eq!(
+        qwen[0].model.id, "qwen3-embedding-0.6b",
+        "the entry first run installs"
+    );
+    assert_eq!(
+        qwen[0].downloads, 8_138_659,
+        "keeps the repository's popularity"
+    );
+    assert!(models
+        .iter()
+        .any(|entry| entry.model.id == "hf::BAAI/bge-m3"));
 }
 
 #[test]
