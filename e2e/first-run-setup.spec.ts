@@ -36,6 +36,7 @@ async function installFirstRun(page: Page) {
   await serveCommands(page, () => ({
     recommend_chat_models: () => Array.from({ length: MODEL_COUNT }, (_, index) => recommendation(index + 1)),
     get_compatible_models: () => [],
+    get_all_recommended_models: () => [],
   }));
   return backend;
 }
