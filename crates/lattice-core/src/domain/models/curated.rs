@@ -90,9 +90,13 @@ pub fn curated_gguf_files() -> Vec<CuratedGguf> {
     chat.chain(embedding).chain([reranker]).collect()
 }
 
-/// The catalog entries the model catalog lists beside Hugging Face's rows.
+/// The catalog entries the model catalog lists beside Hugging Face's rows: the
+/// chat models and the embedding model first run offers, so a model skipped
+/// there can be found and downloaded later.
 pub fn listed_curated_models() -> Vec<ModelMetadata> {
-    get_curated_llm_models()
+    let mut models = get_curated_llm_models();
+    models.extend(get_curated_embedding_models());
+    models
 }
 
 /// The listed catalog entries a catalog search for `query` should show.
