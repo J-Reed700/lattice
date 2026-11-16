@@ -13,10 +13,9 @@ import { ChevronDown, Monitor } from 'lucide-react';
 import { useModelCatalog } from '@/features/model/hooks/useModelCatalog';
 import { useRecommendedChatModels } from '@/features/model/hooks/useRecommendedChatModels';
 import { useModelCatalogStore } from '@/features/model/stores/modelCatalogStore';
-import type { ModelMetadata } from '@/types/modelCatalog';
 
 import { CatalogManagementSection } from './CatalogManagementSection';
-import { CATALOG_TEXT_BUTTON_CLASS, embeddingBlockReason, hasActiveFilters } from './catalogUtils';
+import { CATALOG_TEXT_BUTTON_CLASS, hasActiveFilters } from './catalogUtils';
 import { ModelDetailPanel } from './ModelDetailPanel';
 import { ModelFilterPanel } from './ModelFilterPanel';
 import { ModelListView } from './ModelListView';
@@ -73,13 +72,10 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
     const sortModels = <T extends {
       popularity_downloads?: number | null;
       popularity_likes?: number | null;
-      model: Pick<ModelMetadata, 'id' | 'size_gb' | 'name' | 'category' | 'embedding_compatibility'>;
+      model: { id: string; size_gb: number; name: string };
     }>(
       models: T[]
     ) => [...models].sort((a, b) => {
-        const blocked = Number(embeddingBlockReason(a.model) !== null) - Number(embeddingBlockReason(b.model) !== null);
-        if (blocked !== 0) return blocked;
-
         if (sortBy === 'name') {
           return a.model.name.localeCompare(b.model.name);
         }

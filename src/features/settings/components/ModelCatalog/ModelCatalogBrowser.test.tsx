@@ -106,21 +106,6 @@ describe('ModelCatalogBrowser', () => {
     expect(listed()).toEqual(order);
   });
 
-  it.each(['popularity', 'likes', 'name', 'size_asc', 'recommended'])(
-    'puts models this computer can run before ones it cannot when sorting by %s',
-    (sortBy) => {
-      const noGguf = { kind: 'incompatible', architecture: 'bert', reason: 'The repository ships no single-file GGUF.' };
-      h.catalog.compatibleModels = [
-        rec('all-minilm', { category: 'Embedding', size_gb: 0.1, embedding_compatibility: noGguf }, { popularity_downloads: 170_000_000, popularity_likes: 900 }),
-        rec('mystery', { category: 'Embedding', size_gb: 0.2, embedding_compatibility: { kind: 'unknown' } }, { popularity_downloads: 9_000_000, popularity_likes: 800 }),
-        rec('qwen3-embedding-0.6b', { category: 'Embedding', size_gb: 1.2, embedding_compatibility: null }, { popularity_downloads: 8_000_000, popularity_likes: 700 }),
-      ];
-      h.catalog.sortBy = sortBy;
-      render(<ModelCatalogBrowser />);
-      expect(listed()[0]).toBe('qwen3-embedding-0.6b');
-    },
-  );
-
   it('keeps the backend’s order for models that tie', () => {
     h.catalog.compatibleModels = [rec('second'), rec('first')];
     h.catalog.sortBy = 'likes';
