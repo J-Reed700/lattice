@@ -1,9 +1,18 @@
-use super::prompting::enforce_numeric_citation_format;
+use super::prompting::enforce_citation_format;
 pub(super) use lattice_core::application::contracts::settings::LLMPromptSettingsDto;
 use lattice_core::application::contracts::settings::DEFAULT_RAG_PROMPT_TEMPLATE;
 
+/// The default that asked the model to copy a document id and an offset.
+const ID_AND_OFFSET_RAG_TEMPLATE: &str = "Answer the user's question using only the provided context. Cite every factual statement supported by the context using numeric brackets like [1], [2], [3]. If the excerpts are insufficient, use available document search/read tools before concluding that evidence is missing. If still unsupported, say it was not found in the excerpts searched and do not guess or claim the entire collection lacks it. Do not cite unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, use the exact Document ID shown in the context. For long documents, read on with the offset parameter each result names.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
+
 /// The default fresh installs were given before the search-first one.
 const PREVIOUS_DEFAULT_RAG_TEMPLATE: &str = "Answer the user's question using only the provided context. Cite every factual statement supported by the context using numeric brackets like [1], [2], [3]. If the context does not contain the answer, say that the answer is not available in the provided documents and do not guess. When the answer is unavailable, respond concisely without summarizing or citing unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, use the exact Document ID shown in the context. For long documents, read on with the offset parameter each result names.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
+
+/// The default that asked for numeric brackets, before a source was a named thing.
+const NUMERIC_BRACKETS_RAG_TEMPLATE: &str = "Answer the user's question using only the provided context. Cite every factual statement supported by the context using numeric brackets like [1], [2], [3]. If the excerpts are insufficient, use available document search/read tools before concluding that evidence is missing. If still unsupported, say it was not found in the excerpts searched and do not guess or claim the entire collection lacks it. Do not cite unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, name the document by its bracketed number in the context. For long documents, read on with read_more and the name each result gives.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
+
+/// The default system prompt that asked for numeric brackets.
+const NUMERIC_BRACKETS_SYSTEM_PROMPT: &str = "You are Lattice, a precise research assistant. Use the user's documents when available. Cite sources using numeric brackets like [1], [2], [3]. Never fabricate document IDs.";
 
 pub(super) fn normalize_prompt_settings(
     mut prompt_settings: LLMPromptSettingsDto,
@@ -32,19 +41,24 @@ pub(super) fn normalize_prompt_settings(
     if stable_prompt_signature(&prompt_settings.rag_prompt_template)
         == LEGACY_RAG_TEMPLATE_SIGNATURE
         || prompt_settings.rag_prompt_template == PREVIOUS_DEFAULT_RAG_TEMPLATE
+        || prompt_settings.rag_prompt_template == ID_AND_OFFSET_RAG_TEMPLATE
+        || prompt_settings.rag_prompt_template == NUMERIC_BRACKETS_RAG_TEMPLATE
     {
         prompt_settings.rag_prompt_template = DEFAULT_RAG_PROMPT_TEMPLATE.to_string();
     }
+    if prompt_settings.system_prompt == NUMERIC_BRACKETS_SYSTEM_PROMPT {
+        prompt_settings.system_prompt = LLMPromptSettingsDto::default().system_prompt;
+    }
 
-    prompt_settings.system_prompt = enforce_numeric_citation_format(&prompt_settings.system_prompt);
+    prompt_settings.system_prompt = enforce_citation_format(&prompt_settings.system_prompt);
     prompt_settings.system_prompt.push_str(
         "\n\nDocument evidence rules: When the user asks to learn from or rely only on their documents, \
          verify factual claims against retrieved text before answering, including chapter names, outlines, \
          section numbers, dates, and page references. If evidence is missing, retrieve it or say it is not \
          verified; do not fill gaps from memory. Search results are a ranked subset, not a complete inventory. \
          Relevance scores rank query matches; they do not diagnose embedding quality, document corruption, \
-         or indexing completeness. Low scores alone do not establish any such problem. get_document offsets \
-         count characters of extracted text, not original PDF page numbers. Cite printed PDF \
+         or indexing completeness. Low scores alone do not establish any such problem. Reading on with read_more \
+         continues by characters of extracted text, not original PDF page numbers. Cite printed PDF \
          pages only when supported by the returned source text or explicit PDF page metadata. If a tool \
          fails, report that specific failure without assuming the user's documents are absent. When the \
          user's practical wording is broader or less formal than a source's terminology, answer with the \
@@ -123,6 +137,38 @@ mod tests {
             normalize_prompt_settings(saved).rag_prompt_template,
             DEFAULT_RAG_PROMPT_TEMPLATE
         );
+    }
+
+    #[test]
+    fn a_saved_copy_of_the_default_that_asked_for_ids_is_brought_up_to_date() {
+        let saved = LLMPromptSettingsDto {
+            rag_prompt_template: ID_AND_OFFSET_RAG_TEMPLATE.to_string(),
+            ..LLMPromptSettingsDto::default()
+        };
+        let migrated = normalize_prompt_settings(saved).rag_prompt_template;
+        assert_eq!(migrated, DEFAULT_RAG_PROMPT_TEMPLATE);
+        assert!(!migrated.contains("Document ID") && !migrated.contains("offset"));
+    }
+
+    #[test]
+    fn a_saved_copy_of_the_default_that_asked_for_numeric_brackets_is_brought_up_to_date() {
+        let saved = LLMPromptSettingsDto {
+            rag_prompt_template: NUMERIC_BRACKETS_RAG_TEMPLATE.to_string(),
+            system_prompt: NUMERIC_BRACKETS_SYSTEM_PROMPT.to_string(),
+            ..LLMPromptSettingsDto::default()
+        };
+        let migrated = normalize_prompt_settings(saved);
+        assert_eq!(migrated.rag_prompt_template, DEFAULT_RAG_PROMPT_TEMPLATE);
+        assert!(!migrated.system_prompt.contains("numeric brackets"));
+        assert!(migrated.system_prompt.contains("[s1], [s2], [s3]"));
+    }
+
+    #[test]
+    fn no_default_asks_for_numeric_brackets() {
+        let settings = LLMPromptSettingsDto::default();
+        assert!(!settings.system_prompt.contains("numeric"));
+        assert!(!DEFAULT_RAG_PROMPT_TEMPLATE.contains("numeric"));
+        assert!(!DEFAULT_RAG_PROMPT_TEMPLATE.contains("bracketed number"));
     }
 
     #[test]

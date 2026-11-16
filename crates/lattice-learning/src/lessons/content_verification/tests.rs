@@ -5,8 +5,13 @@
     clippy::panic
 )]
 use super::*;
+use crate::lessons::teaching::repair_script::{
+    finding_labels, key_item, quote_label, sentence_label, task_of,
+};
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-use lattice_core::application::services::model_contract::{CORRECTION_LEAD, CUT_OFF_REFUSAL};
+use lattice_core::application::services::model_contract::{
+    Contract as _, CORRECTION_LEAD, CUT_OFF_REFUSAL,
+};
 use lattice_core::domain::learning::acceptance::{Outcome, Reading, StandardPolicy};
 use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::JobStore;
@@ -35,14 +40,13 @@ struct Model {
     repaired: Mutex<bool>,
     judge_calls: Mutex<usize>,
     failing_judge: bool,
-    incomplete_coverage: bool,
     hold_bad_claim: bool,
     /// Fail every batched check as a server that cannot finish a group does,
     /// so the claims are checked one at a time.
     batch_unavailable: bool,
     extracted_sections: Mutex<Vec<Vec<usize>>>,
     audited_sections: Mutex<Vec<Vec<usize>>>,
-    /// Fail the coverage batch that starts at this section.
+    /// Fail the coverage mapping of the unit at this section.
     fail_coverage_at: Option<usize>,
     coverage_gap_in: Option<usize>,
 }
@@ -53,7 +57,6 @@ impl Model {
             repaired: Mutex::new(false),
             judge_calls: Mutex::new(0),
             failing_judge: false,
-            incomplete_coverage: false,
             hold_bad_claim: false,
             batch_unavailable: false,
             extracted_sections: Mutex::new(Vec::new()),
@@ -62,9 +65,26 @@ impl Model {
             coverage_gap_in: None,
         }
     }
+
+    /// The sections whose coverage was mapped, in section order.
+    fn audited(&self) -> Vec<usize> {
+        let mut sections: Vec<usize> = self
+            .audited_sections
+            .lock()
+            .unwrap()
+            .iter()
+            .flatten()
+            .copied()
+            .collect();
+        sections.sort_unstable();
+        sections
+    }
 }
 /// The task a fixture prompt carries, as JSON: its last paragraph before the correction an ask-again adds.
 pub(crate) fn fixture_task(prompt: &str) -> Option<Value> {
+    if let Some(task) = task_of(prompt) {
+        return Some(task);
+    }
     let task = prompt
         .split_once(&format!("\n\n{CORRECTION_LEAD}"))
         .map_or(prompt, |(task, _)| task);
@@ -80,19 +100,17 @@ pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
     if crate::lessons::structured_call::is_draft_request(request) {
         return Vec::new();
     }
-    if let Some(schema) = &request.json_schema {
+    if let Some(schema) = request.schema().map(|schema| schema.as_json()) {
         assert_schema_request_holds_the_shape(request, schema);
     }
     let (system, user) = fixture_messages(request);
-    if system.starts_with(crate::lessons::teaching::contract::SYSTEM)
-        || system.starts_with(crate::lessons::teaching::contract::confirm::SYSTEM)
-    {
+    if crate::lessons::teaching::contract::scripted::ask_of(system, user).is_some() {
         return Vec::new();
     }
     if let Some(batch) = fixture_batch(user) {
         return batch
             .into_iter()
-            .map(|(claim, passages, _)| {
+            .map(|(claim, passages, _, _)| {
                 let evidence = passages
                     .iter()
                     .enumerate()
@@ -105,16 +123,59 @@ pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
     }
     let correction = fixture_correction(request);
     if is_claim_check(user) || system.is_empty() {
-        return vec![format!("{user}{correction}")];
+        return vec![format!("{}{correction}", passages_by_place(user))];
     }
-    vec![format!("{system}\n\n{user}{correction}")]
+    let mapped = request
+        .contract()
+        .filter(|call| call.id == coverage::CoverageMapping::ID)
+        .and_then(|call| call.input["unit"].as_u64())
+        .map(|unit| format!("\n\nMapped unit: {unit}"))
+        .unwrap_or_default();
+    let extracted = request
+        .contract()
+        .filter(|call| call.id == inventory::InventoryExtraction::ID)
+        .map(|call| {
+            let indices: Vec<String> = call.input["sections"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|section| section["index"].as_u64())
+                .map(|index| index.to_string())
+                .collect();
+            format!("\n\nExtracted sections: {}", indices.join(","))
+        })
+        .unwrap_or_default();
+    vec![format!("{system}{mapped}{extracted}\n\n{user}{correction}")]
+}
+
+/// The sections an extraction prompt of the fixture asked about.
+pub(crate) fn extracted_sections_of(prompt: &str) -> Vec<usize> {
+    prompt
+        .split("\n\n")
+        .find_map(|chunk| chunk.strip_prefix("Extracted sections: "))
+        .map(|list| {
+            list.split(',')
+                .filter_map(|index| index.parse().ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The section a coverage mapping prompt of the fixture was asked about.
+pub(crate) fn mapped_unit(prompt: &str) -> Option<usize> {
+    prompt
+        .split("\n\n")
+        .find_map(|chunk| chunk.strip_prefix("Mapped unit: ")?.parse().ok())
 }
 
 /// The correction a request asks again with, as the text that follows its task
 /// prompt: nothing for a first ask.
 fn fixture_correction(request: &CompletionRequest) -> String {
+    if let Some((_, told)) = asked_again_with(request) {
+        return format!("\n\n{CORRECTION_LEAD} {told}");
+    }
     request
-        .input
+        .input()
         .iter()
         .rev()
         .find_map(|item| match item {
@@ -129,18 +190,33 @@ fn fixture_correction(request: &CompletionRequest) -> String {
         .unwrap_or_default()
 }
 
-/// What a fixture model answers a lesson's check against its course plan
-/// with, unless a test routes that call itself (`teaching::contract_tests`).
-pub(crate) const CONTRACT_NOTHING: &str =
-    "{\"planned\":[],\"usedBeforeTaught\":[],\"contradictions\":[],\"unseen\":[]}";
+/// The first message of a request's user: the task a re-ask repeats.
+fn first_task(request: &CompletionRequest) -> Option<&str> {
+    request.input().iter().find_map(|item| match item {
+        lattice_core::application::ports::llm_port::CompletionInput::Message { role, content }
+            if role == "user" =>
+        {
+            Some(content.as_str())
+        }
+        _ => None,
+    })
+}
 
-/// What a fixture model answers a confirming read of the lesson's check with:
-/// not taught, and an item belongs in no part in particular.
-pub(crate) const CONFIRM_PLANNED_NOTHING: &str =
-    "{\"taught\":false,\"quote\":\"\",\"belongs\":\"\"}";
-pub(crate) const CONFIRM_USE_NOTHING: &str =
-    "{\"asked\":true,\"taught\":false,\"where\":\"thisLesson\",\"quote\":\"\"}";
-pub(crate) const CONFIRM_CLASH_NOTHING: &str = "{\"case\":\"\",\"contradict\":false}";
+/// The task a request asks again and what it tells the model in asking: the
+/// first user message and the last when that is a message of its own, or the
+/// task and the sentence a restated task adds to it.
+fn asked_again_with(request: &CompletionRequest) -> Option<(&str, &str)> {
+    let last = crate::lessons::structured_call::latest_ask(request);
+    let first = first_task(request)?;
+    if last != first && !last.is_empty() {
+        return Some((first, last));
+    }
+    let (task, told) = last.rsplit_once("\n\n")?;
+    let is_object =
+        |text: &str| serde_json::from_str::<Value>(text).is_ok_and(|value| value.is_object());
+    (is_object(task.rsplit("\n\n").next()?) && serde_json::from_str::<Value>(told).is_err())
+        .then_some((task, told))
+}
 
 /// The fixture's replies to [`fixture_prompts`], answered in the typed
 /// protocol: one batched reply, a check's verdict as its last line, or the
@@ -153,35 +229,21 @@ pub(crate) fn fixture_completion(
         return CompletionResponse::from_text(crate::lessons::structured_call::FIXTURE_DRAFT);
     }
     let (system, user) = fixture_messages(request);
-    if system.starts_with(crate::lessons::teaching::contract::confirm::SYSTEM) {
-        return CompletionResponse::from_text(
-            if user.contains(crate::lessons::teaching::contract::confirm::PLANNED_TASK) {
-                CONFIRM_PLANNED_NOTHING
-            } else if user.contains(crate::lessons::teaching::contract::confirm::CLASH_TASK) {
-                CONFIRM_CLASH_NOTHING
-            } else {
-                CONFIRM_USE_NOTHING
-            },
-        );
-    }
-    if system.starts_with(crate::lessons::teaching::contract::SYSTEM) {
+    if let Some(ask) = crate::lessons::teaching::contract::scripted::ask_of(system, user) {
         let text = replies.concat();
         return CompletionResponse::from_text(if text.is_empty() {
-            CONTRACT_NOTHING
+            crate::lessons::teaching::contract::scripted::nothing(ask, user)
         } else {
-            text.as_str()
+            text
         });
     }
     let text = if let Some(batch) = fixture_batch(user) {
-        let checks: Vec<Value> = batch
+        let entries: Vec<Value> = batch
             .iter()
-            .enumerate()
             .zip(replies)
-            .map(|((index, (_, _, evidence_ids)), reply)| {
-                json!({"id": json!(format!("claim-{index}")), "response": verdict_last(&reply, evidence_ids)})
-            })
+            .map(|((_, _, passage_ids, of), reply)| batch_entry(of, &reply, passage_ids))
             .collect();
-        json!({ "checks": checks }).to_string()
+        json!({ "entries": entries }).to_string()
     } else if is_claim_check(user) && system.contains("End with a third line: Verdict") {
         let local: Vec<String> = (0..64).map(|index| format!("passage-{index}")).collect();
         replies
@@ -198,52 +260,29 @@ pub(crate) fn fixture_completion(
             .map(|reply| part_wise_reply(&reply, user))
             .unwrap_or_default()
     } else {
-        fixture_repair_edits(request, user, replies.concat())
+        fixture_repair_edits(user, replies.concat())
     };
     CompletionResponse::from_text(text)
 }
 
-/// A scripted repair answer made to obey the schema it was asked under: when
-/// the schema asks for an entry for each finding, the changes are put in the
-/// entries of the findings they name or, naming none, the finding sent for
-/// their part; otherwise the names are taken away. Any other reply is
-/// returned as written.
-fn fixture_repair_edits(request: &CompletionRequest, user: &str, text: String) -> String {
+/// A scripted repair answer in the form its request asks for: a teaching
+/// repair's flat answer becomes entries of sentence changes by label; any
+/// other reply is returned as written.
+fn fixture_repair_edits(user: &str, text: String) -> String {
     let Ok(Value::Object(mut answer)) = serde_json::from_str::<Value>(&text) else {
         return text;
     };
-    if !["edits", "citations", "uncite"]
+    if !["edits", "citations", "uncite", "recites"]
         .iter()
         .any(|key| answer.contains_key(*key))
     {
         return text;
     }
-    let entries = request
-        .json_schema
-        .as_ref()
-        .and_then(|schema| schema.pointer("/properties/answers/items"));
-    let sent: Vec<Value> = serde_json::from_str::<Value>(user)
-        .ok()
-        .and_then(|prompt| prompt.get("issuesToFix").and_then(Value::as_array).cloned())
-        .unwrap_or_default();
-    let finding_for = |path: &str| -> Value {
-        let mut segments = path.split('/').skip(1);
-        let part = match (segments.next(), segments.next()) {
-            (Some(list @ ("blocks" | "questions")), Some(index)) => format!("/{list}/{index}"),
-            _ => String::new(),
-        };
-        let entry = sent
-            .iter()
-            .find(|entry| {
-                entry["part"].as_str() == Some(part.as_str())
-                    || entry["also"].as_str() == Some(part.as_str())
-            })
-            .or_else(|| sent.iter().find(|entry| entry["part"].is_null()))
-            .or_else(|| sent.first());
-        entry.map_or(Value::Null, |entry| entry["id"].clone())
-    };
-    if let Some(entry) = entries {
-        return answered_by_finding(&answer, &sent, entry, &finding_for);
+    if let Some(task) = task_of(user) {
+        return teaching_repair_answer(&task, &Value::Object(answer));
+    }
+    if let Some(task) = repair_script::task_of(user) {
+        return repair_script::answer(&task, &Value::Object(answer));
     }
     for key in ["edits", "citations"] {
         let Some(Value::Array(changes)) = answer.get_mut(key) else {
@@ -269,73 +308,304 @@ fn fixture_repair_edits(request: &CompletionRequest, user: &str, text: String) -
 /// What a fixture writes as the plan of an entry it makes.
 pub(crate) const FIXTURE_PLAN: &str = "Make the change the finding asks for.";
 
-/// A flat scripted repair answer as the schema's `answers` ask for it: an
-/// entry for each finding sent, holding the changes that name it or fall in
-/// its part, and no change when none does.
-fn answered_by_finding(
-    answer: &serde_json::Map<String, Value>,
-    sent: &[Value],
-    entry: &Value,
-    finding_for: &dyn Fn(&str) -> Value,
-) -> String {
-    let offered: Vec<&str> = entry
-        .get("required")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .filter(|key| ["edits", "citations", "uncite"].contains(key))
-        .collect();
-    let blank = |id: &str| {
-        let mut fields = serde_json::Map::new();
-        fields.insert("finding".into(), json!(id));
-        fields.insert("plan".into(), json!(FIXTURE_PLAN));
-        for key in &offered {
-            fields.insert((*key).into(), json!([]));
-        }
-        fields
-    };
-    let mut entries: Vec<serde_json::Map<String, Value>> = Vec::new();
-    for id in sent.iter().filter_map(|sent| sent["id"].as_str()) {
-        if !entries.iter().any(|known| known["finding"] == id) {
-            entries.push(blank(id));
-        }
-    }
-    for key in ["edits", "citations", "uncite"] {
-        let Some(Value::Array(changes)) = answer.get(key) else {
+/// The length of the bracketed label that opens `text`, as in `[u12] `.
+fn label_len(text: &str) -> Option<usize> {
+    let body = text.strip_prefix("[u")?;
+    let digits = body.bytes().take_while(u8::is_ascii_digit).count();
+    (digits > 0 && body[digits..].starts_with("] ")).then_some(digits + 4)
+}
+
+/// A marked text as what stands before its first label, then each label with
+/// the text up to the next one.
+fn labelled(marked: &str) -> (String, Vec<(String, String)>) {
+    let mut lead = String::new();
+    let mut pieces: Vec<(String, String)> = Vec::new();
+    let mut at = 0;
+    while at < marked.len() {
+        let rest = &marked[at..];
+        if let Some(len) = label_len(rest) {
+            pieces.push((rest[1..len - 2].to_owned(), String::new()));
+            at += len;
             continue;
+        }
+        let Some(ch) = rest.chars().next() else {
+            break;
         };
-        for change in changes {
-            let mut fields = match change {
-                Value::Object(fields) => fields.clone(),
-                Value::String(path) => std::iter::once(("path".to_owned(), json!(path))).collect(),
-                _ => continue,
-            };
-            let path = fields
-                .get("path")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned();
-            let finding = match fields.remove("finding") {
-                Some(Value::String(named)) => named,
-                _ => finding_for(&path).as_str().unwrap_or("").to_owned(),
-            };
-            let at = match entries
-                .iter()
-                .position(|known| known["finding"] == finding.as_str())
-            {
-                Some(at) => at,
-                None => {
-                    entries.push(blank(&finding));
-                    entries.len() - 1
+        match pieces.last_mut() {
+            Some((_, text)) => text.push(ch),
+            None => lead.push(ch),
+        }
+        at += ch.len_utf8();
+    }
+    (lead, pieces)
+}
+
+/// A marked text as the field was before it was marked.
+pub(crate) fn unmarked(marked: &str) -> String {
+    let (lead, pieces) = labelled(marked);
+    pieces
+        .iter()
+        .fold(lead, |text, (_, piece)| format!("{text}{piece}"))
+}
+
+/// A JSON pointer from a pointer or the dotted form of a path.
+fn pointer_of(path: &str) -> String {
+    if path.starts_with('/') {
+        path.to_owned()
+    } else {
+        format!("/{}", path.replace('.', "/"))
+    }
+}
+
+/// The pointer of the block or question a pointer is in; empty outside every part.
+fn part_of(pointer: &str) -> String {
+    let mut segments = pointer.split('/').skip(1);
+    match (segments.next(), segments.next()) {
+        (Some(list @ ("blocks" | "questions")), Some(index)) => format!("/{list}/{index}"),
+        _ => String::new(),
+    }
+}
+
+/// The pointer of each string of `value` outside its citations.
+fn text_pointers(value: &Value, pointer: &str, found: &mut Vec<String>) {
+    match value {
+        Value::String(_) => found.push(pointer.to_owned()),
+        Value::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                text_pointers(item, &format!("{pointer}/{index}"), found);
+            }
+        }
+        Value::Object(fields) => {
+            for (key, item) in fields {
+                if key != "citations" && key != "citation" {
+                    text_pointers(item, &format!("{pointer}/{key}"), found);
                 }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The label of the citation a fixture names by the pointer of the citation
+/// or of the part holding its own.
+fn citation_at(task: &Value, path: &str) -> String {
+    let named = task["candidate"].pointer(&pointer_of(path));
+    let at = named.and_then(|named| named.get("at").or_else(|| named.pointer("/citation/at")));
+    match at.and_then(Value::as_str) {
+        Some(at) => at.to_owned(),
+        None => panic!("a scripted repair names no citation at {path}"),
+    }
+}
+
+/// A teaching repair's answer, in the form its request asks for, making the
+/// changes of a flat fixture answer
+/// (`{"edits":[{path,before,after}],"citations":[..],"uncite":[..],"recites":[..]}`):
+/// an entry for each finding sent, each change in the entry of the finding it
+/// names by its place (`"finding": 0`), else of the finding sent for its part.
+/// An answer already in the form of the request (`{"entries":[..]}`) is
+/// returned as written; `"plans"` maps a place to the plan of its entry and
+/// `"only"` lists the places whose entries are given at all.
+pub(crate) fn teaching_repair_answer(task: &Value, flat: &Value) -> String {
+    if flat.get("entries").is_some() {
+        return flat.to_string();
+    }
+    let labels = finding_labels(task);
+    let rows: Vec<Value> = task["issuesToFix"].as_array().cloned().unwrap_or_default();
+    let mut entries: Vec<Value> = labels
+        .iter()
+        .enumerate()
+        .map(|(place, label)| {
+            let plan = flat["plans"][place.to_string()]
+                .as_str()
+                .unwrap_or(FIXTURE_PLAN);
+            json!({"of": label, "plan": plan, "edits": {
+                "sentences": {"replace": [], "insert": [], "remove": [], "move": []},
+                "cite": [], "recite": [], "uncite": [], "keys": []}})
+        })
+        .collect();
+    let routed = |change: &Value, path: &str| -> usize {
+        if let Some(place) = change.get("finding").and_then(Value::as_u64) {
+            return usize::try_from(place).unwrap_or(0);
+        }
+        let part = part_of(&pointer_of(path));
+        let row = rows
+            .iter()
+            .position(|row| {
+                row["part"].as_str() == Some(part.as_str())
+                    || row["also"].as_str() == Some(part.as_str())
+            })
+            .or_else(|| rows.iter().position(|row| row["part"].is_null()))
+            .unwrap_or(0);
+        let named = rows.get(row).and_then(|row| row["finding"].as_str());
+        labels
+            .iter()
+            .position(|label| Some(label.as_str()) == named)
+            .unwrap_or(0)
+    };
+    // (entry, place in its replaces, the text's pointer, the new text)
+    let mut replaced: Vec<(usize, usize, String, String)> = Vec::new();
+    for edit in flat["edits"].as_array().into_iter().flatten() {
+        let path = edit["path"].as_str().unwrap_or_default();
+        if path.ends_with("/correctIndex") {
+            let Some(key) = key_item(task, edit) else {
+                panic!("a scripted key change at {path} names no option of the candidate");
             };
-            if let Some(Value::Array(list)) = entries[at].get_mut(key) {
-                list.push(Value::Object(fields));
+            let entry = routed(edit, path);
+            if let Some(keys) = entries[entry]["edits"]["keys"].as_array_mut() {
+                keys.push(key);
+            }
+            continue;
+        }
+        let pointer = pointer_of(path);
+        let (Some(marked), Some(before), Some(after)) = (
+            task["candidate"].pointer(&pointer).and_then(Value::as_str),
+            edit["before"].as_str(),
+            edit["after"].as_str(),
+        ) else {
+            panic!(
+                "a scripted repair edits {path}, which is no text of the candidate, with before {}",
+                edit["before"]
+            );
+        };
+        let (lead, pieces) = labelled(marked);
+        let plain = unmarked(marked);
+        // A fixture may copy its `before` from the candidate as the request shows it, labels and all.
+        let before = unmarked(before);
+        let Some(start) = plain.find(&before) else {
+            panic!("a scripted repair edit at {path} finds no {before:?} in {plain:?}");
+        };
+        let end = start + before.len();
+        let mut at = lead.len();
+        let mut hit: Vec<(String, usize, usize)> = Vec::new();
+        for (label, text) in &pieces {
+            let stops = at + text.trim_end().len();
+            if at < end && start < stops {
+                hit.push((label.clone(), at, stops));
+            }
+            at += text.len();
+        }
+        let (Some(first), Some(last)) = (hit.first(), hit.last()) else {
+            panic!("a scripted repair edit at {path} reaches no sentence with {before:?}");
+        };
+        let head = if start > first.1 {
+            &plain[first.1..start]
+        } else {
+            ""
+        };
+        let tail = if end < last.2 {
+            &plain[end..last.2]
+        } else {
+            ""
+        };
+        let new = format!("{head}{after}{tail}");
+        let entry = routed(edit, path);
+        let hit_labels: Vec<String> = hit.iter().map(|(label, _, _)| label.clone()).collect();
+        let list = &mut entries[entry]["edits"]["sentences"];
+        if new.trim().is_empty() {
+            for label in &hit_labels {
+                if let Some(removed) = list["remove"].as_array_mut() {
+                    removed.push(json!(label));
+                }
+            }
+            continue;
+        }
+        let mut place = 0;
+        if let Some(replaces) = list["replace"].as_array_mut() {
+            replaces.push(json!({"at": hit_labels[0], "with": {"text": new, "from": []}}));
+            place = replaces.len() - 1;
+        }
+        replaced.push((entry, place, pointer, new));
+        for label in &hit_labels[1..] {
+            if let Some(removed) = list["remove"].as_array_mut() {
+                removed.push(json!(label));
             }
         }
     }
-    json!({ "answers": entries }).to_string()
+    for citation in flat["citations"].as_array().into_iter().flatten() {
+        let path = citation["path"].as_str().unwrap_or_default();
+        let part = part_of(&pointer_of(path));
+        let (Some(sentence), Some(source), Some(words)) = (
+            citation["sentence"].as_str(),
+            citation["sourceIndex"].as_u64(),
+            citation["quote"].as_str(),
+        ) else {
+            panic!("a scripted citation at {path} lacks its sentence, sourceIndex or quote");
+        };
+        let Some(quote) = quote_label(task, source, words) else {
+            panic!(
+                "a scripted citation at {path} quotes {words:?}, which no excerpt sentence holds"
+            );
+        };
+        let inside = format!("{part}/");
+        let writes = replaced
+            .iter()
+            .find(|(_, _, pointer, new)| pointer.starts_with(&inside) && new.contains(sentence));
+        if let Some((entry, place, _, _)) = writes {
+            if let Some(from) = entries[*entry]["edits"]["sentences"]["replace"][*place]["with"]
+                ["from"]
+                .as_array_mut()
+            {
+                from.push(json!(quote));
+            }
+            continue;
+        }
+        let mut pointers = Vec::new();
+        if let Some(value) = task["candidate"].pointer(&part) {
+            text_pointers(value, &part, &mut pointers);
+        }
+        let Some(label) = pointers.iter().find_map(|pointer| {
+            let text = unmarked(task["candidate"].pointer(pointer)?.as_str()?);
+            if !text.contains(sentence) {
+                return None;
+            }
+            sentence_label(task, pointer, sentence)
+        }) else {
+            panic!(
+                "a scripted citation at {path} is for {sentence:?}, which the part does not hold"
+            );
+        };
+        let entry = routed(citation, path);
+        if let Some(cites) = entries[entry]["edits"]["cite"].as_array_mut() {
+            cites.push(json!({"sentence": label, "quote": quote}));
+        }
+    }
+    for recite in flat["recites"].as_array().into_iter().flatten() {
+        let path = recite["path"].as_str().unwrap_or_default();
+        let (Some(source), Some(words)) =
+            (recite["sourceIndex"].as_u64(), recite["quote"].as_str())
+        else {
+            panic!("a scripted recite at {path} lacks its sourceIndex or quote");
+        };
+        let Some(quote) = quote_label(task, source, words) else {
+            panic!("a scripted recite at {path} quotes {words:?}, which no excerpt sentence holds");
+        };
+        let entry = routed(recite, path);
+        if let Some(recites) = entries[entry]["edits"]["recite"].as_array_mut() {
+            recites.push(json!({"citation": citation_at(task, path), "quote": quote}));
+        }
+    }
+    for named in flat["uncite"].as_array().into_iter().flatten() {
+        let path = named
+            .as_str()
+            .or_else(|| named["path"].as_str())
+            .unwrap_or_default();
+        let entry = routed(&Value::Null, path);
+        if let Some(uncites) = entries[entry]["edits"]["uncite"].as_array_mut() {
+            uncites.push(json!(citation_at(task, path)));
+        }
+    }
+    if let Some(only) = flat["only"].as_array() {
+        let kept: Vec<usize> = only
+            .iter()
+            .filter_map(|place| place.as_u64().and_then(|place| usize::try_from(place).ok()))
+            .collect();
+        let mut place = 0;
+        entries.retain(|_| {
+            place += 1;
+            kept.contains(&(place - 1))
+        });
+    }
+    json!({ "entries": entries }).to_string()
 }
 
 /// A fixture's label-first verdict ("supported\nReason: …\nSource passage:
@@ -351,15 +621,16 @@ fn part_wise_reply(reply: &str, user: &str) -> String {
     else {
         return reply.to_owned();
     };
-    let (mut reason, mut passage) = (String::new(), Value::Null);
+    let (mut reason, mut passage) = (String::new(), None);
     for line in lines {
         if let Some(value) = line.strip_prefix("Reason:") {
             reason = value.trim().to_owned();
         } else if let Some(value) = line.strip_prefix("Source passage:") {
             let value = value.trim();
-            if value.starts_with("passage-") {
-                passage = json!(value);
-            }
+            passage = value
+                .strip_prefix("passage-")
+                .and_then(|place| place.parse::<usize>().ok())
+                .map(|place| format!("p{}", place + 1));
         }
     }
     let claim = user
@@ -370,11 +641,10 @@ fn part_wise_reply(reply: &str, user: &str) -> String {
     let (kind, passage) = match label.as_str() {
         "supported" => ("stated", passage),
         "contradicted" => ("contradicted", passage),
-        _ => ("specific_missing", Value::Null),
+        _ => ("specific_missing", None),
     };
     json!({
-        "parts": [{"part": claim, "kind": kind, "passage": passage}],
-        "verdict": label,
+        "parts": [{"part": claim, "kind": kind, "passages": passage.into_iter().collect::<Vec<_>>()}],
         "reason": reason,
     })
     .to_string()
@@ -396,7 +666,7 @@ fn assert_schema_request_holds_the_shape(request: &CompletionRequest, schema: &V
     // prompt (application/services/claim_verification/batch.rs), not
     // learning's; it still says "Return JSON with checks" and is left to its
     // owner.
-    let shared_claim_check = request.input.iter().any(|item| {
+    let shared_claim_check = request.input().iter().any(|item| {
         matches!(
             item,
             lattice_core::application::ports::llm_port::CompletionInput::Message { role, content }
@@ -406,7 +676,7 @@ fn assert_schema_request_holds_the_shape(request: &CompletionRequest, schema: &V
     if shared_claim_check {
         return;
     }
-    for item in &request.input {
+    for item in request.input() {
         if let lattice_core::application::ports::llm_port::CompletionInput::Message {
             content,
             ..
@@ -434,45 +704,77 @@ fn assert_schema_request_holds_the_shape(request: &CompletionRequest, schema: &V
 /// The task's own system and user text, so the answer step of a two-step call
 /// reads as the one-step request it replaces.
 fn fixture_messages(request: &CompletionRequest) -> (&str, &str) {
-    crate::lessons::structured_call::task_messages(request)
+    let (system, user) = crate::lessons::structured_call::task_messages(request);
+    match asked_again_with(request) {
+        Some((task, _)) => (system, task),
+        None => (system, user),
+    }
+}
+
+/// A part-wise check's prompt with each passage under the label the fixtures
+/// answer by its place (`[passage-0]`) instead of the handle it is shown under
+/// (`[p1]`).
+fn passages_by_place(user: &str) -> String {
+    if !user.starts_with("Source passages:") {
+        return user.to_owned();
+    }
+    user.split('\n')
+        .map(|line| {
+            line.strip_prefix("[p")
+                .and_then(|rest| rest.strip_suffix(']'))
+                .and_then(|digits| digits.parse::<usize>().ok())
+                .and_then(|handle| handle.checked_sub(1))
+                .map_or_else(|| line.to_owned(), |place| format!("[passage-{place}]"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn is_claim_check(user: &str) -> bool {
     user.starts_with("Source passages:") || user.starts_with("Audit claim fidelity.")
 }
 
-/// One claim of a batched check: its text, its permitted passages and their
-/// bank identifiers.
-type FixtureClaim = (String, Vec<String>, Vec<String>);
+/// One claim of a batched check: its text, its own passages, their handles and its own handle.
+type FixtureClaim = (String, Vec<String>, Vec<String>, String);
 
 fn fixture_batch(user: &str) -> Option<Vec<FixtureClaim>> {
     let batch: Value = serde_json::from_str(user).ok()?;
-    let bank = batch["sourcePassages"].as_array()?;
-    let text_of = |id: &str| {
-        bank.iter()
-            .find(|passage| passage["id"] == id)
-            .and_then(|passage| passage["text"].as_str())
-            .unwrap_or_default()
-            .to_owned()
+    let claims = batch["claims"].as_array()?;
+    claims
+        .iter()
+        .map(|claim| {
+            let passages = claim["passages"].as_array()?;
+            let text_of = |key: &str| {
+                passages
+                    .iter()
+                    .map(|passage| passage[key].as_str().unwrap_or_default().to_owned())
+                    .collect::<Vec<_>>()
+            };
+            Some((
+                claim["claim"].as_str()?.to_owned(),
+                text_of("text"),
+                text_of("id"),
+                claim["id"].as_str()?.to_owned(),
+            ))
+        })
+        .collect()
+}
+
+/// A fixture reply as the batch's entry for the claim `of`: its fields when the reply
+/// states a reason, a source and a verdict, else the entry with the reply as its reason.
+fn batch_entry(of: &str, reply: &str, passage_ids: &[String]) -> Value {
+    let text = verdict_last(reply, passage_ids);
+    let line = |label: &str| {
+        text.lines()
+            .find_map(|line| line.trim().strip_prefix(label))
+            .map(|value| value.trim().to_owned())
     };
-    batch["claims"].as_array().map(|claims| {
-        claims
-            .iter()
-            .map(|claim| {
-                let ids: Vec<String> = claim["evidenceIds"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|id| id.as_str().map(str::to_owned))
-                    .collect();
-                (
-                    claim["claim"].as_str().unwrap_or_default().to_owned(),
-                    ids.iter().map(|id| text_of(id)).collect(),
-                    ids,
-                )
-            })
-            .collect()
-    })
+    match (line("Reason:"), line("Source passage:"), line("Verdict:")) {
+        (Some(reason), Some(source), Some(verdict)) => {
+            json!({"of": of, "reason": reason, "source": source, "verdict": verdict})
+        }
+        _ => json!({"of": of, "reason": text}),
+    }
 }
 
 /// A label-first fixture verdict ("supported\nReason: …\nSource passage:
@@ -511,22 +813,24 @@ fn verdict_last(reply: &str, ids: &[String]) -> String {
 /// are, and an item judge that finds nothing in any item.
 pub(crate) fn question_review_response(prompt: &str) -> Option<String> {
     if prompt.starts_with("Solve quiz questions independently") {
-        let answers: Vec<Value> = fixture_task(prompt).unwrap()["questions"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(|question| json!({"index":question["index"],"reason":"The fixture's key.","correctIndices":[0],"answer":"","blankAnswers":[],"matches":[],"orderedValues":[]}))
-            .collect();
-        return Some(json!({"answers":answers}).to_string());
+        let task = fixture_task(prompt).unwrap();
+        let picks = task["questions"].as_array().is_some_and(|questions| {
+            questions
+                .iter()
+                .all(|question| question["options"].is_array())
+        });
+        return Some(
+            if picks {
+                crate::key_review::scripted::solved(&task, |_| vec![0])
+            } else {
+                crate::key_review::scripted::solved_text(&task, "The fixture's key.")
+            }
+            .to_string(),
+        );
     }
     if prompt.starts_with("Review quiz questions one at a time") {
-        let checks: Vec<Value> = fixture_task(prompt).unwrap()["items"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(|item| json!({"id":item["id"],"finding":"","hasDefect":false,"repeats":[]}))
-            .collect();
-        return Some(json!({"checks":checks}).to_string());
+        let task = fixture_task(prompt).unwrap();
+        return Some(crate::assessment::item_review::scripted::sound(&task).to_string());
     }
     None
 }
@@ -546,13 +850,8 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
             panic!("a JSON task");
         };
         return Some(
-            Value::Object(
-                statements
-                    .keys()
-                    .map(|id| (id.clone(), json!("sourced")))
-                    .collect(),
-            )
-            .to_string(),
+            json!({"entries": statements.keys().map(|id| json!({"of": id, "class": "sourced"})).collect::<Vec<_>>()})
+                .to_string(),
         );
     }
     if prompt.starts_with("Audit inventory fidelity.") {
@@ -571,26 +870,15 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
             let passages = v["passages"].as_array().unwrap();
             let passage = passages.iter().find(|p|p["field"]=="/body" || p["field"]=="/explanation").unwrap();
             let quote = passage_text(passage);
-            let index = v["index"].as_u64().unwrap() as usize;
             let statement = if quote.contains(BAD) { BAD } else if quote.contains(GOOD) { GOOD } else if quote.contains(FIXED) { FIXED } else { quote.as_str() };
-            json!({"index":index,"claims":[{"sentenceId":sentence_id(passage, statement),"statement":statement}],"nonFactualReason":""})
+            json!({"of":v["id"],"claims":[{"sentenceId":sentence_id(passage, statement),"statement":statement}],"nonFactualReason":""})
         }).collect::<Vec<_>>()).to_string());
     }
     if prompt.starts_with("Audit claim coverage independently.") {
-        let data = fixture_task(prompt).unwrap();
-        let mut checks = Vec::new();
-        for unit in data["units"].as_array().unwrap() {
-            let ids: Vec<_> = unit["claims"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|claim| claim["id"].clone())
-                .collect();
-            for passage in unit["passages"].as_array().unwrap() {
-                checks.push(json!({"passageId":passage["id"],"claimIds":ids,"nonFactualReason":if ids.is_empty() {"The fixture contains only a stipulated instruction."} else {""},"missingClaims":[]}));
-            }
-        }
-        return Some(json!({"passages":checks}).to_string());
+        return Some(coverage::scripted_decisions(
+            prompt,
+            |_, claims| json!({"claimIds":claims,"nonFactualReason":if claims.is_empty() {"The fixture contains only a stipulated instruction."} else {""},"missingClaims":[]}),
+        ));
     }
     None
 }
@@ -621,6 +909,12 @@ impl LLMPort for Model {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 impl Model {
     async fn respond(&self, prompt: &str) -> Result<String> {
@@ -628,24 +922,14 @@ impl Model {
             self.extracted_sections
                 .lock()
                 .unwrap()
-                .push(serde_json::from_value(
-                    fixture_task(prompt).unwrap()["requestedIndices"].clone(),
-                )?);
+                .push(extracted_sections_of(prompt));
         }
         if prompt.starts_with("Audit claim coverage independently.") {
-            let batch: Vec<usize> = fixture_task(prompt).unwrap()["units"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|unit| unit["index"].as_u64().unwrap() as usize)
-                .collect();
-            if self.fail_coverage_at.is_some() && self.fail_coverage_at == batch.first().copied() {
+            let index = mapped_unit(prompt).unwrap();
+            if self.fail_coverage_at == Some(index) {
                 return Err(invalid("fixture interrupted during coverage"));
             }
-            self.audited_sections.lock().unwrap().push(batch);
-        }
-        if prompt.starts_with("Audit claim coverage independently.") && self.incomplete_coverage {
-            return Ok(json!({"units":[]}).to_string());
+            self.audited_sections.lock().unwrap().push(vec![index]);
         }
         if let Some(index) = self.coverage_gap_in {
             if prompt.starts_with("Audit inventory fidelity.") {
@@ -658,21 +942,18 @@ impl Model {
                     return Ok(json!({"missingAssertions":[{"sentenceId":data["targetPassage"]["sentences"][0]["id"],"statement":"An additional original assertion is missing from this fixture inventory."}],"reason":"The fixture names one omission."}).to_string());
                 }
             }
-            if prompt.starts_with("Audit claim coverage independently.") {
-                let mut response: Value = serde_json::from_str(&fixture_response(prompt).unwrap())?;
-                for unit in fixture_task(prompt).unwrap()["units"].as_array().unwrap() {
-                    if unit["index"].as_u64() == Some(index as u64) {
-                        let id = unit["passages"][0]["id"].as_str().unwrap();
-                        let entry = response["passages"]
-                            .as_array_mut()
-                            .unwrap()
-                            .iter_mut()
-                            .find(|entry| entry["passageId"].as_str() == Some(id))
-                            .unwrap();
-                        entry["missingClaims"] = json!(["An assertion is missing."]);
-                    }
-                }
-                return Ok(response.to_string());
+            if prompt.starts_with("Audit claim coverage independently.")
+                && mapped_unit(prompt) == Some(index)
+            {
+                let first = std::cell::Cell::new(true);
+                return Ok(coverage::scripted_decisions(prompt, |_, claims| {
+                    let missing = if first.replace(false) {
+                        json!([{"statement":"An assertion is missing."}])
+                    } else {
+                        json!([])
+                    };
+                    json!({"claimIds":claims,"nonFactualReason":"","missingClaims":missing})
+                }));
             }
         }
         if let Some(response) = fixture_response(prompt) {
@@ -688,17 +969,13 @@ impl Model {
         }
         if prompt.starts_with("Review instructional quality.") {
             let data = fixture_task(prompt).unwrap();
-            let asked = data["sectionIndicesToReview"].as_array().cloned();
-            let checks = data["candidate"]["blocks"].as_array().unwrap().iter().enumerate().filter(|(index,_)|asked.as_ref().is_none_or(|asked|asked.contains(&json!(index)))).map(|(index,block)|json!({"index":index,"passageId":block["bodyPassages"][0]["id"],"finding":"The corrected field-name statement agrees with the concrete example.","hasDefect":false})).collect::<Vec<_>>();
-            let mut answer =
-                json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)});
-            if let Some(open) = data["openFindings"].as_array() {
-                answer["openFindings"] = open
-                    .iter()
-                    .map(|finding| json!({"id":finding["id"],"quote":"","verdict":"resolved"}))
-                    .collect();
-            }
-            return Ok(answer.to_string());
+            let resolved: Vec<Value> = data["openFindings"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|finding| json!({"entry":{"kind":"resolved","openFinding":finding["id"]}}))
+                .collect();
+            return Ok(json!({"items":resolved}).to_string());
         }
         if prompt.starts_with("Source passages:") {
             if !prompt.contains(CORRECTION_LEAD) {
@@ -735,13 +1012,19 @@ impl Model {
 }
 
 /// The answer of a model that finds nothing to change in a teaching repair's
-/// request for edits: none.
+/// request for edits: an entry for each finding sent, with no change.
 pub(crate) fn declined_teaching_edits(prompt: &str) -> Option<String> {
     prompt
         .starts_with(
             "You are editing a rejected draft. Correct only the established teaching defects.",
         )
-        .then(|| json!({"edits": []}).to_string())
+        .then(|| {
+            let none = json!({"edits": []});
+            task_of(prompt).map_or_else(
+                || none.to_string(),
+                |task| teaching_repair_answer(&task, &none),
+            )
+        })
 }
 
 fn candidate(statement: &str) -> Value {
@@ -929,11 +1212,14 @@ mod reading_record_tests;
 #[path = "repair_request_tests.rs"]
 mod repair_request_tests;
 
+#[path = "repair_script.rs"]
+pub(super) mod repair_script;
+
 #[path = "born_of_repair_tests.rs"]
 mod born_of_repair_tests;
 
-#[path = "apparatus_tests.rs"]
-mod apparatus_tests;
+#[path = "right_choice_tests.rs"]
+mod right_choice_tests;
 
 #[path = "sentence_naming_tests.rs"]
 mod sentence_naming_tests;
@@ -1257,6 +1543,12 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+        fn enforces(
+            &self,
+            schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            self.model.enforces(schema)
+        }
     }
     impl InterruptedRepair {
         async fn respond(&self, prompt: &str) -> Result<String> {
@@ -1410,6 +1702,12 @@ async fn a_contradicted_claim_gets_a_correction_then_is_taken_out() -> Result<()
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
+        }
     }
     impl GradualRepair {
         async fn respond(&self, prompt: &str) -> Result<String> {
@@ -1429,7 +1727,7 @@ async fn a_contradicted_claim_gets_a_correction_then_is_taken_out() -> Result<()
                     .map(|statement| json!({"sentenceId":sentence_id(passage, statement),"statement":statement}))
                     .collect();
                 return Ok(inventory::fixture_response(vec![
-                    json!({"index":0,"claims":claims,"nonFactualReason":""}),
+                    json!({"of":unit["id"],"claims":claims,"nonFactualReason":""}),
                 ])
                 .to_string());
             }
@@ -1447,11 +1745,17 @@ async fn a_contradicted_claim_gets_a_correction_then_is_taken_out() -> Result<()
                 assert!(!prompt.contains("lastAttempt"));
                 // The correction drops the first sentence and leaves the
                 // second as it was.
-                let body = fixture_task(prompt).unwrap()["candidate"]["blocks"][0]["body"]
+                let dropped = format!("{BAD} ");
+                let edits = if asked.last().unwrap()["candidate"]["blocks"][0]["body"]
                     .as_str()
                     .unwrap()
-                    .replace(&format!("{BAD} "), "");
-                return Ok(repair_body(prompt, json!(body)));
+                    .contains(BAD)
+                {
+                    json!([{"path":"/blocks/0/body","before":dropped,"after":""}])
+                } else {
+                    json!([])
+                };
+                return Ok(json!({ "edits": edits }).to_string());
             }
             if prompt.starts_with("Source passages:")
                 && prompt
@@ -1506,11 +1810,10 @@ async fn a_contradicted_claim_gets_a_correction_then_is_taken_out() -> Result<()
     let reason = asked[1]["failedClaims"][0]["reason"].as_str().unwrap();
     assert!(reason.contains("preserves whitespace"), "{reason}");
     assert!(!asked[1].to_string().contains("lastAttempt"));
-    // The second correction has no first sentence left to drop, so its edit
-    // changes nothing and the section is asked for once.
+    // The second correction has no first sentence left to drop, so its entry
+    // changes nothing; the model is never asked to write the section itself.
     let sections = model.sections.lock().unwrap();
-    assert_eq!(sections.len(), 1, "{sections:?}");
-    assert!(sections[0].contains("changed nothing"), "{}", sections[0]);
+    assert!(sections.is_empty(), "{sections:?}");
     assert!(!raw.contains(BAD) && !raw.contains(SECOND), "{raw}");
     assert!(raw.contains(GOOD));
     assert!(report.issues.is_empty());
@@ -1708,7 +2011,7 @@ fn saved_coverage_with_a_long_missing_assertion_is_reused() {
 }
 
 #[tokio::test]
-async fn missing_evidence_failed_judge_and_incomplete_coverage_never_approve() -> Result<()> {
+async fn missing_evidence_and_failed_judge_never_approve() -> Result<()> {
     let model = Model::new();
     // Without evidence a claim stating a figure stays an issue.
     let no_evidence = verify(&model, &candidate("A short definition from 2019."), &[]).await?;
@@ -1749,13 +2052,6 @@ async fn missing_evidence_failed_judge_and_incomplete_coverage_never_approve() -
         report.findings[0].resolution
     );
     assert!(!*offline.repaired.lock().unwrap());
-    let incomplete = Model {
-        incomplete_coverage: true,
-        ..Model::new()
-    };
-    assert!(verify(&incomplete, &candidate(GOOD), &[source()])
-        .await
-        .is_err());
     Ok(())
 }
 
@@ -2025,7 +2321,7 @@ async fn an_open_fence_is_no_example_and_the_closed_ones_still_run() -> Result<(
 async fn unlabeled_data_and_code_are_labeled_without_changing_their_bytes() -> Result<()> {
     let runtimes = BuiltinRuntimes::for_tests();
     use crate::lessons::course_generation_tests::ScriptedModel;
-    let model=ScriptedModel {outputs:Mutex::new(vec![json!({"fences":[{"id":"block-0-fence-0","language":"text"},{"id":"block-0-fence-1","language":"javascript"}]}).to_string()].into()),prompts:Mutex::new(Vec::new())};
+    let model=ScriptedModel {outputs:Mutex::new(vec![json!({"entries":[{"of":"f1","language":"text"},{"of":"f2","language":"javascript"}]}).to_string()].into()),prompts:Mutex::new(Vec::new())};
     let tree = "project/\n└── main.rs\n";
     let code = "console.log(' a  b ');\n";
     let body = format!("Directory tree:\n```\n{tree}```\nRunnable example:\n```\n{code}```\n");
@@ -2048,12 +2344,29 @@ async fn unlabeled_data_and_code_are_labeled_without_changing_their_bytes() -> R
 }
 
 #[tokio::test]
+async fn prompt_snapshot_fence_labels() -> Result<()> {
+    use crate::lessons::course_generation_tests::{RequestLog, ScriptedModel};
+    let inner = ScriptedModel {
+        outputs: Mutex::new(
+            vec![json!({"entries":[{"of":"f1","language":"text"},{"of":"f2","language":"javascript"}]}).to_string()].into(),
+        ),
+        prompts: Mutex::new(Vec::new()),
+    };
+    let model = RequestLog::new(&inner);
+    let body = "Directory tree:\n```\nproject/\n└── main.rs\n```\nRunnable example:\n```\nconsole.log(' a  b ');\n```\n";
+    let lesson = json!({"blocks":[{"kind":"worked_example","title":"Tree and program","body":body}],"questions":[]});
+    normalize_example_fences(&model, lesson.to_string()).await?;
+    model.assert_snapshot::<execution::FenceLabels>();
+    Ok(())
+}
+
+#[tokio::test]
 async fn an_unclosed_fence_is_left_as_written_and_a_closed_one_elsewhere_is_still_labeled(
 ) -> Result<()> {
     use crate::lessons::course_generation_tests::ScriptedModel;
     let model = ScriptedModel {
         outputs: Mutex::new(
-            vec![json!({"fences":[{"id":"block-1-fence-0","language":"text"}]}).to_string()].into(),
+            vec![json!({"entries":[{"of":"f1","language":"text"}]}).to_string()].into(),
         ),
         prompts: Mutex::new(Vec::new()),
     };
@@ -2082,17 +2395,22 @@ async fn invalid_fence_classification_cannot_hide_an_unexecuted_program() {
     use crate::lessons::course_generation_tests::ScriptedModel;
     let lesson = json!({"blocks":[{"kind":"worked_example","body":"```\nconsole.log(42);\n```"}],"questions":[]});
     for response in [
-        json!({"fences":[]}),
-        json!({"fences":[{"id":"invented","language":"text"}]}),
-        json!({"fences":[{"id":"block-0-fence-0","language":"invalid-label"}]}),
+        json!({"entries":[]}),
+        json!({"entries":[{"of":"f9","language":"text"}]}),
+        json!({"entries":[{"of":"f1","language":"invalid-label"}]}),
     ] {
         let model = ScriptedModel {
-            outputs: Mutex::new(vec![response.to_string()].into()),
+            outputs: Mutex::new(vec![response.to_string(), response.to_string()].into()),
             prompts: Mutex::new(Vec::new()),
         };
-        assert!(normalize_example_fences(&model, lesson.to_string())
-            .await
-            .is_err());
+        let kept: Value = serde_json::from_str(
+            &normalize_example_fences(&model, lesson.to_string())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(kept["blocks"][0]["body"], "```\nconsole.log(42);\n```");
+        assert!(execution::observe(&runtimes, &kept).await.is_err());
     }
     assert!(execution::observe(&runtimes, &lesson).await.is_err());
 }
@@ -2108,7 +2426,7 @@ async fn durable_judge_recovers_truncated_output_without_using_it_as_approval() 
     impl LLMPort for TruncatedJudge {
         async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
             assert!(request.no_time_limit);
-            assert!(request.max_output_tokens.unwrap() > 512);
+            assert!(request.max_output_tokens().unwrap() > 512);
             assert_eq!(request.reasoning_effort.as_deref(), Some("low"));
             assert!(!request.want_logprobs);
             let call = self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -2119,7 +2437,7 @@ async fn durable_judge_recovers_truncated_output_without_using_it_as_approval() 
                     ..Default::default()
                 });
             }
-            let sent = serde_json::to_string(&request.input)?;
+            let sent = serde_json::to_string(request.input())?;
             assert!(sent.contains(CORRECTION_LEAD));
             assert!(sent.contains(CUT_OFF_REFUSAL));
             Ok(CompletionResponse {
@@ -2140,6 +2458,12 @@ async fn durable_judge_recovers_truncated_output_without_using_it_as_approval() 
         }
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
+        }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
         }
     }
     let model = TruncatedJudge(Default::default());
@@ -2176,6 +2500,12 @@ impl LLMPort for TypedModel {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 #[tokio::test]
@@ -2357,7 +2687,7 @@ async fn malformed_verdict_gets_one_format_correction_without_approving_missing_
     use crate::lessons::course_generation_tests::ScriptedModel;
     let malformed="The passages describe Rust tools but do not mention Visual Studio.\nReason: Visual Studio is absent.\nSource quote: none";
     for corrected in [
-        "unsupported\nReason: Visual Studio is absent.\nSource quote: none",
+        "Reason: Visual Studio is absent.\nSource passage: none\nVerdict: unsupported",
         malformed,
     ] {
         let model = ScriptedModel {
@@ -2376,7 +2706,7 @@ async fn malformed_verdict_gets_one_format_correction_without_approving_missing_
         )
         .check("Visual Studio includes a package manager.", &evidence)
         .await;
-        if corrected.starts_with("unsupported") {
+        if corrected != malformed {
             assert!(
                 matches!(result,ClaimJudgment::Judged(outcome) if outcome.verdict==ClaimVerdict::Unsupported)
             );
@@ -2400,7 +2730,7 @@ async fn malformed_verdict_gets_one_format_correction_without_approving_missing_
 }
 
 #[tokio::test]
-async fn strict_checker_records_a_long_or_reflowed_quote_as_the_sources_exact_text() {
+async fn strict_checker_records_the_one_evidence_text_it_is_given_as_the_passage_it_cites() {
     let quote = format!(
         "{} The field contains two spaces: a  b.",
         "A factual reference sentence. ".repeat(20)
@@ -2409,71 +2739,75 @@ async fn strict_checker_records_a_long_or_reflowed_quote_as_the_sources_exact_te
         text: quote.clone(),
         quote: None,
     };
-    for cited in [quote.clone(), quote.replace("a  b", "a b")] {
-        let model=TypedModel {response:CompletionResponse {
-            text:format!("supported\nReason: The exact reference contains the statement.\nSource quote: {cited}"),
-            finish_reason:"stop".into(),..Default::default()
-        }};
-        let checker = ClaimChecker::new(
-            &model,
-            SamplingOverride::deterministic(),
-            512,
-            CheckPolicy::Strict,
-        );
-        let result = checker
-            .check("The field contains two spaces.", &evidence)
-            .await;
-        assert!(
-            matches!(result,ClaimJudgment::Judged(outcome) if outcome.quote.as_deref()==Some(quote.as_str()))
-        );
-    }
+    let model = TypedModel {
+        response: CompletionResponse {
+            text: "Reason: The exact reference contains the statement.\nSource passage: passage-0\nVerdict: supported".into(),
+            finish_reason: "stop".into(),
+            ..Default::default()
+        },
+    };
+    let checker = ClaimChecker::new(
+        &model,
+        SamplingOverride::deterministic(),
+        512,
+        CheckPolicy::Strict,
+    );
+    let result = checker
+        .check("The field contains two spaces.", &evidence)
+        .await;
+    assert!(
+        matches!(result, ClaimJudgment::Judged(outcome) if outcome.quote.as_deref() == Some(quote.as_str()))
+    );
 }
 
 #[tokio::test]
-async fn strict_checker_rejects_missing_invented_quotes_and_truncated_replies() {
+async fn strict_checker_rejects_missing_invented_passages_and_truncated_replies() {
     let evidence = ClaimEvidence {
         text: SOURCE.into(),
         quote: Some(GOOD.into()),
     };
-    for (text, finish) in [("supported","stop"),("supported\nReason: a match\nSource quote: fabricated", "stop"),("supported\nReason: a match\nSource quote: DictReader preserves field-name whitespace by default.","length")] {
-        let model=TypedModel { response:CompletionResponse { text:text.into(),finish_reason:finish.into(), ..Default::default() } };
-        let strict=ClaimChecker::new(&model,SamplingOverride::deterministic(),512,CheckPolicy::Strict).check(GOOD,&evidence).await;
-        assert!(matches!(strict,ClaimJudgment::Unusable));
-    }
-    for alternatives in [
-        vec![
-            ("contradicted".into(), 0.9_f32.ln()),
-            ("supported".into(), 0.1_f32.ln()),
-        ],
-        vec![
-            ("supported".into(), 0.5_f32.ln()),
-            ("contradicted".into(), 0.5_f32.ln()),
-        ],
+    for (text, finish) in [
+        ("Verdict: supported", "stop"),
+        (
+            "Reason: a match\nSource passage: passage-7\nVerdict: supported",
+            "stop",
+        ),
+        (
+            "Reason: a match\nSource passage: passage-0\nVerdict: supported",
+            "length",
+        ),
     ] {
         let model = TypedModel {
             response: CompletionResponse {
-                text: format!(
-                    "supported\nReason: The source preserves spaces.\nSource quote: {GOOD}"
-                ),
-                finish_reason: "stop".into(),
-                first_token_logprobs: Some(alternatives),
+                text: text.into(),
+                finish_reason: finish.into(),
                 ..Default::default()
             },
         };
-        let checker = ClaimChecker::new(
+        let strict = ClaimChecker::new(
             &model,
             SamplingOverride::deterministic(),
             512,
             CheckPolicy::Strict,
-        );
-        assert!(matches!(
-            checker.check(GOOD, &evidence).await,
-            ClaimJudgment::Judged(outcome) if outcome.verdict == ClaimVerdict::Unsupported && outcome.quote.is_none()
-        ));
+        )
+        .check(GOOD, &evidence)
+        .await;
+        assert!(matches!(strict, ClaimJudgment::Unusable));
     }
 }
 
 pub(crate) async fn install_source(db: &Database, program_id: &str, text: &str) -> Result<()> {
+    let id = || uuid::Uuid::new_v4().to_string();
+    install_source_as(db, program_id, text, (&id(), &id())).await
+}
+
+/// [`install_source`] with the source and version ids given.
+pub(crate) async fn install_source_as(
+    db: &Database,
+    program_id: &str,
+    text: &str,
+    (source_id, version_id): (&str, &str),
+) -> Result<()> {
     use crate::{
         dto::{LearningSourceKind, LearningSourcePolicy},
         source_library::{CapturedLearningSource, LearningSourceLibraryRepository},
@@ -2483,8 +2817,8 @@ pub(crate) async fn install_source(db: &Database, program_id: &str, text: &str) 
         .add(
             crate::source_library::NewLearningSource {
                 operation_id: &id(),
-                source_id: &id(),
-                version_id: &id(),
+                source_id,
+                version_id,
                 program_id,
                 kind: LearningSourceKind::Pasted,
                 operation_kind: "add_text",

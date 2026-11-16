@@ -425,7 +425,7 @@ impl ClaimChecker<'_> {
         schema: &Value,
         sampling: SamplingOverride,
     ) -> CompletionRequest {
-        CompletionRequest {
+        legacy::completion(legacy::Completion {
             input: vec![
                 CompletionInput::Message {
                     role: "system".into(),
@@ -442,7 +442,7 @@ impl ClaimChecker<'_> {
             no_time_limit: true,
             priority: InferencePriority::Verification,
             ..Default::default()
-        }
+        })
     }
 }
 

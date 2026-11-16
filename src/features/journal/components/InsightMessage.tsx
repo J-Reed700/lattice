@@ -3,8 +3,8 @@ import { useMemo } from 'react';
 import { TiptapViewer } from '@/components/TiptapEditor';
 import { parseMessageSources, type JournalMessageSource } from '@/features/journal/hooks/useJournalSources';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
+import { useDrawnReply } from '@/shared/conversations/useDrawnReply';
 import type { SnapshotMessage } from '@/types/api/dailyNotes';
-import { normalizeAssistantMarkdown } from '@/utils/assistantMarkdown';
 
 
 interface InsightMessageProps {
@@ -19,10 +19,7 @@ interface InsightMessageProps {
  */
 export function InsightMessage({ message, onOpenSource }: InsightMessageProps) {
   const showCitations = useCitationDisplayStore((state) => state.visible);
-  const normalized = useMemo(
-    () => normalizeAssistantMarkdown(message.content),
-    [message.content],
-  );
+  const drawn = useDrawnReply(message);
 
   const sources = useMemo(() => parseMessageSources(message.metadata), [message.metadata]);
   const citationMap = useMemo(
@@ -59,7 +56,8 @@ export function InsightMessage({ message, onOpenSource }: InsightMessageProps) {
         }}
       >
         <TiptapViewer
-          content={normalized}
+          content={drawn?.markdown ?? message.content}
+          marks={drawn?.numbers}
           citationNumbers={citationNumbers}
           showEvidence={showCitations}
         />

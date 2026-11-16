@@ -3,14 +3,14 @@ use super::review_candidate;
 use serde_json::json;
 
 fn passages(body: &str) -> Vec<String> {
-    let (reviewed, ids) = review_candidate(&json!({"blocks":[{"body":body}]}));
+    let (reviewed, ids) = review_candidate(&json!({"blocks":[{"body":body}]}), &[0]);
     let texts: Vec<String> = reviewed["blocks"][0]["bodyPassages"]
         .as_array()
         .unwrap()
         .iter()
         .map(|p| p["text"].as_str().unwrap().to_owned())
         .collect();
-    assert_eq!(ids[0].len(), texts.len());
+    assert_eq!(ids.iter().filter(|p| p.section == 0).count(), texts.len());
     texts
 }
 

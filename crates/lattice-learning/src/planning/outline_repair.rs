@@ -36,7 +36,7 @@ pub(crate) const REMOVE: &str =
     "Remove the assertion or restate it as a learning activity rather than a fact.";
 pub(crate) const PLAN_FIX: &str = "Fix the plan defect described; do not add or change citations.";
 pub(crate) const PLAN_SMALLEST: &str =
-    "This is the last attempt and the previous rewording did not remove the defect. Rewrite the text at this finding's path so the reason no longer applies: delete or replace every phrase the reason objects to instead of rewording it. If a sentence cannot be fixed, remove it; if the item cannot be fixed, drop it.";
+    "This is the last attempt and the previous rewording did not remove the defect. Rewrite the text this finding is about so the reason no longer applies: delete or replace every phrase the reason objects to instead of rewording it. If a sentence cannot be fixed, remove it; if the item cannot be fixed, drop it.";
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct RepairOutcome {
@@ -544,11 +544,19 @@ pub(crate) async fn repair(
                 LearningOutlineIssueKind::Plan => PLAN_FIX,
                 _ => instructions.get(id).copied().unwrap_or(NARROW),
             };
-            let mut entry = json!({"id":issue.id,"path":issue.path,"kind":kind_name(issue.kind),"claim":issue.claim,"reason":issue.message,"instruction":instruction});
-            if let (Some(source_id), Some(object)) = (&issue.source_id, entry.as_object_mut()) {
-                object.insert("contradictingPassage".into(), json!({"sourceIndex":sources.iter().position(|s| &s.id == source_id),"quote":issue.quote}));
-            }
-            listed.push(entry);
+            listed.push(Finding::new(
+                &issue.path,
+                kind_name(issue.kind),
+                &issue.claim,
+                &issue.message,
+                instruction,
+                issue.source_id.as_ref().map(|source_id| {
+                    (
+                        sources.iter().position(|s| &s.id == source_id),
+                        issue.quote.clone(),
+                    )
+                }),
+            ));
         }
         let rewrite =
             rewrite_module(repo, llm, program, draft, sources, index, &listed, progress).await?;
@@ -582,7 +590,7 @@ pub(crate) async fn repair(
 mod evidence;
 use evidence::{insufficient, locate};
 mod rewrite;
-use rewrite::{rewrite_module, Rewrite};
+use rewrite::{rewrite_module, Finding, Rewrite};
 
 #[cfg(test)]
 mod tests;

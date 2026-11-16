@@ -144,20 +144,22 @@ pub async fn remove_source_key(
     .map_err(ApiError::from)
 }
 
+/// What the plugin starts: delivering saved snapshot jobs, and the finders
+/// the user configured (keys, SearXNG, contact, switches) in place of the
+/// keyless defaults, before the first search.
+pub(crate) async fn start(container: &Container) {
+    container
+        .jobs()
+        .register_all(vec![container.web_page_snapshots().job_kind()])
+        .await;
+    container.reload_source_finders().await;
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("web")
         .setup(|app, _api| {
             let container = app.state::<Container>().inner().clone();
-            // Registration settles snapshot jobs the last process left
-            // running, then starts delivering saved work.
-            tauri::async_runtime::block_on(
-                container
-                    .jobs()
-                    .register_all(vec![container.web_page_snapshots().job_kind()]),
-            );
-            // The finders the user configured (keys, SearXNG, contact,
-            // switches) replace the keyless defaults before the first search.
-            tauri::async_runtime::block_on(container.reload_source_finders());
+            tauri::async_runtime::block_on(start(&container));
             // The scheme handler resolves the service from managed state (not the container).
             app.manage(container.web_page_snapshots());
             app.manage(container.chat_images_service());

@@ -177,7 +177,7 @@ impl Script {
         } else {
             ""
         };
-        json!({"index":unit["index"],"claims":claims,"nonFactualReason":reason})
+        json!({"of":unit["id"],"claims":claims,"nonFactualReason":reason})
     }
 
     /// The next scripted correction of the section `request` sends, or the end
@@ -195,10 +195,12 @@ impl Script {
                 "the run ends at a repair request past the script".into(),
             ));
         };
-        let after = replacements
+        let edits: Vec<Value> = replacements
             .iter()
-            .fold(body.clone(), |text, (from, to)| text.replace(*from, to));
-        Ok(json!({"edits":[{"path":"/blocks/0/body","before":body,"after":after}]}).to_string())
+            .filter(|(from, _)| body.contains(*from))
+            .map(|(from, to)| json!({"path":"/blocks/0/body","before":from,"after":to}))
+            .collect();
+        Ok(json!({ "edits": edits }).to_string())
     }
 }
 
@@ -225,6 +227,12 @@ impl LLMPort for Script {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 

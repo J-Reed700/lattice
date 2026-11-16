@@ -5,11 +5,13 @@ use crate::features::llm::engine::vision::not_set_up_to_see;
 use crate::features::llm::fitting::{Fitted, OutputLimits, Thinking};
 use crate::features::llm::scheduler::{InferenceScheduler, SchedulerRegistry};
 use async_trait::async_trait;
+use lattice_core::application::services::model_contract::shape::Schema;
 use lattice_core::application::{
     contracts::settings::LLMSettingsDto,
     ports::llm_port::{CompletionRequest, CompletionResponse, LLMPort},
 };
 use lattice_core::domain::models::vision::VisionGeometry;
+use lattice_core::shared::error::WithCauses;
 use lattice_core::shared::error::{AppError, Result};
 use protocol::{cloud_provider, protocols, CompletionProtocol, ProviderApi};
 use serde_json::Value;
@@ -18,7 +20,7 @@ use std::time::{Duration, Instant};
 
 pub mod catalog;
 pub(crate) mod limits;
-mod protocol;
+pub(in crate::features::llm) mod protocol;
 mod reply;
 mod streaming;
 mod timing;
@@ -52,10 +54,7 @@ impl CloudLlm {
     ) -> std::sync::Arc<dyn LLMPort> {
         let scheduler = schedulers.cloud(self.protocol.name());
         self.scheduler = Arc::clone(&scheduler);
-        std::sync::Arc::new(crate::features::llm::scheduler::ScheduledLlm::new(
-            std::sync::Arc::new(self),
-            scheduler,
-        ))
+        schedulers.front(std::sync::Arc::new(self), scheduler, None)
     }
 
     /// This client as a port, behind a scheduler of its own.
@@ -86,7 +85,7 @@ impl CloudLlm {
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(10))
             .build()
-            .map_err(|e| AppError::InvalidConfig(e.to_string()))?;
+            .map_err(|e| AppError::InvalidConfig(WithCauses(&e).to_string()))?;
         Ok(Self {
             protocol,
             model: settings.model.clone(),
@@ -161,7 +160,7 @@ impl CloudLlm {
                 if e.is_timeout() {
                     self.budget_error()
                 } else {
-                    AppError::Network(format!("Cloud request failed: {e}"))
+                    AppError::Network(format!("Cloud request failed: {}", WithCauses(&e)))
                 }
             })?;
             let status = response.status();
@@ -258,10 +257,9 @@ impl CloudLlm {
         let (response, _) = self
             .send_with_fallback(self.body(fitted, false)?, deadline, true)
             .await?;
-        let value: Value = response
-            .json()
-            .await
-            .map_err(|e| AppError::Network(format!("Invalid cloud response: {e}")))?;
+        let value: Value = response.json().await.map_err(|e| {
+            AppError::Network(format!("Invalid cloud response: {}", WithCauses(&e)))
+        })?;
         // Without the server's own timings a whole answer at once has no
         // edge between reading and writing, so it is not timed.
         self.protocol.parse_reply(value)
@@ -323,6 +321,9 @@ impl ModelBackend for CloudLlm {
     }
     fn keeps_read_prompts(&self) -> bool {
         false
+    }
+    fn enforces(&self, schema: &Schema) -> bool {
+        self.protocol.enforces(schema.as_json())
     }
     fn is_alive(&self) -> bool {
         true

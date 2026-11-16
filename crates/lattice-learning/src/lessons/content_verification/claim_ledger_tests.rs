@@ -18,7 +18,6 @@ use crate::lessons::claim_reviews::repository::{ClaimReviewRepository, ShownPass
 use crate::lessons::claim_reviews::service::ClaimReviewService;
 use crate::repository::LearningRepository;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
-use lattice_core::application::services::model_contract::CORRECTION_LEAD;
 use lattice_core::domain::learning::acceptance::{Goal, Outcome, Reading, Step, Then};
 use lattice_core::domain::learning::claim_review::{
     text_sha256, Actor, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry,
@@ -121,7 +120,12 @@ impl Figures {
     /// A research planner that plans one web search for the first gap.
     pub(super) fn planning(query: &str) -> Self {
         Self {
-            plan: Some(json!({"needs":[{"gap":0,"kind":"web","query":query}]}).to_string()),
+            plan: Some(
+                crate::references::web_research::needs_answer(
+                    json!([{"gap":0,"kind":"web","query":query}]),
+                )
+                .to_string(),
+            ),
             ..Self::new()
         }
     }
@@ -139,7 +143,7 @@ impl Figures {
             self.extracted
                 .lock()
                 .unwrap()
-                .push(serde_json::from_value(data["requestedIndices"].clone())?);
+                .push(extracted_sections_of(prompt));
             return Ok(inventory::fixture_response(
                 units
                     .iter()
@@ -152,8 +156,8 @@ impl Figures {
                             .unwrap();
                         let statement = statement_in(&passage_text(passage));
                         match statement {
-                            Some(statement) => json!({"index":unit["index"],"claims":[{"sentenceId":sentence_id(passage, &statement),"statement":statement}],"nonFactualReason":""}),
-                            None => json!({"index":unit["index"],"claims":[],"nonFactualReason":NOTHING_TO_CHECK}),
+                            Some(statement) => json!({"of":unit["id"],"claims":[{"sentenceId":sentence_id(passage, &statement),"statement":statement}],"nonFactualReason":""}),
+                            None => json!({"of":unit["id"],"claims":[],"nonFactualReason":NOTHING_TO_CHECK}),
                         }
                     })
                     .collect(),
@@ -190,8 +194,13 @@ impl Figures {
             } else {
                 figure(repair)
             };
-            let after = body.replace(&statement_in(body).unwrap(), &replacement);
-            return Ok(json!({"edits":[{"path":path,"before":body,"after":after}]}).to_string());
+            let plain = unmarked(body);
+            let statement = statement_in(&plain).unwrap();
+            let start = plain.find(&statement).unwrap();
+            let end = plain.rfind(&statement).unwrap() + statement.len();
+            let before = &plain[start..end];
+            let after = before.replace(&statement, &replacement);
+            return Ok(json!({"edits":[{"path":path,"before":before,"after":after}]}).to_string());
         }
         if prompt.starts_with("Source passages:") {
             let claim = prompt
@@ -222,7 +231,7 @@ impl LLMPort for Figures {
             .iter()
             .any(|prompt| prompt.starts_with("Source passages:"))
         {
-            let correcting = serde_json::to_string(&request.input)?.contains(CORRECTION_LEAD);
+            let correcting = !fixture_correction(request).is_empty();
             let ask = if correcting {
                 self.asks.load(Ordering::Relaxed)
             } else {
@@ -249,6 +258,12 @@ impl LLMPort for Figures {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -1890,6 +1905,12 @@ impl LLMPort for Counting {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 
 /// A lesson of `statements`, one to a section; each section cites the
@@ -2882,6 +2903,15 @@ fn bare(index: usize, sentence: &str) -> Value {
     json!({"kind":"explanation","title":format!("Section {index}"),"body":sentence,"rubric":[]})
 }
 
+/// `block` citing the source's own sentence, so the review finds nothing in
+/// its citation. The course's library numbers the source it holds second, after
+/// the one its setup adds.
+fn cited(mut block: Value) -> Value {
+    block["sourceIndex"] = json!(1);
+    block["quote"] = json!(GOOD);
+    block
+}
+
 /// A lesson of two cited sections that state what the sources do, and
 /// `questions`.
 fn with_questions(questions: Vec<Value>) -> Value {
@@ -2897,9 +2927,9 @@ async fn statements_alone_in_their_sections_are_published_not_verified_instead_o
     let course = Course::new().await?;
     let (first, second) = (figure(5), figure(6));
     let draft = json!({"blocks":[
-        {"kind":"explanation","title":"Section 0","body":section(GOOD),"rubric":[]},
-        bare(1, &first),
-        bare(2, &second)
+        cited(json!({"kind":"explanation","title":"Section 0","body":section(GOOD),"rubric":[]})),
+        cited(bare(1, &first)),
+        cited(bare(2, &second))
     ],"questions":[]});
     let prepared = course
         .prepare(&Figures::contradicting(), &draft)

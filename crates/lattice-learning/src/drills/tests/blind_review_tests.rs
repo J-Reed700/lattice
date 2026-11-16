@@ -2,9 +2,9 @@
 //! the key; and how findable each planted issue was.
 
 use super::support::{
-    baseline, baseline_with_brief, blind_answer, blind_assessment, build, entry_answer, files,
-    idle_grader, last, lesson_brief, lesson_proved, messages, proved, system, unchecked,
-    FakeGrader, ScriptedModel, LITERALS, OPERATOR, OPERATOR_AFTER,
+    baseline, baseline_with_brief, blind_answer, blind_assessment, build, entry_answer, entry_for,
+    files, idle_grader, last, lesson_brief, lesson_proved, line_handle, messages, proved, system,
+    unchecked, FakeGrader, ScriptedModel, LITERALS, OPERATOR,
 };
 use crate::drills::build::{LessonChecked, Proved};
 use crate::tests::pool;
@@ -25,8 +25,9 @@ fn span(line: u32) -> LineSpan {
 }
 
 fn pop_finding() -> Value {
+    let at = line_handle(&proved().files, "src/limiter.py", 21);
     json!({
-        "path": "src/limiter.py", "quote": "self.hits.pop(key, None)",
+        "from": at, "to": at,
         "comment": "Nothing calls forget, so the dictionary grows without bound.", "severity": "minor"
     })
 }
@@ -97,8 +98,7 @@ async fn the_key_the_grader_is_shown_carries_the_link_of_a_checked_lesson_issue(
 }
 
 #[tokio::test]
-async fn a_quote_gives_its_lines_unless_it_is_missing_or_ambiguous_and_the_grader_sees_them(
-) -> Result<()> {
+async fn a_finding_gets_the_lines_it_points_at_and_the_grader_sees_them() -> Result<()> {
     let db = Database::new(pool().await?);
     let model = ScriptedModel::new([blind_answer(), entry_answer()]);
     let grader = FakeGrader::new(blind_assessment());
@@ -115,7 +115,20 @@ async fn a_quote_gives_its_lines_unless_it_is_missing_or_ambiguous_and_the_grade
         .iter()
         .map(|finding| finding.span.clone())
         .collect();
-    assert_eq!(spans, [Some(span(13)), None, Some(span(21)), None]);
+    let config = LineSpan {
+        path: "src/config.py".into(),
+        start: 8,
+        end: 8,
+    };
+    assert_eq!(
+        spans,
+        [
+            Some(span(13)),
+            Some(span(17)),
+            Some(span(21)),
+            Some(config.clone())
+        ]
+    );
     let seen = grader.seen();
     assert_eq!(seen.len(), 1);
     assert_eq!(seen[0].issues, ["planted-1", "planted-2"]);
@@ -129,8 +142,8 @@ async fn a_quote_gives_its_lines_unless_it_is_missing_or_ambiguous_and_the_grade
         "This lets one call more than the limit through."
     );
     assert_eq!(findings[0].severity, Some(Severity::Major));
-    assert_eq!(findings[1].span, None);
-    assert_eq!(findings[3].span, None);
+    assert_eq!(findings[1].span, Some(span(17)));
+    assert_eq!(findings[3].span, Some(config));
     Ok(())
 }
 
@@ -187,19 +200,18 @@ async fn a_valid_extra_becomes_a_found_in_review_issue_with_its_span_from_its_fi
     assert!(sent[1]
         .1
         .contains("The dictionary really does grow without bound."));
-    assert!(sent[1]
-        .1
-        .contains("resources.unbounded_growth (Unbounded growth)"));
-    let schema = entry.json_schema.clone().unwrap();
-    let ids = schema["properties"]["pattern"]["enum"].as_array().unwrap();
-    assert!(ids.contains(&json!("none")));
+    assert!(sent[1].1.contains("(Unbounded growth):"));
     assert!(
-        ids.contains(&json!("correctness.mutable_default_argument")),
+        sent[1].1.contains("(Mutable default argument):"),
         "a Python pattern"
     );
     assert!(
-        !ids.contains(&json!("errors.unwrap_on_fallible")),
+        !sent[1].1.contains("(Unwrap on a fallible value):"),
         "a Rust pattern"
+    );
+    assert!(
+        !sent[1].1.contains("resources.unbounded_growth"),
+        "the id is not shown"
     );
     Ok(())
 }
@@ -237,21 +249,14 @@ async fn how_findable_each_planted_issue_was_is_kept() -> Result<()> {
     Ok(())
 }
 
-fn entry(pattern: &str, before: &str) -> String {
-    json!({
-        "pattern": pattern,
-        "severity": "minor",
-        "consequence": "Every key ever seen stays in memory.",
-        "fix": {"path": "src/limiter.py", "before": before, "after": "        self.hits.clear()\n"},
-        "explanation": "The dictionary only grows. Drop keys whose window has passed."
-    })
-    .to_string()
+fn none_entry() -> String {
+    json!({"entry": {"kind": "none"}}).to_string()
 }
 
 #[tokio::test]
 async fn none_adds_nothing_to_the_key() -> Result<()> {
     let db = Database::new(pool().await?);
-    let model = ScriptedModel::new([blind_answer(), entry("none", "-")]);
+    let model = ScriptedModel::new([blind_answer(), none_entry()]);
     let grader = FakeGrader::new(blind_assessment());
     let blind = build(&db, &model, None, &grader)
         .blind_review(
@@ -266,30 +271,33 @@ async fn none_adds_nothing_to_the_key() -> Result<()> {
     Ok(())
 }
 
+fn unchanged_fix() -> String {
+    entry_for(
+        "resources.unbounded_growth",
+        21,
+        "        self.hits.pop(key, None)",
+    )
+}
+
 #[tokio::test]
 async fn an_entry_that_does_not_fit_the_code_is_refused_with_what_to_change() -> Result<()> {
+    let files = proved().files;
+    let across = json!({"entry": {
+        "kind": "issue", "pattern": "p1", "severity": "minor",
+        "consequence": "Every key ever seen stays in memory.",
+        "fix": {
+            "replace": [
+                {"at": line_handle(&files, "src/limiter.py", 21), "with": "        self.hits.clear()"},
+                {"at": line_handle(&files, "src/config.py", 8), "with": "    return None"}
+            ],
+            "insert": [], "remove": [], "move": []
+        },
+        "explanation": "The dictionary only grows."
+    }})
+    .to_string();
     let cases = [
-        (
-            entry(
-                "resources.unbounded_growth",
-                "        self.hits.nothing()\n",
-            ),
-            "The fix: `before` is not in src/limiter.py",
-        ),
-        (
-            entry(
-                "resources.unbounded_growth",
-                "        self.hits[key] = recent\n",
-            ),
-            "`before` is in src/limiter.py 2 times",
-        ),
-        (
-            entry(
-                "errors.unwrap_on_fallible",
-                "        self.hits.pop(key, None)\n",
-            ),
-            "errors.unwrap_on_fallible is not one of the patterns listed",
-        ),
+        (unchanged_fix(), "The fix changes nothing."),
+        (across, "One repair changes lines of one file."),
     ];
     for (bad, fragment) in cases {
         let db = Database::new(pool().await?);
@@ -305,10 +313,7 @@ async fn an_entry_that_does_not_fit_the_code_is_refused_with_what_to_change() ->
             .await?;
         assert_eq!(blind.extras.len(), 1, "{fragment}");
         let reask = last(&model.requests()[2]);
-        assert!(
-            reask.starts_with("That answer could not be used:"),
-            "{reask}"
-        );
+        assert!(reask.ends_with("Answer again."), "{reask}");
         assert!(reask.contains(fragment), "{fragment} in {reask}");
     }
     Ok(())
@@ -317,12 +322,7 @@ async fn an_entry_that_does_not_fit_the_code_is_refused_with_what_to_change() ->
 #[tokio::test]
 async fn an_entry_that_cannot_be_used_is_left_out_without_failing_the_build() -> Result<()> {
     let db = Database::new(pool().await?);
-    let bad = || {
-        entry(
-            "resources.unbounded_growth",
-            "        self.hits.nothing()\n",
-        )
-    };
+    let bad = unchanged_fix;
     let model = ScriptedModel::new([blind_answer(), bad(), bad()]);
     let grader = FakeGrader::new(blind_assessment());
     let blind = build(&db, &model, None, &grader)
@@ -348,7 +348,7 @@ async fn an_entry_that_cannot_be_used_is_left_out_without_failing_the_build() ->
 #[tokio::test]
 async fn two_findings_that_describe_one_fix_add_one_issue() -> Result<()> {
     let db = Database::new(pool().await?);
-    let reviewer = json!({"findings": [pop_finding(), pop_finding()]}).to_string();
+    let reviewer = json!({"items": [pop_finding(), pop_finding()]}).to_string();
     let assessment = Assessment {
         issues: vec![
             (IssueOutcome::Missed, "Not mentioned.".into()),
@@ -386,7 +386,7 @@ async fn a_review_that_found_nothing_is_still_judged_and_every_planted_issue_is_
         ],
         findings: Vec::new(),
     };
-    let model = ScriptedModel::new([json!({"findings": []}).to_string()]);
+    let model = ScriptedModel::new([json!({"items": []}).to_string()]);
     let grader = FakeGrader::new(assessment);
     let blind = build(&db, &model, None, &grader)
         .blind_review(
@@ -498,7 +498,7 @@ async fn with_no_planted_issue_there_is_no_key_to_judge_against_and_nothing_is_a
 /// The extras the key gains when the reviewer's one finding is a valid extra that the model describes as `entry`.
 async fn extras_for(entry: String) -> Result<Vec<KeyIssue>> {
     let db = Database::new(pool().await?);
-    let reviewer = json!({"findings": [pop_finding()]}).to_string();
+    let reviewer = json!({"items": [pop_finding()]}).to_string();
     let assessment = Assessment {
         issues: vec![
             (IssueOutcome::Missed, "Not mentioned.".into()),
@@ -522,14 +522,24 @@ async fn extras_for(entry: String) -> Result<Vec<KeyIssue>> {
 #[tokio::test]
 async fn an_entry_of_a_planted_issues_pattern_on_its_lines_restates_it_and_is_not_added(
 ) -> Result<()> {
-    let extras = extras_for(entry(OPERATOR, OPERATOR_AFTER)).await?;
+    let extras = extras_for(entry_for(
+        OPERATOR,
+        13,
+        "        if len(recent) >= self.limit:",
+    ))
+    .await?;
     assert!(extras.is_empty(), "{extras:?}");
     Ok(())
 }
 
 #[tokio::test]
 async fn an_entry_of_another_pattern_on_a_planted_issues_lines_is_added() -> Result<()> {
-    let extras = extras_for(entry("resources.unbounded_growth", OPERATOR_AFTER)).await?;
+    let extras = extras_for(entry_for(
+        "resources.unbounded_growth",
+        13,
+        "        if len(recent) >= max(self.limit, 1):",
+    ))
+    .await?;
     assert_eq!(extras.len(), 1);
     assert_eq!(extras[0].span, span(13));
     Ok(())
@@ -537,7 +547,7 @@ async fn an_entry_of_another_pattern_on_a_planted_issues_lines_is_added() -> Res
 
 #[tokio::test]
 async fn an_entry_of_a_planted_issues_pattern_on_other_lines_is_added() -> Result<()> {
-    let extras = extras_for(entry(OPERATOR, "        self.hits.pop(key, None)\n")).await?;
+    let extras = extras_for(entry_for(OPERATOR, 21, "        self.hits.clear()")).await?;
     assert_eq!(extras.len(), 1);
     assert_eq!(extras[0].span, span(21));
     Ok(())

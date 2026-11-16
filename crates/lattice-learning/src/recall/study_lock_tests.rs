@@ -1,5 +1,5 @@
 //! Study writes that read first must wait for another writer, not fail.
-use super::{study_dto::*, study_generation::parse_cards, study_repository::StudyRepository};
+use super::{study_dto::*, study_generation::ChoiceCard, study_repository::StudyRepository};
 use lattice_core::shared::persistence::Database;
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use std::time::Duration;
@@ -19,9 +19,23 @@ fn source() -> StudySourceDto {
 
 fn deck() -> StudyDeckDto {
     let id = uuid::Uuid::new_v4().to_string();
-    let generated = serde_json::json!({"cards":[{"question":"What should be studied before selecting a procedure?","options":["The stated conditions","Only the title","Nothing","Only the filing date","Only the fee"],"correctIndex":0,"explanation":"The passage explicitly asks the reader to study the stated conditions.","sourceIndex":0,"quote":"Study the stated conditions before selecting a procedure.","topic":"Procedures"}]});
+    let card = ChoiceCard {
+        question: "What should be studied before selecting a procedure?",
+        answer: "The stated conditions",
+        distractors: [
+            "Only the title",
+            "Nothing",
+            "Only the filing date",
+            "Only the fee",
+        ]
+        .map(String::from)
+        .to_vec(),
+        explanation: "The passage explicitly asks the reader to study the stated conditions.",
+        topic: "Procedures",
+    }
+    .into_card(&id, 1000, source(), vec![source()]);
     StudyDeckDto {
-        cards: parse_cards(&generated.to_string(), &[source()], &id, 6, 1000).unwrap(),
+        cards: vec![card],
         id,
         title: "Procedures".into(),
         focus: "procedures".into(),

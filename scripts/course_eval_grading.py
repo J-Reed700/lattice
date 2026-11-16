@@ -270,18 +270,13 @@ def reference_containment(text, reference):
     return len(grams & cq.ngrams(said, COPY_NGRAM)) / len(grams) if grams else 0.0
 
 
-def rationale_checks(rationale, answer, sources, reference, earned, possible):
-    """Section 4.3a's checks on one rationale, counted rather than repaired, so the eval sees what the model did."""
+def point_checks(rationale, earned, possible):
+    """The checks that read a rationale's points: only the app's, the grader no longer writes any."""
     criteria = rationale.get("criteria") or []
-    spans = [w for c in criteria for w in c.get("your_words") or []]
-    spans_ok = [bool(ws(w)) and ws(w) in ws(answer) for w in spans]
-    quotes = [c for c in criteria if str(c.get("source_quote") or "").strip()]
-    quotes_ok = [ws(c["source_quote"]) in ws(sources.get(c.get("source_version_id"), "\0")) for c in quotes]
-    consistent, lost, unknown = [], [], []
+    consistent, lost = [], []
     for c in criteria:
         verdict, points, top = c.get("verdict"), c.get("points"), c.get("max_points")
         if verdict not in VERDICTS:
-            unknown.append(c.get("criterion_id"))
             continue
         if verdict != "uncertain":
             consistent.append(points is not None and top is not None and (
@@ -289,25 +284,43 @@ def rationale_checks(rationale, answer, sources, reference, earned, possible):
                 or (verdict == "partly_met" and EPSILON < points < top - EPSILON)))
         if points is not None and top is not None and points < top - EPSILON:
             lost.append(bool(str(c.get("what_was_missing") or "").strip()))
-    containment = reference_containment(" ".join(str(c.get("full_credit_includes") or "") for c in criteria), reference)
-    copies = None if containment is None else containment >= COPY_SHARE
     summary = bool(str(rationale.get("summary") or "").strip())
     marked_down = earned is not None and earned < possible - EPSILON
     unexplained = marked_down and (not summary or not any(lost))
     total = sum(c["points"] for c in criteria if c.get("points") is not None)
     sum_ok = earned is None or not criteria or abs(total - earned) < EPSILON
-    problems = ([f"your_words not verbatim: {w!r}" for w, ok in zip(spans, spans_ok) if not ok]
-                + [f"source_quote not verbatim: {c['source_quote']!r}" for c, ok in zip(quotes, quotes_ok) if not ok]
-                + (["points disagree with a verdict"] if not all(consistent) else [])
+    problems = ((["points disagree with a verdict"] if not all(consistent) else [])
                 + (["lost points without what_was_missing"] if not all(lost) else [])
-                + ([f"unknown verdict on {unknown}"] if unknown else [])
-                + (["full_credit_includes reproduces the reference answer"] if copies else [])
                 + (["marked down without a reason"] if unexplained else [])
                 + (["criterion points do not add up to the grade"] if not sum_ok else []))
-    return {"spans": len(spans), "spans_verbatim": sum(spans_ok), "quotes": len(quotes),
-            "quotes_verbatim": sum(quotes_ok), "criteria": len(consistent), "consistent": sum(consistent),
-            "lost": len(lost), "lost_with_missing": sum(lost), "summary": summary, "containment": containment,
-            "copies_reference": copies, "unexplained": unexplained, "problems": problems, "passed": not problems}
+    return {"criteria": len(consistent), "consistent": sum(consistent), "lost": len(lost),
+            "lost_with_missing": sum(lost), "unexplained": unexplained, "problems": problems}
+
+
+def rationale_checks(rationale, answer, sources, reference, earned, possible, points=True):
+    """Section 4.3a's checks on one rationale, counted rather than repaired, so the eval sees what the model did.
+    `points` is False for the model's raw output, which carries none; the app's rationale supplies them."""
+    criteria = rationale.get("criteria") or []
+    spans = [w for c in criteria for w in c.get("your_words") or []]
+    spans_ok = [bool(ws(w)) and ws(w) in ws(answer) for w in spans]
+    quotes = [c for c in criteria if str(c.get("source_quote") or "").strip()]
+    quotes_ok = [ws(c["source_quote"]) in ws(sources.get(c.get("source_version_id"), "\0")) for c in quotes]
+    unknown = [c.get("criterion_id") for c in criteria if c.get("verdict") not in VERDICTS]
+    containment = reference_containment(" ".join(str(c.get("full_credit_includes") or "") for c in criteria), reference)
+    copies = None if containment is None else containment >= COPY_SHARE
+    summary = bool(str(rationale.get("summary") or "").strip())
+    problems = ([f"your_words not verbatim: {w!r}" for w, ok in zip(spans, spans_ok) if not ok]
+                + [f"source_quote not verbatim: {c['source_quote']!r}" for c, ok in zip(quotes, quotes_ok) if not ok]
+                + ([f"unknown verdict on {unknown}"] if unknown else [])
+                + (["full_credit_includes reproduces the reference answer"] if copies else []))
+    checks = {"spans": len(spans), "spans_verbatim": sum(spans_ok), "quotes": len(quotes),
+              "quotes_verbatim": sum(quotes_ok), "summary": summary, "containment": containment,
+              "copies_reference": copies,
+              **(point_checks(rationale, earned, possible) if points else
+                 {"criteria": 0, "consistent": 0, "lost": 0, "lost_with_missing": 0, "unexplained": False,
+                  "problems": []})}
+    checks["problems"] = problems + checks["problems"]
+    return {**checks, "passed": not checks["problems"]}
 
 
 # --- score -------------------------------------------------------------------
@@ -384,15 +397,15 @@ def score(name, grades_path, out, registry_path=REGISTRY, bar=None):
     for row in model_rows:
         item, grade = items[row["item"]], first[row["id"]]
         answer = response_text(row["response"])
-        rationale = grade.get("raw") or grade.get("rationale") or {}
-        checks = rationale_checks(rationale, answer, sources, item.get("reference_answer"), grade.get("points_earned"),
-                                  cq.possible_points(item))
-        shown = rationale_checks(grade.get("rationale") or {}, answer, sources, item.get("reference_answer"),
-                                 grade.get("points_earned"), cq.possible_points(item))
-        checks |= {"checked_on": "raw" if grade.get("raw") else "shown", "shown_unexplained": shown["unexplained"]}
-        if shown["unexplained"] and grade.get("status") == "graded":
-            checks["problems"].append("the app showed a markdown without a reason")
-            checks["passed"] = False
+        raw = grade.get("raw")
+        shown = grade.get("rationale") or {}
+        checks = rationale_checks(raw or shown, answer, sources, item.get("reference_answer"),
+                                  grade.get("points_earned"), cq.possible_points(item), points=not raw)
+        if raw:
+            app = point_checks(shown, grade.get("points_earned"), cq.possible_points(item))
+            checks |= {**app, "problems": checks["problems"] + app["problems"]}
+            checks["passed"] = not checks["problems"]
+        checks |= {"checked_on": "raw" if raw else "shown", "shown_unexplained": checks["unexplained"]}
         scored.append(chat_row(row, item, grade, checks, manifest["run_id"]))
         checked.append({"query_id": row["id"], "graded": scored[-1]["turn_scores"][0]["judge"]["graded"], **checks})
         chat_items.append({"id": row["id"], "item": row["item"], "subject": item.get("subject"),

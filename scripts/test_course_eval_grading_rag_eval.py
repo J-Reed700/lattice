@@ -103,9 +103,14 @@ PARTIAL = rationale("You named the site but not the kinetics.",
 WRONG_SHOWN = rationale("The inhibitor does not destroy the enzyme.",
                         criterion("c1", "missed", 0, missing="Where it binds."),
                         criterion("c2", "missed", 0, missing="Km rises and Vmax is unchanged."))
-WRONG_RAW = rationale("The inhibitor does not destroy the enzyme.",
-                      criterion("c1", "partly_met", 0, missing="Where it binds.", words=["it ruins the enzyme"]),
-                      criterion("c2", "missed", 0, missing="Km rises and Vmax is unchanged."))
+def without_points(why):
+    return {**why, "criteria": [{k: v for k, v in c.items() if k != "points"} for c in why["criteria"]]}
+
+
+WRONG_RAW = without_points(rationale(
+    "The inhibitor does not destroy the enzyme.",
+    criterion("c1", "partly_met", 0, missing="Where it binds.", words=["it ruins the enzyme"]),
+    criterion("c2", "missed", 0, missing="Km rises and Vmax is unchanged.")))
 COPYING = rationale("Partly right.", criterion("c1", "partly_met", 1, missing="The active site.",
                                                words=["It binds the enzyme"],
                                                full=EXPLAIN["reference_answer"]),
@@ -255,8 +260,8 @@ class Scoring(Fixture):
         self.assertTrue(checks["bio-partial"]["passed"])
         self.assertEqual(checks["bio-partial"]["quotes_verbatim"], 1)
         self.assertEqual(checks["bio-wrong"]["checked_on"], "raw")
-        self.assertEqual(checks["bio-wrong"]["problems"], ["your_words not verbatim: 'it ruins the enzyme'",
-                                                           "points disagree with a verdict"])
+        self.assertEqual(checks["bio-wrong"]["problems"], ["your_words not verbatim: 'it ruins the enzyme'"])
+        self.assertEqual((checks["bio-wrong"]["criteria"], checks["bio-wrong"]["consistent"]), (2, 2))
         self.assertTrue(checks["bio-copy"]["copies_reference"])
         self.assertIn("full_credit_includes reproduces the reference answer", checks["bio-copy"]["problems"])
         self.assertIsNone(checks["chem-paraphrase"]["copies_reference"])
@@ -285,6 +290,16 @@ class RationaleChecks(unittest.TestCase):
         self.assertEqual(self.check(uncertain, earned=None, possible=2)["criteria"], 0)
         self.assertIn("unknown verdict", "; ".join(self.check(rationale("s", criterion("c1", "great", 2)),
                                                               earned=2, possible=2)["problems"]))
+
+    def test_the_raw_output_is_not_read_for_points(self):
+        raw = without_points(rationale("s", criterion("c1", "met", 2, words=["binds the active site"]),
+                                       criterion("c2", "missed", 0, missing="m")))
+        result = g.rationale_checks(raw, "It binds the active site.", SOURCES, None, 2, 4, points=False)
+        self.assertEqual(result["problems"], [])
+        self.assertTrue(result["passed"])
+        self.assertEqual((result["criteria"], result["lost"], result["unexplained"]), (0, 0, False))
+        app = rationale("s", criterion("c1", "met", 1), criterion("c2", "missed", 0, missing="m"))
+        self.assertIn("points disagree with a verdict", g.point_checks(app, 1, 4)["problems"])
 
     def test_no_reason_no_wrong(self):
         silent = rationale("", criterion("c1", "missed", 0), criterion("c2", "missed", 0))

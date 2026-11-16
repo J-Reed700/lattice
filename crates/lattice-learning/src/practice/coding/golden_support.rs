@@ -77,7 +77,7 @@ fn pretty(value: &Value) -> String {
 /// A request as the model server receives it: each message under its role, the schema, and every other field.
 pub(crate) fn render_completion(request: &CompletionRequest) -> String {
     let mut out = String::new();
-    for input in &request.input {
+    for input in request.input() {
         match input {
             CompletionInput::Message { role, content } => {
                 let _ = writeln!(out, "--- {role} ---\n{content}");
@@ -89,8 +89,8 @@ pub(crate) fn render_completion(request: &CompletionRequest) -> String {
         }
     }
     let schema = request
-        .json_schema
-        .as_ref()
+        .schema()
+        .map(|schema| schema.as_json())
         .map_or_else(|| "none".to_owned(), pretty);
     let _ = writeln!(out, "--- schema ---\n{schema}");
     let mut rest = serde_json::to_value(request).expect("a request writes out as JSON");
@@ -152,6 +152,12 @@ impl LLMPort for Recorder {
 
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 

@@ -74,7 +74,7 @@ async fn an_open_finding_without_a_verdict_stays_open_and_is_asked_about_again()
     // The third review still asked about finding-1.
     assert_eq!(
         fixture_task(&prompts[5]).unwrap()["openFindings"][0]["id"],
-        "finding-1"
+        "f1"
     );
     Ok(())
 }
@@ -162,7 +162,7 @@ async fn verdicts_close_or_refresh_findings_and_the_reviewer_sees_current_text()
     let second_review = fixture_task(&prompts[3]).unwrap();
     assert_eq!(second_review["openFindings"][0]["claim"], first);
     let third_review = fixture_task(&prompts[5]).unwrap();
-    assert_eq!(third_review["openFindings"][0]["id"], "finding-1");
+    assert_eq!(third_review["openFindings"][0]["id"], "f1");
     assert_eq!(third_review["openFindings"][0]["claim"], second);
     assert_eq!(
         third_review["openFindings"][0]["reason"],
@@ -278,8 +278,9 @@ async fn factual_findings_on_plan_items_are_recorded_as_plan_findings() -> Resul
 async fn the_reviewer_cannot_raise_a_course_wide_finding() -> Result<()> {
     let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     // The empty path is not an allowed path on any pass: the schema enum
-    // excludes it and a finding that uses it anyway is dropped, so nothing is
-    // saved from it and no module is rewritten for it.
+    // excludes it and a finding that uses it anyway is refused, so the
+    // reviewer is asked once more; nothing is saved from it and no module is
+    // rewritten for it.
     let llm = model(vec![
         candidate(),
         findings(vec![plan_finding(
@@ -287,6 +288,7 @@ async fn the_reviewer_cannot_raise_a_course_wide_finding() -> Result<()> {
             "The course claims to cover experimental design in four modules.",
             "Four modules cannot cover the stated scope.",
         )]),
+        findings(vec![]),
     ]);
     let program = generate(&repo, &llm).await?;
     let review = program.outline_review.as_ref().unwrap();
@@ -297,7 +299,7 @@ async fn the_reviewer_cannot_raise_a_course_wide_finding() -> Result<()> {
         review.note
     );
     assert!(review.issues.is_empty());
-    assert_eq!(llm.prompts.lock().unwrap().len(), 2);
+    assert_eq!(llm.prompts.lock().unwrap().len(), 3);
     Ok(())
 }
 
@@ -366,10 +368,44 @@ async fn a_verified_assertion_is_listed_to_the_reviewer_and_a_repeat_is_dropped_
     let recheck = fixture_task(&prompts[4]).unwrap();
     assert_eq!(recheck["verifiedAssertions"], json!([ADDITIONAL]));
     assert_eq!(recheck["openFindings"].as_array().unwrap().len(), 1);
-    assert_eq!(recheck["openFindings"][0]["id"], "finding-2");
+    assert_eq!(recheck["openFindings"][0]["id"], "f1");
     assert!(prompts[4].contains("do not raise them again"));
     // Two findings were raised by the first review; the repeat got no id.
     let saved = repo.outline_draft(&program.summary.id).await?.unwrap();
     assert_eq!(saved.findings_raised, 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_snapshot_outline_review() -> Result<()> {
+    use lattice_core::application::services::model_contract::{test_support::snapshot, ContractId};
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
+    let initial = candidate();
+    let llm = model(vec![
+        initial.clone(),
+        issue(0),
+        changed_module(
+            &initial,
+            0,
+            "Compare the groups with an observable measurement.",
+        ),
+        verdicts(&[("finding-1", "resolved")], vec![]),
+    ]);
+    let capture = Capture::named(&llm, ContractId::new("outline-review"));
+
+    service::generate(
+        &repo,
+        &DraftRunRegistry::new(),
+        &capture,
+        request(LearningCourseDepth::Course),
+        vec![],
+    )
+    .await?;
+
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "outline-review",
+        &capture.requests(),
+    );
     Ok(())
 }

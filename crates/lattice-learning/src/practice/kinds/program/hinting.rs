@@ -33,10 +33,11 @@ impl Hinting for ProgramHinting {
             ask.cancel,
         )
         .await?;
-        let parts = match &hint.path {
-            Some(path) => hint.lines.iter().map(|line| part_of(path, *line)).collect(),
-            None => Vec::new(),
-        };
+        let parts = hint
+            .lines
+            .iter()
+            .map(|place| part_of(&place.path, place.line))
+            .collect();
         Ok(Some(Hint {
             rung: hint.rung,
             text: hint.text,

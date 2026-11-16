@@ -3,6 +3,7 @@ use super::*;
 use crate::features::llm::fitting::SendUnscheduled;
 use lattice_core::application::contracts::settings::LLMProvider;
 use lattice_core::application::ports::llm_port::CompletionInput;
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::domain::models::model_ref::CloudProvider;
 use lattice_core::shared::error::ErrorClass;
 use serde_json::json;
@@ -29,18 +30,14 @@ async fn interactive_completion_can_disable_the_wall_clock_budget() {
             "status":"completed", "output":[{"type":"message","content":[{"type":"output_text","text":"Completed"}]}]
         }))).mount(&server).await;
     let client = client(&server).await;
-    let request = CompletionRequest {
+    let request = legacy::completion(legacy::Completion {
         time_budget: Some(Duration::from_millis(10)),
         ..Default::default()
-    };
+    });
     assert!(client.complete(&request).await.is_err());
-    let response = client
-        .complete(&CompletionRequest {
-            no_time_limit: true,
-            ..request
-        })
-        .await
-        .unwrap();
+    let mut unlimited = request;
+    unlimited.no_time_limit = true;
+    let response = client.complete(&unlimited).await.unwrap();
     assert_eq!(response.text, "Completed");
 }
 
@@ -60,7 +57,7 @@ async fn streams_text_and_requires_terminal_event() {
         Ok(())
     };
     let response = client
-        .complete_with_progress(&CompletionRequest::default(), &on_text)
+        .complete_with_progress(&legacy::completion(legacy::Completion::default()), &on_text)
         .await
         .unwrap();
     assert_eq!(response.text, "héllo");
@@ -73,7 +70,9 @@ async fn streams_text_and_requires_terminal_event() {
         .mount(&server)
         .await;
     assert!(client
-        .complete_with_progress(&CompletionRequest::default(), &|_| Ok(()))
+        .complete_with_progress(&legacy::completion(legacy::Completion::default()), &|_| Ok(
+            ()
+        ))
         .await
         .is_err());
 }
@@ -98,10 +97,10 @@ async fn typed_reasoning_completion_requests_a_stream_and_keeps_its_native_resul
     let reasoning = std::sync::Mutex::new(String::new());
     let response = client
         .complete_with_reasoning_progress(
-            &CompletionRequest {
+            &legacy::completion(legacy::Completion {
                 include_reasoning: true,
                 ..Default::default()
-            },
+            }),
             &|_| Ok(()),
             &|delta| {
                 reasoning.lock().unwrap().push_str(&delta);
@@ -126,7 +125,7 @@ async fn typed_tool_calls_keep_native_call_ids_and_replay_them() {
             "status":"completed", "output":[{"type":"function_call", "call_id":"call_7", "name":"search", "arguments":"{}"}], "usage":{"input_tokens":4,"output_tokens":2}
         }))).mount(&server).await;
     let client = client(&server).await;
-    let request = CompletionRequest {
+    let request = legacy::completion(legacy::Completion {
         input: vec![
             CompletionInput::Message {
                 role: "system".into(),
@@ -143,7 +142,7 @@ async fn typed_tool_calls_keep_native_call_ids_and_replay_them() {
             parameters: json!({"type":"object","properties":{}}),
         }],
         ..Default::default()
-    };
+    });
     let response = client.complete(&request).await.unwrap();
     assert!(matches!(
         response.tool_calls.first(),
@@ -172,7 +171,7 @@ async fn authentication_failure_is_not_retried_or_echoed() {
         .await;
     let client = client(&server).await;
     let error = client
-        .complete(&CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .unwrap_err();
     assert!(error.to_string().contains("401"));
@@ -198,10 +197,10 @@ async fn refusals_are_typed_by_what_waiting_can_change() {
             .mount(&server)
             .await;
         // Shorter than the first backoff: the provider's own refusal comes back.
-        let request = CompletionRequest {
+        let request = legacy::completion(legacy::Completion {
             time_budget: Some(Duration::from_millis(900)),
             ..Default::default()
-        };
+        });
         let error = client(&server).await.complete(&request).await.unwrap_err();
         assert_eq!(
             ErrorClass::of(&error).is_temporary(),
@@ -309,7 +308,7 @@ async fn a_request_refused_for_quota_is_sent_once_and_reaches_the_caller_as_a_se
         .await;
     let error = client(&server)
         .await
-        .complete(&CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .unwrap_err();
     assert!(matches!(error, AppError::InvalidConfig(_)), "{error:?}");
@@ -330,10 +329,10 @@ async fn a_persistent_rate_limit_reaches_the_caller_as_a_rate_limit() {
         .mount(&server)
         .await;
     // Room for one resend after the first backoff, not for the second.
-    let request = CompletionRequest {
+    let request = legacy::completion(legacy::Completion {
         time_budget: Some(Duration::from_millis(2_500)),
         ..Default::default()
-    };
+    });
     let error = client(&server).await.complete(&request).await.unwrap_err();
     assert!(matches!(error, AppError::RateLimitExceeded(_)), "{error:?}");
     assert_eq!(server.received_requests().await.unwrap().len(), 2);
@@ -352,44 +351,48 @@ async fn anthropic_client(server: &MockServer) -> CloudLlm {
 }
 
 fn structured() -> CompletionRequest {
-    CompletionRequest {
+    legacy::completion(legacy::Completion {
         json_schema: Some(json!({"type":"object","properties":{"ok":{"type":"boolean"}}})),
         ..Default::default()
-    }
+    })
 }
 
-/// Claude refuses some schemas it cannot compile ("The compiled grammar is
-/// too large"), which no shape check predicts; the request goes once more
-/// with the schema asked for in words.
+/// Claude refuses some schemas it cannot compile, which no shape check
+/// predicts; the request goes once more with the schema asked for in words.
 #[tokio::test]
 async fn a_schema_claude_refuses_is_asked_for_in_words() {
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(body_string_contains("json_schema"))
-        .respond_with(
-            ResponseTemplate::new(400).set_body_json(json!({"type":"error","error":{
-                "type":"invalid_request_error",
-                "message":"The compiled grammar is too large, which would cause performance issues."
-            }})),
-        )
-        .expect(1)
-        .mount(&server)
-        .await;
-    Mock::given(method("POST"))
-        .and(body_string_contains("matches this JSON Schema"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "content":[{"type":"text","text":"{\"ok\":true}"}],"stop_reason":"end_turn"
-        })))
-        .expect(1)
-        .mount(&server)
-        .await;
+    for reason in [
+        "The compiled grammar is too large, which would cause performance issues.",
+        "Schema is too complex for compilation.",
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(body_string_contains("json_schema"))
+            .respond_with(
+                ResponseTemplate::new(400).set_body_json(json!({"type":"error","error":{
+                    "type":"invalid_request_error",
+                    "message":reason
+                }})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(body_string_contains("matches this JSON Schema"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "content":[{"type":"text","text":"{\"ok\":true}"}],"stop_reason":"end_turn"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
 
-    let response = anthropic_client(&server)
-        .await
-        .complete(&structured())
-        .await
-        .unwrap();
-    assert_eq!(response.text, "{\"ok\":true}");
+        let response = anthropic_client(&server)
+            .await
+            .complete(&structured())
+            .await
+            .unwrap_or_else(|error| panic!("{reason}: {error:?}"));
+        assert_eq!(response.text, "{\"ok\":true}", "{reason}");
+    }
 }
 
 /// The reason Claude gives for refusing a schema is what tells a schema that
@@ -458,7 +461,10 @@ async fn any_other_bad_request_is_not_resent() {
 /// reworded, with or without a schema.
 #[tokio::test]
 async fn an_account_out_of_credit_is_a_setting_to_fix() {
-    for request in [CompletionRequest::default(), structured()] {
+    for request in [
+        legacy::completion(legacy::Completion::default()),
+        structured(),
+    ] {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .respond_with(
@@ -499,7 +505,9 @@ async fn dropping_a_completion_cancels_the_request_without_a_retry() {
     let client = client(&server).await;
     let abandoned = tokio::time::timeout(
         Duration::from_millis(100),
-        client.complete_with_progress(&CompletionRequest::default(), &|_| Ok(())),
+        client.complete_with_progress(&legacy::completion(legacy::Completion::default()), &|_| {
+            Ok(())
+        }),
     )
     .await;
     assert!(abandoned.is_err());
@@ -537,7 +545,7 @@ async fn a_completed_request_tells_the_providers_scheduler_it_was_accepted() {
         .unwrap();
     assert_eq!(client.scheduler.load().slots, 1);
     client
-        .complete(&CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .unwrap();
     assert_eq!(client.scheduler.load().slots, 2);
@@ -579,7 +587,7 @@ async fn a_rate_limit_is_resent_only_after_the_wait_the_provider_asked_for() {
         .await;
     let client = client(&server).await;
     let scheduler = Arc::clone(&client.scheduler);
-    let call = tokio::spawn(async move { client.complete(&CompletionRequest::default()).await });
+    let call = tokio::spawn(async move { client.complete(&legacy::completion(legacy::Completion::default())).await });
 
     let closed_for = tokio::time::timeout(Duration::from_secs(30), async {
         loop {
@@ -622,7 +630,7 @@ async fn a_spend_limit_refusal_is_sent_once_and_names_the_spend_limit() {
         .await;
     let error = anthropic_client(&server)
         .await
-        .complete(&CompletionRequest::default())
+        .complete(&legacy::completion(legacy::Completion::default()))
         .await
         .unwrap_err();
     assert!(matches!(error, AppError::InvalidConfig(_)), "{error:?}");
@@ -651,10 +659,10 @@ async fn a_retry_after_beyond_the_time_left_gives_the_refusal_without_resending_
         })))
         .mount(&server)
         .await;
-    let request = CompletionRequest {
+    let request = legacy::completion(legacy::Completion {
         time_budget: Some(Duration::from_secs(35)),
         ..Default::default()
-    };
+    });
     let error = client(&server).await.complete(&request).await.unwrap_err();
     assert!(matches!(error, AppError::RateLimitExceeded(_)), "{error:?}");
     assert_eq!(server.received_requests().await.unwrap().len(), 1);
@@ -682,7 +690,7 @@ async fn a_streamed_answer_resent_after_a_server_error_is_timed_from_the_resend(
         .await;
     let response = client(&server)
         .await
-        .complete_with_progress(&CompletionRequest::default(), &|_| Ok(()))
+        .complete_with_progress(&legacy::completion(legacy::Completion::default()), &|_| Ok(()))
         .await
         .unwrap();
     assert_eq!(server.received_requests().await.unwrap().len(), 2);

@@ -1,8 +1,8 @@
 //! Stage 2: an independent reviewer repairs the clean code, and the repaired code is the baseline.
 
 use super::support::{
-    build, code, config, files, flawed_limiter, idle_grader, last, messages, review_answer, spec,
-    system, FakeRunner, ScriptedModel, SUITE,
+    build, code, config, files, flawed_limiter, handle_of, idle_grader, last, messages,
+    review_answer, spec, system, FakeRunner, ScriptedModel, SUITE,
 };
 use crate::drills::build::{CleanCode, RunRecord};
 use crate::drills::runner::RunOutcome;
@@ -30,15 +30,29 @@ fn flawed() -> CleanCode {
 
 const FLAW: &str = "        del self.hits[key]\n";
 const REPAIR: &str = "        self.hits.pop(key, None)\n";
+const FLAW_LINE: &str = "        del self.hits[key]";
+const REPAIR_LINE: &str = "        self.hits.pop(key, None)";
 
-fn issue(before: &str, after: &str) -> Value {
+/// The handle the reviewer is shown for a line of the flawed project.
+fn handle(file: &str, line: &str) -> String {
+    handle_of(&flawed().files, file, line)
+}
+
+fn problem(change: Value) -> Value {
     json!({
         "description": "forget raises KeyError for a key never seen",
         "severity": "minor",
-        "path": "src/limiter.py",
-        "before": before,
-        "after": after
+        "change": change
     })
+}
+
+fn replace(at: &str, with: &str) -> Value {
+    json!({"replace": [{"at": at, "with": with}], "insert": [], "remove": [], "move": []})
+}
+
+/// The repair of the flaw.
+fn repair() -> Value {
+    problem(replace(&handle("src/limiter.py", FLAW_LINE), REPAIR_LINE))
 }
 
 #[tokio::test]
@@ -61,7 +75,7 @@ async fn a_review_that_finds_nothing_leaves_the_code_and_runs_nothing() -> Resul
 #[tokio::test]
 async fn repairs_are_made_and_the_suite_runs_on_the_repaired_code() -> Result<()> {
     let db = Database::new(pool().await?);
-    let model = ScriptedModel::new([review_answer(vec![issue(FLAW, REPAIR)])]);
+    let model = ScriptedModel::new([review_answer(vec![repair()])]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
     let reviewed = build(&db, &model, Some(&runner), &grader)
@@ -69,6 +83,7 @@ async fn repairs_are_made_and_the_suite_runs_on_the_repaired_code() -> Result<()
         .await?;
     assert_eq!(reviewed.files, files(), "the repaired code is the baseline");
     assert_eq!(reviewed.repairs.len(), 1);
+    assert_eq!(reviewed.repairs[0].edit.path, "src/limiter.py");
     assert_eq!(reviewed.repairs[0].edit.before, FLAW);
     assert_eq!(reviewed.repairs[0].edit.after, REPAIR);
     assert_eq!(reviewed.repairs[0].severity, Severity::Minor);
@@ -83,71 +98,100 @@ async fn repairs_are_made_and_the_suite_runs_on_the_repaired_code() -> Result<()
     Ok(())
 }
 
-/// The reviewer's first answer is `bad`, which has to be refused with a message holding `fragment`; the second repairs
-/// the flaw.
-async fn refused_then_accepted(bad: String, fragment: &str) -> Result<()> {
+#[tokio::test]
+async fn the_reviewer_is_shown_every_line_under_a_name_and_no_other_number() -> Result<()> {
     let db = Database::new(pool().await?);
-    let model = ScriptedModel::new([bad, review_answer(vec![issue(FLAW, REPAIR)])]);
+    let model = ScriptedModel::new([review_answer(vec![])]);
+    let runner = FakeRunner::passing();
+    let grader = idle_grader();
+    build(&db, &model, Some(&runner), &grader)
+        .clean_review(&spec(), &flawed())
+        .await?;
+    let task = last(&model.requests()[0]);
+    let shown = format!("[{}] {}", handle("src/limiter.py", FLAW_LINE), FLAW_LINE);
+    assert!(task.contains(&shown), "{task}");
+    assert!(task.contains("[u1] class RateLimiter:"), "{task}");
+    Ok(())
+}
+
+/// The reviewer reports `bad` beside the repair of the flaw: `bad` is left out, and the repair stands.
+async fn left_out(bad: Value, why: &str) -> Result<()> {
+    let db = Database::new(pool().await?);
+    let model = ScriptedModel::new([review_answer(vec![bad, repair()])]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
     let reviewed = build(&db, &model, Some(&runner), &grader)
         .clean_review(&spec(), &flawed())
         .await?;
-    assert_eq!(reviewed.files, files(), "{fragment}");
-    let requests = model.requests();
-    assert_eq!(requests.len(), 2, "{fragment}");
-    let reask = last(&requests[1]);
-    assert!(
-        reask.starts_with("That answer could not be used:"),
-        "{reask}"
-    );
-    assert!(reask.contains(fragment), "{fragment} in {reask}");
+    assert_eq!(reviewed.files, files(), "{why}");
+    assert_eq!(reviewed.repairs.len(), 1, "{why}");
+    assert_eq!(model.requests().len(), 1, "{why}");
     Ok(())
 }
 
 #[tokio::test]
-async fn a_repair_that_does_not_apply_is_refused_naming_it_and_what_to_change() -> Result<()> {
-    let mut elsewhere = issue(FLAW, REPAIR);
-    elsewhere["path"] = json!("src/other.py");
+async fn a_repair_the_app_cannot_use_is_left_out_and_the_others_stand() -> Result<()> {
+    let at = handle("src/limiter.py", FLAW_LINE);
+    let other_file = handle("src/config.py", "DEFAULT_LIMIT = 100");
+    let twice = json!({
+        "replace": [{"at": at, "with": REPAIR_LINE}, {"at": at, "with": "        pass"}],
+        "insert": [], "remove": [], "move": []
+    });
+    let across = json!({
+        "replace": [{"at": at, "with": REPAIR_LINE}, {"at": other_file, "with": "DEFAULT_LIMIT = 10"}],
+        "insert": [], "remove": [], "move": []
+    });
+    let at_start = json!({
+        "replace": [],
+        "insert": [{"after": "start", "with": "import os"}],
+        "remove": [], "move": []
+    });
+    let mut nameless = repair();
+    nameless["description"] = json!("  ");
     let cases = [
         (
-            review_answer(vec![issue("        del self.hits[other]\n", REPAIR)]),
-            "Repair 1: `before` is not in src/limiter.py",
+            problem(replace("u999", REPAIR_LINE)),
+            "a line that is not shown",
         ),
         (
-            review_answer(vec![issue("        self.hits[key] = recent\n", REPAIR)]),
-            "`before` is in src/limiter.py 2 times",
+            problem(replace(&at, FLAW_LINE)),
+            "a repair that changes nothing",
         ),
-        (
-            review_answer(vec![issue("", REPAIR)]),
-            "Repair 1: `before` is empty",
-        ),
-        (
-            review_answer(vec![elsewhere]),
-            "Repair 1: src/other.py is not one of the files",
-        ),
-        (
-            review_answer(vec![issue(FLAW, REPAIR), issue(FLAW, REPAIR)]),
-            "Repair 1 and Repair 2 overlap",
-        ),
-        (
-            review_answer(vec![issue(FLAW, FLAW)]),
-            "Repair 1 changes nothing",
-        ),
+        (problem(twice), "a line changed twice"),
+        (problem(across), "two files in one repair"),
+        (problem(at_start), "an insert at the start of several files"),
+        (nameless, "a repair with no description"),
     ];
-    for (bad, fragment) in cases {
-        refused_then_accepted(bad, fragment).await?;
+    for (bad, why) in cases {
+        left_out(bad, why).await?;
     }
     Ok(())
 }
 
 #[tokio::test]
-async fn a_review_refused_twice_fails_the_stage() -> Result<()> {
+async fn a_repair_on_a_line_an_earlier_repair_changed_is_left_out_and_the_others_stand(
+) -> Result<()> {
     let db = Database::new(pool().await?);
-    let model = ScriptedModel::new([
-        review_answer(vec![issue("        del self.hits[other]\n", REPAIR)]),
-        review_answer(vec![issue("        del self.hits[another]\n", REPAIR)]),
-    ]);
+    let at = handle("src/limiter.py", FLAW_LINE);
+    let model = ScriptedModel::new([review_answer(vec![
+        repair(),
+        problem(replace(&at, "        self.hits.clear()")),
+    ])]);
+    let runner = FakeRunner::passing();
+    let grader = idle_grader();
+    let reviewed = build(&db, &model, Some(&runner), &grader)
+        .clean_review(&spec(), &flawed())
+        .await?;
+    assert_eq!(reviewed.files, files());
+    assert_eq!(reviewed.repairs.len(), 1);
+    assert_eq!(model.requests().len(), 1, "nothing is asked again");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_review_that_cannot_be_read_twice_fails_the_stage() -> Result<()> {
+    let db = Database::new(pool().await?);
+    let model = ScriptedModel::new(["No problems.".to_owned(), "None at all.".to_owned()]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
     let error = build(&db, &model, Some(&runner), &grader)
@@ -155,7 +199,7 @@ async fn a_review_refused_twice_fails_the_stage() -> Result<()> {
         .await
         .unwrap_err();
     assert!(
-        matches!(&error, AppError::ModelAnswerUnusable(reason) if reason.contains("not in src/limiter.py")),
+        matches!(&error, AppError::ModelAnswerUnusable(_)),
         "{error:?}"
     );
     assert_eq!(model.requests().len(), 2);
@@ -163,14 +207,17 @@ async fn a_review_refused_twice_fails_the_stage() -> Result<()> {
     Ok(())
 }
 
+fn breaking() -> String {
+    review_answer(vec![problem(replace(
+        &handle("src/limiter.py", FLAW_LINE),
+        "        self.hits.clear()",
+    ))])
+}
+
 #[tokio::test]
 async fn a_repair_that_breaks_the_suite_is_sent_back_once_with_the_output() -> Result<()> {
     let db = Database::new(pool().await?);
-    let breaking = issue(FLAW, "        self.hits.clear()\n");
-    let model = ScriptedModel::new([
-        review_answer(vec![breaking]),
-        review_answer(vec![issue(FLAW, REPAIR)]),
-    ]);
+    let model = ScriptedModel::new([breaking(), review_answer(vec![repair()])]);
     let runner = FakeRunner::scripted(vec![
         RunOutcome::Failed {
             output: "AssertionError: the limiter forgot every key".into(),
@@ -184,9 +231,10 @@ async fn a_repair_that_breaks_the_suite_is_sent_back_once_with_the_output() -> R
     assert_eq!(reviewed.files, files());
     let reask = last(&model.requests()[1]);
     assert!(
-        reask.starts_with("That answer could not be used:"),
+        reask.contains("Your earlier answer made these repairs"),
         "{reask}"
     );
+    assert!(reask.contains("self.hits.clear()"), "{reask}");
     assert!(reask.contains("the limiter forgot every key"), "{reask}");
     let purposes: Vec<&str> = reviewed
         .trail
@@ -201,7 +249,6 @@ async fn a_repair_that_breaks_the_suite_is_sent_back_once_with_the_output() -> R
 #[tokio::test]
 async fn a_repair_that_breaks_the_suite_twice_fails_the_stage() -> Result<()> {
     let db = Database::new(pool().await?);
-    let breaking = || review_answer(vec![issue(FLAW, "        self.hits.clear()\n")]);
     let model = ScriptedModel::new([breaking(), breaking()]);
     let runner = FakeRunner::new(|_, _| RunOutcome::Failed {
         output: "AssertionError: the limiter forgot every key".into(),
@@ -220,14 +267,17 @@ async fn a_repair_that_breaks_the_suite_twice_fails_the_stage() -> Result<()> {
 }
 
 fn looping() -> String {
-    review_answer(vec![issue(FLAW, "        while True:\n            pass\n")])
+    review_answer(vec![problem(replace(
+        &handle("src/limiter.py", FLAW_LINE),
+        "        while True:\n            pass",
+    ))])
 }
 
 #[tokio::test]
 async fn a_repair_that_leaves_the_suite_running_is_sent_back_once_with_what_it_wrote() -> Result<()>
 {
     let db = Database::new(pool().await?);
-    let model = ScriptedModel::new([looping(), review_answer(vec![issue(FLAW, REPAIR)])]);
+    let model = ScriptedModel::new([looping(), review_answer(vec![repair()])]);
     let runner = FakeRunner::scripted(vec![
         RunOutcome::TimedOut {
             output: "spinning".into(),
@@ -240,10 +290,6 @@ async fn a_repair_that_leaves_the_suite_running_is_sent_back_once_with_what_it_w
         .await?;
     assert_eq!(reviewed.files, files());
     let reask = last(&model.requests()[1]);
-    assert!(
-        reask.starts_with("That answer could not be used:"),
-        "{reask}"
-    );
     assert!(
         reask.contains(
             "The suite on the repaired code did not finish within the runtime's time limit."
@@ -334,5 +380,23 @@ async fn the_reviewer_is_told_nothing_of_planting() -> Result<()> {
     assert!(sent[1]
         .1
         .starts_with("Language: python\n\n<file path=\"src/limiter.py\">"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_snapshot_drill_clean_review() -> Result<()> {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let db = Database::new(pool().await?);
+    let model = ScriptedModel::new([review_answer(vec![])]);
+    let runner = FakeRunner::passing();
+    let grader = idle_grader();
+    build(&db, &model, Some(&runner), &grader)
+        .clean_review(&spec(), &flawed())
+        .await?;
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "drill-clean-review",
+        &model.requests(),
+    );
     Ok(())
 }

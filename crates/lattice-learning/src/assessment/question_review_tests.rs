@@ -1,9 +1,9 @@
 //! A lesson's questions reviewed as quiz items: a scripted blind solver and
 //! item judge, and the requests between them.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-use super::item_review::ITEM_REVIEW_SYSTEM;
+use super::item_review::item_review_system;
 use super::question_review::{check, Outcome};
-use crate::review_findings::FindingSite;
+use crate::review_findings::{FindingSite, KeyDefect, Origin};
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::{AppError, Result};
@@ -13,12 +13,15 @@ use std::sync::Mutex;
 
 type Solves = Box<dyn Fn(usize) -> usize + Send + Sync>;
 type Judges = Box<dyn Fn(&Value) -> (String, Vec<String>) + Send + Sync>;
+type Kinded = Box<dyn Fn(&Value) -> Vec<(&'static str, String)> + Send + Sync>;
 
 /// Solves and judges with the closures it is given and keeps every request;
 /// any other request fails the test.
 struct Script {
     solves: Solves,
     judges: Judges,
+    /// What the judge says in kinds, for a test that needs a question with defects of two kinds.
+    kinded: Option<Kinded>,
     seen: Mutex<Vec<(&'static str, String)>>,
     schemas: Mutex<Vec<Value>>,
 }
@@ -38,23 +41,28 @@ impl LLMPort for Script {
         self.schemas
             .lock()
             .unwrap()
-            .extend(request.json_schema.clone());
+            .extend(request.schema().map(|schema| schema.as_json().clone()));
         let context: Value = serde_json::from_str(user).unwrap_or(Value::Null);
         let reply = match kind {
-            "solve" => {
-                json!({"answers": context["questions"].as_array().into_iter().flatten().map(|q| json!({
-                "index": q["index"],
-                "reason": "The case decides it.",
-                "correctIndices": [(self.solves)(q["index"].as_u64().unwrap_or(0) as usize)],
-                "answer": "", "blankAnswers": [], "matches": [], "orderedValues": []
-            })).collect::<Vec<_>>()})
-            }
-            "judge" => {
-                json!({"checks": context["items"].as_array().into_iter().flatten().map(|item| {
-                let (finding, repeats) = (self.judges)(item);
-                json!({"id": item["id"], "hasDefect": !finding.is_empty(), "finding": finding, "repeats": repeats})
-            }).collect::<Vec<_>>()})
-            }
+            "solve" => crate::key_review::scripted::solved(&context, |q| {
+                let at = q["id"]
+                    .as_str()
+                    .and_then(|id| id.get(1..))
+                    .and_then(|digits| digits.parse::<usize>().ok())
+                    .unwrap_or(1)
+                    - 1;
+                vec![(self.solves)(at)]
+            }),
+            "judge" => match &self.kinded {
+                Some(kinded) => {
+                    crate::assessment::item_review::scripted::judged_of_kinds(&context, |item| {
+                        (kinded(item), vec![])
+                    })
+                }
+                None => crate::assessment::item_review::scripted::judged(&context, |item| {
+                    (self.judges)(item)
+                }),
+            },
             _ => return Err(AppError::InvalidInput("an unscripted request".into())),
         };
         Ok(CompletionResponse::from_text(reply.to_string()))
@@ -71,6 +79,12 @@ impl LLMPort for Script {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 impl Script {
@@ -78,9 +92,15 @@ impl Script {
         Self {
             solves,
             judges,
+            kinded: None,
             seen: Mutex::new(Vec::new()),
             schemas: Mutex::new(Vec::new()),
         }
+    }
+
+    fn kinded(mut self, kinded: Kinded) -> Self {
+        self.kinded = Some(kinded);
+        self
     }
 
     fn agreeing() -> Solves {
@@ -157,7 +177,7 @@ async fn a_question_whose_key_stands_apart_is_a_finding_at_that_question() -> Re
     let llm = Script::new(
         Script::agreeing(),
         Box::new(|item| {
-            if item["id"] == "new-1" {
+            if item["id"] == "q2" {
                 (STANDS_APART.into(), vec![])
             } else {
                 (String::new(), vec![])
@@ -202,7 +222,7 @@ async fn a_question_that_repeats_an_earlier_one_is_a_finding_on_the_later_one() 
     let llm = Script::new(
         Script::agreeing(),
         Box::new(|item| {
-            if item["id"] == "new-2" {
+            if item["id"] == "q3" {
                 (String::new(), vec!["new-0".into()])
             } else {
                 (String::new(), vec![])
@@ -383,7 +403,7 @@ async fn a_faulted_question_keeps_its_finding_without_another_review() -> Result
     let llm = Script::new(
         Script::agreeing(),
         Box::new(|item| {
-            if item["id"] == "new-1" {
+            if item["id"] == "q2" {
                 (STANDS_APART.into(), vec![])
             } else {
                 (String::new(), vec![])
@@ -458,16 +478,16 @@ async fn the_review_and_the_solve_show_the_lesson_passage_as_quote() -> Result<(
 
 #[test]
 fn the_item_review_system_names_the_passage_quote() {
-    assert!(!ITEM_REVIEW_SYSTEM.contains("referenceQuote"));
-    assert!(ITEM_REVIEW_SYSTEM.contains("the lesson passage it rests on (quote)"));
-    assert!(ITEM_REVIEW_SYSTEM.contains("never its quote and never independentSolution"));
-    assert!(ITEM_REVIEW_SYSTEM.contains("quote is one passage of what the learner was taught, not all of it: a statement is not untrue or unsupported because quote does not contain it."));
+    assert!(!item_review_system().contains("referenceQuote"));
+    assert!(item_review_system().contains("the lesson passage it rests on (quote)"));
+    assert!(item_review_system().contains("never its quote and never independentSolution"));
+    assert!(item_review_system().contains("quote is part of what the learner was taught, not all of it: a statement is not untrue or unsupported because quote does not contain it."));
 }
 
 #[test]
 fn the_key_aware_judge_is_not_asked_whether_an_option_stands_apart() {
-    assert!(!ITEM_REVIEW_SYSTEM.contains("in length, detail or wording"));
-    assert!(ITEM_REVIEW_SYSTEM.contains("do not report the form, length or wording"));
+    assert!(!item_review_system().contains("in length, detail or wording"));
+    assert!(item_review_system().contains("do not report the form, length or wording"));
 }
 
 #[test]
@@ -491,4 +511,44 @@ fn a_lessons_outcome_includes_what_the_course_plan_gives_it_to_teach() {
     assert!(outcome.description.contains("Bravo gives way"));
     assert!(!outcome.description.contains("Charlie came before"));
     assert!(!outcome.description.contains("Delta comes after"));
+}
+
+#[tokio::test]
+async fn a_question_with_defects_of_two_kinds_is_two_findings_with_their_own_ids() -> Result<()> {
+    let llm = Script::new(Script::agreeing(), Script::sound()).kinded(Box::new(|item| {
+        if item["id"] == "q2" {
+            vec![
+                ("untrue", "The explanation contradicts the key.".to_owned()),
+                ("reason-misses-why", "A reason is off the case.".to_owned()),
+                ("untrue", "A criterion is untrue.".to_owned()),
+            ]
+        } else {
+            vec![]
+        }
+    }));
+
+    let found = check(&llm, &lesson(), outcome()).await?;
+
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(found
+        .iter()
+        .all(|finding| finding.site == Some(FindingSite::Question(1))));
+    assert!(matches!(
+        found[0].origin,
+        Origin::AnswerKey {
+            defect: KeyDefect::Untrue
+        }
+    ));
+    assert!(matches!(
+        found[1].origin,
+        Origin::AnswerKey {
+            defect: KeyDefect::ReasonMissesWhy
+        }
+    ));
+    assert!(found[0]
+        .note
+        .contains("The explanation contradicts the key. A criterion is untrue."));
+    assert!(found[1].note.contains("A reason is off the case."));
+    assert_ne!(found[0].id(), found[1].id());
+    Ok(())
 }

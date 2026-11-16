@@ -3,11 +3,12 @@
 //! itself nor points at what the learner cannot see.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
-use crate::content_verification::tests::{fixture_completion, CONTRACT_NOTHING};
+use crate::content_verification::tests::{fixture_completion, fixture_task};
 use crate::lessons::content_verification::Protected;
 use crate::lessons::course_generation_tests::{clean_review, verdict, ScriptedModel};
 use crate::reference_collection::ReferenceCollection;
-use crate::review_findings::{subject_of, Held, PlanCheck};
+use crate::review_findings::Held;
+use contract::scripted::{self, ask_of, Ask, Script};
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
@@ -20,10 +21,11 @@ const OPEN_TERMINAL: &str = "Opening the terminal application";
 /// from `contract` and every question put to it kept.
 struct Routed<'a> {
     inner: &'a ScriptedModel,
-    contract: Mutex<std::collections::VecDeque<String>>,
-    asked: Mutex<Vec<String>>,
+    script: Script,
+    asked: Mutex<Vec<(Ask, String)>>,
     drafting: Mutex<Vec<String>>,
     confirming: Mutex<Vec<(String, String)>>,
+    uses: Mutex<Vec<(String, String)>>,
     confirmed: Mutex<Vec<String>>,
 }
 
@@ -35,7 +37,7 @@ fn not_confirmed(user: &str) -> String {
     } else if user.contains(contract::confirm::CLASH_TASK) {
         json!({"case":"","contradict":false}).to_string()
     } else {
-        json!({"asked":true,"taught":false,"where":"thisLesson","quote":""}).to_string()
+        json!({"asked":true,"taught":false,"quote":""}).to_string()
     }
 }
 
@@ -43,10 +45,11 @@ impl<'a> Routed<'a> {
     fn new(inner: &'a ScriptedModel, answers: Vec<String>) -> Self {
         Self {
             inner,
-            contract: Mutex::new(answers.into()),
+            script: Script::new(answers),
             asked: Mutex::new(Vec::new()),
             drafting: Mutex::new(Vec::new()),
             confirming: Mutex::new(Vec::new()),
+            uses: Mutex::new(Vec::new()),
             confirmed: Mutex::new(Vec::new()),
         }
     }
@@ -60,6 +63,15 @@ impl<'a> Routed<'a> {
         self
     }
 
+    /// Answer the confirming read of the use in the sentence `words` with `reply`.
+    fn confirming_use(self, words: &str, reply: Value) -> Self {
+        self.uses
+            .lock()
+            .unwrap()
+            .push((words.to_owned(), reply.to_string()));
+        self
+    }
+
     fn confirmed(&self) -> Vec<String> {
         self.confirmed.lock().unwrap().clone()
     }
@@ -69,7 +81,23 @@ impl<'a> Routed<'a> {
     }
 
     fn asked(&self) -> Vec<String> {
-        self.asked.lock().unwrap().clone()
+        self.asked
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, user)| user.clone())
+            .collect()
+    }
+
+    /// What was asked of the ask `ask`, in the order it was asked.
+    fn asked_of(&self, ask: Ask) -> Vec<String> {
+        self.asked
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(kind, _)| *kind == ask)
+            .map(|(_, user)| user.clone())
+            .collect()
     }
 }
 
@@ -77,22 +105,37 @@ impl<'a> Routed<'a> {
 impl LLMPort for Routed<'_> {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let (system, user) = crate::lessons::structured_call::task_messages(request);
-        if system.starts_with(contract::confirm::SYSTEM)
-            && !crate::lessons::structured_call::is_draft_request(request)
+        let ask = ask_of(system, user);
+        if matches!(
+            ask,
+            Some(Ask::ConfirmPlanned | Ask::ConfirmUse | Ask::ConfirmClash)
+        ) && !crate::lessons::structured_call::is_draft_request(request)
         {
             self.confirmed.lock().unwrap().push(user.to_owned());
-            let reply = self
-                .confirming
+            let sentence = scripted::use_sentence(user);
+            let of_use = self
+                .uses
                 .lock()
                 .unwrap()
                 .iter()
-                .find(|(needle, _)| user.contains(needle.as_str()))
-                .map_or_else(|| not_confirmed(user), |(_, reply)| reply.clone());
-            return Ok(CompletionResponse::from_text(reply.as_str()));
+                .find(|(words, _)| sentence.as_deref() == Some(words.as_str()))
+                .map(|(_, reply)| reply.clone());
+            let old = of_use.unwrap_or_else(|| {
+                self.confirming
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .find(|(needle, _)| user.contains(needle.as_str()))
+                    .map_or_else(|| not_confirmed(user), |(_, reply)| reply.clone())
+            });
+            let kind = ask.unwrap_or(Ask::ConfirmUse);
+            return Ok(CompletionResponse::from_text(
+                scripted::confirm(kind, &old, user).as_str(),
+            ));
         }
-        let is_contract = system.starts_with(contract::SYSTEM);
-        if is_contract && crate::lessons::structured_call::is_draft_request(request) {
-            let said = request.input.iter().filter_map(|item| match item {
+        let checking = matches!(ask, Some(Ask::Planned | Ask::Find | Ask::Reports));
+        if checking && crate::lessons::structured_call::is_draft_request(request) {
+            let said = request.input().iter().filter_map(|item| match item {
                 CompletionInput::Message { role, content } if role == "system" => {
                     Some(content.as_str())
                 }
@@ -106,16 +149,12 @@ impl LLMPort for Routed<'_> {
 ",
                 ));
         }
-        if !is_contract || crate::lessons::structured_call::is_draft_request(request) {
+        if !checking || crate::lessons::structured_call::is_draft_request(request) {
             return self.inner.complete(request).await;
         }
-        self.asked.lock().unwrap().push(user.to_owned());
-        let reply = self
-            .contract
-            .lock()
-            .unwrap()
-            .pop_front()
-            .unwrap_or_else(|| CONTRACT_NOTHING.to_owned());
+        let kind = ask.unwrap_or(Ask::Find);
+        self.asked.lock().unwrap().push((kind, user.to_owned()));
+        let reply = self.script.reply(kind, user);
         Ok(fixture_completion(request, vec![reply]))
     }
     fn model_name(&self) -> &str {
@@ -129,6 +168,12 @@ impl LLMPort for Routed<'_> {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
     }
 }
 
@@ -166,6 +211,10 @@ fn block(title: &str, body: &str) -> Value {
     json!({"kind":"explanation","title":title,"body":body,"rubric":[],"sourceIndex":0,"quote":EXCERPT})
 }
 
+fn block_of(kind: &str, title: &str, body: &str) -> Value {
+    json!({"kind":kind,"title":title,"body":body,"rubric":[],"sourceIndex":0,"quote":EXCERPT})
+}
+
 fn lesson(bodies: [&str; 3]) -> Value {
     json!({"blocks":[
         block("Opening", bodies[0]),
@@ -174,14 +223,14 @@ fn lesson(bodies: [&str; 3]) -> Value {
     ],"questions":[]})
 }
 
-fn reviewed(blocks: usize) -> String {
-    reviewed_of(&(0..blocks).collect::<Vec<_>>(), &[])
+fn reviewed() -> String {
+    reviewed_of(&[])
 }
 
-/// A review that finds no defect in the sections it is asked about, and gives
-/// `verdicts` on the findings it is asked about.
-fn reviewed_of(sections: &[usize], verdicts: &[Value]) -> String {
-    clean_review(sections, verdicts)
+/// A review that finds no defect, and gives `verdicts` on the findings it is
+/// asked about.
+fn reviewed_of(verdicts: &[Value]) -> String {
+    clean_review(verdicts)
 }
 
 fn edits(edits: Value) -> String {
@@ -317,11 +366,11 @@ fn body(reviewed: &Reviewed, section: usize) -> String {
 #[tokio::test]
 async fn a_planned_action_the_lesson_does_not_teach_is_a_finding_at_its_section() -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         retitle_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         retitle_again_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let missing = answer(
         json!([not_taught("action-0")]),
@@ -355,14 +404,14 @@ async fn a_planned_action_the_lesson_does_not_teach_is_a_finding_at_its_section(
     assert!(repair.contains("Teach it in the lesson's own words"));
     assert!(!repair.contains("Teach it here"));
     drop(prompts);
-    let asked = model.asked();
+    let asked = model.asked_of(Ask::Planned);
     assert_eq!(asked.len(), 3);
     for expected in [
-        "action-0",
+        "action",
         OPEN_TERMINAL,
         "Listing the files in a folder",
         "The learner has used a graphical file manager.",
-        "section-2",
+        "Read the names.",
     ] {
         assert!(asked[0].contains(expected), "{expected}");
     }
@@ -377,11 +426,11 @@ async fn a_planned_action_the_lesson_does_not_teach_is_a_finding_at_its_section(
 async fn a_use_before_it_is_taught_is_a_finding_only_when_its_words_are_in_the_lesson() -> Result<()>
 {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         retitle_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         retitle_again_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let found = answer(
         json!([]),
@@ -403,7 +452,7 @@ async fn a_use_before_it_is_taught_is_a_finding_only_when_its_words_are_in_the_l
         waiting(&result),
         [(
             "teaching:section-1".to_owned(),
-            Some("Type `ls -l`\nto see sizes".to_owned())
+            Some("Type `ls -l`".to_owned())
         )]
     );
     assert!(result.set_aside[0]
@@ -417,69 +466,8 @@ async fn a_use_before_it_is_taught_is_a_finding_only_when_its_words_are_in_the_l
 }
 
 #[tokio::test]
-async fn a_planned_item_reported_taught_with_words_not_in_the_lesson_is_not_taught() -> Result<()> {
-    let scripted = scripted(vec![
-        reviewed(3),
-        retitle_at(1),
-        reviewed_of(&[1], &[]),
-        retitle_again_at(1),
-        reviewed_of(&[1], &[]),
-    ]);
-    let reported = answer(
-        json!([
-            taught("idea-0", "A terminal takes typed commands."),
-            taught("action-0", "Press the terminal icon in the dock")
-        ]),
-        json!([]),
-        json!([]),
-        json!([]),
-    );
-    let model = Routed::new(
-        &scripted,
-        vec![reported.clone(), reported.clone(), reported],
-    );
-    let candidate = lesson([
-        "A terminal takes typed commands.",
-        "The list shows names.",
-        "Read the names.",
-    ]);
-    let ctx = context(&["Typing commands"], &[OPEN_TERMINAL]);
-    let result = run(&model, &candidate, &ctx, &[]).await?;
-    assert_eq!(waiting(&result), [("teaching:section-1".to_owned(), None)]);
-    assert!(result.set_aside[0].finding.note.contains(OPEN_TERMINAL));
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_planned_item_missing_from_the_answer_is_not_taught() -> Result<()> {
-    let scripted = scripted(vec![
-        reviewed(3),
-        retitle_at(1),
-        reviewed_of(&[1], &[]),
-        retitle_again_at(1),
-        reviewed_of(&[1], &[]),
-    ]);
-    let model = Routed::new(&scripted, vec![]);
-    let candidate = lesson([
-        "A terminal takes typed commands.",
-        "The list shows names.",
-        "Read the names.",
-    ]);
-    let result = run(&model, &candidate, &context(&[], &[OPEN_TERMINAL]), &[]).await?;
-    assert_eq!(result.set_aside.len(), 1);
-    assert!(result.set_aside[0].finding.note.contains(OPEN_TERMINAL));
-    Ok(())
-}
-
-#[tokio::test]
 async fn a_contradiction_is_sited_at_the_statement_that_is_not_protected() -> Result<()> {
-    let scripted = scripted(vec![
-        reviewed(3),
-        retitle(),
-        retitle(),
-        retitle(),
-        retitle(),
-    ]);
+    let scripted = scripted(vec![reviewed(), retitle(), retitle(), retitle(), retitle()]);
     let clash = answer(
         json!([]),
         json!([]),
@@ -507,7 +495,7 @@ async fn a_contradiction_is_sited_at_the_statement_that_is_not_protected() -> Re
         waiting(&result),
         [(
             "teaching:section-2".to_owned(),
-            Some("Type ls Documents to list that folder".to_owned())
+            Some("Type ls Documents to list that folder.".to_owned())
         )]
     );
     assert_eq!(result.set_aside[0].finding.also, None);
@@ -526,11 +514,11 @@ async fn a_contradiction_is_sited_at_the_statement_that_is_not_protected() -> Re
 #[tokio::test]
 async fn a_contradiction_between_two_parts_that_can_change_is_about_both() -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         retitle_at(2),
-        reviewed_of(&[2], &[]),
+        reviewed_of(&[]),
         retitle_again_at(2),
-        reviewed_of(&[2], &[]),
+        reviewed_of(&[]),
     ]);
     let clash = answer(
         json!([]),
@@ -564,11 +552,11 @@ async fn a_contradiction_between_two_parts_that_can_change_is_about_both() -> Re
 async fn a_finding_in_a_section_with_protected_sentences_is_repaired_when_it_touches_none(
 ) -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         edits(
             json!([{"path":"/blocks/1/body","before":"Type ls -l to see sizes.","after":"Type ls to list names."}]),
         ),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let found = answer(
         json!([]),
@@ -600,11 +588,11 @@ async fn teaching_can_be_added_beside_an_editable_sentence_in_a_section_with_pro
 ) -> Result<()> {
     let added = "To open the terminal, press the Terminal icon in the dock and a window with a prompt appears.";
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         edits(
             json!([{"path":"/blocks/1/body","before":"Then look at the list.","after":format!("Then look at the list. {added}")}]),
         ),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let missing = answer(
         json!([not_taught("action-0")]),
@@ -640,16 +628,16 @@ async fn teaching_can_be_added_beside_an_editable_sentence_in_a_section_with_pro
 #[tokio::test]
 async fn a_recheck_after_a_repair_checks_the_whole_lesson_again() -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         edits(json!([
             {"path":"/blocks/0/body","before":"Type ls -l to see sizes.","after":"Type ls to list names."},
             {"path":"/blocks/2/body","before":"Read the names.","after":"Then rename a file with mv old.txt new.txt."}
         ])),
-        reviewed_of(&[0, 2], &[]),
+        reviewed_of(&[]),
         edits(
             json!([{"path":"/blocks/2/body","before":"Then rename a file with mv old.txt new.txt.","after":"Read the names."}]),
         ),
-        reviewed_of(&[2], &[]),
+        reviewed_of(&[]),
     ]);
     let first = answer(
         json!([]),
@@ -716,13 +704,13 @@ fn replace_in_listing(before: &str, after: &str) -> String {
 #[tokio::test]
 async fn a_third_defect_in_a_section_gets_its_own_repairs() -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         replace_in_listing(FIRST_USE, "Name the first tool before listing names."),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         replace_in_listing(SECOND_USE, "Name the second tool before sorting names."),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         replace_in_listing(THIRD_USE, "Name the third tool before counting names."),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let model = Routed::new(
         &scripted,
@@ -747,12 +735,12 @@ async fn a_third_defect_in_a_section_gets_its_own_repairs() -> Result<()> {
 #[tokio::test]
 async fn two_defects_in_one_section_are_two_entries_for_the_repair() -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         replace_in_listing(
             &format!("{FIRST_USE} {SECOND_USE}"),
             "Name both tools before listing and sorting names.",
         ),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let model = Routed::new(
         &scripted,
@@ -773,13 +761,8 @@ async fn two_defects_in_one_section_are_two_entries_for_the_repair() -> Result<(
         .iter()
         .find(|prompt| prompt.contains("issuesToFix"))
         .unwrap();
-    let key = "\"issuesToFix\":";
-    let start = repair.find(key).unwrap() + key.len();
-    let issues: Value = serde_json::Deserializer::from_str(&repair[start..])
-        .into_iter::<Value>()
-        .next()
-        .unwrap()
-        .unwrap();
+    let issues =
+        crate::lessons::teaching::repair_script::task_of(repair).unwrap()["issuesToFix"].clone();
     assert_eq!(issues.as_array().unwrap().len(), 2, "{issues}");
     Ok(())
 }
@@ -787,13 +770,13 @@ async fn two_defects_in_one_section_are_two_entries_for_the_repair() -> Result<(
 #[tokio::test]
 async fn one_fixed_defect_does_not_charge_the_other_in_its_section() -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         replace_in_listing(FIRST_USE, "Name the first tool before listing names."),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         retitle_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         retitle_again_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let model = Routed::new(
         &scripted,
@@ -826,10 +809,9 @@ async fn one_fixed_defect_does_not_charge_the_other_in_its_section() -> Result<(
     Ok(())
 }
 
-/// A repair of the second section's body for `finding`.
-fn replace_for(finding: &ReviewFinding, before: &str, after: &str) -> String {
+/// A repair of the second section's body.
+fn replace_for(before: &str, after: &str) -> String {
     edits(json!([{
-        "finding": finding.id().as_str(),
         "path": "/blocks/1/body",
         "before": before,
         "after": after
@@ -846,30 +828,14 @@ async fn a_defect_in_words_a_repair_wrote_continues_the_count_of_its_own_kind_of
     let first = "Sorting the list with the second tool leaves names unchanged.";
     let second = "Sorting the list with the third tool leaves names unchanged.";
     let third = "Sorting the list with the third tool always leaves names unchanged.";
-    let mut digests = [subject_of(one), subject_of(other)];
-    digests.sort();
-    let clash = ReviewFinding::plan(
-        PlanCheck::Contradiction,
-        digests.join("-"),
-        FindingSite::Section(0),
-        "",
-    );
-    let use_of = |tool: &str| {
-        ReviewFinding::plan(
-            PlanCheck::Used,
-            subject_of(tool),
-            FindingSite::Section(1),
-            "",
-        )
-    };
     let scripted = scripted(vec![
-        reviewed(3),
-        replace_for(&clash, other, first),
-        reviewed_of(&[1], &[]),
-        replace_for(&use_of("the second tool"), first, second),
-        reviewed_of(&[1], &[]),
-        replace_for(&use_of("the third tool"), second, third),
-        reviewed_of(&[1], &[]),
+        reviewed(),
+        replace_for(other, first),
+        reviewed_of(&[]),
+        replace_for(first, second),
+        reviewed_of(&[]),
+        replace_for(second, third),
+        reviewed_of(&[]),
     ]);
     let contradiction = answer(
         json!([]),
@@ -901,10 +867,7 @@ async fn a_defect_in_words_a_repair_wrote_continues_the_count_of_its_own_kind_of
     assert_eq!(repairs_asked(&scripted), 3);
     assert_eq!(result.set_aside.len(), 1, "{:?}", waiting(&result));
     assert_eq!(result.set_aside[0].repairs, 2);
-    assert_eq!(
-        result.set_aside[0].finding.passage.as_deref(),
-        Some("the third tool")
-    );
+    assert_eq!(result.set_aside[0].finding.passage.as_deref(), Some(third));
     assert_eq!(
         body(&result, 1),
         format!("{third} The list shows names in order.")
@@ -915,17 +878,17 @@ async fn a_defect_in_words_a_repair_wrote_continues_the_count_of_its_own_kind_of
 #[tokio::test]
 async fn words_that_point_at_what_the_learner_never_sees_are_a_finding() -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         retitle_at(2),
-        reviewed_of(&[2], &[]),
+        reviewed_of(&[]),
         retitle_again_at(2),
-        reviewed_of(&[2], &[]),
+        reviewed_of(&[]),
     ]);
     let pointing = answer(
         json!([]),
         json!([]),
         json!([]),
-        json!([{"quote":"which the excerpt does not describe","what":"an excerpt the learner is never shown"}]),
+        json!([{"quote":"which the excerpt does not describe","what":"an excerpt the learner is never shown","neverShown":true}]),
     );
     let model = Routed::new(
         &scripted,
@@ -941,37 +904,25 @@ async fn words_that_point_at_what_the_learner_never_sees_are_a_finding() -> Resu
         waiting(&result),
         [(
             "teaching:section-2".to_owned(),
-            Some("which the excerpt does not describe".to_owned())
+            Some("The sort order is one which the excerpt does not describe.".to_owned())
         )]
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn an_outline_review_never_checks_against_a_course_plan() -> Result<()> {
+async fn a_material_review_never_checks_against_a_course_plan() -> Result<()> {
     let scripted = scripted(vec![json!({"issues":[]}).to_string()]);
     let model = Routed::new(&scripted, vec![]);
     let outline = json!({"modules":[{"title":"A module","lessons":[]}]});
     let schema = json!({"type":"object","properties":{"modules":{"type":"array"}}});
-    let progress = crate::outline_progress::OutlineProgress::default();
-    let sources = vec![crate::dto::LearningSourceDto {
-        id: "saved-reference".into(),
-        title: "Example reference".into(),
-        url: None,
-        acquired_at: 0,
-        excerpt: EXCERPT.into(),
-    }];
-    review_and_repair_with_progress(
+    review_and_repair(
         &model,
         "Author a curriculum outline",
         &context(&[], &[OPEN_TERMINAL]),
         &schema,
         outline.to_string(),
         4000,
-        OutlineReviewContext {
-            progress: &progress,
-            sources: &sources,
-        },
     )
     .await?;
     assert!(model.asked().is_empty());
@@ -979,15 +930,12 @@ async fn an_outline_review_never_checks_against_a_course_plan() -> Result<()> {
 }
 
 fn defect_in_first_section() -> String {
-    let checks = (0..3)
-        .map(|index| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"The first section states a wrong result.","hasDefect":index == 0}))
-        .collect();
-    json!({"issues":[],"blockChecks":crate::lessons::teaching_review::fixture_checks(checks)})
-        .to_string()
+    let defect = json!({"passageId":"section-0-passage-0","finding":"The first section promises that the tutor certifies the learner's work as expert reviewed.","concerns":["promise"]});
+    json!({"issues":[],"sectionDefects":[defect]}).to_string()
 }
 
 fn actionable() -> String {
-    json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"internal_conflict","evidenceIds":["blocks-0"],"partId":"blocks-0","requirementId":null,"reason":"The section states a wrong result."}]}).to_string()
+    json!({"entries":[{"of":"i1","verdict":"actionable","basis":"internal_conflict","candidateIds":["p1"],"referenceIds":[],"partId":"p1","leftTo":"none","reason":"The section promises expert certification."}]}).to_string()
 }
 
 const LEARNER_SEES_ONLY_THE_LESSON: &str = "never mentions the course plan";
@@ -998,7 +946,7 @@ async fn the_span_edit_repair_is_told_the_learner_sees_only_the_lesson() -> Resu
         defect_in_first_section(),
         actionable(),
         retitle(),
-        reviewed_of(&[0], &[verdict("reviewer/1", "resolved")]),
+        reviewed_of(&[verdict("reviewer/1", "resolved")]),
     ]);
     let model = Routed::new(&scripted, vec![]);
     let candidate = lesson([
@@ -1030,7 +978,7 @@ async fn the_whole_lesson_repair_is_told_not_to_mention_the_plan_or_the_excerpts
         "The list shows names.",
         "Read the names.",
     ]);
-    let scripted = scripted(vec![fixed.to_string(), reviewed(3)]);
+    let scripted = scripted(vec![fixed.to_string(), reviewed()]);
     let model = Routed::new(&scripted, vec![]);
     let schema = json!({"type":"object","required":["blocks","questions"]});
     run_under(&model, &broken, &context(&[], &[]), &[], &schema).await?;
@@ -1048,7 +996,7 @@ async fn the_whole_lesson_repair_is_told_not_to_mention_the_plan_or_the_excerpts
 
 #[tokio::test]
 async fn the_check_covers_the_steps_a_deliverable_needs_including_saving_the_work() -> Result<()> {
-    let scripted = scripted(vec![reviewed(3)]);
+    let scripted = scripted(vec![reviewed()]);
     let model = Routed::new(&scripted, vec![]);
     let candidate = lesson([
         "A terminal takes typed commands.",
@@ -1068,7 +1016,7 @@ async fn the_check_covers_the_steps_a_deliverable_needs_including_saving_the_wor
 
 #[tokio::test]
 async fn the_request_carries_the_modules_title_and_milestone() -> Result<()> {
-    let scripted = scripted(vec![reviewed(3)]);
+    let scripted = scripted(vec![reviewed()]);
     let model = Routed::new(&scripted, vec![]);
     let candidate = lesson([
         "A terminal takes typed commands.",
@@ -1102,7 +1050,7 @@ async fn the_request_carries_the_modules_title_and_milestone() -> Result<()> {
 
 #[tokio::test]
 async fn the_check_is_told_what_later_lessons_teach() -> Result<()> {
-    let scripted = scripted(vec![reviewed(3)]);
+    let scripted = scripted(vec![reviewed()]);
     let model = Routed::new(&scripted, vec![]);
     let candidate = lesson([
         "A terminal takes typed commands.",
@@ -1130,26 +1078,26 @@ async fn the_check_is_told_what_later_lessons_teach() -> Result<()> {
 
 #[test]
 fn the_check_s_rule_lets_a_lesson_say_what_a_later_one_teaches() {
-    assert!(contract::SYSTEM.contains("neither is saying what a later lesson will teach"));
+    assert!(contract::FIND_SYSTEM.contains("neither is saying what a later lesson will teach"));
 }
 
 #[test]
 fn pointing_at_the_outline_or_an_earlier_lesson_is_not_unseen() {
-    assert!(contract::SYSTEM
+    assert!(contract::FIND_SYSTEM
         .contains("Pointing at the course outline or at an earlier lesson is not unseen"));
 }
 
 #[test]
 fn the_contract_check_looks_for_unseen_words_in_questions_too() {
-    assert!(contract::SYSTEM.contains(
+    assert!(contract::FIND_SYSTEM.contains(
         "words in any part, a question's choices, rationales and explanation included, that point the learner at something they never see"
     ));
 }
 
 #[test]
 fn the_unseen_check_names_the_whole_outline_and_scopes_its_qualifier() {
-    assert!(contract::SYSTEM.contains("courseOutline"));
-    assert!(contract::SYSTEM
+    assert!(contract::FIND_SYSTEM.contains("courseOutline"));
+    assert!(contract::FIND_SYSTEM
         .contains("text above or below or a step number that this lesson does not contain"));
 }
 
@@ -1180,13 +1128,13 @@ async fn finding_note_in(
     marker: &str,
 ) -> Result<String> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         retitle_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         retitle_again_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         retitle_third_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let found = answer(planned, used, json!([]), json!([]));
     let model = Routed::new(
@@ -1212,11 +1160,10 @@ async fn finding_note_in(
 
 #[tokio::test]
 async fn the_contract_check_describes_learner_actions_in_no_subjects_terms() -> Result<()> {
-    let system = contract::SYSTEM;
-    let start = system.find("1. planned:").unwrap();
-    let end = system.find("3. contradictions:").unwrap();
-    let checks = &system[start..end];
-    assert_no_software_words("checks 1 and 2", checks);
+    let system = contract::FIND_SYSTEM;
+    let end = system.find("2. contradictions:").unwrap();
+    let checks = format!("{}{}", contract::PLANNED_SYSTEM, &system[..end]);
+    assert_no_software_words("the planned and used checks", &checks);
     for expected in [
         "the exact steps, and the result the learner should get",
         "anything a part asks the learner to do or use that they need to be shown how to do (an action, a technique, a tool, a setting, or a variant of something taught)",
@@ -1225,7 +1172,7 @@ async fn the_contract_check_describes_learner_actions_in_no_subjects_terms() -> 
         assert!(checks.contains(expected), "missing {expected:?} in {checks}");
     }
 
-    let scripted = scripted(vec![reviewed(3)]);
+    let scripted = scripted(vec![reviewed()]);
     let model = Routed::new(&scripted, vec![]);
     let candidate = lesson(["One.", "Two.", "Three."]);
     run(&model, &candidate, &context(&[], &[]), &[]).await?;
@@ -1305,9 +1252,9 @@ const SHOWN: &str = "what it is for, exactly how to do it, and the result the le
 
 #[tokio::test]
 async fn check_two_counts_teaching_where_a_step_asks_for_it() -> Result<()> {
-    let system = contract::SYSTEM;
-    let start = system.find("2. usedBeforeTaught").unwrap();
-    let end = system.find("3. contradictions:").unwrap();
+    let system = contract::FIND_SYSTEM;
+    let start = system.find("1. usedBeforeTaught").unwrap();
+    let end = system.find("2. contradictions:").unwrap();
     let check = &system[start..end];
     let criterion = format!(
         "or that it treats as known, which the lesson has not taught by the words that ask for it and which priorKnowledge and the actions and terms of earlierLessons do not cover. The lesson has taught something the learner does or uses when an earlier part, or this part before or in those words, says {SHOWN}: words that ask for it and say all of this teach it where it is used."
@@ -1318,7 +1265,7 @@ async fn check_two_counts_teaching_where_a_step_asks_for_it() -> Result<()> {
         "{check}"
     );
 
-    let scripted = scripted(vec![reviewed(3)]);
+    let scripted = scripted(vec![reviewed()]);
     let model = Routed::new(&scripted, vec![]);
     let candidate = lesson(["One.", "Two.", "Three."]);
     run(&model, &candidate, &context(&[], &[]), &[]).await?;
@@ -1332,10 +1279,10 @@ async fn check_two_counts_teaching_where_a_step_asks_for_it() -> Result<()> {
 
 #[test]
 fn check_two_asks_for_a_noun_phrase_never_a_sentence() {
-    let system = contract::SYSTEM;
+    let system = contract::FIND_SYSTEM;
     assert!(
         system.contains(
-            "Give one entry for each such thing, however many parts use it: in what, its name, a noun phrase, never a sentence; in uses, the words copied exactly of every place that asks the learner to use it before the lesson has taught it; in taughtLater, the words copied exactly with which the lesson first teaches it after those places, empty when it never does."
+            "Give one entry of kind usedBeforeTaught for each such thing, however many parts use it: in what, its name, a noun phrase, never a sentence; in uses, cite every sentence that asks the learner to use it before the lesson has taught it; in taughtLater, cite the sentences with which the lesson first teaches it after those places, empty when it never does."
         ),
         "{system}"
     );
@@ -1353,7 +1300,11 @@ async fn the_check_and_the_note_define_shown_how_in_the_same_words() -> Result<(
     let (_, rest) = note.split_once("where it is first used (").unwrap();
     let (phrase, _) = rest.split_once(')').unwrap();
     assert_eq!(phrase, EACH_SHOWN, "{note}");
-    assert!(contract::SYSTEM.contains(SHOWN), "{}", contract::SYSTEM);
+    assert!(
+        contract::FIND_SYSTEM.contains(SHOWN),
+        "{}",
+        contract::FIND_SYSTEM
+    );
     Ok(())
 }
 
@@ -1361,7 +1312,7 @@ const EACH_SHOWN: &str = "for something the learner does or uses, what it is for
 
 #[test]
 fn the_check_says_when_a_term_has_been_taught() {
-    let system = contract::SYSTEM;
+    let system = contract::FIND_SYSTEM;
     assert!(
         system.contains("It has taught a term when an earlier part, or this part before or in those words, says what it means."),
         "{system}"
@@ -1376,9 +1327,9 @@ fn the_check_says_when_a_term_has_been_taught() {
 
 #[test]
 fn the_confirming_read_says_what_a_part_only_mentions_is_not_used() {
-    let system = contract::confirm::SYSTEM;
+    let system = contract::confirm::USE_SYSTEM;
     assert!(
-        system.contains("A part uses something when its words ask the learner to do or use it, when its practice deliverable needs it, or when it treats it as known. What a part only mentions, and does not ask of the learner, it does not use; then asked is false and quote is empty."),
+        system.contains("A part uses something when its words ask the learner to do or use it, when its practice deliverable needs it, or when it treats it as known. What a part only mentions, and does not ask of the learner, it does not use; then asked is no and units is empty."),
         "{system}"
     );
     assert!(system.contains("It has taught a term when"), "{system}");
@@ -1401,7 +1352,7 @@ const TYPED: &str = "A terminal takes typed commands.";
 
 #[tokio::test]
 async fn an_item_is_taught_wherever_in_the_lesson_its_words_are() -> Result<()> {
-    let scripted = scripted(vec![reviewed(3), retitle(), reviewed(3)]);
+    let scripted = scripted(vec![reviewed(), retitle(), reviewed()]);
     let reported = answer(
         json!([taught("idea-0", TYPED)]),
         json!([]),
@@ -1420,11 +1371,11 @@ async fn an_item_is_taught_wherever_in_the_lesson_its_words_are() -> Result<()> 
 #[tokio::test]
 async fn a_use_is_a_finding_at_the_part_that_holds_its_words() -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         retitle_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         retitle_again_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let found = answer(
         json!([]),
@@ -1443,7 +1394,7 @@ async fn a_use_is_a_finding_at_the_part_that_holds_its_words() -> Result<()> {
         waiting(&result),
         [(
             "teaching:section-1".to_owned(),
-            Some("Type ls -l to see sizes".to_owned())
+            Some("Type ls -l to see sizes in the list.".to_owned())
         )]
     );
     Ok(())
@@ -1452,7 +1403,7 @@ async fn a_use_is_a_finding_at_the_part_that_holds_its_words() -> Result<()> {
 #[tokio::test]
 async fn a_use_the_confirming_read_finds_taught_raises_nothing_and_asks_for_no_repair() -> Result<()>
 {
-    let scripted = scripted(vec![reviewed(3), retitle(), reviewed(3)]);
+    let scripted = scripted(vec![reviewed(), retitle(), reviewed()]);
     let found = answer(
         json!([]),
         json!([used(
@@ -1489,15 +1440,15 @@ const LISTED: &str = "Look at the list of names.";
 #[tokio::test]
 async fn an_item_found_taught_is_not_asked_again_until_its_sentence_changes() -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         edits(
             json!([{"path":"/blocks/1/body","before":"Type ls -l to see sizes.","after":"Type ls to list names."}]),
         ),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         edits(
             json!([{"path":"/blocks/0/body","before":TYPED,"after":"A terminal runs typed commands."}]),
         ),
-        reviewed_of(&[0], &[]),
+        reviewed_of(&[]),
     ]);
     let first = answer(
         json!([taught("idea-0", TYPED)]),
@@ -1529,18 +1480,18 @@ async fn an_item_found_taught_is_not_asked_again_until_its_sentence_changes() ->
     ]);
     let ctx = context(&["Typing commands"], &[]);
     let result = run(&model, &candidate, &ctx, &[]).await?;
-    let asked = model.asked();
-    assert_eq!(asked.len(), 3);
+    let asked = model.asked_of(Ask::Planned);
+    assert_eq!(asked.len(), 2);
     assert!(asked[0].contains("Typing commands"), "{}", asked[0]);
-    assert!(!asked[1].contains("Typing commands"), "{}", asked[1]);
-    assert!(asked[2].contains("Typing commands"), "{}", asked[2]);
+    assert!(asked[1].contains("Typing commands"), "{}", asked[1]);
+    assert_eq!(model.asked_of(Ask::Find).len(), 3);
     assert!(result.set_aside.is_empty(), "{:?}", waiting(&result));
     Ok(())
 }
 
 #[tokio::test]
 async fn a_confirming_read_that_finds_a_planned_items_words_settles_it() -> Result<()> {
-    let scripted = scripted(vec![reviewed(3), retitle(), reviewed(3)]);
+    let scripted = scripted(vec![reviewed(), retitle(), reviewed()]);
     let missing = answer(
         json!([not_taught("action-0")]),
         json!([]),
@@ -1566,11 +1517,11 @@ async fn a_confirming_read_that_finds_a_planned_items_words_settles_it() -> Resu
 async fn a_planned_item_the_confirming_read_does_not_find_is_a_finding_where_it_belongs(
 ) -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         retitle_at(2),
-        reviewed_of(&[2], &[]),
+        reviewed_of(&[]),
         retitle_again_at(2),
-        reviewed_of(&[2], &[]),
+        reviewed_of(&[]),
     ]);
     let missing = answer(
         json!([not_taught("idea-0")]),
@@ -1589,6 +1540,87 @@ async fn a_planned_item_the_confirming_read_does_not_find_is_a_finding_where_it_
     Ok(())
 }
 
+/// The notes waiting after a lesson with a contrast section is twice repaired
+/// for its missing planned contrast, the prompts of the confirming read, and
+/// the rows of the first repair.
+async fn waiting_after_planned_contrast(
+    reply: Value,
+) -> Result<(Vec<(String, Option<String>)>, Vec<String>, Value)> {
+    let scripted = scripted(vec![
+        reviewed(),
+        retitle_at(1),
+        reviewed_of(&[]),
+        retitle_again_at(1),
+        reviewed_of(&[]),
+    ]);
+    let missing = answer(
+        json!([not_taught("contrast")]),
+        json!([]),
+        json!([]),
+        json!([]),
+    );
+    let model = Routed::new(&scripted, vec![missing.clone(), missing.clone(), missing])
+        .confirming("A planned confusion", reply);
+    let candidate = json!({"blocks":[
+        block_of("explanation", "Opening", TYPED),
+        block_of("contrast", "Listing", "The list shows names."),
+        block_of("explanation", "Reading", "Read the names.")
+    ],"questions":[]});
+    let ctx = context_planning(&[], &[], &[], "A planned confusion");
+    let result = run(&model, &candidate, &ctx, &[]).await?;
+    let prompts = scripted.prompts.lock().unwrap();
+    let repair = prompts
+        .iter()
+        .find(|prompt| prompt.contains("issuesToFix"))
+        .unwrap();
+    let issues =
+        crate::lessons::teaching::repair_script::task_of(repair).unwrap()["issuesToFix"].clone();
+    Ok((waiting(&result), model.confirmed(), issues))
+}
+
+#[tokio::test]
+async fn a_planned_contrast_is_placed_only_in_a_contrast_section() -> Result<()> {
+    let (found, confirmed, _) =
+        waiting_after_planned_contrast(json!({"taught":false,"quote":"","belongs":"section-1"}))
+            .await?;
+    assert_eq!(found, [("teaching:section-1".to_owned(), None)]);
+    assert!(!confirmed.is_empty());
+    for prompt in &confirmed {
+        let task: Value = serde_json::from_str(prompt).unwrap();
+        let named: Vec<usize> = task["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .filter(|(_, section)| section.get("id").is_some())
+            .map(|(at, _)| at)
+            .collect();
+        assert_eq!(named, [1], "{prompt}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_planned_contrast_the_confirming_read_puts_in_an_explanation_waits_at_the_lesson(
+) -> Result<()> {
+    let (found, _, _) =
+        waiting_after_planned_contrast(json!({"taught":false,"quote":"","belongs":"section-0"}))
+            .await?;
+    assert_eq!(found, [("teaching:lesson".to_owned(), None)]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_planned_contrast_the_confirming_read_misplaces_is_sent_with_the_sections_it_belongs_in(
+) -> Result<()> {
+    let (_, _, issues) =
+        waiting_after_planned_contrast(json!({"taught":false,"quote":"","belongs":"section-0"}))
+            .await?;
+    assert_eq!(issues[0]["part"], Value::Null, "{issues}");
+    assert_eq!(issues[0]["within"], json!(["/blocks/1"]), "{issues}");
+    Ok(())
+}
+
 /// The section a use is confirmed in: words before the use, the use, words after.
 const USED_IN: &str = "Use the list command. Type ls -l to see sizes. Then read the list.";
 
@@ -1596,11 +1628,11 @@ const USED_IN: &str = "Use the list command. Type ls -l to see sizes. Then read 
 /// confirming read of it.
 async fn waiting_after_confirming(reply: Value) -> Result<Vec<(String, Option<String>)>> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         retitle_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         retitle_again_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let found = answer(
         json!([]),
@@ -1638,7 +1670,7 @@ async fn a_confirming_read_settles_a_use_when_its_words_check_out() -> Result<()
 async fn a_confirming_read_that_does_not_check_out_leaves_the_finding_standing() -> Result<()> {
     let standing = vec![(
         "teaching:section-1".to_owned(),
-        Some("Type ls -l to see sizes".to_owned()),
+        Some("Type ls -l to see sizes.".to_owned()),
     )];
     for (place, quote) in [
         ("thisLesson", "Then read the list."),
@@ -1673,7 +1705,7 @@ async fn a_use_the_part_asked_for_and_nothing_taught_stands() -> Result<()> {
         left,
         [(
             "teaching:section-1".to_owned(),
-            Some("Type ls -l to see sizes".to_owned())
+            Some("Type ls -l to see sizes.".to_owned())
         )]
     );
     Ok(())
@@ -1683,11 +1715,11 @@ async fn a_use_the_part_asked_for_and_nothing_taught_stands() -> Result<()> {
 async fn the_question_put_for_a_use_asks_whether_the_part_asks_it_and_names_both_standards(
 ) -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         retitle_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         retitle_again_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let found = answer(
         json!([]),
@@ -1715,13 +1747,13 @@ async fn the_question_put_for_a_use_asks_whether_the_part_asks_it_and_names_both
 async fn every_negative_is_read_again_once_and_a_use_is_shown_only_the_parts_up_to_it() -> Result<()>
 {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         retitle_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         retitle_again_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
         retitle_third_at(1),
-        reviewed_of(&[1], &[]),
+        reviewed_of(&[]),
     ]);
     let found = answer(
         json!([not_taught("idea-0"), not_taught("idea-1")]),
@@ -1750,9 +1782,15 @@ async fn every_negative_is_read_again_once_and_a_use_is_shown_only_the_parts_up_
         .iter()
         .find(|prompt| prompt.contains("the -l option of ls"))
         .unwrap();
-    assert!(about_the_use.contains("section-1"), "{about_the_use}");
-    assert!(!about_the_use.contains("section-2"), "{about_the_use}");
-    assert_eq!(confirmed.len(), 3 * model.asked().len());
+    assert!(
+        about_the_use.contains("Type ls -l to see sizes."),
+        "{about_the_use}"
+    );
+    assert!(
+        !about_the_use.contains("Read the names."),
+        "{about_the_use}"
+    );
+    assert_eq!(confirmed.len(), 3 * model.asked_of(Ask::Find).len());
     Ok(())
 }
 
@@ -1760,17 +1798,17 @@ async fn every_negative_is_read_again_once_and_a_use_is_shown_only_the_parts_up_
 async fn words_pointing_at_what_is_never_seen_are_a_finding_in_every_part_that_holds_them(
 ) -> Result<()> {
     let scripted = scripted(vec![
-        reviewed(3),
+        reviewed(),
         retitle_both("", ", revised"),
-        reviewed_of(&[1, 2], &[]),
+        reviewed_of(&[]),
         retitle_both(", revised", ", revised again"),
-        reviewed_of(&[1, 2], &[]),
+        reviewed_of(&[]),
     ]);
     let pointing = answer(
         json!([]),
         json!([]),
         json!([]),
-        json!([{"quote":"see the excerpt above","what":"an excerpt the learner is never shown"}]),
+        json!([{"quote":"see the excerpt above","what":"an excerpt the learner is never shown","neverShown":true}]),
     );
     let model = Routed::new(
         &scripted,
@@ -1787,22 +1825,47 @@ async fn words_pointing_at_what_is_never_seen_are_a_finding_in_every_part_that_h
         [
             (
                 "teaching:section-1".to_owned(),
-                Some("see the excerpt above".to_owned())
+                Some("For sizes, see the excerpt above.".to_owned())
             ),
             (
                 "teaching:section-2".to_owned(),
-                Some("see the excerpt above".to_owned())
+                Some("For names, see the excerpt above.".to_owned())
             )
         ]
     );
     Ok(())
 }
 
+#[tokio::test]
+async fn an_unseen_entry_the_check_says_the_learner_sees_is_no_finding() -> Result<()> {
+    let scripted = scripted(vec![reviewed(), reviewed(), reviewed()]);
+    let dismissed = answer(
+        json!([]),
+        json!([]),
+        json!([]),
+        json!([{"quote":"see the excerpt above","what":"the steps below, which the lesson shows","neverShown":false}]),
+    );
+    let model = Routed::new(
+        &scripted,
+        vec![dismissed.clone(), dismissed.clone(), dismissed],
+    );
+    let candidate = lesson([
+        TYPED,
+        "For sizes, see the excerpt above.",
+        "For names, see the excerpt above.",
+    ]);
+    let result = run(&model, &candidate, &context(&[], &[]), &[]).await?;
+    assert_eq!(waiting(&result), []);
+    Ok(())
+}
+
 #[test]
 fn the_check_and_the_confirming_read_define_taught_in_the_same_words() {
     let definition = "An action is taught when the lesson shows the learner how to perform it: the exact steps, and the result the learner should get.";
-    for system in [contract::SYSTEM, contract::confirm::SYSTEM] {
+    for system in [contract::PLANNED_SYSTEM, contract::confirm::PLANNED_SYSTEM] {
         assert!(system.contains(definition), "{system}");
+    }
+    for system in [contract::FIND_SYSTEM, contract::confirm::USE_SYSTEM] {
         assert!(system.contains(SHOWN), "{system}");
         assert!(system.contains("A variant is a new thing"), "{system}");
     }
@@ -1811,3 +1874,142 @@ fn the_check_and_the_confirming_read_define_taught_in_the_same_words() {
 #[cfg(test)]
 #[path = "contract_used_once_tests.rs"]
 mod used_once;
+
+#[tokio::test]
+async fn prompt_snapshot_lesson_contract_check() -> Result<()> {
+    let scripted = scripted(vec![reviewed()]);
+    let reported = answer(
+        json!([
+            taught("idea-0", "A terminal takes typed commands."),
+            taught("action-0", "The list shows names.")
+        ]),
+        json!([]),
+        json!([]),
+        json!([]),
+    );
+    let model = Routed::new(&scripted, vec![reported]);
+    let log = crate::lessons::course_generation_tests::RequestLog::new(&model);
+    let candidate = lesson([
+        "A terminal takes typed commands.",
+        "The list shows names.",
+        "Read the names.",
+    ]);
+    let context = context(
+        &["A terminal takes typed commands"],
+        &["Listing the files in a folder"],
+    );
+    run(&log, &candidate, &context, &[]).await?;
+    log.assert_snapshot::<contract::LessonContractCheck>();
+    Ok(())
+}
+
+fn parcel_lesson() -> Value {
+    json!({"blocks":[
+        block_of("explanation", "Opening", TYPED),
+        block_of("contrast", "Listing", "The list shows names."),
+        block_of("explanation", "Reading", "Read the names.")
+    ],"questions":[]})
+}
+
+fn repair_script() -> Vec<String> {
+    vec![
+        reviewed(),
+        retitle_at(1),
+        reviewed_of(&[]),
+        retitle_again_at(1),
+        reviewed_of(&[]),
+    ]
+}
+
+#[tokio::test]
+async fn a_contrast_cited_only_in_an_explanation_is_not_taught() -> Result<()> {
+    let scripted = scripted(repair_script());
+    let cited = answer(
+        json!([taught("contrast", TYPED)]),
+        json!([]),
+        json!([]),
+        json!([]),
+    );
+    let model = Routed::new(&scripted, vec![cited.clone(), cited.clone(), cited]);
+    let ctx = context_planning(&[], &[], &[], "A planned confusion");
+    let result = run(&model, &parcel_lesson(), &ctx, &[]).await?;
+    assert_eq!(waiting(&result), [("teaching:section-1".to_owned(), None)]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_confirming_read_that_cites_a_contrast_only_in_an_explanation_does_not_settle_it(
+) -> Result<()> {
+    let scripted = scripted(repair_script());
+    let missing = answer(
+        json!([not_taught("contrast")]),
+        json!([]),
+        json!([]),
+        json!([]),
+    );
+    let model = Routed::new(&scripted, vec![missing.clone(), missing.clone(), missing]).confirming(
+        "A planned confusion",
+        json!({"taught":true,"quote":TYPED,"belongs":"section-1"}),
+    );
+    let ctx = context_planning(&[], &[], &[], "A planned confusion");
+    let result = run(&model, &parcel_lesson(), &ctx, &[]).await?;
+    assert_eq!(waiting(&result), [("teaching:section-1".to_owned(), None)]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_term_said_only_in_a_contrast_section_is_taught() -> Result<()> {
+    let scripted = scripted(vec![reviewed()]);
+    let cited = answer(
+        json!([taught("term-0", "The list shows names.")]),
+        json!([]),
+        json!([]),
+        json!([]),
+    );
+    let model = Routed::new(&scripted, vec![cited.clone(), cited]);
+    let ctx = context_planning(&[], &["list"], &[], "");
+    let result = run(&model, &parcel_lesson(), &ctx, &[]).await?;
+    assert!(result.set_aside.is_empty(), "{:?}", waiting(&result));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_planned_contrast_with_no_section_to_teach_it_is_set_aside_and_never_sent_to_a_repair(
+) -> Result<()> {
+    let inner = scripted(vec![reviewed(); 6]);
+    let missing = answer(
+        json!([not_taught("contrast")]),
+        json!([]),
+        json!([]),
+        json!([]),
+    );
+    let model = Routed::new(&inner, vec![missing.clone(), missing.clone(), missing])
+        .confirming("A planned confusion", json!({"taught":false,"quote":""}));
+    let candidate = json!({"blocks":[
+        block_of("explanation", "Opening", TYPED),
+        block_of("explanation", "Listing", "The list shows names."),
+        block_of("worked_example", "Reading", "Read the names.")
+    ],"questions":[]});
+    let ctx = context_planning(&[], &[], &[], "A planned confusion");
+
+    let result = run(&model, &candidate, &ctx, &[]).await?;
+
+    let lacking: Vec<_> = result
+        .set_aside
+        .iter()
+        .filter(|waiting| waiting.finding.lacks_its_section())
+        .collect();
+    assert_eq!(lacking.len(), 1, "{:?}", waiting(&result));
+    assert_eq!(lacking[0].repairs, 0);
+    assert_eq!(lacking[0].finding.site, Some(FindingSite::Lesson));
+    let repairs = inner
+        .prompts
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|prompt| fixture_task(prompt))
+        .filter(|task| task.get("issuesToFix").is_some())
+        .count();
+    assert_eq!(repairs, 0);
+    Ok(())
+}

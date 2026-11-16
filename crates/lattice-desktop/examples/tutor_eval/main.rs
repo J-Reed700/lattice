@@ -301,7 +301,7 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
 
     let data_dir = workdir.join("app-data");
     std::fs::create_dir_all(&data_dir)?;
-    let container = app::open(&data_dir, &settings, None).await?;
+    let container = lattice::interfaces::di::headless::open(&data_dir, &settings, None).await?;
     eprintln!("activating {}", embedding_gguf.display());
     let embedding =
         app::activate_embedding(&container, &embedding_gguf, &recipe.embedding_model_id).await?;

@@ -3,8 +3,8 @@
 
 use super::support::{
     blind_answer, blind_assessment, built_drill, clean_code_answer, code_check_answer, code_spec,
-    entry_answer, grade_answer, judge_answer, lesson_spec, messages, plant_answer, review_answer,
-    ScriptedModel,
+    entry_answer, grade_answer, grade_extras_answer, judge_answer, lesson_spec, messages,
+    plant_answer, review_answer, ScriptedModel,
 };
 use crate::drills::bank::queue_build;
 use crate::drills::jobs::{drill_job_config, judge_grader, spec_of, DrillBuildWorker, DRILL_BUILD};
@@ -136,6 +136,7 @@ async fn a_queued_build_runs_on_the_runtime_and_the_judge_grades_its_blind_revie
         judge_answer(true),
         blind_answer(),
         grade_answer(),
+        grade_extras_answer(),
         entry_answer(),
     ]));
     let spec = code_spec(&pool, &database).await?;
@@ -155,9 +156,10 @@ async fn a_queued_build_runs_on_the_runtime_and_the_judge_grades_its_blind_revie
             "judge",
             "blind review",
             "grade",
+            "grade extras",
             "key entry"
         ],
-        "without a runner both defects are judged, and one call grades the review"
+        "without a runner both defects are judged, and one call grades the issues and one the other findings"
     );
     let stored = built_drill(&pool).await?.expect("the drill is in the bank");
     assert_eq!(job.result_ref, Some(format!("drill:{}", stored.drill.id)));
@@ -192,9 +194,9 @@ async fn a_queued_build_runs_on_the_runtime_and_the_judge_grades_its_blind_revie
     );
     for request in &requests {
         let schema = request
-            .json_schema
-            .as_ref()
-            .expect("every call is structured");
+            .schema()
+            .expect("every call is structured")
+            .as_json();
         assert!(text_length_rules(schema).is_empty(), "{schema}");
     }
     Ok(())
@@ -230,7 +232,7 @@ async fn a_review_the_judge_cannot_grade_fails_the_build_with_the_work_before_it
 ) -> Result<()> {
     let pool = pool().await?;
     let database = Database::new(pool.clone());
-    let nothing = || json!({"issues": [], "findings": []}).to_string();
+    let nothing = || json!({"entries": []}).to_string();
     let model = Arc::new(ScriptedModel::new([
         code_check_answer(true),
         clean_code_answer(),
@@ -239,6 +241,7 @@ async fn a_review_the_judge_cannot_grade_fails_the_build_with_the_work_before_it
         judge_answer(true),
         judge_answer(true),
         blind_answer(),
+        nothing(),
         nothing(),
         nothing(),
     ]));
@@ -252,15 +255,15 @@ async fn a_review_the_judge_cannot_grade_fails_the_build_with_the_work_before_it
     assert!(
         job.error_message
             .as_deref()
-            .is_some_and(|message| message.contains("Issue 1 has no entry")),
+            .is_some_and(|message| message.contains("The answer said nothing about what was asked")),
         "{:?}",
         job.error_message
     );
     let purposes = model.purposes();
     assert_eq!(
-        purposes[purposes.len() - 2..],
-        ["grade", "grade"],
-        "the judge is asked once more, never twice"
+        purposes[purposes.len() - 4..],
+        ["blind review", "grade", "grade", "grade"],
+        "the judge is asked for the whole key, then for its first issue alone and once more, where the build fails"
     );
     assert_eq!(drills(&pool).await?, 0);
     for stage in ["clean_code", "clean_review", "plant", "prove"] {
@@ -298,6 +301,12 @@ impl LLMPort for Hang {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 

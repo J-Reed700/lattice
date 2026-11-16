@@ -2,10 +2,12 @@ use super::RenderAnswer;
 use crate::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, LLMPort,
 };
+use crate::application::services::model_contract::shape::Schema;
 use crate::application::services::model_contract::{Contract, ContractCall, ContractId};
 use crate::shared::error::{AppError, Result};
 use async_trait::async_trait;
 use futures::future::BoxFuture;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -54,6 +56,45 @@ pub struct Sent {
     pub request: CompletionRequest,
 }
 
+/// Every message of `request`, system and user, one after another.
+pub fn prompt_of(request: &CompletionRequest) -> String {
+    request
+        .input()
+        .iter()
+        .filter_map(|item| match item {
+            CompletionInput::Message { content, .. } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// The JSON objects `prompt` carries, in order: each part between blank lines that begins with one.
+pub fn tasks_in(prompt: &str) -> Vec<Value> {
+    prompt
+        .split("\n\n")
+        .filter_map(|part| {
+            serde_json::Deserializer::from_str(part)
+                .into_iter::<Value>()
+                .next()
+                .and_then(std::result::Result::ok)
+                .filter(Value::is_object)
+        })
+        .collect()
+}
+
+impl Sent {
+    /// Every message of the request, one after another.
+    pub fn prompt(&self) -> String {
+        prompt_of(&self.request)
+    }
+
+    /// The JSON objects the request carries, in order.
+    pub fn tasks(&self) -> Vec<Value> {
+        tasks_in(&self.prompt())
+    }
+}
+
 type Handler = Box<dyn Fn(&Sent, usize) -> BoxFuture<'static, Handled> + Send + Sync>;
 
 type Outage = Box<dyn Fn(&Sent) -> AppError + Send + Sync>;
@@ -71,6 +112,7 @@ pub struct ScriptedModel {
     name: String,
     window: usize,
     exact_tokens: bool,
+    enforcing: bool,
     handlers: HashMap<ContractId, Handler>,
     outage: Option<Outage>,
     record: Mutex<Record>,
@@ -88,6 +130,7 @@ impl ScriptedModel {
             name: "scripted-model".into(),
             window: SCRIPTED_WINDOW,
             exact_tokens: false,
+            enforcing: false,
             handlers: HashMap::new(),
             outage: None,
             record: Mutex::new(Record::default()),
@@ -106,6 +149,12 @@ impl ScriptedModel {
 
     pub fn exact_tokens(mut self, exact: bool) -> Self {
         self.exact_tokens = exact;
+        self
+    }
+
+    /// A backend that holds an answer to its schema.
+    pub fn enforcing(mut self) -> Self {
+        self.enforcing = true;
         self
     }
 
@@ -201,7 +250,7 @@ impl ScriptedModel {
     }
 
     async fn answer(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        let Some(call) = request.contract.clone() else {
+        let Some(call) = request.contract().cloned() else {
             return self.miss(format!(
                 "a request names no contract: {}",
                 first_line_of(request)
@@ -238,7 +287,7 @@ impl ScriptedModel {
 
 fn first_line_of(request: &CompletionRequest) -> String {
     request
-        .input
+        .input()
         .iter()
         .rev()
         .find_map(|input| match input {
@@ -292,6 +341,10 @@ impl LLMPort for ScriptedModel {
         self.exact_tokens
     }
 
+    fn enforces(&self, _schema: &Schema) -> bool {
+        self.enforcing
+    }
+
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
@@ -301,7 +354,7 @@ impl LLMPort for ScriptedModel {
 mod tests {
     use super::*;
     use crate::application::ports::llm_port::Finish;
-    use crate::application::services::model_contract::{tagged, PromptInput, Step};
+    use crate::application::services::model_contract::{legacy, tagged, PromptInput, Step};
 
     struct Number;
 
@@ -356,7 +409,7 @@ mod tests {
     ) -> Result<CompletionResponse> {
         let call = ContractCall::of::<C>(&input(prompt)).unwrap();
         let response = tagged(model, &call)
-            .complete(&CompletionRequest::default())
+            .complete(&legacy::completion(legacy::Completion::default()))
             .await;
         response
     }
@@ -439,10 +492,10 @@ mod tests {
             input: serde_json::json!(5),
             splits: false,
         };
-        let request = CompletionRequest {
+        let request = legacy::completion(legacy::Completion {
             contract: Some(call),
             ..Default::default()
-        };
+        });
         let error = model.complete(&request).await.unwrap_err();
         assert!(
             error.to_string().contains("could not be read back"),
@@ -482,10 +535,13 @@ mod tests {
         let call = ContractCall::of::<Word>(&input("a")).unwrap();
         let shown = Mutex::new(Vec::new());
         let response = tagged(&model, &call)
-            .complete_with_progress(&CompletionRequest::default(), &|text| {
-                shown.lock().unwrap().push(text);
-                Ok(())
-            })
+            .complete_with_progress(
+                &legacy::completion(legacy::Completion::default()),
+                &|text| {
+                    shown.lock().unwrap().push(text);
+                    Ok(())
+                },
+            )
             .await
             .unwrap();
         assert_eq!(*shown.lock().unwrap(), [response.text]);
@@ -512,13 +568,13 @@ mod tests {
         assert!(error.to_string().contains("scripted-number"), "{error}");
         assert!(error.to_string().contains("\"prompt\":\"a\""), "{error}");
         let bare = model
-            .complete(&CompletionRequest {
+            .complete(&legacy::completion(legacy::Completion {
                 input: vec![CompletionInput::Message {
                     role: "user".into(),
                     content: "First line\nsecond".into(),
                 }],
                 ..Default::default()
-            })
+            }))
             .await
             .unwrap_err();
         assert!(bare.to_string().contains("names no contract: First line"));

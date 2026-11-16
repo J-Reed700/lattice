@@ -288,6 +288,34 @@ fn a_long_answer_restating_the_prompts_setting_is_kept() {
 }
 
 #[test]
+fn a_short_answer_read_out_of_shown_output_is_kept() {
+    let mut item = candidate(
+        LearningItemFormat::ShortAnswer,
+        &[],
+        LearningAssessmentKey::Text(text_key(&["3"], None)),
+    );
+    item.prompt =
+        "A tool prints found 12 files, 3 hidden. How many hidden files did it find? Give the number."
+            .into();
+    assert!(engine::validate_candidate(&item).is_ok());
+    assert!(engine::checks::item_faults(&item).is_empty());
+}
+
+#[test]
+fn a_short_answer_naming_its_alternatives_is_kept() {
+    let mut item = candidate(
+        LearningItemFormat::ShortAnswer,
+        &[],
+        LearningAssessmentKey::Text(text_key(&["draft"], None)),
+    );
+    item.prompt =
+        "A file's label reads draft. Is the file a draft or a final copy? Answer with one word."
+            .into();
+    assert!(engine::validate_candidate(&item).is_ok());
+    assert!(engine::checks::item_faults(&item).is_empty());
+}
+
+#[test]
 fn a_choice_question_whose_other_option_no_is_in_the_prompt_is_kept() {
     let mut item = candidate(
         LearningItemFormat::SingleChoice,
@@ -333,13 +361,7 @@ fn rubric() -> Vec<LearningRubricCriterion> {
     ]
 }
 
-fn criterion(
-    id: &str,
-    verdict: GraderVerdict,
-    points: f64,
-    missing: &str,
-    words: &[&str],
-) -> GraderCriterion {
+fn criterion(id: &str, verdict: GraderVerdict, missing: &str, words: &[&str]) -> GraderCriterion {
     GraderCriterion {
         criterion_id: id.into(),
         your_words: words.iter().map(|w| w.to_string()).collect(),
@@ -347,14 +369,13 @@ fn criterion(
         full_credit_includes: "Names competitive inhibition and why Vmax holds.".into(),
         source_quote: None,
         verdict,
-        points,
     }
 }
 
 const ANSWER: &str = "It is competitive   inhibition, because the inhibitor binds the active site.";
 
 #[test]
-fn rationale_checks_keep_verbatim_words_and_trust_the_verdict_over_points() {
+fn rationale_checks_keep_verbatim_words_and_compute_points_from_the_verdict() {
     let rubric = rubric();
     let grader = grade_rationale::Grader {
         model: "model",
@@ -365,14 +386,12 @@ fn rationale_checks_keep_verbatim_words_and_trust_the_verdict_over_points() {
             criterion(
                 &rubric[0].id,
                 GraderVerdict::Met,
-                1.0,
                 "",
                 &["competitive inhibition"],
             ),
             criterion(
                 &rubric[1].id,
                 GraderVerdict::PartlyMet,
-                9.0,
                 "Did not say why Vmax is unchanged.",
                 &[],
             ),
@@ -387,7 +406,7 @@ fn rationale_checks_keep_verbatim_words_and_trust_the_verdict_over_points() {
     else {
         panic!("expected a grade");
     };
-    // Met is the maximum whatever was returned; a partly-met 9/4 becomes 2/4.
+    // Met is the maximum; partly met is half of it.
     assert_eq!(rationale.criteria[0].points, Some(4.0));
     assert_eq!(rationale.criteria[1].points, Some(2.0));
     assert!((fraction - 0.75).abs() < 1e-9);
@@ -407,14 +426,8 @@ fn an_invented_quote_makes_the_criterion_uncertain() {
     };
     let raw = GraderItem {
         criteria: vec![
-            criterion(
-                &rubric[0].id,
-                GraderVerdict::Met,
-                4.0,
-                "",
-                &["noncompetitive"],
-            ),
-            criterion(&rubric[1].id, GraderVerdict::Met, 4.0, "", &[]),
+            criterion(&rubric[0].id, GraderVerdict::Met, "", &["noncompetitive"]),
+            criterion(&rubric[1].id, GraderVerdict::Met, "", &[]),
         ],
         summary: String::new(),
     };
@@ -441,8 +454,8 @@ fn no_reason_no_wrong() {
     };
     let unexplained_loss = GraderItem {
         criteria: vec![
-            criterion(&rubric[0].id, GraderVerdict::Missed, 0.0, "  ", &[]),
-            criterion(&rubric[1].id, GraderVerdict::Met, 4.0, "", &[]),
+            criterion(&rubric[0].id, GraderVerdict::Missed, "  ", &[]),
+            criterion(&rubric[1].id, GraderVerdict::Met, "", &[]),
         ],
         summary: "Partly right.".into(),
     };
@@ -455,11 +468,10 @@ fn no_reason_no_wrong() {
             criterion(
                 &rubric[0].id,
                 GraderVerdict::Missed,
-                0.0,
                 "Wrong mechanism.",
                 &[],
             ),
-            criterion(&rubric[1].id, GraderVerdict::Met, 4.0, "", &[]),
+            criterion(&rubric[1].id, GraderVerdict::Met, "", &[]),
         ],
         summary: String::new(),
     };
@@ -524,13 +536,10 @@ fn the_graders_reasons_are_shown_whole_however_long() {
     let missing = "It never says why the maximum rate is unchanged. ".repeat(40);
     let full = "Names competitive inhibition and why Vmax holds. ".repeat(30);
     let summary = "The answer names the mechanism and leaves Vmax unexplained. ".repeat(30);
-    let mut first = criterion(&rubric[0].id, GraderVerdict::Missed, 0.0, &missing, &[]);
+    let mut first = criterion(&rubric[0].id, GraderVerdict::Missed, &missing, &[]);
     first.full_credit_includes = full.clone();
     let raw = GraderItem {
-        criteria: vec![
-            first,
-            criterion(&rubric[1].id, GraderVerdict::Met, 4.0, "", &[]),
-        ],
+        criteria: vec![first, criterion(&rubric[1].id, GraderVerdict::Met, "", &[])],
         summary: summary.clone(),
     };
     let Checked::Graded { rationale, .. } =

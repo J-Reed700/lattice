@@ -236,7 +236,7 @@ impl LlamaCppLlm {
     /// server's own window replaces the configured one.
     pub(crate) async fn schedule(mut self, schedulers: &SchedulerRegistry) -> Arc<dyn LLMPort> {
         use crate::features::llm::scheduler::{
-            llama_server_capacity, BackendCapacity, ScheduledLlm, ServerTokenizer,
+            llama_server_capacity, BackendCapacity, ServerTokenizer,
         };
         let (scheduler, is_llama_server) = match &self.process {
             Some(process) => {
@@ -282,11 +282,7 @@ impl LlamaCppLlm {
         }
         let tokenizer =
             is_llama_server.then(|| ServerTokenizer::new(self.client.clone(), self.server_root()));
-        let scheduled = ScheduledLlm::new(Arc::new(self), scheduler);
-        Arc::new(match tokenizer {
-            Some(tokenizer) => scheduled.with_tokenizer(tokenizer),
-            None => scheduled,
-        })
+        schedulers.front(Arc::new(self), scheduler, tokenizer)
     }
 }
 
@@ -387,6 +383,12 @@ impl ModelBackend for LlamaCppLlm {
         self.config.supports_tools
     }
     fn keeps_read_prompts(&self) -> bool {
+        true
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
         true
     }
     fn vision(&self) -> Option<VisionGeometry> {

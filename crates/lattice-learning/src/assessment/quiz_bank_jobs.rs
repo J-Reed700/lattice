@@ -10,6 +10,7 @@ use crate::assessment_generation::{
     StoredItem, WrittenAnswer,
 };
 use crate::assessment_repository::{BankItem, ItemGrade, LearningAssessmentRepository};
+use crate::bank_writing::BankWriting;
 use crate::curriculum_repository::lesson_rank_in;
 use crate::dto::{
     LearningAssessmentGradeStatus, LearningQuizScopeDto, LearningQuizScopeKind, LessonAnswerKey,
@@ -90,8 +91,8 @@ pub struct BankReport {
     pub dropped: Vec<String>,
 }
 
-/// Write a quiz's missing questions with `llm` now, exactly as the
-/// `quiz_bank` job does (per-format authoring, code checks, shuffled options,
+/// Write a quiz's missing questions with `llm` now, as the `quiz_bank` job's
+/// general path does (per-format authoring, code checks, shuffled options,
 /// blinded key review), without the job runner. For the course eval's live
 /// hook and other callers that hold a model already.
 pub async fn prepare_bank_now(
@@ -104,8 +105,10 @@ pub async fn prepare_bank_now(
     let needs =
         LearningAssessmentRepository::bank_needs(database, program_id, scope, top_up).await?;
     let mut report = BankReport::default();
-    for need in &needs {
-        let authored = generation::author_items(llm, need).await?;
+    let mut writing = BankWriting::new(needs);
+    while let Some(need) = writing.next() {
+        let authored = generation::author_items(llm, &need).await?;
+        writing.wrote(&need, &authored);
         report.dropped.extend(authored.dropped);
         let items: Vec<BankItem> = authored
             .items
@@ -135,6 +138,43 @@ fn written_message(written: usize, dropped: usize) -> String {
     } else {
         format!("{written} questions written; {dropped} failed the checks and were left out.")
     }
+}
+
+/// What a finished bank job says: what it wrote, and when the quiz's first form still cannot be filled, that the
+/// quiz cannot start (traced in the lesson's span for a lesson scope).
+async fn completion_message(
+    database: &Database,
+    program_id: &str,
+    scope: &LearningQuizScopeDto,
+    written: usize,
+    dropped: usize,
+) -> Result<String> {
+    let message = written_message(written, dropped);
+    let Some(shortfall) =
+        LearningAssessmentRepository::first_form_shortfall(database, program_id, scope).await?
+    else {
+        return Ok(message);
+    };
+    let requirement = &shortfall.requirement;
+    let why = format!(
+        "{} of {} {} {}-{} items for the first form",
+        shortfall.eligible,
+        requirement.count,
+        crate::quiz_blueprints::format_name(requirement.format),
+        requirement.difficulty_min,
+        requirement.difficulty_max
+    );
+    match (&scope.kind, &scope.id) {
+        (LearningQuizScopeKind::Lesson, Some(lesson_id)) => {
+            trace::lesson_span(lesson_id).in_scope(|| {
+                trace::decided(trace::Stage::Quiz, "quiz bank", "cannot start", &why);
+            });
+        }
+        _ => trace::decided(trace::Stage::Quiz, "quiz bank", "cannot start", &why),
+    }
+    Ok(format!(
+        "{message} The quiz cannot start yet: its questions could not fill a first form."
+    ))
 }
 
 /// A completed lesson quiz job's numbers: what it stored, from its result,
@@ -211,23 +251,28 @@ impl JobHandler for QuizBankWorker {
         let pin = pin?;
         let llm = pin.llm.as_ref();
         let total = context.job().progress_total;
+        let planned = needs.len();
         let mut written = 0usize;
         let mut dropped = 0usize;
-        for (index, need) in needs.iter().enumerate() {
+        let mut taken = 0usize;
+        let mut writing = BankWriting::new(needs);
+        while let Some(need) = writing.next() {
             context
                 .progress(
-                    (index as u32).min(total),
-                    &format!("Writing quiz questions ({} of {})", index + 1, needs.len()),
+                    (taken as u32).min(total),
+                    &format!("Writing quiz questions ({} of {planned})", taken + 1),
                     None,
                 )
                 .await?;
+            taken += 1;
             let Some(authored) = context
-                .until_cancelled(generation::author_items(llm, need))
+                .until_cancelled(generation::author_items(llm, &need))
                 .await
             else {
                 return Ok(JobOutcome::Stopped);
             };
             let authored = authored?;
+            writing.wrote(&need, &authored);
             dropped += authored.dropped.len();
             let items: Vec<BankItem> = authored
                 .items
@@ -250,7 +295,8 @@ impl JobHandler for QuizBankWorker {
         }
         Ok(JobOutcome::Completed {
             result_ref: format!("quiz_bank:{written}"),
-            message: written_message(written, dropped),
+            message: completion_message(&self.database, &program_id, &scope, written, dropped)
+                .await?,
         })
     }
 
@@ -359,7 +405,8 @@ impl QuizBankWorker {
         });
         Ok(JobOutcome::Completed {
             result_ref: format!("quiz_bank:{written}"),
-            message: written_message(written, dropped),
+            message: completion_message(&self.database, program_id, scope, written, dropped)
+                .await?,
         })
     }
 }

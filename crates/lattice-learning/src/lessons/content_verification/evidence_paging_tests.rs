@@ -130,6 +130,12 @@ impl LLMPort for PagingModel {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 pub(super) fn reference(id: String, excerpt: String) -> LearningSourceDto {
@@ -411,7 +417,11 @@ struct BrokenJudge {
 impl LLMPort for BrokenJudge {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let (_, user) = crate::lessons::structured_call::task_messages(request);
-        if user.contains("Claim: ") || user.contains("\"sourcePassages\"") {
+        if user.contains("Claim: ")
+            || request.contract().is_some_and(|call| {
+                call.id == lattice_core::application::services::claim_verification::ClaimBatch::ID
+            })
+        {
             if self.outage {
                 return Err(AppError::ServiceNotAvailable("503: loading model".into()));
             }
@@ -430,6 +440,12 @@ impl LLMPort for BrokenJudge {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
     }
 }
 
@@ -618,7 +634,7 @@ impl LLMPort for DenseModel {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         use lattice_core::application::ports::llm_port::CompletionInput;
         let estimate: usize = request
-            .input
+            .input()
             .iter()
             .map(|item| match item {
                 CompletionInput::Message { content, .. } => self.count_tokens(content),
@@ -653,6 +669,12 @@ impl LLMPort for DenseModel {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.paging.enforces(schema)
     }
 }
 
@@ -722,7 +744,7 @@ impl LLMPort for CountingDenseModel {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         use lattice_core::application::ports::llm_port::CompletionInput;
         let text = request
-            .input
+            .input()
             .iter()
             .filter_map(|item| match item {
                 CompletionInput::Message { content, .. } => Some(content.as_str()),
@@ -764,6 +786,12 @@ impl LLMPort for CountingDenseModel {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.paging.enforces(schema)
     }
 }
 

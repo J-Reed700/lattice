@@ -2,7 +2,8 @@
 //! judged stands while the inputs it judged are unchanged.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::loop_tests::{
-    context, part_a_is_wrong, parts_lesson, references, retitled, ByRequest, EXCERPT, INPUT,
+    context, part_a_is_wrong, parts_lesson, references, retitled, sections_in_review, ByRequest,
+    EXCERPT, INPUT,
 };
 use super::*;
 use crate::content_verification::tests::fixture_task;
@@ -97,8 +98,8 @@ async fn a_later_review_in_the_job_asks_only_about_the_section_that_changed() ->
     .await?;
     let reviews = model.reviews();
     assert_eq!(reviews.len(), 2);
-    assert_eq!(reviews[0]["sectionIndicesToReview"], json!([0, 1, 2]));
-    assert_eq!(reviews[1]["sectionIndicesToReview"], json!([1]));
+    assert_eq!(sections_in_review(&reviews[0]), json!([0, 1, 2]));
+    assert_eq!(sections_in_review(&reviews[1]), json!([1]));
     Ok(())
 }
 
@@ -110,10 +111,7 @@ async fn asked_again(
     let model = ByRequest::new(|_| false, |_, _| Vec::new());
     let same = |lesson: Value| lesson;
     two_reviews(&model, &context(), &parts_lesson(2), before, &same, after).await?;
-    Ok(model
-        .reviews()
-        .get(1)
-        .map(|request| request["sectionIndicesToReview"].clone()))
+    Ok(model.reviews().get(1).map(sections_in_review))
 }
 
 #[tokio::test]
@@ -144,32 +142,39 @@ struct Planning<'a> {
 impl LLMPort for Planning<'_> {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let (system, user) = task_messages(request);
-        if !system.starts_with(contract::SYSTEM) || is_draft_request(request) {
+        let Some(ask) = contract::scripted::ask_of(system, user) else {
+            return self.inner.complete(request).await;
+        };
+        if is_draft_request(request) {
             return self.inner.complete(request).await;
         }
+        if ask != contract::scripted::Ask::Planned {
+            return Ok(crate::content_verification::tests::fixture_completion(
+                request,
+                Vec::new(),
+            ));
+        }
         let sent = fixture_task(user).unwrap_or(Value::Null);
-        let ids: Vec<String> = sent
+        let texts: Vec<String> = sent
             .pointer("/thisLesson/planned")
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
-            .filter_map(|item| item["id"].as_str().map(str::to_owned))
+            .filter_map(|item| item["text"].as_str().map(str::to_owned))
             .collect();
-        let taught: Vec<Value> = ids
+        let taught: Vec<Value> = texts
             .iter()
-            .map(|id| {
-                let quote = if id == "idea-0" {
-                    FIRST_FACT
-                } else {
-                    SECOND_FACT
-                };
-                json!({"item": id, "taught": true, "quote": quote})
+            .enumerate()
+            .map(|(at, _)| {
+                let quote = if at == 0 { FIRST_FACT } else { SECOND_FACT };
+                json!({"item": format!("idea-{at}"), "taught": true, "quote": quote})
             })
             .collect();
-        self.planned.lock().unwrap().push(ids);
+        self.planned.lock().unwrap().push(texts);
         let reply =
             json!({"planned": taught, "usedBeforeTaught": [], "contradictions": [], "unseen": []})
                 .to_string();
+        let reply = contract::scripted::Script::new(vec![reply]).reply(ask, user);
         Ok(crate::content_verification::tests::fixture_completion(
             request,
             vec![reply],
@@ -186,6 +191,12 @@ impl LLMPort for Planning<'_> {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
     }
 }
 
@@ -207,10 +218,10 @@ async fn a_later_review_does_not_ask_the_plan_check_about_an_item_it_found_taugh
     let asked = model.planned.lock().unwrap().clone();
     assert_eq!(
         asked,
-        vec![
-            vec!["idea-0".to_owned(), "idea-1".to_owned()],
-            Vec::<String>::new()
-        ]
+        vec![vec![
+            "The first plain fact".to_owned(),
+            "The second plain fact".to_owned()
+        ]]
     );
     Ok(())
 }

@@ -32,7 +32,7 @@ fn exact(text: &str) -> usize {
 impl LLMPort for Notation {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let rendered = request
-            .input
+            .input()
             .iter()
             .flat_map(|item| match item {
                 CompletionInput::Message { role, content } => vec![role.clone(), content.clone()],
@@ -73,6 +73,12 @@ impl LLMPort for Notation {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// About 1,100 characters of reaction notation.
@@ -96,6 +102,7 @@ fn need(description: String, blocks: usize) -> AuthoringNeed {
         outcome_description: description,
         lesson_id: Some("lesson".into()),
         count: 1,
+        pass: BankPass::Retakes,
         material: (0..blocks)
             .map(|i| MaterialPassage {
                 lesson_title: "Reduction".into(),
@@ -141,9 +148,10 @@ async fn passages_twice_as_dense_as_estimated_are_packed_until_the_request_fits(
 
     let sent = batch.send(&llm, &collection).await?;
 
-    let Some((_, carried)) = sent else {
-        panic!("expected the request to be sent with the passages that fit");
-    };
+    assert!(
+        sent.is_some(),
+        "expected the request to be sent with the passages that fit"
+    );
     assert_eq!(llm.refusals.load(Ordering::SeqCst), 0);
     let prompts = llm
         .prompts
@@ -155,8 +163,6 @@ async fn passages_twice_as_dense_as_estimated_are_packed_until_the_request_fits(
         .and_then(|prompt| prompt["passages"].as_array())
         .map_or(0, Vec::len);
     assert!(shown > 0 && shown < need.material.len(), "{shown} passages");
-    // Quotes are checked against exactly the passages the model saw.
-    assert_eq!(carried.len(), shown);
     Ok(())
 }
 
@@ -180,162 +186,6 @@ async fn instructions_the_window_cannot_hold_by_exact_count_name_the_window() {
     assert_eq!(llm.refusals.load(Ordering::SeqCst), 0);
 }
 
-/// Judges short answers from a script: a request holding more than `fits`
-/// items, or the item `cut`, has its reply cut off at the output limit;
-/// any other is judged equivalent, item by item.
-struct Grader {
-    fits: usize,
-    cut: &'static str,
-    sizes: Mutex<Vec<usize>>,
-}
-
-#[async_trait::async_trait]
-impl LLMPort for Grader {
-    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        let (_, user) = crate::lessons::structured_call::task_messages(request);
-        let prompt: Value = serde_json::from_str(user)?;
-        let ids: Vec<String> = prompt["items"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|item| item["itemId"].as_str().map(str::to_owned))
-            .collect();
-        self.sizes.lock().unwrap().push(ids.len());
-        if ids.len() > self.fits || ids.iter().any(|id| id == self.cut) {
-            return Ok(CompletionResponse {
-                finish_reason: "length".into(),
-                ..CompletionResponse::from_text("{\"items\":[{\"itemId\":")
-            });
-        }
-        let items: Vec<Value> = ids
-            .iter()
-            .map(
-                |id| serde_json::json!({"itemId": id, "verdict": "equivalent", "summary": "Same."}),
-            )
-            .collect();
-        Ok(CompletionResponse::from_text(
-            serde_json::json!({ "items": items }).to_string(),
-        ))
-    }
-    fn model_name(&self) -> &str {
-        "grader"
-    }
-    fn max_context_tokens(&self) -> usize {
-        131_072
-    }
-    async fn is_ready(&self) -> Result<bool> {
-        Ok(true)
-    }
-}
-
-fn short(id: &str) -> ShortAnswer {
-    ShortAnswer {
-        item_id: id.into(),
-        prompt: "When did the mill close?".into(),
-        accepted: vec!["1887".into()],
-        answer: "In 1887.".into(),
-        reference: "The mill closed in 1887.".into(),
-        learner_note: None,
-    }
-}
-
-#[tokio::test]
-async fn a_grading_reply_cut_off_is_asked_again_in_halves_and_grades_every_item() {
-    let grader = Grader {
-        fits: 2,
-        cut: "",
-        sizes: Mutex::new(Vec::new()),
-    };
-    let answers: Vec<ShortAnswer> = ["a", "b", "c", "d", "e"].map(short).to_vec();
-    let graded = judge_short_answers(&grader, &answers).await.unwrap();
-    let mut ids: Vec<_> = graded.iter().map(|grade| grade.item_id.as_str()).collect();
-    ids.sort_unstable();
-    assert_eq!(
-        ids,
-        ["a", "b", "c", "d", "e"],
-        "nothing was lost to the cut-off replies"
-    );
-    let sizes = grader.sizes.lock().unwrap().clone();
-    assert_eq!(
-        sizes,
-        [5, 2, 2, 1],
-        "five cut off, then the rest at the smaller size"
-    );
-}
-
-#[tokio::test]
-async fn an_item_whose_reply_is_cut_off_alone_stays_pending_and_the_rest_are_graded() {
-    let grader = Grader {
-        fits: usize::MAX,
-        cut: "b",
-        sizes: Mutex::new(Vec::new()),
-    };
-    let answers: Vec<ShortAnswer> = ["a", "b", "c"].map(short).to_vec();
-    let graded = judge_short_answers(&grader, &answers)
-        .await
-        .expect("one overlong reply no longer fails the grading");
-    let mut ids: Vec<_> = graded.iter().map(|grade| grade.item_id.as_str()).collect();
-    ids.sort_unstable();
-    assert_eq!(ids, ["a", "c"], "[b] stays pending");
-}
-
-/// Declines every request that holds the item `b`; grades any other.
-struct Decliner(Mutex<Vec<usize>>);
-
-#[async_trait::async_trait]
-impl LLMPort for Decliner {
-    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        let (_, user) = crate::lessons::structured_call::task_messages(request);
-        let prompt: Value = serde_json::from_str(user)?;
-        let ids: Vec<String> = prompt["items"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|item| item["itemId"].as_str().map(str::to_owned))
-            .collect();
-        self.0.lock().unwrap().push(ids.len());
-        if ids.iter().any(|id| id == "b") {
-            return Ok(CompletionResponse {
-                finish_reason: "refusal".into(),
-                ..CompletionResponse::from_text("")
-            });
-        }
-        let items: Vec<Value> = ids
-            .iter()
-            .map(
-                |id| serde_json::json!({"itemId": id, "verdict": "equivalent", "summary": "Same."}),
-            )
-            .collect();
-        Ok(CompletionResponse::from_text(
-            serde_json::json!({ "items": items }).to_string(),
-        ))
-    }
-    fn model_name(&self) -> &str {
-        "decliner"
-    }
-    fn max_context_tokens(&self) -> usize {
-        131_072
-    }
-    async fn is_ready(&self) -> Result<bool> {
-        Ok(true)
-    }
-}
-
-#[tokio::test]
-async fn an_item_the_model_declines_stays_pending_and_the_rest_are_graded() {
-    let llm = Decliner(Mutex::new(Vec::new()));
-    let answers: Vec<ShortAnswer> = ["a", "b", "c"].map(short).to_vec();
-    let graded = judge_short_answers(&llm, &answers).await.unwrap();
-    let mut ids: Vec<_> = graded.iter().map(|grade| grade.item_id.as_str()).collect();
-    ids.sort_unstable();
-    assert_eq!(ids, ["a", "c"], "[b] stays pending");
-    assert_eq!(
-        llm.0.lock().unwrap().clone(),
-        [3, 1, 1, 1],
-        "the batch is declined and split; a and c are graded; b is declined alone"
-    );
-}
-
 /// Every reply cut off at the output limit.
 struct CutOff;
 
@@ -355,6 +205,12 @@ impl LLMPort for CutOff {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -385,7 +241,7 @@ impl LLMPort for CutOnce {
         let (_, user) = crate::lessons::structured_call::task_messages(request);
         let prompt: Value = serde_json::from_str(user).unwrap_or(Value::Null);
         let mut budgets = self.0.lock().unwrap();
-        budgets.push(request.max_output_tokens);
+        budgets.push(request.max_output_tokens());
         if budgets.len() == 1 {
             return Ok(CompletionResponse {
                 finish_reason: "length".into(),
@@ -414,24 +270,18 @@ impl LLMPort for CutOnce {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 fn doubled(budgets: &Mutex<Vec<Option<u32>>>) -> bool {
     let budgets = budgets.lock().unwrap().clone();
     let first = budgets.first().copied().flatten();
     first.is_some() && budgets.get(1).copied().flatten() == first.map(|b| b * 2)
-}
-
-#[tokio::test]
-async fn a_single_grading_reply_cut_off_is_asked_again_with_twice_the_room() {
-    let grader = CutOnce(Mutex::new(Vec::new()));
-    let graded = judge_short_answers(&grader, &[short("a")]).await.unwrap();
-    assert_eq!(
-        graded.len(),
-        1,
-        "the learner's answer is graded, not left pending"
-    );
-    assert!(doubled(&grader.0));
 }
 
 #[tokio::test]
@@ -452,113 +302,6 @@ async fn a_single_item_cut_off_is_asked_again_with_twice_the_room() -> Result<()
     Ok(())
 }
 
-/// Records the schema of each request and grades nothing.
-struct SchemaRecorder(Mutex<Vec<Value>>);
-
-#[async_trait::async_trait]
-impl LLMPort for SchemaRecorder {
-    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        self.0.lock().unwrap().extend(request.json_schema.clone());
-        Ok(CompletionResponse::from_text("{\"items\":[]}"))
-    }
-    fn model_name(&self) -> &str {
-        "schema-recorder"
-    }
-    fn max_context_tokens(&self) -> usize {
-        131_072
-    }
-    async fn is_ready(&self) -> Result<bool> {
-        Ok(true)
-    }
-}
-
-#[tokio::test]
-async fn a_grader_may_name_only_the_rubric_criteria() {
-    let criterion = |id: &str| LearningRubricCriterion {
-        id: id.into(),
-        title: id.into(),
-        description: "Explains it.".into(),
-        max_points: 2,
-    };
-    let answer = WrittenAnswer {
-        item_id: "q1".into(),
-        prompt: "Why does the ore reduce?".into(),
-        rubric: vec![criterion("mechanism"), criterion("evidence")],
-        answer: "Carbon monoxide takes the oxygen.".into(),
-        reference: "CO reduces Fe2O3.".into(),
-        learner_note: None,
-    };
-    let llm = SchemaRecorder(Mutex::new(Vec::new()));
-    grade_written(&llm, &[answer]).await.unwrap();
-    let schemas = llm.0.lock().unwrap();
-    assert_eq!(
-        schemas[0]["properties"]["items"]["items"]["properties"]["criteria"]["items"]["properties"]
-            ["criterionId"]["enum"],
-        serde_json::json!(["evidence", "mechanism"])
-    );
-}
-
-#[test]
-fn the_item_schemas_hold_no_text_length_cap() {
-    use crate::practice::practice_tests::text_length_rules;
-    for format in [
-        LearningItemFormat::SingleChoice,
-        LearningItemFormat::TrueFalse,
-        LearningItemFormat::MultiSelect,
-        LearningItemFormat::ShortAnswer,
-        LearningItemFormat::Cloze,
-        LearningItemFormat::Matching,
-        LearningItemFormat::Ordering,
-        LearningItemFormat::Explanation,
-        LearningItemFormat::Artifact,
-    ] {
-        // A written item's criteria are shaped by the lessons' rubric schema,
-        // and a quote must run to a clause to show the item rests on its passage.
-        let rules: Vec<String> = text_length_rules(&item_schema(format, 3, 2, 3))
-            .into_iter()
-            .filter(|rule| {
-                !rule.starts_with("/properties/rubric/")
-                    && rule.as_str() != "/properties/quote/minLength = 25"
-            })
-            .collect();
-        assert!(rules.is_empty(), "{format:?}: {rules:?}");
-    }
-}
-
-#[tokio::test]
-async fn the_grading_schemas_ask_for_no_text_length() {
-    use crate::practice::practice_tests::text_length_rules;
-    let criterion = |id: &str| LearningRubricCriterion {
-        id: id.into(),
-        title: id.into(),
-        description: "Explains it.".into(),
-        max_points: 2,
-    };
-    let written = |note: Option<&str>| WrittenAnswer {
-        item_id: "q1".into(),
-        prompt: "Why does the ore reduce?".into(),
-        rubric: vec![criterion("mechanism"), criterion("evidence")],
-        answer: "Carbon monoxide takes the oxygen.".into(),
-        reference: "CO reduces Fe2O3.".into(),
-        learner_note: note.map(str::to_owned),
-    };
-    let llm = SchemaRecorder(Mutex::new(Vec::new()));
-    grade_written(&llm, &[written(None)]).await.unwrap();
-    grade_written(&llm, &[written(Some("I named the mechanism."))])
-        .await
-        .unwrap();
-    judge_short_answers(&llm, &[short("a")]).await.unwrap();
-    let mut noted = short("b");
-    noted.learner_note = Some("I meant the same thing.".into());
-    judge_short_answers(&llm, &[noted]).await.unwrap();
-    let schemas = llm.0.lock().unwrap();
-    assert!(schemas.len() >= 4, "{} schemas were sent", schemas.len());
-    for schema in schemas.iter() {
-        let rules = text_length_rules(schema);
-        assert!(rules.is_empty(), "{rules:?}");
-    }
-}
-
 #[test]
 fn a_long_distractor_rationale_is_kept_whole() {
     let mut authored = need("Reduce iron oxide.".into(), 1);
@@ -566,17 +309,19 @@ fn a_long_distractor_rationale_is_kept_whole() {
     authored.requirement.outcome_id = uuid::Uuid::new_v4().to_string();
     let passage = authored.material[0].clone();
     let rationale = "This option names a gas that does not take the oxygen away. ".repeat(12);
-    let raw: RawItem = serde_json::from_value(serde_json::json!({
+    let answer = serde_json::json!({"items": [{
         "prompt": "Which gas takes the oxygen from the ore in a blast furnace?",
-        "options": ["Carbon monoxide", "Nitrogen dioxide", "Sulfur dioxide", "Carbon dioxide"],
-        "answerIndex": 0,
-        "distractorRationales": ["", rationale, "Not a reducing gas here.", "Already fully oxidised."],
+        "options": [
+            {"text": "Carbon monoxide", "verdict": "right", "reason": ""},
+            {"text": "Nitrogen dioxide", "verdict": "wrong", "reason": rationale},
+            {"text": "Sulfur dioxide", "verdict": "wrong", "reason": "Not a reducing gas here."},
+            {"text": "Carbon dioxide", "verdict": "wrong", "reason": "Already fully oxidised."}
+        ],
         "explanation": "Carbon monoxide takes the oxygen from the oxide.",
-        "blockIndex": 0,
-        "quote": "iron oxide reduction Fe₂O₃ + 3CO",
-        "difficulty": 2
-    }))
-    .unwrap();
+        "quote": ["u1"],
+        "difficulty": "2"
+    }]});
+    let raw = read_items::<ChoiceBody>(&[&passage], &answer.to_string()).remove(0);
     let item = to_candidate(raw, &authored, &[&passage]).unwrap();
     assert!(item
         .candidate
@@ -602,6 +347,12 @@ impl LLMPort for InstructionRecorder {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -719,7 +470,7 @@ fn do_not_repeat_holds_every_existing_prompt_in_full() {
         repair: None,
     };
 
-    let skeleton = batch.skeleton();
+    let skeleton = batch.input(Packed::default()).skeleton();
 
     let listed: Vec<&str> = skeleton["doNotRepeat"]
         .as_array()
@@ -756,13 +507,15 @@ const GAP: &str = "The question depends on a value it never gives.";
 fn stamp_item(prompt: &str, right: &str) -> Value {
     json!({
         "prompt": prompt,
-        "options": [right, "The green box", "The red box", "The blue box"],
-        "distractorRationales": ["", "A green box takes green stamps.", "The red box takes red stamps.", "The blue box takes blue stamps."],
-        "answerIndex": 0,
+        "options": [
+            {"text": right, "verdict": "right", "reason": ""},
+            {"text": "The green box", "verdict": "wrong", "reason": "A green box takes green stamps."},
+            {"text": "The red box", "verdict": "wrong", "reason": "The red box takes red stamps."},
+            {"text": "The blue box", "verdict": "wrong", "reason": "The blue box takes blue stamps."}
+        ],
         "explanation": "A torn stamp is set aside whatever its colour.",
-        "blockIndex": 0,
-        "quote": STAMP_QUOTE,
-        "difficulty": 3
+        "quote": ["u1"],
+        "difficulty": "3"
     })
 }
 
@@ -779,38 +532,37 @@ impl LLMPort for Rewriter {
         let (system, user) = crate::lessons::structured_call::task_messages(request);
         let context: Value = serde_json::from_str(user).unwrap_or(Value::Null);
         let reply = if system.starts_with("Write quiz questions") {
+            let rewriting = !context["repair"].is_null();
             self.requests.lock().unwrap().push(context);
-            self.writes
+            let reply = self
+                .writes
                 .lock()
                 .unwrap()
                 .pop_front()
-                .unwrap_or_else(|| json!({"items": []}))
+                .unwrap_or_else(|| json!({"items": []}));
+            if rewriting {
+                reply["items"][0].clone()
+            } else {
+                reply
+            }
         } else if system.starts_with("Solve quiz questions") {
-            let answers: Vec<Value> = context["questions"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|question| {
-                    let right = question["options"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .position(|o| o.as_str().is_some_and(|o| o.starts_with(TRAY)));
-                    json!({"index": question["index"], "reason": "Torn stamps are set aside.", "correctIndices": right.into_iter().collect::<Vec<_>>(), "answer": "", "blankAnswers": [], "matches": [], "orderedValues": []})
-                })
-                .collect();
-            json!({"answers": answers})
+            crate::key_review::scripted::solved(&context, |question| {
+                question["options"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .position(|o| o["text"].as_str().is_some_and(|o| o.starts_with(TRAY)))
+                    .into_iter()
+                    .collect()
+            })
         } else {
-            let checks: Vec<Value> = context["items"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|item| {
-                    let flagged = item["prompt"] == self.flag;
-                    json!({"id": item["id"], "hasDefect": flagged, "finding": if flagged { GAP } else { "" }, "repeats": []})
-                })
-                .collect();
-            json!({"checks": checks})
+            crate::assessment::item_review::scripted::judged(&context, |item| {
+                if item["prompt"] == self.flag {
+                    (GAP.into(), vec![])
+                } else {
+                    (String::new(), vec![])
+                }
+            })
         };
         Ok(CompletionResponse::from_text(reply.to_string()))
     }
@@ -822,6 +574,12 @@ impl LLMPort for Rewriter {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -846,6 +604,7 @@ fn stamp_need() -> AuthoringNeed {
         outcome_description: "Say where a stamp goes by its colour and condition.".into(),
         lesson_id: Some("lesson".into()),
         count: 1,
+        pass: BankPass::Retakes,
         material: vec![MaterialPassage {
             lesson_title: "Stamps".into(),
             title: "The boxes".into(),
@@ -908,7 +667,7 @@ struct Incomplete {
 impl LLMPort for Incomplete {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let rendered = request
-            .input
+            .input()
             .iter()
             .flat_map(|item| match item {
                 CompletionInput::Message { role, content } => vec![role.clone(), content.clone()],
@@ -921,14 +680,14 @@ impl LLMPort for Incomplete {
             );
         let (system, _) = crate::lessons::structured_call::task_messages(request);
         let reply = if system.starts_with("Solve quiz questions") {
-            json!({"answers": [{"index": 0, "reason": "It follows.", "correctIndices": [0], "answer": "", "blankAnswers": [], "matches": [], "orderedValues": []}]})
+            crate::key_review::scripted::solved_static(1, 4, 0)
         } else {
             let mut judged = self.judged.lock().unwrap();
             judged.push(rendered);
             if judged.len() == 1 {
-                json!({"checks": []})
+                json!({"entries": []})
             } else {
-                json!({"checks": [{"id": "new-0", "finding": "", "hasDefect": false, "repeats": []}]})
+                crate::assessment::item_review::scripted::sound_static(1)
             }
         };
         Ok(CompletionResponse::from_text(reply.to_string()))
@@ -942,10 +701,16 @@ impl LLMPort for Incomplete {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[tokio::test]
-async fn an_incomplete_item_review_is_corrected_with_why() -> Result<()> {
+async fn an_incomplete_item_review_is_asked_again_for_the_item() -> Result<()> {
     let item = crate::assessment_engine::LearningAssessmentCandidate {
         id: uuid::Uuid::new_v4().to_string(),
         outcome_ids: vec![uuid::Uuid::new_v4().to_string()],
@@ -981,58 +746,6 @@ async fn an_incomplete_item_review_is_corrected_with_why() -> Result<()> {
     assert!(findings.iter().all(item_review::Findings::is_sound));
     let judged = llm.judged.lock().unwrap();
     assert_eq!(judged.len(), 2);
-    assert!(
-        judged[1].contains("That answer could not be used"),
-        "second request: {}",
-        judged[1]
-    );
+    assert!(judged[1].contains(SORTED), "second request: {}", judged[1]);
     Ok(())
-}
-
-#[test]
-fn the_grading_contracts_read_what_they_render() {
-    let criterion = |verdict: &str| {
-        json!({"criterionId":"c1","yourWords":["a phrase"],"whatWasMissing":"","fullCreditIncludes":"",
-            "sourceQuote":"","verdict":verdict,"points":1.0})
-    };
-    let graded: Vec<grading::RawGradeItem> = serde_json::from_value(json!([
-        {"itemId":"i1","criteria":[criterion("met"),criterion("partly_met"),criterion("missed")],"summary":"Fair.","responseToNote":"Noted."}
-    ]))
-    .unwrap();
-    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
-        grading::GradeWritten,
-    >(&graded);
-    for verdict in ["equivalent", "not_equivalent"] {
-        let judged: Vec<grading::RawJudgeItem> = serde_json::from_value(json!([{
-            "itemId":"i1","yourWords":[],"whatWasMissing":"","fullCreditIncludes":"",
-            "verdict":verdict,"summary":"Judged."
-        }]))
-        .unwrap();
-        lattice_core::application::services::model_contract::test_support::assert_round_trip::<
-            grading::JudgeShort,
-        >(&judged);
-    }
-}
-
-#[test]
-fn the_quiz_writing_contracts_read_what_they_render() {
-    let items: Vec<formats::RawItem> = serde_json::from_value(json!([{
-        "prompt":"Which one?","options":["A","B","C","D"],"answerIndex":1,
-        "distractorRationales":["No.","","No.","No."],"explanation":"B follows.",
-        "blockIndex":0,"quote":"A passage.","difficulty":2,
-        "blanks":[{"acceptedAnswers":["x"]}],"pairs":[{"left":"l","right":"r"}],
-        "rubric":[
-            {"title":"T","description":"D","dimension":"recall"},
-            {"title":"T","description":"D","dimension":"explanation"},
-            {"title":"T","description":"D","dimension":"application"},
-            {"title":"T","description":"D","dimension":"transfer"}
-        ]
-    }]))
-    .unwrap();
-    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
-        QuizAuthor,
-    >(&items);
-    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
-        QuizRewrite,
-    >(&items);
 }

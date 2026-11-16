@@ -188,6 +188,12 @@ impl LLMPort for Rewriter {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// The flags of an unflagged turn the intent step read as needing the web.
@@ -267,6 +273,9 @@ async fn run_turn(
             highlight_terms: &[],
             focus: &crate::features::conversation::chat::focus::FocusScope::default(),
             recorder: &recorder,
+            names: &std::sync::Arc::new(
+                lattice_core::application::services::model_contract::kept::TurnNames::unstored(),
+            ),
         },
         &SettingsDto::default(),
         &decision,

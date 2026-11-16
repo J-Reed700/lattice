@@ -5,9 +5,12 @@ use super::item_review::{self, Context, Entry};
 use crate::assessment_engine::LearningAssessmentCandidate;
 use crate::dto::{LessonAnswerKey, LessonQuestion, LessonQuestionKind};
 use crate::lessons::teaching::contract;
-use crate::review_findings::ReviewFinding;
+use crate::review_findings::{KeyDefect, ReviewFinding};
 use lattice_core::shared::hash::sha256_hex;
-use lattice_core::{application::ports::LLMPort, shared::error::Result};
+use lattice_core::{
+    application::ports::LLMPort,
+    shared::error::{AppError, Result},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -97,7 +100,7 @@ impl Drafted {
 #[derive(Serialize, Deserialize)]
 struct Verdict {
     dispute: Option<String>,
-    defects: Vec<String>,
+    defects: Vec<(KeyDefect, String)>,
     repeats: Vec<String>,
     others: String,
 }
@@ -111,7 +114,7 @@ impl Verdict {
 /// What this review decides, in the words the evidence gate is given.
 pub(crate) const DECIDES: &str = "whether the key of a question is right";
 
-/// One finding per question that review faults, placed at that question. A
+/// One finding per kind of fault of each question that review faults, placed at that question. A
 /// question is reviewed once: its verdict is saved by what it says, and a
 /// repeat is reviewed again when the questions around it change. A question
 /// that cannot be read as an item is left to the structure checks.
@@ -132,7 +135,7 @@ pub(crate) async fn check(
         .iter()
         .map(|(_, question)| {
             format!(
-                "question-review-v5:{}",
+                "question-review-v6:{}",
                 sha256_hex(
                     json!({
                         "model": llm.model_name(),
@@ -201,14 +204,15 @@ pub(crate) async fn check(
         .zip(&verdicts)
         .filter_map(|((index, question), verdict)| {
             let verdict = verdict.as_ref()?;
-            finding(
+            Some(findings(
                 *index,
                 &question.prompt,
                 verdict.dispute.as_deref(),
                 &verdict.defects,
                 &verdict.repeats,
-            )
+            ))
         })
+        .flatten()
         .collect())
 }
 
@@ -239,33 +243,53 @@ async fn review(
         outcome_description: &outcome.description,
         learner_has,
     };
-    item_review::review(llm, &entries, &context).await
+    let found = item_review::review(llm, &entries, &context).await?;
+    if found.iter().any(|findings| findings.unreviewed) {
+        return Err(AppError::ModelAnswerUnusable(
+            item_review::UNREVIEWED.into(),
+        ));
+    }
+    Ok(found)
 }
 
-/// The finding for question `index`, placed at it; none when review found
-/// nothing. A repeat is a finding on the question, not a defect of it.
-fn finding(
+/// The findings for question `index`, one for each kind of fault, placed at it;
+/// none when review found nothing. A repeat is a finding on the question, not
+/// a defect of it.
+fn findings(
     index: usize,
     prompt: &str,
     dispute: Option<&str>,
-    defects: &[String],
+    defects: &[(KeyDefect, String)],
     repeats: &[String],
-) -> Option<ReviewFinding> {
-    let texts: Vec<&str> = dispute
-        .into_iter()
-        .chain(defects.iter().map(String::as_str))
-        .chain(repeats.iter().map(String::as_str))
-        .collect();
-    if texts.is_empty() {
-        return None;
+) -> Vec<ReviewFinding> {
+    let mut kinds: Vec<(KeyDefect, Vec<&str>)> = Vec::new();
+    if let Some(dispute) = dispute {
+        kinds.push((KeyDefect::Disputed, vec![dispute]));
     }
-    let summary = if dispute.is_some() && defects.is_empty() && repeats.is_empty() {
-        "A second, independent solution disagreed with the answer key."
-    } else {
-        "The question review found a problem with this question."
-    };
-    let note = format!("Question {}: {}", index + 1, texts.join(" "));
-    let mut finding = ReviewFinding::answer_key(index, note).with_summary(summary);
-    finding.passage = Some(prompt.to_owned());
-    Some(finding)
+    for (kind, text) in defects {
+        match kinds.iter_mut().find(|(known, _)| known == kind) {
+            Some((_, texts)) => texts.push(text),
+            None => kinds.push((*kind, vec![text])),
+        }
+    }
+    if !repeats.is_empty() {
+        kinds.push((
+            KeyDefect::Repeats,
+            repeats.iter().map(String::as_str).collect(),
+        ));
+    }
+    kinds
+        .into_iter()
+        .map(|(kind, texts)| {
+            let summary = if kind == KeyDefect::Disputed {
+                "A second, independent solution disagreed with the answer key."
+            } else {
+                "The question review found a problem with this question."
+            };
+            let note = format!("Question {}: {}", index + 1, texts.join(" "));
+            let mut finding = ReviewFinding::answer_key(index, kind, note).with_summary(summary);
+            finding.passage = Some(prompt.to_owned());
+            finding
+        })
+        .collect()
 }

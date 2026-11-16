@@ -63,7 +63,7 @@ impl LLMPort for RecordingClient {
         serde_json::to_writer(
             &mut file,
             &json!({
-                "request":{"input":request.input,"schema":request.json_schema,"sampling":request.sampling},
+                "request":{"input":request.input(),"schema":request.schema().map(|schema| schema.as_json()),"sampling":request.sampling},
                 "response":{"text":response.text,"finishReason":response.finish_reason,"outputTokens":response.output_tokens},
             }),
         )?;
@@ -108,6 +108,12 @@ impl LLMPort for RecordingClient {
     }
     fn requests(&self) -> Option<RequestLoad> {
         self.inner.requests()
+    }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
     }
 }
 

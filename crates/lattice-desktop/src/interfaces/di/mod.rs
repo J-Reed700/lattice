@@ -31,6 +31,7 @@ use std::sync::Arc;
 mod chat_runtime;
 // DDD Container - Unified DI container for DDD architecture
 pub mod container;
+pub mod headless;
 pub use container::Container;
 
 #[cfg(test)]

@@ -3,6 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::replies::ReplyPieceDto;
 use super::sources::SourceDto;
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -31,6 +32,9 @@ pub struct SnapshotMessageDto {
     pub created_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<String>,
+    /// The message as text between references, when it was saved with them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply: Option<Vec<ReplyPieceDto>>,
 }
 
 #[cfg(test)]

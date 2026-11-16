@@ -26,6 +26,7 @@ use lattice_core::application::ports::{EmbeddingPort, LLMPort};
 use lattice_core::application::services::grounded_generation::{
     self, CallOptions, EvidenceSelection, GroundedRequest,
 };
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::shared::error::{AppError, Result};
 
 const VECTOR_CLEANUP_BATCH: u32 = 256;
@@ -669,12 +670,13 @@ fn summary_request(
     text: &str,
     cancel: &CancellationToken,
 ) -> GroundedRequest {
-    let mut request = GroundedRequest::new(call.system.clone(), task);
-    request.evidence_heading = heading.to_string();
-    request.evidence =
+    let mut request = legacy::grounded(call.system.clone(), task);
+    let says = legacy::grounded_says(&mut request);
+    *says.evidence_heading = heading.to_string();
+    *says.evidence =
         grounded_generation::passages_from_text(source_id, text, prompt::BODY_PASSAGE_CHARS);
-    request.selection = EvidenceSelection::Prefix;
-    request.closing = prompt::response_contract().to_string();
+    *says.selection = EvidenceSelection::Prefix;
+    *says.closing = prompt::response_contract().to_string();
     request.call = CallOptions {
         // Upkeep: queued behind anyone waiting on the model.
         priority: InferencePriority::Maintenance,

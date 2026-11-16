@@ -100,7 +100,7 @@ async fn lesson_model_can_run_past_old_deadlines_and_reports_stream_activity() -
             assert!(request.no_time_limit);
             assert!(request.wall_clock_budget().is_none());
             tokio::time::sleep(std::time::Duration::from_secs(1800)).await;
-            Ok(CompletionResponse { text: "supported\nReason: The source explicitly states this.\nSource quote: Rust is a language.".into(), finish_reason: "stop".into(), ..Default::default() })
+            Ok(CompletionResponse { text: "Reason: The source explicitly states this.\nSource passage: passage-0\nVerdict: supported".into(), finish_reason: "stop".into(), ..Default::default() })
         }
         async fn complete_with_progress(
             &self,
@@ -123,6 +123,12 @@ async fn lesson_model_can_run_past_old_deadlines_and_reports_stream_activity() -
         }
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
+        }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
         }
     }
     let progress = Progress::default();

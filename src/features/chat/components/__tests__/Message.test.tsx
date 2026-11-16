@@ -6,6 +6,7 @@ import { setFolderThreadHost } from '@/features/chat/model/folderThreadHost';
 import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import { render } from '@/tests/renderWithQueryClient';
+import { reply } from '@/tests/replyFixtures';
 import type { MessageVerificationSummary, SourceWithMetadata } from '@/types/conversation';
 
 
@@ -49,8 +50,8 @@ vi.mock('@/features/model/hooks/useLoadedModels', () => ({ useLoadedModels: () =
 // The chips the answer body draws are what the reader is opened from, so the
 // viewer stands in for tiptap by drawing them.
 vi.mock('@/components/TiptapEditor', () => ({
-  TiptapViewer: ({ citationNumbers, claims, showEvidence = true, codeRefs }: { citationNumbers?: number[]; claims?: { sentence: string }[]; showEvidence?: boolean; codeRefs?: boolean }) => (
-    <div>
+  TiptapViewer: ({ content, marks, citationNumbers, claims, showEvidence = true, codeRefs }: { content?: string; marks?: number[]; citationNumbers?: number[]; claims?: { sentence: string }[]; showEvidence?: boolean; codeRefs?: boolean }) => (
+    <div data-content={content} data-marks={JSON.stringify(marks ?? [])}>
       Answer body
       {codeRefs && <span data-code-ref="src/example.ts" data-code-ref-start="12" data-code-ref-end="14">src/example.ts:12-14</span>}
       {/* Each source is cited twice, as a long answer cites it: two marks, two sentences. */}
@@ -313,6 +314,30 @@ describe('opening the source reader from an answer', () => {
 
     expect(useChatReaderStore.getState().session?.occurrence).toBe(0);
     expect(marks().map((mark) => mark.classList.contains('is-lit'))).toEqual([true, false]);
+  });
+});
+
+describe('drawing a reply', () => {
+  const pieces = reply('Kale bolts in heat ', 3, '. Chard does not.');
+  const body = () => document.querySelector<HTMLElement>('[data-content]')!;
+  const drawn = () => ({ content: body().dataset.content, marks: body().dataset.marks });
+
+  it('draws a loaded message and a streamed one alike from the same pieces', () => {
+    const base = { role: 'assistant', content: 'Kale bolts in heat [s3]. Chard does not.', reply: pieces, createdAt: new Date().toISOString(), conversationId: 'conversation' };
+    const loaded = render(<Message message={{ ...base, id: 'answer', status: 'completed' } as Parameters<typeof Message>[0]['message']} />);
+    const fromLoaded = drawn();
+    loaded.unmount();
+    render(<Message message={{ ...base, tempId: 'streaming', status: 'pending' } as Parameters<typeof Message>[0]['message']} />);
+
+    expect(drawn()).toEqual(fromLoaded);
+    expect(fromLoaded.marks).toBe('[3]');
+  });
+
+  it('draws bracketed text that is not a reference as the text it is', () => {
+    render(<Message message={{ id: 'answer', role: 'assistant', content: 'Step [3] is ordinary text.', status: 'completed', createdAt: new Date().toISOString(), conversationId: 'conversation' } as Parameters<typeof Message>[0]['message']} />);
+
+    expect(body().dataset.content).toBe('Step [3] is ordinary text.');
+    expect(body().dataset.marks).toBe('[]');
   });
 });
 

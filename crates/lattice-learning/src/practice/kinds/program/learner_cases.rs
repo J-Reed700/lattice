@@ -47,10 +47,15 @@ impl LearnerCases for ProgramLearnerCases {
         "examples".to_owned()
     }
 
-    fn account(&self, _brief: &Brief, case: &SessionLearnerCase) -> Result<serde_json::Value> {
+    fn account(
+        &self,
+        _brief: &Brief,
+        case: &SessionLearnerCase,
+        name: &str,
+    ) -> Result<serde_json::Value> {
         let body = read_body(&case.body)?;
         Ok(json!({
-            "ordinal": case.ordinal,
+            "example": name,
             "args": body.args,
             "expected": body.expected,
             "verdict": case.verdict.label().to_lowercase(),
@@ -59,8 +64,7 @@ impl LearnerCases for ProgramLearnerCases {
 
     fn cited(&self) -> Citation {
         Citation {
-            tag: "example".to_owned(),
-            sentence: "An example: ref is the example's ordinal.".to_owned(),
+            sentence: "An example: cases holds the names of the examples it cites.".to_owned(),
         }
     }
 

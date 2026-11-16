@@ -49,6 +49,14 @@ impl SourceMessageRow {
         } else {
             Vec::new()
         };
+        let references = if role == SourceRole::Assistant {
+            lattice_core::shared::stored_references::reference_ranges(
+                &self.content,
+                self.metadata.as_deref(),
+            )
+        } else {
+            Vec::new()
+        };
         Ok(SourceMessage {
             id: self.id,
             conversation_id: self.conversation_id,
@@ -58,6 +66,8 @@ impl SourceMessageRow {
             content_digest: digest,
             status: self.status,
             pictures,
+            references,
+            replayed: None,
         })
     }
 }

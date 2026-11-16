@@ -123,5 +123,93 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual(trace.timeline([CHANGED], "nomatch"), [])
 
 
+def span_for(lesson_id):
+    return LESSON_SPAN.replace("5e21c107-7fdc", lesson_id)
+
+
+def record(kind, lesson_id, stamp, *fields):
+    head = HEAD.replace("2026-11-13T01:45:05.669928Z", stamp)
+    return head + span_for(lesson_id) + WHERE + kind + "".join(fields)
+
+
+def drafted(lesson_id, stamp, title):
+    return record(
+        "changed", lesson_id, stamp,
+        field("stage", '"drafting"'), field("cause_findings", "[]"),
+        field("cause_claims", "[]"), field("removed", "[]"),
+        field("added", '["' + title + '", "Body."]'),
+    )
+
+
+def verdict(lesson_id, stamp, claim_id, statement, result, quote_id="aaaaaaaa-1111-2222-3333-444444444444"):
+    return record(
+        "decided", lesson_id, stamp,
+        field("stage", '"claim_verification"'),
+        field("subject", '"claim ' + claim_id + ": " + statement + '"'),
+        field("verdict", '"' + result + '"'),
+        field("why", '"by ' + quote_id + '"'),
+    )
+
+
+class DiffTests(unittest.TestCase):
+    def test_runs_that_differ_only_in_ids_and_times_are_identical(self):
+        a = [
+            drafted("id-a", "2026-11-13T01:00:00.000000Z", "Ownership"),
+            verdict("id-a", "2026-11-13T01:00:01.000000Z", "c-1", "Rust is fast.", "supported"),
+        ]
+        b = [
+            drafted("id-b", "2026-11-13T09:00:00.000000Z", "Ownership"),
+            verdict("id-b", "2026-11-13T09:05:00.000000Z", "c-77", "Rust is fast.", "supported",
+                    "bbbbbbbb-1111-2222-3333-444444444444"),
+        ]
+        out = trace.diff_logs(a, b)
+        self.assertEqual(out, ["1 compared, 1 identical, 0 only in A, 0 only in B; records only in A: 0, only in B: 0"])
+
+    def test_a_changed_verdict_shows_on_each_side_under_its_statement(self):
+        a = [
+            drafted("id-a", "2026-11-13T01:00:00.000000Z", "Ownership"),
+            verdict("id-a", "2026-11-13T01:00:01.000000Z", "c-1", "Rust is fast.", "supported"),
+        ]
+        b = [
+            drafted("id-b", "2026-11-13T09:00:00.000000Z", "Ownership"),
+            verdict("id-b", "2026-11-13T09:00:01.000000Z", "c-2", "Rust is fast.", "failed"),
+        ]
+        text = chr(10).join(trace.diff_logs(a, b))
+        self.assertIn("== lesson Ownership ==", text)
+        self.assertIn("[claim: Rust is fast.]", text)
+        self.assertLess(text.index("only A:"), text.index("only B:"))
+        self.assertIn("-> supported", text.split("only B:")[0])
+        self.assertIn("-> failed", text.split("only B:")[1])
+        self.assertTrue(text.endswith("records only in A: 1, only in B: 1"))
+
+    def test_a_lesson_in_one_log_only_is_named_and_counted(self):
+        a = [drafted("id-a", "2026-11-13T01:00:00.000000Z", "Ownership")]
+        b = [drafted("id-b", "2026-11-13T01:00:00.000000Z", "Borrowing")]
+        text = chr(10).join(trace.diff_logs(a, b))
+        self.assertIn("== lesson Ownership (only in A) ==", text)
+        self.assertIn("== lesson Borrowing (only in B) ==", text)
+        self.assertIn("0 compared, 0 identical, 1 only in A, 1 only in B", text)
+
+    def test_a_repeated_record_is_matched_once_per_copy(self):
+        line = verdict("id-a", "2026-11-13T01:00:01.000000Z", "c-1", "Rust is fast.", "supported")
+        a = [drafted("id-a", "2026-11-13T01:00:00.000000Z", "Ownership"), line, line]
+        same = verdict("id-b", "2026-11-13T01:00:01.000000Z", "c-1", "Rust is fast.", "supported")
+        b = [drafted("id-b", "2026-11-13T01:00:00.000000Z", "Ownership"), same]
+        out = trace.diff_logs(a, b)
+        self.assertTrue(out[-1].endswith("records only in A: 1, only in B: 0"))
+
+    def test_the_substring_keeps_matching_lessons(self):
+        a = [drafted("id-a", "2026-11-13T01:00:00.000000Z", "Ownership")]
+        b = [drafted("id-b", "2026-11-13T01:00:00.000000Z", "Borrowing")]
+        text = chr(10).join(trace.diff_logs(a, b, "Borrow"))
+        self.assertIn("Borrowing", text)
+        self.assertNotIn("Ownership", text)
+
+    def test_a_lesson_without_a_draft_record_matches_by_id(self):
+        a = [verdict("same-id", "2026-11-13T01:00:01.000000Z", "c-1", "S.", "supported")]
+        b = [verdict("same-id", "2026-11-13T02:00:01.000000Z", "c-9", "S.", "supported")]
+        self.assertTrue(trace.diff_logs(a, b)[0].startswith("1 compared, 1 identical"))
+
+
 if __name__ == "__main__":
     unittest.main()

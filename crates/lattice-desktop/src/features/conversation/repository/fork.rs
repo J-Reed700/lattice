@@ -223,6 +223,7 @@ impl ConversationRepository {
         }
 
         Self::copy_sources(&mut tx, conversation_id, new_id).await?;
+        Self::copy_names(&mut tx, conversation_id, new_id).await?;
 
         sqlx::query(
             r#"
@@ -320,6 +321,7 @@ impl ConversationRepository {
         .map_err(|e| AppError::Database(format!("Failed to write the summary: {}", e)))?;
 
         Self::copy_sources(&mut tx, conversation_id, new_id).await?;
+        Self::copy_names(&mut tx, conversation_id, new_id).await?;
 
         sqlx::query("UPDATE conversations SET message_count = 1, total_tokens = ? WHERE id = ?")
             .bind(tokens)

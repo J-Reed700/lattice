@@ -246,7 +246,7 @@ pub async fn generate_learning_practical_activity(
     let llm = &pin.llm;
     let mut researched_source_ids = Vec::new();
     if let Some(target) = interview_target.as_ref() {
-        let web = container.web_service();
+        let web = container.web();
         let library = source_library(&container);
         let research =
             crate::features::learning::practice::interview_research::research_interview_target(
@@ -301,7 +301,7 @@ pub async fn generate_learning_practical_activity(
         .await
         .map_err(ApiError::from)?;
         let library = source_library(&container);
-        let web = container.web_service();
+        let web = container.web();
         let research = crate::features::learning::interview_research::research_interview_answers(
             llm.as_ref(),
             web.as_ref(),

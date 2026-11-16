@@ -64,7 +64,7 @@ async fn recheck_waiting(
         "Checking the waiting statements against the source you added",
     )
     .await?;
-    let web = container.web_service();
+    let web = container.web();
     let snapshots = container.reference_snapshots();
     let library = container.library_passages();
     let progress = move |stage: ClaimAttachProgressDto| {
@@ -145,7 +145,7 @@ pub async fn add_learning_web_source(
     on_progress: tauri::ipc::Channel<ClaimAttachProgressDto>,
     container: State<'_, Container>,
 ) -> Result<LearningSourceWorkspaceDto, ApiError> {
-    let web = container.web_service();
+    let web = container.web();
     let program_id = request.program_id.clone();
     let version_id = request.version_id.clone();
     let workspace = crate::features::learning::source_workflows::add_web_source(
@@ -349,7 +349,7 @@ pub async fn refresh_learning_source(
         ));
     }
     let captured_result = async {
-        let page = container.web_service().fetch_reference_page(&url).await?;
+        let page = container.web().fetch_reference_page(&url).await?;
         let title = page.output.title.clone().unwrap_or_else(|| url.clone());
         Ok::<_, lattice_core::shared::error::AppError>(
             crate::features::learning::references::trust::capture::web_capture(page, &url, title),

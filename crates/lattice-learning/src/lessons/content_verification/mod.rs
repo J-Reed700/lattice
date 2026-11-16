@@ -22,10 +22,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
-mod apparatus;
-#[cfg(test)]
-use apparatus::strip_citation_apparatus;
-pub(crate) use apparatus::strip_draft_apparatus;
+mod right_choice;
+pub(crate) use right_choice::clear_right_choice_reasons;
 mod citations;
 mod claim_ledger;
 mod claim_sentences;
@@ -607,7 +605,8 @@ pub async fn judge_batch_for_publication(
     claims: &[lattice_core::application::services::claim_verification::LocatedClaim],
 ) -> Result<lattice_core::application::services::claim_verification::Answered<Vec<ClaimJudgment>>> {
     let checker =
-        ClaimChecker::for_policy(llm, SamplingOverride::deterministic(), CheckPolicy::Strict);
+        ClaimChecker::for_policy(llm, SamplingOverride::deterministic(), CheckPolicy::Strict)
+            .remembering(&evidence_checks::CountedPastBatches);
     checker
         .check_batch_without_deadline(
             claims,

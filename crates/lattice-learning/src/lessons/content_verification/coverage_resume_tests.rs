@@ -32,6 +32,12 @@ impl LLMPort for DisconnectDuringFidelity {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 impl DisconnectDuringFidelity {
     async fn respond(&self, prompt: &str) -> Result<String> {
@@ -97,7 +103,7 @@ async fn interrupted_coverage_reuses_mapping_and_each_completed_passage() -> Res
         assert!(coverage::audit(&model, &content, &inventory, None)
             .await
             .is_err());
-        assert_eq!(model.mapping_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(model.mapping_calls.load(Ordering::Relaxed), 2);
         assert_eq!(model.fidelity_calls.load(Ordering::Relaxed), 2);
         Ok(())
     })
@@ -106,13 +112,13 @@ async fn interrupted_coverage_reuses_mapping_and_each_completed_passage() -> Res
     crate::lesson_drafts::run(&db, &repo, &job, &lesson, async {
         let audited = coverage::audit(&model, &content, &inventory, None).await?;
         assert!(audited.units.iter().all(|unit| unit.complete));
-        assert_eq!(model.mapping_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(model.mapping_calls.load(Ordering::Relaxed), 2);
         assert_eq!(model.fidelity_calls.load(Ordering::Relaxed), 3);
         coverage::audit(&model, &content, &inventory, None).await?;
         assert_eq!(model.fidelity_calls.load(Ordering::Relaxed), 3);
         content[1]["body"] = json!(format!("{GOOD} Follow these practice instructions."));
         coverage::audit(&model, &content, &inventory, None).await?;
-        assert_eq!(model.mapping_calls.load(Ordering::Relaxed), 2);
+        assert_eq!(model.mapping_calls.load(Ordering::Relaxed), 3);
         assert_eq!(model.fidelity_calls.load(Ordering::Relaxed), 4);
         Ok(())
     })

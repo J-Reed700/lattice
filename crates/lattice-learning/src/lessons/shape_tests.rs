@@ -529,3 +529,13 @@ fn the_draft_still_asks_for_and_checks_two_questions_of_each_kind() {
         .and_then(Value::as_u64);
     assert_eq!(least, Some(6));
 }
+
+#[test]
+fn the_lengths_the_writer_is_asked_for_agree_with_the_shapes_numbers() {
+    let lengths = StandardShape.lengths();
+    let exact = SECTION_MIX.iter().filter(|(_, _, exact)| *exact).count();
+
+    assert_eq!(lengths.ideas, IDEAS);
+    assert!(lengths.ideas.0 * lengths.sections.0 <= SECTIONS.0);
+    assert_eq!(lengths.ideas.1 * lengths.sections.1 + exact, SECTIONS.1);
+}

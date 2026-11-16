@@ -11,6 +11,7 @@ use super::clock::TurnClock;
 use super::document_evidence::DocumentEvidence;
 use super::document_progress::DocumentProgress;
 use super::images::{self, FIND_IMAGE};
+use super::research_notes::Labels;
 use super::tool_sources::{render_with_citations, result_sources};
 use super::{
     chars_in_flight, elapsed_ms, emit_cancelled_stream, scoped_document_tools,
@@ -24,10 +25,10 @@ use crate::features::conversation::chat::history_tools::{self, HistoryToolMemo};
 use crate::features::conversation::chat::ports::{
     ChatRecords, ChatRuntime, FetchUrlContentOutput, TurnSource,
 };
+use crate::features::conversation::chat::retrieval::source_names::name_sources;
 use crate::features::conversation::chat::retrieval::{
-    assign_citation_ids, citation_ids_by_chunk, deduplicate_sources, document_page_room,
-    fetched_page_text_room, format_tool_result, merge_tool_sources,
-    record_tool_document_references,
+    citation_ids_by_chunk, deduplicate_sources, document_page_room, fetched_page_text_room,
+    format_tool_result, merge_tool_sources, record_tool_document_references,
 };
 use crate::features::conversation::chat::turn_record::{StepGuard, TurnRecorder, TurnStepKind};
 use crate::features::conversation::chat::{
@@ -38,6 +39,8 @@ use futures::{FutureExt, StreamExt};
 use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
 use lattice_core::application::ports::llm_port::CompletionInput;
 use lattice_core::application::ports::ToolDefinition;
+use lattice_core::application::services::model_contract::kept::TurnNames;
+use lattice_core::application::services::tool_handles::{CallView, ToolHandles};
 use lattice_core::shared::error::Result;
 use lattice_core::shared::http::url_identity::identity;
 use std::collections::HashSet;
@@ -63,7 +66,8 @@ fn runs_alongside(tool: &str, source: Option<&TurnSource>) -> bool {
 /// Whether a tool only reads, so it may run alongside the other calls of its
 /// round. Named one by one so a new tool runs alone until decided otherwise.
 /// History tools share one per-turn memo, a custom query tool could do
-/// anything, and `find_image` numbers `img-N` refs, so those stay sequential.
+/// anything, `find_image` numbers `img-N` refs, and `read_more` carries on
+/// any of them, so those stay sequential.
 pub(super) fn runs_alongside_others(tool: &str) -> bool {
     matches!(
         tool,
@@ -117,6 +121,8 @@ pub(super) struct CallScope<'a> {
     pub(super) llm: &'a Arc<dyn lattice_core::application::ports::LLMPort>,
     /// The reader's question, the context a `find_image` pick is judged in.
     pub(super) question: &'a str,
+    /// The conversation's scope for this turn.
+    pub(super) names: &'a Arc<TurnNames>,
 }
 
 /// The turn's tool calls, and what they have learned so far.
@@ -131,12 +137,16 @@ pub(super) struct ToolCalls<'a> {
     /// with a reference. Locked only so a round's calls can share `self`; history
     /// calls never run together.
     history_memo: tokio::sync::Mutex<HistoryToolMemo>,
+    /// What this turn's results showed, under the names a later call passes back.
+    handles: ToolHandles,
     document_evidence: DocumentEvidence,
     document_progress: DocumentProgress,
     /// The result each page read in the loop went out in, by page.
     pages_in_results: Vec<(String, String)>,
     /// Pages whose results were condensed into notes.
     condensed_pages: HashSet<String>,
+    /// Where each result's labelled sources' own text stands, for the notes.
+    labels: Labels,
 }
 
 /// A call, decided before anything runs.
@@ -226,8 +236,12 @@ impl<'a> ToolCalls<'a> {
         fetched: Vec<String>,
         sources: &[SourceDto],
     ) -> Self {
+        let handles = ToolHandles::in_turn(Arc::clone(scope.names))
+            .in_conversation(scope.conv_id)
+            .in_request(scope.request_id);
         Self {
             scope,
+            handles,
             fetch_memory: pages_already_read,
             queries,
             fetched,
@@ -236,6 +250,7 @@ impl<'a> ToolCalls<'a> {
             document_progress: DocumentProgress::new(sources),
             pages_in_results: Vec::new(),
             condensed_pages: HashSet::new(),
+            labels: Labels::default(),
         }
     }
 
@@ -278,6 +293,7 @@ impl<'a> ToolCalls<'a> {
     /// they carried are no longer in the context: a repeat request for one is
     /// read again rather than told the text is above.
     pub(super) fn results_condensed(&mut self, result_ids: &HashSet<String>) {
+        self.labels.forget(result_ids);
         let condensed = &mut self.condensed_pages;
         self.pages_in_results.retain(|(page, result_id)| {
             let gone = result_ids.contains(result_id);
@@ -286,6 +302,11 @@ impl<'a> ToolCalls<'a> {
             }
             !gone
         });
+    }
+
+    /// What the app wrote as a label in the results it has put in the transcript.
+    pub(super) fn labels_mut(&mut self) -> &mut Labels {
+        &mut self.labels
     }
 
     fn prepare(
@@ -364,8 +385,25 @@ impl<'a> ToolCalls<'a> {
                 available_tool_names(self.scope.tools).join(", ")
             ));
         }
+        // The names the model wrote become the app's own arguments here, and
+        // nothing the app owns is taken from the model.
+        let called = match self.handles.read_call(tool, &call.arguments) {
+            Ok(called) => called,
+            Err(problem) => {
+                timings.tool_failure_count = timings.tool_failure_count.saturating_add(1);
+                return answered(problem.0);
+            }
+        };
+        let tool = called.tool.as_str();
+        if !is_tool_allowed(tool, self.scope.tools) {
+            return answered(format!(
+                "That result's tool, {tool}, is not available in this turn. The tools you can call are: {}.",
+                available_tool_names(self.scope.tools).join(", ")
+            ));
+        }
+        let call_arguments = &called.arguments;
         let mut reread_from = None;
-        if let Some(url) = page_read_target(tool, &call.arguments) {
+        if let Some(url) = page_read_target(tool, call_arguments) {
             // A URL this turn already failed on is answered from memory rather than
             // requested again.
             if let Some(reason) = self.fetch_memory.previous_failure(url) {
@@ -393,7 +431,7 @@ impl<'a> ToolCalls<'a> {
                 .then(|| {
                     self.fetch_memory.recall(
                         url,
-                        fetch_memory::fetch_offset(&call.arguments),
+                        fetch_memory::fetch_offset(call_arguments),
                         fetched_page_text_room(allowance),
                     )
                 })
@@ -409,15 +447,15 @@ impl<'a> ToolCalls<'a> {
                         "Answered a repeat page request from this turn's memory"
                     );
                     timings.tool_success_count = timings.tool_success_count.saturating_add(1);
-                    return answered(recalled_page_notice(url, &recall));
+                    let view = CallView::new(tool, call_arguments, &self.handles);
+                    return answered(recalled_page_notice(url, &recall, &view));
                 }
                 None => {}
             }
         }
         // A picture's subject is not something the answer searched for
         // evidence on, so it stays out of the turn's queries.
-        if let Some(query) = call
-            .arguments
+        if let Some(query) = call_arguments
             .get("query")
             .and_then(serde_json::Value::as_str)
             .map(str::trim)
@@ -431,12 +469,12 @@ impl<'a> ToolCalls<'a> {
                 .source
                 .filter(|source| source.owns_tool(tool))
                 .map_or_else(
-                    || tool_activity_label(tool, &call.arguments),
-                    |source| source.activity_label(tool, &call.arguments),
+                    || tool_activity_label(tool, call_arguments),
+                    |source| source.activity_label(tool, call_arguments),
                 ),
-            web_steps::tool_detail(tool, &call.arguments)
-                .or_else(|| Some(tool_argument_summary(&call.arguments))),
-            web_steps::links_for_call(tool, &call.arguments),
+            web_steps::tool_detail(tool, call_arguments)
+                .or_else(|| Some(tool_argument_summary(call_arguments))),
+            web_steps::links_for_call(tool, call_arguments),
         );
         info!(
             requested_function = call.name.as_str(),
@@ -444,9 +482,9 @@ impl<'a> ToolCalls<'a> {
             "Executing tool call from LLM"
         );
         let mut arguments = if tool == "get_document" {
-            document_part_sized_to(&call.arguments, allowance)
+            document_part_sized_to(call_arguments, allowance)
         } else {
-            call.arguments.clone()
+            call_arguments.clone()
         };
         if let (Some(offset), Some(object)) = (reread_from, arguments.as_object_mut()) {
             object.insert("offset".into(), serde_json::json!(offset));
@@ -646,7 +684,7 @@ impl<'a> ToolCalls<'a> {
             let before = sources.len();
             tool_chunk_ids = merge_tool_sources(sources, tool_sources);
             *sources = deduplicate_sources(std::mem::take(sources));
-            assign_citation_ids(sources);
+            name_sources(self.scope.names, sources);
             info!(
                 requested_function = name.as_str(),
                 resolved_function = tool,
@@ -684,7 +722,8 @@ impl<'a> ToolCalls<'a> {
             .filter_map(|source| source.citation_id.map(|number| (number, source)))
             .collect();
         let citations = citation_ids_by_chunk(sources);
-        let result_text = render_with_citations(&citable, allowance, |room| {
+        let call_view = CallView::new(tool, &arguments, &self.handles);
+        let rendered = render_with_citations(&citable, allowance, &self.handles, |room| {
             format_tool_result(
                 tool,
                 &result,
@@ -693,18 +732,20 @@ impl<'a> ToolCalls<'a> {
                 page_offset,
                 source_text,
                 &citations,
+                &call_view,
             )
         });
-        let result_text = self
+        let rendered = self
             .document_evidence
-            .render(tool, &result, result_text, |excerpt| {
+            .render(tool, &result, rendered, |excerpt| {
                 input.iter().any(|item| {
                     matches!(item, CompletionInput::ToolResult { output, .. } if output == excerpt)
                 })
             });
+        self.labels.keep(&id, rendered.passages, rendered.legend);
         input.push(CompletionInput::ToolResult {
             id: id.clone(),
-            output: result_text,
+            output: rendered.text,
         });
         if let Err(error) = record_tool_document_references(
             self.scope.conv_service,

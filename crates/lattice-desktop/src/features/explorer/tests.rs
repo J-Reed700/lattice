@@ -402,10 +402,18 @@ fn find_files_matches_substrings_and_globs_and_skips_ignored() {
 
 mod model_tools {
     use super::*;
+    use crate::features::explorer::file_refs::FileNames;
     use crate::features::explorer::{prompt, tools};
     use lattice_core::application::contracts::explorer::{ExplorerFocusDto, ExplorerLineRangeDto};
     use lattice_core::application::contracts::tools::explorer as explorer_tools;
+    use lattice_core::application::contracts::tools::FunctionCall;
+    use lattice_core::application::services::model_contract::kept::TurnNames;
     use serde_json::json;
+    use std::sync::Arc;
+
+    fn names() -> FileNames {
+        FileNames::new(Arc::new(TurnNames::unstored()))
+    }
 
     fn numbered_file(scope: &Scope, relative: &str, lines: u32) {
         let text: String = (1..=lines).map(|n| format!("line {n}\n")).collect();
@@ -418,6 +426,7 @@ mod model_tools {
         numbered_file(&scope, "src/long.txt", 1000);
         let first = tools::run(
             &scope,
+            &names(),
             "read_file",
             &json!({"path": "src/long.txt"}),
             1_000_000,
@@ -425,7 +434,7 @@ mod model_tools {
         .unwrap();
         // A room that holds the whole file gets the whole file.
         assert!(
-            first.starts_with("src/long.txt · lines 1–1000 of 1000\n"),
+            first.starts_with("[f1] src/long.txt · lines 1–1000 of 1000\n"),
             "{first:.200}"
         );
         assert!(first.contains("   1│ line 1\n"));
@@ -435,6 +444,7 @@ mod model_tools {
         // Numbers as strings, as small local models often write them.
         let tail = tools::run(
             &scope,
+            &names(),
             "read_file",
             &json!({"path": "src/long.txt", "start_line": "995", "end_line": 2000}),
             1_000_000,
@@ -454,6 +464,7 @@ mod model_tools {
         write(scope.root(), "huge.log", text.as_bytes());
         let window = tools::run(
             &scope,
+            &names(),
             "read_file",
             &json!({"path": "huge.log", "start_line": lines - 1}),
             10_000,
@@ -461,7 +472,7 @@ mod model_tools {
         .unwrap();
         assert!(
             window.starts_with(&format!(
-                "huge.log · lines {}–{lines} of {lines}\n",
+                "[f1] huge.log · lines {}–{lines} of {lines}\n",
                 lines - 1
             )),
             "{window:.200}"
@@ -473,11 +484,51 @@ mod model_tools {
     fn read_file_cuts_at_a_line_when_the_allowance_is_small() {
         let (_dir, scope) = fixture();
         numbered_file(&scope, "notes.txt", 300);
-        let cut = tools::run(&scope, "read_file", &json!({"path": "notes.txt"}), 900).unwrap();
+        let cut = tools::run(
+            &scope,
+            &names(),
+            "read_file",
+            &json!({"path": "notes.txt"}),
+            900,
+        )
+        .unwrap();
         assert!(cut.chars().count() <= 900, "{}", cut.chars().count());
         let shown = cut.lines().filter(|line| line.contains('│')).count() as u32;
         assert!(shown > 0 && shown < 300);
-        assert!(cut.contains(&format!("start_line {}", shown + 1)), "{cut}");
+        assert!(
+            cut.contains(&format!("[Lines {}–300 not shown.]", shown + 1)),
+            "{cut}"
+        );
+        assert!(!cut.contains("start_line"), "{cut}");
+    }
+
+    /// A read that stopped carries the call that reads on as data, and its
+    /// text asks the model for no line number.
+    #[tokio::test]
+    async fn a_cut_read_carries_the_call_that_reads_on() {
+        let (_dir, scope) = fixture();
+        numbered_file(&scope, "notes.txt", 300);
+        let call = FunctionCall::new(
+            "c1".to_string(),
+            "read_file",
+            json!({"path": "notes.txt", "end_line": 250}),
+        );
+        let result = tools::execute(&scope, &names(), call, 900).await.unwrap();
+        let data = result.data.unwrap();
+        let text = data["text"].as_str().unwrap();
+        let shown = text.lines().filter(|line| line.contains('│')).count() as u64;
+        assert_eq!(data["read_on"]["tool"], "read_file");
+        assert_eq!(
+            data["read_on"]["arguments"],
+            json!({"path": "notes.txt", "start_line": shown + 1, "end_line": 250})
+        );
+        assert!(!text.contains("start_line"), "{text}");
+
+        let whole = FunctionCall::new("c2".to_string(), "read_file", json!({"path": "notes.txt"}));
+        let rest = tools::execute(&scope, &names(), whole, 1_000_000)
+            .await
+            .unwrap();
+        assert!(rest.data.unwrap().is_string());
     }
 
     #[test]
@@ -485,24 +536,43 @@ mod model_tools {
         let (_dir, scope) = fixture();
         assert!(tools::run(
             &scope,
+            &names(),
             "read_file",
             &json!({"path": "../etc/passwd"}),
             10_000
         )
         .is_err());
-        assert!(tools::run(&scope, "read_file", &json!({"path": "/etc/passwd"}), 10_000).is_err());
-        assert!(
-            tools::run(&scope, "read_file", &json!({"path": "logo.png"}), 10_000)
-                .unwrap_err()
-                .to_string()
-                .contains("binary")
-        );
+        assert!(tools::run(
+            &scope,
+            &names(),
+            "read_file",
+            &json!({"path": "/etc/passwd"}),
+            10_000
+        )
+        .is_err());
+        assert!(tools::run(
+            &scope,
+            &names(),
+            "read_file",
+            &json!({"path": "logo.png"}),
+            10_000
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("binary"));
     }
 
     #[test]
     fn list_directory_leaves_ignored_entries_out_and_reads_slash_as_the_root() {
         let (_dir, scope) = fixture();
-        let listing = tools::run(&scope, "list_directory", &json!({"path": "/"}), 10_000).unwrap();
+        let listing = tools::run(
+            &scope,
+            &names(),
+            "list_directory",
+            &json!({"path": "/"}),
+            10_000,
+        )
+        .unwrap();
         assert!(listing.contains("src/\n"), "{listing}");
         assert!(listing.contains("README.md  ("));
         assert!(!listing.contains("target"));
@@ -513,16 +583,79 @@ mod model_tools {
     #[test]
     fn search_and_find_name_paths_and_lines() {
         let (_dir, scope) = fixture();
-        let found =
-            tools::run(&scope, "search_files", &json!({"query": "println"}), 10_000).unwrap();
+        let names = names();
+        let found = tools::run(
+            &scope,
+            &names,
+            "search_files",
+            &json!({"query": "println"}),
+            10_000,
+        )
+        .unwrap();
         assert!(
-            found.contains("src/main.rs:2: println!(\"hello\");"),
+            found.contains("[f1] src/main.rs:2: println!(\"hello\");"),
             "{found}"
         );
-        let files = tools::run(&scope, "find_files", &json!({"pattern": "*.rs"}), 10_000).unwrap();
+        let files = tools::run(
+            &scope,
+            &names,
+            "find_files",
+            &json!({"pattern": "*.rs"}),
+            10_000,
+        )
+        .unwrap();
         assert!(
-            files.contains("src/main.rs") && files.contains("src/lib/util.rs"),
+            files.contains("[f1] src/main.rs") && files.contains("src/lib/util.rs"),
             "{files}"
+        );
+    }
+
+    #[test]
+    fn each_tool_result_names_its_file_and_the_same_file_keeps_its_name() {
+        let (_dir, scope) = fixture();
+        let names = names();
+        let run = |tool: &str, arguments: serde_json::Value| {
+            tools::run(&scope, &names, tool, &arguments, 10_000).unwrap()
+        };
+        let found = run("find_files", json!({"pattern": "util"}));
+        assert!(found.contains("[f1] src/lib/util.rs"), "{found}");
+        let read = run("read_file", json!({"path": "src/main.rs"}));
+        assert!(read.starts_with("[f2] src/main.rs · lines 1–"), "{read}");
+        let again = run("read_file", json!({"path": "src/lib/util.rs"}));
+        assert!(again.starts_with("[f1] src/lib/util.rs · lines"), "{again}");
+        let searched = run("search_files", json!({"query": "println"}));
+        assert!(searched.contains("[f2] src/main.rs:2:"), "{searched}");
+        let listing = run("list_directory", json!({"path": "/"}));
+        assert!(!listing.contains("[f"), "{listing}");
+    }
+
+    #[test]
+    fn a_name_given_in_one_turn_is_in_the_next_turns_legend() {
+        let (_dir, scope) = fixture();
+        let names = Arc::new(TurnNames::unstored());
+        let first = FileNames::new(Arc::clone(&names));
+        tools::run(
+            &scope,
+            &first,
+            "read_file",
+            &json!({"path": "src/main.rs"}),
+            10_000,
+        )
+        .unwrap();
+        let next = FileNames::new(names);
+        let block = prompt::render_context(
+            &scope,
+            &next,
+            None,
+            20_000,
+            true,
+            false,
+            &prompt::FolderPassages::default(),
+        )
+        .unwrap();
+        assert!(
+            block.contains("Files named so far in this conversation:\n[f1] src/main.rs\n"),
+            "{block}"
         );
     }
 
@@ -562,12 +695,14 @@ mod model_tools {
         };
         let block = prompt::render_context(
             &scope,
+            &names(),
             Some(&focus),
             20_000,
             true,
             false,
             &prompt::FolderPassages::default(),
-        );
+        )
+        .unwrap();
         assert!(
             block.contains("Top level: src/, .gitignore, logo.png, README.md"),
             "{block}"
@@ -578,7 +713,15 @@ mod model_tools {
             "{block}"
         );
         assert!(!block.contains("line 13"));
-        assert!(block.contains("`src/main.rs:10-24`"));
+        assert!(block.contains("[f2:10-24]"));
+        assert!(
+            block.contains("Open file: [f1] src/long.txt (50 lines). The user selected lines"),
+            "{block}"
+        );
+        assert!(
+            block.contains("Files named so far in this conversation:\n[f1] src/long.txt\n"),
+            "{block}"
+        );
         assert!(block.contains("read_file"));
     }
 
@@ -592,12 +735,14 @@ mod model_tools {
             };
             let block = prompt::render_context(
                 &scope,
+                &names(),
                 Some(&focus),
                 20_000,
                 false,
                 false,
                 &prompt::FolderPassages::default(),
-            );
+            )
+            .unwrap();
             assert!(!block.contains("Open file"), "{open_path}: {block}");
             assert!(block.contains("You cannot open other files this turn"));
         }
@@ -613,12 +758,14 @@ mod model_tools {
         };
         let block = prompt::render_context(
             &scope,
+            &names(),
             Some(&focus),
             3_000,
             true,
             false,
             &prompt::FolderPassages::default(),
-        );
+        )
+        .unwrap();
         assert!(block.len() <= 3_000, "{}", block.len());
         assert!(
             block.contains("not shown for length. read_file reads on from line"),
@@ -876,22 +1023,23 @@ fn search_in_a_very_long_line_reports_the_true_column() {
 }
 
 /// Explaining the folder draws on what no passage holds, so its template does
-/// not ask for a citation on every statement; bracket numbers stay for the
-/// numbered library and web passages.
+/// not ask for a citation on every statement; bracketed labels stay for the
+/// labelled library and web passages.
 #[test]
 fn the_folder_template_cites_only_numbered_passages() {
     use super::prompt::{FOLDER_POLICY, FOLDER_TEMPLATE};
     assert_eq!(FOLDER_POLICY.evidence_template, Some(FOLDER_TEMPLATE));
     assert!(!FOLDER_TEMPLATE.contains("Cite every factual statement"));
     assert!(!FOLDER_TEMPLATE.contains("using only the provided context"));
-    assert!(FOLDER_TEMPLATE
-        .contains("Bracket numbers like [1] belong only to the numbered library or web passages"));
+    assert!(FOLDER_TEMPLATE.contains(
+        "Bracketed labels like [s1] belong only to the labelled library or web passages"
+    ));
     assert!(FOLDER_TEMPLATE.contains("{context}") && FOLDER_TEMPLATE.contains("{question}"));
     use sha2::{Digest, Sha256};
     assert_eq!(
         format!("{:x}", Sha256::digest(FOLDER_TEMPLATE)),
-        "6ce3edf0508f98fe598f5ca5ed82681ec6e70010114fea969e4157a10f2fbc70",
-        "the folder's template is as it was before the tutor"
+        "47b4ef6f1b2da4f1e209b8dcede0fb8f7efd1154fa70c09e716605cce71f4d01",
+        "the folder's template is as it was before the tutor, but for how it names passages and files"
     );
 }
 

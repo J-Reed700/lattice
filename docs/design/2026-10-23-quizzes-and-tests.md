@@ -587,9 +587,16 @@ source-grounded, window-sized. Changes:
   dropped with them as its reason. A dropped item counts toward the shortfall
   of the next of at most three rounds. A review the model cannot answer after
   being asked twice drops the items it covered as not reviewed, and does not
-  fail the job. Only `agreed` items enter forms.
-- **Bank target** per requirement is `3 × count`; `top_up(scope)` adds
-  `1 × count` for requirements whose unseen count is below `count`.
+  fail the job. Each round's writer is told why the items before it were
+  dropped. Only `agreed` items enter forms.
+- **Bank target** per requirement is `BANK_FORMS × count`. It is written in two
+  passes: the first form's worth of every requirement, then the rest of each
+  requirement's target. A repeat of a question the bank holds fills a retakes
+  need, but not a first-form need, which keeps writing within its three
+  rounds. A requirement whose first form came back short gets no retakes need.
+  A later need is given everything written before it for its outcome.
+  `top_up(scope)` adds `1 × count` for requirements whose unseen count is
+  below `count`.
 
 The quality bar at 9B: the schema grammar, the deterministic checks and the
 blinded solve are what make 9B output trustworthy; a 9B that cannot produce a

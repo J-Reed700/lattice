@@ -569,16 +569,20 @@ impl ContextAssembler {
         // the snapshot's own evidence, which carries the digest it was recorded
         // against. A span with no live content available resolves to nothing,
         // which is the correct answer — not a cached quotation.
-        let by_id: std::collections::HashMap<&str, &str> = recent
+        let by_id: std::collections::HashMap<&str, SourceMessage> = recent
             .iter()
-            .map(|message| (message.id.as_str(), message.content.as_str()))
+            .map(|message| (message.id.as_str(), message.memory_view()))
             .collect();
 
         let mut blocks = Vec::new();
         let mut rendered = Vec::new();
         let mut unresolvable = 0usize;
         for item in snapshot.mandatory_items() {
-            match render::render_memory_item(item, |message_id| by_id.get(message_id).copied()) {
+            match render::render_memory_item(item, |message_id| {
+                by_id
+                    .get(message_id)
+                    .map(|message| message.content.as_str())
+            }) {
                 Some(block) => {
                     blocks.push(block);
                     rendered.push(item.clone());

@@ -650,6 +650,12 @@ impl LLMPort for DenseTokenizer {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 impl DenseTokenizer {
     async fn respond(&self, _prompt: &str) -> Result<String> {
@@ -763,6 +769,7 @@ async fn evidence_rendered_into_the_message_is_cut_to_fit_instead_of_refusing_th
             inline_evidence: None,
             tool_schema_tokens: 600,
             document_evidence: Vec::new(),
+            replay: None,
         },
         true,
         bare,
@@ -788,6 +795,7 @@ async fn evidence_rendered_into_the_message_is_cut_to_fit_instead_of_refusing_th
             }),
             tool_schema_tokens: 600,
             document_evidence: Vec::new(),
+            replay: None,
         },
         true,
         bare,

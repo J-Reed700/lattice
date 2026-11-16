@@ -1,1018 +1,492 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::test_support::candidate;
 use super::*;
-use crate::content_verification::tests::fixture_task;
-use crate::lessons::course_generation_tests::{ScriptedModel, Windowed};
+use crate::lessons::course_generation_tests::RequestLog;
+use futures::future::BoxFuture;
+use lattice_core::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse,
+};
+use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
+use lattice_core::application::services::model_contract::test_support::{ScriptedModel, Sent};
 
-/// A first review of everything: what it reported.
-async fn review(
-    llm: &dyn LLMPort,
-    system: &str,
-    prompt: Value,
-    candidate: &Value,
-    progress: Option<&OutlineProgress>,
-) -> Result<Vec<Reported>> {
-    Ok(
-        super::review(llm, system, prompt, candidate, Scope::default(), progress)
-            .await?
-            .reported,
-    )
-}
-
-fn check(index: usize) -> Value {
-    json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"The explanation correctly distinguishes the stated inputs and resulting behavior.","hasDefect":false})
-}
-fn model(replies: Vec<Value>) -> ScriptedModel {
-    ScriptedModel {
-        outputs: std::sync::Mutex::new(replies.into_iter().map(|v| v.to_string()).collect()),
-        prompts: Default::default(),
-    }
-}
-
-#[tokio::test]
-async fn retains_more_than_six_findings_without_rejecting_a_complete_review() -> Result<()> {
-    let findings: Vec<_> = (0..12)
-        .map(|i| format!("Finding {i}: this assessment has multiple valid answers."))
-        .collect();
-    let response =
-        json!({"issues":findings,"blockChecks":fixture_checks(vec![check(0),check(1),check(2)])});
-    let (_, passages) = review_candidate(&candidate());
-    assert!(
-        jsonschema::JSONSchema::compile(&schema(&[0, 1, 2], &passages, &[]))
-            .unwrap()
-            .is_valid(&response)
-    );
-    let model = model(vec![response]);
-    let actual = review(
-        &model,
-        "Review instructional quality.",
-        json!({}),
-        &candidate(),
-        None,
-    )
-    .await?;
-    assert_eq!(
-        actual.iter().map(|f| f.note.clone()).collect::<Vec<_>>(),
-        findings
-    );
-    assert!(actual.iter().all(|f| f.site.is_none()));
-    // The reviewer's own statement of the problem is what the user reads.
-    assert_eq!(
-        actual.iter().map(|f| f.summary.clone()).collect::<Vec<_>>(),
-        findings
-    );
-    assert_eq!(model.prompts.lock().unwrap().len(), 1);
-    Ok(())
-}
-
-#[test]
-fn response_slots_cannot_renumber_sections_or_cite_unknown_passages() {
-    let (_, passages) = review_candidate(&candidate());
-    let compiled = jsonschema::JSONSchema::compile(&schema(&[0, 1, 2], &passages, &[])).unwrap();
-    let mut response =
-        json!({"issues":[],"blockChecks":fixture_checks(vec![check(0),check(1),check(2)])});
-    assert!(compiled.is_valid(&response));
-    response["blockChecks"][0]["passageId"] = json!("invented-passage");
-    assert!(!compiled.is_valid(&response));
-    response["blockChecks"][0]["passageId"] = json!("section-0-passage-0");
-    response["blockChecks"][0]["index"] = json!(1);
-    assert!(!compiled.is_valid(&response));
-    response["blockChecks"][0]
-        .as_object_mut()
-        .unwrap()
-        .remove("index");
-    response["blockChecks"][0]["sectionId"] = json!("section-7");
-    assert!(!compiled.is_valid(&response));
-}
-
-#[test]
-fn each_reviewed_part_carries_the_label_the_user_sees_beside_its_key() {
-    let original = json!({
-        "blocks":[{"body":"one","title":"First"},{"body":"two","title":"Second"}],
-        "questions":[{"prompt":"ask"},{"prompt":"again"}]
-    });
-    let (reviewed, ids) = review_candidate(&original);
-    assert_eq!(reviewed["blocks"][0]["label"], "Section 1");
-    assert_eq!(reviewed["blocks"][1]["label"], "Section 2");
-    assert_eq!(reviewed["questions"][0]["label"], "Question 1");
-    assert_eq!(reviewed["questions"][1]["label"], "Question 2");
-    assert_eq!(reviewed["blocks"][1]["index"], 1);
-    assert_eq!(ids[1], ["section-1-passage-0"]);
-    assert_eq!(reviewed["blocks"][1]["title"], "Second");
-    assert_eq!(original["blocks"][1].get("label"), None);
-}
-
-#[test]
-fn passages_preserve_every_byte_and_ids_are_scoped_to_the_section() {
-    let body = "🦀 Rust’s ‘book’\n```rust\n    println!(\"a  b\");\n```\r\n\r\n".repeat(40);
-    let original = json!({"blocks":[{"body":body,"title":"Unicode and code"}]});
-    let (reviewed, ids) = review_candidate(&original);
-    let rejoined: String = reviewed["blocks"][0]["bodyPassages"]
-        .as_array()
-        .unwrap()
+/// The task a review request carries.
+pub(super) fn task_of(request: &CompletionRequest) -> Value {
+    request
+        .input()
         .iter()
-        .map(|p| p["text"].as_str().unwrap())
-        .collect();
-    assert_eq!(rejoined, body);
-    assert!(ids[0].len() > 1);
-    assert_eq!(original["blocks"][0]["body"], body);
-    assert_eq!(reviewed["blocks"][0]["title"], "Unicode and code");
-    for indices in [vec![0], vec![]] {
-        jsonschema::JSONSchema::compile(&schema(&indices, &ids, &[])).unwrap();
-    }
+        .find_map(|input| match input {
+            CompletionInput::Message { content, .. } if content.trim_start().starts_with('{') => {
+                serde_json::Deserializer::from_str(content)
+                    .into_iter::<Value>()
+                    .next()
+                    .and_then(|task| task.ok())
+            }
+            _ => None,
+        })
+        .unwrap_or(Value::Null)
 }
 
-#[tokio::test]
-async fn malformed_section_recovers_without_rewriting_content_or_rechecking_valid_sections(
-) -> Result<()> {
-    let mut wrong_source = check(1);
-    wrong_source["passageId"] = json!("section-0-passage-0");
-    wrong_source["hasDefect"] = json!(true);
-    wrong_source["finding"] =
-        json!("The claimed membrane behavior contradicts the stated boundary condition.");
-    let model = model(vec![
-        json!({"issues":["An assessment has two defensible correct choices."],"blockChecks":crate::teaching_review::fixture_checks(vec![check(0),wrong_source,check(2)])}),
-        json!({"issues":["An assessment has two defensible correct choices."],"blockChecks":crate::teaching_review::fixture_checks(vec![check(0),check(1),check(2)])}),
-    ]);
-    let issues = review(
-        &model,
-        "Review instructional quality.",
-        json!({}),
-        &candidate(),
-        None,
-    )
-    .await?;
-    assert_eq!(issues.len(), 1);
-    assert_eq!(issues[0].site, None);
-    let prompts = model.prompts.lock().unwrap();
-    assert_eq!(prompts.len(), 2);
-    assert!(prompts[1].contains("section-1: passageId must be one of"));
-    Ok(())
-}
-
-#[tokio::test]
-async fn missing_duplicate_unknown_and_invented_checks_never_approve_unchecked_content() {
-    let invented = json!({"index":0,"passageId":"invented","finding":"An invented passage cannot establish a complete review.","hasDefect":false});
-    // Each case: the checks of the first answer, and of the answer to the
-    // correction, which asks only for the sections that first answer left unchecked.
-    for (first, retry) in [
-        (vec![], vec![]),
-        (vec![check(0), check(0), check(2)], vec![check(0), check(0)]),
-        (vec![check(1), check(2), check(3)], vec![]),
-        (vec![invented.clone(), check(1), check(2)], vec![invented]),
-    ] {
-        let answer = |checks| json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)});
-        let model = model(vec![answer(first), answer(retry)]);
-        let error = review(
-            &model,
-            "Review instructional quality.",
-            json!({}),
-            &candidate(),
-            None,
-        )
-        .await
-        .unwrap_err();
-        assert!(matches!(error, AppError::ModelAnswerUnusable(_)));
-        assert_eq!(model.prompts.lock().unwrap().len(), 2);
-    }
-}
-
-#[tokio::test]
-async fn a_blank_global_finding_is_corrected_by_a_complete_second_answer() -> Result<()> {
-    let model = model(vec![
-        json!({"issues":["  "],"blockChecks":crate::teaching_review::fixture_checks(vec![check(0),check(1),check(2)])}),
-        json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![check(0),check(1),check(2)])}),
-    ]);
-    assert!(review(
-        &model,
-        "Review instructional quality.",
-        json!({}),
-        &candidate(),
-        None,
-    )
-    .await?
-    .is_empty());
-    assert_eq!(model.prompts.lock().unwrap().len(), 2);
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_lesson_s_corrected_review_drops_blank_findings_and_keeps_the_rest() -> Result<()> {
-    let long = format!(
-        "The worked example's stated result is wrong: {}",
-        "x".repeat(720)
-    );
-    let mut blank = check(1);
-    blank["hasDefect"] = json!(true);
-    blank["finding"] = json!("  ");
-    let first = json!({"issues":["  "],"blockChecks":fixture_checks(vec![check(0),blank.clone(),check(2)])});
-    let second =
-        json!({"issues":[" ",long],"blockChecks":fixture_checks(vec![check(0),blank,check(2)])});
-    let lesson = model(vec![first.clone(), second.clone()]);
-    let issues = review(
-        &lesson,
-        "Review instructional quality.",
-        json!({}),
-        &candidate(),
-        None,
-    )
-    .await?;
-    assert_eq!(issues.len(), 1);
-    assert_eq!(issues[0].note, long);
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_section_finding_carries_the_passage_the_reviewer_chose() -> Result<()> {
-    let mut defect = check(2);
-    defect["hasDefect"] = json!(true);
-    defect["finding"] = json!("The rest is placed after rolling, contradicting the recipe.");
-    let model = model(vec![
-        json!({"issues":[],"blockChecks":fixture_checks(vec![check(0),check(1),defect])}),
-    ]);
-    let issues = review(
-        &model,
-        "Review instructional quality.",
-        json!({}),
-        &candidate(),
-        None,
-    )
-    .await?;
-    assert_eq!(issues.len(), 1);
-    assert_eq!(issues[0].site, Some(FindingSite::Section(2)));
-    assert_eq!(
-        issues[0].passage.as_deref(),
-        candidate()["blocks"][2]["body"].as_str()
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn malformed_json_is_corrected_as_a_review_not_as_lesson_content() -> Result<()> {
-    let model = ScriptedModel {
-        outputs: std::sync::Mutex::new(
-            vec![
-                "not json".into(),
-                json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![check(0),check(1),check(2)])}).to_string(),
-            ]
-            .into(),
-        ),
-        prompts: Default::default(),
-    };
-    assert!(review(
-        &model,
-        "Review instructional quality.",
-        json!({}),
-        &candidate(),
-        None,
-    )
-    .await?
-    .is_empty());
-    assert_eq!(model.prompts.lock().unwrap().len(), 2);
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_check_missing_its_passage_is_corrected_not_approved() -> Result<()> {
-    let mut incomplete = check(1);
-    incomplete.as_object_mut().unwrap().remove("passageId");
-    incomplete["hasDefect"] = json!(true);
-    let mut defect = check(1);
-    defect["hasDefect"] = json!(true);
-    let model = model(vec![
-        json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![check(0),incomplete,check(2)])}),
-        json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![check(0),defect,check(2)])}),
-    ]);
-    let issues = review(
-        &model,
-        "Review instructional quality.",
-        json!({}),
-        &candidate(),
-        None,
-    )
-    .await?;
-    assert_eq!(issues.len(), 1);
-    assert!(issues[0]
-        .note
-        .starts_with("Section 2 (candidate blocks-1):"));
-    assert_eq!(issues[0].site, Some(FindingSite::Section(1)));
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_long_issue_from_the_teaching_review_is_read_not_refused() -> Result<()> {
-    let long = format!(
-        "The worked example's stated result is wrong: {}",
-        "it contradicts the premise it was given. ".repeat(25)
-    );
-    assert!(long.chars().count() > 700);
-    let response =
-        json!({"issues":[long],"blockChecks":fixture_checks(vec![check(0),check(1),check(2)])});
-    let model = model(vec![response]);
-    let issues = review(
-        &model,
-        "Review instructional quality.",
-        json!({}),
-        &candidate(),
-        None,
-    )
-    .await?;
-    assert_eq!(issues.len(), 1);
-    assert_eq!(issues[0].note, long);
-    assert_eq!(model.prompts.lock().unwrap().len(), 1);
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_section_finding_of_any_length_is_read_not_refused() -> Result<()> {
-    let long = format!(
-        "The stated boundary condition is contradicted: {}",
-        "the membrane passes what it should hold back. ".repeat(20)
-    );
-    assert!(long.chars().count() > 700);
-    let mut terse = check(1);
-    terse["hasDefect"] = json!(true);
-    terse["finding"] = json!("Wrong.");
-    let mut lengthy = check(2);
-    lengthy["hasDefect"] = json!(true);
-    lengthy["finding"] = json!(long);
-    let model = model(vec![
-        json!({"issues":[],"blockChecks":fixture_checks(vec![check(0),terse,lengthy])}),
-    ]);
-    let issues = review(
-        &model,
-        "Review instructional quality.",
-        json!({}),
-        &candidate(),
-        None,
-    )
-    .await?;
-    let notes: Vec<_> = issues.iter().map(|issue| issue.note.clone()).collect();
-    assert_eq!(
-        notes,
-        vec![
-            "Section 2 (candidate blocks-1): Wrong.".to_owned(),
-            format!("Section 3 (candidate blocks-2): {long}"),
-        ]
-    );
-    assert_eq!(model.prompts.lock().unwrap().len(), 1);
-    Ok(())
-}
-
-/// The review carries the lesson beside the writer's prompt, whose
-/// excerpts filled the room the writer had: on a 9B's 32k window the
-/// review of a PostgreSQL lesson did not fit, and the lesson failed after
-/// an hour of checked work (2026-11-06). Six excerpts of 2,000 tokens
-/// here, the lesson citing the fifth, in a window that holds some.
-#[tokio::test]
-async fn a_review_too_big_for_its_window_keeps_the_excerpts_that_fit_the_cited_first() -> Result<()>
-{
-    let sources: Vec<_> = (0..6)
-        .map(|index| json!({"sourceIndex":index,"title":format!("Source {index}"),"url":null,"excerpt":"x ".repeat(4000)}))
-        .collect();
-    let mut lesson = candidate();
-    lesson["blocks"][1]["sourceIndex"] = json!(4);
-    let scripted = model(vec![
-        json!({"issues":[],"blockChecks":fixture_checks(vec![check(0),check(1),check(2)])}),
-    ]);
-    let window = Windowed(&scripted, 13_000);
-
-    review(
-        &window,
-        "Review instructional quality.",
-        json!({"authoringContext":{"goal":"Read query plans.","sources":sources}}),
-        &lesson,
-        None,
-    )
-    .await?;
-
-    let sent = scripted.prompts.lock().unwrap()[0].clone();
-    assert!(sent.contains("Source 4"));
-    assert!(!sent.contains("Source 5"));
-    Ok(())
-}
-
-#[test]
-fn the_review_schema_bounds_no_text_but_a_blank() {
-    let (_, passages) = review_candidate(&candidate());
-    let bounds =
-        crate::lessons::course_generation_tests::length_bounds(&schema(&[0, 1, 2], &passages, &[]));
-    assert!(bounds.is_empty(), "{bounds:?}");
-}
-
-fn asked(number: u32, index: usize) -> Asked {
-    Asked {
-        id: ReviewFinding::reviewer(number, Some(FindingSite::Section(index)), "x").id(),
-        site: FindingSite::Section(index),
-        passage_id: None,
-        note: "A defect.".to_owned(),
-    }
-}
-
-fn verdict_entry(number: u32, verdict: &str, quote: &str) -> Value {
-    json!({"id":format!("reviewer/{number}"),"quote":quote,"verdict":verdict})
-}
-
-fn sent(model: &ScriptedModel, call: usize) -> Value {
-    let prompts = model.prompts.lock().unwrap();
-    fixture_task(&prompts[call]).unwrap()
-}
-
-#[test]
-fn the_schema_asks_for_a_verdict_on_exactly_the_asked_ids_and_not_at_all_when_none_were_asked() {
-    let (_, passages) = review_candidate(&candidate());
-    let with = schema(&[0], &passages, &["reviewer/1", "reviewer/2"]);
-    assert_eq!(
-        with.pointer("/properties/openFindings/items/properties/id/enum"),
-        Some(&json!(["reviewer/1", "reviewer/2"]))
-    );
-    assert_eq!(
-        with.pointer("/properties/openFindings/minItems"),
-        Some(&json!(2))
-    );
-    assert_eq!(
-        with.pointer("/properties/openFindings/maxItems"),
-        Some(&json!(2))
-    );
-    assert_eq!(with["required"][0], "openFindings");
-    let without = schema(&[0], &passages, &[]);
-    assert!(without.pointer("/properties/openFindings").is_none());
-    assert!(!without["required"]
-        .as_array()
+/// The handle the task shows for passage `number` of section `section`.
+pub(super) fn passage(task: &Value, section: usize, number: usize) -> String {
+    task["candidate"]["blocks"][section]["bodyPassages"][number]["id"]
+        .as_str()
         .unwrap()
-        .contains(&json!("openFindings")));
+        .to_owned()
 }
 
-#[tokio::test]
-async fn an_answer_that_leaves_an_id_out_is_corrected_by_a_complete_one() -> Result<()> {
-    let asked = [asked(1, 0), asked(2, 0)];
-    let model = model(vec![
-        json!({"openFindings":[verdict_entry(1, "resolved", "")],"issues":[],"blockChecks":fixture_checks(vec![check(0)])}),
-        json!({"openFindings":[verdict_entry(1, "resolved", ""), verdict_entry(2, "present", " compiler is rustc. ")],"issues":[],"blockChecks":fixture_checks(vec![check(0)])}),
-    ]);
-    let judged = super::review(
-        &model,
-        "Review instructional quality.",
-        json!({}),
-        &candidate(),
-        Scope {
-            sections: Some(&[0]),
-            asked: Some(&asked),
-        },
-        None,
-    )
-    .await?;
-    assert_eq!(judged.verdicts.len(), 2);
-    assert_eq!(judged.verdicts[0].id, asked[0].id);
-    assert!(!judged.verdicts[0].present);
-    assert!(judged.verdicts[1].present);
-    assert_eq!(judged.verdicts[1].quote, "compiler is rustc.");
-    let prompts = model.prompts.lock().unwrap();
-    assert_eq!(prompts.len(), 2);
-    assert!(prompts[1].contains("reviewer/2 needs one verdict."));
-    Ok(())
+/// The handle the task shows for its `at`th open finding.
+pub(super) fn open(task: &Value, at: usize) -> String {
+    task["openFindings"][at]["id"].as_str().unwrap().to_owned()
 }
 
-#[tokio::test]
-async fn a_second_verdict_for_one_id_is_refused_then_leaves_its_finding_as_it_stood() -> Result<()>
-{
-    let asked = [asked(1, 0)];
-    let twice = || json!({"openFindings":[verdict_entry(1, "resolved", ""), verdict_entry(1, "present", "compiler is rustc.")],"issues":[],"blockChecks":fixture_checks(vec![check(0)])});
-    let model = model(vec![twice(), twice()]);
-    let judged = super::review(
-        &model,
-        "Review instructional quality.",
-        json!({}),
-        &candidate(),
-        Scope {
-            sections: Some(&[0]),
-            asked: Some(&asked),
-        },
-        None,
-    )
-    .await?;
-    assert!(judged.verdicts.is_empty());
-    let prompts = model.prompts.lock().unwrap();
-    assert_eq!(prompts.len(), 2);
-    assert!(prompts[1].contains("reviewer/1 needs one verdict."));
-    Ok(())
+/// An answer holding `entries`, one to an item.
+pub(super) fn items(entries: Vec<Value>) -> String {
+    let items: Vec<Value> = entries
+        .into_iter()
+        .map(|entry| json!({ "entry": entry }))
+        .collect();
+    json!({ "items": items }).to_string()
 }
 
-#[tokio::test]
-async fn a_verdict_on_an_id_nobody_asked_about_is_refused_then_dropped() -> Result<()> {
-    let asked = [asked(1, 0)];
-    let stray = || json!({"openFindings":[verdict_entry(1, "resolved", ""), verdict_entry(9, "resolved", "")],"issues":[],"blockChecks":fixture_checks(vec![check(0)])});
-    let model = model(vec![stray(), stray()]);
-    let judged = super::review(
-        &model,
-        "Review instructional quality.",
-        json!({}),
-        &candidate(),
-        Scope {
-            sections: Some(&[0]),
-            asked: Some(&asked),
-        },
-        None,
-    )
-    .await?;
-    assert_eq!(judged.verdicts.len(), 1);
-    assert_eq!(judged.verdicts[0].id, asked[0].id);
-    assert!(!judged.verdicts[0].present);
-    let prompts = model.prompts.lock().unwrap();
-    assert_eq!(prompts.len(), 2);
-    assert!(prompts[1].contains("reviewer/9 was not asked about"));
-    Ok(())
+pub(super) fn issue(note: &str) -> Value {
+    json!({"kind":"issue","note":note,"continues":"none"})
 }
 
-#[tokio::test]
-async fn the_scope_limits_the_sections_that_need_a_check() -> Result<()> {
-    let model = model(vec![
-        json!({"issues":[],"blockChecks":fixture_checks(vec![check(1)])}),
-    ]);
-    super::review(
-        &model,
-        "Review instructional quality.",
-        json!({}),
-        &candidate(),
-        Scope {
-            sections: Some(&[1]),
-            ..Scope::default()
-        },
-        None,
-    )
-    .await?;
-    assert_eq!(sent(&model, 0)["sectionIndicesToReview"], json!([1]));
-    Ok(())
+pub(super) fn defect(at: &str, finding: &str) -> Value {
+    json!({"kind":"sectionDefect","passageId":at,"finding":finding,"continues":"none"})
 }
 
-#[tokio::test]
-async fn a_first_review_sends_no_finding_keys() -> Result<()> {
-    let model = model(vec![
-        json!({"issues":[],"blockChecks":fixture_checks(vec![check(0), check(1), check(2)])}),
-    ]);
+pub(super) fn resolved(finding: &str) -> Value {
+    json!({"kind":"resolved","openFinding":finding})
+}
+
+/// A model that answers each review request of lens `L` with `answer` of its task.
+pub(super) fn reviewer<L: Lens>(
+    answer: impl Fn(&Value, usize) -> String + Send + Sync + 'static,
+) -> ScriptedModel {
+    ScriptedModel::new().on_request::<TeachingReview<L>>(move |sent: &Sent, nth| {
+        let text = if sent.request.schema().is_none() {
+            "The candidate reads as written.".to_owned()
+        } else {
+            answer(&task_of(&sent.request), nth)
+        };
+        let reply: BoxFuture<'static, Result<CompletionResponse>> =
+            Box::pin(std::future::ready(Ok(CompletionResponse::from_text(text))));
+        reply
+    })
+}
+
+pub(super) async fn run(model: &ScriptedModel, scope: Scope<'_>, remit: Remit) -> Result<Judged> {
     review(
-        &model,
+        model,
         "Review instructional quality.",
         json!({}),
         &candidate(),
-        None,
-    )
-    .await?;
-    let prompt = sent(&model, 0);
-    assert!(prompt.get("openFindings").is_none());
-    assert!(prompt.get("knownFindings").is_none());
-    assert_eq!(prompt["sectionIndicesToReview"], json!([0, 1, 2]));
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_correction_asks_for_every_verdict_again() -> Result<()> {
-    let asked = [asked(1, 0), asked(2, 0)];
-    let model = model(vec![
-        json!({"openFindings":[verdict_entry(1, "resolved", "")],"issues":[],"blockChecks":fixture_checks(vec![check(0)])}),
-        json!({"openFindings":[verdict_entry(1, "resolved", ""), verdict_entry(2, "resolved", "")],"issues":[],"blockChecks":fixture_checks(vec![check(0)])}),
-    ]);
-    super::review(
-        &model,
-        "Review instructional quality.",
-        json!({}),
-        &candidate(),
-        Scope {
-            sections: Some(&[0]),
-            asked: Some(&asked),
-        },
-        None,
-    )
-    .await?;
-    let ids = |call: usize| -> Vec<Value> {
-        sent(&model, call)["openFindings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|entry| entry["id"].clone())
-            .collect()
-    };
-    assert_eq!(ids(0), [json!("reviewer/1"), json!("reviewer/2")]);
-    assert_eq!(ids(1), [json!("reviewer/1"), json!("reviewer/2")]);
-    Ok(())
-}
-
-/// A first answer whose defect check for Section 2 names a passage of
-/// another section, then a correction with the same finding and `passage`.
-async fn a_defect_named_with_a_wrong_passage(passage: &str) -> (Judged, ScriptedModel) {
-    let finding = "The claimed membrane behavior contradicts the stated boundary condition.";
-    let mut wrong = check(1);
-    wrong["passageId"] = json!("section-0-passage-0");
-    wrong["hasDefect"] = json!(true);
-    wrong["finding"] = json!(finding);
-    let mut right = wrong.clone();
-    right["passageId"] = json!(passage);
-    let model = model(vec![
-        json!({"issues":["A general issue."],"blockChecks":fixture_checks(vec![check(0),wrong,check(2)])}),
-        json!({"issues":["A general issue."],"blockChecks":fixture_checks(vec![check(0),right,check(2)])}),
-    ]);
-    let judged = super::review(
-        &model,
-        "Review instructional quality.",
-        json!({}),
-        &candidate(),
-        Scope::default(),
-        None,
+        scope,
+        remit,
     )
     .await
-    .unwrap();
-    (judged, model)
 }
 
-#[tokio::test]
-async fn a_report_takes_its_passage_from_the_check_that_was_accepted() {
-    let (judged, _) = a_defect_named_with_a_wrong_passage("section-1-passage-0").await;
-    let section: Vec<_> = judged
-        .reported
-        .iter()
-        .filter(|reported| reported.site == Some(FindingSite::Section(1)))
-        .collect();
-    assert_eq!(section.len(), 1);
-    assert_eq!(
-        section[0].passage_id.as_deref(),
-        Some("section-1-passage-0")
-    );
-    let (shown, _) = review_candidate(&candidate());
-    assert_eq!(
-        section[0].passage.as_deref(),
-        shown["blocks"][1]["bodyPassages"][0]["text"].as_str()
-    );
-}
-
-#[test]
-fn a_schema_that_asks_about_open_findings_has_each_report_say_which_it_continues() {
-    let (_, passages) = review_candidate(&candidate());
-    let with = schema(&[0], &passages, &["reviewer/1", "reviewer/2"]);
-    let choices = json!(["reviewer/1", "reviewer/2", "none"]);
-    assert_eq!(
-        with.pointer("/properties/blockChecks/items/properties/continues/enum"),
-        Some(&choices)
-    );
-    assert!(with["properties"]["blockChecks"]["items"]["required"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("continues")));
-    assert_eq!(
-        with.pointer("/properties/issues/items/properties/continues/enum"),
-        Some(&choices)
-    );
-    assert_eq!(
-        with.pointer("/properties/issues/items/properties/note/minLength"),
-        Some(&json!(1))
-    );
-}
-
-#[test]
-fn a_schema_that_asks_about_nothing_is_the_one_it_was_before_reports_could_continue() {
-    let (_, passages) = review_candidate(&candidate());
-    let expected = json!({"type":"object","additionalProperties":false,"required":["issues","blockChecks"],"properties":{
-        "issues":{"type":"array","items":{"type":"string","minLength":1}},
-        "blockChecks":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["sectionId","passageId","finding","hasDefect"],"properties":{
-            "sectionId":{"type":"string","enum":["section-0"]},
-            "passageId":{"type":"string","enum":passages[0]},
-            "finding":{"type":"string","minLength":1},
-            "hasDefect":{"type":"boolean"}}}}}});
-    assert_eq!(schema(&[0], &passages, &[]), expected);
-}
-
-/// The schema of a review that was asked about `asked`.
-fn issue_schema(asked: &[&str]) -> Value {
-    let (_, passages) = review_candidate(&candidate());
-    schema(&[0], &passages, asked)
-}
-
-#[test]
-fn an_asked_finding_can_be_continued_so_an_issue_is_an_object_when_any_finding_is_asked() {
-    let asked = issue_schema(&["reviewer/1", "reviewer/2"]);
-    assert_eq!(
-        asked.pointer("/properties/issues/items/required"),
-        Some(&json!(["note", "continues"]))
-    );
-    let choices = json!(["reviewer/1", "reviewer/2", "none"]);
-    assert_eq!(
-        asked.pointer("/properties/issues/items/properties/continues/enum"),
-        Some(&choices)
-    );
-    assert_eq!(
-        asked.pointer("/properties/blockChecks/items/properties/continues/enum"),
-        Some(&choices)
-    );
-    assert_eq!(
-        asked.pointer("/properties/openFindings/items/properties/id/enum"),
-        Some(&json!(["reviewer/1", "reviewer/2"]))
-    );
-}
-
-/// Passes before and after the fix: with nothing shown an issue is plain text.
-#[test]
-fn with_no_finding_shown_an_issue_is_a_plain_string() {
-    let plain = issue_schema(&[]);
-    assert_eq!(
-        plain.pointer("/properties/issues/items"),
-        Some(&json!({"type":"string","minLength":1}))
-    );
-}
-
-#[tokio::test]
-async fn a_report_carries_the_open_finding_it_continues_and_none_for_an_id_nobody_asked_about(
-) -> Result<()> {
-    let asked = [asked(1, 0)];
-    let mut flagged = check(0);
-    flagged["hasDefect"] = json!(true);
-    flagged["continues"] = json!("reviewer/1");
-    let model = model(vec![json!({
-        "openFindings":[verdict_entry(1, "present", "compiler is rustc.")],
-        "issues":[
-            {"note":"The same defect in new words.","continues":"reviewer/1"},
-            {"note":"A different defect.","continues":"none"},
-            {"note":"A stray id.","continues":"reviewer/9"}
-        ],
-        "blockChecks":fixture_checks(vec![flagged])
-    })]);
-    let judged = super::review(
-        &model,
-        "Review instructional quality.",
-        json!({}),
-        &candidate(),
-        Scope {
-            sections: Some(&[0]),
-            asked: Some(&asked),
-        },
-        None,
-    )
-    .await?;
-    let continues: Vec<_> = judged
-        .reported
-        .iter()
-        .map(|report| report.continues.clone())
-        .collect();
-    assert_eq!(
-        continues,
-        [
-            Some(asked[0].id.clone()),
-            None,
-            None,
-            Some(asked[0].id.clone())
-        ]
-    );
-    Ok(())
-}
-
-fn two_parts() -> Value {
-    json!({"blocks":[{"body":"Alpha holds the line."},{"body":"Beta follows alpha."}],"questions":[]})
-}
-
-fn quoted(number: u32, verdict: &str, quote: &str) -> Value {
-    json!({"id":format!("reviewer/{number}"),"quote":quote,"verdict":verdict})
-}
-
-fn asked_at(number: u32, site: FindingSite) -> Asked {
+pub(super) fn asked_at(number: u32, site: FindingSite) -> Asked {
+    let finding = ReviewFinding::reviewer(number, Some(site), format!("Alpha {number} fails."));
     Asked {
-        id: ReviewFinding::reviewer(number, Some(site), "x").id(),
+        id: finding.id(),
         site,
-        passage_id: None,
-        note: "A defect.".to_owned(),
+        passage_id: Some(format!("{}-passage-0", site.id_text())),
+        note: finding.note.clone(),
     }
 }
 
-/// The verdicts of a review of section 0 that was asked about `asked`, given
-/// `replies` in turn.
-async fn judge(asked: &[Asked], replies: Vec<Value>) -> (Vec<Verdict>, ScriptedModel) {
-    let model = model(replies);
-    let judged = super::review(
-        &model,
-        "Review instructional quality.",
-        json!({}),
-        &two_parts(),
-        Scope {
-            sections: Some(&[0]),
-            asked: Some(asked),
-        },
-        None,
-    )
-    .await
-    .unwrap();
-    (judged.verdicts, model)
-}
-
-fn answer_of(verdicts: Vec<Value>, checks: Vec<Value>) -> Value {
-    json!({"openFindings":verdicts,"issues":[],"blockChecks":fixture_checks(checks)})
+#[tokio::test]
+async fn an_issue_and_a_section_defect_are_read_and_placed() {
+    let model = reviewer::<Anything>(|task, _| {
+        items(vec![
+            issue("The lesson never states its aim."),
+            defect(
+                &passage(task, 2, 0),
+                "The rest comes after rolling, not before.",
+            ),
+        ])
+    });
+    let judged = run(&model, Scope::default(), Remit::Open).await.unwrap();
+    assert_eq!(judged.reported.len(), 2);
+    assert_eq!(judged.reported[0].site, None);
+    assert_eq!(
+        judged.reported[0].summary,
+        "The lesson never states its aim."
+    );
+    let placed = &judged.reported[1];
+    assert_eq!(placed.site, Some(FindingSite::Section(2)));
+    assert_eq!(placed.passage_id.as_deref(), Some("section-2-passage-0"));
+    assert_eq!(
+        placed.passage.as_deref(),
+        Some(passages_of(&candidate())[2][0].1.as_str())
+    );
+    assert!(placed
+        .note
+        .starts_with(&format!("{}: ", FindingSite::Section(2).note_label())));
+    assert!(judged.verdicts.is_empty());
 }
 
 #[tokio::test]
-async fn a_present_verdict_whose_quote_is_not_in_its_part_is_asked_for_again_once_then_leaves_its_finding_as_it_stood(
+async fn a_defect_that_points_at_nothing_shown_is_left_out_and_the_others_stand() {
+    let model = reviewer::<Anything>(|task, _| {
+        items(vec![
+            defect("p99", "A claim outside the lesson."),
+            defect(
+                &passage(task, 1, 0),
+                "The membrane claim contradicts the example.",
+            ),
+        ])
+    });
+    let judged = run(&model, Scope::default(), Remit::Open).await.unwrap();
+    assert_eq!(judged.reported.len(), 1);
+    assert_eq!(judged.reported[0].site, Some(FindingSite::Section(1)));
+}
+
+#[tokio::test]
+async fn a_blank_issue_and_a_blank_defect_are_dropped_and_equal_notes_count_once() {
+    let model = reviewer::<Anything>(|task, _| {
+        let at = passage(task, 0, 0);
+        items(vec![
+            issue("   "),
+            defect(&at, ""),
+            issue("The workload is unrealistic."),
+            issue("The workload is unrealistic."),
+        ])
+    });
+    let judged = run(&model, Scope::default(), Remit::Open).await.unwrap();
+    assert_eq!(judged.reported.len(), 1);
+}
+
+#[tokio::test]
+async fn only_passages_of_sections_in_review_carry_a_name() {
+    let model = reviewer::<Anything>(|_, _| items(vec![]));
+    let scope = Scope {
+        sections: Some(&[0, 2]),
+        asked: None,
+    };
+    run(&model, scope, Remit::Open).await.unwrap();
+    let task = model
+        .sent()
+        .iter()
+        .filter(|sent| sent.request.schema().is_some())
+        .map(|sent| task_of(&sent.request))
+        .next()
+        .unwrap();
+    let blocks = task["candidate"]["blocks"].as_array().unwrap();
+    let marks: Vec<Value> = blocks
+        .iter()
+        .map(|block| block["inReview"].clone())
+        .collect();
+    assert_eq!(marks, [json!(true), json!(false), json!(true)]);
+    assert!(blocks[0]["bodyPassages"][0].get("id").is_some());
+    assert!(blocks[1]["bodyPassages"][0].get("id").is_none());
+    assert!(blocks[1]["bodyPassages"][0].get("text").is_some());
+    assert!(blocks.iter().all(|block| block.get("label").is_some()));
+}
+
+#[tokio::test]
+async fn an_open_finding_reported_resolved_is_gone_and_one_left_unmarked_is_present() {
+    let asked = [
+        asked_at(1, FindingSite::Section(0)),
+        asked_at(2, FindingSite::Section(1)),
+    ];
+    let model = reviewer::<Anything>(|task, _| items(vec![resolved(&open(task, 1))]));
+    let scope = Scope {
+        sections: Some(&[0]),
+        asked: Some(&asked),
+    };
+    let judged = run(&model, scope, Remit::Open).await.unwrap();
+    let verdict = |id: &FindingId| {
+        judged
+            .verdicts
+            .iter()
+            .find(|v| &v.id == id)
+            .map(|v| v.present)
+    };
+    assert_eq!(verdict(&asked[0].id), Some(true));
+    assert_eq!(verdict(&asked[1].id), Some(false));
+}
+
+#[tokio::test]
+async fn the_open_findings_are_shown_by_handle_and_the_hash_id_never_is() {
+    let asked = [asked_at(1, FindingSite::Section(0))];
+    let model = reviewer::<Anything>(|_, _| items(vec![]));
+    let scope = Scope {
+        sections: Some(&[0]),
+        asked: Some(&asked),
+    };
+    run(&model, scope, Remit::Open).await.unwrap();
+    let sent = model.sent();
+    let request = sent.iter().find(|s| s.request.schema().is_some()).unwrap();
+    let task = task_of(&request.request);
+    let entry = &task["openFindings"][0];
+    assert_eq!(entry["id"], "f1");
+    assert_eq!(entry["part"], "Section 1");
+    assert_eq!(entry["passageId"], passage(&task, 0, 0));
+    assert!(!task.to_string().contains(asked[0].id.as_str()));
+}
+
+#[tokio::test]
+async fn a_report_carries_the_open_finding_it_continues() {
+    let asked = [asked_at(1, FindingSite::Section(0))];
+    let model = reviewer::<Anything>(|task, _| {
+        let mut continuing = issue("The same gap, worded differently.");
+        continuing["continues"] = json!(open(task, 0));
+        items(vec![continuing, issue("A different gap.")])
+    });
+    let scope = Scope {
+        sections: Some(&[0]),
+        asked: Some(&asked),
+    };
+    let judged = run(&model, scope, Remit::Open).await.unwrap();
+    assert_eq!(judged.reported[0].continues.as_ref(), Some(&asked[0].id));
+    assert_eq!(judged.reported[1].continues, None);
+}
+
+#[tokio::test]
+async fn a_cut_off_answer_keeps_what_closed_leaves_open_findings_as_they_stood_and_asks_for_the_rest(
 ) {
+    let asked = [asked_at(1, FindingSite::Section(0))];
+    let model = ScriptedModel::new().on_request::<TeachingReview<Anything>>(|sent, _| {
+        let reply: BoxFuture<'static, Result<CompletionResponse>> =
+            if sent.request.schema().is_none() {
+                Box::pin(std::future::ready(Ok(CompletionResponse::from_text(
+                    "The candidate reads as written.",
+                ))))
+            } else if task_of(&sent.request).get("alreadyReported").is_none() {
+                let cut = format!(
+                    "{{\"items\":[{{\"entry\":{}}},{{\"entry\":{{\"kind\":\"iss",
+                    issue("The first gap stands.")
+                );
+                Box::pin(std::future::ready(Ok(CompletionResponse {
+                    finish_reason: "length".into(),
+                    ..CompletionResponse::from_text(cut)
+                })))
+            } else {
+                Box::pin(std::future::ready(Ok(CompletionResponse::from_text(
+                    items(vec![issue("The second gap.")]),
+                ))))
+            };
+        reply
+    });
+    let scope = Scope {
+        sections: Some(&[0]),
+        asked: Some(&asked),
+    };
+    let judged = run(&model, scope, Remit::Open).await.unwrap();
+    let notes: Vec<&str> = judged.reported.iter().map(|r| r.note.as_str()).collect();
+    assert_eq!(notes, ["The first gap stands.", "The second gap."]);
+    let later = model
+        .sent()
+        .iter()
+        .map(|sent| task_of(&sent.request))
+        .find(|task| task.get("alreadyReported").is_some())
+        .unwrap();
+    assert_eq!(later["alreadyReported"], json!(["The first gap stands."]));
+    assert_eq!(judged.verdicts.len(), 1);
+    assert!(judged.verdicts[0].present);
+}
+
+#[tokio::test]
+async fn a_cut_off_answer_with_no_closed_item_does_not_judge_an_open_finding_present() {
+    let asked = [asked_at(1, FindingSite::Section(0))];
+    let model = ScriptedModel::new().on_request::<TeachingReview<Anything>>(|sent, _| {
+        let text = if sent.request.schema().is_none() {
+            "The candidate reads as written.".to_owned()
+        } else {
+            "{\"items\":[{\"entry\":{\"kind\":\"res".to_owned()
+        };
+        let reply: BoxFuture<'static, Result<CompletionResponse>> =
+            Box::pin(std::future::ready(Ok(CompletionResponse {
+                finish_reason: "length".into(),
+                ..CompletionResponse::from_text(text)
+            })));
+        reply
+    });
+    let scope = Scope {
+        sections: Some(&[0]),
+        asked: Some(&asked),
+    };
+    assert!(run(&model, scope, Remit::Open).await.is_err());
+}
+
+#[tokio::test]
+async fn a_review_that_stays_unreadable_fails() {
+    let model = reviewer::<Anything>(|_, _| "no review here".to_owned());
+    assert!(run(&model, Scope::default(), Remit::Open).await.is_err());
+}
+
+#[tokio::test]
+async fn an_empty_complete_review_finds_nothing() {
+    let model = reviewer::<Anything>(|_, _| items(vec![]));
+    let judged = run(&model, Scope::default(), Remit::Open).await.unwrap();
+    assert!(judged.reported.is_empty() && judged.verdicts.is_empty());
+}
+
+#[tokio::test]
+async fn a_long_finding_is_read_not_refused() {
+    let long = "The step is wrong. ".repeat(400);
+    let said = long.clone();
+    let model =
+        reviewer::<Anything>(move |task, _| items(vec![defect(&passage(task, 0, 0), &said)]));
+    let judged = run(&model, Scope::default(), Remit::Open).await.unwrap();
+    assert_eq!(judged.reported[0].summary, long.trim());
+}
+
+#[tokio::test]
+async fn the_writers_excerpts_are_shown_the_cited_first() {
+    let prompt = json!({"authoringContext":{"sources":[
+        {"sourceIndex":0,"text":"Tide tables are revised each spring."},
+        {"sourceIndex":1,"text":"The harbour gate opens at first light."}
+    ]}});
+    let cited = json!({"blocks":[{"body":"The gate opens early.","sourceIndex":1}]});
+    let model = reviewer::<Anything>(|_, _| items(vec![]));
+    review(
+        &model,
+        "Review instructional quality.",
+        prompt,
+        &cited,
+        Scope::default(),
+        Remit::Open,
+    )
+    .await
+    .unwrap();
+    let task = model
+        .sent()
+        .iter()
+        .filter(|sent| sent.request.schema().is_some())
+        .map(|sent| task_of(&sent.request))
+        .next()
+        .unwrap();
+    let order: Vec<u64> = task["authoringContext"]["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|source| source["sourceIndex"].as_u64().unwrap())
+        .collect();
+    assert_eq!(order, [1, 0]);
+}
+
+#[test]
+fn the_review_request_shows_what_it_must_and_nothing_internal() {
+    let mut marks = Marks::new();
+    let finding = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "x");
+    let input = Input {
+        system: marks.told("Review the harbour notes with care.".to_owned()),
+        prompt: marks.told(json!({"task":"Review instructional quality at the quay","authoringContext":{"goal":"Learn the harbour tides"}})),
+        candidate: marks.told(json!({"blocks":[{"label":"Section 1","inReview":true,"bodyPassages":[{"text":"The harbour gate opens at first light."}]}]})),
+        passages: vec![Passage {
+            id: marks.reference("section-0-passage-0".to_owned()),
+            section: 0,
+            number: 0,
+        }],
+        sources: Packed::new(
+            vec![marks.told(json!({"text":"Tide tables are revised each spring."}))],
+            |_| 10,
+        ),
+        open: vec![OpenFinding {
+            id: marks.reference(finding.id()),
+            part: marks.told("Section 1".to_owned()),
+            passage: Some(marks.reference("section-0-passage-0".to_owned())),
+            note: marks.told("The kiln rota contradicts itself.".to_owned()),
+        }],
+        reported: marks.told(vec!["An earlier note about tide tables.".to_owned()]),
+    };
+    holds::<TeachingReview<Anything>>(&input, &marks);
+    holds::<TeachingReview<Concerns>>(&input, &marks);
+}
+
+#[tokio::test]
+async fn prompt_snapshot_teaching_review() {
     let asked = [
         asked_at(1, FindingSite::Section(0)),
         asked_at(2, FindingSite::Section(0)),
     ];
-    let bad = quoted(1, "present", "Gamma is absent here.");
-    let resolved = quoted(2, "resolved", "");
-    let (verdicts, model) = judge(
-        &asked,
-        vec![
-            answer_of(vec![bad.clone(), resolved.clone()], vec![check(0)]),
-            answer_of(vec![bad, resolved], vec![check(0)]),
-        ],
-    )
-    .await;
-    assert_eq!(verdicts.len(), 1);
-    assert_eq!(verdicts[0].id, asked[1].id);
-    assert!(!verdicts[0].present);
-    let prompts = model.prompts.lock().unwrap();
-    assert_eq!(prompts.len(), 2);
-    assert!(prompts[1].contains("reviewer/1: the quote is not in"));
-}
-
-#[tokio::test]
-async fn a_present_verdict_whose_quote_stands_in_its_part_is_kept_with_the_quote() {
-    let asked = [asked_at(1, FindingSite::Section(0))];
-    let (verdicts, model) = judge(
-        &asked,
-        vec![answer_of(
-            vec![quoted(1, "present", "Alpha holds the line.")],
-            vec![check(0)],
-        )],
-    )
-    .await;
-    assert!(verdicts[0].present);
-    assert_eq!(verdicts[0].quote, "Alpha holds the line.");
-    assert_eq!(model.prompts.lock().unwrap().len(), 1);
-}
-
-#[tokio::test]
-async fn a_finding_on_a_part_the_review_was_not_sent_to_is_judged_on_that_parts_text() {
-    let asked = [asked_at(1, FindingSite::Section(1))];
-    let (verdicts, model) = judge(
-        &asked,
-        vec![
-            answer_of(
-                vec![quoted(1, "present", "Alpha holds the line.")],
-                vec![check(0)],
-            ),
-            answer_of(
-                vec![quoted(1, "present", "Beta follows alpha.")],
-                vec![check(0)],
-            ),
-        ],
-    )
-    .await;
-    assert!(verdicts[0].present);
-    assert_eq!(verdicts[0].quote, "Beta follows alpha.");
-    assert_eq!(model.prompts.lock().unwrap().len(), 2);
-    let (kept, model) = judge(
-        &asked,
-        vec![answer_of(
-            vec![quoted(1, "present", "Beta follows alpha.")],
-            vec![check(0)],
-        )],
-    )
-    .await;
-    assert!(kept[0].present);
-    assert_eq!(model.prompts.lock().unwrap().len(), 1);
-}
-
-#[tokio::test]
-async fn a_finding_about_the_whole_lesson_is_grounded_by_words_in_any_part() {
-    let asked = [asked_at(1, FindingSite::Lesson)];
-    let (verdicts, model) = judge(
-        &asked,
-        vec![answer_of(
-            vec![quoted(1, "present", "Beta follows alpha.")],
-            vec![check(0)],
-        )],
-    )
-    .await;
-    assert!(verdicts[0].present);
-    assert_eq!(model.prompts.lock().unwrap().len(), 1);
-}
-
-#[tokio::test]
-async fn a_resolved_verdict_with_a_quote_is_just_resolved() {
-    let asked = [asked_at(1, FindingSite::Section(0))];
-    let (verdicts, model) = judge(
-        &asked,
-        vec![answer_of(
-            vec![quoted(1, "resolved", "Gamma is absent here.")],
-            vec![check(0)],
-        )],
-    )
-    .await;
-    assert!(!verdicts[0].present);
-    assert_eq!(model.prompts.lock().unwrap().len(), 1);
-}
-
-#[test]
-fn a_verdict_is_an_id_a_quote_and_a_judgement_in_that_order_with_no_note() {
-    let (_, passages) = review_candidate(&candidate());
-    let with = schema(&[0], &passages, &["reviewer/1"]);
-    assert_eq!(
-        with.pointer("/properties/openFindings/items/required"),
-        Some(&json!(["id", "quote", "verdict"]))
-    );
-    let fields: Vec<&String> = with
-        .pointer("/properties/openFindings/items/properties")
-        .and_then(Value::as_object)
-        .unwrap()
-        .keys()
-        .collect();
-    assert_eq!(fields, ["id", "quote", "verdict"]);
-}
-
-#[test]
-fn the_open_findings_sentence_sends_the_reviewer_to_the_part_as_it_now_stands_listed_or_not() {
-    assert!(OPEN_FINDINGS_BRIEF.contains("whether or not sectionIndicesToReview lists that part"));
-    assert!(OPEN_FINDINGS_BRIEF.contains("quote"));
-}
-
-#[tokio::test]
-async fn a_verdict_quote_is_stored_as_the_lesson_bytes() {
-    let asked = [asked_at(1, FindingSite::Section(0))];
-    let lesson = json!({"blocks":[{"body":"The borrow checker’s rule holds."}],"questions":[]});
-    let model = model(vec![answer_of(
-        vec![quoted(1, "present", "the borrow checker's rule")],
-        vec![check(0)],
-    )]);
-    let judged = super::review(
-        &model,
+    let scripted = reviewer::<Anything>(|task, _| items(vec![resolved(&open(task, 1))]));
+    let log = RequestLog::new(&scripted);
+    super::review(
+        &log,
         "Review instructional quality.",
-        json!({}),
-        &lesson,
+        json!({"priorKnowledge":"The learner has seen a map of the town."}),
+        &two_parts(),
         Scope {
             sections: Some(&[0]),
             asked: Some(&asked),
         },
-        None,
+        Remit::Open,
     )
     .await
     .unwrap();
-    assert_eq!(judged.verdicts[0].quote, "The borrow checker’s rule");
+    log.assert_snapshot::<TeachingReview<Anything>>();
 }
 
-#[tokio::test]
-async fn a_teaching_review_that_stays_unreadable_fails_the_lesson() {
-    let unreadable = json!({"issues":[],"blockChecks":[]});
-    let model = model(vec![unreadable; 6]);
-    let result = review(
-        &model,
-        "Review instructional quality.",
-        json!({}),
-        &candidate(),
-        None,
-    )
-    .await;
-    assert!(matches!(result, Err(AppError::ModelAnswerUnusable(_))));
-    assert_eq!(model.prompts.lock().unwrap().len(), 2);
+fn two_parts() -> Value {
+    json!({"blocks":[{"body":"Alpha holds the line."},{"body":"Beta holds another."}]})
 }
 
-#[tokio::test]
-async fn a_blank_issue_left_after_the_correction_is_dropped_in_an_outline_review() {
-    let long = format!(
-        "The worked example's stated result is wrong: {}",
-        "x".repeat(720)
-    );
-    let mut blank = check(1);
-    blank["hasDefect"] = json!(true);
-    blank["finding"] = json!("  ");
-    let first = json!({"issues":["  "],"blockChecks":fixture_checks(vec![check(0),blank.clone(),check(2)])});
-    let second =
-        json!({"issues":[" ",long],"blockChecks":fixture_checks(vec![check(0),blank,check(2)])});
-    let model = model(vec![first, second]);
-    let issues = review(
-        &model,
-        "Review instructional quality.",
-        json!({}),
-        &candidate(),
-        None,
-    )
-    .await
-    .unwrap();
-    assert_eq!(issues.len(), 1);
-    assert_eq!(issues[0].note, long);
+fn shown_prompt() -> String {
+    let task = json!({
+        "candidate":{"blocks":[
+            {"bodyPassages":[{"id":"p1","text":"Alpha holds the line."}]},
+            {"bodyPassages":[{"id":"p2","text":"Beta holds another."}]}
+        ]},
+        "openFindings":[
+            {"id":"f1","part":"Section 1","note":"First."},
+            {"id":"f2","part":"Section 2","note":"Second."}
+        ]
+    });
+    format!("Review instructional quality.\n{ANSWER_FORM}\n\n{task}")
+}
+
+fn translated(script: Value) -> Vec<Value> {
+    let reply = scripted::reply(&shown_prompt(), &script.to_string()).unwrap();
+    serde_json::from_str::<Value>(&reply).unwrap()["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["entry"].clone())
+        .collect()
 }
 
 #[test]
-fn the_review_contract_reads_what_it_renders() {
-    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
-        TeachingReview,
-    >(&Review {
-        issues: vec![
-            Issue::Plain("A step is missing.".into()),
-            Issue::Continuing {
-                note: "Still missing.".into(),
-                continues: Some("finding-1".into()),
-            },
-            Issue::Continuing {
-                note: "A new gap.".into(),
-                continues: None,
-            },
-        ],
-        block_checks: vec![json!({"sectionId":"section-1","hasDefect":false})],
-        open_findings: vec![json!({"id":"finding-1","quote":"","verdict":"resolved"})],
-    });
+fn a_scripted_issue_becomes_an_issue_entry_that_continues_the_open_finding() {
+    let entries =
+        translated(json!({"issues":["A gap.",{"note":"Again.","continues":"reviewer/2"}]}));
+    assert_eq!(
+        entries[0],
+        json!({"kind":"issue","note":"A gap.","continues":"none"})
+    );
+    assert_eq!(entries[1]["continues"], "f1");
+}
+
+#[test]
+fn a_scripted_section_defect_lands_on_the_handle_of_its_passage() {
+    let entries = translated(json!({"issues":[],"sectionDefects":[
+        {"passageId":"section-1-passage-0","finding":"Beta fails."}
+    ]}));
+    assert_eq!(
+        entries,
+        [
+            json!({"kind":"sectionDefect","passageId":"p2","finding":"Beta fails.","continues":"none"})
+        ]
+    );
+}
+
+#[test]
+fn a_scripted_resolved_verdict_is_an_entry_and_a_present_one_is_none() {
+    let entries = translated(json!({"issues":[],"openFindings":[
+        {"id":"reviewer/1","quote":"","verdict":"present"},
+        {"id":"reviewer/2","quote":"","verdict":"resolved"}
+    ]}));
+    assert_eq!(entries, [json!({"kind":"resolved","openFinding":"f2"})]);
+}
+
+#[test]
+fn a_reply_already_in_the_layers_form_passes_through() {
+    let new = items(vec![issue("A gap.")]);
+    assert_eq!(scripted::reply(&shown_prompt(), &new), None);
+    assert_eq!(scripted::reply("Another request.", "{\"issues\":[]}"), None);
 }

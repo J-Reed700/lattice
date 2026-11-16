@@ -17,6 +17,9 @@ use lattice_core::application::ports::{EmbeddingPort, LLMPort};
 use lattice_core::application::services::chat_model_resolution::{
     resolve, resolve_learning, DefaultChatModel,
 };
+use lattice_core::application::services::model_contract::kept::{
+    KeptNames, MemoryNames, TurnNames,
+};
 use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::JobRuntime;
@@ -79,6 +82,7 @@ pub(in crate::features::conversation) struct FakeRuntime {
     /// One picture store per test, so what a turn stored, attached and
     /// released can be read back.
     pub(in crate::features::conversation) images: Arc<FakeChatImages>,
+    pub(in crate::features::conversation) names: Arc<KeptNames>,
 }
 
 impl Default for FakeRuntime {
@@ -101,6 +105,7 @@ impl Default for FakeRuntime {
             page_reader: None,
             records: None,
             images: Arc::default(),
+            names: Arc::new(KeptNames::new(Arc::new(MemoryNames::new()))),
         }
     }
 }
@@ -515,14 +520,18 @@ impl ChatStorage for FakeRuntime {
         unreachable!("{UNUSED}")
     }
     fn conversation_branches(&self) -> Arc<dyn ConversationBranches> {
-        unreachable!("{UNUSED}")
+        self.conversations.clone()
     }
     async fn turn_source(
         &self,
         _conversation_id: &str,
         _focus: Option<&lattice_core::application::contracts::explorer::ExplorerFocusDto>,
+        _names: Arc<TurnNames>,
     ) -> Option<TurnSource> {
         None
+    }
+    fn kept_names(&self) -> Arc<KeptNames> {
+        self.names.clone()
     }
 }
 
@@ -733,5 +742,11 @@ impl LLMPort for Scripted {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }

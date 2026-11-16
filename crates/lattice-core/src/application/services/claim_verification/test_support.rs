@@ -1,6 +1,6 @@
 //! What a scripted model that knows exactly some facts answers every judge.
 use super::*;
-use crate::application::services::model_contract::test_support::{Reply, ScriptedModel};
+use crate::application::services::model_contract::test_support::{Reply, ScriptedModel, Sent};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -171,36 +171,42 @@ fn answer_check(truth: &Truth, input: &CheckInput) -> Reply<CheckReply> {
     }
 }
 
-fn answer_batch(truth: &Truth, input: &BatchInput) -> Reply<BatchReply> {
-    let mut checks = Vec::new();
-    for claim in &input.claims {
-        let fact = match truth.fact(&claim.claim) {
-            Ok(fact) => fact,
-            Err(what) => return Reply::Miss(what),
-        };
-        let texts: Vec<String> = claim.passages.iter().map(|p| p.text.clone()).collect();
+fn answer_batch(truth: &Truth, sent: &Sent) -> Result<CompletionResponse> {
+    let mut entries = Vec::new();
+    for claim in batch::shown_claims(&sent.request) {
+        let fact = truth.fact(&claim.claim).map_err(AppError::InternalError)?;
+        let texts: Vec<String> = claim
+            .passages
+            .iter()
+            .map(|(_, text)| text.clone())
+            .collect();
         let parts = fact.read(&claim.claim, &texts);
         let (verdict, at) = page(&parts);
         let source = at
             .and_then(|at| claim.passages.get(at))
-            .map_or_else(|| "none".to_owned(), |passage| passage.id.clone());
-        let reason = why(&parts).to_owned();
-        checks.push((
-            claim.id.clone(),
-            CheckReply {
-                verdict,
-                reason,
-                source: Some(source),
-            },
-        ));
+            .map_or("none", |(id, _)| id.as_str());
+        entries.push(serde_json::json!({
+            "of": claim.of,
+            "reason": why(&parts),
+            "source": source,
+            "verdict": verdict.as_str(),
+        }));
     }
-    Reply::Answer(BatchReply { checks })
+    Ok(CompletionResponse::from_text(
+        serde_json::json!({ "entries": entries }).to_string(),
+    ))
 }
 
 fn answer_parts(truth: &Truth, input: &PartsInput) -> Reply<BridgeOutcome> {
-    match truth.fact(&input.statement) {
+    let statement = &input.statement.0;
+    match truth.fact(statement) {
         Ok(fact) => {
-            let parts = fact.read(&input.statement, &input.passages);
+            let shown: Vec<String> = input
+                .passages
+                .iter()
+                .map(|passage| passage.text.0.clone())
+                .collect();
+            let parts = fact.read(statement, &shown);
             Reply::Answer(BridgeOutcome {
                 reason: why(&parts).to_owned(),
                 parts,
@@ -261,7 +267,10 @@ impl ScriptedModel {
         );
         Self::new()
             .on_nth::<ClaimCheck>(move |input, _| answer_check(&check, input))
-            .on_nth::<ClaimBatch>(move |input, _| answer_batch(&batch, input))
+            .on_request::<ClaimBatch>(move |sent, _| {
+                let answer = answer_batch(&batch, sent);
+                Box::pin(async move { answer })
+            })
             .on_nth::<ClaimParts>(move |input, _| answer_parts(&parts, input))
             .on_nth::<Consistency>(move |input, _| answer_consistency(&consistency, input))
             .on_nth::<Knowledge>(move |input, _| answer_knowledge(&knowledge, input))
@@ -324,6 +333,16 @@ mod tests {
             .check_bridge(statement, shown)
             .await;
         judged(answered.judgments).parts
+    }
+
+    #[tokio::test]
+    async fn an_enforcing_backend_is_asked_for_at_least_one_part() {
+        let model = ScriptedModel::judging(truth()).enforcing();
+        bridged(&model, PARTS, &shown()).await;
+
+        let sent = model.sent();
+        let schema = sent[0].request.schema().unwrap().as_json();
+        assert_eq!(schema["properties"]["parts"]["minItems"], 1, "{schema}");
     }
 
     #[tokio::test]
@@ -459,6 +478,97 @@ mod tests {
             .check_knowledge(COMMON, Some("A worked case."))
             .await;
         assert!(judged(with_case).is_common());
+    }
+
+    #[tokio::test]
+    async fn a_strict_check_of_one_evidence_text_is_the_located_form_over_one_passage() {
+        let model = ScriptedModel::judging(truth());
+        let evidence = ClaimEvidence {
+            text: LEXER.into(),
+            quote: None,
+        };
+        let outcome = judged(
+            checker(&model, CheckPolicy::Strict)
+                .check(STATED, &evidence)
+                .await,
+        );
+        assert_eq!(outcome.verdict, ClaimVerdict::Supported);
+        assert_eq!(outcome.quote.as_deref(), Some(LEXER));
+        let inputs = model.inputs::<ClaimCheck>();
+        assert_eq!(inputs.len(), 1);
+        assert!(inputs[0].located && inputs[0].reasoned);
+        assert_eq!(inputs[0].passages, vec![LEXER.to_owned()]);
+    }
+
+    fn assert_snapshot<C: Contract>(model: &ScriptedModel, name: &str) {
+        let requests = model
+            .sent()
+            .into_iter()
+            .filter(|sent| sent.call.id == C::ID)
+            .map(|sent| sent.request)
+            .collect::<Vec<_>>();
+        crate::application::services::model_contract::test_support::snapshot::assert_requests(
+            env!("CARGO_MANIFEST_DIR"),
+            name,
+            &requests,
+        );
+    }
+
+    #[tokio::test]
+    async fn prompt_snapshot_claim_check() {
+        let model = ScriptedModel::judging(truth());
+        let outcome = checker(&model, CheckPolicy::Strict)
+            .check_passages_without_deadline(STATED, &shown())
+            .await;
+        assert_eq!(judged(outcome).verdict, ClaimVerdict::Supported);
+        assert_snapshot::<ClaimCheck>(&model, "claim-check");
+    }
+
+    #[tokio::test]
+    async fn prompt_snapshot_claim_batch() {
+        let model = ScriptedModel::judging(truth());
+        let claim = |claim: &str, passages: &[&str]| LocatedClaim {
+            claim: claim.into(),
+            passages: passages.iter().map(|text| (*text).to_owned()).collect(),
+        };
+        let claims = [
+            claim(STATED, &[LEXER]),
+            claim(CONTRADICTED, &[LEXER, NEVER_PARSES]),
+        ];
+        let answered = checker(&model, CheckPolicy::Strict)
+            .check_batch_without_deadline(&claims, &|_| Ok(()), &|_| Ok(()))
+            .await
+            .unwrap();
+        assert_eq!(answered.judgments.len(), 2);
+        assert_snapshot::<ClaimBatch>(&model, "claim-batch");
+    }
+
+    #[tokio::test]
+    async fn prompt_snapshot_claim_parts() {
+        let model = ScriptedModel::judging(truth());
+        let parts = bridged(&model, PARTS, &shown()).await;
+        assert_eq!(parts.len(), 2);
+        assert_snapshot::<ClaimParts>(&model, "claim-parts");
+    }
+
+    #[tokio::test]
+    async fn prompt_snapshot_consistency() {
+        let model = ScriptedModel::judging(truth());
+        let outcome = checker(&model, CheckPolicy::Consistency)
+            .check_consistency(STATED, &shown())
+            .await;
+        assert_eq!(judged(outcome).verdict, ConsistencyVerdict::Consistent);
+        assert_snapshot::<Consistency>(&model, "consistency");
+    }
+
+    #[tokio::test]
+    async fn prompt_snapshot_knowledge() {
+        let model = ScriptedModel::judging(truth());
+        let outcome = checker(&model, CheckPolicy::Knowledge)
+            .check_knowledge(COMMON, Some("A worked case."))
+            .await;
+        assert!(judged(outcome).is_common());
+        assert_snapshot::<Knowledge>(&model, "knowledge");
     }
 
     #[tokio::test]

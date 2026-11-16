@@ -18,6 +18,7 @@ use tracing::warn;
 use super::model::OcrModel;
 use super::server::{RunningServer, ServerLauncher, ServerProcess};
 use lattice_core::application::ports::OcrError;
+use lattice_core::shared::error::WithCauses;
 use lattice_core::shared::process::BoundCommand;
 
 /// Context per request: the page image costs about 1,250 tokens at the
@@ -179,7 +180,7 @@ async fn wait_ready(
     let http = lattice_core::shared::http::loopback_client_builder()
         .timeout(HEALTH_PROBE_TIMEOUT)
         .build()
-        .map_err(|error| format!("no HTTP client: {error}"))?;
+        .map_err(|error| format!("no HTTP client: {}", WithCauses(&error)))?;
     let deadline = Instant::now() + READY_TIMEOUT;
     loop {
         if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {

@@ -1,12 +1,25 @@
 #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 
+use super::answer::{DebriefAnswer, Input, Score};
+use super::plan::Plan;
+use super::statements::DebriefStatements;
+use super::telling::{render, Rendered};
+use super::things::{Example, Hinted, Line, Run, Said, Scored};
 use super::*;
+use crate::lessons::structured_call::task_messages;
 use crate::practice::practical_dto::{LearningSimulationSpeaker, LearningSimulationTurnDto};
-use crate::practice::session::fake_kind::{fake_kind, letters_exercise, ScriptedModel};
+use crate::practice::session::fake_kind::{fake_kind, letters_exercise};
 use crate::practice::session::kind::Kind;
 use crate::practice::session::record::{
     DebriefSession, EventKind, SessionCheck, SessionEvent, SessionHint, SessionLearnerCase,
 };
+use futures::future::BoxFuture;
+use lattice_core::application::ports::llm_port::CompletionResponse;
+use lattice_core::application::services::model_contract::shape::Vocabulary;
+use lattice_core::application::services::model_contract::shown::Told;
+use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
+use lattice_core::application::services::model_contract::test_support::{ScriptedModel, Sent};
+use lattice_core::application::services::model_contract::Contract;
 use lattice_core::domain::learning::practice::work::{
     CaseResult, CaseStatus, CheckReport, CheckScope, CheckStatus, Form, LearnerCaseVerdict,
     PartRef, Piece, Rung, Setting, Stage,
@@ -107,61 +120,104 @@ fn session() -> DebriefSession {
     }
 }
 
-fn quote(turn: &str, text: &str) -> Value {
-    json!({"kind": "quote", "ref": turn, "text": text, "index": 0})
+const HOLE_S0: &str = "\u{1}s0\u{2}";
+
+fn reply(
+    text: String,
+) -> BoxFuture<'static, lattice_core::shared::error::Result<CompletionResponse>> {
+    Box::pin(std::future::ready(Ok(CompletionResponse::from_text(text))))
 }
 
-fn slot(check: &str, index: u32) -> Value {
-    json!({"kind": "slot", "ref": check, "text": "", "index": index})
+fn scripted(rows: impl Fn(&Sent, usize) -> String + Send + Sync + 'static) -> ScriptedModel {
+    ScriptedModel::new().on_request::<DebriefAnswer>(move |sent, nth| reply(rows(sent, nth)))
 }
 
-fn check_item(check: &str) -> Value {
-    json!({"kind": "check", "ref": check, "text": "", "index": 0})
+fn also_stating(
+    model: ScriptedModel,
+    texts: impl Fn(&Sent, usize) -> String + Send + Sync + 'static,
+) -> ScriptedModel {
+    model.on_request::<DebriefStatements>(move |sent, nth| reply(texts(sent, nth)))
 }
 
-fn case_item(ordinal: &str) -> Value {
-    json!({"kind": "case", "ref": ordinal, "text": "", "index": 0})
+/// The nth of `texts` for the nth request, and an answer with no entries after them.
+fn in_turn(texts: Vec<String>) -> impl Fn(&Sent, usize) -> String + Send + Sync + 'static {
+    move |_, nth| {
+        texts
+            .get(nth)
+            .cloned()
+            .unwrap_or_else(|| json!({"entries": []}).to_string())
+    }
 }
 
-fn hint_item(ordinal: &str) -> Value {
-    json!({"kind": "hint", "ref": ordinal, "text": "", "index": 0})
+/// Everything a request says: its instructions and its task.
+fn said_in(sent: &Sent) -> String {
+    let (system, user) = task_messages(&sent.request);
+    format!("{system}\n{user}")
 }
 
-fn row(id: &str, points: Option<i64>, evidence: Vec<Value>) -> Value {
-    json!({
-        "criterionId": id,
-        "status": if points.is_some() { "observed" } else { "insufficient_evidence" },
-        "points": points,
-        "evidence": evidence,
+/// The handle the request gives the thing listed under `label`.
+fn handle_of(sent: &Sent, label: &str) -> String {
+    let text = said_in(sent);
+    let rest = text
+        .split_once(&format!("{label} ["))
+        .map(|(_, rest)| rest)
+        .unwrap_or_default();
+    rest.split(']').next().unwrap_or_default().to_owned()
+}
+
+fn sent_to<C: Contract>(model: &ScriptedModel) -> Vec<Sent> {
+    model
+        .sent()
+        .into_iter()
+        .filter(|sent| sent.call.id == C::ID)
+        .collect()
+}
+
+fn entry(of: &str, score: &str, cited: Value) -> Value {
+    let mut entry = json!({
+        "of": of,
+        "score": score,
+        "quotes": [],
+        "parts": [],
+        "checks": [],
+        "cases": [],
+        "hints": [],
         "feedback": "You did this.",
         "nextStep": "Do that next time.",
-    })
+    });
+    if let (Some(fields), Some(cited)) = (entry.as_object_mut(), cited.as_object()) {
+        for (key, handles) in cited {
+            fields.insert(key.clone(), handles.clone());
+        }
+    }
+    entry
 }
 
-fn good_rows() -> Vec<Value> {
+fn good_entries() -> Vec<Value> {
     vec![
-        row("accuracy", Some(3), vec![quote("t1", "the first slot")]),
-        row("process", Some(2), vec![check_item("c1")]),
-        row("clarity", None, Vec::new()),
+        entry("c1", "3", json!({"quotes": ["q1"]})),
+        entry("c2", "2", json!({"checks": ["r1"]})),
+        entry("c3", "insufficient_evidence", json!({})),
     ]
 }
 
-fn answer(rows: Vec<Value>) -> String {
-    json!({"rows": rows}).to_string()
+fn answer(entries: Vec<Value>) -> String {
+    json!({"entries": entries}).to_string()
 }
 
-fn answer_stating(rows: Vec<Value>) -> String {
-    json!({"rows": rows, "model": "Fill a, b, c.", "pitfall": "Do not reverse them."}).to_string()
+fn statements(model: &str, pitfall: &str) -> String {
+    json!({"entries": [
+        {"of": "k1", "text": model},
+        {"of": "k2", "text": pitfall},
+    ]})
+    .to_string()
 }
 
-async fn ask(
-    answers: &[String],
-    kind: &Kind,
-    session: &DebriefSession,
-) -> (Result<Debrief>, ScriptedModel) {
-    let model = ScriptedModel::new(answers.iter().map(String::as_str));
-    let result = debrief(&model, kind, session).await;
-    (result, model)
+fn stating_kind() -> Kind {
+    fake_kind(&["a", "b", "c"])
+        .with_learner_cases()
+        .stating_a_model_and_a_pitfall()
+        .build()
 }
 
 fn row_of<'a>(debrief: &'a Debrief, id: &str) -> &'a DebriefRow {
@@ -174,10 +230,13 @@ fn row_of<'a>(debrief: &'a Debrief, id: &str) -> &'a DebriefRow {
 
 #[tokio::test]
 async fn a_clean_answer_is_asked_for_once_and_becomes_the_rows() {
-    let (result, model) = ask(&[answer(good_rows())], &kind(), &session()).await;
-    let debrief = result.expect("a debrief");
+    let model = scripted(in_turn(vec![answer(good_entries())]));
+    let debrief = debrief(&model, &kind(), &session())
+        .await
+        .expect("a debrief");
 
-    assert_eq!(model.requests().len(), 1);
+    assert_eq!(model.count::<DebriefAnswer>(), 1);
+    assert_eq!(model.count::<DebriefStatements>(), 0);
     let ids: Vec<&str> = debrief
         .rows
         .iter()
@@ -194,11 +253,18 @@ async fn a_clean_answer_is_asked_for_once_and_becomes_the_rows() {
         accuracy.evidence,
         [Evidence::Quote {
             turn_id: "t1".into(),
-            text: "the first slot".into()
+            text: T1.into()
         }]
     );
     assert_eq!(accuracy.feedback, "You did this.");
     assert_eq!(accuracy.next_step, "Do that next time.");
+    let process = row_of(&debrief, "process");
+    assert_eq!(
+        process.evidence,
+        [Evidence::Check {
+            check_id: "c1".into()
+        }]
+    );
     let clarity = row_of(&debrief, "clarity");
     assert_eq!(clarity.status, ScoreStatus::InsufficientEvidence);
     assert_eq!(clarity.points, None);
@@ -206,27 +272,40 @@ async fn a_clean_answer_is_asked_for_once_and_becomes_the_rows() {
 }
 
 #[tokio::test]
+async fn prompt_snapshot_debrief_answer() {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let model = scripted(in_turn(vec![answer(good_entries())]));
+    debrief(&model, &kind(), &session())
+        .await
+        .expect("a debrief");
+    let requests: Vec<_> = model.sent().into_iter().map(|sent| sent.request).collect();
+    snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "debrief-answer", &requests);
+}
+
+#[tokio::test]
 async fn every_kind_of_evidence_the_session_has_is_kept() {
-    let everything = vec![
-        quote("t1", "start with"),
-        slot("c1", 1),
-        check_item("c2"),
-        case_item("0"),
-        hint_item("0"),
-    ];
-    let mut rows = good_rows();
-    rows[0] = row("accuracy", Some(4), everything);
+    let everything = json!({
+        "quotes": ["q1"],
+        "parts": ["l2"],
+        "checks": ["r2"],
+        "cases": ["e1"],
+        "hints": ["h1"],
+    });
+    let mut entries = good_entries();
+    entries[0] = entry("c1", "4", everything);
 
-    let (result, model) = ask(&[answer(rows)], &kind(), &session()).await;
-    let debrief = result.expect("a debrief");
+    let model = scripted(in_turn(vec![answer(entries)]));
+    let debrief = debrief(&model, &kind(), &session())
+        .await
+        .expect("a debrief");
 
-    assert_eq!(model.requests().len(), 1, "nothing to ask again");
+    assert_eq!(model.count::<DebriefAnswer>(), 1, "nothing to ask again");
     assert_eq!(
         row_of(&debrief, "accuracy").evidence,
         [
             Evidence::Quote {
                 turn_id: "t1".into(),
-                text: "start with".into()
+                text: T1.into()
             },
             Evidence::Part {
                 check_id: "c1".into(),
@@ -242,62 +321,169 @@ async fn every_kind_of_evidence_the_session_has_is_kept() {
 }
 
 #[tokio::test]
-async fn evidence_the_session_does_not_have_is_refused_with_the_reason() {
-    let refused = [
-        (
-            quote("t9", "start with"),
-            "quote: there is no turn t9.".to_owned(),
-        ),
-        (
-            quote("t2", "What"),
-            "quote: turn t2 is not the learner's.".to_owned(),
-        ),
-        (
-            quote("t1", "words never said"),
-            format!("quote: the words are not in turn t1, which says: {T1}"),
-        ),
-        (
-            quote("t1", ""),
-            format!("quote: the words are not in turn t1, which says: {T1}"),
-        ),
-        (slot("c9", 0), "slot: there is no check c9.".to_owned()),
-        (slot("c1", 7), "slot: 7 is not in check c1.".to_owned()),
-        (check_item("c9"), "check: there is no check c9.".to_owned()),
-        (case_item("5"), "case: there is no case 5.".to_owned()),
-        (
-            case_item("first"),
-            "case: there is no case first.".to_owned(),
-        ),
-        (hint_item("4"), "hint: there is no hint 4.".to_owned()),
-    ];
-    for (item, reason) in refused {
-        let mut bad = good_rows();
-        bad[0] = row("accuracy", Some(3), vec![item.clone()]);
-        let (result, model) = ask(&[answer(bad), answer(good_rows())], &kind(), &session()).await;
+async fn parts_the_kind_does_not_join_stay_items_of_their_own_in_the_order_of_the_session() {
+    let mut entries = good_entries();
+    entries[0] = entry("c1", "3", json!({"parts": ["l3", "l1", "l5"]}));
 
-        let debrief = result.expect("a debrief");
-        let texts = model.texts();
-        assert_eq!(texts.len(), 2, "{item} is asked again once");
-        assert!(
-            texts[1].contains(&format!("accuracy, evidence 1: {reason}")),
-            "{item} is refused with: {reason}"
-        );
-        assert_eq!(row_of(&debrief, "accuracy").evidence.len(), 1);
+    let model = scripted(in_turn(vec![answer(entries)]));
+    let debrief = debrief(&model, &kind(), &session())
+        .await
+        .expect("a debrief");
+
+    assert_eq!(
+        row_of(&debrief, "accuracy").evidence,
+        [
+            Evidence::Part {
+                check_id: "c1".into(),
+                parts: vec![PartRef::new("0")]
+            },
+            Evidence::Part {
+                check_id: "c1".into(),
+                parts: vec![PartRef::new("2")]
+            },
+            Evidence::Part {
+                check_id: "c2".into(),
+                parts: vec![PartRef::new("1")]
+            },
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_name_the_session_does_not_have_costs_only_that_citation() {
+    let mut entries = good_entries();
+    entries[0] = entry("c1", "3", json!({"quotes": ["q1", "q9"], "hints": ["h1"]}));
+
+    let model = scripted(in_turn(vec![answer(entries)]));
+    let debrief = debrief(&model, &kind(), &session())
+        .await
+        .expect("a debrief");
+
+    assert_eq!(model.count::<DebriefAnswer>(), 1);
+    let accuracy = row_of(&debrief, "accuracy");
+    assert_eq!(accuracy.points, Some(3));
+    assert_eq!(
+        accuracy.evidence,
+        [
+            Evidence::Quote {
+                turn_id: "t1".into(),
+                text: T1.into()
+            },
+            Evidence::Hint { ordinal: 0 },
+        ]
+    );
+}
+
+#[tokio::test]
+async fn each_sentence_of_a_learner_turn_is_a_quote_of_its_own() {
+    let mut session = session();
+    session.turns[0].content = "I would start here. Then I would check it.".to_owned();
+    let mut entries = good_entries();
+    entries[0] = entry("c1", "3", json!({"quotes": ["q2"]}));
+
+    let model = scripted(in_turn(vec![answer(entries)]));
+    let debrief = debrief(&model, &kind(), &session).await.expect("a debrief");
+
+    assert_eq!(
+        row_of(&debrief, "accuracy").evidence,
+        [Evidence::Quote {
+            turn_id: "t1".into(),
+            text: "Then I would check it.".into()
+        }]
+    );
+}
+
+#[tokio::test]
+async fn a_criterion_the_answer_lacks_is_asked_again_alone_while_the_others_stand() {
+    let model = scripted(|sent, nth| match nth {
+        0 => answer(good_entries()[..2].to_vec()),
+        _ => answer(vec![entry(
+            &handle_of(sent, "Clarity"),
+            "insufficient_evidence",
+            json!({}),
+        )]),
+    });
+
+    let debrief = debrief(&model, &kind(), &session())
+        .await
+        .expect("a debrief");
+
+    let asked = sent_to::<DebriefAnswer>(&model);
+    assert_eq!(asked.len(), 2);
+    let again = said_in(&asked[1]);
+    assert!(again.contains("- Clarity ["));
+    assert!(!again.contains("- Accuracy ["));
+    assert!(!again.contains("- Process ["));
+    assert_eq!(row_of(&debrief, "accuracy").points, Some(3));
+    assert_eq!(row_of(&debrief, "process").points, Some(2));
+    assert_eq!(
+        row_of(&debrief, "clarity").status,
+        ScoreStatus::InsufficientEvidence
+    );
+}
+
+#[tokio::test]
+async fn a_criterion_still_unanswered_alone_is_a_row_without_enough_evidence() {
+    let model = scripted(|_, nth| match nth {
+        0 => answer(good_entries()[..2].to_vec()),
+        _ => answer(Vec::new()),
+    });
+
+    let debrief = debrief(&model, &kind(), &session())
+        .await
+        .expect("a debrief");
+
+    assert_eq!(debrief.rows.len(), 3);
+    let clarity = row_of(&debrief, "clarity");
+    assert_eq!(clarity.status, ScoreStatus::InsufficientEvidence);
+    assert_eq!(clarity.points, None);
+    assert!(clarity.evidence.is_empty());
+    assert!(clarity.feedback.is_empty());
+    assert!(clarity.next_step.is_empty());
+    assert_eq!(clarity.max_points, MAX_POINTS);
+    assert_eq!(row_of(&debrief, "accuracy").points, Some(3));
+}
+
+#[tokio::test]
+async fn points_on_no_evidence_the_session_holds_become_insufficient_evidence_and_keep_the_words() {
+    let mut entries = good_entries();
+    entries[0] = entry("c1", "3", json!({}));
+    entries[1] = entry("c2", "2", json!({"quotes": ["q9"]}));
+
+    let model = scripted(in_turn(vec![answer(entries)]));
+    let debrief = debrief(&model, &kind(), &session())
+        .await
+        .expect("a debrief");
+
+    assert_eq!(model.count::<DebriefAnswer>(), 1);
+    for id in ["accuracy", "process"] {
+        let row = row_of(&debrief, id);
+        assert_eq!(row.status, ScoreStatus::InsufficientEvidence, "{id}");
+        assert_eq!(row.points, None, "{id}");
+        assert!(row.evidence.is_empty(), "{id}");
+        assert_eq!(row.feedback, "You did this.", "{id}");
+        assert_eq!(row.next_step, "Do that next time.", "{id}");
     }
 }
 
 #[tokio::test]
-async fn an_item_of_a_kind_the_kind_does_not_name_is_refused() {
-    let mut bad = good_rows();
-    bad[0] = row(
-        "accuracy",
-        Some(3),
-        vec![json!({"kind": "lines", "ref": "c1", "text": "", "index": 0})],
+async fn a_row_that_says_insufficient_evidence_cites_nothing() {
+    let mut entries = good_entries();
+    entries[2] = entry(
+        "c3",
+        "insufficient_evidence",
+        json!({"quotes": ["q1"], "checks": ["r1"]}),
     );
-    let (result, model) = ask(&[answer(bad), answer(good_rows())], &kind(), &session()).await;
 
-    result.expect("a debrief");
-    assert_eq!(model.requests().len(), 2);
+    let model = scripted(in_turn(vec![answer(entries)]));
+    let debrief = debrief(&model, &kind(), &session())
+        .await
+        .expect("a debrief");
+
+    let clarity = row_of(&debrief, "clarity");
+    assert_eq!(clarity.status, ScoreStatus::InsufficientEvidence);
+    assert_eq!(clarity.points, None);
+    assert!(clarity.evidence.is_empty());
 }
 
 #[tokio::test]
@@ -305,335 +491,172 @@ async fn a_kind_without_learner_cases_does_not_take_them_as_evidence() {
     let plain = fake_kind(&["a", "b", "c"]).build();
     let mut session = session();
     session.learner_cases.clear();
-    let mut bad = good_rows();
-    bad[0] = row("accuracy", Some(3), vec![case_item("0")]);
+    let mut entries = good_entries();
+    entries[0] = entry("c1", "3", json!({"cases": ["e1"]}));
 
-    let (result, model) = ask(&[answer(bad), answer(good_rows())], &plain, &session).await;
+    let model = scripted(in_turn(vec![answer(entries)]));
+    let debrief = debrief(&model, &plain, &session).await.expect("a debrief");
 
-    result.expect("a debrief");
-    assert_eq!(model.requests().len(), 2);
-}
-
-#[tokio::test]
-async fn one_re_ask_carries_every_fault() {
-    let mut bad = good_rows();
-    bad[0] = row(
-        "accuracy",
-        Some(3),
-        vec![quote("t9", "start with"), check_item("c9")],
-    );
-    bad[1] = row("process", Some(2), vec![hint_item("4")]);
-    let (result, model) = ask(&[answer(bad), answer(good_rows())], &kind(), &session()).await;
-
-    result.expect("a debrief");
-    let texts = model.texts();
-    assert_eq!(texts.len(), 2);
-    for fault in [
-        "accuracy, evidence 1: quote: there is no turn t9.",
-        "accuracy, evidence 2: check: there is no check c9.",
-        "process, evidence 1: hint: there is no hint 4.",
-    ] {
-        assert!(texts[1].contains(fault), "the re-ask carries: {fault}");
-    }
-    assert!(texts[1]
-        .contains("The app checked the evidence against the session and found these faults:"));
-}
-
-#[tokio::test]
-async fn evidence_still_wrong_after_the_re_ask_is_dropped() {
-    let mut bad = good_rows();
-    bad[0] = row(
-        "accuracy",
-        Some(3),
-        vec![quote("t1", "the first slot"), check_item("c9")],
-    );
-    let (result, model) = ask(&[answer(bad.clone()), answer(bad)], &kind(), &session()).await;
-    let debrief = result.expect("a debrief");
-
-    assert_eq!(model.requests().len(), 2, "asked at most twice");
+    let said = said_in(&sent_to::<DebriefAnswer>(&model)[0]);
+    assert!(!said.contains("A case:"));
     let accuracy = row_of(&debrief, "accuracy");
-    assert_eq!(accuracy.status, ScoreStatus::Observed);
-    assert_eq!(accuracy.points, Some(3));
-    assert_eq!(
-        accuracy.evidence,
-        [Evidence::Quote {
-            turn_id: "t1".into(),
-            text: "the first slot".into()
-        }]
-    );
-}
-
-#[tokio::test]
-async fn a_row_left_without_evidence_becomes_insufficient_evidence() {
-    let mut bad = good_rows();
-    bad[0] = row("accuracy", Some(3), vec![check_item("c9")]);
-    let (result, _) = ask(&[answer(bad.clone()), answer(bad)], &kind(), &session()).await;
-    let debrief = result.expect("a debrief");
-
-    let accuracy = row_of(&debrief, "accuracy");
-    assert_eq!(accuracy.status, ScoreStatus::InsufficientEvidence);
     assert_eq!(accuracy.points, None);
     assert!(accuracy.evidence.is_empty());
-    assert_eq!(accuracy.feedback, "You did this.");
 }
 
 #[tokio::test]
-async fn points_that_break_the_rules_are_refused_with_the_reason() {
-    let mut bad = good_rows();
-    bad[0] = row("accuracy", Some(9), vec![check_item("c1")]);
-    bad[1] = json!({
-        "criterionId": "process", "status": "observed", "points": null,
-        "evidence": [check_item("c1")], "feedback": "f", "nextStep": "n",
-    });
-    bad[2] = json!({
-        "criterionId": "clarity", "status": "insufficient_evidence", "points": 1,
-        "evidence": [check_item("c1")], "feedback": "f", "nextStep": "n",
-    });
-    let (result, model) = ask(&[answer(bad), answer(good_rows())], &kind(), &session()).await;
+async fn the_request_says_how_each_kind_of_evidence_is_cited_and_how_a_criterion_is_scored() {
+    let model = scripted(in_turn(vec![answer(good_entries())]));
+    debrief(&model, &kind(), &session())
+        .await
+        .expect("a debrief");
 
-    result.expect("a debrief");
-    let texts = model.texts();
-    for fault in [
-        "accuracy: points must be from 0 to 4, not 9.",
-        "process: an observed row needs points.",
-        "clarity: a row without enough evidence has no points.",
-        "clarity: a row without enough evidence cites none.",
+    let said = said_in(&sent_to::<DebriefAnswer>(&model)[0]);
+    for sentence in [
+        "A quote: quotes holds the names of the learner's sentences it cites.",
+        "A slot: parts holds the names of the slots of a check it cites.",
+        "A check: checks holds the names of the checks it cites.",
+        "A case: cases holds the names of the cases it cites.",
+        "A hint: hints holds the names of the hints it cites.",
+        "Each criterion is scored from 0 to 4",
+        "return score insufficient_evidence and cite nothing",
+        "- Accuracy [c1]: ",
+        "- Process [c2]: ",
+        "- Clarity [c3]: ",
     ] {
-        assert!(texts[1].contains(fault), "the re-ask carries: {fault}");
+        assert!(said.contains(sentence), "{sentence}");
     }
 }
 
-#[tokio::test]
-async fn an_observed_row_without_evidence_is_refused() {
-    let mut bad = good_rows();
-    bad[0] = row("accuracy", Some(3), Vec::new());
-    let (result, model) = ask(&[answer(bad), answer(good_rows())], &kind(), &session()).await;
+#[test]
+fn the_scores_the_model_may_write_are_the_points_a_criterion_can_earn_and_no_evidence() {
+    let top = Score::WORDS
+        .iter()
+        .filter_map(|(_, score)| match score {
+            Score::Points(points) => Some(*points),
+            Score::Insufficient => None,
+        })
+        .max();
 
-    result.expect("a debrief");
-    assert!(model.texts()[1].contains("accuracy: an observed row needs evidence."));
+    assert_eq!(top.map(i64::from), Some(i64::from(MAX_POINTS)));
+    assert_eq!(Score::WORDS.len(), usize::from(MAX_POINTS) + 2);
 }
 
 #[tokio::test]
-async fn a_row_for_an_unknown_criterion_refuses_the_answer() {
-    let mut extra = good_rows();
-    extra.push(row("speed", Some(1), vec![check_item("c1")]));
-    let (result, model) = ask(&[answer(extra), answer(good_rows())], &kind(), &session()).await;
+async fn what_the_kind_states_is_asked_beside_the_rows_from_the_exercise_alone() {
+    let model = also_stating(
+        scripted(in_turn(vec![answer(good_entries())])),
+        in_turn(vec![statements("Fill a, b, c.", "Do not reverse them.")]),
+    );
 
-    result.expect("a debrief");
-    assert!(model.texts()[1].contains("A row names a criterion that is not one of the three."));
+    let debrief = debrief(&model, &stating_kind(), &session())
+        .await
+        .expect("a debrief");
+
+    assert_eq!(
+        debrief.stated,
+        [
+            ("model".to_owned(), "Fill a, b, c.".to_owned()),
+            ("pitfall".to_owned(), "Do not reverse them.".to_owned()),
+        ]
+    );
+    assert_eq!(model.count::<DebriefStatements>(), 1);
+    let said = said_in(&sent_to::<DebriefStatements>(&model)[0]);
+    assert!(said.contains("- model [k1]"));
+    assert!(said.contains("- pitfall [k2]"));
+    assert!(said.contains("Spell it"));
+    assert!(!said.contains("transcript"));
+    assert!(!said_in(&sent_to::<DebriefAnswer>(&model)[0]).contains("- model ["));
 }
 
 #[tokio::test]
-async fn a_missing_criterion_refuses_the_answer() {
-    let mut short = good_rows();
-    short.pop();
-    let (result, model) = ask(&[answer(short), answer(good_rows())], &kind(), &session()).await;
+async fn a_blank_statement_is_refused_and_asked_for_again_alone() {
+    let model = also_stating(
+        scripted(in_turn(vec![answer(good_entries())])),
+        |sent, nth| match nth {
+            0 => statements("  ", "Do not reverse them."),
+            _ => json!({"entries": [{"of": handle_of(sent, "model"), "text": "Fill a, b, c."}]})
+                .to_string(),
+        },
+    );
 
-    result.expect("a debrief");
-    assert!(model.texts()[1].contains("Criterion clarity must have exactly one row; it has 0."));
+    let debrief = debrief(&model, &stating_kind(), &session())
+        .await
+        .expect("a debrief");
+
+    assert_eq!(
+        debrief.stated,
+        [
+            ("model".to_owned(), "Fill a, b, c.".to_owned()),
+            ("pitfall".to_owned(), "Do not reverse them.".to_owned()),
+        ]
+    );
+    let asked = sent_to::<DebriefStatements>(&model);
+    assert_eq!(asked.len(), 2);
+    assert!(!said_in(&asked[1]).contains("- pitfall ["));
 }
 
 #[tokio::test]
-async fn a_criterion_written_twice_refuses_the_answer() {
-    let mut twice = good_rows();
-    twice.push(row("process", Some(1), vec![check_item("c1")]));
-    let (result, model) = ask(&[answer(twice), answer(good_rows())], &kind(), &session()).await;
+async fn a_statement_the_model_never_writes_fails_the_debrief() {
+    let model = also_stating(
+        scripted(in_turn(vec![answer(good_entries())])),
+        in_turn(Vec::new()),
+    );
 
-    result.expect("a debrief");
-    assert!(model.texts()[1].contains("Criterion process must have exactly one row; it has 2."));
-}
-
-#[tokio::test]
-async fn an_answer_that_cannot_be_read_twice_is_an_error() {
-    let mut short = good_rows();
-    short.pop();
-    let (result, _) = ask(&[answer(short.clone()), answer(short)], &kind(), &session()).await;
+    let result = debrief(&model, &stating_kind(), &session()).await;
 
     assert!(result.is_err());
 }
 
-#[tokio::test]
-async fn silence_is_asked_for_nothing_again() {
-    let silent = vec![
-        row("accuracy", None, Vec::new()),
-        row("process", None, Vec::new()),
-        row("clarity", None, Vec::new()),
-    ];
-    let (result, model) = ask(&[answer(silent)], &kind(), &session()).await;
-    let debrief = result.expect("a debrief");
-
-    assert_eq!(model.requests().len(), 1);
-    assert!(debrief
-        .rows
-        .iter()
-        .all(|row| row.status == ScoreStatus::InsufficientEvidence));
-}
-
 #[test]
-fn a_kind_with_three_criteria_and_nothing_stated_has_a_system_text_of_three() {
+fn the_answer_request_holds_what_it_is_told_and_no_identity_of_the_app() {
+    let mut marks = Marks::new();
     let kind = kind();
-
-    let system = system(&kind, Form::Build);
-
-    assert!(system.starts_with(
-        "You write the debrief of one practice session: a scorecard with one row for each of three criteria. The session below is the learner's work and the transcript of the session."
-    ));
-    assert!(system.contains(
-        "Each criterion is scored from 0 to 4 and earns points as follows.\n- Accuracy (accuracy): Got the letters right.\n- Process (process): Worked in small steps.\n- Clarity (clarity): Said what they were doing."
-    ));
-    assert!(
-        system.contains("Time per stage, checks, hints and settings are shown beside your scores;")
-    );
-    assert!(system.ends_with(
-        "Each row gets feedback about what this session demonstrated, and one next step: a concrete thing to do next time. Write for the learner, in the second person."
-    ));
-}
-
-#[test]
-fn a_kind_with_three_criteria_and_nothing_stated_has_a_schema_of_three_and_no_stated_keys() {
-    let schema = schema(&kind(), Form::Build);
-
-    assert_eq!(schema["required"], json!(["rows"]));
-    let keys: Vec<&str> = schema["properties"]
-        .as_object()
-        .unwrap()
-        .keys()
-        .map(String::as_str)
-        .collect();
-    assert_eq!(keys, ["rows"]);
-    let row = &schema["properties"]["rows"]["items"];
-    assert_eq!(
-        row["properties"]["criterionId"]["enum"],
-        json!(["accuracy", "process", "clarity"])
-    );
-    assert_eq!(row["properties"]["points"]["maximum"], json!(MAX_POINTS));
-    assert_eq!(
-        row["required"],
-        json!([
-            "criterionId",
-            "status",
-            "points",
-            "evidence",
-            "feedback",
-            "nextStep"
-        ])
-    );
-}
-
-#[test]
-fn a_kind_that_states_something_says_so_in_the_opening_and_the_closing() {
-    let kind = fake_kind(&["a", "b", "c"])
-        .stating_a_model_and_a_pitfall()
-        .build();
-
-    let system = system(&kind, Form::Build);
-
-    assert!(system.starts_with(
-        "You write the debrief of one practice session: a scorecard with one row for each of three criteria, and the model answer and the pitfall to avoid. The session below"
-    ));
-    assert!(system.ends_with(
-        "a concrete thing to do next time. The model is how a strong learner fills the slots, and the pitfall is the mistake to avoid. Write for the learner, in the second person."
-    ));
-    let schema = schema(&kind, Form::Build);
-    assert_eq!(schema["required"], json!(["rows", "model", "pitfall"]));
-    assert_eq!(schema["properties"]["model"], json!({"type": "string"}));
-    assert_eq!(schema["properties"]["pitfall"], json!({"type": "string"}));
-}
-
-#[test]
-fn the_system_text_says_how_each_kind_of_evidence_is_cited() {
-    let with_cases = system(&kind(), Form::Build);
-    let without = system(&fake_kind(&["a", "b", "c"]).build(), Form::Build);
-
-    assert!(with_cases.contains(
-        "Every scored row rests on evidence from the session, each item of one of these kinds. A quote: ref is the id of a learner turn, text is words copied exactly from that turn. A slot: ref is a check id, index is a slot of that check, counted from 0. A check: ref is a check id. A case: ref is the case's ordinal. A hint: ref is the hint's ordinal. Leave index 0 when a slot is not cited. Cite only what is in the session; the app checks every item and drops one that is wrong."
-    ));
-    assert!(without.contains(
-        "A check: ref is a check id. A hint: ref is the hint's ordinal. Leave index 0 when a slot is not cited."
-    ));
-}
-
-#[test]
-fn the_schema_lists_the_kinds_of_evidence_and_the_fields_of_an_item() {
-    let item = |schema: &Value| {
-        schema["properties"]["rows"]["items"]["properties"]["evidence"]["items"].clone()
+    let plan = Plan::new(&kind, Form::Build);
+    let scored = Scored {
+        id: marks.reference("criterion-sentinel-0001".to_owned()),
+        title: marks.told("A criterion title".to_owned()),
+        earns: marks.told("What the criterion earns".to_owned()),
+    };
+    let note = marks.told("A told sentence of the session".to_owned());
+    let rendered = Rendered {
+        body: json!({
+            "note": note.0,
+            "transcript": [{"text": format!("{HOLE_S0} The sentence said")}],
+            "runs": [{"id": "\u{1}r0\u{2}"}],
+            "slots": ["\u{1}p0\u{2} a"],
+            "cases": [{"case": "\u{1}e0\u{2}"}],
+            "hints": [{"hint": "\u{1}h0\u{2}"}],
+        }),
+        runs: vec![Run {
+            id: marks.reference("check-sentinel-0002".to_owned()),
+        }],
+        lines: vec![Line {
+            check: marks.reference("check-sentinel-0003".to_owned()),
+            part: marks.reference(PartRef::new("part-sentinel-0004")),
+        }],
+        said: vec![Said {
+            turn: marks.reference("turn-sentinel-0005".to_owned()),
+            index: 0,
+            words: Told("The sentence said".to_owned()),
+        }],
+        examples: vec![Example {
+            ordinal: marks.reference(424_242),
+        }],
+        hints: vec![Hinted {
+            ordinal: marks.reference(535_353),
+        }],
     };
 
-    let with_cases = item(&schema(&kind(), Form::Build));
-    let without = item(&schema(&fake_kind(&["a", "b", "c"]).build(), Form::Build));
+    let input = Input::of(&plan, &rendered, &[&scored]);
 
-    assert_eq!(
-        with_cases["properties"]["kind"],
-        json!({"enum": ["quote", "slot", "check", "case", "hint"]})
-    );
-    assert_eq!(
-        without["properties"]["kind"],
-        json!({"enum": ["quote", "slot", "check", "hint"]})
-    );
-    assert_eq!(
-        with_cases["required"],
-        json!(["kind", "ref", "text", "index"])
-    );
-    assert_eq!(with_cases["additionalProperties"], json!(false));
-    let keys: Vec<&str> = with_cases["properties"]
-        .as_object()
-        .unwrap()
-        .keys()
-        .map(String::as_str)
-        .collect();
-    assert_eq!(keys, ["kind", "ref", "text", "index"]);
-    assert_eq!(
-        with_cases["properties"]["index"],
-        json!({"type": "integer"})
-    );
-}
-
-#[tokio::test]
-async fn a_kind_with_stated_keys_must_have_them_written() {
-    let stating = fake_kind(&["a", "b", "c"])
-        .with_learner_cases()
-        .stating_a_model_and_a_pitfall()
-        .build();
-    let without_pitfall = json!({"rows": good_rows(), "model": "Fill a, b, c."}).to_string();
-    let blank_model =
-        json!({"rows": good_rows(), "model": "  ", "pitfall": "Do not reverse them."}).to_string();
-    for (unwritten, named) in [
-        (without_pitfall, "These must be written: pitfall."),
-        (blank_model, "These must be written: model."),
-    ] {
-        let (result, model) = ask(
-            &[unwritten, answer_stating(good_rows())],
-            &stating,
-            &session(),
-        )
-        .await;
-
-        let debrief = result.expect("a debrief");
-        assert!(model.texts()[1].contains(named), "{}", model.texts()[1]);
-        assert_eq!(
-            debrief.stated,
-            [
-                ("model".to_owned(), "Fill a, b, c.".to_owned()),
-                ("pitfall".to_owned(), "Do not reverse them.".to_owned()),
-            ]
-        );
-    }
-}
-
-#[tokio::test]
-async fn a_kind_that_states_nothing_ignores_what_the_model_adds() {
-    let extra = json!({"rows": good_rows(), "model": "Fill a, b, c."}).to_string();
-    let (result, model) = ask(&[extra], &kind(), &session()).await;
-
-    let debrief = result.expect("a debrief");
-    assert_eq!(model.requests().len(), 1);
-    assert!(debrief.stated.is_empty());
+    holds::<DebriefAnswer>(&input, &marks);
 }
 
 #[test]
-fn the_prompt_tells_the_session_in_the_order_the_kind_names_it() {
-    let prompt = prompt(&kind(), &session()).expect("a prompt");
-    let told: Value = serde_json::from_str(&prompt).unwrap();
+fn the_session_is_told_in_the_order_the_kind_names_it_with_a_place_for_every_name() {
+    let rendered = render(&kind(), &session()).expect("a told session");
+    let told = rendered.body.clone();
 
     let keys: Vec<&str> = told
         .as_object()
@@ -663,36 +686,41 @@ fn the_prompt_tells_the_session_in_the_order_the_kind_names_it() {
     assert_eq!(
         told["transcript"],
         json!([
-            {"turnId": "t1", "speaker": "learner", "text": T1},
-            {"turnId": "t2", "speaker": "counterpart", "text": T2},
+            {"speaker": "learner", "text": format!("{HOLE_S0} {T1}")},
+            {"speaker": "counterpart", "text": T2},
         ])
     );
     assert_eq!(
         told["cases"],
-        json!([{"ordinal": 0, "letter": "a", "verdict": "right"}])
+        json!([{"case": "\u{1}e0\u{2}", "letter": "a", "verdict": "right"}])
     );
-    assert_eq!(told["checks"][0]["id"], json!("c1"));
-    assert_eq!(told["checks"][1]["id"], json!("c2"));
+    assert_eq!(told["checks"][0]["id"], json!("\u{1}r0\u{2}"));
+    assert_eq!(told["checks"][1]["id"], json!("\u{1}r1\u{2}"));
     assert_eq!(
         told["hints"],
-        json!([{"ordinal": 0, "rung": "nudge", "text": "Look at the second slot.", "stage": "make"}])
+        json!([{"hint": "\u{1}h0\u{2}", "rung": "nudge", "text": "Look at the second slot.", "stage": "make"}])
     );
-    assert!(prompt.starts_with("{\n  \"exercise\": {"), "pretty printed");
+    let runs: Vec<&str> = rendered.runs.iter().map(|run| run.id.as_str()).collect();
+    assert_eq!(runs, ["c1", "c2"]);
+    assert_eq!(rendered.lines.len(), 6);
+    assert_eq!(rendered.said.len(), 1);
+    assert_eq!(rendered.examples.len(), 1);
+    assert_eq!(rendered.hints.len(), 1);
 }
 
 #[test]
-fn a_kind_without_learner_cases_has_no_list_of_them_in_the_prompt() {
+fn a_kind_without_learner_cases_has_no_list_of_them_in_the_told_session() {
     let plain = fake_kind(&["a", "b", "c"]).build();
     let mut session = session();
     session.learner_cases.clear();
 
-    let told: Value = serde_json::from_str(&prompt(&plain, &session).unwrap()).unwrap();
+    let told = render(&plain, &session).unwrap().body;
 
     assert!(told.get("cases").is_none());
 }
 
 #[test]
-fn a_check_of_the_same_piece_as_the_one_before_says_so() {
+fn a_check_of_the_same_piece_as_the_one_before_says_so_and_names_no_part_twice() {
     let mut session = session();
     session.checks = vec![
         check("c1", CheckScope::All, &["a", "b", "c"], CaseStatus::Passed),
@@ -704,10 +732,18 @@ fn a_check_of_the_same_piece_as_the_one_before_says_so() {
         ),
     ];
 
-    let told: Value = serde_json::from_str(&prompt(&kind(), &session).unwrap()).unwrap();
+    let rendered = render(&kind(), &session).unwrap();
+    let told = rendered.body;
 
-    assert_eq!(told["checks"][0]["slots"], json!(["a", "b", "c"]));
-    assert_eq!(told["checks"][1]["slots"], json!("the same as check c1"));
+    assert_eq!(
+        told["checks"][0]["slots"],
+        json!(["\u{1}p0\u{2} a", "\u{1}p1\u{2} b", "\u{1}p2\u{2} c"])
+    );
+    assert_eq!(
+        told["checks"][1]["slots"],
+        json!("the same as check \u{1}r0\u{2}")
+    );
+    assert_eq!(rendered.lines.len(), 3);
 }
 
 #[test]
@@ -719,9 +755,9 @@ fn the_final_draft_is_told_only_when_no_check_holds_it() {
     let mut unchecked = session();
     unchecked.checks.clear();
 
-    let held: Value = serde_json::from_str(&prompt(&kind(), &held).unwrap()).unwrap();
-    let changed: Value = serde_json::from_str(&prompt(&kind(), &changed).unwrap()).unwrap();
-    let unchecked: Value = serde_json::from_str(&prompt(&kind(), &unchecked).unwrap()).unwrap();
+    let held = render(&kind(), &held).unwrap().body;
+    let changed = render(&kind(), &changed).unwrap().body;
+    let unchecked = render(&kind(), &unchecked).unwrap().body;
 
     assert_eq!(held["finalDraft"], Value::Null);
     assert_eq!(changed["finalDraft"], json!(["a", "b", "z"]));
@@ -732,7 +768,7 @@ fn the_final_draft_is_told_only_when_no_check_holds_it() {
 fn a_session_with_learner_cases_for_a_kind_without_them_is_a_fault() {
     let plain = fake_kind(&["a", "b", "c"]).build();
 
-    let result = prompt(&plain, &session());
+    let result = render(&plain, &session());
 
     assert!(matches!(
         result,

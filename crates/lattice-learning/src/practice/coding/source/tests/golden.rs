@@ -48,7 +48,8 @@ async fn golden_source() {
         details: Some("The details text.".into()),
         ..request(Form::Build)
     };
-    let model = drafted(&asked, vec![answer()]).await;
+    let named = with(answer(), "patterns", json!(["t1"]));
+    let model = drafted(&asked, vec![named]).await;
     add_requests(
         &mut golden,
         "Problem Easy, no lesson or pattern, with a focus and details",

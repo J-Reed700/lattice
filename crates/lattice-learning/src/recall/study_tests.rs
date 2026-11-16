@@ -2,10 +2,21 @@ use super::{
     super::reference_collection::tests::FakeLibrary,
     schedule::DAY_MS,
     study_dto::*,
-    study_generation::{parse_cards, parse_conversation_cards},
+    study_generation::{
+        ChoiceCard, Citation, Claim, ClaimCards, ConversationCards, DeckPassages, Passage,
+        StudyDeck,
+    },
     study_repository::StudyRepository,
     study_service as service,
 };
+use futures::future::BoxFuture;
+use lattice_core::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse,
+};
+use lattice_core::application::services::model_contract::packed::Packed;
+use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
+use lattice_core::application::services::model_contract::test_support::{ScriptedModel, Sent};
+use lattice_core::shared::error::Result as CoreResult;
 use lattice_core::shared::persistence::Database;
 use serde_json::json;
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
@@ -34,13 +45,37 @@ fn source() -> StudySourceDto {
         url: None,
     }
 }
-fn generated() -> serde_json::Value {
-    json!({"cards":[{"question":"What should be studied before selecting a procedure?","options":["The stated conditions","Only the title","Nothing","Only the filing date","Only the fee"],"correctIndex":0,"explanation":"The passage explicitly asks the reader to study the stated conditions.","sourceIndex":0,"quote":"Study the stated conditions before selecting a procedure.","topic":"Procedures"}]})
-}
 fn deck() -> StudyDeckDto {
     let id = uuid::Uuid::new_v4().to_string();
+    let mut source = source();
+    source.excerpt = "Study the stated conditions before selecting a procedure.".into();
+    let mut card = ChoiceCard {
+        question: "What should be studied before selecting a procedure?",
+        answer: "The stated conditions",
+        distractors: [
+            "Only the title",
+            "Nothing",
+            "Only the filing date",
+            "Only the fee",
+        ]
+        .map(String::from)
+        .to_vec(),
+        explanation: "The passage explicitly asks the reader to study the stated conditions.",
+        topic: "Procedures",
+    }
+    .into_card(&id, 1000, source.clone(), vec![source]);
+    card.options = [
+        "The stated conditions",
+        "Only the title",
+        "Nothing",
+        "Only the filing date",
+        "Only the fee",
+    ]
+    .map(String::from)
+    .to_vec();
+    card.correct_index = 0;
     StudyDeckDto {
-        cards: parse_cards(&generated().to_string(), &[source()], &id, 6, 1000).unwrap(),
+        cards: vec![card],
         id,
         title: "Procedures".into(),
         focus: "procedures".into(),
@@ -50,41 +85,245 @@ fn deck() -> StudyDeckDto {
         target_at: None,
     }
 }
-#[test]
-fn questions_require_an_exact_source_and_an_unambiguous_key() {
-    let s = source();
-    assert_eq!(
-        parse_cards(
-            &format!("```json\n{}\n```", generated()),
-            std::slice::from_ref(&s),
-            "deck",
-            6,
-            0
-        )
-        .unwrap()
-        .len(),
-        1
-    );
-    for (field, value) in [
-        (
-            "quote",
-            json!("An invented rule not supported by the document passage."),
-        ),
-        ("sourceIndex", json!(42)),
-        ("correctIndex", json!(5)),
-        ("options", json!(["A", "A", "B", "C", "D"])),
-    ] {
-        let mut invalid = generated();
-        invalid["cards"][0][field] = value;
-        assert!(
-            parse_cards(&invalid.to_string(), std::slice::from_ref(&s), "deck", 6, 0,).is_err(),
-            "{field}"
-        );
-    }
+/// The last task of `request` that holds `key`, as the request shows it.
+fn task_holding(request: &CompletionRequest, key: &str) -> Option<serde_json::Value> {
+    request.input().iter().rev().find_map(|input| match input {
+        CompletionInput::Message { content, .. } => content.split("\n\n").find_map(|chunk| {
+            serde_json::from_str::<serde_json::Value>(chunk)
+                .ok()
+                .filter(|task| task.get(key).is_some())
+        }),
+        _ => None,
+    })
 }
 
-#[test]
-fn conversation_cards_preserve_every_verified_claim_and_its_citations() {
+/// The ids of the claims a request shows.
+fn claim_ids(sent: &Sent) -> Vec<String> {
+    task_holding(&sent.request, "claims")
+        .and_then(|task| {
+            task["claims"].as_array().map(|claims| {
+                claims
+                    .iter()
+                    .filter_map(|claim| claim["id"].as_str().map(str::to_owned))
+                    .collect()
+            })
+        })
+        .unwrap_or_default()
+}
+
+/// The handles each passage a deck request shows labels its sentences with.
+fn passage_handles(sent: &Sent) -> Vec<Vec<String>> {
+    let task = task_holding(&sent.request, "passages").unwrap_or_default();
+    task["passages"]
+        .as_array()
+        .map(|passages| {
+            passages
+                .iter()
+                .map(|passage| {
+                    passage["text"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .lines()
+                        .filter_map(|line| {
+                            let (handle, _) = line.strip_prefix('[')?.split_once(']')?;
+                            Some(handle.to_owned())
+                        })
+                        .collect()
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn reply(body: serde_json::Value) -> BoxFuture<'static, CoreResult<CompletionResponse>> {
+    Box::pin(std::future::ready(Ok(CompletionResponse::from_text(
+        body.to_string(),
+    ))))
+}
+
+/// A reply whose text stops where the model's length ran out.
+fn cut_off(text: String) -> BoxFuture<'static, CoreResult<CompletionResponse>> {
+    Box::pin(std::future::ready(Ok(CompletionResponse {
+        finish_reason: "length".into(),
+        ..CompletionResponse::from_text(text)
+    })))
+}
+
+fn texts(values: &[&str]) -> Vec<serde_json::Value> {
+    values.iter().map(|text| json!({"text": text})).collect()
+}
+
+const FOUR: [&str; 4] = ["Wrong A", "Wrong B", "Wrong C", "Wrong D"];
+
+fn card_entry(id: &str, question: &str, distractors: &[&str]) -> serde_json::Value {
+    json!({
+        "of": id,
+        "question": question,
+        "distractors": texts(distractors),
+        "explanation": "The cited passage supports the claim.",
+        "topic": "Harbour"
+    })
+}
+
+fn deck_item(question: &str, answer: &str, cites: &[String]) -> serde_json::Value {
+    json!({
+        "question": question,
+        "answer": answer,
+        "distractors": texts(&["Only the title", "Nothing", "Only the filing date", "Only the fee"]),
+        "explanation": "The passage explicitly asks the reader to study the stated conditions.",
+        "sourceIds": cites,
+        "topic": "Procedures"
+    })
+}
+
+#[tokio::test]
+async fn a_study_card_rests_on_the_sentences_it_cites() {
+    let model = ScriptedModel::new().on_request::<StudyDeck>(|sent, _| {
+        let cite = passage_handles(sent)[0][1].clone();
+        reply(json!({"items": [deck_item("What should be studied before selecting a procedure?", "The stated conditions", &[cite])]}))
+    });
+    let cards = super::study_generation::generate(
+        &model,
+        &reaction_deck(String::new()),
+        &[source()],
+        "deck",
+        10,
+    )
+    .await
+    .unwrap();
+    assert_eq!(cards.len(), 1);
+    let excerpt = "Study the stated conditions before selecting a procedure.";
+    assert_eq!(cards[0].source.excerpt, excerpt);
+    assert_eq!(cards[0].citations[0].excerpt, excerpt);
+    assert_eq!(cards[0].source.file_name, "chapter.pdf");
+    assert_eq!(cards[0].options.len(), 5);
+    assert_eq!(
+        cards[0].options[cards[0].correct_index],
+        "The stated conditions"
+    );
+}
+
+#[tokio::test]
+async fn a_deck_keeps_its_usable_cards_when_one_is_invalid() {
+    let model = ScriptedModel::new().on_request::<StudyDeck>(|sent, _| {
+        let cite = passage_handles(sent)[0][1].clone();
+        reply(json!({"items": [
+            deck_item("What should be studied before selecting a procedure?", "The stated conditions", &[cite]),
+            deck_item("What is not in the passage?", "An invented rule", &[])
+        ]}))
+    });
+    let cards = super::study_generation::generate(
+        &model,
+        &reaction_deck(String::new()),
+        &[source()],
+        "deck",
+        10,
+    )
+    .await
+    .unwrap();
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].answer, "The stated conditions");
+}
+
+#[tokio::test]
+async fn a_study_card_citing_two_passages_or_repeating_its_answer_is_left_out() {
+    let mut other = source();
+    other.file_name = "harbour.pdf".into();
+    other.excerpt = "The harbour gate opens before the tide turns at dawn.".into();
+    let model = ScriptedModel::new().on_request::<StudyDeck>(|sent, _| {
+        let handles = passage_handles(sent);
+        let across = vec![handles[0][1].clone(), handles[1][0].clone()];
+        let mut repeating = deck_item(
+            "Which gate opens first?",
+            "The harbour gate",
+            &[handles[1][0].clone()],
+        );
+        repeating["distractors"] = json!(texts(&[
+            "The harbour gate",
+            "The kiln door",
+            "The tide gauge",
+            "The pier lamp"
+        ]));
+        reply(json!({"items": [
+            deck_item("What should be studied before selecting a procedure?", "The stated conditions", &across),
+            repeating
+        ]}))
+    });
+    let error = super::study_generation::generate(
+        &model,
+        &reaction_deck(String::new()),
+        &[source(), other],
+        "deck",
+        10,
+    )
+    .await
+    .err();
+    assert!(
+        matches!(
+            error,
+            Some(lattice_core::shared::error::AppError::InvalidInput(_))
+        ),
+        "{error:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_study_deck_cut_off_after_the_cards_that_closed_is_asked_for_the_rest() {
+    let model = ScriptedModel::new().on_request::<StudyDeck>(|sent, nth| {
+        let cite = passage_handles(sent)[0][1].clone();
+        if nth == 0 {
+            let first = deck_item(
+                "What should be studied before selecting a procedure?",
+                "The stated conditions",
+                &[cite],
+            );
+            let text = format!("{{\"items\":[{first},{{\"question\":\"Wh");
+            return cut_off(text);
+        }
+        reply(json!({"items": [deck_item("When is a procedure selected?", "After the stated conditions are studied", &[cite])]}))
+    });
+    let cards = super::study_generation::generate(
+        &model,
+        &reaction_deck(String::new()),
+        &[source()],
+        "deck",
+        10,
+    )
+    .await
+    .unwrap();
+    assert_eq!(cards.len(), 2);
+    let sent = model.sent();
+    let again = task_holding(&sent[1].request, "passages").unwrap();
+    assert_eq!(again["count"], 1);
+    assert_eq!(
+        again["alreadyWritten"],
+        json!(["What should be studied before selecting a procedure?"])
+    );
+}
+
+#[tokio::test]
+async fn a_question_written_twice_makes_one_card() {
+    let model = ScriptedModel::new().on_request::<StudyDeck>(|sent, _| {
+        let handles = &passage_handles(sent)[0];
+        reply(json!({"items": [
+            deck_item("What should be studied?", "The stated conditions", &[handles[1].clone()]),
+            deck_item("What should be studied?", "The conditions", &[handles[1].clone()])
+        ]}))
+    });
+    let cards = super::study_generation::generate(
+        &model,
+        &reaction_deck(String::new()),
+        &[source()],
+        "deck",
+        10,
+    )
+    .await
+    .unwrap();
+    assert_eq!(cards.len(), 1);
+}
+
+#[tokio::test]
+async fn conversation_cards_preserve_every_verified_claim_and_its_citations() {
     let first = VerifiedConversationClaim {
         answer: "The first verified claim remains exact.".into(),
         citations: vec![source()],
@@ -95,16 +334,18 @@ fn conversation_cards_preserve_every_verified_claim_and_its_citations() {
         answer: "The second verified claim also remains exact.".into(),
         citations: vec![second_source],
     };
-    let response = json!({"cards":[
-        {"claimIndex":1,"question":"What is true of the second claim?","distractors":["False A","False B","False C","False D"],"explanation":"The cited passage supports the second claim.","topic":"Second"},
-        {"claimIndex":0,"question":"What is true of the first claim?","distractors":["Wrong A","Wrong B","Wrong C","Wrong D"],"explanation":"The cited passage supports the first claim.","topic":"First"}
-    ]});
-    let cards: Vec<_> =
-        parse_conversation_cards(&response.to_string(), &[first, second], "deck", 10)
-            .unwrap()
-            .into_iter()
-            .map(|(_, card)| card)
+    let model = ScriptedModel::new().on_request::<ConversationCards>(|sent, _| {
+        let entries: Vec<_> = claim_ids(sent)
+            .iter()
+            .rev()
+            .map(|id| card_entry(id, &format!("What is true of {id}?"), &FOUR))
             .collect();
+        reply(json!({ "entries": entries }))
+    });
+    let cards =
+        super::study_generation::generate_from_conversation(&model, &[first, second], "deck", 10)
+            .await
+            .unwrap();
     assert_eq!(cards.len(), 2);
     assert_eq!(cards[0].answer, "The first verified claim remains exact.");
     assert_eq!(
@@ -117,34 +358,93 @@ fn conversation_cards_preserve_every_verified_claim_and_its_citations() {
         .all(|card| card.options.len() == 5 && card.options[card.correct_index] == card.answer));
 }
 
-#[test]
-fn a_deck_keeps_its_usable_cards_when_one_is_invalid() {
-    let mut reply = generated();
-    let mut invalid = reply["cards"][0].clone();
-    invalid["question"] = json!("What is not in the passage?");
-    invalid["quote"] = json!("An invented rule not supported by the document passage.");
-    reply["cards"].as_array_mut().unwrap().push(invalid);
-    let cards = parse_cards(&reply.to_string(), &[source()], "deck", 6, 0).unwrap();
+#[tokio::test]
+async fn a_conversation_card_out_of_shape_is_left_out_and_the_others_kept() {
+    let claims: Vec<_> = (0..2).map(|i| reaction_claim(i, 1)).collect();
+    let model = ScriptedModel::new().on_request::<ConversationCards>(|sent, _| {
+        let entries: Vec<_> = claim_ids(sent)
+            .iter()
+            .map(|id| {
+                let three = ["A", "B", "C"];
+                card_entry(
+                    id,
+                    "When is equilibrium reached?",
+                    if id == "c1" { &three[..] } else { &FOUR[..] },
+                )
+            })
+            .collect();
+        reply(json!({ "entries": entries }))
+    });
+    let cards = super::study_generation::generate_from_conversation(&model, &claims, "deck", 10)
+        .await
+        .unwrap();
     assert_eq!(cards.len(), 1);
-    assert_eq!(cards[0].answer, "The stated conditions");
+    assert_eq!(cards[0].answer, claims[1].answer);
+    let sent = model.sent();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(claim_ids(&sent[1]), ["c1"]);
 }
 
-#[test]
-fn a_conversation_card_out_of_shape_is_left_out_and_the_others_kept() {
-    let claims: Vec<_> = (0..2).map(|i| reaction_claim(i, 1)).collect();
-    let reply = json!({"cards":[
-        {"claimIndex":0,"question":"When is equilibrium reached?","distractors":["A","B","C"],"explanation":"Cited.","topic":"Equilibrium"},
-        {"claimIndex":1,"question":"When is equilibrium reached?","distractors":["A","B","C","D"],"explanation":"Cited.","topic":"Equilibrium"}
-    ]});
-    let cards = parse_conversation_cards(&reply.to_string(), &claims, "deck", 10).unwrap();
-    assert_eq!(
-        cards.iter().map(|(index, _)| *index).collect::<Vec<_>>(),
-        [1]
+#[tokio::test]
+async fn a_claim_the_answer_leaves_out_is_asked_for_again_and_the_others_stand() {
+    let claims: Vec<_> = (0..3).map(|i| reaction_claim(i, 1)).collect();
+    let model = ScriptedModel::new().on_request::<ConversationCards>(|sent, nth| {
+        let ids = claim_ids(sent);
+        let mut entries: Vec<_> = if nth == 0 {
+            ids.iter()
+                .take(1)
+                .map(|id| card_entry(id, "When is equilibrium reached?", &FOUR))
+                .collect()
+        } else {
+            ids.iter()
+                .map(|id| card_entry(id, &format!("What does {id} state?"), &FOUR))
+                .collect()
+        };
+        if nth == 0 {
+            entries.push(card_entry("c9", "Which claim is this?", &FOUR));
+        }
+        reply(json!({ "entries": entries }))
+    });
+    let cards = super::study_generation::generate_from_conversation(&model, &claims, "deck", 10)
+        .await
+        .unwrap();
+    assert_eq!(cards.len(), 3);
+    let sent = model.sent();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(claim_ids(&sent[1]), ["c2", "c3"]);
+}
+
+#[tokio::test]
+async fn a_distractor_repeating_the_claim_leaves_the_claim_without_a_card() {
+    let claims = vec![reaction_claim(0, 1)];
+    let answer = claims[0].answer.clone();
+    let model = ScriptedModel::new().on_request::<ConversationCards>(move |sent, _| {
+        let entries: Vec<_> = claim_ids(sent)
+            .iter()
+            .map(|id| {
+                card_entry(
+                    id,
+                    "When is equilibrium reached?",
+                    &[answer.as_str(), "B", "C", "D"],
+                )
+            })
+            .collect();
+        reply(json!({ "entries": entries }))
+    });
+    let error = super::study_generation::generate_from_conversation(&model, &claims, "deck", 10)
+        .await
+        .err();
+    assert!(
+        matches!(
+            error,
+            Some(lattice_core::shared::error::AppError::InvalidInput(_))
+        ),
+        "{error:?}"
     );
 }
 
-#[test]
-fn a_card_is_read_at_any_length() {
+#[tokio::test]
+async fn a_card_is_read_at_any_length() {
     let excerpt = "Study the stated conditions before selecting a procedure. ".repeat(30);
     let question = "What should be studied before selecting a procedure? ".repeat(50);
     let explanation =
@@ -153,32 +453,49 @@ fn a_card_is_read_at_any_length() {
     let option = "Only the title of the document, and nothing else in it. ".repeat(20);
     let mut source = source();
     source.excerpt = excerpt.clone();
-    let mut reply = generated();
-    let card = &mut reply["cards"][0];
-    card["question"] = json!(question);
-    card["explanation"] = json!(explanation);
-    card["topic"] = json!(topic);
-    card["options"][1] = json!(option);
-    card["quote"] = json!(excerpt);
-    let cards = parse_cards(
-        &reply.to_string(),
+    let model = ScriptedModel::new().on_request::<StudyDeck>({
+        let (question, explanation, topic, option) = (
+            question.clone(),
+            explanation.clone(),
+            topic.clone(),
+            option.clone(),
+        );
+        move |sent, _| {
+            let cites = passage_handles(sent)[0].clone();
+            let mut item = deck_item(&question, "The stated conditions", &cites);
+            item["explanation"] = json!(explanation);
+            item["topic"] = json!(topic);
+            item["distractors"] = json!(texts(&[
+                option.as_str(),
+                "Nothing",
+                "Only the filing date",
+                "Only the fee"
+            ]));
+            reply(json!({"items": [item]}))
+        }
+    });
+    let cards = super::study_generation::generate(
+        &model,
+        &reaction_deck(String::new()),
         std::slice::from_ref(&source),
         "deck",
-        6,
-        0,
-    );
-    assert!(cards.is_ok(), "{:?}", cards.as_ref().err());
-    let cards = cards.unwrap();
+        10,
+    )
+    .await
+    .unwrap();
     assert_eq!(cards.len(), 1);
     assert_eq!(cards[0].question, question.trim());
     assert_eq!(cards[0].explanation, explanation.trim());
     assert_eq!(cards[0].topic, topic.trim());
-    assert_eq!(cards[0].options[1], option.trim());
+    assert!(cards[0]
+        .options
+        .iter()
+        .any(|choice| choice == option.trim()));
     assert_eq!(cards[0].source.excerpt, excerpt.trim());
 }
 
-#[test]
-fn a_conversation_card_is_read_at_any_length() {
+#[tokio::test]
+async fn a_conversation_card_is_read_at_any_length() {
     let claim = VerifiedConversationClaim {
         answer: "The first verified claim remains exact.".into(),
         citations: vec![source()],
@@ -187,16 +504,35 @@ fn a_conversation_card_is_read_at_any_length() {
     let distractor = "A plausible but false statement about it. ".repeat(30);
     let explanation = "The cited passage supports the first claim. ".repeat(80);
     let topic = "First claim ".repeat(10);
-    let reply = json!({"cards":[{
-        "claimIndex":0,
-        "question":question,
-        "distractors":[distractor, "Wrong B", "Wrong C", "Wrong D"],
-        "explanation":explanation,
-        "topic":topic
-    }]});
-    let cards = parse_conversation_cards(&reply.to_string(), &[claim], "deck", 10).unwrap();
+    let model = ScriptedModel::new().on_request::<ConversationCards>({
+        let (question, distractor, explanation, topic) = (
+            question.clone(),
+            distractor.clone(),
+            explanation.clone(),
+            topic.clone(),
+        );
+        move |sent, _| {
+            let entries: Vec<_> = claim_ids(sent)
+                .iter()
+                .map(|id| {
+                    let mut entry = card_entry(
+                        id,
+                        &question,
+                        &[distractor.as_str(), "Wrong B", "Wrong C", "Wrong D"],
+                    );
+                    entry["explanation"] = json!(explanation);
+                    entry["topic"] = json!(topic);
+                    entry
+                })
+                .collect();
+            reply(json!({ "entries": entries }))
+        }
+    });
+    let cards = super::study_generation::generate_from_conversation(&model, &[claim], "deck", 10)
+        .await
+        .unwrap();
     assert_eq!(cards.len(), 1);
-    let card = &cards[0].1;
+    let card = &cards[0];
     assert_eq!(card.question, question.trim());
     assert_eq!(card.explanation, explanation.trim());
     assert_eq!(card.topic, topic.trim());
@@ -204,6 +540,41 @@ fn a_conversation_card_is_read_at_any_length() {
         .options
         .iter()
         .any(|option| option == distractor.trim()));
+}
+
+#[test]
+fn the_card_request_shows_what_the_model_is_told_and_nothing_internal() {
+    let mut marks = Marks::new();
+    let input = ClaimCards {
+        claims: vec![Claim {
+            at: marks.reference(100_001_usize),
+            answer: marks.told("The harbour gate opens at first light.".to_owned()),
+            citations: vec![Citation {
+                document: marks.told("tide-table.md".to_owned()),
+                excerpt: marks.told("The gate opens when the tide has turned.".to_owned()),
+            }],
+        }],
+    };
+    holds::<ConversationCards>(&input, &marks);
+}
+
+#[test]
+fn the_study_deck_request_shows_what_the_model_is_told_and_nothing_internal() {
+    let mut marks = Marks::new();
+    let input = DeckPassages {
+        count: marks.told(3_usize),
+        focus: marks.told("harbour tide tables".to_owned()),
+        study_goal: marks.told("Read the tide tables unaided".to_owned()),
+        passages: Packed::new(
+            vec![Passage {
+                document: marks.told("tide-table.md".to_owned()),
+                text: marks.told("Tide tables are revised each spring.".to_owned()),
+            }],
+            |_| 1,
+        ),
+        written: vec![marks.told("When are tide tables revised?".to_owned())],
+    };
+    holds::<StudyDeck>(&input, &marks);
 }
 
 #[test]
@@ -472,29 +843,20 @@ async fn passages_stay_within_selected_documents_and_focus() -> anyhow::Result<(
 }
 
 #[test]
-fn source_budget_shares_context_between_documents_and_reserves_output_space() {
+fn passages_are_offered_one_document_after_another() {
     let mut first = source();
     first.document_id = "first".into();
     let mut second = source();
     second.document_id = "second".into();
     let sources = vec![first.clone(), first, second];
-    let selected = super::study_generation::bounded_sources(&sources, 328, |_| 50);
+    let ordered = super::study_generation::by_document_turns(&sources);
     assert_eq!(
-        selected
+        ordered
             .iter()
             .map(|s| s.document_id.as_str())
             .collect::<Vec<_>>(),
-        ["first", "second"]
+        ["first", "second", "first"]
     );
-    assert!(super::study_generation::bounded_sources(&sources, 100, |_| 50).is_empty());
-}
-
-#[test]
-fn a_reply_whose_only_closing_brace_precedes_the_opening_one_is_rejected_not_a_panic() {
-    let s = source();
-    let raw = "} and then {\"cards\": [";
-    assert!(parse_cards(raw, std::slice::from_ref(&s), "deck", 6, 0).is_err());
-    assert!(parse_conversation_cards(raw, &[], "deck", 0).is_err());
 }
 
 #[tokio::test]
@@ -592,6 +954,7 @@ async fn the_consolidation_migration_moves_every_card_onto_fsrs() -> anyhow::Res
 /// or deck request it accepts with cards built from that request.
 struct Notation {
     calls: std::sync::Mutex<Vec<serde_json::Value>>,
+    requests: std::sync::Mutex<Vec<lattice_core::application::ports::llm_port::CompletionRequest>>,
     refusals: std::sync::atomic::AtomicUsize,
     /// Whether the next flashcard request's first card is out of shape.
     spoiled: std::sync::atomic::AtomicBool,
@@ -602,6 +965,7 @@ const NOTATION_WINDOW: usize = 8_192;
 fn notation() -> Notation {
     Notation {
         calls: std::sync::Mutex::new(Vec::new()),
+        requests: std::sync::Mutex::new(Vec::new()),
         refusals: std::sync::atomic::AtomicUsize::new(0),
         spoiled: std::sync::atomic::AtomicBool::new(false),
     }
@@ -620,8 +984,11 @@ impl lattice_core::application::ports::LLMPort for Notation {
         lattice_core::application::ports::llm_port::CompletionResponse,
     > {
         use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};
+        if let Ok(mut requests) = self.requests.lock() {
+            requests.push(request.clone());
+        }
         let rendered = request
-            .input
+            .input()
             .iter()
             .flat_map(|item| match item {
                 CompletionInput::Message { role, content } => vec![role.clone(), content.clone()],
@@ -639,29 +1006,35 @@ impl lattice_core::application::ports::LLMPort for Notation {
                 message: "over the window".into(),
             });
         }
-        let (_, user) = crate::lessons::structured_call::task_messages(request);
-        let prompt: serde_json::Value = serde_json::from_str(user)?;
+        let prompt = task_holding(request, "claims")
+            .or_else(|| task_holding(request, "passages"))
+            .ok_or_else(|| {
+                lattice_core::shared::error::AppError::InternalError("no task".into())
+            })?;
         let reply = match prompt["claims"].as_array() {
             Some(claims) => {
                 let spoiled = self
                     .spoiled
                     .swap(false, std::sync::atomic::Ordering::SeqCst);
-                json!({"cards": (0..claims.len()).map(|i| json!({
-                    "claimIndex": i,
+                json!({"entries": claims.iter().enumerate().map(|(i, claim)| json!({
+                    "of": claim["id"],
                     "question": format!("Which condition does claim {i} state for equilibrium?"),
                     "distractors": if spoiled && i == 0 {
-                        json!(["ΔG° doubles", "Fe₂O₃ melts", "CO₂ freezes"])
+                        vec!["ΔG° doubles", "Fe₂O₃ melts", "CO₂ freezes"]
                     } else {
-                        json!(["ΔG° doubles", "Fe₂O₃ melts", "CO₂ freezes", "Fe dissolves"])
-                    },
+                        vec!["ΔG° doubles", "Fe₂O₃ melts", "CO₂ freezes", "Fe dissolves"]
+                    }.into_iter().map(|text| json!({"text": text})).collect::<Vec<_>>(),
                     "explanation": "The citation states the condition.",
                     "topic": "Equilibrium"
                 })).collect::<Vec<_>>()})
             }
             None => {
                 let text = prompt["passages"][0]["text"].as_str().unwrap_or_default();
-                let quote = text.split_inclusive("zero.").next().unwrap_or_default();
-                json!({"cards":[{"question":"When does iron oxide reduction reach equilibrium?","options":["When ΔG° falls to zero","When ΔG° doubles","When Fe₂O₃ melts","When CO₂ freezes","When Fe dissolves"],"correctIndex":0,"explanation":"The passage states equilibrium is reached when ΔG° falls to zero.","sourceIndex":0,"quote":quote,"topic":"Equilibrium"}]})
+                let handle = text
+                    .strip_prefix('[')
+                    .and_then(|rest| rest.split_once(']'))
+                    .map_or("", |(handle, _)| handle);
+                json!({"items":[{"question":"When does iron oxide reduction reach equilibrium?","answer":"When ΔG° falls to zero","distractors":[{"text":"When ΔG° doubles"},{"text":"When Fe₂O₃ melts"},{"text":"When CO₂ freezes"},{"text":"When Fe dissolves"}],"explanation":"The passage states equilibrium is reached when ΔG° falls to zero.","sourceIds":[handle],"topic":"Equilibrium"}]})
             }
         };
         if let Ok(mut calls) = self.calls.lock() {
@@ -686,6 +1059,12 @@ impl lattice_core::application::ports::LLMPort for Notation {
     }
     async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -763,7 +1142,7 @@ async fn a_claim_whose_card_came_back_out_of_shape_is_asked_for_again() {
 #[tokio::test]
 async fn one_claim_the_window_cannot_hold_by_exact_count_names_the_window() {
     // Within the window by the estimate, over it by the exact count.
-    let claims = vec![reaction_claim(0, 140)];
+    let claims = vec![reaction_claim(0, 150)];
     let llm = notation();
     let error = super::study_generation::generate_from_conversation(&llm, &claims, "deck", 10)
         .await
@@ -776,6 +1155,59 @@ async fn one_claim_the_window_cannot_hold_by_exact_count_names_the_window() {
         "{message}"
     );
     assert!(llm.calls.lock().unwrap().is_empty());
+}
+
+fn requests_of(
+    llm: &Notation,
+    id: &str,
+) -> Vec<lattice_core::application::ports::llm_port::CompletionRequest> {
+    llm.requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|request| {
+            request
+                .contract()
+                .is_some_and(|call| call.id.as_str() == id)
+        })
+        .cloned()
+        .collect()
+}
+
+#[tokio::test]
+async fn prompt_snapshot_recall_conversation_cards() {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let claims: Vec<_> = (0..3).map(|i| reaction_claim(i, 1)).collect();
+    let llm = notation();
+    super::study_generation::generate_from_conversation(&llm, &claims, "deck", 10)
+        .await
+        .unwrap();
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "recall-conversation-cards",
+        &requests_of(&llm, "recall-conversation-cards"),
+    );
+}
+
+#[tokio::test]
+async fn prompt_snapshot_recall_study_deck() {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let sources: Vec<_> = (0..2).map(|i| reaction_source(i, 1)).collect();
+    let llm = notation();
+    super::study_generation::generate(
+        &llm,
+        &reaction_deck("Understand the equilibrium condition".into()),
+        &sources,
+        "deck",
+        10,
+    )
+    .await
+    .unwrap();
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "recall-study-deck",
+        &requests_of(&llm, "recall-study-deck"),
+    );
 }
 
 fn reaction_deck(study_goal: String) -> GenerateStudyDeckRequestDto {

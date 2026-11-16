@@ -4,16 +4,17 @@ import { ChevronDown, ChevronUp } from 'lucide-react';
 
 import { IconButton } from '@/components/ui';
 import { sentencesByOccurrence, sentencesCiting } from '@/features/reading/model/answerSentences';
+import { noteSentencesByOccurrence, noteSentencesCiting } from '@/features/reading/model/noteSentences';
 import {
   findQuoteSpan,
   findSourcedPassages,
   mergePassages,
-  stripCitationMarkers,
   type SourcedPassage,
 } from '@/features/reading/model/sourcedPassages';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import type { PassageLocator, SourceWithMetadata } from '@/types/conversation';
 import { formatRelativeTime } from '@/utils/formatters';
+import { replyOf, type ReplyPiece } from '@/utils/replyPieces';
 
 
 /**
@@ -62,9 +63,7 @@ const EMPTY_SENTENCES: CitedSentences = { sentences: [], quotes: [], focus: null
 
 /** Letters and digits only: the verifier and the splitter cut markdown differently. */
 function comparable(sentence: string): string {
-  return stripCitationMarkers(sentence)
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, '');
+  return sentence.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
 }
 
 /** Where `target` is among `sentences`, exactly or as the larger part of one. */
@@ -84,7 +83,7 @@ function indexOfSentence(sentences: readonly string[], target: string | undefine
  *
  * A verified turn already knows: its claim verdicts name the citations each
  * sentence rests on, and some carry the quote the judge matched. Everything
- * else falls back to the `[n]` markers in the answer text, which is the only
+ * else falls back to the references in the answer's pieces, which are the only
  * record an unverified turn leaves.
  */
 function useCitedSentences(
@@ -99,21 +98,27 @@ function useCitedSentences(
   return useMemo(() => {
     if (!citationNumber) return EMPTY_SENTENCES;
 
-    let content = citationContent;
-    if (content === undefined && ownerKey) {
+    let reply: readonly ReplyPiece[] | undefined;
+    if (citationContent === undefined && ownerKey) {
       for (const conversation of conversations) {
-        content = conversation.messages?.find((candidate) => candidate.id === ownerKey)?.content;
-        if (content !== undefined) break;
+        const message = conversation.messages?.find((candidate) => candidate.id === ownerKey);
+        if (message) {
+          reply = replyOf(message);
+          break;
+        }
       }
     }
-    // The chips are drawn from the answer's text, so that is where a clicked
-    // one is looked up, whichever record then supplies the sentences.
-    const clicked =
-      occurrence === null || content === undefined
-        ? undefined
-        : sentencesByOccurrence(content, citationNumber)[occurrence];
+    const citing = (): string[] => {
+      if (citationContent !== undefined) return noteSentencesCiting(citationContent, citationNumber);
+      return reply === undefined ? [] : sentencesCiting(reply, citationNumber);
+    };
+    const clicked = (() => {
+      if (occurrence === null) return undefined;
+      if (citationContent !== undefined) return noteSentencesByOccurrence(citationContent, citationNumber)[occurrence];
+      return reply === undefined ? undefined : sentencesByOccurrence(reply, citationNumber)[occurrence];
+    })();
 
-    const verdicts = (ownerKey && citationContent === undefined ? messageVerification.get(ownerKey)?.claimVerdicts ?? [] : []).filter((verdict) =>
+    const verdicts = (ownerKey ? messageVerification.get(ownerKey)?.claimVerdicts ?? [] : []).filter((verdict) =>
       verdict.citationIds.includes(citationNumber)
     );
     if (verdicts.length > 0) {
@@ -127,8 +132,7 @@ function useCitedSentences(
       };
     }
 
-    if (content === undefined) return EMPTY_SENTENCES;
-    const sentences = sentencesCiting(content, citationNumber);
+    const sentences = citing();
     return { sentences, quotes: [], focus: indexOfSentence(sentences, clicked) };
   }, [ownerKey, citationNumber, occurrence, citationContent, messageVerification, conversations]);
 }
@@ -379,7 +383,7 @@ export function WebArticleView({
   // A verdict's sentence is raw markdown; a reader is shown words.
   const focusedSentence =
     pageText && focus !== null
-      ? stripCitationMarkers(sentences[focus] ?? '')
+      ? (sentences[focus] ?? '')
           .replace(/[*_`#>|]+/g, '')
           .replace(/\s+/g, ' ')
           .trim()

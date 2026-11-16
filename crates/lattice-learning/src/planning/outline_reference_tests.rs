@@ -248,7 +248,7 @@ pub(super) fn model(outputs: Vec<Value>) -> ScriptedModel {
     }
 }
 pub(super) fn plan_output(subtopics: &[(&str, &[&str])]) -> Value {
-    json!({"subtopics":subtopics.iter().map(|(title, queries)| json!({"title":title,"needs":queries.iter().map(|query| json!({"query":query,"kind":"official_docs"})).collect::<Vec<_>>()})).collect::<Vec<_>>()})
+    json!({"items":subtopics.iter().map(|(title, queries)| json!({"title":title,"needs":queries.iter().map(|query| crate::references::web_research::written_need(&json!({"query":query,"kind":"official_docs"}))).collect::<Vec<_>>()})).collect::<Vec<_>>()})
 }
 /// A planned search for `kind` of source.
 fn planned(
@@ -265,18 +265,34 @@ fn paper(query: &str) -> crate::references::web_research::PlannedNeed {
     planned(query, lattice_core::domain::sourcing::NeedKind::Paper)
 }
 pub(super) fn select_all(count: usize) -> Value {
-    json!({"decisions":(0..count).map(|i| json!({"id":format!("result-{i}"),"useForGap":true,"reason":"A primary reference for this subtopic."})).collect::<Vec<_>>()})
+    json!({"marks":(0..count).map(|i| json!({"at":format!("r{}", i + 1),"reason":"A primary reference for this subtopic."})).collect::<Vec<_>>()})
 }
-/// The evidence-linking replies for one run: each listed item path gets the
-/// candidate whose passage is (or contains) the given text, every other item
-/// `none`. The replies are built from the prompts, so a test does not depend
-/// on how many batches retrieval produced.
-pub(super) fn links(picks: &[(&str, &str)]) -> Value {
-    json!({"@links":picks.iter().map(|(path, quote)| (path.to_string(), json!(quote))).collect::<serde_json::Map<_, _>>()})
+/// The evidence-linking replies for one run: each listed item path of
+/// `outline` gets the candidate whose passage is (or contains) the given
+/// text, every other item `none`. The replies are built from the prompts, so
+/// a test does not depend on how many requests retrieval produced.
+pub(super) fn links(outline: &Value, picks: &[(&str, &str)]) -> Value {
+    let text_at = |path: &str| {
+        let field = outline.pointer(path).unwrap_or(&Value::Null);
+        field["text"]
+            .as_str()
+            .or_else(|| field["objective"].as_str())
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let key_at = |path: &str| {
+        let module = path.split('/').take(3).collect::<Vec<_>>().join("/");
+        let title = outline
+            .pointer(&module)
+            .and_then(|module| module["title"].as_str())
+            .unwrap_or_default();
+        format!("{title}\u{1f}{}", text_at(path))
+    };
+    json!({"@links":picks.iter().map(|(path, quote)| (key_at(path), json!(quote))).collect::<serde_json::Map<_, _>>()})
 }
 /// An evidence-linking run that links nothing.
 pub(super) fn no_links() -> Value {
-    links(&[])
+    links(&Value::Null, &[])
 }
 /// The model's prompts other than evidence-linking batches, whose number
 /// depends on retrieval rather than on the protocol under test.
@@ -600,9 +616,9 @@ fn readable(url: &str) -> Page {
 fn search(query: &str, kind: &str, page: usize) -> (String, String, usize) {
     (query.into(), kind.into(), page)
 }
-/// A selection that turns down every one of `count` results.
-fn reject_all(count: usize) -> Value {
-    json!({"decisions":(0..count).map(|i| json!({"id":format!("result-{i}"),"useForGap":false,"reason":"Off topic for this subtopic."})).collect::<Vec<_>>()})
+/// A selection that turns down every result.
+fn reject_all() -> Value {
+    json!({"marks":[]})
 }
 fn one_subtopic(title: &str, query: &str) -> ReferencePlan {
     ReferencePlan {
@@ -669,7 +685,7 @@ async fn a_subtopic_whose_first_selection_picks_nothing_is_selected_again_in_a_l
         .serve("q1", "paper", 1, std::slice::from_ref(&off))
         .serve("q1", "community", 1, std::slice::from_ref(&good));
     let plan = one_subtopic("Random assignment", "q1");
-    let llm = model(vec![reject_all(1), select_all(1)]);
+    let llm = model(vec![reject_all(), select_all(1)]);
     let found =
         outline_references::gather(&llm, &web, &plan, &[], &OutlineProgress::default()).await?;
     assert_eq!(found.references.len(), 1);
@@ -1076,8 +1092,8 @@ async fn typography_only_mismatches_are_restored_before_the_author_citation_is_o
         &exact.replace('’', "'"),
     );
     let llm = model(vec![
-        initial,
-        links(&[("/modules/0/summary", exact)]),
+        initial.clone(),
+        links(&initial, &[("/modules/0/summary", exact)]),
         clean(),
     ]);
     let sources = vec![source];
@@ -1125,7 +1141,7 @@ async fn typography_only_mismatches_are_restored_before_the_author_citation_is_o
 async fn a_course_plan_keeps_rewordings_and_dates_and_refuses_an_unreadable_date() -> Result<()> {
     let request = request(LearningCourseDepth::Focused);
     let progress = OutlineProgress::default();
-    let subtopic = |need: Value| json!({"subtopics":[{"title":"Release cadence","needs":[need]}]});
+    let subtopic = |need: Value| json!({"items":[{"title":"Release cadence","needs":[crate::references::web_research::written_need(&need)]}]});
     let llm = model(vec![subtopic(json!({
         "query": "Python release cycle",
         "kind": "official_docs",
@@ -1146,6 +1162,97 @@ async fn a_course_plan_keeps_rewordings_and_dates_and_refuses_an_unreadable_date
         .await
         .is_err());
     Ok(())
+}
+
+/// The depth tells the planner how many subtopics a course has; a longer plan
+/// is read, and its first subtopics are kept.
+#[tokio::test]
+async fn a_plan_longer_than_the_course_depth_keeps_its_first_subtopics() -> Result<()> {
+    let request = request(LearningCourseDepth::Focused);
+    let llm = model(vec![plan_output(&[
+        ("Harbour gates", &["harbour gate opening times"]),
+        ("Tide tables", &["tide table revision schedule"]),
+        ("Kiln rotas", &["kiln rota reading guide"]),
+        ("Rope coils", &["rope coil splicing manual"]),
+    ])]);
+    let plan = outline_references::plan(&llm, &request, &[], &OutlineProgress::default()).await?;
+    assert_eq!(
+        plan.subtopic_titles(),
+        ["Harbour gates", "Tide tables", "Kiln rotas"]
+    );
+    assert_eq!(llm.prompts.lock().unwrap().len(), 1, "no second ask");
+    Ok(())
+}
+
+/// A subtopic left with no usable search is left out on its own; the others stand.
+#[tokio::test]
+async fn a_subtopic_with_no_usable_search_is_left_out_and_the_others_stand() -> Result<()> {
+    let request = request(LearningCourseDepth::Focused);
+    let unusable = json!({"title":"Harbour gates","needs":[crate::references::web_research::written_need(&json!({
+        "query": "harbour gate opening times", "kind": "web", "after": "last spring"
+    }))]});
+    let usable = plan_output(&[("Tide tables", &["tide table revision schedule"])]);
+    let llm = model(vec![
+        json!({"items":[unusable, usable["items"][0].clone()]}),
+    ]);
+    let plan = outline_references::plan(&llm, &request, &[], &OutlineProgress::default()).await?;
+    assert_eq!(plan.subtopic_titles(), ["Tide tables"]);
+    Ok(())
+}
+
+/// A search the app cannot run costs only itself; its subtopic keeps the searches that can run.
+#[tokio::test]
+async fn an_unusable_search_is_dropped_alone_and_its_subtopic_keeps_the_rest() -> Result<()> {
+    let request = request(LearningCourseDepth::Focused);
+    let written = crate::references::web_research::written_need;
+    let llm = model(vec![json!({"items":[{"title":"Harbour gates","needs":[
+        written(&json!({"query": "harbour gate opening times", "kind": "web"})),
+        written(&json!({
+            "query": "harbour gate maintenance log", "kind": "web", "site": "the harbour office pages"
+        }))
+    ]}]})]);
+    let plan = outline_references::plan(&llm, &request, &[], &OutlineProgress::default()).await?;
+    assert_eq!(plan.subtopic_titles(), ["Harbour gates"]);
+    let queries: Vec<&str> = plan.subtopics[0]
+        .needs
+        .iter()
+        .map(|need| need.query.as_str())
+        .collect();
+    assert_eq!(queries, ["harbour gate opening times"]);
+    assert_eq!(llm.prompts.lock().unwrap().len(), 1, "no second ask");
+    Ok(())
+}
+
+/// Subtopics written and none usable is a plan the app cannot use, the same as a plan of none.
+#[tokio::test]
+async fn a_plan_with_no_usable_subtopic_is_malformed() {
+    let request = request(LearningCourseDepth::Focused);
+    let unusable = json!({"title":"Harbour gates","needs":[crate::references::web_research::written_need(&json!({
+        "query": "harbour gate opening times", "kind": "web", "after": "last spring"
+    }))]});
+    // A plan whose every subtopic is refused is asked for once more.
+    for answers in [
+        vec![json!({"items":[unusable]}); 2],
+        vec![json!({"items":[]})],
+    ] {
+        let llm = model(answers);
+        let error = outline_references::plan(&llm, &request, &[], &OutlineProgress::default())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("malformed"), "{error}");
+    }
+}
+
+/// An answer that cannot be read at all fails the plan, as before.
+#[tokio::test]
+async fn an_unreadable_plan_fails_the_draft() {
+    let request = request(LearningCourseDepth::Focused);
+    let llm = model(vec![json!("No plan."), json!("Still no plan.")]);
+    assert!(
+        outline_references::plan(&llm, &request, &[], &OutlineProgress::default())
+            .await
+            .is_err()
+    );
 }
 
 /// A subtopic's title is the planner's own words; only a blank one is refused.
@@ -1195,6 +1302,12 @@ impl lattice_core::application::ports::LLMPort for SystemText<'_> {
     async fn is_ready(&self) -> Result<bool> {
         self.inner.is_ready().await
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 
 #[tokio::test]
@@ -1234,11 +1347,95 @@ async fn the_reference_plan_schema_bounds_no_text_but_a_blank_one() -> Result<()
     )])]);
     let recording = crate::content_caps_tests::Recording::new(&llm);
     outline_references::plan(&recording, &request, &[], &OutlineProgress::default()).await?;
-    let schemas = recording.schemas_naming("subtopics");
+    let schemas = recording.schemas_naming("needs");
     assert!(!schemas.is_empty(), "the plan's schema was sent");
     for schema in &schemas {
         let caps = crate::content_caps_tests::text_caps(schema);
         assert!(caps.is_empty(), "{caps:?}");
+    }
+    Ok(())
+}
+
+/// A backend that holds every answer to its schema.
+struct Enforcing<'a>(&'a dyn lattice_core::application::ports::LLMPort);
+
+#[async_trait::async_trait]
+impl lattice_core::application::ports::LLMPort for Enforcing<'_> {
+    async fn complete(
+        &self,
+        request: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        self.0.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        self.0.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.0.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.0.max_context_tokens()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        self.0.is_ready().await
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        true
+    }
+}
+
+#[tokio::test]
+async fn the_reference_plan_schema_holds_the_subtopics_to_the_modules_the_depth_asks() -> Result<()>
+{
+    let request = request(LearningCourseDepth::Focused);
+    let (_, max_modules, _, _) = LearningCourseDepth::bounds(request.course_depth);
+    let llm = model(vec![plan_output(&[(
+        "Randomized comparison",
+        &["randomized controlled trial design documentation"],
+    )])]);
+    let enforcing = Enforcing(&llm);
+    let recording = crate::content_caps_tests::Recording::new(&enforcing);
+    outline_references::plan(&recording, &request, &[], &OutlineProgress::default()).await?;
+    let schemas = recording.schemas_naming("needs");
+    assert!(!schemas.is_empty(), "the plan's schema was sent");
+    for schema in &schemas {
+        let subtopics = &schema["properties"]["items"];
+        assert_eq!(subtopics["minItems"], json!(1), "{schema}");
+        assert_eq!(subtopics["maxItems"], json!(max_modules), "{schema}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_reference_plan_schema_lists_the_registries_a_package_search_may_name() -> Result<()> {
+    fn ecosystem(value: &Value) -> Option<&Value> {
+        match value {
+            Value::Object(fields) => fields
+                .get("properties")
+                .and_then(|properties| properties.get("ecosystem"))
+                .or_else(|| fields.values().find_map(ecosystem)),
+            Value::Array(items) => items.iter().find_map(ecosystem),
+            _ => None,
+        }
+    }
+    let request = request(LearningCourseDepth::Focused);
+    let llm = model(vec![plan_output(&[(
+        "Randomized comparison",
+        &["randomized controlled trial design documentation"],
+    )])]);
+    let recording = crate::content_caps_tests::Recording::new(&llm);
+    outline_references::plan(&recording, &request, &[], &OutlineProgress::default()).await?;
+    let schemas = recording.schemas_naming("needs");
+    assert!(!schemas.is_empty(), "the plan's schema was sent");
+    for schema in &schemas {
+        let property = ecosystem(schema).expect("an ecosystem property");
+        assert_eq!(
+            property["enum"],
+            json!(["none", "crates", "pypi", "npm", "nuget", "rubygems", "maven", "go"])
+        );
     }
     Ok(())
 }
@@ -1303,5 +1500,107 @@ async fn a_short_page_the_outline_research_found_is_still_swept() -> Result<()> 
     assert!(held
         .iter()
         .all(|source| source.title != "Research reference"));
+    Ok(())
+}
+
+/// Keeps, in order, every request sent for the contract `C` to the model it wraps.
+pub(super) struct Capture<'a> {
+    inner: &'a dyn lattice_core::application::ports::LLMPort,
+    id: lattice_core::application::services::model_contract::ContractId,
+    sent: Mutex<Vec<lattice_core::application::ports::llm_port::CompletionRequest>>,
+}
+
+impl<'a> Capture<'a> {
+    pub(super) fn of<C: lattice_core::application::services::model_contract::Contract>(
+        inner: &'a dyn lattice_core::application::ports::LLMPort,
+    ) -> Self {
+        Self::named(inner, C::ID)
+    }
+
+    /// For a contract whose type is private to its module: its id.
+    pub(super) fn named(
+        inner: &'a dyn lattice_core::application::ports::LLMPort,
+        id: lattice_core::application::services::model_contract::ContractId,
+    ) -> Self {
+        Self {
+            inner,
+            id,
+            sent: Mutex::new(vec![]),
+        }
+    }
+
+    pub(super) fn requests(
+        &self,
+    ) -> Vec<lattice_core::application::ports::llm_port::CompletionRequest> {
+        self.sent.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl lattice_core::application::ports::LLMPort for Capture<'_> {
+    async fn complete(
+        &self,
+        request: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        if request.contract().is_some_and(|call| call.id == self.id) {
+            self.sent.lock().unwrap().push(request.clone());
+        }
+        self.inner.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        self.inner.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.inner.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.inner.max_context_tokens()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        self.inner.is_ready().await
+    }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
+}
+
+#[tokio::test]
+async fn prompt_snapshot_outline_reference_plan() -> Result<()> {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let request = request(LearningCourseDepth::Focused);
+    let existing = LearningSourceDto {
+        id: "overview".into(),
+        title: "Brief reference overview".into(),
+        excerpt: ORIGINAL.into(),
+        url: Some("https://example.org/overview".into()),
+        acquired_at: 0,
+    };
+    let llm = model(vec![plan_output(&[
+        (
+            "Randomized comparison",
+            &["randomized controlled trial design documentation"],
+        ),
+        (
+            "Uncertainty",
+            &["confidence interval interpretation textbook"],
+        ),
+    ])]);
+    let capture = Capture::named(
+        &llm,
+        lattice_core::application::services::model_contract::ContractId::new(
+            "outline-reference-plan",
+        ),
+    );
+
+    outline_references::plan(&capture, &request, &[existing], &OutlineProgress::default()).await?;
+
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "outline-reference-plan",
+        &capture.requests(),
+    );
     Ok(())
 }

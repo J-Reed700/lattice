@@ -1,5 +1,6 @@
 //! Changing a lesson's topics by hand, by asking the model, and undoing.
 #![allow(clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
+use super::edit::ChangeInput;
 use super::topics_support::*;
 use super::*;
 use lattice_core::application::ports::llm_port::{CompletionInput, InferencePriority};
@@ -269,12 +270,17 @@ async fn a_change_replaces_only_the_selected_entries() {
     .await
     .unwrap();
 
-    for changed in [&order[1], &order[2]] {
+    for (changed, handle) in [(&order[1], "l1"), (&order[2], "l2")] {
         let entry = entry_of(&shown, changed);
         assert_eq!(entry.entry_revision, 2);
         assert_eq!(
             entry.topics.ideas,
-            vec![format!("a changed idea of {changed}")]
+            vec![format!("a changed idea of {handle}")]
+        );
+        assert_eq!(
+            entry.topics.actions,
+            ["an action"],
+            "a field not written is kept"
         );
         assert_eq!(entry.previous, Some(the_planned_entry(changed)));
     }
@@ -288,7 +294,53 @@ async fn a_change_replaces_only_the_selected_entries() {
 }
 
 #[tokio::test]
-async fn a_change_is_asked_at_interactive_priority_under_a_schema_of_the_selected_ids() {
+async fn prompt_snapshot_course_plan_change() {
+    use lattice_core::application::services::model_contract::Contract;
+    let pool = crate::tests::pool().await.unwrap();
+    let db = Database::new(pool.clone());
+    let mut program = crate::tests::fixture();
+    crate::lessons::course_generation_tests::fixed_ids(&mut program);
+    crate::repository::LearningRepository::new(db.clone())
+        .create(&program)
+        .await
+        .unwrap();
+    let revision = outline_revision(&db, &program.summary.id).await.unwrap();
+    ensure(&db, &Topics::new(), &program, revision, &Default::default())
+        .await
+        .unwrap();
+    let order = ids(&program);
+    let model = Topics::new();
+
+    change_entries(
+        &db,
+        &model,
+        change_request(
+            &program,
+            revision,
+            &[at(&order[1], 1), at(&order[2], 1)],
+            "Move the terms to the next lesson",
+        ),
+    )
+    .await
+    .unwrap();
+
+    let sent: Vec<_> = (0..model.calls())
+        .map(|index| model.request(index))
+        .filter(|request| {
+            request
+                .contract()
+                .is_some_and(|call| call.id == edit::ChangeEntries::ID)
+        })
+        .collect();
+    lattice_core::application::services::model_contract::test_support::snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "course-plan-change",
+        &sent,
+    );
+}
+
+#[tokio::test]
+async fn a_change_is_asked_at_interactive_priority_with_every_lesson_shown_by_handle() {
     let pool = crate::tests::pool().await.unwrap();
     let db = Database::new(pool.clone());
     let (program, revision) = planned_program(&db, &Topics::new()).await;
@@ -311,36 +363,77 @@ async fn a_change_is_asked_at_interactive_priority_under_a_schema_of_the_selecte
     assert_eq!(model.calls(), 1, "the model is asked once");
     let sent = model.request(0);
     assert_eq!(sent.priority, InferencePriority::Interactive);
-    let schema = sent.json_schema.unwrap();
-    assert_eq!(
-        schema["properties"]["lessons"]["items"]["properties"]["lessonId"]["enum"],
-        json!([order[3], order[1]])
+    let (_, user) = crate::lessons::structured_call::task_messages(&sent);
+    assert!(
+        order.iter().all(|id| !user.contains(id.as_str())),
+        "no lesson id reaches the model: {user}"
     );
     let task = model.task(0);
     assert_eq!(task["goal"], program.summary.goal.as_str());
     assert_eq!(task["priorKnowledge"], program.prior_knowledge.as_str());
     assert_eq!(task["learnersRequest"], "Make these two shorter");
-    assert_eq!(task["lessonsToChange"], json!([order[3], order[1]]));
+    assert_eq!(task["lessonsToChange"], json!(["l1", "l2"]));
     let outline = task["modules"][0]["lessons"][0].clone();
-    assert_eq!(outline["lessonId"], order[0].as_str());
+    assert_eq!(outline["otherLessonId"], "o1");
     assert_eq!(outline["objective"], "Explain the central idea");
     let plan = task["plan"].as_array().unwrap();
-    let planned: Vec<_> = plan.iter().map(|entry| entry["lessonId"].clone()).collect();
+    let planned: Vec<_> = plan
+        .iter()
+        .map(|entry| {
+            entry
+                .get("lessonId")
+                .or_else(|| entry.get("otherLessonId"))
+                .cloned()
+                .unwrap()
+        })
+        .collect();
     assert_eq!(
-        planned,
-        order.iter().map(|id| json!(id)).collect::<Vec<_>>(),
+        json!(planned),
+        json!(["o1", "l2", "o2", "l1"]),
         "the whole plan, in course order"
     );
     assert_eq!(plan[0]["ideas"][0], "the central idea");
 }
 
 #[tokio::test]
-async fn a_gap_in_a_change_is_asked_for_again_with_the_lesson_it_left_out() {
+async fn a_change_leaves_the_fields_the_model_did_not_write_as_they_were() {
     let pool = crate::tests::pool().await.unwrap();
     let db = Database::new(pool.clone());
     let (program, revision) = planned_program(&db, &Topics::new()).await;
     let order = ids(&program);
-    let model = Topics::answering(vec![change_answer(&[&order[1]], "a first idea")]);
+    let only_contrast = json!({"entries":[{"of":"l1","changes":[
+        {"to":{"kind":"contrast","contrast":"a sharper confusion"}}
+    ]}]})
+    .to_string();
+    let model = Topics::answering(vec![only_contrast]);
+
+    let shown = change_entries(
+        &db,
+        &model,
+        change_request(
+            &program,
+            revision,
+            &[at(&order[1], 1)],
+            "Sharpen the contrast",
+        ),
+    )
+    .await
+    .unwrap();
+
+    let entry = entry_of(&shown, &order[1]);
+    assert_eq!(entry.topics.contrast, "a sharper confusion");
+    assert_eq!(entry.topics.ideas, ["the central idea"]);
+    assert_eq!(entry.topics.terms, ["a term"]);
+    assert_eq!(entry.topics.actions, ["an action"]);
+}
+
+#[tokio::test]
+async fn a_lesson_left_out_of_a_change_is_asked_for_again_alone_with_the_settled_entry_shown() {
+    let pool = crate::tests::pool().await.unwrap();
+    let db = Database::new(pool.clone());
+    let (program, revision) = planned_program(&db, &Topics::new()).await;
+    let order = ids(&program);
+    let model = Topics::answering(vec![change_answer(&["l1"], "a first idea")]);
 
     let shown = change_entries(
         &db,
@@ -356,23 +449,150 @@ async fn a_gap_in_a_change_is_asked_for_again_with_the_lesson_it_left_out() {
     .unwrap();
 
     assert_eq!(model.calls(), 2);
-    let asked = model.request(1);
-    let said = asked
-        .input
+    let again = model.task(1);
+    assert_eq!(again["lessonsToChange"], json!(["l2"]));
+    let settled = again["plan"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["ideas"][0] == "a first idea of l1");
+    assert!(
+        settled.is_some_and(|entry| entry.get("otherLessonId").is_some()),
+        "the settled entry is shown as it now stands: {again}"
+    );
+    for changed in [&order[1], &order[2]] {
+        assert_eq!(entry_of(&shown, changed).entry_revision, 2);
+    }
+}
+
+#[tokio::test]
+async fn a_lesson_that_stays_unanswered_saves_nothing_and_is_named() {
+    let pool = crate::tests::pool().await.unwrap();
+    let db = Database::new(pool.clone());
+    let (program, revision) = planned_program(&db, &Topics::new()).await;
+    let order = ids(&program);
+    let before = snapshot(&pool, &program.summary.id).await;
+    let first_only = change_answer(&["l1"], "a first idea");
+    let model = Topics::answering(vec![first_only.clone(), first_only.clone(), first_only]);
+
+    let refused = change_entries(
+        &db,
+        &model,
+        change_request(
+            &program,
+            revision,
+            &[at(&order[1], 1), at(&order[2], 1)],
+            "Rework these",
+        ),
+    )
+    .await;
+
+    let title = program
+        .modules
+        .iter()
+        .flat_map(|module| module.lessons.iter())
+        .find(|lesson| lesson.id == order[2])
+        .map(|lesson| lesson.title.clone())
+        .unwrap();
+    assert!(
+        matches!(&refused, Err(AppError::ModelAnswerUnusable(text)) if text.contains(&title)),
+        "{refused:?}"
+    );
+    assert_eq!(model.calls(), 3);
+    assert_eq!(snapshot(&pool, &program.summary.id).await, before);
+}
+
+#[tokio::test]
+async fn a_change_the_rules_refuse_is_corrected_for_that_lesson_alone() {
+    let pool = crate::tests::pool().await.unwrap();
+    let db = Database::new(pool.clone());
+    let (program, revision) = planned_program(&db, &Topics::new()).await;
+    let order = ids(&program);
+    let first = json!({"entries":[
+        {"of":"l1","changes":[{"to":{"kind":"ideas","topics":[]}}]},
+        {"of":"l2","changes":[{"to":{"kind":"contrast","contrast":"a new confusion"}}]}
+    ]})
+    .to_string();
+    let model = Topics::answering(vec![first]);
+
+    let shown = change_entries(
+        &db,
+        &model,
+        change_request(
+            &program,
+            revision,
+            &[at(&order[1], 1), at(&order[2], 1)],
+            "Rework these",
+        ),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(model.calls(), 2);
+    let said = said_in(&model.request(1));
+    assert!(said.contains("at least one idea"), "{said}");
+    assert_eq!(model.task(1)["lessonsToChange"], json!(["l1"]));
+    assert_eq!(
+        entry_of(&shown, &order[1]).topics.ideas,
+        ["a changed idea of l1"]
+    );
+    let kept = entry_of(&shown, &order[2]);
+    assert_eq!(kept.topics.contrast, "a new confusion");
+    assert_eq!(kept.topics.ideas, ["the central idea"]);
+}
+
+#[test]
+fn the_change_request_shows_what_the_model_is_told_and_nothing_internal() {
+    use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
+    let mut marks = Marks::new();
+    let lesson = |marks: &mut Marks, id: &str, title: &str| outline::Lesson {
+        id: marks.reference(id.to_owned()),
+        title: marks.told(title.to_owned()),
+        objective: marks.told(format!("Explain {title} at the harbour.")),
+        minutes: None,
+        taught: None,
+    };
+    let first = lesson(&mut marks, "lesson-uuid-0001", "Reading the tide tables");
+    let second = lesson(&mut marks, "lesson-uuid-0002", "Mooring a small boat");
+    let held = |marks: &mut Marks, id: &str, idea: &str| outline::Held {
+        lesson: marks.internal(id.to_owned()),
+        ideas: marks.told(vec![idea.to_owned()]),
+        terms: marks.told(vec!["Cleat and bollard fittings".to_owned()]),
+        actions: marks.told(vec!["Tying a bowline knot".to_owned()]),
+        contrast: marks.told("Mooring against anchoring at sea.".to_owned()),
+    };
+    let input = ChangeInput {
+        goal: marks.told("Run the harbour office.".to_owned()),
+        prior_knowledge: marks.told("Some time on the water.".to_owned()),
+        request: marks.told("Move the tide terms to the next lesson".to_owned()),
+        modules: vec![outline::Module {
+            title: marks.told("The harbour basics".to_owned()),
+            milestone: None,
+            lessons: vec![
+                marks.internal(first.id.clone()),
+                marks.internal(second.id.clone()),
+            ],
+        }],
+        lessons: vec![first.clone()],
+        others: vec![outline::Other(second.clone())],
+        plan: vec![
+            held(&mut marks, &first.id, "How the tide turns"),
+            held(&mut marks, &second.id, "How a mooring holds a boat"),
+        ],
+    };
+    holds::<edit::ChangeEntries>(&input, &marks);
+}
+
+fn said_in(request: &lattice_core::application::ports::llm_port::CompletionRequest) -> String {
+    request
+        .input()
         .iter()
         .filter_map(|item| match item {
             CompletionInput::Message { role, content } if role == "user" => Some(content.as_str()),
             _ => None,
         })
         .collect::<Vec<_>>()
-        .join("\n");
-    assert!(
-        said.contains(&order[2]) && said.contains("exactly once"),
-        "{said}"
-    );
-    for changed in [&order[1], &order[2]] {
-        assert_eq!(entry_of(&shown, changed).entry_revision, 2);
-    }
+        .join("\n")
 }
 
 #[tokio::test]
@@ -587,19 +807,4 @@ async fn an_undo_that_does_not_apply_is_refused_and_writes_nothing() {
     );
 
     assert_eq!(snapshot(&pool, &program.summary.id).await, before);
-}
-
-#[test]
-fn the_change_contract_reads_what_it_renders() {
-    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
-        super::edit::ChangeEntries,
-    >(&CoursePlan {
-        lessons: vec![PlannedLesson {
-            lesson_id: "lesson-1".into(),
-            ideas: vec!["an idea".into()],
-            terms: vec![],
-            actions: vec!["an action".into()],
-            contrast: String::new(),
-        }],
-    });
 }

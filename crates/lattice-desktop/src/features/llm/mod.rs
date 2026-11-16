@@ -21,3 +21,6 @@ pub mod cloud;
 pub mod engine;
 pub mod llama_cpp;
 pub(crate) mod scheduler;
+
+#[cfg(test)]
+mod dialect_tests;

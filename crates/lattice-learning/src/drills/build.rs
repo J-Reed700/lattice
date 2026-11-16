@@ -36,6 +36,8 @@ mod blind_review;
 mod clean_code;
 #[path = "stages/clean_review.rs"]
 mod clean_review;
+#[path = "stages/code_units.rs"]
+pub(crate) mod code_units;
 #[path = "stages/lesson_check.rs"]
 mod lesson_check;
 #[path = "stages/outputs.rs"]

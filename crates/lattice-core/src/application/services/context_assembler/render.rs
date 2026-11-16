@@ -61,21 +61,26 @@ fn json_string(value: &str) -> String {
 /// A past message as it is replayed. An assistant answer's pictures become
 /// their captions (`[Picture: caption]`): an `img-N` ref belongs to the turn
 /// that stored it, and a later answer that copied one would show another
-/// turn's picture, or none. Its citation markers go for the same reason: this
-/// turn's `[3]` is another passage, and a model reading the old one beside it
-/// takes a right answer for a wrong one and says so. Every other byte is kept.
+/// turn's picture, or none. Its references are kept as the handles they are
+/// written as: a handle names the same thing in every turn. Every other byte is kept.
 fn replayed(role: SourceRole, text: &str) -> std::borrow::Cow<'_, str> {
-    if role != SourceRole::Assistant {
-        return std::borrow::Cow::Borrowed(text);
-    }
-    let answer = if text.contains("](img-") {
+    if role == SourceRole::Assistant && text.contains("](img-") {
         std::borrow::Cow::Owned(crate::shared::markdown_media::images_to_captions(text))
     } else {
         std::borrow::Cow::Borrowed(text)
-    };
-    std::borrow::Cow::Owned(crate::shared::citation_markers::without_citation_markers(
-        &answer,
-    ))
+    }
+}
+
+/// A passage copied out of a message to be shown elsewhere or later: what
+/// `replayed` gives, and no numbered marker of a message saved before handles
+/// either, for such a number names nothing outside its own turn.
+fn quoted(role: SourceRole, text: &str) -> String {
+    let text = replayed(role, text);
+    if role == SourceRole::Assistant {
+        crate::shared::citation_markers::without_citation_markers(&text)
+    } else {
+        text.into_owned()
+    }
 }
 
 fn role_label(role: SourceRole) -> &'static str {
@@ -130,7 +135,7 @@ pub fn render_memory_item<'a>(
             role_label(span.role),
             span.sequence,
             span.message_id,
-            json_string(&replayed(span.role, text))
+            json_string(&quoted(span.role, text))
         ));
     }
     // An item whose every span stopped resolving is not evidence of anything.
@@ -191,7 +196,7 @@ pub fn render_recalled(
                 role_label(passage.role),
                 passage.sequence,
                 passage.message_id,
-                json_string(&replayed(passage.role, &passage.text))
+                json_string(&quoted(passage.role, &passage.text))
             )
         })
         .collect::<Vec<_>>()
@@ -227,12 +232,14 @@ pub fn render_evidence(blocks: &[String]) -> Option<String> {
 ///
 /// No trimming. `completion_input::from_context` trims, and a trimmed user
 /// message is a different message; this path exists so the production memory
-/// path never goes through that. The rewrites are an answer's pictures and
-/// citation markers (see `replayed`), and a question's attached pictures, which
-/// replay as one caption line each after its text: their pixels rode only in
-/// the turn they were sent in.
+/// path never goes through that. The rewrites are an answer's pictures (see
+/// `replayed`) and a question's attached pictures, which replay as one caption
+/// line each after its text: their pixels rode only in the turn they were sent in.
 pub fn render_recent(message: &SourceMessage) -> CompletionInput {
-    let content = replayed(message.role, &message.content);
+    let content = replayed(
+        message.role,
+        message.replayed.as_deref().unwrap_or(&message.content),
+    );
     let content = if message.pictures.is_empty() {
         content.into_owned()
     } else {
@@ -468,6 +475,8 @@ mod tests {
             content_digest: compute_digest("  indented\n\tcode\n  "),
             status: "completed".into(),
             pictures: Vec::new(),
+            references: Vec::new(),
+            replayed: None,
         };
         match render_recent(&message) {
             CompletionInput::Message { role, content } => {
@@ -491,6 +500,8 @@ mod tests {
             content_digest: compute_digest(content),
             status: "completed".into(),
             pictures: Vec::new(),
+            references: Vec::new(),
+            replayed: None,
         };
         let answer = "It flew.\n\n![Saturn V lifting off](img-1)\n";
         match render_recent(&message(SourceRole::Assistant, answer)) {
@@ -505,13 +516,10 @@ mod tests {
         }
     }
 
-    /// A question's attached pictures replay as caption lines after its
-    /// text, which is kept byte for byte.
-    /// A past answer's `[3]` is not this turn's `[3]`, and a model that reads
-    /// the two together takes a right answer for a wrong one. What the user
-    /// wrote is theirs, and may ask about a number.
+    /// A past answer's `[s5]` names the same source in every turn, so it is
+    /// replayed as written, like what the user wrote.
     #[test]
-    fn a_recent_answer_replays_without_its_citation_markers() {
+    fn a_recent_answer_replays_its_handles_as_written() {
         let message = |role, content: &str| SourceMessage {
             id: "m3".into(),
             conversation_id: "c1".into(),
@@ -521,12 +529,12 @@ mod tests {
             content_digest: compute_digest(content),
             status: "completed".into(),
             pictures: Vec::new(),
+            references: Vec::new(),
+            replayed: None,
         };
-        let answer = "The rule is 74 hours [5]. See \"the status line\" [6][7].";
+        let answer = "The rule is 74 hours [s5]. See \"the status line\" [s6][s7].";
         match render_recent(&message(SourceRole::Assistant, answer)) {
-            CompletionInput::Message { content, .. } => {
-                assert_eq!(content, "The rule is 74 hours. See \"the status line\".");
-            }
+            CompletionInput::Message { content, .. } => assert_eq!(content, answer),
             other => panic!("unexpected input {other:?}"),
         }
         match render_recent(&message(SourceRole::User, answer)) {
@@ -535,6 +543,19 @@ mod tests {
         }
     }
 
+    /// What is quoted out of a message carries no reference into another
+    /// turn: the old numbered form goes, and what the user wrote is theirs.
+    #[test]
+    fn a_quoted_answer_has_no_numbered_marker() {
+        assert_eq!(
+            quoted(SourceRole::Assistant, "It lasts 74 hours [5], see [6, 7]."),
+            "It lasts 74 hours, see."
+        );
+        assert_eq!(quoted(SourceRole::User, "What is [5]?"), "What is [5]?");
+    }
+
+    /// A question's attached pictures replay as caption lines after its
+    /// text, which is kept byte for byte.
     #[test]
     fn a_recent_question_names_its_attached_pictures() {
         let message = SourceMessage {
@@ -546,6 +567,8 @@ mod tests {
             content_digest: compute_digest("What is this?  "),
             status: "completed".into(),
             pictures: vec!["leaf.jpg".into(), "bark.jpg".into()],
+            references: Vec::new(),
+            replayed: None,
         };
         match render_recent(&message) {
             CompletionInput::Message { role, content } => {

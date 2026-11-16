@@ -376,7 +376,7 @@ pub async fn research_interview_target(
     });
     let schema = serde_json::json!({
         "type":"object", "additionalProperties":false, "required":["needs"],
-        "properties":{"needs":{"type":"array","items":web_research::need_schema(None)}}
+        "properties":{"needs":{"type":"array","items":web_research::need_schema()}}
     });
     let private = [
         learner_brief,
@@ -474,7 +474,7 @@ pub async fn research_interview_answers(
     let needs = crate::generation::complete_checked(
         llm, &call, &system, prompt,
         serde_json::json!({"type":"object","additionalProperties":false,"required":["needs"],"properties":{
-            "needs":{"type":"array","items":web_research::need_schema(None)}
+            "needs":{"type":"array","items":web_research::need_schema()}
         }}), 1_600, None, None,
         |raw| {
             let parsed: PlannedSearches = serde_json::from_str(raw).map_err(|_| invalid("The interview answer research plan was malformed."))?;

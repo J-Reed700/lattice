@@ -1,6 +1,8 @@
 use super::*;
+use crate::application::ports::llm_port::CompletionRequest;
 use crate::application::ports::llm_port::CompletionResponse;
 use crate::application::ports::llm_port::InferencePriority;
+use crate::application::services::model_contract::legacy;
 use async_trait::async_trait;
 use std::sync::Mutex;
 
@@ -43,6 +45,12 @@ impl LLMPort for Scripted {
     async fn is_ready(&self) -> crate::shared::error::Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &crate::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 fn passage(id: &str, label: &str, text: &str, rank: f32) -> EvidencePassage {
@@ -61,13 +69,14 @@ fn user_text(request: &CompletionRequest) -> String {
 #[tokio::test]
 async fn evidence_is_rendered_under_its_heading_between_the_task_and_the_closing() {
     let llm = Scripted::new(8192, "answer");
-    let mut request = GroundedRequest::new("Be exact.", "Fill the row.");
-    request.evidence_heading = "Passages:".into();
-    request.evidence = vec![
+    let mut request = legacy::grounded("Be exact.", "Fill the row.");
+    let says = legacy::grounded_says(&mut request);
+    *says.evidence_heading = "Passages:".into();
+    *says.evidence = vec![
         passage("c1", "[1]", "First passage.", 1.0),
         passage("c2", "[2]", "Second passage.", 0.5),
     ];
-    request.closing = "Answer in JSON.".into();
+    *says.closing = "Answer in JSON.".into();
     request.call = CallOptions {
         priority: InferencePriority::Interactive,
         cache_key: Some("doc-1".into()),
@@ -84,14 +93,14 @@ async fn evidence_is_rendered_under_its_heading_between_the_task_and_the_closing
         "Fill the row.\n\nPassages:\n[1] First passage.\n\n[2] Second passage.\n\nAnswer in JSON."
     );
     assert!(matches!(
-        sent.input.first(),
+        sent.input().first(),
         Some(CompletionInput::Message { role, content }) if role == "system" && content == "Be exact."
     ));
     assert_eq!(sent.priority, InferencePriority::Interactive);
     assert_eq!(sent.cache_key.as_deref(), Some("doc-1"));
     // The reservation the plan made is the one the request enforces.
     assert_eq!(
-        sent.max_output_tokens,
+        sent.max_output_tokens(),
         u32::try_from(output.accounting.output_reserved).ok()
     );
     assert!(output.accounting.fits());
@@ -100,7 +109,7 @@ async fn evidence_is_rendered_under_its_heading_between_the_task_and_the_closing
 #[tokio::test]
 async fn a_task_larger_than_the_window_is_refused_with_a_typed_overflow_and_never_sent() {
     let llm = Scripted::new(4096, "unused");
-    let request = GroundedRequest::new("Be exact.", "word ".repeat(20_000));
+    let request = legacy::grounded("Be exact.", "word ".repeat(20_000));
 
     let error = generate(&llm, request).await.unwrap_err();
 
@@ -113,8 +122,9 @@ async fn a_task_larger_than_the_window_is_refused_with_a_typed_overflow_and_neve
 #[tokio::test]
 async fn required_evidence_that_does_not_fit_is_refused_rather_than_cut() {
     let llm = Scripted::new(4096, "unused");
-    let mut request = GroundedRequest::new("", "Summarize.");
-    request.evidence = vec![passage("m1", "USER:", &"long ".repeat(10_000), 1.0)];
+    let mut request = legacy::grounded("", "Summarize.");
+    *legacy::grounded_says(&mut request).evidence =
+        vec![passage("m1", "USER:", &"long ".repeat(10_000), 1.0)];
 
     let error = generate(&llm, request).await.unwrap_err();
 
@@ -125,9 +135,10 @@ async fn required_evidence_that_does_not_fit_is_refused_rather_than_cut() {
 #[tokio::test]
 async fn best_first_keeps_the_strongest_passages_that_fit_and_reports_the_rest() {
     let llm = Scripted::new(4096, "answer");
-    let mut request = GroundedRequest::new("", "Answer.");
-    request.selection = EvidenceSelection::BestFirst;
-    request.evidence = vec![
+    let mut request = legacy::grounded("", "Answer.");
+    let says = legacy::grounded_says(&mut request);
+    *says.selection = EvidenceSelection::BestFirst;
+    *says.evidence = vec![
         passage("weak", "[1]", &"weak ".repeat(100), 0.1),
         passage("huge", "[2]", &"huge ".repeat(20_000), 0.9),
         passage("strong", "[3]", "strong", 0.8),
@@ -146,10 +157,11 @@ async fn best_first_keeps_the_strongest_passages_that_fit_and_reports_the_rest()
 #[tokio::test]
 async fn a_prefix_stops_at_the_first_passage_that_does_not_fit() {
     let llm = Scripted::new(8192, "answer");
-    let mut request = GroundedRequest::new("", "Summarize the opening.");
-    request.selection = EvidenceSelection::Prefix;
-    request.evidence_limit = Some(100);
-    request.evidence = vec![
+    let mut request = legacy::grounded("", "Summarize the opening.");
+    let says = legacy::grounded_says(&mut request);
+    *says.selection = EvidenceSelection::Prefix;
+    *says.evidence_limit = Some(100);
+    *says.evidence = vec![
         passage("p1", "", &"a ".repeat(100), 1.0),
         passage("p2", "", &"b ".repeat(200), 0.9),
         passage("p3", "", "c", 0.8),
@@ -165,9 +177,9 @@ async fn a_prefix_stops_at_the_first_passage_that_does_not_fit() {
 #[tokio::test]
 async fn evidence_room_shrinks_by_what_the_task_and_history_take() {
     let llm = Scripted::new(8192, "unused");
-    let bare = GroundedRequest::new("", "Task.");
-    let mut with_history = GroundedRequest::new("", "Task.");
-    with_history.history = vec![HistoryItem {
+    let bare = legacy::grounded("", "Task.");
+    let mut with_history = legacy::grounded("", "Task.");
+    *legacy::grounded_says(&mut with_history).history = vec![HistoryItem {
         role: "user".into(),
         content: "earlier ".repeat(400),
     }];
@@ -182,13 +194,14 @@ async fn evidence_room_shrinks_by_what_the_task_and_history_take() {
 #[tokio::test]
 async fn structured_call_options_reach_the_model_unchanged() {
     let llm = Scripted::new(8192, "{}");
-    let mut request = GroundedRequest::new("Return JSON.", "Draft a card.");
-    request.output_tokens = 1000;
+    let mut request = legacy::grounded("Return JSON.", "Draft a card.");
+    let says = legacy::grounded_says(&mut request);
+    *says.output_tokens = 1000;
+    *says.schema = Some(legacy::schema(serde_json::json!({"type": "object"})));
     request.call = CallOptions {
         priority: InferencePriority::Verification,
         cache_key: Some("course-1".into()),
         no_time_limit: true,
-        json_schema: Some(serde_json::json!({"type": "object"})),
         reasoning_effort: Some("low".into()),
         ..Default::default()
     };
@@ -200,24 +213,25 @@ async fn structured_call_options_reach_the_model_unchanged() {
     assert_eq!(sent.cache_key.as_deref(), Some("course-1"));
     assert!(sent.no_time_limit);
     assert_eq!(
-        sent.json_schema,
-        Some(serde_json::json!({"type": "object"}))
+        sent.schema().map(|schema| schema.as_json()),
+        Some(&serde_json::json!({"type": "object"}))
     );
     assert_eq!(sent.reasoning_effort.as_deref(), Some("low"));
-    assert_eq!(sent.max_output_tokens, Some(1000));
+    assert_eq!(sent.max_output_tokens(), Some(1000));
     assert_eq!(output.finish_reason, "stop");
 }
 
 #[tokio::test]
 async fn an_answer_that_fills_the_window_gets_the_room_the_input_left() {
     let llm = Scripted::new(8192, "{}");
-    let mut request = GroundedRequest::new("Return JSON.", "Draft an outline.");
-    request.output_tokens = 1000;
-    request.output_fills_window = true;
+    let mut request = legacy::grounded("Return JSON.", "Draft an outline.");
+    let says = legacy::grounded_says(&mut request);
+    *says.output_tokens = 1000;
+    *says.output_fills_window = true;
 
     let output = generate(&llm, request).await.unwrap();
 
-    let max_output = llm.first_request().max_output_tokens.unwrap() as usize;
+    let max_output = llm.first_request().max_output_tokens().unwrap() as usize;
     let margin = output.accounting.safety_margin;
     assert_eq!(max_output + output.accounting.total_input + margin, 8192);
     assert!(max_output > 1000);
@@ -235,7 +249,7 @@ async fn streaming_delivers_text_and_retries_through_the_callers_callbacks() {
 
     let output = generate_streaming(
         &llm,
-        GroundedRequest::new("", "Write."),
+        legacy::grounded("", "Write."),
         &Streaming {
             on_text: &on_text,
             on_retry: Some(&on_retry),
@@ -314,13 +328,19 @@ impl LLMPort for Counting {
     async fn is_ready(&self) -> crate::shared::error::Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &crate::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// What a scheduler hands a tokenizer for `request`: each message's role and
 /// content, joined by newlines.
 fn rendered(request: &CompletionRequest) -> String {
     request
-        .input
+        .input()
         .iter()
         .flat_map(|item| match item {
             CompletionInput::Message { role, content } => vec![role.clone(), content.clone()],
@@ -331,15 +351,16 @@ fn rendered(request: &CompletionRequest) -> String {
 }
 
 fn measured_request() -> GroundedRequest {
-    let mut request = GroundedRequest::new("Be exact.", "Fill the row.");
-    request.evidence_heading = "Passages:".into();
-    request.evidence = vec![
+    let mut request = legacy::grounded("Be exact.", "Fill the row.");
+    let says = legacy::grounded_says(&mut request);
+    *says.evidence_heading = "Passages:".into();
+    *says.evidence = vec![
         passage("c1", "[1]", "First passage.", 1.0),
         passage("c2", "[2]", "Second passage, in C♯ minor.", 0.5),
     ];
-    request.selection = EvidenceSelection::BestFirst;
-    request.closing = "Answer in JSON.".into();
-    request.history = vec![HistoryItem {
+    *says.selection = EvidenceSelection::BestFirst;
+    *says.closing = "Answer in JSON.".into();
+    *says.history = vec![HistoryItem {
         role: "assistant".into(),
         content: "Earlier.".into(),
     }];
@@ -359,7 +380,7 @@ async fn a_request_is_measured_as_the_text_it_sends_with_the_templates_framing()
     assert_eq!(
         measured.prompt_tokens,
         text.chars().count() / 2
-            + TEMPLATE_TOKENS_PER_MESSAGE * sent.input.len()
+            + TEMPLATE_TOKENS_PER_MESSAGE * sent.input().len()
             + TEMPLATE_TOKENS_FOR_ANSWER
     );
     assert_eq!(measured.estimated, output.accounting.total_input);
@@ -378,7 +399,7 @@ async fn a_count_that_fails_measures_by_the_estimate_and_is_no_error() {
     assert_eq!(measured.prompt_tokens, measured.estimated);
     assert_eq!(measured, estimate(&llm, &measured_request()).unwrap());
     // The planner's refusal is the only error.
-    let crowded = GroundedRequest::new("", "x".repeat(100_000));
+    let crowded = legacy::grounded("", "x".repeat(100_000));
     assert!(matches!(
         measure(&llm, &crowded).await,
         Err(GroundedGenerationError::Budget(_))

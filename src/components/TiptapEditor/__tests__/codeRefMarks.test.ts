@@ -2,64 +2,19 @@ import { Editor } from '@tiptap/core';
 import { Markdown } from 'tiptap-markdown';
 import { describe, expect, it } from 'vitest';
 
+import { filePiece, said } from '@/tests/replyFixtures';
+import { drawReply, type FileTarget } from '@/utils/replyPieces';
+
 import { createExtensions } from '../extensions';
-import { CodeRefMarks, codeRefMarksKey, findCodeRefs, parseCodeRef } from '../extensions/codeRefMarks';
+import { CodeRefMarks, codeRefMarksKey } from '../extensions/codeRefMarks';
 
 import type { DecorationSet } from '@tiptap/pm/view';
 
-describe('parseCodeRef', () => {
-  it.each([
-    ['src/a.rs:10-24', { path: 'src/a.rs', startLine: 10, endLine: 24 }],
-    ['README.md:3', { path: 'README.md', startLine: 3, endLine: 3 }],
-    ['src/main.rs:3–6', { path: 'src/main.rs', startLine: 3, endLine: 6 }],
-    ['./lib/util.ts:7', { path: 'lib/util.ts', startLine: 7, endLine: 7 }],
-    ['@scope/pkg/index.js:12-4', { path: '@scope/pkg/index.js', startLine: 4, endLine: 12 }],
-  ])('reads %s', (text, expected) => {
-    expect(parseCodeRef(text)).toEqual(expected);
-  });
-
-  it.each([
-    'foo:12', // no `/` or `.`: a label, not a path
-    'http://x:80', // a URL
-    'localhost:8080',
-    'src/a.rs', // no line
-    'src/a.rs:', // no line
-    'src/a.rs:0',
-    'src/a.rs:10-', // dangling range
-    'src/a rs:10', // a space is not a path character
-    'let x = a.b:3',
-    'fn main() {}',
-  ])('leaves %s as ordinary code', (text) => {
-    expect(parseCodeRef(text)).toBeNull();
-  });
-});
-
-describe('findCodeRefs', () => {
-  it('waits for a reference still being written at the end of a streaming answer', () => {
-    expect(findCodeRefs('Look at src/a.rs:1', { complete: false })).toEqual([]);
-    expect(findCodeRefs('Look at src/a.rs:12 and', { complete: false })).toEqual([
-      { path: 'src/a.rs', startLine: 12, endLine: 12 },
-    ]);
-    expect(findCodeRefs('Look at src/a.rs:12')).toEqual([{ path: 'src/a.rs', startLine: 12, endLine: 12 }]);
-  });
-
-  it('finds inline references in order and skips fenced code', () => {
-    const markdown = [
-      'Start at `src/main.rs:3-6`, then `README.md:1`.',
-      '```',
-      '`src/hidden.rs:1`',
-      '```',
-      'Not this: `foo:2`.',
-    ].join('\n');
-    expect(findCodeRefs(markdown).map((ref) => ref.path)).toEqual(['src/main.rs', 'README.md']);
-  });
-});
-
-function drawnRefs(markdown: string, enabled: boolean): string[] {
+function drawnRefs(markdown: string, files: readonly FileTarget[], links = true): string[] {
   const editor = new Editor({
     extensions: [
       ...createExtensions(),
-      CodeRefMarks.configure({ isEnabled: () => enabled }),
+      CodeRefMarks.configure({ isEnabled: () => links, getFiles: () => files }),
       Markdown.configure({ html: false }),
     ],
     content: markdown,
@@ -67,43 +22,47 @@ function drawnRefs(markdown: string, enabled: boolean): string[] {
   });
   const plugin = editor.state.plugins.find((candidate) => candidate.spec.key === codeRefMarksKey);
   const set = plugin?.props.decorations?.call(plugin, editor.state) as DecorationSet;
-  const refs = set.find().map((decoration) => {
-    const attrs = (decoration as unknown as { type: { attrs: Record<string, string> } }).type.attrs;
-    const lines = attrs['data-code-ref-start'] ? `:${attrs['data-code-ref-start']}-${attrs['data-code-ref-end']}` : '';
-    return `${attrs['data-code-ref']}${lines}`;
-  });
+  const refs = set
+    .find()
+    .map((decoration) => (decoration as unknown as { type: { attrs: Record<string, string> } }).type.attrs)
+    .filter((attrs) => attrs['data-code-ref'])
+    .map((attrs) => {
+      const lines = attrs['data-code-ref-start'] ? `:${attrs['data-code-ref-start']}-${attrs['data-code-ref-end']}` : '';
+      return `${attrs['data-code-ref']}${lines}`;
+    });
   editor.destroy();
   return refs;
 }
 
 describe('CodeRefMarks', () => {
-  const answer = 'The loop is in `src/main.rs:3-6`; `foo:12` is a label and `README.md:2` explains it.\n\n```\nsrc/main.rs:9\n```';
+  const reply = [
+    said('The loop is in '),
+    filePiece(1, 'src/main.rs', 3, 6),
+    said(' and `foo:12` is a label; see '),
+    { type: 'reference', reference: { written: '[f2]', kind: 'file', number: 2, name: 'README.md', lines: null } } as const,
+    said('.\n\n```\nsrc/main.rs:9\n```'),
+  ];
 
-  it('decorates only inline code that is a line reference', () => {
-    expect(drawnRefs(answer, true)).toEqual(['src/main.rs:3-6', 'README.md:2-2']);
+  it('draws a chip over each file piece of a folder reply and nothing else', () => {
+    const drawn = drawReply(reply, true);
+    expect(drawn.markdown).toContain('src/main.rs:3-6');
+    expect(drawnRefs(drawn.markdown, drawn.files)).toEqual(['src/main.rs:3-6', 'README.md']);
   });
 
-  it('draws nothing outside an explorer conversation', () => {
-    expect(drawnRefs(answer, false)).toEqual([]);
+  it('draws no chip outside a folder reply, where a file piece is inline code', () => {
+    const drawn = drawReply(reply);
+    expect(drawn.files).toEqual([]);
+    expect(drawn.markdown).toContain('`src/main.rs:3-6`');
+    expect(drawnRefs(drawn.markdown, drawn.files)).toEqual([]);
   });
 
-  /** Models do not keep to the backticks the prompt asks for. */
-  it('draws references however the answer formats them', () => {
-    const prose = [
-      'The facade is src/lib/api.ts [package.json:51; src-tauri/Cargo.toml:35-38], registered at',
-      '[src-tauri/src/main.rs:9, 64-67]. The loop is in **src/main.rs**:12 and `lib.rs` line 4;',
-      'see lines 3–9 of `util.ts`, [the entry](src/main.rs#L20-L22) and [the docs](https://example.com/a.rs).',
-    ].join(' ');
-    expect(drawnRefs(prose, true)).toEqual([
-      'src/lib/api.ts',
-      'package.json:51-51',
-      'src-tauri/Cargo.toml:35-38',
-      'src-tauri/src/main.rs:9-9',
-      'src-tauri/src/main.rs:64-67',
-      'src/main.rs:12-12',
-      'lib.rs:4-4',
-      'util.ts:3-9',
-      'src/main.rs:20-22',
-    ]);
+  it('does not read a chip from text that looks like a reference', () => {
+    expect(drawnRefs('See `src/main.rs:3-6` and src/lib.rs:4.', [])).toEqual([]);
+  });
+
+  it('draws a chip over a link whose address points into the folder', () => {
+    const markdown = 'See [the entry](src/main.rs#L20-L22) and [the docs](https://example.com/a.rs).';
+    expect(drawnRefs(markdown, [])).toEqual(['src/main.rs:20-22']);
+    expect(drawnRefs(markdown, [], false)).toEqual([]);
   });
 });

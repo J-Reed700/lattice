@@ -23,11 +23,10 @@ pub(super) fn report(site: Option<FindingSite>, note: &str, passage: Option<&str
     }
 }
 
-fn verdict(finding: &ReviewFinding, present: bool, quote: &str) -> Verdict {
+fn verdict(finding: &ReviewFinding, present: bool, _quote: &str) -> Verdict {
     Verdict {
         id: finding.id(),
         present,
-        quote: quote.to_owned(),
     }
 }
 
@@ -148,28 +147,6 @@ fn a_resolved_verdict_closes_the_finding() {
     );
     assert!(new.is_empty());
     assert!(standing.open().is_empty());
-}
-
-#[test]
-fn a_present_verdict_keeps_the_note_and_summary_and_makes_its_quote_the_passage() {
-    let candidate = lesson(&[FIRST, SECOND]);
-    let (mut standing, fresh) = reviewed(
-        &candidate,
-        vec![report(Some(FindingSite::Section(0)), "Wrong.", Some(FIRST))],
-    );
-    let changed = lesson(&["The first part states one plain fact. More.", SECOND]);
-    answer(
-        &mut standing,
-        &changed,
-        vec![verdict(&fresh[0], true, "More.")],
-        Vec::new(),
-    );
-    let open = &standing.open()[0];
-    assert_eq!(open.id(), fresh[0].id());
-    assert_eq!(open.note, "Wrong.");
-    assert_eq!(open.summary, "About: Wrong.");
-    assert_eq!(open.site, Some(FindingSite::Section(0)));
-    assert_eq!(open.passage.as_deref(), Some("More."));
 }
 
 #[test]
@@ -435,33 +412,6 @@ fn a_report_that_continues_a_finding_the_verdict_called_resolved_is_a_new_findin
     assert_eq!(new[0].note, "Still wrong.");
     assert_eq!(new[0].site, Some(FindingSite::Section(0)));
     assert_eq!(new[0].passage.as_deref(), Some("More."));
-}
-
-#[test]
-fn a_present_finding_follows_the_words_its_verdict_quotes() {
-    let first = "The first part states one plain fact.\n\nSecond paragraph here.";
-    let candidate = lesson(&[first, SECOND]);
-    let (mut standing, fresh) = reviewed(
-        &candidate,
-        vec![report(Some(FindingSite::Section(0)), "Wrong.", Some(FIRST))],
-    );
-    let changed = lesson(&[
-        "The first part states one plain fact.\n\nSecond paragraph here, now.",
-        SECOND,
-    ]);
-    answer(
-        &mut standing,
-        &changed,
-        vec![verdict(&fresh[0], true, "Second paragraph here, now.")],
-        Vec::new(),
-    );
-    let moved = lesson(&[
-        "Second paragraph here, now.\n\nThe first part states one plain fact.",
-        SECOND,
-    ]);
-    let asked = standing.round(&moved).unwrap().asked;
-    assert_eq!(asked.len(), 1);
-    assert_eq!(asked[0].passage_id.as_deref(), Some("section-0-passage-0"));
 }
 
 #[test]

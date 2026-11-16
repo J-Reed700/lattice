@@ -58,10 +58,37 @@ impl Rounds {
                 return Ok(fault(prompt, section, sentence));
             }
             if prompt.starts_with("Check whether proposed lesson-review findings are justified") {
-                return Ok(json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"internal_conflict","evidenceIds":[format!("blocks-{section}")],"partId":format!("blocks-{section}"),"requirementId":null,"reason":"The step asks for something the explanation beside it never set up."}]}).to_string());
+                return Ok(crate::review_evidence::scripted_entries(prompt, |shows| {
+                    let part = shows.part(&format!("Section {}", section + 1));
+                    let mut decision = crate::review_evidence::decided(
+                        "actionable",
+                        "internal_conflict",
+                        std::slice::from_ref(&part),
+                        &[],
+                        &part,
+                        "none",
+                    );
+                    decision["reason"] = json!(
+                        "The step promises that the tutor runs the learner's code and reports whether the tests pass."
+                    );
+                    Some(decision)
+                }));
             }
             if prompt.starts_with("You are editing a rejected draft.") {
-                return Ok(json!({"edits":[{"path":format!("/blocks/{section}/body"),"before":sentence,"after":written}]}).to_string());
+                // The repair writes over the sentence once; after that it has nothing to change.
+                let path = format!("/blocks/{section}/body");
+                let there = fixture_task(prompt).is_some_and(|task| {
+                    task["candidate"]
+                        .pointer(&path)
+                        .and_then(Value::as_str)
+                        .is_some_and(|body| unmarked(body).contains(sentence))
+                });
+                let edits = if there {
+                    json!([{"path":path,"before":sentence,"after":written}])
+                } else {
+                    json!([])
+                };
+                return Ok(json!({ "edits": edits }).to_string());
             }
         }
         if prompt.starts_with("Repair verified lesson defects.") {
@@ -73,7 +100,9 @@ impl Rounds {
                 .iter()
                 .find(|(from, _)| body.contains(*from))
                 .unwrap_or_else(|| panic!("no rewrite is scripted for {body}"));
-            return Ok(json!({"edits":[{"path":"/blocks/0/body","before":body,"after":body.replace(from, to)}]}).to_string());
+            return Ok(
+                json!({"edits":[{"path":"/blocks/0/body","before":from,"after":to}]}).to_string(),
+            );
         }
         if prompt.starts_with("You decide whether one statement is standard knowledge") {
             let statement = prompt.rsplit("\n\nStatement: ").next().unwrap_or_default();
@@ -87,29 +116,19 @@ impl Rounds {
 /// holding `sentence`, and none elsewhere.
 fn fault(prompt: &str, section: usize, sentence: &str) -> String {
     let data = fixture_task(prompt).unwrap();
-    let checks: Vec<Value> = data["candidate"]["blocks"]
+    let passage = data["candidate"]["blocks"][section]["bodyPassages"]
         .as_array()
         .unwrap()
         .iter()
-        .enumerate()
-        .map(|(index, block)| {
-            let passages = block["bodyPassages"].as_array().unwrap();
-            if index == section {
-                let passage = passages
-                    .iter()
-                    .find(|passage| {
-                        passage["text"]
-                            .as_str()
-                            .is_some_and(|text| text.contains(sentence))
-                    })
-                    .unwrap();
-                json!({"index":index,"passageId":passage["id"],"finding":"This step asks the learner for something the explanation beside it never set up.","hasDefect":true})
-            } else {
-                json!({"index":index,"passageId":passages[0]["id"],"finding":"The section explains its point and asks nothing it has not set up.","hasDefect":false})
-            }
+        .position(|passage| {
+            passage["text"]
+                .as_str()
+                .is_some_and(|text| text.contains(sentence))
         })
-        .collect();
-    json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)}).to_string()
+        .unwrap();
+    let defect = json!({"passageId":format!("section-{section}-passage-{passage}"),"finding":"This step promises that the tutor runs the learner's code and reports whether the tests pass.","concerns":["promise"]});
+    let legacy = json!({"issues":[],"sectionDefects":[defect]}).to_string();
+    crate::teaching_review::scripted::reply(prompt, &legacy).unwrap_or(legacy)
 }
 
 #[async_trait::async_trait]
@@ -132,6 +151,12 @@ impl LLMPort for Rounds {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 

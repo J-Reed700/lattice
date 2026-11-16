@@ -306,6 +306,7 @@ mod tests {
                 "get_document",
                 "list_attachments",
                 "list_documents",
+                "read_more",
                 "semantic_search",
                 "web_search",
                 "wiki_search",
@@ -334,6 +335,8 @@ mod tests {
             "find_image",
             "wiki_search",
             "wiki_summary",
+            // Runs as the tool whose read it carries on, under that tool's name.
+            "read_more",
         ] {
             assert!(!reads_the_vault(name), "{name} does not touch the vault");
         }

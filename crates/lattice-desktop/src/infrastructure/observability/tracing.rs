@@ -6,13 +6,14 @@
 //!
 //! File logs are written to `<data_dir>/lattice/logs/` with daily rotation.
 
+use lattice_core::shared::observability::{env_filter, file_log_layer, DEFAULT_FILTER};
 use opentelemetry::{global, trace::TracerProvider, KeyValue};
 use opentelemetry_otlp::{SpanExporter, WithExportConfig};
 use opentelemetry_sdk::{trace::SdkTracerProvider, Resource};
 use std::sync::{Mutex, OnceLock};
 use tracing_appender::non_blocking::{NonBlocking, NonBlockingBuilder, WorkerGuard};
 use tracing_appender::rolling;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Global handle to the OTEL tracer provider, used for graceful shutdown.
 // global-state: the tracing subscriber is installed process-wide, so the
@@ -115,8 +116,7 @@ pub fn init_otel_tracing(
     let tracer = provider.tracer("lattice-desktop");
     let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
 
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter()));
+    let filter = env_filter(default_filter());
 
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_writer(stdout_writer())
@@ -125,15 +125,10 @@ pub fn init_otel_tracing(
         .with_line_number(true);
 
     // Rotating file log
-    let file_layer = tracing_subscriber::fmt::layer()
-        .with_writer(file_writer())
-        .with_target(true)
-        .with_file(true)
-        .with_line_number(true)
-        .with_ansi(false);
+    let file_layer = file_log_layer(file_writer());
 
     tracing_subscriber::registry()
-        .with(env_filter)
+        .with(filter)
         .with(telemetry)
         .with(fmt_layer)
         .with(file_layer)
@@ -147,10 +142,6 @@ pub fn init_otel_tracing(
     Ok(true)
 }
 
-/// `tokenizers` warns once per added token when it loads the Qwen3 tokenizer
-/// (IDs it expected but the file leaves implicit) — two dozen lines on every
-/// startup for a tokenizer that loads and works.
-const DEFAULT_FILTER: &str = "info,tokenizers=error";
 const DEBUG_FILTER: &str = "info,lattice=debug,lattice_desktop=debug,tokenizers=error";
 
 /// Daily log files kept on disk. A week covers "it broke on Tuesday"; the
@@ -174,8 +165,7 @@ fn default_filter() -> &'static str {
 ///
 /// Called as fallback when OTEL is disabled or fails to initialize.
 pub fn init_regular_tracing() {
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter()));
+    let filter = env_filter(default_filter());
 
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_writer(stdout_writer())
@@ -185,15 +175,10 @@ pub fn init_regular_tracing() {
         .with_line_number(true);
 
     // Rotating file log
-    let file_layer = tracing_subscriber::fmt::layer()
-        .with_writer(file_writer())
-        .with_target(true)
-        .with_file(true)
-        .with_line_number(true)
-        .with_ansi(false);
+    let file_layer = file_log_layer(file_writer());
 
     tracing_subscriber::registry()
-        .with(env_filter)
+        .with(filter)
         .with(fmt_layer)
         .with(file_layer)
         .init();

@@ -515,7 +515,7 @@ impl Default for RouterSettingsDto {
             temperature: 0.1,
             ambiguity_threshold: 0.62,
             prefer_last_document: true,
-            prompt_template: "You are a routing assistant for a knowledge base chat.\nReturn ONLY valid JSON with the fields:\n- action: \"use_last_document\" | \"new_search\" | \"clarify\"\n- confidence: number from 0 to 1\n- clarify_question: string or null\n- rationale: short string\n\nUser query: {query}\nHas recent document: {has_recent_document}\nRecent document title: {recent_document_title}\nRecent document id: {recent_document_id}\n\nDecide whether the user is referring to the recent document or wants a new search. If uncertain, choose \"clarify\".\nJSON:".to_string(),
+            prompt_template: "You are a routing assistant for a knowledge base chat.\nReturn ONLY valid JSON with the fields:\n- action: \"use_last_document\" | \"new_search\" | \"clarify\"\n- confidence: number from 0 to 1\n- clarify_question: string or null\n- rationale: short string\n\nUser query: {query}\nHas recent document: {has_recent_document}\nRecent document title: {recent_document_title}\n\nDecide whether the user is referring to the recent document or wants a new search. If uncertain, choose \"clarify\".\nJSON:".to_string(),
             clarify_prompt_template: "Are you asking about the recent document ({recent_document_title}), or should I search for something else?".to_string(),
         }
     }
@@ -572,12 +572,12 @@ impl Default for LLMSettingsDto {
 /// The answer template a turn with passages renders in, unless the user set
 /// their own: search before concluding evidence is missing, then say it was
 /// not found in what was searched.
-pub const DEFAULT_RAG_PROMPT_TEMPLATE: &str = "Answer the user's question using only the provided context. Cite every factual statement supported by the context using numeric brackets like [1], [2], [3]. If the excerpts are insufficient, use available document search/read tools before concluding that evidence is missing. If still unsupported, say it was not found in the excerpts searched and do not guess or claim the entire collection lacks it. Do not cite unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, use the exact Document ID shown in the context. For long documents, read on with the offset parameter each result names.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
+pub const DEFAULT_RAG_PROMPT_TEMPLATE: &str = "Answer the user's question using only the provided context. Cite every factual statement supported by the context using bracketed labels like [s1], [s2], [s3]. If the excerpts are insufficient, use available document search/read tools before concluding that evidence is missing. If still unsupported, say it was not found in the excerpts searched and do not guess or claim the entire collection lacks it. Do not cite unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, name the document by its bracketed name in the context. For long documents, read on with read_more and the name each result gives.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
 
 impl Default for LLMPromptSettingsDto {
     fn default() -> Self {
         Self {
-            system_prompt: "You are Lattice, a precise research assistant. Use the user's documents when available. Cite sources using numeric brackets like [1], [2], [3]. Never fabricate document IDs.".to_string(),
+            system_prompt: "You are Lattice, a precise research assistant. Use the user's documents when available. Cite sources using bracketed labels like [s1], [s2], [s3]. Never fabricate document IDs.".to_string(),
             greeting_prompt_template: default_greeting_prompt_template(),
             rag_prompt_template: DEFAULT_RAG_PROMPT_TEMPLATE.to_string(),
             no_context_prompt_template: "The user asked: \"{question}\"\n\n{context}\n\nAnswer from general knowledge where you can, and say plainly that this answer is not backed by their own documents. If they want sourced evidence, offer a web search or adding documents to their lattice.".to_string(),

@@ -9,8 +9,6 @@ use std::sync::Mutex;
 
 const EMPTY: &str = "The kettle is empty when it boils.";
 const FULL: &str = "The kettle is full when it boils.";
-const EMPTY_WORDS: &str = "The kettle is empty when it boils";
-const FULL_WORDS: &str = "The kettle is full when it boils";
 const CASE: &str = "A kettle that is half full when it boils.";
 
 /// The check lists one contradiction of `first` and `second`; every confirming read is answered with `clash`.
@@ -44,16 +42,20 @@ impl LLMPort for Sweep {
         if crate::lessons::structured_call::is_draft_request(request) {
             return Ok(fixture_completion(request, Vec::new()));
         }
-        if system.starts_with(confirm::SYSTEM) {
+        if system.starts_with(confirm::CLASH_SYSTEM) {
             if let Ok(asked) = serde_json::from_str::<Value>(user) {
                 self.requests.lock().unwrap().push(asked);
             }
-            if let Some(schema) = &request.json_schema {
+            if let Some(schema) = request.schema().map(|schema| schema.as_json()) {
                 self.schemas.lock().unwrap().push(schema.clone());
             }
             return Ok(CompletionResponse::from_text(self.clash.as_str()));
         }
-        Ok(fixture_completion(request, vec![self.plan.clone()]))
+        let reply = match super::scripted::ask_of(system, user) {
+            Some(ask) => super::scripted::Script::new(vec![self.plan.clone()]).reply(ask, user),
+            None => self.plan.clone(),
+        };
+        Ok(fixture_completion(request, vec![reply]))
     }
     fn model_name(&self) -> &str {
         "scripted-review"
@@ -66,6 +68,12 @@ impl LLMPort for Sweep {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -174,13 +182,13 @@ async fn the_confirming_request_gives_both_statements_in_their_parts_and_the_who
     assert_eq!(request["task"], confirm::CLASH_TASK);
     assert_eq!(
         request["question"],
-        format!("Can the first statement, section-0's words '{EMPTY_WORDS}', and the second, section-1's words '{FULL_WORDS}', both be true? If they can, give in case a situation in which both hold. If they cannot, give in case what one says happens or holds that the other says cannot. In case, call them the first and the second statement.")
+        format!("Can the first statement, section-0's words '{EMPTY}', and the second, section-1's words '{FULL}', both be true? If they can, give in case a situation in which both hold. If they cannot, give in case what one says happens or holds that the other says cannot. In case, call them the first and the second statement.")
     );
     assert_eq!(
         request["statements"],
         json!([
-            {"part":"section-0","words":EMPTY_WORDS},
-            {"part":"section-1","words":FULL_WORDS}
+            {"part":"section-0","words":EMPTY},
+            {"part":"section-1","words":FULL}
         ])
     );
     let (sections, questions) = shown_parts(parts_of(&kettle()).iter());
@@ -192,20 +200,6 @@ async fn the_confirming_request_gives_both_statements_in_their_parts_and_the_who
         schemas[0],
         json!({"type":"object","additionalProperties":false,"required":["case","contradict"],"properties":{"case":{"type":"string"},"contradict":{"type":"boolean"}}})
     );
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_contradiction_with_a_quote_not_in_the_lesson_is_not_put_to_the_model() -> Result<()> {
-    for (first, second) in [
-        ("The kettle whistles twice.", FULL),
-        (EMPTY, "The kettle whistles twice."),
-    ] {
-        let model = Sweep::new(first, second, upheld(CASE));
-        let result = found(&model, &[], &[]).await?;
-        assert!(clashes(&result).is_empty(), "{result:?}");
-        assert!(model.requests().is_empty());
-    }
     Ok(())
 }
 
@@ -288,9 +282,7 @@ async fn a_contradiction_the_reported_ask_lists_is_confirmed_the_same_way() -> R
 
 #[test]
 fn the_confirming_read_says_when_two_statements_contradict() {
-    assert!(confirm::SYSTEM.contains(concat!(
-        " are taught too.\n",
-        "Two statements contradict each other when there is a case in which one says something happens or holds and the other says it cannot; statements that can both be true, read with their conditions, do not.",
-        "\nCopy every quotation exactly"
-    )));
+    assert!(confirm::CLASH_SYSTEM.contains(
+        "Two statements contradict each other when there is a case in which one says something happens or holds and the other says it cannot; statements that can both be true, read with their conditions, do not."
+    ));
 }

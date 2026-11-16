@@ -30,12 +30,16 @@ async fn an_unreadable_answer_is_asked_for_once_more() {
 async fn twice_unreadable_answers_leave_each_claim_could_not_verify_with_the_cause() {
     let harness = Harness::new(vec![verified("a", BOILS), verified("b", SALT)]);
     let llm = ScriptedVerifier::new(BIG, |_, _| {
-        Ok(CompletionResponse::from_text("{\"verdicts\": \"none\"}"))
+        Ok(CompletionResponse::from_text("{\"entries\": \"none\"}"))
     });
 
     let outcome = harness.audit(&llm, None).await.unwrap();
 
-    assert_eq!(llm.calls(), 2, "one repeat, no more");
+    assert_eq!(
+        llm.calls(),
+        5,
+        "the batch once, then each claim alone with one repeat"
+    );
     assert_eq!(outcome.summary().disputes, 2);
     for id in ["a", "b"] {
         let check = harness.store.verifier_checks(id).pop().unwrap();
@@ -58,7 +62,7 @@ async fn an_answer_cut_off_at_its_limit_is_sent_again_in_halves() {
     let harness = Harness::new(vec![verified("a", BOILS), verified("b", SALT)]);
     let llm = ScriptedVerifier::new(BIG, |request, call| {
         if call == 1 {
-            let mut cut = CompletionResponse::from_text("{\"verdicts\": [{\"claim\": \"C1\"");
+            let mut cut = CompletionResponse::from_text("{\"entries\": [{\"of\": \"c1\"");
             cut.finish_reason = "length".into();
             return Ok(cut);
         }
@@ -111,11 +115,12 @@ async fn a_batch_the_backend_refuses_for_its_size_is_sent_again_in_halves() {
             .await
             .unwrap();
 
-        assert_eq!(llm.calls(), 3, "with_web={with_web}");
+        let (calls, first, second) = if with_web { (5, 1, 3) } else { (3, 1, 2) };
+        assert_eq!(llm.calls(), calls, "with_web={with_web}");
         assert!(outcome.publishable(), "with_web={with_web}");
         let texts = llm.user_texts();
-        assert_eq!(sent_claims(&texts[1]), [BOILS]);
-        assert_eq!(sent_claims(&texts[2]), [SALT]);
+        assert_eq!(sent_claims(&texts[first]), [BOILS]);
+        assert_eq!(sent_claims(&texts[second]), [SALT]);
     }
 }
 
@@ -179,16 +184,22 @@ async fn pages_the_verifier_fetches_are_saved_before_it_can_quote_them() {
                 "search_web",
                 json!({"query": "salt boiling point", "kind": "web"}),
             ),
-            2 => tool_call("fetch_page", json!({"url": "https://example.org/salt"})),
-            _ => {
-                let fetched = request.input.iter().any(|item| {
-                    matches!(item, CompletionInput::ToolResult { output, .. } if output.starts_with("[W1]"))
+            2 => tool_call("fetch_page", json!({"hit": "h1"})),
+            3 => {
+                let fetched = request.input().iter().any(|item| {
+                    matches!(item, CompletionInput::ToolResult { output, .. }
+                        if output.starts_with("Handbook saved-web-1
+[u1] Dissolved salt"))
                 });
-                assert!(fetched, "the saved page reaches the Verifier as W1");
-                CompletionResponse::from_text(answer_each(request, &|_, _| {
+                assert!(fetched, "the saved page reaches the Verifier as sentences");
+                CompletionResponse::from_text("I have read the page.")
+            }
+            _ => {
+                assert!(request.user_text().contains("Pages you fetched"));
+                CompletionResponse::from_text(answer_each(request, &|_, sentences| {
+                    let page = "Dissolved salt raises the boiling point of water slightly.";
                     json!({"verdict": "contradicted", "reason": "it raises it only slightly",
-                           "passagesUsed": [{"passage": "W1",
-                               "quote": "Dissolved salt raises the boiling point of water slightly."}]})
+                           "sentencesUsed": [handle_of_sentence(sentences, page)]})
                 }))
             }
         })
@@ -200,7 +211,7 @@ async fn pages_the_verifier_fetches_are_saved_before_it_can_quote_them() {
         web.saved.lock().unwrap().as_slice(),
         ["https://example.org/salt"]
     );
-    assert!(llm.sent.lock().unwrap()[0].tools.len() == 2);
+    assert!(llm.sent.lock().unwrap()[0].tools().len() == 2);
     assert_eq!(
         outcome.summary().disputes,
         1,

@@ -131,7 +131,6 @@ pub async fn reprofile_claim(
     .label();
     let topic = format!("{goal}: {lesson_title}");
     let claims = [ClaimToProfile {
-        id: "claim-0".into(),
         statement: statement.clone(),
     }];
     let mut judged = profile_claims(

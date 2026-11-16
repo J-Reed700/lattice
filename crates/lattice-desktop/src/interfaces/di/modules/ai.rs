@@ -203,6 +203,12 @@ impl AIModule {
         &self.conversation.handoffs_in_flight
     }
 
+    pub(crate) fn kept_names(
+        &self,
+    ) -> &Arc<lattice_core::application::services::model_contract::kept::KeptNames> {
+        &self.conversation.kept_names
+    }
+
     pub(crate) fn planner_health(
         &self,
     ) -> &Arc<crate::features::conversation::chat::retrieval::PlannerHealth> {

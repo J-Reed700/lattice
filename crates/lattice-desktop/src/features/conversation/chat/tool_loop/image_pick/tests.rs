@@ -68,6 +68,12 @@ impl LLMPort for Judge {
     fn vision(&self) -> Option<VisionGeometry> {
         self.vision
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 struct Called {
@@ -133,6 +139,9 @@ async fn find_herons(llm: Arc<dyn LLMPort>) -> Called {
         tool_schema_chars: 0,
         llm: &llm,
         question: "What does a grey heron look like?",
+        names: &std::sync::Arc::new(
+            lattice_core::application::services::model_contract::kept::TurnNames::unstored(),
+        ),
     };
     let result = images::execute(
         &scope,
@@ -170,13 +179,13 @@ async fn the_pick_keeps_only_the_candidates_the_model_chose() {
     assert_eq!(requests.len(), 1, "one side request for the pick");
     let pick = &requests[0];
     assert!(matches!(
-        &pick.input[0],
+        &pick.input()[0],
         CompletionInput::Message { role, content } if role == "system" && content == PICK_SYSTEM
     ));
-    let CompletionInput::Multimodal { parts, .. } = &pick.input[1] else {
+    let CompletionInput::Multimodal { parts, .. } = &pick.input()[1] else {
         panic!(
             "the candidates ride in the user message: {:?}",
-            pick.input[1]
+            pick.input()[1]
         );
     };
     assert!(matches!(&parts[0], ContentPart::Image(image) if image.alt == "img-1"));
@@ -190,9 +199,9 @@ async fn the_pick_keeps_only_the_candidates_the_model_chose() {
         pick.cache_key.as_deref(),
         Some("pick-conversation:image-pick")
     );
-    assert!(pick.tools.is_empty());
+    assert!(pick.tools().is_empty());
     assert_eq!(
-        pick.json_schema.as_ref().unwrap()["properties"]["keep"]["items"]["enum"],
+        pick.schema().unwrap().as_json()["properties"]["keep"]["items"]["enum"],
         json!(["img-1", "img-2"])
     );
 

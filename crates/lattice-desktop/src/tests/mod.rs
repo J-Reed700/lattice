@@ -4,6 +4,8 @@
 
 // Common test utilities module (used by all tests)
 pub mod common;
+#[cfg(test)]
+pub mod call_log;
 pub mod live_llama_cpp;
 pub mod sqlite;
 

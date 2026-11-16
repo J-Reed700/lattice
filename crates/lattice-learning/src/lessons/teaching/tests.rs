@@ -271,3 +271,57 @@ fn a_quotation_that_matches_no_saved_reference_is_named_by_its_part() {
         ]
     );
 }
+
+#[test]
+fn the_teaching_repair_is_told_the_writer_s_citing_rules_when_its_material_takes_citations() {
+    use crate::lessons::text_edits::STEPS_IN_ORDER;
+    let with = repair::system(true);
+    assert!(with.contains(STEPS_IN_ORDER));
+    assert!(with.contains("double quotation marks"));
+    assert!(with.contains("never put wording in single quotation marks"));
+    assert!(with.contains("never paste the quote as the sentence"));
+    assert!(with.contains(
+        "The lesson's own figures are the quantities its own example, scenario or exercise sets, and the results calculated from them."
+    ));
+    let without = repair::system(false);
+    assert!(!without.contains(STEPS_IN_ORDER));
+    assert!(!without.contains("double quotation marks"));
+}
+
+#[test]
+fn a_schema_finding_keeps_its_id_when_its_section_moves() {
+    let schema = json!({"type": "object", "properties": {"blocks": {"type": "array",
+        "items": {"type": "object", "required": ["rubric"]}}}});
+    let sound = |title: &str, body: &str| json!({"title": title, "body": body, "rubric": []});
+    let faulty = json!({"title": "Weighing", "body": "A parcel is weighed."});
+    let before = json!({"blocks": [sound("Sorting", "A parcel is sorted."), faulty.clone()],
+        "questions": []});
+    let after = json!({"blocks": [sound("Opening", "Parcels arrive each morning."),
+        sound("Sorting", "A parcel is sorted."), faulty], "questions": []});
+    let schema_id = |lineage: &mut crate::review_findings::Lineage, candidate: &Value| {
+        let mut found = structural_findings(
+            ReviewSchema::Other(&schema),
+            &candidate.to_string(),
+            &Default::default(),
+        )
+        .unwrap();
+        lineage.place(candidate, &mut found);
+        found
+            .iter()
+            .find(|finding| {
+                matches!(
+                    finding.origin,
+                    crate::review_findings::Origin::Rule {
+                        rule: Rule::Schema,
+                        ..
+                    }
+                )
+            })
+            .map(ReviewFinding::id)
+    };
+    let mut lineage = crate::review_findings::Lineage::default();
+    let first = schema_id(&mut lineage, &before);
+    assert!(first.is_some());
+    lineage.carry_rewrite(&before, &after);
+    assert_eq!(schema_id(&mut lineage, &after), first);
+}

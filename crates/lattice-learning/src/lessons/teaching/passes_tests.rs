@@ -1,6 +1,6 @@
 #![allow(clippy::panic, clippy::indexing_slicing)]
 use super::*;
-use crate::review_findings::{FindingSite, PlanCheck};
+use crate::review_findings::{FindingKind, FindingSite, KeyDefect, PlanCheck, Rule};
 use std::collections::BTreeSet;
 
 fn section(index: usize, note: &str) -> ReviewFinding {
@@ -25,6 +25,14 @@ fn own(index: usize, words: &str) -> ReviewFinding {
         words,
     )
     .with_passage(words)
+}
+
+/// `finding` as the review names it once `passes` has placed it in `candidate`.
+fn placed(passes: &mut Passes, candidate: &Value, finding: ReviewFinding) -> ReviewFinding {
+    let mut one = [finding];
+    passes.place(candidate, &mut one);
+    let [finding] = one;
+    finding
 }
 
 /// The ids the next repair is sent, each charged as a repair that applied.
@@ -64,6 +72,7 @@ fn state_saved_with_fields_no_longer_kept_still_resumes() {
         "spent": [[id, 1]],
         "last": [[id, "Applied"]],
         "worked": {},
+        "ids": IDS_BY_UNIT,
         "open_at_repair": [id],
         "sent_at_repair": [],
         "stalled": [],
@@ -216,10 +225,10 @@ fn two_findings_with_their_own_ids_at_one_place_stay_two() {
 fn a_new_finding_about_words_a_repair_worked_on_starts_at_that_repair_s_count() {
     let candidate = serde_json::json!({"blocks":[{"body":"A first sentence. A second sentence."}],"questions":[]});
     let mut passes = Passes::default();
-    let first = own(0, "A first sentence.");
+    let first = placed(&mut passes, &candidate, own(0, "A first sentence."));
     sent(&mut passes, &candidate, vec![first.clone()]);
     passes.worked_on(&first, ["A second sentence.".to_owned()]);
-    let second = own(0, "A second sentence.");
+    let second = placed(&mut passes, &candidate, own(0, "A second sentence."));
     assert_eq!(
         sent(&mut passes, &candidate, vec![second.clone()]),
         vec![second.id()]
@@ -232,7 +241,7 @@ fn a_new_finding_about_words_a_repair_worked_on_starts_at_that_repair_s_count() 
 }
 
 #[test]
-fn a_finding_about_words_a_reverted_repair_was_charged_for_starts_at_that_charge() {
+fn a_finding_about_words_a_refused_repair_was_charged_for_starts_at_that_charge() {
     let candidate = serde_json::json!({"blocks":[{"body":"A first sentence. A second sentence."}],"questions":[]});
     let about = |number| {
         ReviewFinding::reviewer(number, Some(FindingSite::Section(0)), "It is wrong.")
@@ -244,7 +253,7 @@ fn a_finding_about_words_a_reverted_repair_was_charged_for_starts_at_that_charge
         passes.next(&candidate, vec![first.clone()]),
         Next::Repair(_)
     ));
-    passes.charge(&first, Outcome::Reverted);
+    passes.charge(&first, refused());
     let again = about(2);
     assert!(matches!(
         passes.next(&candidate, vec![again.clone()]),
@@ -290,15 +299,12 @@ fn a_new_finding_about_words_that_went_through_the_limit_is_not_repaired() {
         {"body":"A second sentence."}
     ],"questions":[]});
     let mut passes = Passes::default();
-    let first = own(0, "A first sentence.");
-    sent(
-        &mut passes,
-        &candidate,
-        vec![first.clone(), own(1, "A filler.")],
-    );
+    let first = placed(&mut passes, &candidate, own(0, "A first sentence."));
+    let filler = placed(&mut passes, &candidate, own(1, "A filler."));
+    sent(&mut passes, &candidate, vec![first.clone(), filler]);
     sent(&mut passes, &candidate, vec![first.clone()]);
     passes.worked_on(&first, ["A second sentence.".to_owned()]);
-    let second = own(2, "A second sentence.");
+    let second = placed(&mut passes, &candidate, own(2, "A second sentence."));
     assert_eq!(
         done(passes.next(&candidate, vec![second.clone()])),
         vec![(second.id(), 2)]
@@ -379,8 +385,8 @@ fn a_second_attempt_is_told_what_became_of_the_first() {
         "The last repair's edits for this finding could not be applied: edit 0 first. edit 1 second."
     );
     assert_eq!(
-        told(&mut passes, Outcome::Reverted),
-        "The last repair's edits for this finding changed a sentence that must stay as it is; they were put back."
+        told(&mut passes, refused()),
+        "The last repair's correction for this finding was refused, and none of its edits were applied: A sentence must stay as it is."
     );
     assert_eq!(
         told(&mut passes, Outcome::Unnamed),
@@ -392,15 +398,28 @@ fn a_second_attempt_is_told_what_became_of_the_first() {
     );
 }
 
+/// A correction refused whole for changing a sentence that must stay.
+fn refused() -> Outcome {
+    Outcome::Refused(vec!["A sentence must stay as it is.".into()])
+}
+
+#[test]
+fn an_outcome_saved_as_reverted_is_read_as_applied() {
+    assert_eq!(
+        serde_json::from_str::<Outcome>("\"Reverted\"").unwrap(),
+        Outcome::Applied
+    );
+}
+
 #[test]
 fn what_became_of_the_last_attempt_survives_a_saved_review() {
     let mut passes = Passes::default();
     let finding = section(0, "A");
-    passes.charge(&finding, Outcome::Reverted);
+    passes.charge(&finding, refused());
     let saved = passes.saved().unwrap().to_string();
     let mut resumed = Passes::default();
     resumed.resume(&saved);
-    assert_eq!(resumed.last.get(&finding.id()), Some(&Outcome::Reverted));
+    assert_eq!(resumed.last.get(&finding.id()), Some(&refused()));
     assert_eq!(resumed.spent.get(&finding.id()), Some(&1));
 }
 
@@ -456,7 +475,9 @@ fn the_count_of_findings_with_no_passage_survives_a_saved_review() {
 #[test]
 fn state_saved_before_findings_with_no_passage_were_counted_still_resumes() {
     let id = serde_json::to_value(section(3, "").id()).unwrap();
-    let saved = serde_json::json!({"spent": [[id, 1]], "last": [], "worked": {}}).to_string();
+    let saved =
+        serde_json::json!({"spent": [[id, 1]], "last": [], "worked": {}, "ids": IDS_BY_UNIT})
+            .to_string();
     let mut passes = Passes::default();
     passes.resume(&saved);
     assert_eq!(passes.spent.get(&section(3, "").id()), Some(&1));
@@ -525,10 +546,250 @@ fn the_account_of_a_finding_lists_its_attempts_in_order_and_why_it_was_held() {
 fn a_finding_that_starts_above_zero_says_so_in_its_account() {
     let candidate = serde_json::json!({"blocks":[{"body":"A first sentence. A second sentence."}],"questions":[]});
     let mut passes = Passes::default();
-    let first = own(0, "A first sentence.");
+    let first = placed(&mut passes, &candidate, own(0, "A first sentence."));
     sent(&mut passes, &candidate, vec![first.clone()]);
     passes.worked_on(&first, ["A second sentence.".to_owned()]);
-    let second = own(0, "A second sentence.");
+    let second = placed(&mut passes, &candidate, own(0, "A second sentence."));
     sent(&mut passes, &candidate, vec![second.clone()]);
     assert_eq!(passes.account(&second).inherited, 1);
+}
+
+/// A lesson of questions named by their prompts, one after another.
+fn questions(prompts: &[&str]) -> Value {
+    let questions: Vec<Value> = prompts
+        .iter()
+        .map(|prompt| serde_json::json!({"prompt": prompt, "options": ["Left", "Right"]}))
+        .collect();
+    serde_json::json!({"blocks": [], "questions": questions})
+}
+
+const PARCELS: [&str; 6] = [
+    "Which bin takes a parcel under one kilo?",
+    "Which bin takes a parcel over ten kilos?",
+    "Where does a parcel with a torn label wait?",
+    "Who signs for a parcel left at the desk?",
+    "What is done with a parcel marked fragile?",
+    "When is a parcel sent back to its sender?",
+];
+
+#[test]
+fn a_new_defect_on_a_question_whose_budget_an_older_defect_spent_is_repaired() {
+    let mut passes = Passes::default();
+    let candidate = questions(&PARCELS);
+    let repeats =
+        || ReviewFinding::answer_key(5, KeyDefect::Repeats, "It asks what another question asks.");
+    sent(&mut passes, &candidate, vec![repeats()]);
+    sent(&mut passes, &candidate, vec![repeats()]);
+    let other = ReviewFinding::answer_key(
+        5,
+        KeyDefect::ReasonMissesWhy,
+        "A reason does not say why its option is wrong.",
+    );
+    assert!(
+        matches!(passes.next(&candidate, vec![other]), Next::Repair(_)),
+        "a defect no repair has been asked about is not stopped by the budget another defect spent"
+    );
+}
+
+#[test]
+fn a_question_that_moves_up_after_a_cut_does_not_inherit_the_budget_of_the_one_cut() {
+    let mut passes = Passes::default();
+    let before = questions(&PARCELS);
+    let cut_one =
+        || ReviewFinding::answer_key(4, KeyDefect::Untrue, "Its explanation contradicts the key.");
+    sent(&mut passes, &before, vec![cut_one()]);
+    sent(&mut passes, &before, vec![cut_one()]);
+    let after: Vec<&str> = PARCELS
+        .iter()
+        .copied()
+        .enumerate()
+        .filter(|(index, _)| *index != 4)
+        .map(|(_, prompt)| prompt)
+        .collect();
+    let moved =
+        ReviewFinding::answer_key(4, KeyDefect::Untrue, "Its explanation contradicts the key.");
+    assert!(
+        matches!(
+            passes.next(&questions(&after), vec![moved]),
+            Next::Repair(_)
+        ),
+        "the last question has been repaired never, whatever stood at its new position"
+    );
+}
+
+#[test]
+fn state_saved_under_position_ids_keeps_what_the_words_were_put_through_and_nothing_else() {
+    let mut passes = Passes::default();
+    let first = own(0, "A first sentence.");
+    let candidate = serde_json::json!({"blocks":[{"body":"A first sentence."}],"questions":[]});
+    sent(&mut passes, &candidate, vec![first.clone()]);
+    passes.worked_on(&first, ["A first sentence.".to_owned()]);
+    let mut saved: Value = serde_json::from_str(&passes.saved().unwrap().to_string()).unwrap();
+    saved.as_object_mut().unwrap().remove("ids");
+    let mut resumed = Passes::default();
+    resumed.resume(&saved.to_string());
+    assert!(resumed.spent.is_empty());
+    assert!(resumed.last.is_empty());
+    assert!(resumed.attempts.is_empty());
+    assert!(resumed.passage_less.is_empty());
+    assert_eq!(resumed.worked, passes.worked);
+}
+
+#[test]
+fn the_lineage_a_review_kept_is_resumed_and_joined_with_what_is_held() {
+    let candidate = questions(&PARCELS);
+    let mut passes = Passes::default();
+    let mut findings = vec![ReviewFinding::answer_key(2, KeyDefect::Untrue, "x")];
+    passes.place(&candidate, &mut findings);
+    let unit = findings[0].unit.clone().unwrap();
+    let saved = passes.saved().unwrap().to_string();
+    let mut resumed = Passes::default();
+    resumed.resume(&saved);
+    let mut again = vec![ReviewFinding::answer_key(2, KeyDefect::Untrue, "x")];
+    resumed.place(&candidate, &mut again);
+    assert_eq!(again[0].unit, Some(unit));
+}
+
+/// A lesson of sections named by their bodies, one after another.
+fn sections(bodies: &[&str]) -> Value {
+    let blocks: Vec<Value> = bodies
+        .iter()
+        .map(|body| serde_json::json!({"title": "Sorting", "body": body}))
+        .collect();
+    serde_json::json!({"blocks": blocks, "questions": []})
+}
+
+fn title_repeated(section: usize) -> ReviewFinding {
+    ReviewFinding::rule(
+        Rule::TitleRepeated,
+        FindingKind::Structure,
+        FindingSite::Section(section),
+        "The title repeats an earlier one.",
+    )
+}
+
+fn block_body(section: usize) -> ReviewFinding {
+    ReviewFinding::rule(
+        Rule::BlockBody,
+        FindingKind::Structure,
+        FindingSite::Section(section),
+        "The section has no body.",
+    )
+}
+
+#[test]
+fn a_section_a_rewrite_moves_up_and_changes_is_a_new_part() {
+    let mut passes = Passes::default();
+    let before = sections(&[
+        "A parcel is sorted.",
+        "A parcel is weighed.",
+        "A parcel is shipped.",
+    ]);
+    let mut earlier = vec![title_repeated(0), title_repeated(1), title_repeated(2)];
+    passes.place(&before, &mut earlier);
+    let after = sections(&["A parcel is sorted.", "A parcel is shipped by road."]);
+    passes.carry_rewrite(&before, &after);
+    assert_eq!(
+        placed(&mut passes, &after, title_repeated(0)).id(),
+        earlier[0].id()
+    );
+    let changed = placed(&mut passes, &after, title_repeated(1)).id();
+    assert!(
+        earlier.iter().all(|finding| finding.id() != changed),
+        "a changed section takes the id of no part it did not come from: {changed:?}"
+    );
+}
+
+#[test]
+fn a_rewrite_that_drops_a_section_and_rewords_the_next_does_not_hand_it_the_dropped_one_s_repairs()
+{
+    let mut passes = Passes::default();
+    let before = sections(&[
+        "A parcel is sorted.",
+        "A parcel is weighed.",
+        "A parcel is shipped.",
+    ]);
+    sent(&mut passes, &before, vec![title_repeated(1)]);
+    sent(&mut passes, &before, vec![title_repeated(1)]);
+    let after = sections(&["A parcel is sorted.", "A parcel is shipped by road."]);
+    passes.carry_rewrite(&before, &after);
+    assert!(
+        matches!(
+            passes.next(&after, vec![title_repeated(1)]),
+            Next::Repair(_)
+        ),
+        "the reworded section has never been repaired"
+    );
+}
+
+/// A lesson whose second section has no body, under a title that names `round`.
+fn bodiless(round: usize) -> Value {
+    serde_json::json!({"blocks": [
+        {"title": "Sorting", "body": "A parcel is sorted."},
+        {"title": format!("Weighing {round}"), "body": ""}
+    ], "questions": []})
+}
+
+#[test]
+fn a_finding_only_a_rewrite_repairs_stops_after_its_repairs_though_each_rewrite_gives_its_section_new_text(
+) {
+    let mut passes = Passes::default();
+    let mut current = bodiless(0);
+    for round in 1..=usize::from(REPAIRS_PER_FINDING) {
+        sent(&mut passes, &current, vec![block_body(1)]);
+        let rewritten = bodiless(round);
+        passes.carry_rewrite(&current, &rewritten);
+        current = rewritten;
+    }
+    let left = done(passes.next(&current, vec![block_body(1)]));
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].1, REPAIRS_PER_FINDING);
+}
+
+#[test]
+fn rewrites_that_swap_a_section_between_two_texts_end() {
+    let mut passes = Passes::default();
+    let mut current = bodiless(0);
+    let mut rounds = 0;
+    while let Next::Repair(send) = passes.next(&current, vec![block_body(1)]) {
+        for finding in &send {
+            passes.charge(finding, Outcome::Applied);
+        }
+        rounds += 1;
+        assert!(
+            rounds <= 2 * usize::from(REPAIRS_PER_FINDING),
+            "each of the two texts is repaired at most its own repairs"
+        );
+        let rewritten = bodiless(rounds % 2);
+        passes.carry_rewrite(&current, &rewritten);
+        current = rewritten;
+    }
+}
+
+#[test]
+fn a_finding_only_a_rewrite_repairs_about_a_part_no_rewrite_wrote_has_repairs_of_its_own() {
+    let mut passes = Passes::default();
+    let mut current = bodiless(0);
+    for round in 1..=usize::from(REPAIRS_PER_FINDING) {
+        sent(&mut passes, &current, vec![block_body(1)]);
+        let rewritten = bodiless(round);
+        passes.carry_rewrite(&current, &rewritten);
+        current = rewritten;
+    }
+    assert_eq!(sent(&mut passes, &current, vec![block_body(0)]).len(), 1);
+}
+
+#[test]
+fn the_parts_rewrites_wrote_survive_a_saved_review() {
+    let mut passes = Passes::default();
+    let mut current = bodiless(0);
+    for round in 1..=usize::from(REPAIRS_PER_FINDING) {
+        sent(&mut passes, &current, vec![block_body(1)]);
+        let rewritten = bodiless(round);
+        passes.carry_rewrite(&current, &rewritten);
+        current = rewritten;
+    }
+    let mut resumed = Passes::default();
+    resumed.resume(&passes.saved().unwrap().to_string());
+    assert_eq!(done(resumed.next(&current, vec![block_body(1)])).len(), 1);
 }

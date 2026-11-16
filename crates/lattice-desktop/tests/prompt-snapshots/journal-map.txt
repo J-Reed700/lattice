@@ -1,0 +1,206 @@
+######## request 1 of 1 ########
+=== input 1: message (system) ===
+Answer with an entries list: each entry names an entry in `of` by the handle shown beside it, and holds one list of bullets for each section: `highlights` (Entry Highlights), `practical_details` (Practical Details), `decisions_constraints` (Decisions & Constraints), `open_questions_risks` (Open Questions & Risks) and `evidence_notes` (Evidence Notes). Each bullet has `text` and `sources`, the handles of the sources that support it.
+
+=== input 2: message (user) ===
+Below are journal entries, chunk 1 of 1. You will synthesize them.
+
+Entries:
+ENTRY [e1]
+Title: Harbour log
+Updated: 2026-09-05T10:00:00.000Z
+Message Count: 2
+Transcript (citation markers resolve to the source list below):
+ASSISTANT: high tide is at six [s1]
+Sources (cite only when supporting a claim):
+[s1] tide-table.pdf
+Passage: Tide table passage
+
+---
+
+ENTRY [e2]
+Title: Kiln notes
+Updated: 2026-09-05T10:00:00.000Z
+Message Count: 2
+Transcript (citation markers resolve to the source list below):
+USER: the kiln holds heat
+Sources: (none recorded)
+
+Now write the synthesis of these entries (chunk 1 of 1).
+Use only the entry transcripts above.
+Goal: capture practical details so the final output can replace re-reading every entry.
+Write notes in exactly these sections for each entry:
+Entry Highlights
+Practical Details
+Decisions & Constraints
+Open Questions & Risks
+Evidence Notes
+Rules:
+- Write concise but information-dense bullets (not generic summaries).
+- Include concrete values when present (counts, ranges, timing, limits, caveats).
+- In Evidence Notes, map each important claim to one or more supporting entry titles.
+- Cite the sources that support a bullet in its `sources`, by the handles shown beside the sources of that entry; never invent a source or cite one that is not listed with that entry.
+- If a section has no data, leave its list empty.
+
+- An entry marked (part i of n) continues across chunks; describe the part you have.
+
+=== schema ===
+{
+  "type": "object",
+  "properties": {
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "of": {
+            "type": "string",
+            "description": "One of the names the request shows, such as e1."
+          },
+          "highlights": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "sources": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "description": "One of the names the request shows, such as s1."
+                  }
+                }
+              },
+              "required": [
+                "text",
+                "sources"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "practical_details": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "sources": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "description": "One of the names the request shows, such as s1."
+                  }
+                }
+              },
+              "required": [
+                "text",
+                "sources"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "decisions_constraints": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "sources": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "description": "One of the names the request shows, such as s1."
+                  }
+                }
+              },
+              "required": [
+                "text",
+                "sources"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "open_questions_risks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "sources": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "description": "One of the names the request shows, such as s1."
+                  }
+                }
+              },
+              "required": [
+                "text",
+                "sources"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "evidence_notes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "sources": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "description": "One of the names the request shows, such as s1."
+                  }
+                }
+              },
+              "required": [
+                "text",
+                "sources"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "of",
+          "highlights",
+          "practical_details",
+          "decisions_constraints",
+          "open_questions_risks",
+          "evidence_notes"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "entries"
+  ],
+  "additionalProperties": false
+}
+
+=== sent with ===
+{
+  "reasoning_effort": null,
+  "tool_choice": null,
+  "include_reasoning": false,
+  "sampling": null,
+  "thinking": "off",
+  "max_output_tokens": 8192,
+  "stop": [],
+  "want_logprobs": false,
+  "priority": "background",
+  "cache_key": null
+}

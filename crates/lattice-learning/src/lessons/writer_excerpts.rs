@@ -62,6 +62,14 @@ impl WriterExcerpts {
         })
     }
 
+    /// The excerpts, the cited first.
+    pub(super) fn ranked(&self) -> Vec<Value> {
+        self.order
+            .iter()
+            .filter_map(|(position, _)| self.excerpts.get(*position).cloned())
+            .collect()
+    }
+
     /// Those that fit in `room`, in the planner's estimate tokens, in the
     /// writer's order.
     fn within(&self, mut room: usize) -> Vec<Value> {
@@ -80,7 +88,7 @@ impl WriterExcerpts {
 }
 
 /// The sources the candidate's blocks and questions cite, by index.
-fn cited_sources(candidate: &Value) -> BTreeSet<u64> {
+pub(in crate::lessons) fn cited_sources(candidate: &Value) -> BTreeSet<u64> {
     let mut cited = BTreeSet::new();
     for field in ["blocks", "questions"] {
         for item in candidate

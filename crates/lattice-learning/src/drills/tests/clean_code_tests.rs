@@ -81,7 +81,7 @@ async fn the_code_of_a_language_without_a_runner_is_accepted_with_its_lines_made
         ]
     );
     assert!(code.trail.runs.is_empty());
-    let schema = model.requests()[1].json_schema.clone().unwrap();
+    let schema = model.requests()[1].schema().unwrap().as_json().clone();
     assert!(schema["properties"].get("suite").is_none());
     Ok(())
 }
@@ -107,7 +107,7 @@ async fn a_runner_language_asks_for_a_suite_and_runs_it_on_the_code() -> Result<
         }]
     );
     let request = &model.requests()[1];
-    let schema = request.json_schema.clone().unwrap();
+    let schema = request.schema().unwrap().as_json().clone();
     assert!(schema["required"]
         .as_array()
         .unwrap()
@@ -744,7 +744,10 @@ async fn before_the_code_is_written_the_lesson_is_asked_whether_it_teaches_what_
     assert_eq!(model.purposes(), ["code fit check", "clean code"]);
     let request = &model.requests()[0];
     assert_eq!(last(request), check_message(&facts));
-    assert_eq!(request.json_schema, Some(check_schema()));
+    assert_eq!(
+        request.schema().map(|schema| schema.as_json()),
+        Some(&check_schema())
+    );
     assert!(
         system(request).starts_with("You decide whether a lesson of a course"),
         "{}",
@@ -990,5 +993,27 @@ async fn a_failing_code_fit_check_call_fails_the_clean_stage_and_stores_nothing(
     );
     assert_eq!(model.purposes(), ["code fit check"]);
     assert!(verdicts(&pool, &lesson).await?.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_snapshot_drill_stage_ask() -> Result<()> {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let pool = pool().await?;
+    let database = Database::new(pool.clone());
+    let spec = code_spec(&pool, &database).await?;
+    let (model, built) = clean_with(
+        &database,
+        &spec,
+        vec![code_check_answer(true), clean_code_answer()],
+    )
+    .await;
+    built?;
+
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "drill-stage-ask",
+        &model.requests(),
+    );
     Ok(())
 }

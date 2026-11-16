@@ -1067,6 +1067,12 @@ impl lattice_core::application::ports::LLMPort for TestResearchLLM {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[tokio::test]
@@ -1225,6 +1231,185 @@ async fn interview_research_ingests_context_and_web_pages_idempotently() -> Resu
     Ok(())
 }
 
+struct RecordingResearchLlm {
+    answer: serde_json::Value,
+    requests: std::sync::Mutex<Vec<lattice_core::application::ports::llm_port::CompletionRequest>>,
+}
+
+#[async_trait::async_trait]
+impl lattice_core::application::ports::LLMPort for RecordingResearchLlm {
+    async fn complete(
+        &self,
+        request: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        self.requests
+            .lock()
+            .map_err(|_| AppError::InternalError("Request lock poisoned".into()))?
+            .push(request.clone());
+        Ok(
+            lattice_core::application::ports::llm_port::CompletionResponse::from_text(
+                self.answer.to_string(),
+            ),
+        )
+    }
+    fn model_name(&self) -> &str {
+        "recording-research-model"
+    }
+    fn max_context_tokens(&self) -> usize {
+        131_072
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.split_whitespace().count()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
+}
+
+fn research_page(
+    url: &str,
+    title: &str,
+    content: &str,
+) -> lattice_core::application::contracts::web::FetchUrlContentOutput {
+    lattice_core::application::contracts::web::FetchUrlContentOutput {
+        url: url.into(),
+        title: Some(title.into()),
+        content: content.into(),
+        content_truncated: false,
+        word_count: content.split_whitespace().count(),
+        fetch_time_ms: 0.0,
+        content_type: None,
+        from_cache: false,
+        read_via: Default::default(),
+    }
+}
+
+#[tokio::test]
+async fn prompt_snapshot_interview_company_searches() -> Result<()> {
+    use crate::practice::interview_research;
+    use crate::references::source_library::LearningSourceLibraryRepository;
+    use lattice_core::application::contracts::web::WebSearchResult;
+    use lattice_core::application::ports::MockWebService;
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let (_, database, program_id, _lesson_id, _) = fixture().await?;
+    let library = LearningSourceLibraryRepository::new(database);
+    let llm = RecordingResearchLlm {
+        answer: serde_json::json!({"needs":[{"query":"Acme parcel engineering blog","kind":"web"}]}),
+        requests: std::sync::Mutex::new(Vec::new()),
+    };
+    let web = MockWebService::new();
+    web.set_url_content(
+        "https://acme.example",
+        research_page(
+            "https://acme.example",
+            "Acme parcels",
+            "Acme routes parcels between made-up towns.",
+        ),
+    );
+    web.set_url_content(
+        "https://acme.example/blog/routing",
+        research_page(
+            "https://acme.example/blog/routing",
+            "Acme routing",
+            "The Acme engineering team plans parcel routes.",
+        ),
+    );
+    web.set_search_results(vec![WebSearchResult {
+        title: "Acme routing".into(),
+        url: "https://acme.example/blog/routing".into(),
+        snippet: String::new(),
+        published_date: None,
+        source: None,
+    }]);
+    let target = LearningInterviewTargetDto {
+        company_name: Some("Acme".into()),
+        company_url: Some("https://acme.example".into()),
+        target_role: Some("Staff Engineer".into()),
+        company_context: Some("A made-up parcel company.".into()),
+        round_kind: Some(LearningInterviewRoundKind::TechnicalDeepDive),
+    };
+    interview_research::research_interview_target(
+        &llm,
+        &web,
+        &library,
+        &program_id,
+        "snapshot-operation",
+        "Reliable retries",
+        "Interview at Acme",
+        &target,
+    )
+    .await?;
+    let requests = llm.requests.lock().expect("requests").clone();
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "interview-company-searches",
+        &requests,
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_snapshot_interview_answer_searches() -> Result<()> {
+    use crate::practice::interview_answers::test_support::plan;
+    use crate::practice::interview_research;
+    use crate::references::source_library::LearningSourceLibraryRepository;
+    use lattice_core::application::contracts::web::WebSearchResult;
+    use lattice_core::application::ports::MockWebService;
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let (_, database, program_id, _lesson_id, _) = fixture().await?;
+    let library = LearningSourceLibraryRepository::new(database);
+    let llm = RecordingResearchLlm {
+        answer: serde_json::json!({"needs":[{"query":"idempotent request retry intended effects","kind":"standard","subject":"HTTP"}]}),
+        requests: std::sync::Mutex::new(Vec::new()),
+    };
+    let web = MockWebService::new();
+    let url = "https://spec.example/idempotency";
+    web.set_url_content(
+        url,
+        research_page(
+            url,
+            "Idempotent operations",
+            "An idempotent operation has the same intended effect when repeated.",
+        ),
+    );
+    web.set_search_results(vec![WebSearchResult {
+        title: "Idempotent operations".into(),
+        url: url.into(),
+        snippet: String::new(),
+        published_date: None,
+        source: None,
+    }]);
+    let mut plan = plan();
+    let mut behavioral = plan.questions[0].clone();
+    behavioral.id = "question-two".into();
+    behavioral.round = LearningInterviewRoundKind::Behavioral;
+    behavioral.question = "Describe a time you made a retry safe.".into();
+    plan.questions.push(behavioral);
+    interview_research::research_interview_answers(
+        &llm,
+        &web,
+        &library,
+        &program_id,
+        "snapshot-operation",
+        &plan,
+        &["Private applicant notes stay local"],
+    )
+    .await?;
+    let requests = llm.requests.lock().expect("requests").clone();
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "interview-answer-searches",
+        &requests,
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn interview_research_rejects_redirects_outside_structured_site_scope() -> Result<()> {
     use crate::practice::interview_research;
@@ -1339,9 +1524,9 @@ struct Authors {
 impl lattice_core::application::ports::LLMPort for Authors {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let evaluator = request
-            .json_schema
-            .as_ref()
-            .is_some_and(|schema| schema.pointer("/properties/checkFiles").is_some());
+            .schema()
+            .map(|schema| schema.as_json())
+            .is_some_and(|schema| schema.pointer("/properties/entries").is_some());
         Ok(CompletionResponse::from_text(if evaluator {
             self.checks.clone()
         } else {
@@ -1360,6 +1545,12 @@ impl lattice_core::application::ports::LLMPort for Authors {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 fn activity_reply(
@@ -1369,7 +1560,7 @@ fn activity_reply(
     starter_files: serde_json::Value,
 ) -> String {
     serde_json::json!({
-        "title": title, "brief": brief, "sourceVersionIds": [],
+        "title": title, "brief": brief, "sources": [],
         "rubric": [
             {"title": rubric.0, "description": rubric.1, "maxPoints": 3},
             {"title": "Verification", "description": "Checks the result against the stated constraints.", "maxPoints": 3}
@@ -1468,8 +1659,8 @@ async fn a_large_evaluator_reply_is_read_not_refused() -> Result<()> {
         ("Reasoning", "Explains the relevant tradeoffs."),
         starter,
     );
-    let checks = serde_json::json!({"checkFiles": [{
-        "path": "checks/evaluate.py", "content": "# a check\n".repeat(10_000)
+    let checks = serde_json::json!({"entries": [{
+        "of": "e1", "content": "# a check\n".repeat(10_000)
     }]})
     .to_string();
     let llm = Authors { activity, checks };
@@ -1527,9 +1718,7 @@ async fn a_long_simulation_turn_is_read_not_refused() -> Result<()> {
     let session = simulation_session("I would isolate the variable first.");
     let passage = "The passage states one condition after another. ".repeat(20);
     let sources = [passage_source(&passage)];
-    let cited = serde_json::json!(
-        [{"sourceId": "logical-source", "versionId": "version-1", "quote": passage}]
-    );
+    let cited = serde_json::json!(["u1"]);
     let turn = |content: &str, citations: serde_json::Value| {
         serde_json::json!({"content": content, "citations": citations}).to_string()
     };
@@ -1543,7 +1732,7 @@ async fn a_long_simulation_turn_is_read_not_refused() -> Result<()> {
     for (what, reply) in [
         ("a short turn", turn(short, serde_json::json!([]))),
         ("turn", turn(&long, serde_json::json!([]))),
-        ("citation quote", turn(short, cited)),
+        ("a cited sentence", turn(short, cited)),
         ("whitespace around the reply", padded),
     ] {
         let llm = Reply::new(reply);

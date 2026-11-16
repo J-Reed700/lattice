@@ -50,29 +50,27 @@ pub async fn get_learning_outline_evidence(
         .map_err(ApiError::from)
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn generate_learning_program(
+/// Drafts a course outline: the body of `generate_learning_program`.
+pub(crate) async fn generate_outline(
+    container: &Container,
     request: GenerateLearningProgramRequestDto,
     request_id: Option<String>,
-    on_progress: tauri::ipc::Channel<
-        crate::features::learning::outline_progress::LearningOutlineProgressDto,
-    >,
-    container: State<'_, Container>,
+    on_progress: impl Fn(crate::features::learning::outline_progress::LearningOutlineProgressDto)
+        + Send
+        + Sync
+        + 'static,
 ) -> Result<LearningProgramDto, ApiError> {
     service::validate_request(&request).map_err(ApiError::from)?;
     let run = container
         .outline_run_registry()
-        .register(request_id, move |update| {
-            let _ = on_progress.send(update);
-        })
+        .register(request_id, on_progress)
         .map_err(ApiError::from)?;
     let progress = &run.progress;
     progress
         .run(async {
             progress
                 .stage(crate::features::learning::outline_progress::OutlineStage::ReadingSources);
-            let deps = source_deps(&container);
+            let deps = source_deps(container);
             let sources = crate::features::learning::sources::acquire(&deps, &request).await?;
             progress.stage(crate::features::learning::outline_progress::OutlineStage::LoadingModel);
             // A temporary model outage is waited out, call by call; see
@@ -101,7 +99,7 @@ pub async fn generate_learning_program(
                     sources.sources,
                     &sources.references,
                     progress,
-                    Some(container.web_service().as_ref()),
+                    Some(container.web().as_ref()),
                 ),
             )
             .await
@@ -112,13 +110,29 @@ pub async fn generate_learning_program(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn repair_learning_outline(
-    request: crate::features::learning::outline_draft::RepairLearningOutlineRequestDto,
+pub async fn generate_learning_program(
+    request: GenerateLearningProgramRequestDto,
     request_id: Option<String>,
     on_progress: tauri::ipc::Channel<
         crate::features::learning::outline_progress::LearningOutlineProgressDto,
     >,
     container: State<'_, Container>,
+) -> Result<LearningProgramDto, ApiError> {
+    generate_outline(&container, request, request_id, move |update| {
+        let _ = on_progress.send(update);
+    })
+    .await
+}
+
+/// Repairs a saved outline: the body of `repair_learning_outline`.
+pub(crate) async fn repair_outline(
+    container: &Container,
+    request: crate::features::learning::outline_draft::RepairLearningOutlineRequestDto,
+    request_id: Option<String>,
+    on_progress: impl Fn(crate::features::learning::outline_progress::LearningOutlineProgressDto)
+        + Send
+        + Sync
+        + 'static,
 ) -> Result<LearningProgramDto, ApiError> {
     uuid::Uuid::parse_str(&request.program_id).map_err(|_| {
         ApiError::from(lattice_core::shared::error::AppError::InvalidInput(
@@ -127,9 +141,7 @@ pub async fn repair_learning_outline(
     })?;
     let run = container
         .outline_run_registry()
-        .register(request_id, move |update| {
-            let _ = on_progress.send(update);
-        })
+        .register(request_id, on_progress)
         .map_err(ApiError::from)?;
     let progress = &run.progress;
     progress
@@ -154,13 +166,29 @@ pub async fn repair_learning_outline(
                     &llm,
                     &request,
                     progress,
-                    Some(container.web_service().as_ref()),
+                    Some(container.web().as_ref()),
                 ),
             )
             .await
         })
         .await
         .map_err(|error| progress.api_error(error))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn repair_learning_outline(
+    request: crate::features::learning::outline_draft::RepairLearningOutlineRequestDto,
+    request_id: Option<String>,
+    on_progress: tauri::ipc::Channel<
+        crate::features::learning::outline_progress::LearningOutlineProgressDto,
+    >,
+    container: State<'_, Container>,
+) -> Result<LearningProgramDto, ApiError> {
+    repair_outline(&container, request, request_id, move |update| {
+        let _ = on_progress.send(update);
+    })
+    .await
 }
 
 #[tauri::command]
@@ -176,11 +204,10 @@ pub async fn cancel_learning_outline(
     })?;
     Ok(container.outline_run_registry().cancel(&request_id))
 }
-#[tauri::command]
-#[specta::specta]
-pub async fn accept_learning_program(
+/// Accepts a drafted course: the body of `accept_learning_program`.
+pub(crate) async fn accept_program(
+    container: &Container,
     request: AcceptLearningProgramRequestDto,
-    container: State<'_, Container>,
 ) -> Result<LearningProgramDto, ApiError> {
     service::accept(
         &LearningRepository::new(container.database().clone()),
@@ -189,6 +216,15 @@ pub async fn accept_learning_program(
     )
     .await
     .map_err(ApiError::from)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn accept_learning_program(
+    request: AcceptLearningProgramRequestDto,
+    container: State<'_, Container>,
+) -> Result<LearningProgramDto, ApiError> {
+    accept_program(&container, request).await
 }
 #[tauri::command]
 #[specta::specta]
@@ -244,11 +280,10 @@ pub async fn prepare_learning_lesson(
         .map_err(ApiError::from)
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn prepare_learning_module(
+/// Queues a job for each unprepared lesson of a module: the body of `prepare_learning_module`.
+pub(crate) async fn prepare_module(
+    container: &Container,
     request: PrepareLearningModuleRequestDto,
-    container: State<'_, Container>,
 ) -> Result<LearningProgramDto, ApiError> {
     let operation_id = crate::features::learning::curriculum_repository::stable_job_operation_id(
         &request.program_id,
@@ -273,6 +308,15 @@ pub async fn prepare_learning_module(
         .get(&request.program_id)
         .await
         .map_err(ApiError::from)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn prepare_learning_module(
+    request: PrepareLearningModuleRequestDto,
+    container: State<'_, Container>,
+) -> Result<LearningProgramDto, ApiError> {
+    prepare_module(&container, request).await
 }
 
 #[tauri::command]

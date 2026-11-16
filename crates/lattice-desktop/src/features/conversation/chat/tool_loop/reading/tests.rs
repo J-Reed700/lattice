@@ -1,18 +1,25 @@
-use super::groups::{GROUP_INSTRUCTION, LABELS_INSTRUCTION};
-use super::notes::{locate, parse_notes};
+use super::contract::{
+    scripted_answer, shown_in, Excerpt, Input, PassageNotes, Sentence, BEARING_INSTRUCTION,
+    READ_INSTRUCTION,
+};
 use super::*;
+use crate::features::conversation::chat::cancellation::is_cancellation;
+use crate::features::conversation::chat::verification::test_support::reply as reply_of;
+use futures::future::BoxFuture;
 use lattice_core::application::ports::llm_port::CompletionResponse;
 use lattice_core::application::ports::ToolDefinition;
+use lattice_core::application::services::model_contract::test_support::snapshot::assert_requests;
+use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
+use lattice_core::application::services::model_contract::test_support::ScriptedModel;
 use lattice_core::shared::error::AppError;
-use std::collections::VecDeque;
-use std::sync::Mutex;
 use std::time::Duration;
 
-const KITCHEN: &str = "[18:56:58] Councillor Reallhollow: I'm putting £6,497.92 from my ward budget towards the new kitchen, and that is settled. [18:57:10] Chair: Thank you.";
-const MILL: &str = "Entries gathered in June\n1887-12-21. The last miller at Greassby Mill retired, and the building was let as a store.";
-const MÜHLE: &str = "Die Mühle wurde 1850 nach dem Hochwasser wieder in Betrieb genommen. Der Müller zog später fort.";
-const MOLINO: &str =
-    "El molino se vendió en 1860 a la familia del molinero. La escritura se firmó en la posada.";
+const SLUICE_FIRST: &str = "The sluice gate was rebuilt in oak in 1902.";
+const SLUICE: &str = "The sluice gate was rebuilt in oak in 1902. The oak came from the old quay.";
+const WEIR: &str = "Floods in 1911 breached the weir twice.";
+const KILN_FIRST: &str = "The kiln was fired every Friday.";
+const KILN_SECOND: &str = "Its chimney fell in 1952.";
+const TIDES: &str = "Tide tables were printed in March.";
 
 fn source(label: u32, content: &str) -> SourceDto {
     SourceDto {
@@ -42,28 +49,28 @@ fn source(label: u32, content: &str) -> SourceDto {
 
 fn sources() -> Vec<SourceDto> {
     vec![
-        source(1, KITCHEN),
-        source(2, MILL),
-        source(3, MÜHLE),
-        source(4, MOLINO),
+        source(1, SLUICE),
+        source(2, WEIR),
+        source(3, &format!("{KILN_FIRST} {KILN_SECOND}")),
+        source(4, TIDES),
     ]
 }
 
 /// The turn's question, as the loop hands it to the reading.
-const QUESTION: &str = "Question: What happened?";
+const QUESTION: &str = "Question: What happened at the harbour?";
 
 /// The turn's message as the prompt builder closes it.
 fn message(labels: &[u32]) -> String {
     let passages = labels
         .iter()
-        .map(|label| format!("[{label}] Document: d{label}.md\nContent: …"))
+        .map(|label| format!("[s{label}] Document: d{label}.md\nContent: …"))
         .collect::<Vec<_>>()
         .join("\n\n");
-    format!("{passages}\n\nQuestion: What happened?\n\n{READING_INSTRUCTION}")
+    format!("{passages}\n\nQuestion: What happened at the harbour?\n\n{READING_INSTRUCTION}")
 }
 
 fn planned(labels: &[u32]) -> CompletionRequest {
-    CompletionRequest {
+    legacy::completion(legacy::Completion {
         input: vec![
             CompletionInput::Message {
                 role: "system".into(),
@@ -82,99 +89,15 @@ fn planned(labels: &[u32]) -> CompletionRequest {
         max_output_tokens: Some(777),
         cache_key: Some("conversation".into()),
         ..Default::default()
-    }
+    })
 }
 
 fn passages() -> Passages {
-    asked(&planned(&[1, 2, 3, 4]).input, &sources()).expect("the message asks for a reading")
+    asked(planned(&[1, 2, 3, 4]).input(), &sources()).expect("the message asks for a reading")
 }
 
-fn reply(text: &str, finish_reason: &str) -> CompletionResponse {
-    CompletionResponse {
-        finish_reason: finish_reason.into(),
-        ..CompletionResponse::from_text(text)
-    }
-}
-
-/// Answers from a script, keeping every request it was sent.
-struct Model {
-    script: Mutex<VecDeque<CompletionResponse>>,
-    requests: Mutex<Vec<CompletionRequest>>,
-    context_tokens: Option<usize>,
-    /// Fails every request past the script, as a provider that went down.
-    down_after_script: bool,
-    keeps_read_prompts: bool,
-}
-
-impl Model {
-    fn new(script: impl IntoIterator<Item = CompletionResponse>) -> Self {
-        Self {
-            script: Mutex::new(script.into_iter().collect()),
-            requests: Mutex::default(),
-            context_tokens: None,
-            down_after_script: false,
-            keeps_read_prompts: false,
-        }
-    }
-
-    fn keeping_read_prompts(script: impl IntoIterator<Item = CompletionResponse>) -> Self {
-        Self {
-            keeps_read_prompts: true,
-            ..Self::new(script)
-        }
-    }
-
-    fn going_down_after(script: impl IntoIterator<Item = CompletionResponse>) -> Self {
-        Self {
-            down_after_script: true,
-            ..Self::new(script)
-        }
-    }
-
-    fn with_context_tokens(
-        context_tokens: usize,
-        script: impl IntoIterator<Item = CompletionResponse>,
-    ) -> Self {
-        Self {
-            context_tokens: Some(context_tokens),
-            ..Self::new(script)
-        }
-    }
-
-    fn requests(&self) -> Vec<CompletionRequest> {
-        self.requests.lock().unwrap().clone()
-    }
-}
-
-#[async_trait::async_trait]
-impl LLMPort for Model {
-    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        self.requests.lock().unwrap().push(request.clone());
-        let reply = self.script.lock().unwrap().pop_front();
-        match reply {
-            Some(reply) => Ok(reply),
-            None if self.down_after_script => {
-                Err(AppError::ServiceNotAvailable("The provider is down".into()))
-            }
-            None => Ok(reply_nothing()),
-        }
-    }
-    fn model_name(&self) -> &str {
-        "scripted"
-    }
-    fn max_context_tokens(&self) -> usize {
-        self.context_tokens.unwrap_or(32_768)
-    }
-    fn keeps_read_prompts(&self) -> bool {
-        self.keeps_read_prompts
-    }
-    async fn is_ready(&self) -> Result<bool> {
-        Ok(true)
-    }
-}
-
-fn reply_nothing() -> CompletionResponse {
-    reply("", "stop")
+fn reply(text: String) -> BoxFuture<'static, Result<CompletionResponse>> {
+    Box::pin(std::future::ready(Ok(CompletionResponse::from_text(text))))
 }
 
 fn notes_of(reading: Reading) -> Option<Notes> {
@@ -184,423 +107,263 @@ fn notes_of(reading: Reading) -> Option<Notes> {
     }
 }
 
-async fn read(model: &Model, request: &CompletionRequest) -> Option<Notes> {
-    let recorder = TurnRecorder::silent("conversation", "request");
-    let clock = TurnClock::new(Duration::from_secs(60), Duration::ZERO);
-    let reading = read_passages(
+async fn reading_by(model: &ScriptedModel) -> Reading {
+    read_passages(
         model,
-        request,
+        &planned(&[1, 2, 3, 4]),
         &passages(),
         QUESTION,
-        &recorder,
+        &TurnRecorder::silent("conversation", "request"),
         &CancellationToken::new(),
-        &clock,
+        &TurnClock::new(Duration::from_secs(60), Duration::ZERO),
     )
     .await
-    .expect("only Stop and the deadline are errors");
-    notes_of(reading)
+    .expect("only Stop and the deadline are errors")
 }
 
-#[test]
-fn notes_are_read_label_by_label_hyphens_and_all() {
-    let notes = "[1] I'm putting £6,497.92 from my ward budget towards the new kitchen, and that is settled.\n\
-                 [2] -\n\
-                 3: none\n\
-                 [4]. El molino se vendió en 1860 a la familia del molinero.\n\
-                 The answer comes after.\n\
-                 [5] —";
-    assert_eq!(
-        parse_notes(notes),
-        vec![
-            (
-                1,
-                Some("I'm putting £6,497.92 from my ward budget towards the new kitchen, and that is settled.".into())
-            ),
-            (2, None),
-            (3, Some("none".into())),
-            (4, Some("El molino se vendió en 1860 a la familia del molinero.".into())),
-            (5, None),
-        ]
-    );
-    assert_eq!(
-        parse_notes("[3] Die Mühle wurde 1850 nach dem Hochwasser wieder in Betrieb genommen."),
-        vec![(
-            3,
-            Some("Die Mühle wurde 1850 nach dem Hochwasser wieder in Betrieb genommen.".into())
-        )]
-    );
+async fn read(model: &ScriptedModel) -> Option<Notes> {
+    notes_of(reading_by(model).await)
 }
 
-#[test]
-fn a_reading_cut_at_its_limit_keeps_only_its_complete_lines() {
-    let text = "[1] -\n[2] 1887-12-21. The last miller at Greassby";
-    assert_eq!(whole_lines(text, "length"), "[1] -");
-    assert_eq!(whole_lines(text, "stop"), text);
-    assert_eq!(whole_lines("[1] The last", "length"), "");
-    assert_eq!(
-        whole_lines(
-            "[1] -\n<tool_call>{\"name\": \"search\"}</tool_call>",
-            "stop"
-        )
-        .trim(),
-        "[1] -"
-    );
-}
-
-/// A model lays a table's row out under its heading. Held to one unbroken copy,
-/// the note is dropped, and the passage that answers reads as if it said nothing.
-#[test]
-fn a_note_joining_a_heading_and_a_table_row_is_found_in_their_passage() {
-    let passages = Passages(BTreeMap::from([(
-        1,
-        Passage::new(
-            "## Actions\n\n| Action | Owner | Due |\n|---|---|---|\n| Close out the open drift report | Ilse Brantgard | 2031-10-25 |",
-        ),
-    )]));
-    assert_eq!(
-        locate(
-            "## Actions | Close out the open drift report | Ilse Brantgard | 2031-10-25",
-            &passages
-        ),
-        [1]
-    );
-    assert!(locate(
-        "## Actions | Close out the open drift report | Dagny Oreskel",
-        &passages
-    )
-    .is_empty());
-}
-
-#[test]
-fn a_note_is_found_in_the_passage_it_was_copied_from() {
-    let passages = passages();
-    assert_eq!(
-        locate(
-            "1887-12-21. The last miller at Greassby Mill   retired,\nand the building was let as a store.",
-            &passages
-        ),
-        [2]
-    );
-    assert_eq!(
-        locate(
-            "\"The last miller at Greassby Mill retired, and the building was let as a store.\"",
-            &passages
-        ),
-        [2]
-    );
-    assert!(locate("The last miller retired in December 1887.", &passages).is_empty());
-    assert_eq!(
-        locate(
-            "I'm putting £6,497.92 from my ward budget towards the new kitchen, and that is settled.",
-            &passages
-        ),
-        [1],
-        "a quote from another passage is found there"
-    );
-    assert!(locate("none", &passages).is_empty());
-    assert_eq!(
-        locate(
-            "Die Mühle wurde 1850 nach dem Hochwasser wieder in Betrieb genommen. Der Müller zog später fort.",
-            &passages
-        ),
-        [3]
-    );
-    assert_eq!(
-        locate("„Der Müller zog später fort.“", &passages),
-        [3],
-        "quotation marks around a copy are not part of it"
-    );
-}
-
-#[test]
-fn a_note_copied_from_one_other_passage_is_that_passages_note() {
-    let passages = passages();
-    let mühle = "Die Mühle wurde 1850 nach dem Hochwasser wieder in Betrieb genommen.";
-    let molino = "El molino se vendió en 1860 a la familia del molinero.";
-    let posada = "La escritura se firmó en la posada.";
-    let mut lines = BTreeMap::from([
-        (1, Some(mühle.to_string())),
-        (2, Some(molino.to_string())),
-        (3, None),
-        (4, Some(posada.to_string())),
-    ]);
-    let (noted, moved) = attribute(&mut lines, &passages);
-    assert_eq!(moved, vec![(1, 3)]);
-    assert_eq!(noted, [3, 4].into());
-    assert_eq!(
-        lines[&3],
-        Some(mühle.into()),
-        "it takes the place of the hyphen"
-    );
-    assert_eq!(
-        lines[&1],
-        Some(mühle.into()),
-        "the label written keeps its line, as a mistaken note"
-    );
-    assert_eq!(
-        lines[&4],
-        Some(posada.into()),
-        "a passage that holds a copy of its own keeps it"
-    );
-    assert_eq!(lines[&2], Some(molino.into()));
-}
-
-#[test]
-fn a_note_found_in_several_passages_stays_a_mistaken_note() {
-    let filler = "The treasurer noted that the reserve is healthy.";
-    let passages = Passages(BTreeMap::from([
-        (
-            1,
-            Passage::from(format!("{filler} The roof was mended in 1851.")),
-        ),
-        (
-            2,
-            Passage::from(format!("The hall opened in 1932. {filler}")),
-        ),
-        (3, Passage::from("The bell was cast in 1702.")),
-    ]));
-    let mut lines = BTreeMap::from([(1, None), (2, None), (3, Some(filler.to_string()))]);
-    let written = lines.clone();
-    let (noted, moved) = attribute(&mut lines, &passages);
-    assert!(noted.is_empty());
-    assert!(moved.is_empty());
-    assert_eq!(lines, written, "nothing is guessed");
-}
-
-#[test]
-fn a_numbered_list_of_labels_is_read_by_its_labels() {
-    assert_eq!(
-        parse_notes("1. [1] -\n12. [12] The bell was cast in 1702.\n1. -"),
-        vec![
-            (1, None),
-            (12, Some("The bell was cast in 1702.".into())),
-            (1, None),
-        ]
-    );
-    assert_eq!(
-        parse_notes("2. 1887-12-21. The last miller retired."),
-        vec![(2, Some("1887-12-21. The last miller retired.".into()))],
-        "a bare number after the label is the note's own"
-    );
-}
-
-/// Labels set out as a list or in bold, as some models write them, are still
-/// labels.
-#[test]
-fn a_label_in_a_list_item_or_in_bold_is_read() {
-    assert_eq!(
-        parse_notes(
-            "- [3] The bell was cast in 1702.\n**[4]** -\n**[5]:** The tower fell.\n* [6] -\n__7.__ The mill closed."
-        ),
-        vec![
-            (3, Some("The bell was cast in 1702.".into())),
-            (4, None),
-            (5, Some("The tower fell.".into())),
-            (6, None),
-            (7, Some("The mill closed.".into())),
-        ]
-    );
-    assert_eq!(
-        parse_notes("[8] *The Mill* was sold."),
-        vec![(8, Some("*The Mill* was sold.".into()))],
-        "emphasis inside the note is the note's own"
-    );
-}
-
-#[test]
-fn only_the_labels_the_message_shows_are_read() {
-    let mut planned = planned(&[1, 2]);
-    let passages = asked(&planned.input, &sources()).unwrap();
-    assert_eq!(passages.labels().collect::<Vec<_>>(), vec![1, 2]);
-    withdraw(&mut planned.input);
-    assert!(
-        asked(&planned.input, &sources()).is_none(),
-        "a message without the instruction asks for no reading"
-    );
-    assert!(!planned.input[1].text().contains(READING_INSTRUCTION));
-    assert!(planned.input[1]
-        .text()
-        .ends_with("Question: What happened?"));
-}
-
-#[test]
-fn every_way_of_citing_a_passage_uses_it() {
-    let noted: BTreeSet<u32> = [1, 2, 3, 4, 5, 6].into();
-    let answer = "The kitchen got £6,497.92 [1][2]. The mill retired [3, 4]. It was sold.[5]";
-    assert_eq!(left_out(&noted, &cited_labels(answer)), [6].into());
-    assert_eq!(
-        left_out(
-            &noted,
-            &cited_labels("Nothing cited, and $a[3]$ is a formula.")
-        ),
-        noted
-    );
-}
-
-/// The passages shown again put the question far back in the message, with the
-/// last turn's question and answer before it. Measured on Haiku: without the
-/// question said again, a follow-up's reading can quote only a passage carried
-/// over from the last turn, and the answer repeats the last answer.
-#[tokio::test]
-async fn a_group_says_the_question_again_after_its_passages() {
-    let model = Model::new([reply(
-        &format!("[1] {KITCHEN}\n[2] {MILL}\n[3] {MÜHLE}\n[4] {MOLINO}"),
-        "stop",
-    )]);
-    read(&model, &planned(&[1, 2, 3, 4])).await.unwrap();
-    let sent = model.requests();
-    let message = sent[0].input[1].text();
-    let last_passage = message.rfind(MOLINO).expect("the passages shown again");
-    let said_again = message[last_passage..]
-        .find(&format!("My question is: \"{QUESTION}\""))
-        .is_some();
-    assert!(said_again, "{message}");
+fn choosing(keep: fn(&str) -> bool) -> ScriptedModel {
+    ScriptedModel::new().on_request::<PassageNotes>(move |sent, _| {
+        reply(scripted_answer(&shown_in(&sent.request), |_| true, keep))
+    })
 }
 
 #[tokio::test]
-async fn a_group_is_read_on_the_planned_prompt_with_its_passages_shown_again() {
-    let model = Model::new([reply(
-        &format!("[1] {KITCHEN}\n[2] {MILL}\n[3] {MÜHLE}\n[4] {MOLINO}"),
-        "stop",
-    )]);
-    let request = planned(&[1, 2, 3, 4]);
-    let notes = read(&model, &request).await.unwrap();
-    let sent = model.requests();
-    assert_eq!(sent.len(), 1, "one group, every label accounted for");
-    let reading = &sent[0];
-    assert_eq!(json(&reading.input[0]), json(&request.input[0]));
-    let shown = format!("[1] {KITCHEN}\n\n[2] {MILL}\n\n[3] {MÜHLE}\n\n[4] {MOLINO}");
-    let planned_message = request.input[1].text();
-    let (passages_and_question, _) = planned_message
-        .split_once(READING_INSTRUCTION)
-        .expect("the planned message closes with the reading instruction");
+async fn a_note_is_the_chosen_sentences_written_from_the_passage() {
+    let model = choosing(|sentence| sentence == SLUICE_FIRST || sentence == KILN_SECOND);
+    let notes = read(&model).await.expect("notes");
     assert_eq!(
-        reading.input[1].text(),
-        format!(
-            "{passages_and_question}{}",
-            GROUP_INSTRUCTION
-                .replace("{passages}", &shown)
-                .replace("{question}", QUESTION)
-                .replace("{last}", "4")
-        ),
-        "the message to its question, then the group shown again in place of the reading instruction"
+        notes.text,
+        format!("[s1] {SLUICE_FIRST}\n[s2] -\n[s3] {KILN_SECOND}\n[s4] -")
     );
-    assert_eq!(json(&reading.tools), json(&request.tools));
-    assert_eq!(reading.tool_choice, Some(ToolChoice::None));
-    assert_eq!(
-        json(&reading.sampling),
-        json(&Some(SamplingOverride::deterministic()))
-    );
-    assert_eq!(reading.thinking, ThinkingMode::Off);
-    assert_eq!(reading.max_output_tokens, Some(777));
-    assert_eq!(notes.noted, [1, 2, 3, 4].into());
+    assert_eq!(notes.noted(), [1, 3].into());
+    assert_eq!(notes.tokens, model.count_tokens(&notes.text));
+    assert_eq!(model.sent().len(), 1, "every passage is one request");
 }
 
 #[tokio::test]
-async fn labels_the_notes_left_out_are_asked_for_until_a_sweep_adds_none() {
-    let model = Model::new([
-        // Cut mid-line: [2] is lost with it and asked for again.
-        reply("[1] -\n[2] 1887-12-21. The last", "length"),
+async fn a_note_holds_its_sentences_in_the_passages_own_order() {
+    let model = ScriptedModel::new().on_request::<PassageNotes>(|_, _| {
         reply(
-            "[2] 1887-12-21. The last miller at Greassby Mill retired, and the building was let as a store.\n[3] -",
-            "stop",
-        ),
-        reply("[1] overwritten?", "stop"),
-    ]);
-    let notes = read(&model, &planned(&[1, 2, 3, 4])).await.unwrap();
-    let sent = model.requests();
-    assert_eq!(sent.len(), 3, "the group's reading and two sweeps");
+            r#"{"entries":[{"of":"p1","keep":[]},{"of":"p2","keep":[]},{"of":"p3","keep":["u2","u1","u2"]},{"of":"p4","keep":[]}]}"#
+                .into(),
+        )
+    });
+    let notes = read(&model).await.expect("notes");
     assert_eq!(
-        sent[1].input.last().unwrap().text(),
-        "You did not account for [2], [3], [4]. Write one line for each of them, in the same form."
+        notes.lines.get(&3),
+        Some(&Some(format!("{KILN_FIRST} {KILN_SECOND}")))
     );
+}
+
+#[tokio::test]
+async fn a_sentence_the_passage_does_not_have_makes_no_note() {
+    let model = ScriptedModel::new().on_request::<PassageNotes>(|_, _| {
+        reply(
+            r#"{"entries":[{"of":"p1","keep":["u1"]},{"of":"p2","keep":["u2"]},{"of":"p3","keep":[]},{"of":"p4","keep":[]}]}"#
+                .into(),
+        )
+    });
+    let notes = read(&model).await.expect("notes");
+    assert_eq!(notes.lines.get(&1), Some(&Some(SLUICE_FIRST.to_string())));
     assert_eq!(
-        sent[1].input[sent[1].input.len() - 2].text(),
-        "[1] -",
-        "the notes so far, whole lines only, as the model's own message"
-    );
-    assert_eq!(
-        sent[2].input.last().unwrap().text(),
-        "You did not account for [4]. Write one line for each of them, in the same form."
-    );
-    assert_eq!(
-        notes.lines.get(&1),
+        notes.lines.get(&2),
         Some(&None),
-        "a sweep cannot overwrite a note"
+        "the weir has one sentence: u2 is another passage's"
     );
-    assert_eq!(notes.noted, [2].into());
+}
+
+#[tokio::test]
+async fn a_passage_left_out_of_the_answer_is_asked_for_again_alone_and_the_others_stand() {
+    let model = ScriptedModel::new().on_request::<PassageNotes>(|sent, nth| {
+        let first = nth == 0;
+        reply(scripted_answer(
+            &shown_in(&sent.request),
+            |document| !first || !document.contains("d4.md"),
+            |sentence| sentence == SLUICE_FIRST || sentence == TIDES,
+        ))
+    });
+    let notes = read(&model).await.expect("notes");
+    let sent = model.sent();
+    assert_eq!(sent.len(), 2);
+    let second = shown_in(&sent[1].request);
+    assert!(second.contains(TIDES) && !second.contains(SLUICE_FIRST));
+    assert_eq!(notes.noted(), [1, 4].into());
+}
+
+#[tokio::test]
+async fn a_passage_that_stays_unanswered_has_no_line() {
+    let model = ScriptedModel::new().on_request::<PassageNotes>(|sent, _| {
+        reply(scripted_answer(
+            &shown_in(&sent.request),
+            |document| !document.contains("d4.md"),
+            |sentence| sentence == SLUICE_FIRST,
+        ))
+    });
+    let notes = read(&model).await.expect("the others are noted");
+    assert_eq!(notes.text, format!("[s1] {SLUICE_FIRST}\n[s2] -\n[s3] -"));
     assert!(!notes.lines.contains_key(&4));
 }
 
 #[tokio::test]
-async fn every_sweep_writes_only_what_the_answer_reservation_has_left() {
-    let first = "[1] -";
-    let second = "[2] 1887-12-21. The last miller at Greassby Mill retired, and the building was let as a store.";
-    let notes = format!("{first}\n{second}");
-    let counter = Model::new([]);
-    let reserved = counter.count_tokens(&notes);
-    let model = Model::new([
-        // Each cut at the output limit mid-line: only complete lines are kept.
-        reply(&format!("{first}\n[2] 1887-12-21. The last"), "length"),
-        reply(&format!("{second}\n[3] Die Mühle"), "length"),
-        reply("[3] -\n[4] -", "stop"),
-    ]);
-    let mut request = planned(&[1, 2, 3, 4]);
-    request.max_output_tokens = Some(u32::try_from(reserved).unwrap());
-    let read = read(&model, &request).await.unwrap();
-    let sent = model.requests();
-    assert_eq!(
-        sent.len(),
-        2,
-        "the reservation is spent: [3] and [4] are not asked for"
+async fn no_sentence_chosen_from_any_passage_means_that_nothing_bears() {
+    let model = choosing(|_| false);
+    assert!(matches!(reading_by(&model).await, Reading::NothingBears));
+}
+
+#[tokio::test]
+async fn no_sentence_chosen_while_passages_stay_unread_gives_no_notes() {
+    let model = ScriptedModel::new().on_request::<PassageNotes>(|sent, _| {
+        reply(scripted_answer(
+            &shown_in(&sent.request),
+            |document| document.contains("d1.md") || document.contains("d2.md"),
+            |_| false,
+        ))
+    });
+    assert!(matches!(reading_by(&model).await, Reading::NoNotes));
+}
+
+#[tokio::test]
+async fn a_provider_that_fails_gives_no_notes() {
+    let model = ScriptedModel::new()
+        .failing_every_request(|_| AppError::ServiceNotAvailable("The provider is down".into()));
+    assert!(matches!(reading_by(&model).await, Reading::NoNotes));
+}
+
+#[tokio::test]
+async fn stop_while_reading_is_an_error() {
+    let model = choosing(|_| true);
+    let stop = CancellationToken::new();
+    stop.cancel();
+    let error = read_passages(
+        &model,
+        &planned(&[1, 2, 3, 4]),
+        &passages(),
+        QUESTION,
+        &TurnRecorder::silent("conversation", "request"),
+        &stop,
+        &TurnClock::new(Duration::from_secs(60), Duration::ZERO),
+    )
+    .await
+    .expect_err("Stop is an error");
+    assert!(is_cancellation(&error));
+}
+
+#[tokio::test]
+async fn the_request_shows_each_passage_by_handle_with_its_document_and_the_question_after() {
+    let model = choosing(|_| true);
+    read(&model).await.expect("notes");
+    let request = &model.sent()[0].request;
+    let prompt = shown_in(request);
+    assert!(prompt.contains(READ_INSTRUCTION));
+    assert!(prompt.contains(&format!(
+        "[p3] Document: d3.md\n[u1] {KILN_FIRST}\n[u2] {KILN_SECOND}"
+    )));
+    assert!(
+        !prompt.contains("[s3]"),
+        "a passage is shown by its handle only"
     );
-    let ceilings: Vec<_> = sent.iter().map(|sent| sent.max_output_tokens).collect();
-    let after_first = reserved - counter.count_tokens(first);
-    assert_eq!(
-        ceilings,
-        vec![
-            Some(u32::try_from(reserved).unwrap()),
-            Some(u32::try_from(after_first).unwrap()),
-        ]
-    );
-    assert_eq!(read.text, notes, "complete lines only");
-    assert_eq!(read.tokens, reserved, "no more than the answer may");
-    assert_eq!(read.noted, [2].into());
-    assert!(!read.lines.contains_key(&3));
+    let (passages, closing) = prompt.split_once("My question is: ").expect("the question");
+    assert!(passages.contains(TIDES));
+    assert_eq!(closing, format!("\"{QUESTION}\"\n\n{BEARING_INSTRUCTION}"));
+}
+
+#[test]
+fn the_reading_request_shows_what_the_model_is_told_and_nothing_internal() {
+    let mut marks = Marks::new();
+    let input = Input {
+        question: marks.told(QUESTION.to_owned()),
+        passages: vec![Excerpt {
+            label: marks.reference(441_700u32),
+            document: marks.told("harbour-notes.md".to_owned()),
+            sentences: vec![
+                Sentence {
+                    at: 0,
+                    text: marks.told(SLUICE_FIRST.to_owned()),
+                },
+                Sentence {
+                    at: 1,
+                    text: marks.told(WEIR.to_owned()),
+                },
+            ],
+        }],
+    };
+    holds::<PassageNotes>(&input, &marks);
+}
+
+#[tokio::test]
+async fn prompt_snapshot_passage_notes() {
+    let model = ScriptedModel::new().on_request::<PassageNotes>(|sent, nth| {
+        let first = nth == 0;
+        reply(scripted_answer(
+            &shown_in(&sent.request),
+            |document| !first || !document.contains("d4.md"),
+            |sentence| sentence == SLUICE_FIRST,
+        ))
+    });
+    read(&model).await.expect("notes");
+    let requests: Vec<_> = model.sent().into_iter().map(|sent| sent.request).collect();
+    assert_requests(env!("CARGO_MANIFEST_DIR"), "passage-notes", &requests);
 }
 
 #[test]
 fn a_message_that_numbers_no_source_the_turn_holds_asks_for_no_reading() {
     let planned = planned(&[7, 8]);
-    assert!(planned.input[1].text().contains(READING_INSTRUCTION));
-    assert!(asked(&planned.input, &sources()).is_none());
+    assert!(planned.input()[1].text().contains(READING_INSTRUCTION));
+    assert!(asked(planned.input(), &sources()).is_none());
 }
 
 #[test]
-fn a_note_in_a_script_without_spaces_is_split_at_its_own_full_stops() {
-    let passage = normalize_whitespace(
-        "磨坊于1850年洪水后重新启用。磨坊主后来搬走了。磨坊在1860年卖给了磨坊主的家人。",
+fn only_the_labels_the_message_shows_are_read() {
+    let mut planned = planned(&[1, 2]);
+    let passages = asked(planned.input(), &sources()).unwrap();
+    assert_eq!(passages.labels().collect::<Vec<_>>(), vec![1, 2]);
+    withdraw(legacy::says(&mut planned).input);
+    assert!(
+        asked(planned.input(), &sources()).is_none(),
+        "a message without the instruction asks for no reading"
     );
-    let notes =
-        parse_notes("［5］：磨坊于1850年洪水后重新启用。磨坊在1860年卖给了磨坊主的家人。\n[6]：-");
+    assert!(!planned.input()[1].text().contains(READING_INSTRUCTION));
+    assert!(planned.input()[1]
+        .text()
+        .ends_with("Question: What happened at the harbour?"));
+}
+
+#[test]
+fn sources_sharing_a_label_read_as_one_passage_under_the_first_document() {
+    let mut chunks = sources();
+    let mut second = source(1, "A second chunk.");
+    second.file_name = "other.md".into();
+    chunks.push(second);
+    let passages = asked(planned(&[1]).input(), &chunks).unwrap();
+    let passage = &passages.0[&1];
+    assert_eq!(passage.document, "d1.md");
+    assert!(passage.text.ends_with("A second chunk."));
+}
+
+#[test]
+fn every_passage_the_reply_cites_is_used() {
+    let noted: BTreeSet<u32> = [1, 2, 3, 4, 5, 6].into();
+    let held: Vec<SourceDto> = (1..=6).map(|label| source(label, "A passage.")).collect();
+    let answer = reply_of(
+        "The kitchen got a grant [s1][s2]. The mill retired [s3] [s4]. It was sold.[s5]",
+        &held,
+    );
     assert_eq!(
-        notes,
-        vec![
-            (
-                5,
-                Some("磨坊于1850年洪水后重新启用。磨坊在1860年卖给了磨坊主的家人。".into())
-            ),
-            (6, None),
-        ]
+        left_out(&noted, &answer.cited().into_iter().collect()),
+        [6].into()
     );
-    let note = notes[0].1.as_deref().unwrap();
-    let passages = Passages(BTreeMap::from([(5, Passage::from(passage))]));
+    let nothing = reply_of(
+        "Nothing cited, `[s3]` is code, and [s9] names no passage.",
+        &held,
+    );
     assert_eq!(
-        locate(note, &passages),
-        [5],
-        "two sentences copied, not side by side"
+        left_out(&noted, &nothing.cited().into_iter().collect()),
+        noted
     );
-    assert!(locate("磨坊于1850年重新启用。", &passages).is_empty());
 }
 
 #[test]
@@ -608,7 +371,7 @@ fn a_resumed_turn_knows_its_saved_rounds_hold_the_reading() {
     let read = vec![
         CompletionInput::Message {
             role: "assistant".into(),
-            content: "[1] -".into(),
+            content: "[s1] -".into(),
         },
         CompletionInput::Message {
             role: "user".into(),
@@ -628,178 +391,28 @@ fn a_resumed_turn_knows_its_saved_rounds_hold_the_reading() {
     assert!(!noted_in(&unread));
 }
 
-#[tokio::test]
-async fn a_reading_with_no_label_in_it_is_shown_back_once_then_gives_no_notes() {
-    let model = Model::new([reply("The mill closed in 1887.", "stop")]);
-    assert!(read(&model, &planned(&[1, 2, 3, 4])).await.is_none());
-    let sent = model.requests();
-    assert_eq!(sent.len(), 2, "the reading and one more ask");
-    assert_eq!(
-        sent[1].input[sent[1].input.len() - 2].text(),
-        "The mill closed in 1887.",
-        "the reply is shown back as the model's own message"
-    );
-    assert_eq!(
-        sent[1].input.last().unwrap().text(),
-        "You did not account for [1], [2], [3], [4]. Write one line for each of them, in the same form."
-    );
-}
-
-#[tokio::test]
-async fn a_reading_that_answered_instead_gets_its_lines_when_asked_once_more() {
-    let model = Model::new([
-        reply("The last miller retired in 1887.", "stop"),
-        reply(
-            "[1] -\n[2] 1887-12-21. The last miller at Greassby Mill retired, and the building was let as a store.\n[3] -\n[4] -",
-            "stop",
-        ),
-    ]);
-    let notes = read(&model, &planned(&[1, 2, 3, 4])).await.unwrap();
-    assert_eq!(notes.noted, [2].into());
-    assert_eq!(model.requests().len(), 2);
-}
-
-#[tokio::test]
-async fn an_answer_written_after_the_lines_does_not_replace_them() {
-    let model = Model::new([reply(
-        "[1] -\n[2] 1887-12-21. The last miller at Greassby Mill retired, and the building was let as a store.\n[3] -\n[4] -\n\nThe record shows:\n1. The mill was rebuilt.\n2. The miller retired.",
-        "stop",
-    )]);
-    let notes = read(&model, &planned(&[1, 2, 3, 4])).await.unwrap();
-    assert_eq!(notes.noted, [2].into(), "{:?}", notes.lines);
-    assert_eq!(notes.lines.get(&1), Some(&None));
-}
-
-#[tokio::test]
-async fn a_reading_that_copies_no_passage_gives_no_notes() {
-    let model = Model::new([reply("1. [1] -\n2. [2] -\n3. [3] -\n4. [4] -", "stop")]);
-    assert!(read(&model, &planned(&[1, 2, 3, 4])).await.is_none());
-    assert_eq!(model.requests().len(), 1, "every label accounted for");
-    let model = Model::new([reply(
-        "[1] -\n[2] The last miller retired in December 1887.\n[3] -\n[4] -",
-        "stop",
-    )]);
-    assert!(
-        read(&model, &planned(&[1, 2, 3, 4])).await.is_none(),
-        "a paraphrase is no copy"
-    );
-}
-
-async fn reading_of(reply_text: &str) -> Reading {
-    let model = Model::new([reply(reply_text, "stop"), reply("", "stop")]);
-    let recorder = TurnRecorder::silent("conversation", "request");
-    let clock = TurnClock::new(Duration::from_secs(60), Duration::ZERO);
-    read_passages(
-        &model,
-        &planned(&[1, 2, 3, 4]),
-        &passages(),
-        QUESTION,
-        &recorder,
-        &CancellationToken::new(),
-        &clock,
-    )
-    .await
-    .expect("only Stop and the deadline are errors")
-}
-
-#[tokio::test]
-async fn only_a_hyphen_for_every_passage_means_that_nothing_bears() {
-    assert!(matches!(
-        reading_of("[1] -\n[2] -\n[3] -\n[4] -").await,
-        Reading::NothingBears
-    ));
-    assert!(
-        matches!(
-            reading_of("[1] -\n[2] The last miller retired in December 1887.\n[3] -\n[4] -").await,
-            Reading::NoNotes
-        ),
-        "a paraphrase says something bears on it"
-    );
-    assert!(
-        matches!(reading_of("[1] -\n[2] -").await, Reading::NoNotes),
-        "two passages were never read"
-    );
-}
-
 #[test]
 fn a_search_takes_the_readings_place_only_in_a_round_that_can_search() {
     let mut closed = planned(&[1]);
-    closed.tools.clear();
+    legacy::says(&mut closed).tools.clear();
     search_instead(&mut closed);
     assert!(closed
-        .input
+        .input()
         .last()
         .unwrap()
         .text()
         .contains(READING_INSTRUCTION));
 
     let mut open = planned(&[1]);
-    open.tools = vec![ToolDefinition {
+    *legacy::says(&mut open).tools = vec![ToolDefinition {
         name: "semantic_search".into(),
         description: String::new(),
         parameters: serde_json::json!({}),
     }];
     search_instead(&mut open);
-    let message = open.input.last().unwrap().text();
+    let message = open.input().last().unwrap().text();
     assert!(!message.contains(READING_INSTRUCTION));
     assert!(message.ends_with(NOTHING_BEARS_INSTRUCTION));
-}
-
-#[tokio::test]
-async fn a_note_written_under_the_wrong_label_is_replayed_under_its_own_too() {
-    let mühle = "Die Mühle wurde 1850 nach dem Hochwasser wieder in Betrieb genommen.";
-    let model = Model::new([reply(&format!("[1] {mühle}\n[2] -\n[3] -\n[4] -"), "stop")]);
-    let notes = read(&model, &planned(&[1, 2, 3, 4])).await.unwrap();
-    assert_eq!(notes.noted, [3].into());
-    assert_eq!(
-        notes.text,
-        format!("[1] -\n[2] -\n[3] {mühle}\n[4] -"),
-        "a line is replayed only under the passage it copies"
-    );
-    assert_eq!(notes.tokens, model.count_tokens(&notes.text));
-}
-
-#[tokio::test]
-async fn what_a_reading_writes_after_its_lines_is_not_replayed() {
-    let mill = "1887-12-21. The last miller at Greassby Mill retired, and the building was let as a store.";
-    let model = Model::new([reply(
-        &format!("[1] -\n[2] {mill}\n[3] -\n[4] -\n\nThe mill closed in 1887 [1]."),
-        "stop",
-    )]);
-    let notes = read(&model, &planned(&[1, 2, 3, 4])).await.unwrap();
-    assert_eq!(notes.text, format!("[1] -\n[2] {mill}\n[3] -\n[4] -"));
-    assert_eq!(
-        notes.tokens,
-        model.count_tokens(&notes.text),
-        "measured as it is replayed"
-    );
-}
-
-#[tokio::test]
-async fn notes_are_replayed_one_line_per_label_however_they_were_written() {
-    let mill = "1887-12-21. The last miller at Greassby Mill retired, and the building was let as a store.";
-    let written = format!("1. [1] -\n[2]: {mill}\n\n［3］ —\n4. -");
-    let model = Model::new([reply(&written, "stop")]);
-    let notes = read(&model, &planned(&[1, 2, 3, 4])).await.unwrap();
-    assert_eq!(notes.text, format!("[1] -\n[2] {mill}\n[3] -\n[4] -"));
-    assert_eq!(notes.noted, [2].into());
-}
-
-#[tokio::test]
-async fn a_reading_and_its_sweeps_stop_at_a_line_for_the_first_label_not_shown() {
-    let model = Model::new([
-        reply(
-            "[1] -\n[2] 1887-12-21. The last miller at Greassby Mill retired, and the building was let as a store.",
-            "stop",
-        ),
-        reply("[3] -\n[4] -", "stop"),
-    ]);
-    read(&model, &planned(&[1, 2, 3, 4])).await.unwrap();
-    let sent = model.requests();
-    assert_eq!(sent.len(), 2, "a reading and one sweep");
-    for request in &sent {
-        assert_eq!(request.stop, ["\n[5]", "\n5."]);
-    }
 }
 
 #[tokio::test]
@@ -807,28 +420,28 @@ async fn the_writing_round_is_the_reading_round_with_the_notes_and_the_instructi
     let request = planned(&[1, 2]);
     let mut writing = request.clone();
     let notes = Notes {
-        text: "[1] -\n[2] -".into(),
+        text: "[s1] -\n[s2] -".into(),
         lines: BTreeMap::from([(1, None), (2, None)]),
-        noted: BTreeSet::new(),
         tokens: 3,
+        labels: BTreeMap::new(),
     };
-    assert!(append_notes(&Model::new([]), &mut writing, &notes).await);
+    assert!(append_notes(&ScriptedModel::new(), &mut writing, &notes).await);
     assert_eq!(
-        writing.max_output_tokens,
+        writing.max_output_tokens(),
         Some(777),
         "a window with room keeps the reservation"
     );
     assert_eq!(
-        json(&writing.input[..request.input.len()].to_vec()),
-        json(&request.input)
+        json(&writing.input()[..request.input().len()].to_vec()),
+        json(&request.input())
     );
-    assert_eq!(writing.input.len(), request.input.len() + 2);
+    assert_eq!(writing.input().len(), request.input().len() + 2);
     assert!(matches!(
-        &writing.input[request.input.len()],
-        CompletionInput::Message { role, content } if role == "assistant" && content == "[1] -\n[2] -"
+        &writing.input()[request.input().len()],
+        CompletionInput::Message { role, content } if role == "assistant" && content == "[s1] -\n[s2] -"
     ));
     assert_eq!(
-        writing.input.last().unwrap().text(),
+        writing.input().last().unwrap().text(),
         SEARCH_OR_WRITE_INSTRUCTION
     );
 }
@@ -839,26 +452,66 @@ async fn the_writing_round_is_the_reading_round_with_the_notes_and_the_instructi
 #[tokio::test]
 async fn only_a_round_with_tools_is_told_to_search_for_what_is_missing() {
     let notes = Notes {
-        text: "[1] -".into(),
+        text: "[s1] -".into(),
         lines: BTreeMap::from([(1, None)]),
-        noted: BTreeSet::new(),
         tokens: 3,
+        labels: BTreeMap::new(),
     };
     let mut closed = planned(&[1]);
-    closed.tools.clear();
-    assert!(append_notes(&Model::new([]), &mut closed, &notes).await);
-    assert_eq!(closed.input.last().unwrap().text(), WRITE_INSTRUCTION);
+    legacy::says(&mut closed).tools.clear();
+    assert!(append_notes(&ScriptedModel::new(), &mut closed, &notes).await);
+    assert_eq!(closed.input().last().unwrap().text(), WRITE_INSTRUCTION);
 
     let mut open = planned(&[1]);
-    open.tools = vec![ToolDefinition {
+    *legacy::says(&mut open).tools = vec![ToolDefinition {
         name: "semantic_search".into(),
         description: String::new(),
         parameters: serde_json::json!({}),
     }];
-    assert!(append_notes(&Model::new([]), &mut open, &notes).await);
-    let instruction = open.input.last().unwrap().text();
+    assert!(append_notes(&ScriptedModel::new(), &mut open, &notes).await);
+    let instruction = open.input().last().unwrap().text();
     assert_eq!(instruction, SEARCH_OR_WRITE_INSTRUCTION);
     assert!(instruction.starts_with("If the passages leave any part of my question unanswered"));
+}
+
+#[tokio::test]
+async fn the_answer_gets_what_the_window_has_left_after_the_notes() {
+    let notes = Notes {
+        text: "[s1] A note.".into(),
+        lines: BTreeMap::from([(1, Some("A note.".into()))]),
+        tokens: 10,
+        labels: BTreeMap::new(),
+    };
+    let mut measured = planned(&[1]);
+    assert!(append_notes(&ScriptedModel::new(), &mut measured, &notes).await);
+    let needed = prompt_tokens(&ScriptedModel::new(), &measured).await;
+    let model = ScriptedModel::new().window(needed + 30);
+    let mut writing = planned(&[1]);
+    assert!(append_notes(&model, &mut writing, &notes).await);
+    assert_eq!(
+        writing.max_output_tokens(),
+        Some(30),
+        "the answer is held to the room the notes left"
+    );
+}
+
+#[tokio::test]
+async fn notes_that_would_crowd_out_the_answer_are_taken_back() {
+    let notes = Notes {
+        text: "[s1] A note.".into(),
+        lines: BTreeMap::from([(1, Some("A note.".into()))]),
+        tokens: 100,
+        labels: BTreeMap::new(),
+    };
+    let mut measured = planned(&[1]);
+    assert!(append_notes(&ScriptedModel::new(), &mut measured, &notes).await);
+    let needed = prompt_tokens(&ScriptedModel::new(), &measured).await;
+    let model = ScriptedModel::new().window(needed + 30);
+    let request = planned(&[1]);
+    let mut writing = request.clone();
+    assert!(!append_notes(&model, &mut writing, &notes).await);
+    assert_eq!(json(&writing.input()), json(&request.input()), "no notes");
+    assert_eq!(writing.max_output_tokens(), Some(777));
 }
 
 #[test]
@@ -874,34 +527,27 @@ fn a_continuation_quotes_each_left_out_note() {
     let notes = Notes {
         text: String::new(),
         lines: BTreeMap::from([(6, Some("A.".into())), (7, Some("B.".into()))]),
-        noted: [6, 7].into(),
         tokens: 4,
+        labels: BTreeMap::from([(6, "[s6]".into()), (7, "[s7]".into())]),
     };
     assert_eq!(
         continue_instruction(&[6, 7].into(), &notes),
-        "Your answer does not use these passages, which your notes quote as bearing on my question: [6] \"A.\" [7] \"B.\". Add only what my question still needs from them, continuing your answer in its own form and citing each with its label; do not repeat what you have written. If your answer already covers my question, reply with a single hyphen. Do not mention your notes or correct them."
+        "Your answer does not use these passages, which your notes quote as bearing on my question: [s6] \"A.\" [s7] \"B.\". Add only what my question still needs from them, continuing your answer in its own form and citing each with its label; do not repeat what you have written. If your answer already covers my question, reply with a single hyphen. Do not mention your notes or correct them."
     );
 }
 
 #[test]
-fn a_continuation_that_says_its_quotes_back_adds_nothing() {
+fn only_a_label_with_a_note_can_be_left_out() {
     let notes = Notes {
         text: String::new(),
-        lines: BTreeMap::from([(6, Some("A.".into())), (7, Some("B.".into()))]),
-        noted: [6, 7].into(),
+        lines: BTreeMap::from([(1, None), (2, Some("A.".into())), (3, Some("B.".into()))]),
         tokens: 4,
+        labels: BTreeMap::new(),
     };
-    let left = [6, 7].into();
-    assert_eq!(passages_added("[6] \"A.\" [7] \"B.\"", &left, &notes), 0);
-    assert_eq!(passages_added("[6] \"A.\"\n[7] \"B.\"", &left, &notes), 0);
-    assert_eq!(
-        passages_added("Both still apply: A [6], B [7].", &left, &notes),
-        2
-    );
+    assert_eq!(notes.noted(), [2, 3].into());
+    assert_eq!(left_out(&notes.noted(), &[3].into()), [2].into());
 }
 
 fn json(value: &impl serde::Serialize) -> serde_json::Value {
     serde_json::to_value(value).unwrap()
 }
-
-mod groups;

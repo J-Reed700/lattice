@@ -102,56 +102,6 @@ pub(in crate::lessons::content_verification) fn number_evidence(
     }
 }
 
-/// The citations `repaired` appended to `section`'s own, in order.
-pub(super) fn appended(section: &Value, repaired: &Value) -> Vec<Value> {
-    let had = section
-        .get("citations")
-        .and_then(Value::as_array)
-        .map_or(0, Vec::len);
-    repaired
-        .get("citations")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .skip(had)
-        .cloned()
-        .collect()
-}
-
-/// Puts the `appended` citations back into `confined`, a section whose repair
-/// was confined to the failed sentences. Only a citation of a sentence that
-/// stands in the section's text is kept, and none twice.
-pub(super) fn restore_appended(confined: &mut Value, appended: Vec<Value>, field: &str) {
-    let held: Vec<String> = crate::lessons::text_edits::citable_texts(confined, field != "blocks")
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
-    let standing: Vec<Value> = appended
-        .into_iter()
-        .filter(|entry| {
-            entry
-                .get("sentence")
-                .and_then(Value::as_str)
-                .is_some_and(|sentence| held.iter().any(|text| text.contains(sentence)))
-        })
-        .collect();
-    if standing.is_empty() {
-        return;
-    }
-    let Some(listed) = confined
-        .as_object_mut()
-        .map(|section| section.entry("citations").or_insert_with(|| json!([])))
-        .and_then(Value::as_array_mut)
-    else {
-        return;
-    };
-    for entry in standing {
-        if !listed.contains(&entry) {
-            listed.push(entry);
-        }
-    }
-}
-
 /// What the citation repair did for one finding.
 pub(in crate::lessons::content_verification) enum Cited {
     /// The sentence's citation moved to the passage found, or the sentence

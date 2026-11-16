@@ -1,7 +1,7 @@
 //! What a review has seen taught. An item the check found taught keeps the
 //! sentences of the lesson its words lie in; while every one of them is still
-//! in the lesson unchanged, the item is not asked about again, so a later
-//! pass cannot unsay it and spend a repair.
+//! unchanged in a part the item counts in, the item is not asked about again,
+//! so a later pass cannot unsay it and spend a repair.
 use super::{Hit, Item, Part};
 use lattice_core::shared::text::same_text;
 use serde_json::Value;
@@ -30,15 +30,22 @@ impl Receipts {
         }
     }
 
-    /// Forget every receipt that has a sentence the lesson no longer holds as it was.
-    pub(super) fn lapse(&mut self, parts: &[Part]) {
-        self.sentences.retain(|_, receipted| {
-            receipted.iter().all(|sentence| {
-                parts
-                    .iter()
-                    .flat_map(|part| &part.texts)
-                    .any(|text| text.contains(sentence.as_str()))
-            })
+    /// Forget every receipt of an item `items` does not hold, and every one
+    /// with a sentence no part its item counts in holds as it was.
+    pub(super) fn lapse(&mut self, parts: &[Part], items: &[Item]) {
+        self.sentences.retain(|id, receipted| {
+            items
+                .iter()
+                .find(|item| item.id == *id)
+                .is_some_and(|item| {
+                    receipted.iter().all(|sentence| {
+                        parts
+                            .iter()
+                            .filter(|part| item.counts_in(part))
+                            .flat_map(|part| &part.texts)
+                            .any(|text| text.contains(sentence.as_str()))
+                    })
+                })
         });
     }
 
@@ -47,19 +54,25 @@ impl Receipts {
         self.sentences.contains_key(&item.id)
     }
 
-    /// Keep the sentences `hit` lies in as `item`'s receipt.
-    pub(super) fn record(&mut self, item: &Item, hit: &Hit) {
-        let Some(text) = hit.part.texts.get(hit.found.text) else {
-            return;
-        };
-        let lying_in: Vec<String> =
-            same_text::sentences_over(text, (hit.found.start, hit.found.end))
-                .into_iter()
-                .filter_map(|(start, end)| text.get(start..end))
-                .map(str::to_owned)
-                .collect();
+    /// Keep the sentences `hits` are as `item`'s receipt.
+    pub(super) fn record(&mut self, item: &Item, hits: &[Hit]) {
+        let lying_in: Vec<String> = hits
+            .iter()
+            .filter_map(|hit| {
+                let text = hit.part.texts.get(hit.found.text)?;
+                same_text::sentences_over(text, (hit.found.start, hit.found.end))
+                    .into_iter()
+                    .map(|(start, end)| text.get(start..end).map(str::to_owned))
+                    .collect::<Option<Vec<String>>>()
+            })
+            .flatten()
+            .collect();
         if !lying_in.is_empty() {
             self.sentences.insert(item.id.clone(), lying_in);
         }
     }
 }
+
+#[cfg(test)]
+#[path = "receipts_tests.rs"]
+mod tests;

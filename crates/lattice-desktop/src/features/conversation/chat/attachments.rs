@@ -20,17 +20,20 @@ use lattice_core::shared::text::{build_excerpt, safe_truncate};
 
 use super::document_text::truncate_to_token_budget;
 use super::retrieval::infer_category;
+use super::retrieval::source_names::marker;
 
 /// Appended to an attachment the window could not hold, so the model reports a
 /// partial read as partial instead of answering as though it saw the end, and
-/// can read on: `get_document` pages the same text, joined the same way, from
-/// the character the carried part ends at.
-fn truncation_note(document_id: &str, carried: &str) -> String {
+/// can read it: `get_document` with the attachment's number.
+fn truncation_note(label: &str) -> String {
+    let how = if label.is_empty() {
+        "Call list_attachments, then get_document with its name,".to_string()
+    } else {
+        format!("Call get_document with document {label}")
+    };
     format!(
-        "\n\n[Attachment truncated here: the rest did not fit the context window. Call \
-         get_document with document_id=\"{document_id}\" and offset={} to read on, and say \
-         so if the answer depends on a part you have not read.]",
-        carried.chars().count()
+        "\n\n[Attachment truncated here: the rest did not fit the context window. {how} to \
+         read it, and say so if the answer depends on a part you have not read.]"
     )
 }
 
@@ -77,7 +80,7 @@ impl TurnAttachments {
     }
 
     /// The citations, for the turn's source list. Numbering happens later, over
-    /// the whole list, so these go in before `assign_citation_ids` runs.
+    /// the whole list, so these go in before `name_sources` runs.
     pub(super) fn sources(&self) -> Vec<SourceDto> {
         self.documents
             .iter()
@@ -128,8 +131,8 @@ impl TurnAttachments {
     }
 
     /// The prompt section, numbered with the citation ids the turn's final
-    /// `sources` ended up with. Call after `assign_citation_ids`, so the model's
-    /// `[2]` is the source the reader's `[2]` opens.
+    /// `sources` ended up with. Call after `name_sources`, so the model's
+    /// `[s2]` is the source the reader's 2 opens.
     pub(super) fn render(&self, sources: &[SourceDto]) -> Option<String> {
         if self.is_empty() {
             return None;
@@ -148,16 +151,15 @@ say a file is missing when it is listed here):\n",
                 .and_then(|source| source.citation_id)
                 .or(attached.source.citation_id);
             let label = match citation {
-                Some(id) => format!("[{id}] "),
+                Some(id) => format!("{} ", marker(id)),
                 None => String::new(),
             };
             section.push_str(&format!(
-                "\n{label}Attached file: {}\nDocument ID: {}\nContent: {}{}\n",
+                "\n{label}Attached file: {}\nContent: {}{}\n",
                 attached.source.file_name,
-                attached.source.document_id,
                 attached.source.content,
                 if attached.truncated {
-                    truncation_note(&attached.source.document_id, &attached.source.content)
+                    truncation_note(label.trim_end())
                 } else {
                     String::new()
                 },
@@ -431,7 +433,7 @@ mod tests {
             .render(&[numbered])
             .expect("an attachment renders a section");
 
-        assert!(rendered.contains("[4] Attached file: notes.txt"));
+        assert!(rendered.contains("[s4] Attached file: notes.txt"));
         assert!(rendered.contains("the whole file"));
         assert!(!rendered.contains("truncated here"));
     }
@@ -450,7 +452,25 @@ mod tests {
 
         assert!(rendered.contains("Attachment truncated here"));
         assert!(
-            rendered.contains("document_id=\"doc-book.txt\" and offset=11 to read on"),
+            rendered.contains("Call list_attachments, then get_document with its name, to read it"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("doc-book.txt"), "{rendered}");
+        assert!(!rendered.contains("offset"), "{rendered}");
+
+        let mut numbered = source("book.txt", "chunk-1", "chapter one");
+        numbered.citation_id = Some(2);
+        let rendered = attachments(
+            vec![AttachedDocument {
+                source: numbered,
+                truncated: true,
+            }],
+            Vec::new(),
+        )
+        .render(&[])
+        .expect("an attachment renders a section");
+        assert!(
+            rendered.contains("Call get_document with document [s2] to read it"),
             "{rendered}"
         );
     }

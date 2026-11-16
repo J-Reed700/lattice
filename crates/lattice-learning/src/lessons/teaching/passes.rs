@@ -26,6 +26,12 @@
 //! the kinds are finitely many, so the review still ends. A new reviewer
 //! finding with no passage has no words to count, so it starts at the count
 //! of the reviewer's findings with no passage already at its place.
+//!
+//! A rewrite of the whole lesson gives each part it changes a new id, and a
+//! rewrite that leaves a finding's part as it was is charged to the finding.
+//! A finding new to the review that only a rewrite repairs, about a part a
+//! rewrite wrote, starts at the most repairs any finding of its kind has been
+//! charged, so rewrites that keep changing its part still end.
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::lessons::trace::{self, Stage};
@@ -33,9 +39,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::review_findings::{
-    sentences_in, sentences_of, subject_of, FindingId, FindingSite, Held, Origin, ReviewFinding,
-    SetAside,
+    sentences_in, sentences_of, subject_of, FindingId, Held, Lineage, Origin, Remedy,
+    ReviewFinding, SetAside, UnitId,
 };
+
+/// What `Kept` holds when its ids name units: state saved with an older kind of id is not taken up.
+const IDS_BY_UNIT: u8 = 1;
 
 /// Attempts one finding is given: a first, and one retry that is told what
 /// became of the first. The loop must end on a defect no repair fixes.
@@ -45,12 +54,14 @@ pub(in crate::lessons::teaching) const REPAIRS_PER_FINDING: u8 = 2;
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(super) enum Outcome {
     /// A change naming it was applied and stands.
+    #[serde(alias = "Reverted")]
     Applied,
+    /// A rewrite of the whole lesson left the part it is about as it was.
+    Unchanged,
     /// It was named, and none of its changes could be applied.
     NotApplied(Vec<String>),
-    /// Its changes were applied and put back: they touched a sentence that must stay.
-    Reverted,
-    /// Its correction as a whole was refused: it changed what must stay or what it was not asked to change.
+    /// Its correction was refused: asked again in the same repair it stayed refused, or it
+    /// changed what must stay.
     Refused(Vec<String>),
     /// No change named it.
     Unnamed,
@@ -60,6 +71,8 @@ pub(super) enum Outcome {
     Unusable(String),
     /// Its edit overlapped another finding's and was left out: not an attempt.
     Deferred,
+    /// Its repair does not fit the model's window: not an attempt, it waits for the user.
+    NoRoom,
 }
 
 impl Outcome {
@@ -72,14 +85,12 @@ impl Outcome {
     }
 
     /// What became of the attempt, for the user's log.
-    fn in_words(&self) -> String {
+    pub(super) fn in_words(&self) -> String {
         match self {
             Self::Applied => "its edits were applied and the defect was still found".to_owned(),
+            Self::Unchanged => "the rewrite left its part unchanged".to_owned(),
             Self::NotApplied(reasons) => {
                 format!("its edits could not be applied: {}", reasons.join(" "))
-            }
-            Self::Reverted => {
-                "its edits were put back: they touched a sentence that must stay".to_owned()
             }
             Self::Refused(reasons) => {
                 format!("its correction was refused: {}", reasons.join(" "))
@@ -90,9 +101,12 @@ impl Outcome {
             }
             Self::Unusable(reason) => format!("the repair's answer could not be used: {reason}"),
             Self::Deferred => "its edit overlapped another finding's and was left out".to_owned(),
+            Self::NoRoom => NO_ROOM.to_owned(),
         }
     }
 }
+
+const NO_ROOM: &str = "its repair did not fit the window";
 
 /// What a finding's repairs came to, for the log of one the user is left with.
 pub(super) struct Account {
@@ -130,9 +144,16 @@ pub(super) struct Passes {
     /// Sentence digest to the repairs those words have been through, per kind
     /// of defect.
     worked: BTreeMap<String, BTreeMap<String, u8>>,
-    /// For each place, the most repairs a reviewer finding with no passage
+    /// For each part, the most repairs a reviewer finding with no passage
     /// there has been charged.
-    passage_less: BTreeMap<FindingSite, u8>,
+    passage_less: BTreeMap<String, u8>,
+    /// For each kind of finding only a rewrite of the whole lesson repairs,
+    /// the most repairs a finding of it has been charged.
+    whole: BTreeMap<String, u8>,
+    /// The units rewrites of the whole lesson wrote.
+    created: BTreeSet<UnitId>,
+    /// The unit each section and question of the lesson is named by.
+    lineage: Lineage,
     /// The latest pass's findings, one per id.
     latest: Vec<ReviewFinding>,
     /// The digests of the sentences each of the latest findings is about.
@@ -149,11 +170,20 @@ struct Kept {
     last: Vec<(FindingId, Outcome)>,
     worked: BTreeMap<String, BTreeMap<String, u8>>,
     #[serde(default)]
-    passage_less: Vec<(FindingSite, u8)>,
+    passage_less_by_part: Vec<(String, u8)>,
     #[serde(default)]
     attempts: Vec<(FindingId, Vec<Outcome>)>,
     #[serde(default)]
     inherited: Vec<(FindingId, u8)>,
+    #[serde(default)]
+    lineage: Lineage,
+    #[serde(default)]
+    whole: BTreeMap<String, u8>,
+    #[serde(default)]
+    created: BTreeSet<UnitId>,
+    /// What kind of ids the maps above are keyed by; none when saved before ids named units.
+    #[serde(default)]
+    ids: u8,
 }
 
 /// Raises `kind`'s count in `counts` to at least `count`.
@@ -170,7 +200,7 @@ fn passage_less(finding: &ReviewFinding) -> bool {
 }
 
 impl Passes {
-    pub fn new(held: Held) -> Self {
+    pub fn new(mut held: Held) -> Self {
         let stored = held
             .reviewer
             .iter()
@@ -178,9 +208,11 @@ impl Passes {
             .flat_map(|passage| sentences_in(&Value::String(passage.to_owned())))
             .map(|sentence| subject_of(&sentence))
             .collect();
+        let lineage = std::mem::take(&mut held.lineage);
         Self {
             held,
             stored,
+            lineage,
             ..Self::default()
         }
     }
@@ -200,10 +232,10 @@ impl Passes {
                 .map(|(id, outcome)| (id.clone(), outcome.clone()))
                 .collect(),
             worked: self.worked.clone(),
-            passage_less: self
+            passage_less_by_part: self
                 .passage_less
                 .iter()
-                .map(|(site, count)| (*site, *count))
+                .map(|(part, count)| (part.clone(), *count))
                 .collect(),
             attempts: self
                 .attempts
@@ -215,20 +247,51 @@ impl Passes {
                 .iter()
                 .map(|(id, count)| (id.clone(), *count))
                 .collect(),
+            lineage: self.lineage.clone(),
+            whole: self.whole.clone(),
+            created: self.created.clone(),
+            ids: IDS_BY_UNIT,
         })
     }
 
     /// Takes up the state a review cut short saved with this draft; state
-    /// that cannot be read, such as state saved before finding ids, is none.
+    /// that cannot be read, such as state saved before finding ids, is none,
+    /// and state keyed by ids that did not name units keeps only what the
+    /// words were put through.
     pub fn resume(&mut self, saved: &str) {
         if let Ok(kept) = serde_json::from_str::<Kept>(saved) {
-            self.spent = kept.spent.into_iter().collect();
-            self.last = kept.last.into_iter().collect();
             self.worked = kept.worked;
-            self.passage_less = kept.passage_less.into_iter().collect();
-            self.attempts = kept.attempts.into_iter().collect();
-            self.inherited = kept.inherited.into_iter().collect();
+            self.whole = kept.whole;
+            self.created = kept.created;
+            let mut lineage = kept.lineage;
+            lineage.absorb(&self.lineage);
+            self.lineage = lineage;
+            if kept.ids == IDS_BY_UNIT {
+                self.spent = kept.spent.into_iter().collect();
+                self.last = kept.last.into_iter().collect();
+                self.passage_less = kept.passage_less_by_part.into_iter().collect();
+                self.attempts = kept.attempts.into_iter().collect();
+                self.inherited = kept.inherited.into_iter().collect();
+            }
         }
+    }
+
+    /// Names the part of `candidate` each of these findings is about.
+    pub fn place(&mut self, candidate: &Value, findings: &mut [ReviewFinding]) {
+        self.lineage.place(candidate, findings);
+    }
+
+    /// A repair edited parts of `before` in place, giving `after`.
+    pub fn carry(&mut self, before: &Value, after: &Value) {
+        self.lineage.carry(before, after);
+    }
+
+    /// A repair wrote the whole lesson again, giving `after`: the ids its
+    /// parts have.
+    pub fn carry_rewrite(&mut self, before: &Value, after: &Value) -> BTreeSet<UnitId> {
+        let rewritten = self.lineage.carry_rewrite(before, after);
+        self.created.extend(rewritten.created);
+        rewritten.standing
     }
 
     /// The machine no longer repairs this finding.
@@ -256,7 +319,8 @@ impl Passes {
 
     /// Decide on one pass's findings, raised on `candidate`, in the order the
     /// review gave them.
-    pub fn next(&mut self, candidate: &Value, findings: Vec<ReviewFinding>) -> Next {
+    pub fn next(&mut self, candidate: &Value, mut findings: Vec<ReviewFinding>) -> Next {
+        self.lineage.place(candidate, &mut findings);
         // One finding per id: two notes about one defect are one finding.
         let mut current: Vec<ReviewFinding> = Vec::new();
         for finding in findings {
@@ -297,14 +361,26 @@ impl Passes {
             if self.spent.contains_key(&id) {
                 continue;
             }
+            if matches!(finding.remedy(), Remedy::Whole)
+                && finding
+                    .unit
+                    .as_ref()
+                    .is_some_and(|unit| self.created.contains(unit))
+            {
+                start = start.max(self.whole.get(&kind).copied().unwrap_or_default());
+            }
             if matches!(finding.origin, Origin::Reviewer { .. })
                 && about.iter().any(|digest| self.stored.contains(digest))
             {
                 start = REPAIRS_PER_FINDING;
             }
             if passage_less(finding) {
-                let site = finding.site.unwrap_or(FindingSite::Lesson);
-                start = start.max(self.passage_less.get(&site).copied().unwrap_or_default());
+                start = start.max(
+                    self.passage_less
+                        .get(&finding.part())
+                        .copied()
+                        .unwrap_or_default(),
+                );
             }
             if start > 0 {
                 self.inherited.insert(id.clone(), start);
@@ -328,7 +404,8 @@ impl Passes {
     /// repair is charged to it, unless its edit was only left out for
     /// overlapping another finding's, or the attempt was a miss and the one
     /// before it (not counting those left out) was not. Of two attempts in a
-    /// row one is charged, so the review still ends.
+    /// row one is charged, so the review still ends. A finding whose repair
+    /// does not fit is not charged: it waits for the user.
     pub fn charge(&mut self, finding: &ReviewFinding, outcome: Outcome) {
         trace::decided_finding(
             Stage::TeachingRepair,
@@ -337,6 +414,10 @@ impl Passes {
             &format!("{outcome:?}"),
         );
         let id = finding.id();
+        if outcome == Outcome::NoRoom {
+            self.hold([id], NO_ROOM);
+            return;
+        }
         let attempts = self.attempts.entry(id.clone()).or_default();
         let missed_before = attempts
             .iter()
@@ -352,13 +433,15 @@ impl Passes {
         let spent = self.spent.entry(id.clone()).or_default();
         *spent += 1;
         let own = *spent;
+        if matches!(finding.remedy(), Remedy::Whole) {
+            raise(&mut self.whole, &finding.origin.kind(), own);
+        }
         for digest in self.words.get(&id).into_iter().flatten() {
             let counts = self.worked.entry(digest.clone()).or_default();
             raise(counts, &finding.origin.kind(), own);
         }
         if passage_less(finding) {
-            let site = finding.site.unwrap_or(FindingSite::Lesson);
-            let known = self.passage_less.entry(site).or_default();
+            let known = self.passage_less.entry(finding.part()).or_default();
             *known = (*known).max(own);
         }
         self.last.insert(id, outcome);
@@ -368,11 +451,11 @@ impl Passes {
     pub fn last_attempt(&self, id: &FindingId) -> Option<String> {
         Some(match self.last.get(id)? {
             Outcome::Applied => "The last repair's edits for this finding were applied and the defect is still there.".to_owned(),
+            Outcome::Unchanged => "The last rewrite left the part this finding is about unchanged.".to_owned(),
             Outcome::NotApplied(reasons) => format!(
                 "The last repair's edits for this finding could not be applied: {}",
                 reasons.join(" ")
             ),
-            Outcome::Reverted => "The last repair's edits for this finding changed a sentence that must stay as it is; they were put back.".to_owned(),
             Outcome::Refused(reasons) => format!(
                 "The last repair's correction for this finding was refused, and none of its edits were applied: {}",
                 reasons.join(" ")
@@ -383,6 +466,7 @@ impl Passes {
                 format!("The last repair's answer could not be used: {reason}")
             }
             Outcome::Deferred => "The last repair's edit for this finding overlapped an edit for another finding and was left out; give it again.".to_owned(),
+            Outcome::NoRoom => "The last repair for this finding did not fit the window.".to_owned(),
         })
     }
 

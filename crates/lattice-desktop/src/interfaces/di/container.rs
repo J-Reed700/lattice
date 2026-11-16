@@ -196,6 +196,10 @@ pub struct Container {
     /// methods. The long-term cleanup is to split Container into a
     /// wiring layer + a runtime-state layer (audit P1-2).
     pub(crate) app_handle: Option<tauri::AppHandle>,
+
+    /// The calls a test run records or replays; `None` outside such a run.
+    #[cfg(test)]
+    pub(crate) calls: Option<Arc<crate::tests::call_log::Calls>>,
 }
 
 impl Container {
@@ -489,7 +493,17 @@ impl Container {
             course_indexes: None,
             index_turns: None,
             app_handle: None,
+            #[cfg(test)]
+            calls: None,
         })
+    }
+
+    /// Records or replays this container's model and web calls.
+    #[cfg(test)]
+    pub(crate) fn with_calls(mut self, calls: Arc<crate::tests::call_log::Calls>) -> Self {
+        self.llm_runtime.schedulers.record_calls(Arc::clone(&calls));
+        self.calls = Some(calls);
+        self
     }
 
     /// Serve embeddings through `starter` instead of the bundled sidecar.
@@ -520,18 +534,22 @@ impl Container {
         self
     }
 
-    /// Attach the Tauri `AppHandle` post-construction. Real callers chain
-    /// `.with_app_handle(handle)`; tests skip it.
-    pub fn with_app_handle(mut self, handle: tauri::AppHandle) -> Self {
-        self.vault_writer.set_app_handle(handle.clone());
-        self.web_snapshot_events.attach(handle.clone());
-        // A page that refuses the HTTP client is read in a hidden window of
-        // the app's own browser engine, which exists only from here on.
+    /// A page that refuses the HTTP client is read in a hidden window of the
+    /// app's own browser engine, which exists only once there is an app.
+    pub fn attach_browser(&self, handle: &tauri::AppHandle) {
         let browser = Arc::new(
             crate::features::web::services::browser_reader::BrowserReader::new(handle.clone()),
         );
         self.web_service.attach_browser(Arc::clone(&browser));
         self.web_page_snapshots.attach_browser(browser);
+    }
+
+    /// Attach the Tauri `AppHandle` post-construction. Real callers chain
+    /// `.with_app_handle(handle)`; tests skip it.
+    pub fn with_app_handle(mut self, handle: tauri::AppHandle) -> Self {
+        self.vault_writer.set_app_handle(handle.clone());
+        self.web_snapshot_events.attach(handle.clone());
+        self.attach_browser(&handle);
         // The vault writer starts before the container exists, so its corpus
         // sink is installed here, once the indexing pipeline is built. Until
         // then — and in tests that skip this step — the writer defers its

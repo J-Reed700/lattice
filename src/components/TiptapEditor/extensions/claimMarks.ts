@@ -7,7 +7,7 @@ import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 export const claimMarksKey = new PluginKey('claimMarks');
 
 export interface ClaimMark {
-  /** The sentence as the verifier saw it: raw markdown, `[n]` markers and all. */
+  /** The sentence as the verifier judged it: raw markdown, its references taken out. */
   sentence: string;
   verdict: 'supported' | 'contradicted' | 'unsupported' | 'unverified';
 }
@@ -26,7 +26,6 @@ const VERDICT_CLASS: Record<ClaimMark['verdict'], string> = {
   unverified: 'claim claim-unverified',
 };
 
-const CITATION_MARKER = /\[\d{1,5}\]/g;
 const WORD_CHARACTER = /[\p{L}\p{N}]/u;
 /** Shorter than this and a sentence could match somewhere it was never said. */
 const MIN_COMPARABLE_LENGTH = 16;
@@ -40,10 +39,9 @@ function comparableUnit(unit: string): string {
 
 /** Letters and digits only, so markdown syntax and spacing cannot break a match. */
 function comparable(sentence: string): string {
-  const text = sentence.replace(CITATION_MARKER, '');
   let out = '';
   // By unit, not by code point: document positions are counted in units too.
-  for (let i = 0; i < text.length; i += 1) out += comparableUnit(text[i] ?? '');
+  for (let i = 0; i < sentence.length; i += 1) out += comparableUnit(sentence[i] ?? '');
   return out;
 }
 
@@ -62,13 +60,8 @@ function comparableDocument(doc: ProseMirrorNode): { text: string; positions: nu
     const source = node.isText ? node.text : leafText && parent ? leafText({ node, pos, parent, index }) : undefined;
     if (!source) return;
     if (node.marks.some((mark) => mark.type.spec.code)) return;
-    const skipped = new Set<number>();
-    for (const match of source.matchAll(CITATION_MARKER)) {
-      const start = match.index ?? 0;
-      for (let i = start; i < start + match[0].length; i += 1) skipped.add(i);
-    }
     for (let i = 0; i < source.length; i += 1) {
-      const unit = skipped.has(i) ? '' : comparableUnit(source[i] ?? '');
+      const unit = comparableUnit(source[i] ?? '');
       if (!unit) continue;
       text += unit;
       positions.push(node.isText ? pos + i : pos);

@@ -10,8 +10,8 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use crate::application::ports::llm_port::{
-    CompletionInput, CompletionRequest, InferencePriority, SamplingOverride,
-    TEMPLATE_TOKENS_FOR_ANSWER, TEMPLATE_TOKENS_PER_MESSAGE,
+    CompletionInput, InferencePriority, SamplingOverride, TEMPLATE_TOKENS_FOR_ANSWER,
+    TEMPLATE_TOKENS_PER_MESSAGE,
 };
 use crate::application::ports::LLMPort;
 use crate::application::services::context_assembler::{
@@ -117,8 +117,6 @@ pub struct CallOptions {
     /// No elapsed-time limit, for cancellable work a slow model must not
     /// fail. Stall detection and retry limits still apply.
     pub no_time_limit: bool,
-    /// Constrains the answer to this JSON schema.
-    pub json_schema: Option<serde_json::Value>,
     pub reasoning_effort: Option<String>,
 }
 
@@ -130,52 +128,7 @@ pub struct Streaming<'a> {
     pub on_retry: Option<&'a (dyn Fn(usize) -> crate::shared::error::Result<()> + Send + Sync)>,
 }
 
-/// Everything one grounded call needs.
-#[derive(Debug, Clone)]
-pub struct GroundedRequest {
-    /// The system message.
-    pub instructions: String,
-    /// What the model is asked to do, written before the evidence.
-    pub task: String,
-    /// Written on the line above the evidence, e.g. `Passages:`. May be empty.
-    pub evidence_heading: String,
-    pub evidence: Vec<EvidencePassage>,
-    pub selection: EvidenceSelection,
-    /// A ceiling the caller sets on evidence below what the window allows,
-    /// for work whose cost it wants bounded on a large model.
-    pub evidence_limit: Option<usize>,
-    /// Written after the evidence, e.g. a response contract. May be empty.
-    pub closing: String,
-    /// Sent whole ahead of the task; part of the request's fixed cost.
-    pub history: Vec<HistoryItem>,
-    /// Generation reservation, enforced on the request. Zero takes the
-    /// planner's default for the model.
-    pub output_tokens: usize,
-    /// The answer may also use the input room the request leaves unused, so a
-    /// reasoning model writing long structured output is not cut off by an
-    /// estimate. `output_tokens` is then the least it is promised.
-    pub output_fills_window: bool,
-    pub call: CallOptions,
-}
-
-impl GroundedRequest {
-    /// A request with every optional part empty.
-    pub fn new(instructions: impl Into<String>, task: impl Into<String>) -> Self {
-        Self {
-            instructions: instructions.into(),
-            task: task.into(),
-            evidence_heading: String::new(),
-            evidence: Vec::new(),
-            selection: EvidenceSelection::All,
-            evidence_limit: None,
-            closing: String::new(),
-            history: Vec::new(),
-            output_tokens: 0,
-            output_fills_window: false,
-            call: CallOptions::default(),
-        }
-    }
-}
+pub use crate::application::services::model_contract::request::GroundedRequest;
 
 /// The answer, and what it was built from.
 #[derive(Debug, Clone)]
@@ -188,6 +141,13 @@ pub struct GroundedOutput {
     pub finish_reason: String,
     pub input_tokens: u64,
     pub output_tokens: u64,
+}
+
+impl GroundedOutput {
+    /// How the reply ended.
+    pub fn finish(&self) -> crate::application::ports::llm_port::Finish {
+        crate::application::ports::llm_port::Finish::of(&self.finish_reason)
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -272,30 +232,30 @@ fn message_tokens(llm: &dyn LLMPort, role: &str, content: &str) -> usize {
 }
 
 fn plan(llm: &dyn LLMPort, request: &GroundedRequest) -> Result<Planned, GroundedGenerationError> {
-    let instruction_tokens = if request.instructions.trim().is_empty() {
+    let instruction_tokens = if request.instructions().trim().is_empty() {
         0
     } else {
-        message_tokens(llm, "system", &request.instructions)
+        message_tokens(llm, "system", request.instructions())
     };
     let task_tokens = message_tokens(
         llm,
         "user",
         &[
-            request.task.as_str(),
-            request.evidence_heading.as_str(),
-            request.closing.as_str(),
+            request.task(),
+            request.evidence_heading(),
+            request.closing(),
         ]
         .join("\n\n"),
     );
     let history_tokens: usize = request
-        .history
+        .history()
         .iter()
         .map(|item| message_tokens(llm, &item.role, &item.content))
         .sum();
     let mut capacity = ModelCapacity::new(llm.model_name(), llm.max_context_tokens())
         .with_accounting(TokenAccounting::Estimated);
-    if request.output_tokens > 0 {
-        capacity = capacity.with_output_limit(request.output_tokens);
+    if request.output_tokens() > 0 {
+        capacity = capacity.with_output_limit(request.output_tokens());
     }
     let allocation = BudgetAllocation::plan(
         &capacity,
@@ -312,7 +272,7 @@ fn plan(llm: &dyn LLMPort, request: &GroundedRequest) -> Result<Planned, Grounde
         .into());
     }
     let room = request
-        .evidence_limit
+        .evidence_limit()
         .map_or(allocation.evidence, |limit| limit.min(allocation.evidence));
     Ok(Planned {
         budget: EvidenceBudget::new(room),
@@ -378,20 +338,16 @@ fn render_user_message(request: &GroundedRequest, carried: &[&EvidencePassage]) 
         .map(|passage| passage.render())
         .collect::<Vec<_>>()
         .join("\n\n");
-    let evidence = match (body.is_empty(), request.evidence_heading.is_empty()) {
+    let evidence = match (body.is_empty(), request.evidence_heading().is_empty()) {
         (true, _) => String::new(),
         (false, true) => body,
-        (false, false) => format!("{}\n{body}", request.evidence_heading),
+        (false, false) => format!("{}\n{body}", request.evidence_heading()),
     };
-    [
-        request.task.as_str(),
-        evidence.as_str(),
-        request.closing.as_str(),
-    ]
-    .into_iter()
-    .filter(|part| !part.is_empty())
-    .collect::<Vec<_>>()
-    .join("\n\n")
+    [request.task(), evidence.as_str(), request.closing()]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 /// Plan, select and call one grounded request.
@@ -455,6 +411,26 @@ impl Measured {
     }
 }
 
+/// The room to try after a request built with `room` tokens of material
+/// measured over: the material it carried, scaled by the room its skeleton
+/// leaves over what the prompt beside that skeleton measured. Every token of
+/// the overflow is blamed on the material, which shrinks too far rather than
+/// too little. Always below `room`; halved when the measurement says nothing
+/// better.
+pub fn shrunk(room: usize, skeleton_tokens: usize, measured: &Measured) -> usize {
+    let material = measured.estimated.saturating_sub(skeleton_tokens);
+    let beside = measured.allowed.saturating_sub(skeleton_tokens);
+    let next = material
+        .saturating_mul(beside)
+        .checked_div(measured.prompt_tokens.saturating_sub(skeleton_tokens))
+        .unwrap_or(0);
+    if next < room && measured.prompt_tokens > measured.allowed {
+        next
+    } else {
+        room / 2
+    }
+}
+
 /// [`measure`] by the planner's estimate alone, with no call to the backend:
 /// for a caller sizing material before it counts.
 ///
@@ -488,7 +464,7 @@ pub async fn measure(
     if !llm.counts_tokens_exactly() {
         return Ok(estimated);
     }
-    let input = assemble(request, &carried(&request.evidence, &prepared.kept));
+    let input = assemble(request, &carried(request.evidence(), &prepared.kept));
     let framing = TEMPLATE_TOKENS_PER_MESSAGE * input.len() + TEMPLATE_TOKENS_FOR_ANSWER;
     match llm.count_tokens_exact(&prompt_text(&input)).await {
         Ok(tokens) => Ok(Measured {
@@ -536,15 +512,15 @@ fn prepare(
     } = plan(llm, request)?;
 
     let costs: Vec<usize> = request
-        .evidence
+        .evidence()
         .iter()
         .map(|passage| passage_tokens(llm, passage))
         .collect();
-    let kept = select(&request.evidence, &costs, request.selection, &mut budget);
+    let kept = select(request.evidence(), &costs, request.selection(), &mut budget);
     // Evidence was the point of the call. Carrying none of it — or less than
     // the caller required — would answer ungrounded under a grounded name.
-    if !request.evidence.is_empty() && kept.is_empty() {
-        let needed = match request.selection {
+    if !request.evidence().is_empty() && kept.is_empty() {
+        let needed = match request.selection() {
             EvidenceSelection::All => costs.iter().sum(),
             EvidenceSelection::Prefix => costs.first().copied().unwrap_or(0),
             EvidenceSelection::BestFirst => costs.iter().copied().min().unwrap_or(0),
@@ -564,7 +540,7 @@ fn prepare(
     accounting.total_input =
         instruction_tokens + task_tokens + history_tokens + accounting.document_evidence;
     accounting.evicted = request
-        .evidence
+        .evidence()
         .iter()
         .enumerate()
         .filter(|(index, _)| !kept.contains(index))
@@ -589,16 +565,21 @@ fn carried<'a>(evidence: &'a [EvidencePassage], kept: &[usize]) -> Vec<&'a Evide
 /// measured, so the two cannot drift apart.
 fn assemble(request: &GroundedRequest, carried: &[&EvidencePassage]) -> Vec<CompletionInput> {
     let mut input = Vec::new();
-    if !request.instructions.trim().is_empty() {
+    if !request.instructions().trim().is_empty() {
         input.push(CompletionInput::Message {
             role: "system".into(),
-            content: request.instructions.clone(),
+            content: request.instructions().to_string(),
         });
     }
-    input.extend(request.history.iter().map(|item| CompletionInput::Message {
-        role: item.role.clone(),
-        content: item.content.clone(),
-    }));
+    input.extend(
+        request
+            .history()
+            .iter()
+            .map(|item| CompletionInput::Message {
+                role: item.role.clone(),
+                content: item.content.clone(),
+            }),
+    );
     input.push(CompletionInput::Message {
         role: "user".into(),
         content: render_user_message(request, carried),
@@ -630,12 +611,12 @@ async fn run(
         accounting,
         kept,
     } = prepare(llm, &request)?;
-    let carried = carried(&request.evidence, &kept);
+    let carried = carried(request.evidence(), &kept);
     let input = assemble(&request, &carried);
 
     // Room the input leaves unused goes to the answer only when asked: the
     // margin stays reserved either way.
-    let output_tokens = if request.output_fills_window {
+    let output_tokens = if request.output_fills_window() {
         allocation.output_reserved
             + allocation
                 .input_budget
@@ -643,20 +624,7 @@ async fn run(
     } else {
         allocation.output_reserved
     };
-    let call = request.call;
-    let completion = CompletionRequest {
-        input,
-        priority: call.priority,
-        cancel: call.cancel,
-        cache_key: call.cache_key,
-        sampling: call.sampling,
-        time_budget: call.time_budget,
-        no_time_limit: call.no_time_limit,
-        json_schema: call.json_schema,
-        reasoning_effort: call.reasoning_effort,
-        max_output_tokens: u32::try_from(output_tokens).ok(),
-        ..Default::default()
-    };
+    let completion = request.completion(input, u32::try_from(output_tokens).ok());
     let response = match streaming {
         None => llm.complete(&completion).await,
         Some(Streaming {

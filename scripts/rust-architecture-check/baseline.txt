@@ -11,6 +11,10 @@
 # and commit the smaller file. Do not add lines to get a change through: fix
 # the dependency, or mark a deliberate detached task with a
 # `// raw-spawn: <reason>` comment directly above the statement or its fn.
+# Production code starts a child process only through core's `BoundCommand`,
+# which ends it with Lattice (raw-process, held at zero); a launch that must
+# outlive Lattice carries a `// detached-process: <reason>` comment directly
+# above the statement or its fn.
 # State a static holds belongs in a value the composition root builds and
 # passes on; only a derived constant or a hook the process owns by nature
 # (a panic hook, an OS callback target) may stay global, marked with a
@@ -42,10 +46,21 @@
 #   composition-root-import <file> bootstrap              the composition root named outside itself
 #                                                         and the entry points main.rs, lib.rs, bin/*
 #   raw-spawn <file> <spawn fn>                           detached spawns outside shared/runtime
+#   raw-process <file> <path>                             std/tokio process Command named outside
+#                                                         shared/process; held at zero, so never
+#                                                         listed here
 #   global-state <file> <static>                          statics that hold mutable or lazily
 #                                                         built state, unless a derived constant
 #   file-length <file> max-1000-lines                     files over 1000 lines, except tests.rs,
 #                                                         *_tests.rs and files under tests/
+#   old-model-call <file> <legacy|answer>                 uses of model_contract::legacy (written
+#                                                         `legacy::...`) and calls of model_contract's
+#                                                         `answer`, outside test code; the legacy
+#                                                         module's own file is not counted
+#   legacy-item-import <file> legacy                      an item, glob or renamed import out of
+#                                                         model_contract::legacy; held at zero, so
+#                                                         never listed here. Import the module and
+#                                                         write `legacy::...`
 
 feature-reexport features/conversation/chat/ports.rs lattice_core 2
 feature-reexport features/favorites/dto.rs lattice_core 1
@@ -55,3 +70,27 @@ feature-reexport features/llm/engine/models.rs lattice_core 1
 feature-reexport features/model_management/domain.rs lattice_core 1
 feature-reexport features/recent/dto.rs lattice_core 1
 feature-reexport features/settings/dto/mod.rs lattice_core 1
+
+old-model-call application/services/claim_verification.rs answer 1
+old-model-call application/services/completion_input.rs legacy 2
+old-model-call application/services/source_trust.rs answer 1
+old-model-call application/services/source_trust.rs legacy 4
+old-model-call features/conversation/chat/intent.rs legacy 2
+old-model-call features/conversation/chat/tool_loop.rs legacy 7
+old-model-call features/conversation/chat/tool_loop/final_round.rs legacy 4
+old-model-call features/conversation/chat/tool_loop/image_pick.rs legacy 2
+old-model-call features/conversation/chat/tool_loop/limits.rs legacy 1
+old-model-call features/conversation/chat/tool_loop/reading.rs legacy 8
+old-model-call features/conversation/chat/tool_loop/research_notes.rs legacy 1
+old-model-call features/conversation/handoff.rs legacy 2
+old-model-call features/search/hyde/hyde_generator.rs legacy 2
+old-model-call features/summaries/use_cases/generate_summaries.rs legacy 2
+old-model-call lattice-learning/drills/material/code/clean.rs legacy 2
+old-model-call lattice-learning/lessons/content_verification/audit/calls.rs legacy 2
+old-model-call lattice-learning/lessons/content_verification/audit/tools.rs legacy 2
+old-model-call lattice-learning/lessons/generation.rs legacy 2
+old-model-call lattice-learning/lessons/generation/lesson.rs legacy 2
+old-model-call lattice-learning/lessons/reference_collection/snapshots.rs legacy 2
+old-model-call lattice-learning/lessons/structured_call.rs answer 3
+old-model-call lattice-learning/model_call.rs legacy 3
+old-model-call lattice-learning/practice/interview_answer_review.rs legacy 2

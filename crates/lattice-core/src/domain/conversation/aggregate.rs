@@ -452,6 +452,15 @@ impl ConversationMessage {
     pub fn is_failed(&self) -> bool {
         matches!(self.status_kind(), ConversationMessageStatus::Failed)
     }
+
+    /// The text of the message without the references it was saved with: what
+    /// anything outside the prompt that writes an answer in this conversation reads.
+    pub fn text_without_references(&self) -> std::borrow::Cow<'_, str> {
+        crate::shared::stored_references::text_without_references(
+            &self.content,
+            self.metadata.as_deref(),
+        )
+    }
 }
 
 /// Message role in the conversation.

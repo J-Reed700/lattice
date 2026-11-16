@@ -36,6 +36,14 @@ pub async fn retry_learning_generation_job(
     request: LearningGenerationJobActionRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningGenerationJob, ApiError> {
+    retry_generation_job(&container, request).await
+}
+
+/// Saves a new attempt of a stopped job and queues it: the body of `retry_learning_generation_job`.
+pub(crate) async fn retry_generation_job(
+    container: &Container,
+    request: LearningGenerationJobActionRequestDto,
+) -> Result<LearningGenerationJob, ApiError> {
     let repo = crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
         container.database().clone(),
     );
@@ -68,7 +76,7 @@ pub(super) fn generation_worker(
     crate::features::learning::generation_jobs::LessonGenerationWorker {
         course_setups,
         runtimes,
-        research_web: Some(container.web_service()),
+        research_web: Some(container.web()),
         verifier: Some(super::audit::container_verifier(container)),
         database: container.database().clone(),
         courses: container.course_indexes().cloned(),

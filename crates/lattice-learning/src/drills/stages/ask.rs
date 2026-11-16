@@ -33,8 +33,8 @@ pub(crate) async fn ask_request<V>(
     accept: impl Fn(&str) -> Result<V> + Send + Sync,
 ) -> Result<Asked<V>> {
     let call = ContractCall::of::<DrillStageAsk>(&PromptInput {
-        system: request.instructions.clone(),
-        prompt: request.task.clone(),
+        system: request.instructions().to_owned(),
+        prompt: request.task().to_owned(),
     })?;
     let (raw, value) = complete_checked_request(llm, &call, request, None, None, |raw| {
         accept(raw).map(|value| (raw.to_owned(), value))
@@ -74,24 +74,30 @@ pub(crate) async fn ask_until_suite_passes<V>(
         };
         let outcome = runner.run(&files, &test, cancel.clone()).await?;
         trail.run(what_runs, &outcome);
-        let why = match outcome {
-            RunOutcome::Passed => return Ok(asked.value),
-            RunOutcome::Failed { output } => {
-                format!("{what_runs} failed. The runner's output follows.\n{output}")
-            }
-            RunOutcome::TimedOut { output } => did_not_finish(what_runs, &output),
-            RunOutcome::Cancelled => return Err(cancelled()),
-            RunOutcome::Unavailable { why } => {
-                return Err(AppError::ServiceNotAvailable(format!(
-                    "{what_runs} could not be run: {why}"
-                )))
-            }
+        let Some(why) = suite_failure(what_runs, outcome)? else {
+            return Ok(asked.value);
         };
         if again {
             return Err(AppError::ModelAnswerUnusable(why));
         }
         request = reask(request, &asked.raw, &why);
         again = true;
+    }
+}
+
+/// What to tell the model about a suite run that did not pass; `None` when it passed. A runtime that is not
+/// there is an unavailable service, never a bad answer, and a cancelled run is a cancelled build.
+pub(crate) fn suite_failure(what_runs: &str, outcome: RunOutcome) -> Result<Option<String>> {
+    match outcome {
+        RunOutcome::Passed => Ok(None),
+        RunOutcome::Failed { output } => Ok(Some(format!(
+            "{what_runs} failed. The runner's output follows.\n{output}"
+        ))),
+        RunOutcome::TimedOut { output } => Ok(Some(did_not_finish(what_runs, &output))),
+        RunOutcome::Cancelled => Err(cancelled()),
+        RunOutcome::Unavailable { why } => Err(AppError::ServiceNotAvailable(format!(
+            "{what_runs} could not be run: {why}"
+        ))),
     }
 }
 
@@ -169,17 +175,6 @@ pub(crate) fn describe_fault(
             label(second)
         ),
     }
-}
-
-/// The schema of a severity.
-pub(crate) fn severity_schema() -> Value {
-    json!({"type": "string", "enum": ["critical", "major", "minor", "nit"]})
-}
-
-/// The schema of an edit's path: one of the files.
-pub(crate) fn path_schema(files: &[DrillFile]) -> Value {
-    let paths: Vec<&str> = files.iter().map(|file| file.path.as_str()).collect();
-    json!({"type": "string", "enum": paths})
 }
 
 /// The schema of a text that must say something.

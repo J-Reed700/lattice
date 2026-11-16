@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use super::lexical::{lexical_pass, needs_judge, LexicalClaim};
-use super::test_support::source;
+use super::test_support::{reply, source};
 
 /// One labelled pair from `claim-pairs-v1.jsonl`.
 pub(super) struct Pair {
@@ -48,20 +48,21 @@ pub(super) fn pair(id: &str) -> &'static Pair {
         .unwrap_or_else(|| panic!("{id} is not in the dataset"))
 }
 
-/// The claim as the eval harness sends it: one answer paragraph with a `[1]`
+/// The claim as the eval harness sends it: one answer paragraph with a `[s1]`
 /// marker before its closing stop, and the passage as source 1.
 pub(super) fn cited_answer(claim: &str) -> String {
     let claim = claim.trim();
     for stop in ['.', '!'] {
         if let Some(body) = claim.strip_suffix(stop) {
-            return format!("{body} [1]{stop}");
+            return format!("{body} [s1]{stop}");
         }
     }
-    format!("{claim} [1]")
+    format!("{claim} [s1]")
 }
 
 fn assessed(claim: &str, passage: &str) -> Vec<LexicalClaim> {
-    let claims = lexical_pass(&cited_answer(claim), &[source(passage)]);
+    let sources = [source(passage)];
+    let claims = lexical_pass(&reply(&cited_answer(claim), &sources), &sources);
     assert!(!claims.is_empty(), "no claim sentence in {claim:?}");
     claims
 }

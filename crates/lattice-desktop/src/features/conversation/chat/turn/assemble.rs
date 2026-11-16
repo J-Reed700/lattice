@@ -7,6 +7,7 @@ use super::retrieve::Retrieved;
 use super::*;
 use crate::features::conversation::chat::fetch_memory::FetchMemory;
 use crate::features::conversation::chat::prompting::{kb_passage, kb_passages};
+use crate::features::conversation::chat::retrieval::source_names::name_sources;
 use crate::features::conversation::chat::retrieval::WEB_SOURCE_PREFIX;
 use lattice_core::application::ports::llm_port::CompletionInput;
 use lattice_core::application::ports::{LLMPort, ToolDefinition};
@@ -250,7 +251,7 @@ pub(super) fn render_prompt(
     // list (including the follow-up swap above), then build the prompt from
     // those same numbers. Assigning earlier would let the follow-up path
     // renumber behind the prompt's back.
-    assign_citation_ids(&mut retrieval.sources);
+    name_sources(&turn.names, &mut retrieval.sources);
     let citations_of = |chunks: &HashSet<String>| -> Vec<u32> {
         retrieval
             .sources
@@ -472,6 +473,11 @@ pub(super) async fn plan_request(
                     // text, so both are charged as fixed tokens.
                     tool_schema_tokens: tool_schema_tokens + picture_tokens,
                     document_evidence: Vec::new(),
+                    replay: Some(super::super::replay::Replay {
+                        conv_service: &turn.conv_service,
+                        names: &turn.names,
+                        source: turn.source.as_ref(),
+                    }),
                 },
                 turn.settings.llm.bounded_conversation_memory,
                 &turn.message,
@@ -598,8 +604,8 @@ pub(super) fn grounded_tool_tokens(
 /// no other: the same text each time, so it never moves the cached prefix of
 /// a web turn.
 const PICTURE_GUIDANCE: &str = "\nA picture helps when the reader would otherwise have to imagine a \
-    concrete thing. Get one only with find_image and paste its `markdown` line as its own paragraph, \
-    unchanged; never write an image address of your own, and do not add a citation to the picture line.";
+    concrete thing. Get one only with find_image and place it by writing its bracketed name alone \
+    on its own line; never write an image address of your own, and do not add a citation to the picture line.";
 
 /// When to search memory, sent on every turn that can. What memory holds for
 /// the turn is already in the prompt, and a tool call is a whole extra round.

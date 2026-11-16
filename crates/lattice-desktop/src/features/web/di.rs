@@ -128,6 +128,18 @@ impl Container {
         Arc::clone(&self.web_service)
     }
 
+    /// The web service as work reads it: recorded or replayed when a test run
+    /// logs its calls.
+    pub fn web(&self) -> Arc<dyn lattice_core::application::ports::web_service::WebServiceTrait> {
+        let web: Arc<dyn lattice_core::application::ports::web_service::WebServiceTrait> =
+            self.web_service();
+        #[cfg(test)]
+        if let Some(calls) = &self.calls {
+            return calls.web(web);
+        }
+        web
+    }
+
     /// Routed, fused source finding (design 2026-10-18 §3.3): the service
     /// `search_web` delegates to, with the same finders, breakers and
     /// provider-page cache, for callers that state a need and a budget.

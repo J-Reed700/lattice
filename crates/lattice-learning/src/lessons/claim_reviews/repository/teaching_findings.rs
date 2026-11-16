@@ -54,6 +54,9 @@ pub(in crate::lessons::claim_reviews) struct FindingWrite<'a> {
     pub repairs: i64,
     pub job_id: &'a str,
     pub found_at: i64,
+    /// Whether the row stored under this key holds for the text recorded: a
+    /// decision on it stands.
+    pub standing: bool,
 }
 
 fn held_row(row: &SqliteRow) -> HeldRow {
@@ -71,49 +74,61 @@ fn held_row(row: &SqliteRow) -> HeldRow {
     }
 }
 
-pub(in crate::lessons::claim_reviews) async fn held_rows(
-    database: &Database,
-    lesson_id: &str,
-) -> Result<Vec<HeldRow>> {
-    let mut read = database.begin_read().await?;
-    let rows = sqlx::query(
-        "SELECT finding_key, identity, kind, site, unit_index, unit_sha256, note, summary, passage, sentence FROM learning_lesson_teaching_findings WHERE lesson_id=?",
-    )
-    .bind(lesson_id)
-    .fetch_all(&mut *read)
-    .await?;
-    read.commit().await?;
-    Ok(rows.iter().map(held_row).collect())
-}
-
-/// The text hashes of the lesson's question findings that wait for the user.
-pub(in crate::lessons::claim_reviews) async fn waiting_question_hashes(
-    database: &Database,
-    lesson_id: &str,
-) -> Result<Vec<String>> {
-    let mut read = database.begin_read().await?;
-    let hashes = sqlx::query_scalar(
-        "SELECT unit_sha256 FROM learning_lesson_teaching_findings WHERE lesson_id=? AND site='question' AND state='waiting'",
-    )
-    .bind(lesson_id)
-    .fetch_all(&mut *read)
-    .await?;
-    read.commit().await?;
-    Ok(hashes)
-}
-
-/// The lesson's rows recorded before finding ids, read on `connection`.
-pub(in crate::lessons::claim_reviews) async fn place_rows(
+/// The lesson's findings, read on `connection`: by place, then key.
+pub(in crate::lessons::claim_reviews) async fn rows_on(
     connection: &mut SqliteConnection,
     lesson_id: &str,
 ) -> Result<Vec<HeldRow>> {
     let rows = sqlx::query(
-        "SELECT finding_key, identity, kind, site, unit_index, unit_sha256, note, summary, passage, sentence FROM learning_lesson_teaching_findings WHERE lesson_id=? AND identity='place'",
+        "SELECT finding_key, identity, kind, site, unit_index, unit_sha256, note, summary, passage, sentence FROM learning_lesson_teaching_findings WHERE lesson_id=? ORDER BY site, unit_index, finding_key",
     )
     .bind(lesson_id)
     .fetch_all(&mut *connection)
     .await?;
     Ok(rows.iter().map(held_row).collect())
+}
+
+/// The lesson's findings: by place, then key.
+pub(in crate::lessons::claim_reviews) async fn held_rows(
+    database: &Database,
+    lesson_id: &str,
+) -> Result<Vec<HeldRow>> {
+    let mut read = database.begin_read().await?;
+    let rows = rows_on(&mut read, lesson_id).await?;
+    read.commit().await?;
+    Ok(rows)
+}
+
+/// A finding that waits for the user, with the part it is on.
+pub(in crate::lessons::claim_reviews) struct WaitingPart {
+    pub(in crate::lessons::claim_reviews) finding_key: String,
+    pub(in crate::lessons::claim_reviews) site: String,
+    pub(in crate::lessons::claim_reviews) unit_index: Option<i64>,
+    pub(in crate::lessons::claim_reviews) unit_sha256: String,
+}
+
+/// The lesson's findings that wait for the user, each with its part.
+pub(in crate::lessons::claim_reviews) async fn waiting_parts(
+    database: &Database,
+    lesson_id: &str,
+) -> Result<Vec<WaitingPart>> {
+    let mut read = database.begin_read().await?;
+    let rows = sqlx::query(
+        "SELECT finding_key, site, unit_index, unit_sha256 FROM learning_lesson_teaching_findings WHERE lesson_id=? AND state='waiting'",
+    )
+    .bind(lesson_id)
+    .fetch_all(&mut *read)
+    .await?;
+    read.commit().await?;
+    Ok(rows
+        .iter()
+        .map(|row| WaitingPart {
+            finding_key: row.get("finding_key"),
+            site: row.get("site"),
+            unit_index: row.get("unit_index"),
+            unit_sha256: row.get("unit_sha256"),
+        })
+        .collect())
 }
 
 /// Deletes the lesson's findings whose keys are not in `keys_json`.
@@ -156,15 +171,16 @@ pub(in crate::lessons::claim_reviews) async fn upsert(
     sqlx::query(
         "INSERT INTO learning_lesson_teaching_findings \
          (lesson_id, finding_key, kind, site, unit_index, unit_title, unit_sha256, note, summary, passage, sentence, repairs, state, job_id, found_at, kept_at, identity) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting', ?, ?, NULL, 'finding') \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'waiting', ?13, ?14, NULL, 'finding') \
          ON CONFLICT(lesson_id, finding_key) DO UPDATE SET \
+         site=excluded.site, unit_index=excluded.unit_index, \
          unit_title=excluded.unit_title, note=excluded.note, summary=excluded.summary, passage=excluded.passage, \
          sentence=excluded.sentence, \
          repairs=max(repairs, excluded.repairs), job_id=excluded.job_id, found_at=excluded.found_at, \
-         state=CASE WHEN state IN ('kept','resolved') AND unit_sha256=excluded.unit_sha256 THEN state ELSE 'waiting' END, \
-         kept_at=CASE WHEN state='kept' AND unit_sha256=excluded.unit_sha256 THEN kept_at ELSE NULL END, \
-         resolution=CASE WHEN state='resolved' AND unit_sha256=excluded.unit_sha256 THEN resolution ELSE NULL END, \
-         resolved_at=CASE WHEN state='resolved' AND unit_sha256=excluded.unit_sha256 THEN resolved_at ELSE NULL END, \
+         state=CASE WHEN state IN ('kept','resolved') AND ?15 THEN state ELSE 'waiting' END, \
+         kept_at=CASE WHEN state='kept' AND ?15 THEN kept_at ELSE NULL END, \
+         resolution=CASE WHEN state='resolved' AND ?15 THEN resolution ELSE NULL END, \
+         resolved_at=CASE WHEN state='resolved' AND ?15 THEN resolved_at ELSE NULL END, \
          unit_sha256=excluded.unit_sha256",
     )
     .bind(lesson_id)
@@ -181,6 +197,7 @@ pub(in crate::lessons::claim_reviews) async fn upsert(
     .bind(finding.repairs)
     .bind(finding.job_id)
     .bind(finding.found_at)
+    .bind(finding.standing)
     .execute(&mut **tx)
     .await?;
     Ok(())

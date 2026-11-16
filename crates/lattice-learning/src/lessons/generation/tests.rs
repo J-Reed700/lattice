@@ -1,7 +1,5 @@
-use super::recall::{parse_recall_drafts, recall_draft_prompt, recall_draft_schema};
 use super::*;
 use crate::dto::LearningProgramDto;
-use crate::lessons::course_generation_tests::length_bounds;
 use crate::lessons::course_plan::CoursePlan;
 
 fn source() -> LearningSourceDto {
@@ -87,11 +85,6 @@ fn outline_citations_are_optional_but_exact_when_present() {
     assert!(optional_citation(&sources, Some(1), exact).is_err());
     assert!(optional_citation(&[], Some(0), exact).is_err());
     assert!(optional_citation(&[], None, "").unwrap().is_none());
-    let with_sources = outline_schema(None, 1).to_string();
-    assert!(with_sources.contains("\"anyOf\":[{\"type\":\"null\"}"));
-    let without = outline_schema(None, 0).to_string();
-    assert!(!without.contains("anyOf"));
-    assert!(without.contains("\"sourceIndex\":{\"type\":\"null\"}"));
 }
 
 #[test]
@@ -157,13 +150,6 @@ fn decode_outline_names_the_modules_and_lessons_whose_titles_repeat() {
 }
 
 #[test]
-fn generated_ids_are_not_accepted_from_model_schema() {
-    let schema = outline_schema(None, 1);
-    assert!(schema.to_string().contains("additionalProperties"));
-    assert!(!schema.to_string().contains("\"id\""));
-}
-
-#[test]
 fn goal_and_prior_knowledge_have_no_character_limit() {
     let mut request = GenerateLearningProgramRequestDto {
         goal: "Understand the material".into(),
@@ -186,118 +172,6 @@ fn rejects_duplicate_or_empty_program_source_ids() {
     let mut empty = source();
     empty.id.clear();
     assert!(validate_source_snapshot_ids(&[empty]).is_err());
-}
-
-fn recall_response(cards: serde_json::Value) -> String {
-    json!({"cards":cards}).to_string()
-}
-
-fn valid_recall_card(question: &str) -> serde_json::Value {
-    recall_card(
-        question,
-        "A stable identifier links the observation to its record.",
-        json!(["source-a"]),
-    )
-}
-
-fn recall_card(question: &str, answer: &str, source_ids: serde_json::Value) -> serde_json::Value {
-    json!({
-        "question":question,
-        "answer":answer,
-        "explanation":"The excerpt says that each observation has a stable identifier.",
-        "sourceIds":source_ids,
-        "quote":"A process records each observation with a stable identifier."
-    })
-}
-
-#[test]
-fn recall_drafts_require_exact_count_and_lesson_source_ids() {
-    let allowed = vec![source()];
-    assert!(parse_recall_drafts(
-        &recall_response(json!([valid_recall_card("What links the observation?")])),
-        2,
-        &allowed,
-    )
-    .is_err());
-    assert!(parse_recall_drafts(
-        &recall_response(json!([
-            valid_recall_card("First question?"),
-            recall_card(
-                "What links the observation?",
-                "A stable identifier.",
-                json!(["source-outside-lesson"])
-            )
-        ])),
-        2,
-        &allowed,
-    )
-    .is_err());
-}
-
-#[test]
-fn recall_drafts_reject_duplicate_questions_and_empty_fields() {
-    let allowed = vec![source()];
-    assert!(parse_recall_drafts(
-        &recall_response(json!([
-            valid_recall_card("What links the observation?"),
-            valid_recall_card("  What links the   observation? ")
-        ])),
-        2,
-        &allowed,
-    )
-    .is_err());
-    let unsupported_quote = json!({
-        "question":"Question with unsupported quote?",
-        "answer":"A stable identifier.",
-        "explanation":"The excerpt supports the identifier relationship.",
-        "sourceIds":["source-a"],
-        "quote":"A different observation appears in an unrelated document."
-    });
-    assert!(parse_recall_drafts(
-        &recall_response(json!([
-            valid_recall_card("First question?"),
-            unsupported_quote
-        ])),
-        2,
-        &allowed,
-    )
-    .is_err());
-    assert!(parse_recall_drafts(
-        &recall_response(json!([
-            valid_recall_card("First question?"),
-            recall_card("Which record is linked?", "  ", json!(["source-a"]))
-        ])),
-        2,
-        &allowed,
-    )
-    .is_err());
-}
-
-#[test]
-fn recall_schema_has_only_question_answer_explanation_and_allowed_source_ids() {
-    let allowed = HashSet::from(["source-a".to_owned()]);
-    let schema = recall_draft_schema(2, &allowed).to_string();
-    assert!(schema.contains("question"));
-    assert!(schema.contains("answer"));
-    assert!(schema.contains("explanation"));
-    assert!(schema.contains("quote"));
-    assert!(schema.contains("source-a"));
-    assert!(!schema.contains("options"));
-    assert!(!schema.contains("correctIndex"));
-}
-
-#[test]
-fn recall_parser_rejects_unknown_fields_and_choice_payloads() {
-    let allowed = vec![source()];
-    let with_choices = json!({
-        "question":"A question?",
-        "answer":"A stable identifier.",
-        "explanation":"A supported explanation.",
-        "sourceIds":["source-a"],
-        "quote":"A process records each observation with a stable identifier.",
-        "options":["one","two"]
-    });
-    assert!(parse_recall_drafts(&recall_response(json!([with_choices])), 1, &allowed,).is_err());
 }
 
 /// A course of eight lessons, the first module holding six, each planned with topics of its own.
@@ -417,6 +291,12 @@ impl LLMPort for Window {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -549,21 +429,6 @@ fn a_module_or_lesson_text_of_two_letters_is_read_not_refused() {
     assert!(decoded_with("/modules/0/title", "  ").is_err());
 }
 
-#[test]
-fn a_recall_question_answer_or_explanation_of_any_length_is_read_not_refused() {
-    let allowed = [source()];
-    let long = "A stable identifier links the observation to its record. ".repeat(60);
-    for field in ["question", "answer", "explanation"] {
-        let mut card = valid_recall_card("What links the observation?");
-        card[field] = json!(long);
-        let parsed = parse_recall_drafts(&recall_response(json!([card])), 1, &allowed);
-        assert!(parsed.is_ok(), "{field}: {:?}", parsed.as_ref().err());
-    }
-    let short = recall_card("What is six times seven?", "42", json!(["source-a"]));
-    let parsed = parse_recall_drafts(&recall_response(json!([short])), 1, &allowed);
-    assert!(parsed.is_ok(), "{:?}", parsed.as_ref().err());
-}
-
 #[tokio::test]
 async fn a_lesson_block_of_any_length_does_not_stop_recall_drafts() {
     use crate::dto::{
@@ -606,25 +471,83 @@ async fn a_lesson_block_of_any_length_does_not_stop_recall_drafts() {
     );
 }
 
-#[test]
-fn the_outline_schema_bounds_no_text_but_a_blank() {
-    for sources in [0, 1] {
-        let bounds = length_bounds(&outline_schema(None, sources));
-        assert!(bounds.is_empty(), "{sources} sources: {bounds:?}");
-    }
+#[tokio::test]
+async fn prompt_snapshot_outline_description() -> Result<()> {
+    use crate::lessons::course_generation_tests::{outline, RequestLog};
+    let inner = outline(2, 2);
+    let llm = RequestLog::new(&inner);
+    let input = outline_request();
+    let sources = [source()];
+
+    draft_outline(
+        &llm,
+        &input,
+        &sources,
+        &["Stable identifiers".to_owned()],
+        &crate::outline_progress::OutlineProgress::default(),
+        |raw| decode_outline(raw, &input, &sources).map(|_| raw.to_owned()),
+    )
+    .await?;
+
+    llm.assert_snapshot::<super::outline::OutlineDescription>();
+    llm.assert_snapshot::<super::outline::OutlinePrerequisites>();
+    Ok(())
 }
 
-#[test]
-fn the_recall_schema_bounds_no_text_but_the_quotes_floor() {
-    let allowed = HashSet::from(["source-a".to_owned()]);
-    let schema = recall_draft_schema(2, &allowed);
-    let floor = "/properties/cards/items/properties/quote/minLength";
-    assert_eq!(schema.pointer(floor), Some(&json!(MIN_QUOTE_CHARS)));
-    let bounds: Vec<_> = length_bounds(&schema)
-        .into_iter()
-        .filter(|bound| !bound.starts_with(floor))
-        .collect();
-    assert!(bounds.is_empty(), "{bounds:?}");
+#[tokio::test]
+async fn prompt_snapshot_recall_drafts() -> Result<()> {
+    use crate::dto::{
+        LearningBlockDto, LearningBlockKind, LearningPreparation, LearningProgramStatus,
+    };
+    use crate::lessons::course_generation_tests::{fixed_ids, RequestLog, ScriptedModel};
+    let mut program = crate::tests::fixture();
+    fixed_ids(&mut program);
+    program.summary.status = LearningProgramStatus::Active;
+    let source_id = program.sources[0].id.clone();
+    let lesson = &mut program.modules[0].lessons[0];
+    lesson.preparation = LearningPreparation::Ready;
+    lesson.blocks = vec![
+        LearningBlockDto::new(
+            LearningBlockKind::Explanation,
+            "Bounded passages".into(),
+            "A bounded passage keeps a course to the material it was given.".into(),
+            vec![source_id.clone()],
+            vec![],
+        ),
+        LearningBlockDto::new(
+            LearningBlockKind::Recap,
+            "Recap".into(),
+            "Takeaway: a bounded passage limits what a course may claim.".into(),
+            vec![source_id.clone()],
+            vec![],
+        ),
+    ];
+    let lesson_id = lesson.id.clone();
+    let card = |question: &str| {
+        json!({
+            "question":question,
+            "answer":"A bounded passage limits what the course may claim.",
+            "explanation":"The excerpt says the passage is bounded.",
+            "cites":["u1"]
+        })
+    };
+    let inner = ScriptedModel {
+        outputs: std::sync::Mutex::new(
+            vec![json!({"items":[
+                card("What does a bounded passage limit?"),
+                card("Why does a course use a bounded passage?")
+            ]})
+            .to_string()]
+            .into(),
+        ),
+        prompts: Default::default(),
+    };
+    let llm = RequestLog::new(&inner);
+
+    generate_recall_drafts(&llm, &program, &lesson_id, 2).await?;
+
+    llm.assert_snapshot::<super::recall::RecallDrafts>();
+    Ok(())
 }
 
 #[test]
@@ -636,40 +559,13 @@ fn the_writer_is_told_never_to_name_a_source_in_the_text() {
 }
 
 #[test]
-fn recall_cards_are_written_for_a_learner_who_sees_only_the_lesson() {
-    let lesson = crate::tests::fixture().modules[0].lessons[0].clone();
-    let prompt = recall_draft_prompt(&lesson, 2, &HashSet::new(), Vec::new());
-    for expected in [
-        "The learner sees a card and the lesson, never the source excerpts.",
-        "never point at an excerpt, passage or tutorial the learner cannot see",
-    ] {
-        assert!(
-            prompt.contains(expected),
-            "missing {expected:?} in {prompt}"
-        );
-    }
-}
-
-#[test]
-fn the_writer_and_the_repairs_are_told_quoted_wording_takes_double_quotation_marks() {
-    let schema = lesson_schema(2);
-    for (who, text) in [
-        ("writer", citation_instructions(true)),
-        (
-            "teaching repair",
-            crate::lessons::text_edits::instructions(&schema),
-        ),
-        (
-            "claim repair",
-            crate::lessons::text_edits::rewrite_instructions(&schema),
-        ),
-    ] {
-        assert!(text.contains("double quotation marks"), "{who}: {text}");
-        assert!(
-            text.contains("never put wording in single quotation marks"),
-            "{who}"
-        );
-    }
+fn the_writer_is_told_quoted_wording_takes_double_quotation_marks() {
+    let text = citation_instructions(true);
+    assert!(text.contains("double quotation marks"), "{text}");
+    assert!(
+        text.contains("never put wording in single quotation marks"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -700,79 +596,10 @@ fn the_writer_is_told_to_name_no_source_by_name_either() {
 }
 
 #[test]
-fn the_writer_and_the_teaching_repair_are_told_what_the_lesson_s_own_figures_are() {
-    let schema = lesson_schema(2);
-    for (who, text) in [
-        ("writer", citation_instructions(true)),
-        (
-            "teaching repair",
-            crate::lessons::text_edits::instructions(&schema),
-        ),
-    ] {
-        assert!(
-            text.contains("The lesson's own figures are the quantities its own example, scenario or exercise sets, and the results calculated from them."),
-            "{who}: {text}"
-        );
-    }
-}
-
-#[test]
-fn the_outline_contract_reads_what_it_renders() {
-    lattice_core::application::services::model_contract::test_support::assert_round_trip::<outline::OutlineDescription>(&serde_json::from_value(json!({
-        "modules":[{
-            "title":"A module",
-            "summary":{"text":"What it covers.","sourceIndex":0,"quote":"A quote."},
-            "outcomes":[{"text":"An outcome.","sourceIndex":null,"quote":""}],
-            "prerequisiteIndices":[],
-            "project":{"title":"A project","brief":"Its brief.","deliverables":["One"],"successCriteria":["Works"]},
-            "lessons":[{"title":"A lesson","objective":"Its objective.","estimatedMinutes":20,"sourceIndex":0,"quote":"A quote."}]
-        }]
-    })).unwrap());
-}
-
-#[test]
-fn the_recall_contract_reads_what_it_renders() {
-    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
-        recall::RecallDrafts,
-    >(
-        &serde_json::from_value(json!({
-            "cards":[{
-                "question":"What is it?","answer":"This.","explanation":"Because.",
-                "sourceIds":["source-a"],"quote":"A quote."
-            }]
-        }))
-        .unwrap(),
+fn the_writer_is_told_what_the_lesson_s_own_figures_are() {
+    let text = citation_instructions(true);
+    assert!(
+        text.contains("The lesson's own figures are the quantities its own example, scenario or exercise sets, and the results calculated from them."),
+        "{text}"
     );
-}
-
-#[test]
-fn a_rendered_outline_meets_the_outline_schema() {
-    let (modules, _, lessons, _) = crate::dto::LearningCourseDepth::bounds(None);
-    let cited = || json!({"text":"A statement.","sourceIndex":0,"quote":"A quote."});
-    let module = |index: usize| {
-        json!({
-            "title":format!("Module {index}"),
-            "summary":cited(),
-            "outcomes":[cited(), cited()],
-            "prerequisiteIndices":if index == 0 { vec![] } else { vec![0] },
-            "project":{"title":"A project","brief":"Its brief.","deliverables":["One","Two"],"successCriteria":["Works","Is clear"]},
-            "lessons":(0..lessons).map(|n| json!({"title":format!("Lesson {n}"),"objective":"Its objective.","estimatedMinutes":20,"sourceIndex":0,"quote":"A quote."})).collect::<Vec<_>>()
-        })
-    };
-    let outline: outline::GeneratedOutline =
-        serde_json::from_value(json!({"modules":(0..modules).map(module).collect::<Vec<_>>()}))
-            .unwrap();
-    let rendered: serde_json::Value = serde_json::from_str(
-        &<outline::OutlineDescription as lattice_core::application::services::model_contract::test_support::RenderAnswer>::render(&outline),
-    )
-    .unwrap();
-    let validator = jsonschema::JSONSchema::compile(&outline_schema(None, 1)).unwrap();
-    let errors: Vec<String> = validator
-        .validate(&rendered)
-        .err()
-        .into_iter()
-        .flatten()
-        .map(|error| error.to_string())
-        .collect();
-    assert!(errors.is_empty(), "{errors:?}");
 }

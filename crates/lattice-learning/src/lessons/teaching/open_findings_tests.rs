@@ -1,7 +1,7 @@
 //! A lesson that changed since the reviewer saw it has every open finding
 //! judged again, wherever in the lesson it is.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-use super::loop_tests::{parts_lesson, retitled, run, ByRequest};
+use super::loop_tests::{parts_lesson, retitled, run, sections_in_review, ByRequest};
 use super::standing_tests::{lesson, report, reviewed, FIRST, SECOND};
 use super::*;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
@@ -35,19 +35,22 @@ struct Mended<'a>(&'a ByRequest);
 impl LLMPort for Mended<'_> {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let mut response = self.0.complete(request).await?;
+        let task = crate::content_verification::tests::fixture_prompts(request)
+            .iter()
+            .find_map(|text| crate::content_verification::tests::fixture_task(text));
         let judges = request
-            .json_schema
-            .as_ref()
-            .is_some_and(|schema| schema.pointer("/properties/openFindings").is_some());
+            .schema()
+            .map(|schema| schema.as_json())
+            .is_some_and(|schema| schema.pointer("/properties/items").is_some());
         let Ok(Value::Object(mut answer)) = serde_json::from_str::<Value>(&response.text) else {
             return Ok(response);
         };
         if !judges {
             return Ok(response);
         }
-        if let Some(Value::Array(verdicts)) = answer.get_mut("openFindings") {
-            for verdict in verdicts {
-                verdict["verdict"] = json!("resolved");
+        if let (Some(task), Some(Value::Array(items))) = (task, answer.get_mut("items")) {
+            for finding in task["openFindings"].as_array().into_iter().flatten() {
+                items.push(json!({"entry":{"kind":"resolved","openFinding":finding["id"]}}));
             }
         }
         let mended = CompletionResponse::from_text(Value::Object(answer).to_string());
@@ -67,6 +70,12 @@ impl LLMPort for Mended<'_> {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.0.enforces(schema)
+    }
 }
 
 /// Two sections each hold a defect; the one repair changes only the first.
@@ -83,7 +92,7 @@ async fn mended_in_the_first_section() -> Result<(ByRequest, Reviewed)> {
 async fn the_recheck_lists_the_finding_in_the_section_the_repair_did_not_change() -> Result<()> {
     let (model, _) = mended_in_the_first_section().await?;
     let reviews = model.reviews();
-    assert_eq!(reviews[1]["sectionIndicesToReview"], json!([0]));
+    assert_eq!(sections_in_review(&reviews[1]), json!([0]));
     let parts: Vec<&str> = reviews[1]["openFindings"]
         .as_array()
         .unwrap()

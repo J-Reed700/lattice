@@ -2,25 +2,26 @@
 //! reviewer's finding of it.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
-use crate::content_verification::tests::{fixture_completion, fixture_task, CONTRACT_NOTHING};
-use crate::lessons::course_generation_tests::{review_reply, ScriptedModel};
+use crate::content_verification::tests::{fixture_completion, fixture_task};
+use crate::lessons::course_generation_tests::{clean_review, review_reply, ScriptedModel};
 use crate::reference_collection::ReferenceCollection;
 use crate::review_findings::Held;
+use contract::scripted::{ask_of, Ask, Script, CONTRACT_NOTHING};
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-use std::collections::VecDeque;
 use std::sync::Mutex;
 
 const EXCERPT: &str = "This saved reference describes the exact behavior of the example tool.";
 const UNSAVED: &str = "The kettle sings a note that no saved reference holds.";
 const FIRST: &str = "The function returns the number 4 for the sum of two and two. ";
 const SECOND: &str = "The kettle then rests on the stand once the water is hot. ";
-const REVIEWER_ONLY: &str = "The explanation leans on an unstated premise about the sum.";
+const REVIEWER_ONLY: &str =
+    "The explanation promises that the tutor will certify the learner's sum as expert reviewed.";
 
 /// The scripted model, with the lesson's check against its plan answered
 /// from `plan` and the evidence gate's requests kept.
 struct Routed {
     inner: ScriptedModel,
-    plan: Mutex<VecDeque<String>>,
+    plan: Script,
     gate: Mutex<Vec<Value>>,
     plan_asked: Mutex<Vec<Value>>,
     clash_reply: Mutex<String>,
@@ -32,22 +33,15 @@ impl LLMPort for Routed {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let (system, user) = crate::lessons::structured_call::task_messages(request);
         let drafting = crate::lessons::structured_call::is_draft_request(request);
-        if !drafting && system.starts_with(contract::SYSTEM) {
+        let ask = ask_of(system, user);
+        if !drafting && matches!(ask, Some(Ask::Planned | Ask::Find | Ask::Reports)) {
             if let Ok(asked) = serde_json::from_str::<Value>(user) {
                 self.plan_asked.lock().unwrap().push(asked);
             }
-            let reply = self
-                .plan
-                .lock()
-                .unwrap()
-                .pop_front()
-                .unwrap_or_else(|| CONTRACT_NOTHING.to_owned());
+            let reply = self.plan.reply(ask.unwrap_or(Ask::Find), user);
             return Ok(fixture_completion(request, vec![reply]));
         }
-        if !drafting
-            && system.starts_with(contract::confirm::SYSTEM)
-            && user.contains(contract::confirm::CLASH_TASK)
-        {
+        if !drafting && ask == Some(Ask::ConfirmClash) {
             *self.clash_asked.lock().unwrap() += 1;
             let reply = self.clash_reply.lock().unwrap().clone();
             return Ok(CompletionResponse::from_text(reply.as_str()));
@@ -74,6 +68,12 @@ impl LLMPort for Routed {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 
 fn routed(outputs: Vec<String>, plan: Vec<String>) -> Routed {
@@ -82,7 +82,7 @@ fn routed(outputs: Vec<String>, plan: Vec<String>) -> Routed {
             outputs: Mutex::new(outputs.into()),
             prompts: Mutex::new(Vec::new()),
         },
-        plan: Mutex::new(plan.into()),
+        plan: Script::new(plan),
         gate: Mutex::new(Vec::new()),
         plan_asked: Mutex::new(Vec::new()),
         clash_reply: Mutex::new(
@@ -108,34 +108,22 @@ fn used_before_taught() -> String {
     json!({"planned":[],"usedBeforeTaught":[{"what":"the number 4","uses":["returns the number 4"],"taughtLater":""}],"contradictions":[],"unseen":[]}).to_string()
 }
 
-/// A review that reports `defect` in the first of `sections` sections.
-fn reporting(defect: &str, sections: usize) -> String {
-    let checks = (0..sections)
-        .map(|index| {
-            crate::lessons::course_generation_tests::section_check(
-                index,
-                (index == 0).then_some(defect),
-            )
-        })
-        .collect();
-    review_reply(&[], checks, &[])
-}
-
-fn clean(sections: usize) -> String {
-    let checks = (0..sections)
-        .map(|index| crate::lessons::course_generation_tests::section_check(index, None))
-        .collect();
-    review_reply(&[], checks, &[])
-}
-
-/// A clean review of `sections` sections that finds the reviewer's first finding resolved.
-fn resolved(sections: usize) -> String {
-    let checks = (0..sections)
-        .map(|index| crate::lessons::course_generation_tests::section_check(index, None))
-        .collect();
+/// A review that reports `defect` in the first section.
+fn reporting(defect: &str) -> String {
     review_reply(
         &[],
-        checks,
+        vec![crate::lessons::course_generation_tests::section_defect(
+            0, defect,
+        )],
+        &[],
+    )
+}
+
+/// A clean review that finds the reviewer's first finding resolved.
+fn resolved() -> String {
+    review_reply(
+        &[],
+        vec![],
         &[crate::lessons::course_generation_tests::verdict(
             "reviewer/1",
             "resolved",
@@ -143,12 +131,13 @@ fn resolved(sections: usize) -> String {
     )
 }
 
+/// The gate's answer for its one proposal, `i1`, over a lesson whose first section is `p1`; `leftTo` names a check or a recorded finding by its handle: the three checks are `k1` to `k3`, the recorded findings follow from `k4`.
 fn gate_answer(left_to: &str) -> String {
-    json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"internal_conflict","evidenceIds":["blocks-0"],"partId":"blocks-0","requirementId":null,"leftTo":left_to,"reason":"The explanation contradicts the sum it states."}]}).to_string()
+    json!({"entries":[{"of":"i1","verdict":"actionable","basis":"internal_conflict","candidateIds":["p1"],"referenceIds":[],"partId":"p1","leftTo":left_to,"reason":"The explanation contradicts the sum it states."}]}).to_string()
 }
 
 fn gate_not_established(left_to: &str) -> String {
-    json!({"decisions":[{"issueId":"issue-0","verdict":"not_established","basis":"internal_conflict","evidenceIds":[],"partId":"lesson","requirementId":null,"leftTo":left_to,"reason":"Nothing in the explanation shows it."}]}).to_string()
+    json!({"entries":[{"of":"i1","verdict":"not_established","basis":"internal_conflict","candidateIds":[],"referenceIds":[],"partId":"none","leftTo":left_to,"reason":"Nothing in the explanation shows it."}]}).to_string()
 }
 
 /// `reply` with the plan check's ruling on each report: whether each is about a kind it decides.
@@ -199,10 +188,10 @@ fn repair_requests(model: &Routed) -> Vec<Value> {
 async fn a_reviewer_finding_the_plan_check_recorded_is_not_repaired_a_second_time() -> Result<()> {
     let model = routed(
         vec![
-            reporting(REVIEWER_ONLY, 1),
-            gate_answer("recorded-0"),
+            reporting(REVIEWER_ONLY),
+            gate_answer("k4"),
             json!({"edits":[{"path":"/blocks/0/title","before":"Example","after":"Corrected example"}]}).to_string(),
-            clean(1),
+            clean_review(&[]),
         ],
         vec![used_before_taught()],
     );
@@ -220,7 +209,7 @@ async fn a_reviewer_finding_the_plan_check_recorded_is_not_repaired_a_second_tim
 #[tokio::test]
 async fn the_gate_is_handed_the_other_checks_findings_and_not_the_reviewers() -> Result<()> {
     let model = routed(
-        vec![reporting(REVIEWER_ONLY, 2), gate_answer("none")],
+        vec![reporting(REVIEWER_ONLY), gate_answer("none")],
         vec![used_before_taught()],
     );
     let candidate = json!({"blocks":[
@@ -241,7 +230,7 @@ async fn the_gate_is_handed_the_other_checks_findings_and_not_the_reviewers() ->
         .iter()
         .map(|finding| finding["id"].as_str().unwrap())
         .collect();
-    assert_eq!(ids, ["recorded-0", "recorded-1"]);
+    assert_eq!(ids, ["k4", "k5"]);
     assert!(!gate[0]["recordedFindings"]
         .to_string()
         .contains(REVIEWER_ONLY));
@@ -254,9 +243,9 @@ async fn a_reviewer_finding_about_what_the_plan_check_decides_is_left_to_it_when
 ) -> Result<()> {
     let model = routed(
         vec![
-            reporting(REVIEWER_ONLY, 1),
-            gate_answer("check-1"),
-            clean(1),
+            reporting(REVIEWER_ONLY),
+            gate_answer("k2"),
+            clean_review(&[]),
         ],
         vec![
             CONTRACT_NOTHING.to_owned(),
@@ -274,7 +263,7 @@ async fn a_reviewer_finding_about_what_the_plan_check_decides_is_left_to_it_when
 #[tokio::test]
 async fn the_gate_is_told_what_each_of_the_three_checks_decides_in_order() -> Result<()> {
     let model = routed(
-        vec![reporting(REVIEWER_ONLY, 1), gate_answer("none")],
+        vec![reporting(REVIEWER_ONLY), gate_answer("none")],
         Vec::new(),
     );
     let candidate = json!({"blocks":[block("Example", FIRST, EXCERPT)],"questions":[]});
@@ -284,9 +273,9 @@ async fn the_gate_is_told_what_each_of_the_three_checks_decides_in_order() -> Re
     assert_eq!(
         gate[0]["otherChecks"],
         json!([
-            {"id":"check-0","decides":crate::question_review::DECIDES},
-            {"id":"check-1","decides":contract::DECIDES},
-            {"id":"check-2","decides":RULES_DECIDE}
+            {"id":"k1","decides":crate::question_review::DECIDES},
+            {"id":"k2","decides":contract::DECIDES},
+            {"id":"k3","decides":RULES_DECIDE}
         ])
     );
     Ok(())
@@ -324,10 +313,10 @@ async fn what_the_review_reported_about_a_contradiction_is_ruled_on_by_the_plan_
 {
     let model = routed(
         vec![
-            reporting(REVIEWER_ONLY, 2),
-            gate_answer("check-1"),
+            reporting(REVIEWER_ONLY),
+            gate_answer("k2"),
             repair_edit(),
-            clean(1),
+            clean_review(&[]),
         ],
         vec![CONTRACT_NOTHING.to_owned(), contradiction()],
     );
@@ -335,8 +324,8 @@ async fn what_the_review_reported_about_a_contradiction_is_ruled_on_by_the_plan_
     assert!(reviewed.set_aside.is_empty());
     let asked = repair_requests(&model);
     assert_eq!(asked.len(), 1);
-    let id = asked[0]["issuesToFix"][0]["id"].as_str().unwrap();
-    assert!(id.starts_with("plan/contradiction"), "{id}");
+    let note = asked[0]["issuesToFix"][0]["note"].as_str().unwrap();
+    assert!(note.starts_with("The lesson contradicts itself"), "{note}");
     Ok(())
 }
 
@@ -344,10 +333,10 @@ async fn what_the_review_reported_about_a_contradiction_is_ruled_on_by_the_plan_
 async fn the_plan_check_is_asked_again_with_what_the_review_reported() -> Result<()> {
     let model = routed(
         vec![
-            reporting(REVIEWER_ONLY, 2),
-            gate_answer("check-1"),
+            reporting(REVIEWER_ONLY),
+            gate_answer("k2"),
             repair_edit(),
-            clean(1),
+            clean_review(&[]),
         ],
         vec![CONTRACT_NOTHING.to_owned(), contradiction()],
     );
@@ -367,9 +356,9 @@ async fn the_plan_check_is_asked_again_with_what_the_review_reported() -> Result
 async fn a_finding_left_to_the_question_review_is_not_given_to_the_plan_check() -> Result<()> {
     let model = routed(
         vec![
-            reporting(REVIEWER_ONLY, 2),
-            gate_not_established("check-0"),
-            clean(2),
+            reporting(REVIEWER_ONLY),
+            gate_not_established("k1"),
+            clean_review(&[]),
         ],
         vec![CONTRACT_NOTHING.to_owned(), contradiction()],
     );
@@ -385,10 +374,10 @@ async fn a_contradiction_the_reported_ask_lists_is_confirmed_once_before_it_is_r
 ) -> Result<()> {
     let model = routed(
         vec![
-            reporting(REVIEWER_ONLY, 2),
-            gate_answer("check-1"),
+            reporting(REVIEWER_ONLY),
+            gate_answer("k2"),
             repair_edit(),
-            clean(1),
+            clean_review(&[]),
         ],
         vec![CONTRACT_NOTHING.to_owned(), contradiction()],
     );
@@ -403,9 +392,9 @@ async fn a_contradiction_the_reported_ask_lists_and_the_read_refuses_repairs_not
 {
     let model = routed(
         vec![
-            reporting(REVIEWER_ONLY, 2),
-            gate_answer("check-1"),
-            clean(2),
+            reporting(REVIEWER_ONLY),
+            gate_answer("k2"),
+            clean_review(&[]),
         ],
         vec![CONTRACT_NOTHING.to_owned(), contradiction()],
     );
@@ -423,9 +412,9 @@ async fn a_contradiction_the_reported_ask_lists_and_the_read_refuses_repairs_not
 async fn a_report_the_plan_check_does_not_hold_up_repairs_nothing() -> Result<()> {
     let model = routed(
         vec![
-            reporting(REVIEWER_ONLY, 2),
-            gate_answer("check-1"),
-            clean(2),
+            reporting(REVIEWER_ONLY),
+            gate_answer("k2"),
+            clean_review(&[]),
         ],
         vec![
             CONTRACT_NOTHING.to_owned(),
@@ -456,10 +445,10 @@ async fn a_report_the_plan_check_says_is_of_another_kind_stands_on_the_gates_ver
 {
     let model = routed(
         vec![
-            reporting(REVIEWER_ONLY, 1),
-            gate_answer("check-1"),
+            reporting(REVIEWER_ONLY),
+            gate_answer("k2"),
             repair_edit(),
-            resolved(1),
+            resolved(),
         ],
         vec![
             CONTRACT_NOTHING.to_owned(),
@@ -476,9 +465,9 @@ async fn a_report_the_plan_check_says_is_of_its_kind_and_leaves_out_is_not_repai
 {
     let model = routed(
         vec![
-            reporting(REVIEWER_ONLY, 1),
-            gate_answer("check-1"),
-            clean(1),
+            reporting(REVIEWER_ONLY),
+            gate_answer("k2"),
+            clean_review(&[]),
         ],
         vec![
             CONTRACT_NOTHING.to_owned(),
@@ -496,9 +485,9 @@ async fn a_report_the_gate_did_not_establish_is_not_repaired_even_when_it_is_of_
 ) -> Result<()> {
     let model = routed(
         vec![
-            reporting(REVIEWER_ONLY, 1),
-            gate_not_established("check-1"),
-            clean(1),
+            reporting(REVIEWER_ONLY),
+            gate_not_established("k2"),
+            clean_review(&[]),
         ],
         vec![
             CONTRACT_NOTHING.to_owned(),
@@ -516,10 +505,10 @@ async fn a_finding_left_to_the_question_review_is_repaired_when_the_gate_establi
 ) -> Result<()> {
     let model = routed(
         vec![
-            reporting(REVIEWER_ONLY, 1),
-            gate_answer("check-0"),
+            reporting(REVIEWER_ONLY),
+            gate_answer("k1"),
             repair_edit(),
-            resolved(1),
+            resolved(),
         ],
         Vec::new(),
     );
@@ -533,9 +522,9 @@ async fn a_finding_left_to_the_question_review_is_not_repaired_when_the_gate_did
 ) -> Result<()> {
     let model = routed(
         vec![
-            reporting(REVIEWER_ONLY, 1),
-            gate_not_established("check-0"),
-            clean(1),
+            reporting(REVIEWER_ONLY),
+            gate_not_established("k1"),
+            clean_review(&[]),
         ],
         Vec::new(),
     );
@@ -549,10 +538,10 @@ async fn a_finding_left_to_the_question_review_is_not_repaired_when_the_gate_did
 async fn a_finding_left_to_the_rules_is_repaired_when_the_gate_established_it() -> Result<()> {
     let model = routed(
         vec![
-            reporting(REVIEWER_ONLY, 1),
-            gate_answer("check-2"),
+            reporting(REVIEWER_ONLY),
+            gate_answer("k3"),
             repair_edit(),
-            resolved(1),
+            resolved(),
         ],
         Vec::new(),
     );

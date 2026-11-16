@@ -10,6 +10,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
 
+mod lineage;
+pub(crate) use lineage::Lineage;
+pub use lineage::UnitId;
+
 /// What raised a finding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -318,6 +322,137 @@ pub enum PlanCheck {
     Unseen,
 }
 
+impl PlanCheck {
+    const ALL: [Self; 4] = [Self::Planned, Self::Used, Self::Contradiction, Self::Unseen];
+
+    /// Whether the check finds something the lesson lacks.
+    pub fn lacks(self) -> bool {
+        matches!(self, Self::Used | Self::Planned)
+    }
+}
+
+/// A defect no quiz question may have: its answer can be picked without the material.
+macro_rules! defect_answer_pickable {
+    () => {
+        "the answer can be picked without knowing the material"
+    };
+}
+/// A defect no quiz question may have: an option named by its place, not its words.
+macro_rules! defect_option_by_position {
+    () => {
+        "an explanation or a reason names an option by its position, number or letter, not by what it says"
+    };
+}
+/// A defect no quiz question may have: it mentions where its material came from.
+macro_rules! defect_source_mentioned {
+    () => {
+        "the question, its explanation or a reason mentions a passage, an excerpt, a tutorial, a document or a source"
+    };
+}
+/// A defect no quiz question may have: a value its answer needs is missing from its prompt.
+macro_rules! defect_value_missing {
+    () => {
+        "the question depends on a value its prompt never gives"
+    };
+}
+pub(crate) use {
+    defect_answer_pickable, defect_option_by_position, defect_source_mentioned,
+    defect_value_missing,
+};
+
+/// What is wrong with a question's answer key: the reviewer chooses the first
+/// eight, the application sets `Disputed` and `Repeats`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(into = "&'static str", try_from = "String")]
+pub enum KeyDefect {
+    /// The question as worded has no defensible answer or more than one.
+    NoSingleAnswer,
+    /// The explanation, a reason or a criterion says something untrue.
+    Untrue,
+    /// The question depends on a value its prompt never gives.
+    ValueMissing,
+    /// The answer can be picked without knowing the material.
+    AnswerPickable,
+    /// A reason does not say why its option is wrong.
+    ReasonMissesWhy,
+    /// The question mentions where its material came from.
+    NamesSource,
+    /// An explanation or a reason names an option by its position.
+    OptionByPosition,
+    /// The question does not test the outcome.
+    MissesOutcome,
+    /// An independent solution disagreed with the key.
+    Disputed,
+    /// The question asks what another question asks.
+    Repeats,
+}
+
+impl KeyDefect {
+    const ALL: [Self; 10] = [
+        Self::NoSingleAnswer,
+        Self::Untrue,
+        Self::ValueMissing,
+        Self::AnswerPickable,
+        Self::ReasonMissesWhy,
+        Self::NamesSource,
+        Self::OptionByPosition,
+        Self::MissesOutcome,
+        Self::Disputed,
+        Self::Repeats,
+    ];
+
+    /// The word the reviewer writes for this defect and its id carries.
+    pub const fn word(self) -> &'static str {
+        match self {
+            Self::NoSingleAnswer => "no-single-answer",
+            Self::Untrue => "untrue",
+            Self::ValueMissing => "value-missing",
+            Self::AnswerPickable => "answer-pickable",
+            Self::ReasonMissesWhy => "reason-misses-why",
+            Self::NamesSource => "names-source",
+            Self::OptionByPosition => "option-by-position",
+            Self::MissesOutcome => "misses-outcome",
+            Self::Disputed => "disputed",
+            Self::Repeats => "repeats",
+        }
+    }
+
+    /// What the defect means, as the reviewer is told.
+    pub const fn meaning(self) -> &'static str {
+        match self {
+            Self::NoSingleAnswer => {
+                "the question as worded has no defensible answer or more than one"
+            }
+            Self::Untrue => "the explanation, a reason or a criterion says something untrue, contradicts the key, or leads to a different result from the one the question's own values lead to",
+            Self::ValueMissing => defect_value_missing!(),
+            Self::AnswerPickable => defect_answer_pickable!(),
+            Self::ReasonMissesWhy => "a reason does not say why its option is wrong, or is about a different case from the question's",
+            Self::NamesSource => defect_source_mentioned!(),
+            Self::OptionByPosition => defect_option_by_position!(),
+            Self::MissesOutcome => "the question does not test the outcome",
+            Self::Disputed => "an independent solution disagreed with the key",
+            Self::Repeats => "the question asks what another question asks",
+        }
+    }
+}
+
+impl From<KeyDefect> for &'static str {
+    fn from(defect: KeyDefect) -> Self {
+        defect.word()
+    }
+}
+
+impl TryFrom<String> for KeyDefect {
+    type Error = String;
+
+    fn try_from(word: String) -> Result<Self, String> {
+        Self::ALL
+            .into_iter()
+            .find(|defect| defect.word() == word)
+            .ok_or_else(|| format!("{word} is not a kind of answer-key defect"))
+    }
+}
+
 /// What raised a finding, and what it is about.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "by")]
@@ -327,8 +462,8 @@ pub enum Origin {
     Rule { rule: Rule, subject: Option<String> },
     /// The check against the course plan.
     Plan { check: PlanCheck, subject: String },
-    /// An independent solution disagreed with the question's key.
-    AnswerKey,
+    /// What is wrong with the question's answer key.
+    AnswerKey { defect: KeyDefect },
     /// The teaching reviewer; `number` is the finding's own among the
     /// reviewer's findings on one lesson.
     Reviewer { number: u32 },
@@ -346,7 +481,7 @@ impl Origin {
         match self {
             Self::Rule { rule, .. } => format!("rule/{}", serde_name(rule)),
             Self::Plan { check, .. } => format!("plan/{}", serde_name(check)),
-            Self::AnswerKey => "key".to_owned(),
+            Self::AnswerKey { defect } => format!("key/{}", defect.word()),
             Self::Reviewer { .. } => "reviewer".to_owned(),
         }
     }
@@ -365,6 +500,36 @@ impl FindingId {
     /// The number of a reviewer's finding's id.
     pub(crate) fn reviewer_number(&self) -> Option<u32> {
         self.0.strip_prefix("reviewer/")?.parse().ok()
+    }
+
+    /// The unit a finding's id names; none for the whole lesson, a reviewer's
+    /// finding, a planned one and an id written before ids named their unit.
+    pub(crate) fn unit(&self) -> Option<UnitId> {
+        let mut segments = self.0.split('/');
+        match (segments.next()?, segments.next()?) {
+            ("plan", "planned") => None,
+            ("rule" | "plan" | "key", _) => UnitId::parse(segments.next()?),
+            _ => None,
+        }
+    }
+
+    /// The plan check of a plan finding's id.
+    fn plan_check(&self) -> Option<PlanCheck> {
+        PlanCheck::ALL.into_iter().find(|check| {
+            let kind = Origin::Plan {
+                check: *check,
+                subject: String::new(),
+            }
+            .kind();
+            self.0
+                .strip_prefix(&kind)
+                .is_some_and(|rest| rest.starts_with('/'))
+        })
+    }
+
+    /// Whether taking the part at `site` out of the lesson settles the finding: it is about that part's own text, not the whole lesson or something the lesson lacks.
+    pub(crate) fn ends_with_its_part(&self, site: FindingSite) -> bool {
+        site != FindingSite::Lesson && !self.plan_check().is_some_and(PlanCheck::lacks)
     }
 }
 
@@ -408,6 +573,14 @@ pub struct ReviewFinding {
     /// The second part a finding about two parts is about.
     #[serde(default)]
     pub also: Option<FindingSite>,
+    /// The application's name of the section or question the finding is about,
+    /// set where the finding meets the candidate (`Lineage::place`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<UnitId>,
+    /// The sections a finding about the whole lesson belongs in: its repair
+    /// may change any one of them and nothing else.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub within: Vec<FindingSite>,
 }
 
 impl ReviewFinding {
@@ -426,6 +599,8 @@ impl ReviewFinding {
             passage: None,
             sentence: None,
             also: None,
+            unit: None,
+            within: Vec::new(),
         }
     }
 
@@ -473,10 +648,10 @@ impl ReviewFinding {
         )
     }
 
-    /// An independent solution of `question` disagreed with its key.
-    pub fn answer_key(question: usize, note: impl Into<String>) -> Self {
+    /// `question` has `defect` in its answer key.
+    pub fn answer_key(question: usize, defect: KeyDefect, note: impl Into<String>) -> Self {
         Self::raised(
-            Origin::AnswerKey,
+            Origin::AnswerKey { defect },
             FindingKind::AnswerKey,
             Some(FindingSite::Question(question)),
             note,
@@ -509,7 +684,14 @@ impl ReviewFinding {
             }
             FindingKind::Quotation => Self::rule(Rule::Quotation, kind, site, note),
             FindingKind::Structure => Self::rule(Rule::Schema, kind, site, note),
-            FindingKind::AnswerKey => Self::raised(Origin::AnswerKey, kind, Some(site), note),
+            FindingKind::AnswerKey => Self::raised(
+                Origin::AnswerKey {
+                    defect: KeyDefect::Disputed,
+                },
+                kind,
+                Some(site),
+                note,
+            ),
         }
     }
 
@@ -544,37 +726,38 @@ impl ReviewFinding {
     pub fn remedy(&self) -> Remedy {
         match &self.origin {
             Origin::Rule { rule, .. } => rule.remedy(),
-            Origin::Plan { .. } | Origin::AnswerKey | Origin::Reviewer { .. } => Remedy::Edits,
+            Origin::Plan { .. } | Origin::AnswerKey { .. } | Origin::Reviewer { .. } => {
+                Remedy::Edits
+            }
         }
     }
 
-    /// Whether a repair may change any part to mend this finding: it is about the whole material, or about something the lesson lacks.
+    /// Whether a repair may change any part to mend this finding: it is about
+    /// the whole material and names no sections it belongs in.
     pub fn mends_anywhere(&self) -> bool {
-        matches!(self.site, None | Some(FindingSite::Lesson))
-            || matches!(
-                self.origin,
-                Origin::Plan {
-                    check: PlanCheck::Planned,
-                    ..
-                }
-            )
+        matches!(self.site, None | Some(FindingSite::Lesson)) && self.within.is_empty()
+    }
+
+    /// Whether the finding is that the lesson has no section that can hold an item of its plan.
+    pub fn lacks_its_section(&self) -> bool {
+        matches!(
+            self.origin,
+            Origin::Plan {
+                check: PlanCheck::Planned,
+                ..
+            }
+        ) && self.mends_anywhere()
     }
 
     /// Whether the lesson lacks teaching, which its correction adds without changing any existing sentence.
     pub fn adds(&self) -> bool {
-        matches!(
-            self.origin,
-            Origin::Plan {
-                check: PlanCheck::Used | PlanCheck::Planned,
-                ..
-            }
-        )
+        matches!(self.origin, Origin::Plan { check, .. } if check.lacks())
     }
 
     /// This finding's identity: the same across passes while the same defect
     /// is raised, whatever its note says.
     pub fn id(&self) -> FindingId {
-        let site = self.site.unwrap_or(FindingSite::Lesson).id_text();
+        let site = self.part();
         let kind = self.origin.kind();
         FindingId(match &self.origin {
             Origin::Rule { subject: None, .. } => format!("{kind}/{site}"),
@@ -587,9 +770,17 @@ impl ReviewFinding {
                 subject,
             } => format!("{kind}/{subject}"),
             Origin::Plan { subject, .. } => format!("{kind}/{site}/{subject}"),
-            Origin::AnswerKey => format!("{kind}/{site}"),
+            Origin::AnswerKey { .. } => format!("{kind}/{site}"),
             Origin::Reviewer { number } => format!("{kind}/{number}"),
         })
+    }
+
+    /// What an id names of the part: its unit, or its site before it has one.
+    pub(crate) fn part(&self) -> String {
+        match &self.unit {
+            Some(unit) => unit.as_str().to_owned(),
+            None => self.site.unwrap_or(FindingSite::Lesson).id_text(),
+        }
     }
 
     /// The identity of rows stored before finding ids.
@@ -632,6 +823,9 @@ pub(crate) struct Held {
     pub ids: BTreeSet<FindingId>,
     /// Rows stored before finding ids: every finding of the kind at the place.
     pub places: BTreeSet<FindingKey>,
+    /// The unit of each held finding that names one, by its part's text: the
+    /// review names its parts by these first.
+    pub lineage: Lineage,
     /// The reviewer's findings among those, each with the digest of its
     /// part's text.
     pub reviewer: Vec<(ReviewFinding, String)>,
@@ -666,13 +860,14 @@ pub(crate) fn part_at(candidate: &Value, site: FindingSite) -> Option<&Value> {
     }
 }
 
+/// The digest of the text of one part, which a "keep as written" is bound to.
+pub(crate) fn part_sha256(part: &Value) -> String {
+    text_sha256(&part.to_string())
+}
+
 /// The digest of the text at `site`, which a "keep as written" is bound to.
 pub(crate) fn site_sha256(candidate: &Value, site: FindingSite) -> String {
-    text_sha256(
-        &part_at(candidate, site)
-            .map(Value::to_string)
-            .unwrap_or_default(),
-    )
+    part_at(candidate, site).map_or_else(|| text_sha256(""), part_sha256)
 }
 
 /// Every string of `value` at any depth, with its path relative to `value`
@@ -732,6 +927,7 @@ pub(crate) fn sentences_of(candidate: &Value, finding: &ReviewFinding) -> Vec<St
 
 /// The lesson bytes of the first string of the part `site` names (the whole
 /// candidate for the lesson) that holds `quote` as a copy.
+#[cfg(test)]
 pub(crate) fn part_quote<'c>(
     candidate: &'c Value,
     site: FindingSite,
@@ -757,59 +953,6 @@ pub(crate) fn sentences_in(value: &Value) -> Vec<String> {
         .filter(|sentence| !same_text::fold(sentence).is_empty())
         .map(str::to_owned)
         .collect()
-}
-
-/// What a lesson holds outside its sections and questions.
-fn lesson_rest(lesson: &Value) -> Value {
-    let mut rest = lesson.clone();
-    if let Some(fields) = rest.as_object_mut() {
-        fields.remove("blocks");
-        fields.remove("questions");
-    }
-    rest
-}
-
-/// For each part a repair changed, the sentences it holds that the lesson did
-/// not have before, anywhere: a sentence that only moved is not new.
-pub(crate) fn new_sentences(previous: &Value, repaired: &Value) -> Vec<(FindingSite, Vec<String>)> {
-    let known: BTreeSet<String> = sentences_in(previous)
-        .iter()
-        .map(|sentence| subject_of(sentence))
-        .collect();
-    let mut changed = Vec::new();
-    let mut visit = |site: FindingSite, before: Option<&Value>, after: &Value| {
-        if before == Some(after) {
-            return;
-        }
-        let fresh: Vec<String> = sentences_in(after)
-            .into_iter()
-            .filter(|sentence| !known.contains(&subject_of(sentence)))
-            .collect();
-        if !fresh.is_empty() {
-            changed.push((site, fresh));
-        }
-    };
-    let items = |field: &str| {
-        repaired
-            .get(field)
-            .and_then(Value::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
-    };
-    for (index, block) in items("blocks").iter().enumerate() {
-        let site = FindingSite::Section(index);
-        visit(site, part_at(previous, site), block);
-    }
-    for (index, question) in items("questions").iter().enumerate() {
-        let site = FindingSite::Question(index);
-        visit(site, part_at(previous, site), question);
-    }
-    visit(
-        FindingSite::Lesson,
-        Some(&lesson_rest(previous)),
-        &lesson_rest(repaired),
-    );
-    changed
 }
 
 pub(crate) fn unit(candidate: &Value, finding: &ReviewFinding) -> Unit {

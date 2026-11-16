@@ -369,6 +369,12 @@ impl LLMPort for LargeWindow {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// How far back candidates reach is the recent-history pool's call, so a long

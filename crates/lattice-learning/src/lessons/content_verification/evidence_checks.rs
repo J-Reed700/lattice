@@ -27,7 +27,7 @@ pub(crate) use outcome::{holders, supporting_passage};
 pub(crate) use outcome::{CheckedPart, Pass, SupportedElsewhere, TwoPass};
 pub use page_budget::page_budget;
 pub(crate) use page_budget::AnswerSize;
-pub(super) use requests::{group, labelled_passages, pack};
+pub(super) use requests::{group, labelled_passages, pack, CountedPastBatches};
 pub(crate) use walk::Reach;
 pub(super) use walk::{page_of, page_one, within_page, PageBudget};
 

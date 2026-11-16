@@ -1,6 +1,13 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
+use crate::lessons::content_verification::tests::{fixture_prompts, fixture_task};
 use crate::lessons::course_generation_tests::ScriptedModel;
+use futures::future::BoxFuture;
+use lattice_core::application::ports::llm_port::CompletionResponse;
+use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
+use lattice_core::application::services::model_contract::test_support::{
+    ScriptedModel as Layered, Sent,
+};
 use std::sync::Mutex;
 
 /// The replay's planted statements (evals/grounding/claim-classes/
@@ -45,6 +52,41 @@ fn scripted(replies: Vec<Value>) -> ScriptedModel {
         outputs: Mutex::new(replies.into_iter().map(|reply| reply.to_string()).collect()),
         prompts: Mutex::new(Vec::new()),
     }
+}
+
+/// An answer that gives each handle of `pairs` its class.
+fn entries(pairs: &[(&str, &str)]) -> Value {
+    json!({"entries": pairs.iter().map(|(of, class)| json!({"of": of, "class": class})).collect::<Vec<_>>()})
+}
+
+fn reply(text: String) -> BoxFuture<'static, Result<CompletionResponse>> {
+    Box::pin(std::future::ready(Ok(CompletionResponse::from_text(text))))
+}
+
+/// The handle and the text of each statement the request shows.
+fn shown(sent: &Sent) -> Vec<(String, String)> {
+    let prompt = fixture_prompts(&sent.request)
+        .into_iter()
+        .next()
+        .unwrap_or_default();
+    match fixture_task(&prompt) {
+        Some(Value::Object(statements)) => statements
+            .iter()
+            .map(|(handle, text)| (handle.clone(), text.as_str().unwrap_or_default().to_owned()))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// An answer that sorts each statement the request shows as `class_of` says, leaving out the statements it gives none.
+fn sorting(sent: &Sent, class_of: impl Fn(&str) -> Option<&'static str>) -> String {
+    let given: Vec<Value> = shown(sent)
+        .iter()
+        .filter_map(|(handle, text)| {
+            class_of(text).map(|class| json!({"of": handle, "class": class}))
+        })
+        .collect();
+    json!({"entries": given}).to_string()
 }
 
 #[test]
@@ -185,25 +227,6 @@ fn quoted_wording_is_sourced_but_a_lone_apostrophe_is_not() {
 }
 
 #[test]
-fn the_answer_schema_names_every_id_once_and_only_the_four_classes() {
-    let ids = vec!["s0".to_owned(), "s3".to_owned()];
-    let validator = jsonschema::JSONSchema::compile(&schema(&ids)).unwrap();
-    assert!(validator.is_valid(&json!({"s0": "common", "s3": "internal"})));
-    assert!(
-        !validator.is_valid(&json!({"s0": "common"})),
-        "an id left out"
-    );
-    assert!(
-        !validator.is_valid(&json!({"s0": "common", "s3": "internal", "s9": "common"})),
-        "an id not asked for"
-    );
-    assert!(
-        !validator.is_valid(&json!({"s0": "common", "s3": "maybe"})),
-        "a class that is not one"
-    );
-}
-
-#[test]
 fn only_a_checked_statement_called_internal_is_moved_and_only_to_reasoning() {
     let classes = [
         Class::Sourced,
@@ -257,15 +280,19 @@ async fn the_model_sorts_only_what_the_rules_leave_twenty_to_a_call() -> Result<
     );
     let mut to_sort: Vec<ToSort<'_>> = texts.iter().map(|text| body(text)).collect();
     to_sort[1].field = "options/0";
-    let first: Map<String, Value> = (2..=21)
-        .map(|index| {
-            let class = if index == 5 { "common" } else { "reasoning" };
-            (format!("s{index}"), json!(class))
+    let first: Vec<(String, &str)> = (1..=20)
+        .map(|handle| {
+            let class = if handle == 4 { "common" } else { "reasoning" };
+            (format!("s{handle}"), class)
         })
         .collect();
+    let first: Vec<(&str, &str)> = first
+        .iter()
+        .map(|(handle, class)| (handle.as_str(), *class))
+        .collect();
     let model = scripted(vec![
-        Value::Object(first),
-        json!({"s22": "internal", "s23": "reasoning"}),
+        entries(&first),
+        entries(&[("s1", "internal"), ("s2", "reasoning")]),
     ]);
 
     let sorted = classify(&model, &to_sort).await?;
@@ -293,16 +320,22 @@ async fn the_model_sorts_only_what_the_rules_leave_twenty_to_a_call() -> Result<
 }
 
 #[tokio::test]
-async fn an_answer_missing_a_statement_is_asked_for_once_more_and_then_refused() -> Result<()> {
+async fn a_statement_left_out_is_asked_for_again_alone_and_the_other_class_stands() -> Result<()> {
     let to_sort = [
         body("A stage hands its output to the next stage."),
         body("A bounding box locates a value on the page."),
     ];
-
-    let model = scripted(vec![
-        json!({"s0": "reasoning"}),
-        json!({"s0": "reasoning", "s1": "common"}),
-    ]);
+    let model = Layered::new().on_request::<SortStatements>(|sent, nth| {
+        reply(sorting(sent, |text| {
+            if text.contains("bounding box") {
+                Some("common")
+            } else if nth == 0 {
+                None
+            } else {
+                Some("reasoning")
+            }
+        }))
+    });
     let sorted = classify(&model, &to_sort).await?;
     assert_eq!(
         sorted,
@@ -311,16 +344,45 @@ async fn an_answer_missing_a_statement_is_asked_for_once_more_and_then_refused()
             (Class::Common, ClassifiedBy::Model)
         ]
     );
-    assert_eq!(model.prompts.lock().unwrap().len(), 2);
-
-    let model = scripted(vec![
-        json!({"s0": "reasoning"}),
-        json!({"s0": "reasoning", "s1": "maybe"}),
-    ]);
-    let error = classify(&model, &to_sort).await.unwrap_err();
-    assert!(matches!(error, AppError::ModelAnswerUnusable(_)), "{error}");
-    assert_eq!(model.prompts.lock().unwrap().len(), 2);
+    let sent = model.sent();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(shown(&sent[0]).len(), 2);
+    let again = shown(&sent[1]);
+    assert_eq!(again.len(), 1);
+    assert!(again[0].1.contains("stage"));
     Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_that_gets_no_class_fails_the_sort_and_keeps_the_others() -> Result<()> {
+    let to_sort = [
+        body("A stage hands its output to the next stage."),
+        body("A bounding box locates a value on the page."),
+    ];
+    let model = Layered::new().on_request::<SortStatements>(|sent, _| {
+        reply(sorting(sent, |text| {
+            Some(if text.contains("bounding box") {
+                "common"
+            } else {
+                "maybe"
+            })
+        }))
+    });
+    let pool = crate::tests::pool().await?;
+    let db = lattice_core::shared::persistence::Database::new(pool);
+    let (repo, job, lesson) =
+        crate::content_verification::tests::batch_scheduler_tests::setup(&db).await?;
+    crate::lesson_drafts::run(&db, &repo, &job, &lesson, async {
+        let error = classify(&model, &to_sort).await.unwrap_err();
+        assert!(matches!(error, AppError::ModelAnswerUnusable(_)), "{error}");
+        assert_eq!(
+            saved_class(&model, to_sort[1].statement).await?,
+            Some(Class::Common)
+        );
+        assert_eq!(saved_class(&model, to_sort[0].statement).await?, None);
+        Ok(())
+    })
+    .await
 }
 
 #[test]
@@ -612,7 +674,7 @@ const OWN_FIGURES_SENTENCE: &str = "The lesson's own figures are the quantities 
 
 #[tokio::test]
 async fn a_figure_in_a_part_that_states_what_is_so_is_the_model_s_to_sort() -> Result<()> {
-    let model = scripted(vec![json!({"s0": "reasoning"})]);
+    let model = scripted(vec![entries(&[("s1", "reasoning")])]);
     let sorted = classify(&model, &[body("Dividing 12 by 48 gives 0.25.")]).await?;
     assert_eq!(sorted, vec![(Class::Reasoning, ClassifiedBy::Model)]);
     Ok(())
@@ -620,7 +682,10 @@ async fn a_figure_in_a_part_that_states_what_is_so_is_the_model_s_to_sort() -> R
 
 #[tokio::test]
 async fn a_figure_statement_the_model_calls_internal_is_read_as_reasoning() -> Result<()> {
-    let model = scripted(vec![json!({"s0": "internal"}), json!({"s0": "reasoning"})]);
+    let model = scripted(vec![
+        entries(&[("s1", "internal")]),
+        entries(&[("s1", "reasoning")]),
+    ]);
     let sorted = classify(
         &model,
         &[body("The sample batch holds 12 of the 48 units.")],
@@ -637,7 +702,7 @@ async fn a_figure_statement_the_model_calls_internal_is_read_as_reasoning() -> R
 
 #[tokio::test]
 async fn a_statement_without_a_figure_the_model_calls_internal_stays_internal() -> Result<()> {
-    let model = scripted(vec![json!({"s0": "internal"})]);
+    let model = scripted(vec![entries(&[("s1", "internal")])]);
     let sorted = classify(&model, &[body("The sample batch is set by the exercise.")]).await?;
     assert_eq!(sorted, vec![(Class::Internal, ClassifiedBy::Model)]);
     assert_eq!(model.prompts.lock().unwrap().len(), 1);
@@ -671,13 +736,36 @@ fn the_classifier_is_told_what_the_lesson_s_own_figures_are() {
 }
 
 #[test]
-fn the_sort_contract_reads_what_it_renders() {
-    let answer: BTreeMap<String, String> = ["sourced", "reasoning", "common", "internal"]
-        .into_iter()
-        .enumerate()
-        .map(|(index, class)| (format!("s{index}"), class.to_owned()))
-        .collect();
-    lattice_core::application::services::model_contract::test_support::assert_round_trip::<
-        SortStatements,
-    >(&answer);
+fn the_sort_request_shows_what_it_tells_and_hides_the_internal_position() {
+    let mut marks = Marks::new();
+    let input = Input {
+        statements: vec![
+            Statement {
+                at: marks.internal(7_340_219_usize),
+                text: marks.told("A harbour kiln heats before each firing.".to_owned()),
+            },
+            Statement {
+                at: marks.internal(7_340_220_usize),
+                text: marks.told("A tide table lists the hours of high water.".to_owned()),
+            },
+        ],
+    };
+    holds::<SortStatements>(&input, &marks);
+}
+
+#[tokio::test]
+async fn prompt_snapshot_classify_statements() -> Result<()> {
+    let inner = scripted(vec![entries(&[("s1", "reasoning"), ("s2", "common")])]);
+    let model = crate::lessons::course_generation_tests::RequestLog::new(&inner);
+    let sorted = classify(
+        &model,
+        &[
+            body("A confidence score tells a reviewer how sure the sorter is."),
+            body("A bounding box is a rectangle that frames one region of a page."),
+        ],
+    )
+    .await?;
+    assert_eq!(sorted.len(), 2);
+    model.assert_snapshot::<SortStatements>();
+    Ok(())
 }

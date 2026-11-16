@@ -133,6 +133,7 @@ pub(super) struct CardToRate {
     pub review_count: i64,
     pub format: String,
     pub question: String,
+    pub options: Vec<String>,
 }
 
 pub(super) async fn card_to_rate(
@@ -142,19 +143,25 @@ pub(super) async fn card_to_rate(
 ) -> Result<Option<CardToRate>> {
     let mut read = database.begin_read().await?;
     let row = sqlx::query(
-        "SELECT c.due_at,c.review_count,c.format,c.question FROM study_cards c JOIN learning_memory m ON m.deck_id=c.deck_id WHERE c.id=? AND m.program_id=?",
+        "SELECT c.due_at,c.review_count,c.format,c.question,c.options_json FROM study_cards c JOIN learning_memory m ON m.deck_id=c.deck_id WHERE c.id=? AND m.program_id=?",
     )
     .bind(card_id)
     .bind(program_id)
     .fetch_optional(&mut *read)
     .await?;
     read.commit().await?;
-    Ok(row.map(|row| CardToRate {
-        due_at: row.get("due_at"),
-        review_count: row.get("review_count"),
-        format: row.get("format"),
-        question: row.get("question"),
-    }))
+    row.map(|row| {
+        Ok(CardToRate {
+            due_at: row.get("due_at"),
+            review_count: row.get("review_count"),
+            format: row.get("format"),
+            question: row.get("question"),
+            options: serde_json::from_str(row.get("options_json")).map_err(|error| {
+                AppError::InvalidState(format!("Invalid recall options: {error}"))
+            })?,
+        })
+    })
+    .transpose()
 }
 
 pub(super) async fn card_due_at(database: &Database, card_id: &str) -> Result<i64> {
@@ -183,4 +190,45 @@ pub(super) async fn source_text(
     .await?;
     read.commit().await?;
     Ok(row.map(|row| (row.get("title"), row.get("full_text"))))
+}
+
+/// Records that the tutor asked `card_id` at the review count it had.
+pub(super) async fn record_asking(
+    database: &Database,
+    conversation_id: &str,
+    card_id: &str,
+    review_count: i64,
+    at: i64,
+) -> Result<()> {
+    let mut tx = database.begin_write().await?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO tutor_card_askings(conversation_id, card_id, review_count, asked_at) VALUES(?,?,?,?)",
+    )
+    .bind(conversation_id)
+    .bind(card_id)
+    .bind(review_count)
+    .bind(at)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await.map_err(AppError::from)
+}
+
+/// Whether the tutor asked `card_id` in this chat since the card's last review.
+pub(super) async fn was_asked(
+    database: &Database,
+    conversation_id: &str,
+    card_id: &str,
+    review_count: i64,
+) -> Result<bool> {
+    let mut read = database.begin_read().await?;
+    let asked: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM tutor_card_askings WHERE conversation_id=? AND card_id=? AND review_count=?",
+    )
+    .bind(conversation_id)
+    .bind(card_id)
+    .bind(review_count)
+    .fetch_optional(&mut *read)
+    .await?;
+    read.commit().await?;
+    Ok(asked.is_some())
 }

@@ -109,7 +109,7 @@ impl Classes {
                             .filter(|statement| text.contains(**statement))
                             .map(|statement| json!({"sentenceId":sentence_id(passage, statement),"statement":statement}))
                             .collect();
-                        json!({"index":unit["index"],"claims":claims,"nonFactualReason":""})
+                        json!({"of":unit["id"],"claims":claims,"nonFactualReason":""})
                     })
                     .collect(),
             )
@@ -120,7 +120,7 @@ impl Classes {
             let Some(Value::Object(statements)) = fixture_task(prompt) else {
                 panic!("a JSON task");
             };
-            let answer: serde_json::Map<String, Value> = statements
+            let answer: Vec<Value> = statements
                 .iter()
                 .map(|(id, statement)| {
                     let statement = statement.as_str().unwrap_or_default();
@@ -129,10 +129,10 @@ impl Classes {
                         .iter()
                         .find(|(part, _)| statement.contains(part))
                         .map_or("sourced", |(_, class)| *class);
-                    (id.clone(), json!(class))
+                    json!({"of": id, "class": class})
                 })
                 .collect();
-            return Ok(Value::Object(answer).to_string());
+            return Ok(json!({"entries": answer}).to_string());
         }
         if let Some((_, statement)) = prompt.split_once("\n\nExplanatory statement: ") {
             self.asked.lock().unwrap().push("consistency");
@@ -167,9 +167,9 @@ impl Classes {
             self.rewrite,
         ) {
             self.asked.lock().unwrap().push("repair");
-            let data = fixture_task(prompt).unwrap();
-            let body = data["candidate"]["blocks"][0]["body"].as_str().unwrap();
-            return Ok(json!({"edits":[{"path":"/blocks/0/body","before":body,"after":body.replace(from, to)}]}).to_string());
+            return Ok(
+                json!({"edits":[{"path":"/blocks/0/body","before":from,"after":to}]}).to_string(),
+            );
         }
         self.inner.respond(prompt).await
     }
@@ -195,6 +195,12 @@ impl LLMPort for Classes {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -713,8 +719,7 @@ impl Reads {
                 json!({"part": format!("the {kind} part of the claim"), "kind": kind, "passage": passage})
             })
             .collect();
-        json!({"parts": parts, "verdict": "supported_with_common", "reason": "Each part was read."})
-            .to_string()
+        super::bridge_tests::parts_json(json!(parts), "Each part was read.")
     }
 }
 
@@ -750,6 +755,12 @@ impl LLMPort for Reads {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
     }
 }
 

@@ -121,6 +121,7 @@ fn test_message_dto_creation() {
         tokens: 5,
         created_at: "2024-01-01T00:00:00Z".to_string(),
         metadata: None,
+        reply: None,
     };
 
     assert_eq!(dto.role, "user");

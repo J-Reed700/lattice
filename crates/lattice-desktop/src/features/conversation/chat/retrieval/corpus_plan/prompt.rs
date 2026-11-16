@@ -7,15 +7,16 @@
 
 use std::collections::{HashMap, HashSet};
 
-use serde::Serialize;
 use tracing::warn;
 
 use lattice_core::application::contracts::search::CorpusDocument;
 use lattice_core::application::ports::LLMPort;
-use lattice_core::domain::value_objects::source_context::SourceContext;
+use lattice_core::application::services::model_contract::ask::Answered;
+use lattice_core::application::services::model_contract::shown::{Scope, Told};
 use lattice_core::shared::error::{AppError, Result};
 
-use super::{CorrectionRequest, CORRECTION_INSTRUCTION, PLANNER_SYSTEM, SUMMARY_CATALOG_CHARS};
+use super::answer::{catalog_json, Correction, PlanContract, PlanInput, Row};
+use super::{PLANNER_SYSTEM, SUMMARY_CATALOG_CHARS};
 
 /// What the planner may write back, enforced on the request and reserved out
 /// of the window. A full plan (three short queries, four handles, the JSON
@@ -67,23 +68,6 @@ fn sendable(llm: &dyn LLMPort, exact: bool) -> usize {
     }
 }
 
-/// One catalog row as the planner sees it. The document and its book are named
-/// by short handles ("d3", "g1") rather than UUIDs, which are long on
-/// tokenizers that split digits one by one.
-#[derive(Serialize)]
-struct CatalogRow<'a> {
-    id: String,
-    name: &'a str,
-    opening: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    chapter_number: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    source_context: Option<SourceContext>,
-    sections: &'a [String],
-    #[serde(skip_serializing_if = "Option::is_none")]
-    summary: Option<String>,
-}
-
 fn clipped(text: &str, chars: usize) -> String {
     text.chars()
         .take(chars)
@@ -92,37 +76,41 @@ fn clipped(text: &str, chars: usize) -> String {
         .to_owned()
 }
 
-fn row<'a>(
-    document: &'a CorpusDocument,
-    handle: String,
+/// `document` as one catalog row. Its book is named by a short handle ("g1")
+/// rather than a UUID, which is long on tokenizers that split digits one by one.
+fn row(
+    document: &CorpusDocument,
     group_handle: Option<String>,
     summaries: &HashMap<String, String>,
     whole: bool,
-) -> CatalogRow<'a> {
+) -> Row {
     let (opening_chars, sections_shown, summary_chars) = if whole {
         (usize::MAX, usize::MAX, usize::MAX)
     } else {
         (OPENING_CHARS, SECTIONS_SHOWN, SUMMARY_CATALOG_CHARS)
     };
-    CatalogRow {
-        id: handle,
-        name: &document.name,
-        opening: clipped(&document.opening, opening_chars),
-        chapter_number: document.chapter_number,
+    Row {
+        id: document.id.clone(),
+        name: Told(document.name.clone()),
+        opening: Told(clipped(&document.opening, opening_chars)),
+        chapter_number: document.chapter_number.map(Told),
         source_context: document.source_context.as_ref().map(|context| {
             let mut context = context.clone();
             if let Some(handle) = group_handle {
                 context.group.id = handle;
             }
-            context
+            Told(context)
         }),
-        sections: document
-            .sections
-            .get(..sections_shown.min(document.sections.len()))
-            .unwrap_or_default(),
+        sections: Told(
+            document
+                .sections
+                .get(..sections_shown.min(document.sections.len()))
+                .unwrap_or_default()
+                .to_vec(),
+        ),
         summary: summaries
             .get(&document.id)
-            .map(|summary| clipped(summary, summary_chars)),
+            .map(|summary| Told(clipped(summary, summary_chars))),
     }
 }
 
@@ -131,15 +119,14 @@ pub(super) struct PromptParts<'a> {
     pub question: &'a str,
     pub history: &'a str,
     pub catalog_total: usize,
-    pub correction: Option<&'a CorrectionRequest>,
+    pub correction: Option<&'a Correction>,
     pub summaries: &'a HashMap<String, String>,
 }
 
 /// A planner prompt ready to send.
 pub(super) struct PlannerPrompt {
-    pub user: String,
-    /// Handle shown to the planner, mapped back to the document's real ID.
-    pub handles: HashMap<String, String>,
+    /// The rows the planner is shown, in catalog order.
+    pub documents: Vec<Row>,
     pub shown: usize,
     /// System prompt plus user turn, as counted.
     pub tokens: usize,
@@ -175,14 +162,14 @@ pub(super) fn recent_history(llm: &dyn LLMPort, history: Option<&str>, target: u
 }
 
 /// Render the user turn with `shown` (in priority order) as its catalog. Rows
-/// appear in catalog order, which is reading order, with handles numbered in
-/// that order.
+/// appear in catalog order, which is reading order. Returns the turn as the
+/// planner is asked it and the rows it shows.
 fn render(
     parts: &PromptParts<'_>,
     shown: &[&CorpusDocument],
     catalog: &[CorpusDocument],
     whole: &HashSet<&str>,
-) -> Result<(String, HashMap<String, String>)> {
+) -> Result<(String, Vec<Row>)> {
     let position: HashMap<&str, usize> = catalog
         .iter()
         .enumerate()
@@ -190,12 +177,9 @@ fn render(
         .collect();
     let mut in_order = shown.to_vec();
     in_order.sort_by_key(|document| position.get(document.id.as_str()).copied());
-    let mut handles = HashMap::new();
     let mut group_handles: HashMap<&str, String> = HashMap::new();
     let mut rows = Vec::with_capacity(in_order.len());
-    for (index, document) in in_order.iter().enumerate() {
-        let handle = format!("d{}", index + 1);
-        handles.insert(handle.clone(), document.id.clone());
+    for document in &in_order {
         let group_handle = document.source_context.as_ref().map(|context| {
             let next = group_handles.len() + 1;
             group_handles
@@ -205,29 +189,22 @@ fn render(
         });
         rows.push(row(
             document,
-            handle,
             group_handle,
             parts.summaries,
             whole.contains(document.id.as_str()),
         ));
     }
-    let mut payload = serde_json::json!({
-        "request": parts.question, "recent_conversation": parts.history,
-        "catalog_total": parts.catalog_total, "catalog": rows,
-    });
-    if let (Some(correction), Some(payload)) = (parts.correction, payload.as_object_mut()) {
-        payload.insert(
-            "correction".into(),
-            serde_json::json!({
-                "instruction": CORRECTION_INSTRUCTION,
-                "queries_already_tried": correction.queries_already_tried,
-                "top_result_titles": correction.top_result_titles,
-                "more_titles_not_shown": correction.more_titles_not_shown,
-                "why_insufficient": correction.why_insufficient,
-            }),
-        );
-    }
-    Ok((serde_json::to_string(&payload)?, handles))
+    let input = PlanInput {
+        question: Told(parts.question.to_owned()),
+        history: Told(parts.history.to_owned()),
+        catalog_total: Told(parts.catalog_total),
+        correction: parts.correction.cloned().map(Told),
+        documents: rows,
+    };
+    let mut scope = Scope::for_question();
+    let mut showing = scope.request();
+    let says = PlanContract::says(&input, &mut showing)?;
+    Ok((says.task, input.documents))
 }
 
 /// Tokens in the system prompt and `user`, from the server's tokenizer where
@@ -260,8 +237,7 @@ fn row_cost(
     whole: bool,
 ) -> usize {
     let group = document.source_context.as_ref().map(|_| "g99".to_string());
-    let json = serde_json::to_string(&row(document, "d99".into(), group, summaries, whole))
-        .unwrap_or_default();
+    let json = catalog_json(&row(document, group, summaries, whole), "d99").unwrap_or_default();
     llm.count_tokens(&json) + 1
 }
 
@@ -341,13 +317,13 @@ pub(super) async fn build(
 
     let mut scale = 1.0_f64;
     let mut attempt = 0;
-    let (mut user, mut handles, shown, mut tokens, mut exact, spent, shown_rows) = loop {
+    let (mut documents, shown, mut tokens, mut exact, spent, shown_rows) = loop {
         let room = limit as f64 - base as f64 * scale;
         let (shown, spent) = take_rows(ranked, &costs, scale, room);
-        let (user, handles) = render(parts, &shown, catalog, &compact)?;
+        let (user, documents) = render(parts, &shown, catalog, &compact)?;
         let (tokens, exact) = count(llm, &user).await;
         if tokens <= limit || shown.is_empty() || attempt == RECOUNTS {
-            break (user, handles, shown.len(), tokens, exact, spent, shown);
+            break (documents, shown.len(), tokens, exact, spent, shown);
         }
         // The estimate read low on this text. Choose again at the measured
         // rate, and never at a lower rate than last time.
@@ -373,11 +349,10 @@ pub(super) async fn build(
             whole.insert(document.id.as_str());
         }
         if !whole.is_empty() {
-            let (whole_user, whole_handles) = render(parts, &shown_rows, catalog, &whole)?;
+            let (whole_user, whole_documents) = render(parts, &shown_rows, catalog, &whole)?;
             let (whole_tokens, whole_exact) = count(llm, &whole_user).await;
             if whole_tokens <= limit {
-                user = whole_user;
-                handles = whole_handles;
+                documents = whole_documents;
                 tokens = whole_tokens;
                 exact = whole_exact;
             }
@@ -387,12 +362,11 @@ pub(super) async fn build(
         if shown > 0 {
             // Recounting could not bring the rows under the window; a plan from
             // the request alone is still better than none.
-            let (user, handles) = render(parts, &[], catalog, &compact)?;
+            let (user, documents) = render(parts, &[], catalog, &compact)?;
             let (tokens, exact) = count(llm, &user).await;
             if tokens <= window(exact) {
                 return Ok(PlannerPrompt {
-                    user,
-                    handles,
+                    documents,
                     shown: 0,
                     tokens,
                     exact,
@@ -406,8 +380,7 @@ pub(super) async fn build(
         )));
     }
     Ok(PlannerPrompt {
-        user,
-        handles,
+        documents,
         shown,
         tokens,
         exact,

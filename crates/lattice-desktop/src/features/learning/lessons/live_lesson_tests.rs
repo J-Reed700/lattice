@@ -12,6 +12,7 @@ use crate::features::learning::review_findings::ReviewFinding;
 use crate::features::llm::llama_cpp::LlamaCppLlm;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::legacy;
 
 #[path = "live_claim_pairs_eval.rs"]
 mod claim_pairs;
@@ -175,7 +176,7 @@ async fn live_coverage_mapping_recovers_existing_claims_without_inventing_missin
             cases.push((serde_json::json!({"units":[{"index":0,"kind":"teaching",
                 "passages":[{"id":"target","field":"/body","text":text}],
                 "claims":[{"id":"selected","statement":selected},{"id":"unselected","statement":if complete { omitted } else { unrelated }}]}],
-                "mapping":{"target":{"claimIds":["selected"],"nonFactualReason":"","missingClaims":[]}}}), complete));
+                "judged":["target"]}), complete));
         }
     }
     // An optional recorded teaching passage reproduces a real mapping omission.
@@ -303,7 +304,7 @@ impl ObservedModel {
             self.directory.join(format!("call-{call}.json")),
             serde_json::to_vec_pretty(&serde_json::json!({
                 "model":self.inner.model_name(),
-                "input":request.input,"answer":response.text,"finishReason":response.finish_reason,
+                "input":request.input(),"answer":response.text,"finishReason":response.finish_reason,
                 "inputTokens":response.input_tokens,"outputTokens":response.output_tokens,
                 "firstTokenLogprobs":response.first_token_logprobs
             }))?,
@@ -376,6 +377,12 @@ impl LLMPort for ObservedModel {
     async fn is_ready(&self) -> Result<bool> {
         self.inner.is_ready().await
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 
 /// A backend that reports each answer's timing, as llama-server does: it
@@ -404,6 +411,12 @@ impl LLMPort for TimedBackend {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// The model measures its pace from its first answer, and the page that pace
@@ -416,13 +429,13 @@ async fn a_saved_call_names_the_model_that_answered() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let model = ObservedModel::observing(Arc::new(TimedBackend), directory.path().to_path_buf(), 0);
     model
-        .complete(&CompletionRequest {
+        .complete(&legacy::completion(legacy::Completion {
             input: vec![CompletionInput::Message {
                 role: "user".into(),
                 content: "Check this claim.".into(),
             }],
             ..Default::default()
-        })
+        }))
         .await?;
     let saved: serde_json::Value =
         serde_json::from_slice(&std::fs::read(directory.path().join("call-0.json"))?)?;
@@ -451,13 +464,13 @@ async fn an_observed_model_sizes_claim_pages_by_its_measured_pace() -> Result<()
     );
     assert_eq!(model.pace(), None, "nothing is measured before an answer");
     model
-        .complete(&CompletionRequest {
+        .complete(&legacy::completion(legacy::Completion {
             input: vec![CompletionInput::Message {
                 role: "user".into(),
                 content: "Check this claim.".into(),
             }],
             ..Default::default()
-        })
+        }))
         .await?;
     let pace = model
         .pace()
@@ -671,7 +684,6 @@ async fn live_teaching_review_evidence_scope() -> Result<()> {
         message("system"),
         crate::features::learning::teaching::LESSON_REVIEW_EVIDENCE_SCOPE
     );
-    let progress = crate::features::learning::outline_progress::OutlineProgress::default();
     let prompt: serde_json::Value = serde_json::from_str(&message("user"))?;
     let mut candidate = prompt["candidate"].clone();
     for block in candidate["blocks"].as_array_mut().unwrap() {
@@ -691,7 +703,7 @@ async fn live_teaching_review_evidence_scope() -> Result<()> {
         prompt,
         &candidate,
         crate::features::learning::teaching_review::Scope::default(),
-        Some(&progress),
+        crate::features::learning::teaching_review::Remit::Open,
     )
     .await?
     .reported;
@@ -719,7 +731,7 @@ async fn live_teaching_review_evidence_scope() -> Result<()> {
 
     // Evidence scope must not excuse a demonstrably wrong worked result.
     let wrong = serde_json::json!({"blocks":[{"kind":"explanation","title":"Adding whole numbers","body":"To add two whole numbers, combine their quantities. Worked example: start with two apples and add two more apples. The total is five apples, so 2 + 2 = 5. This is ordinary integer addition, with no rounding or special convention.","rubric":[]}],"questions":[]});
-    let issues = crate::features::learning::teaching_review::review(&model, &system, serde_json::json!({"task":"Review instructional quality","authoringContext":{"goal":"Learn ordinary whole-number addition","sources":[]}}), &wrong, crate::features::learning::teaching_review::Scope::default(), Some(&progress)).await?.reported;
+    let issues = crate::features::learning::teaching_review::review(&model, &system, serde_json::json!({"task":"Review instructional quality","authoringContext":{"goal":"Learn ordinary whole-number addition","sources":[]}}), &wrong, crate::features::learning::teaching_review::Scope::default(), crate::features::learning::teaching_review::Remit::Open).await?.reported;
     std::fs::write(
         directory.join("incorrect-example-issues.json"),
         serde_json::to_vec_pretty(&issues)?,

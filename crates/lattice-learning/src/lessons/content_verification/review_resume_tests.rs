@@ -1,7 +1,7 @@
 use super::*;
 use crate::lessons::course_generation_tests::ScriptedModel;
 use crate::question_review::{self, Outcome};
-use crate::teaching_review::Scope;
+use crate::teaching_review::{Remit, Scope};
 use crate::{lesson_drafts, teaching_review};
 
 fn outcome() -> Outcome<'static> {
@@ -12,11 +12,11 @@ fn outcome() -> Outcome<'static> {
 }
 
 fn solved(chosen: usize) -> String {
-    json!({"answers":[{"index":0,"reason":"The source identifies that option as correct.","correctIndices":[chosen],"answer":"","blankAnswers":[],"matches":[],"orderedValues":[]}]}).to_string()
+    crate::key_review::scripted::solved_static(1, 2, chosen).to_string()
 }
 
 fn judged() -> String {
-    json!({"checks":[{"id":"new-0","finding":"","hasDefect":false,"repeats":[]}]}).to_string()
+    crate::assessment::item_review::scripted::sound_static(1).to_string()
 }
 
 #[tokio::test]
@@ -27,9 +27,7 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
     let mut candidate = json!({"blocks":[{"body":"A teaching passage to inspect."}],"questions":[{
         "kind":"quiz","prompt":"Choose the documented answer.","options":["First","Second"],"correctIndex":0,"explanation":"The reference names it.","quote":"The reference identifies the second option."
     }]});
-    let review = json!({"issues":["The candidate's answer conflicts with the reference."],"blockChecks":[
-        {"sectionId":"section-0","passageId":"section-0-passage-0","finding":"The complete teaching passage was inspected for conflicts.","hasDefect":false}
-    ]}).to_string();
+    let review = json!({"issues":["The candidate's answer conflicts with the reference."],"sectionDefects":[]}).to_string();
     let model = ScriptedModel {
         outputs: Mutex::new(
             vec![
@@ -61,7 +59,7 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
                     json!({}),
                     &candidate,
                     Scope::default(),
-                    None,
+                    Remit::Open,
                 )
                 .await?
                 .reported
@@ -87,7 +85,7 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
             json!({}),
             &candidate,
             Scope::default(),
-            None,
+            Remit::Open,
         )
         .await?;
         assert_eq!(
@@ -105,7 +103,7 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
             json!({}),
             &candidate,
             Scope::default(),
-            None,
+            Remit::Open,
         )
         .await?;
         assert_eq!(model.prompts.lock().unwrap().len(), 7);
@@ -137,7 +135,7 @@ async fn incomplete_reviews_are_never_saved_as_completed() -> Result<()> {
                 json!({}),
                 &candidate,
                 Scope::default(),
-                None,
+                Remit::Open,
             )
             .await
             .is_err());

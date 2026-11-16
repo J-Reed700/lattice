@@ -429,3 +429,113 @@ impl ConversationServiceTrait for MockConversationService {
         Ok(())
     }
 }
+
+#[cfg(test)]
+const NO_BRANCHES: &str = "the mock truncates and reads a thread, nothing else";
+
+/// Truncation and the read after it, over the same threads the service holds.
+#[async_trait]
+#[cfg(test)]
+impl crate::features::conversation::chat::ports::ConversationBranches for MockConversationService {
+    async fn create_tangent(
+        &self,
+        _request: crate::features::conversation::tangent_dto::CreateTangentRequestDto,
+    ) -> Result<crate::features::conversation::tangent_dto::ConversationTangentDto> {
+        unreachable!("{NO_BRANCHES}")
+    }
+    async fn list_tangents(
+        &self,
+        _conversation_id: &str,
+    ) -> Result<Vec<crate::features::conversation::tangent_dto::ConversationTangentDto>> {
+        unreachable!("{NO_BRANCHES}")
+    }
+    async fn promote_tangent(&self, _conversation_id: &str) -> Result<()> {
+        unreachable!("{NO_BRANCHES}")
+    }
+    async fn create_continuation(
+        &self,
+        _conversation_id: &str,
+        _new_id: &str,
+        _new_title: &str,
+        _summary: &str,
+        _metadata: &str,
+    ) -> Result<()> {
+        unreachable!("{NO_BRANCHES}")
+    }
+    async fn find_by_id(
+        &self,
+        _id: &str,
+    ) -> Result<Option<lattice_core::domain::conversation::Conversation>> {
+        unreachable!("{NO_BRANCHES}")
+    }
+    async fn project_conversation(
+        &self,
+        _conversation: &lattice_core::domain::conversation::Conversation,
+    ) -> Result<crate::features::conversation::dto::ConversationDto> {
+        unreachable!("{NO_BRANCHES}")
+    }
+    async fn truncate_after(
+        &self,
+        conversation_id: &str,
+        message_id: &str,
+        inclusive: bool,
+    ) -> Result<u64> {
+        use lattice_core::domain::conversation::ConversationAggregate;
+
+        let mut conversations = self.conversations.write().unwrap();
+        let aggregate = conversations
+            .get_mut(conversation_id)
+            .ok_or_else(|| not_found(conversation_id))?;
+        let at = aggregate
+            .messages()
+            .iter()
+            .position(|message| message.id == message_id)
+            .ok_or_else(|| not_found(message_id))?;
+        let keep = if inclusive { at } else { at + 1 };
+        let deleted = aggregate.messages().len() - keep;
+        *aggregate = ConversationAggregate::from_persistence(
+            aggregate.conversation().clone(),
+            aggregate.messages().iter().take(keep).cloned().collect(),
+            aggregate.document_context().to_vec(),
+            aggregate.compaction().cloned(),
+        );
+        Ok(deleted as u64)
+    }
+    async fn get_messages(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Vec<lattice_core::domain::conversation::ConversationMessage>> {
+        self.conversations
+            .read()
+            .unwrap()
+            .get(conversation_id)
+            .map(|aggregate| aggregate.messages().to_vec())
+            .ok_or_else(|| not_found(conversation_id))
+    }
+    async fn fork(
+        &self,
+        _conversation_id: &str,
+        _up_to_message_id: Option<&str>,
+        _new_id: &str,
+        _new_title: &str,
+    ) -> Result<(String, u32)> {
+        unreachable!("{NO_BRANCHES}")
+    }
+    async fn take_last_user_turn(
+        &self,
+        _conversation_id: &str,
+    ) -> Result<Option<(String, i64, Option<String>)>> {
+        unreachable!("{NO_BRANCHES}")
+    }
+    async fn add_message_with_status(
+        &self,
+        _conversation_id: &str,
+        _role: lattice_core::domain::conversation::MessageRole,
+        _content: &str,
+        _tokens: i64,
+        _metadata: Option<&str>,
+        _status: &str,
+    ) -> Result<lattice_core::domain::conversation::ConversationMessage> {
+        unreachable!("{NO_BRANCHES}")
+    }
+}

@@ -99,6 +99,12 @@ impl LLMPort for Supporting {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.figures.enforces(schema)
+    }
 }
 
 /// The page the user links.

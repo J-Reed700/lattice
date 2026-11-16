@@ -13,6 +13,7 @@ mod binding;
 mod cards;
 mod course_turn;
 mod facts;
+mod names;
 mod notes;
 mod passages;
 pub(crate) mod prompt;
