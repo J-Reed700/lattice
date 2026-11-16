@@ -156,6 +156,132 @@ mod tests {
         assert_eq!(prefixes_for(""), None);
     }
 
+    fn trained(name: &str) -> Option<(&'static str, &'static str)> {
+        prefixes_for(name).map(|p| (p.query, p.document))
+    }
+
+    #[test]
+    fn embeddinggemma_gets_its_task_and_title_prompts() {
+        for name in [
+            "google/embeddinggemma-300m",
+            "ggml-org/embeddinggemma-300M-GGUF",
+            "unsloth/embeddinggemma-2-GGUF",
+            "embeddinggemma-300M-Q8_0.gguf",
+        ] {
+            assert_eq!(
+                trained(name),
+                Some(("task: search result | query: ", "title: none | text: ")),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn mxbai_embed_large_gets_a_query_instruction_and_a_bare_document() {
+        for name in [
+            "mixedbread-ai/mxbai-embed-large-v1",
+            "ChristianAzinn/mxbai-embed-large-v1-gguf",
+        ] {
+            assert_eq!(
+                trained(name),
+                Some((
+                    "Represent this sentence for searching relevant passages: ",
+                    ""
+                )),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn snowflake_arctic_embed_v1_and_v1_5_get_the_bge_style_query_instruction() {
+        for name in [
+            "Snowflake/snowflake-arctic-embed-m-v1.5",
+            "Snowflake/snowflake-arctic-embed-m",
+            "snowflake-arctic-embed-l-q8_0.gguf",
+        ] {
+            assert_eq!(
+                trained(name),
+                Some((
+                    "Represent this sentence for searching relevant passages: ",
+                    ""
+                )),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn snowflake_arctic_embed_v2_gets_a_plain_query_prefix_and_a_bare_document() {
+        for name in [
+            "Snowflake/snowflake-arctic-embed-l-v2.0",
+            "snowflake-arctic-embed-m-v2.0-q8_0.gguf",
+        ] {
+            assert_eq!(trained(name), Some(("query: ", "")), "{name}");
+        }
+    }
+
+    #[test]
+    fn jina_v5_retrieval_models_get_query_and_document_prefixes() {
+        for name in [
+            "jinaai/jina-embeddings-v5-text-small-retrieval-GGUF",
+            "jinaai/jina-embeddings-v5-text-nano-retrieval-GGUF",
+            "jinaai/jina-embeddings-v5-omni-small-retrieval-GGUF",
+        ] {
+            assert_eq!(trained(name), Some(("Query: ", "Document: ")), "{name}");
+        }
+    }
+
+    #[test]
+    fn jina_v5_models_for_other_tasks_prefix_documents_only() {
+        for name in [
+            "jinaai/jina-embeddings-v5-text-small-text-matching-GGUF",
+            "jinaai/jina-embeddings-v5-text-small-classification-GGUF",
+            "jinaai/jina-embeddings-v5-text-nano-clustering-GGUF",
+        ] {
+            assert_eq!(trained(name), Some(("", "Document: ")), "{name}");
+        }
+    }
+
+    #[test]
+    fn families_with_different_prompts_never_share_an_id() {
+        let names = [
+            "google/embeddinggemma-300m",
+            "mixedbread-ai/mxbai-embed-large-v1",
+            "Snowflake/snowflake-arctic-embed-m-v1.5",
+            "Snowflake/snowflake-arctic-embed-l-v2.0",
+            "jinaai/jina-embeddings-v5-text-small-retrieval-GGUF",
+            "jinaai/jina-embeddings-v5-text-small-text-matching-GGUF",
+            "Qwen/Qwen3-Embedding-0.6B",
+            "intfloat/e5-base-v2",
+            "nomic-ai/nomic-embed-text-v1.5",
+            "BAAI/bge-base-en-v1.5",
+            "BAAI/bge-m3",
+        ];
+        let found: Vec<(&str, &EmbeddingPrefixes)> = names
+            .iter()
+            .map(|n| {
+                (
+                    *n,
+                    prefixes_for(n).unwrap_or_else(|| panic!("{n} has no entry")),
+                )
+            })
+            .collect();
+        for (a_name, a) in &found {
+            if !a.document.is_empty() {
+                assert_ne!(
+                    a.id, "none",
+                    "{a_name} prefixes documents but is named none"
+                );
+            }
+            for (b_name, b) in &found {
+                if (a.query, a.document) != (b.query, b.document) {
+                    assert_ne!(a.id, b.id, "{a_name} and {b_name} share an id");
+                }
+            }
+        }
+    }
+
     #[test]
     fn a_prefix_is_prepended_verbatim_and_an_empty_one_borrows() {
         assert_eq!(

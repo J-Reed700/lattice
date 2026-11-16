@@ -104,10 +104,9 @@ mod tests {
         Arc::new(DownloadedModelRepository::new(Database::new(pool)))
     }
 
-    /// An embedding GGUF and its tokenizer, as a download leaves them.
+    /// An embedding GGUF, as a download leaves it.
     fn embedding_model_dir() -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().expect("create model directory");
-        std::fs::write(dir.path().join("tokenizer.json"), b"{}").expect("write tokenizer");
         let gguf = dir.path().join("model-f16.gguf");
         std::fs::write(&gguf, b"weights").expect("write weights");
         (dir, gguf)
@@ -228,26 +227,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_gguf_without_its_tokenizer_cannot_be_activated() {
+    async fn a_gguf_without_a_tokenizer_json_is_activated() {
         let repo = setup_repo().await;
         let (dir, gguf) = embedding_model_dir();
-        std::fs::remove_file(dir.path().join("tokenizer.json")).expect("remove tokenizer");
+        assert!(!dir.path().join("tokenizer.json").exists());
         save_gguf_model(&repo, "local-embed", &gguf).await;
 
-        let err = SetActiveEmbeddingModelUseCase::new(repo.clone(), repo.clone())
+        SetActiveEmbeddingModelUseCase::new(repo.clone(), repo.clone())
             .execute("local-embed")
             .await
-            .expect_err("a GGUF without tokenizer.json is refused");
+            .expect("a GGUF alone is activated");
 
-        assert!(
-            matches!(&err, AppError::InvalidInput(message) if message.contains("tokenizer.json")),
-            "{err:?}"
-        );
-        assert!(repo
+        let active = repo
             .get_active_embedding_model()
             .await
             .expect("read active model")
-            .is_none());
+            .expect("active embedding model");
+        assert_eq!(active.model_id(), "local-embed");
     }
 
     #[tokio::test]

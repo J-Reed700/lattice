@@ -15,7 +15,7 @@ use lattice_core::shared::types::ValidatedFilePath;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 #[tokio::test]
-#[ignore = "requires LATTICE_EMBED_GGUF (tokenizer.json beside it) and a runnable llama-server"]
+#[ignore = "requires LATTICE_EMBED_GGUF and a runnable llama-server"]
 async fn real_model_import_search_and_disk_restart_preserve_results() {
     let gguf = std::env::var_os("LATTICE_EMBED_GGUF")
         .expect("set LATTICE_EMBED_GGUF to an embedding GGUF");

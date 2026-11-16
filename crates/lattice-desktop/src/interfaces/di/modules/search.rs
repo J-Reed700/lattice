@@ -357,23 +357,6 @@ mod index_identity_tests {
         }
     }
 
-    fn tokenizer() -> tokenizers::Tokenizer {
-        use tokenizers::models::wordlevel::WordLevel;
-        use tokenizers::pre_tokenizers::whitespace::Whitespace;
-        let vocab = [("[UNK]".to_owned(), 0), ("word".to_owned(), 1)]
-            .into_iter()
-            .collect();
-        let mut tokenizer = tokenizers::Tokenizer::new(
-            WordLevel::builder()
-                .vocab(vocab)
-                .unk_token("[UNK]".into())
-                .build()
-                .unwrap(),
-        );
-        tokenizer.with_pre_tokenizer(Whitespace);
-        tokenizer
-    }
-
     fn model(
         model_id: &str,
         location: ModelLocation,
@@ -398,13 +381,10 @@ mod index_identity_tests {
         })
     }
 
-    /// A GGUF in `dir`, with `tokenizer.json` beside it when `tokenizer`.
-    fn gguf(dir: &Path, tokenizer_beside: bool) -> ModelLocation {
+    /// A GGUF alone in `dir`, as a download leaves it.
+    fn gguf(dir: &Path) -> ModelLocation {
         let path = dir.join("embedder.gguf");
         std::fs::write(&path, b"GGUF").unwrap();
-        if tokenizer_beside {
-            tokenizer().save(dir.join("tokenizer.json"), false).unwrap();
-        }
         ModelLocation::LocalFile { path }
     }
 
@@ -415,7 +395,7 @@ mod index_identity_tests {
             ("intfloat/e5-base-v2", "bert", true),
         ] {
             let dir = tempfile::tempdir().unwrap();
-            let active = model(model_id, gguf(dir.path(), true), Some(recorded()));
+            let active = model(model_id, gguf(dir.path()), Some(recorded()));
             let starter = FakeStarter::pooled(architecture);
             let facts = active_facts(&active, starter.as_ref()).await.unwrap();
             let loaded = LlamaEmbeddingService::start(starter, &active, recorded())
@@ -429,6 +409,18 @@ mod index_identity_tests {
     }
 
     #[tokio::test]
+    async fn a_gguf_without_a_tokenizer_json_still_has_its_facts() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!dir.path().join("tokenizer.json").exists());
+        let active = model("e", gguf(dir.path()), Some(recorded()));
+        let starter = FakeStarter::pooled("qwen3");
+
+        let facts = active_facts(&active, starter.as_ref()).await;
+
+        assert_eq!(facts.expect("a GGUF alone is enough").dimension, 4);
+    }
+
+    #[tokio::test]
     async fn no_active_model_is_unconfigured() {
         let space = vector_space(None, None, &FakeStarter::pooled("qwen3"));
         assert_eq!(space.identity, None);
@@ -438,7 +430,6 @@ mod index_identity_tests {
     #[tokio::test]
     async fn a_model_that_cannot_load_is_unconfigured() {
         let dir = tempfile::tempdir().unwrap();
-        let bare = tempfile::tempdir().unwrap();
         let qwen = FakeStarter::pooled("qwen3");
         let unpooled: Arc<dyn EmbeddingServerStarter> = Arc::new(FakeStarter {
             architecture: "qwen3",
@@ -446,14 +437,9 @@ mod index_identity_tests {
         });
         for (active, starter, why) in [
             (
-                model("e", gguf(dir.path(), true), None),
+                model("e", gguf(dir.path()), None),
                 &qwen,
                 "no recorded identity",
-            ),
-            (
-                model("e", gguf(bare.path(), false), Some(recorded())),
-                &qwen,
-                "no tokenizer.json beside the GGUF",
             ),
             (
                 model(
@@ -472,7 +458,7 @@ mod index_identity_tests {
                 "a remote model",
             ),
             (
-                model("e", gguf(dir.path(), true), Some(recorded())),
+                model("e", gguf(dir.path()), Some(recorded())),
                 &unpooled,
                 "a header that does not pool",
             ),

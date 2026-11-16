@@ -16,7 +16,7 @@
 //! ```
 //!
 //! `passages.json` is an object of named sets, each an array of passage
-//! texts as an index stores them. `tokenizer.json` must sit beside the GGUF.
+//! texts as an index stores them.
 
 use super::parity_tests::{live_facts, LiveServer};
 use super::*;
@@ -126,14 +126,13 @@ async fn embedding_throughput_on_the_llama_server() {
 
     for slots in SLOT_SWEEP {
         let facts = live_facts(&gguf).await;
-        let tokens = tokenizer_count(&gguf, &facts).await.unwrap();
         let window = facts.window_tokens();
         let live = LiveServer::start(&gguf, slots, window).await;
         let prefixes = resolve_prefixes("qwen3-embedding-0.6b", &facts.architecture);
-        let mut service = LlamaEmbeddingService::connect(Arc::clone(&live.server), facts, prefixes)
-            .expect("loopback client");
-        service.tokens = Some(tokens);
-        let service = Arc::new(service);
+        let service = Arc::new(
+            LlamaEmbeddingService::connect(Arc::clone(&live.server), facts, prefixes)
+                .expect("loopback client"),
+        );
         println!(
             "\n-np {slots}, window {window} tokens a slot, {BATCH_SIZE} passages per index call"
         );

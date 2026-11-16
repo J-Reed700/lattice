@@ -31,3 +31,47 @@ pub(crate) fn resolve_prefixes(model_ref: &str, architecture: &str) -> &'static 
         &NONE
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pair(name: &str, architecture: &str) -> (&'static str, &'static str) {
+        let p = resolve_prefixes(name, architecture);
+        (p.query, p.document)
+    }
+
+    #[test]
+    fn an_embeddinggemma_architecture_gets_its_prompts_when_the_name_says_nothing() {
+        for architecture in ["gemma-embedding", "gemma-embedding2"] {
+            assert_eq!(
+                pair("my-embedder.gguf", architecture),
+                ("task: search result | query: ", "title: none | text: "),
+                "{architecture}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_name_that_claims_a_family_beats_a_qwen3_architecture() {
+        assert_eq!(
+            pair(
+                "jinaai/jina-embeddings-v5-text-small-retrieval-GGUF",
+                "qwen3"
+            ),
+            ("Query: ", "Document: ")
+        );
+    }
+
+    #[test]
+    fn an_unnamed_qwen3_architecture_still_gets_the_qwen3_instruction() {
+        let (query, document) = pair("my-embedder.gguf", "qwen3");
+        assert!(query.ends_with("\nQuery:"), "{query}");
+        assert_eq!(document, "");
+    }
+
+    #[test]
+    fn an_unnamed_unknown_architecture_gets_no_prefix() {
+        assert_eq!(pair("my-embedder.gguf", "bert"), ("", ""));
+    }
+}
