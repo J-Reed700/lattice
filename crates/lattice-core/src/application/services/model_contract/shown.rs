@@ -241,14 +241,19 @@ impl Minted {
 
     /// The ordinal `reference` has, minting one when it has none. The flag says whether it was minted.
     fn ordinal(&mut self, reference: serde_json::Value) -> (u32, bool) {
-        let key = reference.to_string();
-        if let Some(ordinal) = self.by_reference.get(&key) {
-            return (*ordinal, false);
+        if let Some(ordinal) = self.ordinal_of(&reference) {
+            return (ordinal, false);
         }
+        let key = key(&reference);
         self.references.push(reference);
         let ordinal = u32::try_from(self.references.len()).unwrap_or(u32::MAX);
         self.by_reference.insert(key, ordinal);
         (ordinal, true)
+    }
+
+    /// The ordinal `reference` was given, if it was given one.
+    fn ordinal_of(&self, reference: &serde_json::Value) -> Option<u32> {
+        self.by_reference.get(&key(reference)).copied()
     }
 
     fn restore(&mut self, ordinal: u32, reference: serde_json::Value) -> Result<()> {
@@ -257,7 +262,7 @@ impl Minted {
                 "A stored scope's names are not in the order they were given.".into(),
             ));
         }
-        self.by_reference.insert(reference.to_string(), ordinal);
+        self.by_reference.insert(key(&reference), ordinal);
         self.references.push(reference);
         Ok(())
     }
@@ -266,6 +271,11 @@ impl Minted {
         let index = usize::try_from(ordinal.checked_sub(1)?).ok()?;
         self.references.get(index)
     }
+}
+
+/// What a reference is known by: one reference, one name.
+fn key(reference: &serde_json::Value) -> String {
+    reference.to_string()
 }
 
 type Kinds = BTreeMap<String, Minted>;
@@ -419,6 +429,20 @@ fn picked<K: Kind>(
     })
 }
 
+/// The things `ordinals` names among what `minted` holds, in the order of `ordinals`.
+fn picked_all<K: Kind>(ordinals: &[u32], minted: &Minted, of: Option<&Name>) -> Vec<Picked<K>> {
+    ordinals
+        .iter()
+        .filter_map(|&ordinal| {
+            let name = Name {
+                prefix: K::PREFIX.to_owned(),
+                ordinal,
+            };
+            picked(name, of.cloned(), minted.reference(ordinal)?)
+        })
+        .collect()
+}
+
 /// What one request shows. A structured answer is resolved against this and
 /// nothing else: a handle minted for an earlier request of the question, for
 /// an item since settled, names nothing here.
@@ -508,23 +532,37 @@ impl Showing<'_> {
 
     /// Every thing of kind `K` this request shows, in the order shown.
     pub(super) fn shown<K: Kind>(&self) -> Vec<Picked<K>> {
-        self.top
-            .get(K::PREFIX)
-            .into_iter()
-            .flatten()
-            .filter_map(|ordinal| self.resolve(&format!("{}{ordinal}", K::PREFIX)))
-            .collect()
+        match (self.top.get(K::PREFIX), self.scope.top.get(K::PREFIX)) {
+            (Some(ordinals), Some(minted)) => picked_all(ordinals, minted, None),
+            _ => Vec::new(),
+        }
     }
 
     /// Every own thing of kind `C` this request shows under `of`, in the order shown.
     pub(super) fn shown_under<C: Kind>(&self, of: &Name) -> Vec<Picked<C>> {
-        self.under
+        let ordinals = self.under.get(of).and_then(|kinds| kinds.get(C::PREFIX));
+        let minted = self
+            .scope
+            .under
             .get(of)
-            .and_then(|kinds| kinds.get(C::PREFIX))
-            .into_iter()
-            .flatten()
-            .filter_map(|ordinal| self.resolve_under(of, &format!("{}{ordinal}", C::PREFIX)))
-            .collect()
+            .and_then(|kinds| kinds.get(C::PREFIX));
+        match (ordinals, minted) {
+            (Some(ordinals), Some(minted)) => picked_all(ordinals, minted, Some(of)),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The handle this request shows `thing` under; `None` when it does not show it.
+    pub(super) fn handle<K: Kind>(&self, thing: &K) -> Option<Handle<K>> {
+        let reference = serde_json::to_value(thing.reference()).ok()?;
+        let ordinal = self.scope.top.get(K::PREFIX)?.ordinal_of(&reference)?;
+        self.top.get(K::PREFIX)?.contains(&ordinal).then(|| {
+            let name = Name {
+                prefix: K::PREFIX.to_owned(),
+                ordinal,
+            };
+            Handle::new(name, None)
+        })
     }
 
     /// The written handles a pointer to a thing of the kind with `prefix`
