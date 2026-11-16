@@ -1,10 +1,10 @@
 //! Embeddings served by the bundled llama-server.
 //!
-//! [`LlamaEmbeddingService`] is the app's `EmbeddingPort`: it splits text with
-//! the model's own tokenizer, prefixes it as the model's family was trained,
-//! and sends each batch as one `/v1/embeddings` request. It knows the server
-//! only as a [`RunningLlamaServer`]; starting one is the composition
-//! root's job, through an [`EmbeddingServerStarter`].
+//! [`LlamaEmbeddingService`] is the app's `EmbeddingPort`: it splits text by
+//! the counts of the server that embeds it (`/tokenize`), prefixes it as the
+//! model's family was trained, and sends each batch as one `/v1/embeddings`
+//! request. It knows the server only as a [`RunningLlamaServer`]; starting
+//! one is the composition root's job, through an [`EmbeddingServerStarter`].
 
 mod client;
 mod facts;
@@ -23,9 +23,9 @@ use lattice_core::domain::value_objects::ArtifactIdentity;
 use lattice_core::shared::error::{AppError, Result};
 use lru::LruCache;
 
-use crate::features::embedding::input_policy::{InputPolicy, TokenCounter, TokenizerCount};
+use crate::features::embedding::input_policy::{InputPolicy, TokenCounter};
 use crate::features::embedding::prefixes::EmbeddingPrefixes;
-use crate::infrastructure::llama_server::RunningLlamaServer;
+use crate::infrastructure::llama_server::{RunningLlamaServer, ServerTokenizer};
 use crate::infrastructure::passage_index::build::BATCH_SIZE;
 
 pub use facts::{EmbeddingHeader, EmbeddingModelFacts, Pooling};
@@ -51,15 +51,27 @@ struct Restart {
     gate: tokio::sync::Mutex<()>,
 }
 
+/// The server the service talks to now, and the tokenizer that counts on
+/// it. A start or restart replaces both at once.
+struct Live {
+    process: Arc<RunningLlamaServer>,
+    tokenizer: ServerTokenizer,
+}
+
+impl Live {
+    fn new(http: &reqwest::Client, process: Arc<RunningLlamaServer>) -> Arc<Self> {
+        let tokenizer = ServerTokenizer::whole_inputs(http.clone(), &process);
+        Arc::new(Self { process, tokenizer })
+    }
+}
+
 /// An embedding model on a llama-server.
 pub struct LlamaEmbeddingService {
-    server: parking_lot::Mutex<Arc<RunningLlamaServer>>,
+    live: parking_lot::Mutex<Arc<Live>>,
     restart: Option<Restart>,
     http: reqwest::Client,
     facts: EmbeddingModelFacts,
     policy: InputPolicy,
-    /// What the splitter counts with: the `tokenizer.json` beside the GGUF, which `start_gguf` loads.
-    tokens: Option<TokenizerCount>,
     prefixes: &'static EmbeddingPrefixes,
     /// One permit per server slot: a batch takes one for its request.
     slots: tokio::sync::Semaphore,
@@ -81,12 +93,11 @@ impl LlamaEmbeddingService {
             })?;
         let policy = InputPolicy::new(facts.window_tokens() as usize)?;
         Ok(Self {
-            server: parking_lot::Mutex::new(server),
+            live: parking_lot::Mutex::new(Live::new(&http, server)),
             restart: None,
             http,
             facts,
             policy,
-            tokens: None,
             prefixes,
             slots: tokio::sync::Semaphore::new(SERVER_SLOTS as usize),
             query_cache: parking_lot::Mutex::new(LruCache::new(
@@ -96,8 +107,7 @@ impl LlamaEmbeddingService {
     }
 
     /// Read `model`'s header, start its server through `starter`, and
-    /// connect. `identity` is the SHA-256 of its GGUF; `tokenizer.json`
-    /// beside the GGUF is what the splitter counts with.
+    /// connect. `identity` is the SHA-256 of its GGUF.
     pub async fn start(
         starter: Arc<dyn EmbeddingServerStarter>,
         model: &DownloadedModel,
@@ -137,7 +147,6 @@ impl LlamaEmbeddingService {
         })?;
         let file_type = header.file_type;
         let facts = EmbeddingModelFacts::from_header(header, identity, name)?;
-        let tokens = tokenizer_count(gguf, &facts).await?;
         let prefixes = resolve_prefixes(model_ref, &facts.architecture);
         let launch = EmbeddingLaunch::new(gguf.to_path_buf(), &facts, starter.accelerated().await);
         tracing::info!(
@@ -155,7 +164,6 @@ impl LlamaEmbeddingService {
         let server = starter.start(&launch).await?;
         let mut service = Self::connect(server, facts, prefixes)?;
         service.slots = tokio::sync::Semaphore::new(launch.slots as usize);
-        service.tokens = Some(tokens);
         service.restart = Some(Restart {
             starter,
             launch,
@@ -171,16 +179,16 @@ impl LlamaEmbeddingService {
 
     /// Requests in flight to its server now.
     pub fn in_flight(&self) -> u32 {
-        self.current().in_flight()
+        self.current().process.in_flight()
     }
 
     /// GPU memory its server holds; `None` on the CPU.
     pub fn gpu_bytes(&self) -> Option<u64> {
-        self.current().gpu_bytes()
+        self.current().process.gpu_bytes()
     }
 
-    fn current(&self) -> Arc<RunningLlamaServer> {
-        Arc::clone(&self.server.lock())
+    fn current(&self) -> Arc<Live> {
+        Arc::clone(&self.live.lock())
     }
 
     /// Vectors for `inputs`, already prefixed, in input order. A server whose
@@ -196,8 +204,8 @@ impl LlamaEmbeddingService {
             .await
             .map_err(|e| AppError::InternalError(format!("Embedding slots closed: {e}")))?;
         let embedded = self
-            .on_server(work, |server| async move {
-                client::embed(&self.http, &server, inputs).await
+            .on_server(work, |live| async move {
+                client::embed(&self.http, &live.process, inputs).await
             })
             .await?;
         self.checked(embedded)
@@ -208,22 +216,22 @@ impl LlamaEmbeddingService {
     /// once more; any other failure, and any answer, is final.
     async fn on_server<T, F, Fut>(&self, work: EmbeddingWork, call: F) -> Result<T>
     where
-        F: Fn(Arc<RunningLlamaServer>) -> Fut,
+        F: Fn(Arc<Live>) -> Fut,
         Fut: std::future::Future<Output = Result<T>>,
     {
-        let server = self.current();
-        let error = match call(Arc::clone(&server)).await {
+        let live = self.current();
+        let error = match call(Arc::clone(&live)).await {
             Ok(answer) => return Ok(answer),
             Err(error) => error,
         };
         let restart = match &self.restart {
-            Some(restart) if !server.alive() => restart,
+            Some(restart) if !live.process.alive() => restart,
             _ => return Err(error),
         };
-        tracing::warn!(endpoint = server.endpoint(), %error, "embedding.server.died; starting it again");
-        let server = self.restarted(restart, &server, work).await?;
-        match call(Arc::clone(&server)).await {
-            Err(error) if !server.alive() => Err(AppError::EmbeddingFailed {
+        tracing::warn!(endpoint = live.process.endpoint(), %error, "embedding.server.died; starting it again");
+        let live = self.restarted(restart, &live, work).await?;
+        match call(Arc::clone(&live)).await {
+            Err(error) if !live.process.alive() => Err(AppError::EmbeddingFailed {
                 reason: format!(
                     "The embedding server was started again after its process died, and failed again: {error}"
                 ),
@@ -238,20 +246,21 @@ impl LlamaEmbeddingService {
     async fn restarted(
         &self,
         restart: &Restart,
-        dead: &Arc<RunningLlamaServer>,
+        dead: &Arc<Live>,
         work: EmbeddingWork,
-    ) -> Result<Arc<RunningLlamaServer>> {
+    ) -> Result<Arc<Live>> {
         let _gate = restart.gate.lock().await;
         let current = self.current();
-        if !Arc::ptr_eq(&current, dead) && current.alive() {
+        if !Arc::ptr_eq(&current, dead) && current.process.alive() {
             return Ok(current);
         }
         let server = restart
             .starter
             .start(&restart.launch.for_work(work))
             .await?;
-        *self.server.lock() = Arc::clone(&server);
-        Ok(server)
+        let live = Live::new(&self.http, server);
+        *self.live.lock() = Arc::clone(&live);
+        Ok(live)
     }
 
     /// Bring a server that was kept off the GPU onto it for indexing, when the
@@ -260,8 +269,8 @@ impl LlamaEmbeddingService {
     /// bring back.
     async fn move_to_gpu(&self, restart: &Restart) {
         let off_the_gpu = || {
-            let server = self.current();
-            server.alive() && server.gpu_bytes().is_none()
+            let live = self.current();
+            live.process.alive() && live.process.gpu_bytes().is_none()
         };
         if !restart.launch.gpu || !off_the_gpu() {
             return;
@@ -272,7 +281,7 @@ impl LlamaEmbeddingService {
         }
         let launch = restart.launch.for_work(EmbeddingWork::Indexing);
         match restart.starter.start(&launch).await {
-            Ok(server) => *self.server.lock() = server,
+            Ok(server) => *self.live.lock() = Live::new(&self.http, server),
             Err(error) => tracing::warn!(%error, "embedding.server.move_to_gpu_failed"),
         }
     }
@@ -310,27 +319,6 @@ impl LlamaEmbeddingService {
     }
 }
 
-/// The counter for the model at `gguf`: the `tokenizer.json` beside it.
-async fn tokenizer_count(gguf: &Path, facts: &EmbeddingModelFacts) -> Result<TokenizerCount> {
-    let path = gguf
-        .parent()
-        .map(|dir| dir.join("tokenizer.json"))
-        .filter(|path| path.is_file())
-        .ok_or_else(|| {
-            AppError::ModelLoadFailed(format!(
-                "{} has no tokenizer.json beside its GGUF ({}), so its passages cannot be split",
-                facts.display_name,
-                gguf.display()
-            ))
-        })?;
-    tokio::task::spawn_blocking(move || {
-        let tokenizer = crate::infrastructure::ml::tokenizer::load_tokenizer(&path)?;
-        TokenizerCount::new(tokenizer)
-    })
-    .await
-    .map_err(|e| AppError::InternalError(format!("Tokenizer load task failed: {e}")))?
-}
-
 fn refuse_empty(text: &str) -> Result<()> {
     if text.is_empty() {
         return Err(AppError::InvalidInput("Cannot embed empty text".into()));
@@ -341,13 +329,11 @@ fn refuse_empty(text: &str) -> Result<()> {
 #[async_trait]
 impl TokenCounter for LlamaEmbeddingService {
     async fn count(&self, text: &str) -> Result<usize> {
-        match &self.tokens {
-            Some(tokens) => tokens.count(text).await,
-            None => Err(AppError::ModelLoadFailed(format!(
-                "{} has no tokenizer to count with",
-                self.facts.display_name
-            ))),
-        }
+        self.on_server(EmbeddingWork::Light, |live| async move {
+            let _in_flight = live.process.request();
+            live.tokenizer.count(text).await
+        })
+        .await
     }
 }
 
@@ -431,7 +417,7 @@ impl EmbeddingPort for LlamaEmbeddingService {
     }
 
     async fn is_ready(&self) -> Result<bool> {
-        Ok(self.current().alive())
+        Ok(self.current().process.alive())
     }
 }
 

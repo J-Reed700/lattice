@@ -21,7 +21,7 @@ pub struct Recipe {
     pub corpus: String,
     /// A desktop-path question set (`items`) or a dataset (`queries`).
     pub questions: String,
-    /// The embedding model's GGUF, with its `tokenizer.json` beside it.
+    /// The embedding model's GGUF.
     pub embedding_gguf: String,
     pub embedding_model_id: String,
     /// The reranker's GGUF, served the way the app serves it. Without one the

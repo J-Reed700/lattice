@@ -4,7 +4,7 @@
 
 ## Problem
 
-The embedding splitter counts tokens with a Hugging Face `tokenizer.json` that has to sit beside the GGUF. Few GGUF repos ship one. Of the 720 Hub repos with a GGUF embedding model in an architecture the bundled llama-server runs, 44 ship one. So the conversions people actually search for can't index in Lattice:
+The embedding splitter counts tokens with a Hugging Face `tokenizer.json` that has to sit beside the GGUF. Few GGUF repos ship one: of the 720 Hub repos with a GGUF embedding model in an architecture the bundled llama-server runs, 44 ship one. So the conversions people actually search for can't index in Lattice:
 
 - CompendiumLabs bge
 - nomic-ai's GGUFs
@@ -12,7 +12,7 @@ The embedding splitter counts tokens with a Hugging Face `tokenizer.json` that h
 - ggml-org embeddinggemma
 - Qwen3-Embedding-4B and -8B, the upgrade path from the default
 
-Since #572 the catalog hides them, because they would download and then fail to activate.
+#572 hides them in the catalog, because they would download and then fail to activate.
 
 The second tokenizer is also a second source of truth. When the two disagree, the server is the one that's right, because its count is what gets embedded. On NFD text the `tokenizer.json` NFC-normalises first: a passage it counts as 133 tokens is embedded as 230. So the splitter can hand the server passages longer than it thinks.
 
@@ -31,9 +31,9 @@ The splitter counts with the GGUF's own tokenizer, through the llama-server that
 
 ## Evidence
 
-All measured with the bundled llama-server 0.7.0 (build 11669) and the curated Qwen3-Embedding-0.6B f16. The corpus was the repo's docs (129 texts, 3.64M characters, 2,359 chunks) plus edge cases: CJK, Arabic and Hindi, emoji, NFD, and a literal special-token string.
+All measured with the bundled llama-server 0.7.0 (build 11669) and the curated Qwen3-Embedding-0.6B f16. The corpus was 129 texts (3.64M characters, 2,359 chunks): the repo's docs, plus edge cases in CJK, Arabic and Hindi, emoji, NFD, and a literal special-token string.
 
-- **The count is the count that gets embedded.** For every sample, `/tokenize` equals the `usage.prompt_tokens` that `/v1/embeddings` reported for the same input.
+- **The count is the count that gets embedded.** For every one of the eight samples checked (three docs and each edge case), `/tokenize` equals the `usage.prompt_tokens` that `/v1/embeddings` reported for the same input. `tokenizer.json` matches on seven: on NFD text it counts 133 where the server embeds 230.
 - **Same splits.** Splitting with server counts gives the same chunks as `tokenizer.json` for 128 of the 129 texts. The odd one out is the NFD text: 7 chunks instead of 4, because the server counts the whole text as 2,963 tokens where `tokenizer.json` says 1,684. The server's split is the correct one.
 - **Speed.**
   - Mean `/tokenize` time is 1.11 ms. At about 14 counts per chunk, splitting costs about 16 ms a chunk, against about 11 ms with `tokenizer.json`.

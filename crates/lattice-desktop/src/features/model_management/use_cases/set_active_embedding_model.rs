@@ -6,7 +6,6 @@
 
 use crate::infrastructure::ml::artifact_identity;
 use lattice_core::application::ports::active_models::ActiveModels;
-use lattice_core::domain::models::checkpoint::has_tokenizer;
 use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::domain::value_objects::ArtifactIdentity;
 use lattice_core::shared::error::{AppError, Result};
@@ -57,18 +56,6 @@ impl SetActiveEmbeddingModelUseCase {
                 )));
             }
             model.validate_for_operation(false)?;
-            // Passages are cut with the model's own tokenizer, which a GGUF
-            // repository does not always ship beside the weights.
-            if !model
-                .location()
-                .enclosing_dir()
-                .is_some_and(|dir| has_tokenizer(&dir))
-            {
-                return Err(AppError::InvalidInput(format!(
-                    "Model '{}' has no tokenizer.json beside it, so Lattice cannot cut documents into passages for it. Download an embedding model whose repository ships tokenizer.json.",
-                    model.model_name()
-                )));
-            }
         }
 
         artifact_identity::establish(&model).await

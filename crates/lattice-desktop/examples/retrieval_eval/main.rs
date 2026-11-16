@@ -12,9 +12,10 @@
 //! ```
 //!
 //! The embedding model runs as the app runs it: a llama-server this process
-//! starts for `LATTICE_EMBED_GGUF` (with its `tokenizer.json` beside it), with
-//! the flags the app's sidecar gets. `LATTICE_LLAMA_SERVER` names the binary;
-//! without it, the bundled build in `binaries/` is used.
+//! starts for `LATTICE_EMBED_GGUF`, with the flags the app's sidecar gets.
+//! Embedding mode needs only the GGUF; production mode's `SemanticChunker`
+//! still reads the `tokenizer.json` beside it. `LATTICE_LLAMA_SERVER` names
+//! the binary; without it, the bundled build in `binaries/` is used.
 //!
 //! `RERANKER` is a reranker GGUF, served the same way as the app serves it
 //! (`llama-server --reranking`).
@@ -443,7 +444,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match args.mode {
         Mode::Embedding => run_embedding(&model, &dataset, reranker.as_ref()).await,
         Mode::Production => {
-            // The splitter's tokenizer, which sits beside the GGUF.
+            // The `SemanticChunker`'s tokenizer, which sits beside the GGUF.
             let tokenizer = gguf.with_file_name("tokenizer.json");
             run_production(model, &tokenizer, &dataset, &args, reranker).await
         }

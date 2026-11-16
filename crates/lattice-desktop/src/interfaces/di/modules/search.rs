@@ -23,7 +23,6 @@ use crate::features::embedding::service::DynamicEmbedding;
 use crate::features::search::di::{BackfillModelLoader, VectorSpace};
 use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use lattice_core::application::ports::EmbeddingPort;
-use lattice_core::domain::models::checkpoint::has_tokenizer;
 use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
 
 /// Search module for semantic, hybrid, and file search
@@ -229,7 +228,7 @@ async fn active_embedding_model_id(database: &Database) -> Option<String> {
 /// What the active embedding model's row and GGUF header say, read as
 /// [`LlamaEmbeddingService::start`] reads them, without starting its server.
 /// `None` means the model cannot load: not a local GGUF, no recorded artifact
-/// identity, no `tokenizer.json` beside it, or a header that cannot serve
+/// identity, or a header that cannot serve
 /// embeddings. Hashes nothing.
 async fn active_facts(
     model: &DownloadedModel,
@@ -248,9 +247,6 @@ async fn active_facts(
         );
         return None;
     };
-    if !gguf.parent().is_some_and(has_tokenizer) {
-        return None;
-    }
     let header = starter.header(gguf).await?;
     EmbeddingModelFacts::from_header(header, identity.clone(), model.model_name())
         .map_err(

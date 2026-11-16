@@ -3,7 +3,9 @@
 
 use lattice_core::domain::value_objects::ArtifactIdentity;
 
-use crate::features::embedding::prefixes::{prefixes_for, EmbeddingPrefixes, NONE, QWEN3_INSTRUCT};
+use crate::features::embedding::prefixes::{
+    prefixes_for, prefixes_for_architecture, EmbeddingPrefixes,
+};
 
 /// The vector-space key of a model whose GGUF hashes to `file_identity`:
 /// the file hash, plus `+prefix-<id>` when its family prefixes documents,
@@ -22,14 +24,9 @@ pub(crate) fn space_identity(
 
 /// The prefixes a model is embedded with: its family's, when `model_ref`
 /// (the catalog id, repo id or file name) names one, else those its
-/// `architecture` implies: Qwen3's instruction for a `qwen3` GGUF, none for
-/// anything else.
+/// `architecture` implies. A name always wins over the architecture.
 pub(crate) fn resolve_prefixes(model_ref: &str, architecture: &str) -> &'static EmbeddingPrefixes {
-    prefixes_for(model_ref).unwrap_or(if architecture == "qwen3" {
-        &QWEN3_INSTRUCT
-    } else {
-        &NONE
-    })
+    prefixes_for(model_ref).unwrap_or_else(|| prefixes_for_architecture(architecture))
 }
 
 #[cfg(test)]

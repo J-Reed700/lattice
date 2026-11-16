@@ -2,7 +2,6 @@
 use async_trait::async_trait;
 use lattice_core::application::ports::embedding_port::EmbeddingTextChunk;
 use lattice_core::shared::error::{AppError, Result};
-use tokenizers::Tokenizer;
 
 /// Passage tokens one retrieval chunk aims for, before its context prefix.
 ///
@@ -28,29 +27,6 @@ const TRAILING_FRAGMENT_PERCENT: usize = 15;
 pub trait TokenCounter: Send + Sync {
     /// The tokens `text` is as one whole embedding input, special tokens included.
     async fn count(&self, text: &str) -> Result<usize>;
-}
-
-/// Counts with a Hugging Face `tokenizer.json`.
-pub struct TokenizerCount(Tokenizer);
-
-impl TokenizerCount {
-    pub fn new(mut tokenizer: Tokenizer) -> Result<Self> {
-        tokenizer
-            .with_truncation(None)
-            .map_err(|e| AppError::InvalidConfig(e.to_string()))?;
-        tokenizer.with_padding(None);
-        Ok(Self(tokenizer))
-    }
-}
-
-#[async_trait]
-impl TokenCounter for TokenizerCount {
-    async fn count(&self, text: &str) -> Result<usize> {
-        self.0
-            .encode(text, true)
-            .map(|e| e.len())
-            .map_err(|e| AppError::InvalidInput(format!("Embedding tokenization: {e}")))
-    }
 }
 
 pub struct InputPolicy {
