@@ -228,6 +228,71 @@ async fn reference_selection_asks_about_every_result_in_as_many_requests_as_the_
 }
 
 #[tokio::test]
+async fn diag_reference_selection_time() -> Result<()> {
+    use std::fmt::Write as _;
+    use std::time::Instant;
+    let results = |n: usize| -> Vec<WebSearchResult> {
+        (0..n)
+            .map(|i| WebSearchResult {
+                title: format!("Tonal centres in electronic dance music, part {i}"),
+                url: format!("https://doi.org/10.1000/paper.{i}"),
+                snippet: "A study of key and tonal centre in four-on-the-floor production.".into(),
+                published_date: None,
+                source: Some("crossref".into()),
+            })
+            .collect()
+    };
+    let begun = Instant::now();
+    let mut table = String::new();
+    for window in [32_768usize, 4_000_000] {
+        for n in [100usize, 200, 400, 800, 1600, 3000] {
+            if begun.elapsed().as_secs() > 35 {
+                break;
+            }
+            let llm = selector(|shown, _| {
+                json!({"marks":[marked(&shown[0], "Directly relevant primary reference for the requested concept.")]})
+            })
+            .window(window);
+            let candidates = found(results(n));
+            let hits: Vec<Hit> = candidates
+                .iter()
+                .enumerate()
+                .map(|(at, candidate)| Hit {
+                    at,
+                    card: Told(card(candidate, &[])),
+                })
+                .collect();
+            let started = Instant::now();
+            let room =
+                lattice_core::application::services::model_contract::ask::room::<ResearchQuery>(
+                    &llm,
+                    &Input::new("Tonality", "tonal centre", &[], hits),
+                    &crate::model_call::answer_options(),
+                )?;
+            let render_ms = started.elapsed().as_millis();
+            let started = Instant::now();
+            let selected =
+                select_references(&llm, "Tonality", "tonal centre", &[], candidates).await?;
+            let select_ms = started.elapsed().as_millis();
+            let sent = llm.sent();
+            let shown: usize = sent.iter().map(|s| results_of(s).len()).sum();
+            let largest = sent.iter().map(|s| results_of(s).len()).max().unwrap_or(0);
+            writeln!(
+                table,
+                "window {window:>7} n {n:>4}: select {select_ms:>6} ms | one render+measure of all n {render_ms:>5} ms (room left {room}) | requests {:>4}, largest {largest:>4}, shown {shown:>5}, selected {:>4}",
+                sent.len(),
+                selected.len()
+            )
+            .ok();
+            if select_ms > 9_000 {
+                break;
+            }
+        }
+    }
+    panic!("timing table\n{table}");
+}
+
+#[tokio::test]
 async fn reference_selection_selects_only_what_it_marks_and_never_invents_pages() -> Result<()> {
     let results = [
         ("Cargo definition", "https://dictionary.example/cargo"),
