@@ -39,6 +39,13 @@ Screenshots from the running macOS app. Click an image to view it at full size.
   recall. Flashcard decks live here too: turn a document or a conversation
   into a deck, review with spaced repetition, and every card keeps its
   citations so you can check the evidence behind it.
+- **Practice.** One Practice area holds written practice and coding sessions
+  with a coach or an interviewer: work a problem in the editor, run its
+  examples, ask for hints, and get a debrief at the end.
+- **Voice, on-device.** The mic beside Send turns any chat into a spoken
+  conversation. Whisper transcribes what you say and Kokoro reads answers and
+  lessons aloud, both on your computer. Audio files you import become
+  searchable transcripts whose citations play from the cited moment.
 - **Explorer.** Open a folder from disk beside a chat. Browse the tree, read
   files in a code viewer, and ask questions the model answers by reading that
   folder, pointing at the exact lines. Each folder gets its own search index,
@@ -50,8 +57,8 @@ Screenshots from the running macOS app. Click an image to view it at full size.
   keep coming back to, plus quick capture from anywhere.
 
 The first launch offers a model bundle recommended for your hardware: an
-embedding model (Qwen3-Embedding where there is a GPU backend, MiniLM
-otherwise) and a local chat model. Downloads continue in the background, the
+embedding model (Qwen3-Embedding, on the GPU where there is one and on the
+CPU otherwise) and a local chat model. Downloads continue in the background, the
 full catalog stays in Settings, and after that it works fully offline.
 Optional chat providers (Ollama, a remote llama.cpp server, OpenAI,
 Anthropic, Google) are available if you want them; `crates/lattice-sync/` holds an
@@ -141,7 +148,7 @@ What the script installs when it is missing:
 | | macOS | Linux (apt, dnf) | Windows (winget) |
 | --- | --- | --- | --- |
 | Build tools | Xcode Command Line Tools | WebKitGTK 4.1, GTK and the other [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/), a C/C++ toolchain, git, curl, python3, the Vulkan loader | Visual Studio 2022 Build Tools (C++), Git, Python 3 |
-| Rust | rustup, stable (1.95 or newer) | same | same |
+| Rust | rustup, stable; the build then uses the toolchain `rust-toolchain.toml` pins | same | same |
 | Node.js | 24, unpacked into `~/.local/share/lattice/toolchain` (or `$XDG_DATA_HOME/lattice/toolchain`) | same | Node.js LTS |
 | Project | `npm ci`, the pinned `llama-server` sidecar | same | same |
 | App | `Lattice.app` in `/Applications` | the `.deb` or `.rpm`, installed with apt or dnf | the NSIS installer, current user |
@@ -153,10 +160,6 @@ it starts and prints the commands to add swap when there is too little.
 On Arch Linux the script installs the prerequisites with pacman, but there is
 no Arch package to build, so use `./setup.sh --dev` there.
 
-On first launch the app shows "Set up AI" with a chat model and an embedding
-model sized to the machine's memory. Click Install. The downloads run in the
-background and both models are switched on when they finish.
-
 Other modes: `./setup.sh --check` lists what is missing and changes nothing,
 `--deps` stops once the build prerequisites are installed, `--dev` runs
 `npm run tauri:dev` instead of installing, and `--yes` never prompts. The
@@ -166,7 +169,9 @@ Windows script takes `-Check`, `-Deps`, `-Dev` and `-Yes`.
 
 #### Set up by hand
 
-You'll need Node.js 20.19+ or 22.12+ (CI uses 24), Rust 1.95 or newer, and the
+You'll need Node.js 20.19+ or 22.12+ (CI uses 24), rustup (the repository's
+`rust-toolchain.toml` pins Rust 1.100.0, and rustup installs it on the first
+build), and the
 [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your
 platform. Local generation uses a bundled `llama-server` sidecar; the build
 refuses to start without it. See
@@ -193,7 +198,8 @@ talks to the Rust backend needs the Tauri dev process.
 │   ├── lattice-index/     # Passage and vector indexes
 │   ├── lattice-learning/  # Learning Studio's engine; its plugin stays in the app
 │   ├── lattice-store/     # Workspace notes
-│   └── lattice-sync/      # Experimental sync service (its own workspace)
+│   ├── lattice-sync/      # Experimental sync service (its own workspace)
+│   └── vendor/            # Vendored third-party crates, outside the workspace
 ├── src/                   # React and TypeScript frontend
 ├── e2e/                   # Playwright renderer journeys and native desktop tests
 ├── evals/                 # Retrieval, grounding and memory eval sets and results
@@ -212,7 +218,9 @@ Frontend:
 
 ```bash
 npm run type-check
+npm run type-check:e2e
 npm run lint
+npm run contracts:check
 npm test -- --run
 npx vite build && node scripts/check-initial-js-budget.mjs dist
 ```
@@ -233,13 +241,15 @@ sets offline SQLx and the test thread stack):
 ```bash
 cd crates/lattice-desktop
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --lib
 ```
 
 Architecture and contract checks:
 
 ```bash
+cargo test --locked --manifest-path scripts/rust-architecture-check/Cargo.toml
+cargo test --locked --manifest-path scripts/data-contract-check/Cargo.toml
 bash scripts/check-repository-barrier.sh
 bash scripts/check-rust-layer-boundaries.sh
 python3 scripts/check-sql-contracts.py
