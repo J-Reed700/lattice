@@ -25,12 +25,10 @@ mod estimator;
 mod registry;
 pub(crate) mod rejection;
 mod scheduled;
-mod tokenize;
 
 pub(crate) use estimator::{PaceEstimator, TokenEstimator};
 pub(crate) use registry::{llama_server_capacity, SchedulerRegistry};
 pub(crate) use scheduled::ScheduledLlm;
-pub(crate) use tokenize::ServerTokenizer;
 
 use std::cmp::Reverse;
 use std::time::Duration;

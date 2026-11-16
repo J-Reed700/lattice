@@ -125,27 +125,25 @@ async fn embedding_throughput_on_the_llama_server() {
         serde_json::from_slice(&std::fs::read(env_path(PASSAGES_ENV)).unwrap()).unwrap();
 
     for slots in SLOT_SWEEP {
-        let (facts, policy) = live_facts(&gguf).await;
+        let facts = live_facts(&gguf).await;
+        let tokens = tokenizer_count(&gguf, &facts).await.unwrap();
         let window = facts.window_tokens();
         let live = LiveServer::start(&gguf, slots, window).await;
         let prefixes = resolve_prefixes("qwen3-embedding-0.6b", &facts.architecture);
-        let service = Arc::new(
-            LlamaEmbeddingService::connect(Arc::clone(&live.server), facts, policy, prefixes)
-                .expect("loopback client"),
-        );
+        let mut service = LlamaEmbeddingService::connect(Arc::clone(&live.server), facts, prefixes)
+            .expect("loopback client");
+        service.tokens = Some(tokens);
+        let service = Arc::new(service);
         println!(
             "\n-np {slots}, window {window} tokens a slot, {BATCH_SIZE} passages per index call"
         );
         for (name, texts) in &sets {
-            let tokens: usize = texts
-                .iter()
-                .map(|text| {
-                    service
-                        .policy
-                        .count(&prefixes.document_input(text))
-                        .unwrap()
-                })
-                .sum();
+            let mut tokens = 0;
+            for text in texts {
+                tokens += TokenCounter::count(&*service, &prefixes.document_input(text))
+                    .await
+                    .unwrap();
+            }
             println!("{name}: {} passages", texts.len());
             model_alone(&service, texts, tokens, BATCH_SIZE, "model, index batches").await;
             model_alone(

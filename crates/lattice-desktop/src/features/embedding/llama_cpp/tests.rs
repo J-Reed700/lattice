@@ -58,13 +58,7 @@ fn running(uri: &str, alive: bool) -> Arc<RunningLlamaServer> {
 }
 
 fn service(uri: &str, prefixes: &'static EmbeddingPrefixes) -> LlamaEmbeddingService {
-    LlamaEmbeddingService::connect(
-        running(uri, true),
-        facts(),
-        InputPolicy::new(tokenizer(), 2048).unwrap(),
-        prefixes,
-    )
-    .expect("loopback client")
+    LlamaEmbeddingService::connect(running(uri, true), facts(), prefixes).expect("loopback client")
 }
 
 /// Answers every input with a vector whose first element is the input's

@@ -86,23 +86,25 @@ impl EmbeddingPort for DynamicEmbedding {
             .unwrap_or_else(|| "unavailable".into())
     }
 
-    fn split_text(
+    async fn split_text(
         &self,
         text: &str,
         prefix: &str,
     ) -> lattice_core::shared::error::Result<
         Vec<lattice_core::application::ports::embedding_port::EmbeddingTextChunk>,
     > {
-        self.loaded_model()?.split_text(text, prefix)
+        let model = self.loaded_model()?;
+        model.split_text(text, prefix).await
     }
 
-    fn window_parts(
+    async fn window_parts(
         &self,
         text: &str,
     ) -> lattice_core::shared::error::Result<
         Vec<lattice_core::application::ports::embedding_port::EmbeddingTextChunk>,
     > {
-        self.loaded_model()?.window_parts(text)
+        let model = self.loaded_model()?;
+        model.window_parts(text).await
     }
 
     fn load_failure(&self) -> Option<lattice_core::shared::error::AppError> {

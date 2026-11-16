@@ -76,7 +76,7 @@ impl ServerTokenizer {
 }
 
 /// `{"tokens": [...]}`, with ids or (`with_pieces`) `{id, piece}` objects.
-pub(super) fn parse_token_count(body: &Value) -> Result<usize> {
+fn parse_token_count(body: &Value) -> Result<usize> {
     body.get("tokens")
         .and_then(Value::as_array)
         .map(Vec::len)
@@ -90,3 +90,6 @@ fn cache_key(text: &str) -> (u64, usize) {
     text.hash(&mut hasher);
     (hasher.finish(), text.len())
 }
+
+#[cfg(test)]
+mod tests;

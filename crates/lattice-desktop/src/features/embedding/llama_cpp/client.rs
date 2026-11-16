@@ -1,19 +1,10 @@
 //! The HTTP side: one `POST /v1/embeddings` per batch, and what its answers
 //! and failures mean.
 
-use lattice_core::shared::error::AppError;
+use lattice_core::shared::error::{AppError, WithCauses};
 use serde::Deserialize;
 
 use crate::infrastructure::llama_server::RunningLlamaServer;
-
-/// Why a request produced no vectors.
-#[derive(Debug)]
-pub(super) enum Failure {
-    /// Nothing usable came back from the socket: the process may be gone.
-    Transport(reqwest::Error),
-    /// The server answered, and the answer is the error.
-    Server(AppError),
-}
 
 /// Vectors for every input, in input order, and the tokens the server
 /// counted across them.
@@ -63,7 +54,7 @@ pub(super) async fn embed(
     http: &reqwest::Client,
     server: &RunningLlamaServer,
     inputs: &[String],
-) -> Result<Embedded, Failure> {
+) -> lattice_core::shared::error::Result<Embedded> {
     let _in_flight = server.request();
     let response = http
         .post(format!("{}/v1/embeddings", server.endpoint()))
@@ -71,24 +62,36 @@ pub(super) async fn embed(
         .json(&serde_json::json!({ "input": inputs }))
         .send()
         .await
-        .map_err(Failure::Transport)?;
+        .map_err(|e| transport_error(server, &e))?;
     let status = response.status();
-    let body = response.bytes().await.map_err(Failure::Transport)?;
+    let body = response
+        .bytes()
+        .await
+        .map_err(|e| transport_error(server, &e))?;
     if !status.is_success() {
-        return Err(Failure::Server(server_error(status, &body)));
+        return Err(server_error(status, &body));
     }
-    let response: Response = serde_json::from_slice(&body).map_err(|e| {
-        Failure::Server(AppError::EmbeddingFailed {
+    let response: Response =
+        serde_json::from_slice(&body).map_err(|e| AppError::EmbeddingFailed {
             reason: format!("llama-server sent an embeddings answer that does not parse: {e}"),
-        })
-    })?;
+        })?;
     let prompt_tokens = response.usage.map_or(0, |usage| usage.prompt_tokens);
-    in_input_order(response.data, inputs.len())
-        .map(|vectors| Embedded {
-            vectors,
-            prompt_tokens,
-        })
-        .map_err(Failure::Server)
+    in_input_order(response.data, inputs.len()).map(|vectors| Embedded {
+        vectors,
+        prompt_tokens,
+    })
+}
+
+/// The error a request that got nothing from the socket means: the process
+/// may be gone.
+fn transport_error(server: &RunningLlamaServer, error: &reqwest::Error) -> AppError {
+    AppError::EmbeddingFailed {
+        reason: format!(
+            "The embedding server at {} did not answer: {}",
+            server.endpoint(),
+            WithCauses(error)
+        ),
+    }
 }
 
 /// The vectors of `data` in input order, by each item's `index`, or an error

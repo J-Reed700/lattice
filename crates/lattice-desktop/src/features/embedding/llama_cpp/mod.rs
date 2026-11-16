@@ -23,7 +23,7 @@ use lattice_core::domain::value_objects::ArtifactIdentity;
 use lattice_core::shared::error::{AppError, Result};
 use lru::LruCache;
 
-use crate::features::embedding::input_policy::InputPolicy;
+use crate::features::embedding::input_policy::{InputPolicy, TokenCounter, TokenizerCount};
 use crate::features::embedding::prefixes::EmbeddingPrefixes;
 use crate::infrastructure::llama_server::RunningLlamaServer;
 use crate::infrastructure::passage_index::build::BATCH_SIZE;
@@ -32,7 +32,6 @@ pub use facts::{EmbeddingHeader, EmbeddingModelFacts, Pooling};
 pub(crate) use identity::{resolve_prefixes, space_identity};
 pub use launch::{EmbeddingLaunch, EmbeddingServerStarter, EmbeddingWork, SERVER_SLOTS};
 
-use client::Failure;
 use lattice_core::shared::error::WithCauses;
 
 /// Queries remembered per service. A query is embedded on every search and
@@ -59,6 +58,8 @@ pub struct LlamaEmbeddingService {
     http: reqwest::Client,
     facts: EmbeddingModelFacts,
     policy: InputPolicy,
+    /// What the splitter counts with: the `tokenizer.json` beside the GGUF, which `start_gguf` loads.
+    tokens: Option<TokenizerCount>,
     prefixes: &'static EmbeddingPrefixes,
     /// One permit per server slot: a batch takes one for its request.
     slots: tokio::sync::Semaphore,
@@ -71,7 +72,6 @@ impl LlamaEmbeddingService {
     pub fn connect(
         server: Arc<RunningLlamaServer>,
         facts: EmbeddingModelFacts,
-        policy: InputPolicy,
         prefixes: &'static EmbeddingPrefixes,
     ) -> Result<Self> {
         let http = lattice_core::shared::http::loopback_client_builder()
@@ -79,12 +79,14 @@ impl LlamaEmbeddingService {
             .map_err(|e| {
                 AppError::ModelLoadFailed(format!("No HTTP client: {}", WithCauses(&e)))
             })?;
+        let policy = InputPolicy::new(facts.window_tokens() as usize)?;
         Ok(Self {
             server: parking_lot::Mutex::new(server),
             restart: None,
             http,
             facts,
             policy,
+            tokens: None,
             prefixes,
             slots: tokio::sync::Semaphore::new(SERVER_SLOTS as usize),
             query_cache: parking_lot::Mutex::new(LruCache::new(
@@ -135,7 +137,7 @@ impl LlamaEmbeddingService {
         })?;
         let file_type = header.file_type;
         let facts = EmbeddingModelFacts::from_header(header, identity, name)?;
-        let policy = tokenizer_policy(gguf, &facts).await?;
+        let tokens = tokenizer_count(gguf, &facts).await?;
         let prefixes = resolve_prefixes(model_ref, &facts.architecture);
         let launch = EmbeddingLaunch::new(gguf.to_path_buf(), &facts, starter.accelerated().await);
         tracing::info!(
@@ -151,8 +153,9 @@ impl LlamaEmbeddingService {
             "embedding.server.starting"
         );
         let server = starter.start(&launch).await?;
-        let mut service = Self::connect(server, facts, policy, prefixes)?;
+        let mut service = Self::connect(server, facts, prefixes)?;
         service.slots = tokio::sync::Semaphore::new(launch.slots as usize);
+        service.tokens = Some(tokens);
         service.restart = Some(Restart {
             starter,
             launch,
@@ -192,32 +195,40 @@ impl LlamaEmbeddingService {
             .acquire()
             .await
             .map_err(|e| AppError::InternalError(format!("Embedding slots closed: {e}")))?;
+        let embedded = self
+            .on_server(work, |server| async move {
+                client::embed(&self.http, &server, inputs).await
+            })
+            .await?;
+        self.checked(embedded)
+    }
+
+    /// `call` on the running server. A call that fails while the server's
+    /// process is dead starts the server again once, for `work`, and is made
+    /// once more; any other failure, and any answer, is final.
+    async fn on_server<T, F, Fut>(&self, work: EmbeddingWork, call: F) -> Result<T>
+    where
+        F: Fn(Arc<RunningLlamaServer>) -> Fut,
+        Fut: std::future::Future<Output = Result<T>>,
+    {
         let server = self.current();
-        let error = match client::embed(&self.http, &server, inputs).await {
-            Ok(embedded) => return self.checked(embedded),
-            Err(Failure::Server(error)) => return Err(error),
-            Err(Failure::Transport(error)) => error,
+        let error = match call(Arc::clone(&server)).await {
+            Ok(answer) => return Ok(answer),
+            Err(error) => error,
         };
         let restart = match &self.restart {
             Some(restart) if !server.alive() => restart,
-            _ => return Err(transport_error(&server, &error)),
+            _ => return Err(error),
         };
-        tracing::warn!(
-            endpoint = server.endpoint(),
-            error = %WithCauses(&error),
-            "embedding.server.died; starting it again"
-        );
+        tracing::warn!(endpoint = server.endpoint(), %error, "embedding.server.died; starting it again");
         let server = self.restarted(restart, &server, work).await?;
-        match client::embed(&self.http, &server, inputs).await {
-            Ok(embedded) => self.checked(embedded),
-            Err(Failure::Server(error)) => Err(error),
-            Err(Failure::Transport(error)) => Err(AppError::EmbeddingFailed {
+        match call(Arc::clone(&server)).await {
+            Err(error) if !server.alive() => Err(AppError::EmbeddingFailed {
                 reason: format!(
-                    "The embedding server was started again after its process died, and failed \
-                     again: {}",
-                    transport_error(&server, &error)
+                    "The embedding server was started again after its process died, and failed again: {error}"
                 ),
             }),
+            answer => answer,
         }
     }
 
@@ -299,9 +310,8 @@ impl LlamaEmbeddingService {
     }
 }
 
-/// The splitter for the model at `gguf`, counting with the `tokenizer.json`
-/// beside it up to the window each server slot has.
-async fn tokenizer_policy(gguf: &Path, facts: &EmbeddingModelFacts) -> Result<InputPolicy> {
+/// The counter for the model at `gguf`: the `tokenizer.json` beside it.
+async fn tokenizer_count(gguf: &Path, facts: &EmbeddingModelFacts) -> Result<TokenizerCount> {
     let path = gguf
         .parent()
         .map(|dir| dir.join("tokenizer.json"))
@@ -313,10 +323,9 @@ async fn tokenizer_policy(gguf: &Path, facts: &EmbeddingModelFacts) -> Result<In
                 gguf.display()
             ))
         })?;
-    let window = facts.window_tokens() as usize;
     tokio::task::spawn_blocking(move || {
         let tokenizer = crate::infrastructure::ml::tokenizer::load_tokenizer(&path)?;
-        InputPolicy::new(tokenizer, window)
+        TokenizerCount::new(tokenizer)
     })
     .await
     .map_err(|e| AppError::InternalError(format!("Tokenizer load task failed: {e}")))?
@@ -329,13 +338,16 @@ fn refuse_empty(text: &str) -> Result<()> {
     Ok(())
 }
 
-fn transport_error(server: &RunningLlamaServer, error: &reqwest::Error) -> AppError {
-    AppError::EmbeddingFailed {
-        reason: format!(
-            "The embedding server at {} did not answer: {}",
-            server.endpoint(),
-            WithCauses(error)
-        ),
+#[async_trait]
+impl TokenCounter for LlamaEmbeddingService {
+    async fn count(&self, text: &str) -> Result<usize> {
+        match &self.tokens {
+            Some(tokens) => tokens.count(text).await,
+            None => Err(AppError::ModelLoadFailed(format!(
+                "{} has no tokenizer to count with",
+                self.facts.display_name
+            ))),
+        }
     }
 }
 
@@ -382,24 +394,25 @@ impl EmbeddingPort for LlamaEmbeddingService {
         self.embed_inputs(&inputs, EmbeddingWork::Indexing).await
     }
 
-    fn split_text(&self, text: &str, prefix: &str) -> Result<Vec<EmbeddingTextChunk>> {
+    async fn split_text(&self, text: &str, prefix: &str) -> Result<Vec<EmbeddingTextChunk>> {
         // The model's document prefix is part of every passage sent, so the
         // splitter measures it against the window too, outside the chunker's
         // context prefix, in the order `embed_batch` builds.
         if self.prefixes.document.is_empty() {
-            return self.policy.split(text, prefix);
+            return self.policy.split(self, text, prefix).await;
         }
         self.policy
-            .split(text, &format!("{}{prefix}", self.prefixes.document))
+            .split(self, text, &format!("{}{prefix}", self.prefixes.document))
+            .await
     }
 
-    fn window_parts(&self, text: &str) -> Result<Vec<EmbeddingTextChunk>> {
+    async fn window_parts(&self, text: &str) -> Result<Vec<EmbeddingTextChunk>> {
         if text.is_empty() {
             return Ok(Vec::new());
         }
-        let tokens = self.policy.count(&self.prefixes.document_input(text))?;
+        let tokens = TokenCounter::count(self, &self.prefixes.document_input(text)).await?;
         if tokens > self.policy.max_tokens {
-            return self.split_text(text, "");
+            return self.split_text(text, "").await;
         }
         Ok(vec![EmbeddingTextChunk {
             text: text.to_owned(),

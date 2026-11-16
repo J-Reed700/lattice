@@ -517,6 +517,7 @@ impl Scorer {
         let chunks = self
             .service
             .split_text(text, "")
+            .await
             .expect("the embedder splits the message");
         assert_eq!(
             chunks.len(),

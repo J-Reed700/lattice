@@ -118,7 +118,7 @@ impl Drop for LiveServer {
 }
 
 /// The facts of the model at `gguf`, from its header.
-pub(super) async fn live_facts(gguf: &Path) -> (EmbeddingModelFacts, InputPolicy) {
+pub(super) async fn live_facts(gguf: &Path) -> EmbeddingModelFacts {
     let info = read_model_info(gguf).expect("a readable GGUF header");
     let header = EmbeddingHeader {
         architecture: info.architecture,
@@ -128,9 +128,7 @@ pub(super) async fn live_facts(gguf: &Path) -> (EmbeddingModelFacts, InputPolicy
         file_type: info.file_type,
     };
     let identity = crate::infrastructure::ml::artifact_identity::compute(gguf).unwrap();
-    let facts = EmbeddingModelFacts::from_header(header, identity, "parity").unwrap();
-    let policy = tokenizer_policy(gguf, &facts).await.unwrap();
-    (facts, policy)
+    EmbeddingModelFacts::from_header(header, identity, "parity").unwrap()
 }
 
 #[derive(serde::Deserialize)]
@@ -192,10 +190,10 @@ async fn embedding_parity_with_the_candle_reference() {
     let queries: Vec<String> =
         serde_json::from_slice(&std::fs::read(reference.join("queries.json")).unwrap()).unwrap();
 
-    let (facts, policy) = live_facts(&gguf).await;
+    let facts = live_facts(&gguf).await;
     let live = LiveServer::start(&gguf, SERVER_SLOTS, facts.window_tokens()).await;
     let prefixes = resolve_prefixes("qwen3-embedding-0.6b", &facts.architecture);
-    let service = LlamaEmbeddingService::connect(Arc::clone(&live.server), facts, policy, prefixes)
+    let service = LlamaEmbeddingService::connect(Arc::clone(&live.server), facts, prefixes)
         .expect("loopback client");
 
     // The server counts the tokens the chunker sized each passage with.

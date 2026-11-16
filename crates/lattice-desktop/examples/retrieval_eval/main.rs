@@ -457,7 +457,7 @@ async fn run_embedding(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut passages = Vec::new();
     for doc in &dataset.documents {
-        let parts = model.split_text(&doc.text, "")?;
+        let parts = model.split_text(&doc.text, "").await?;
         let inputs: Vec<String> = parts.iter().map(|part| part.text.clone()).collect();
         let embeddings = model.embed_batch(&inputs).await?;
         for (text, vector) in inputs.into_iter().zip(embeddings) {
