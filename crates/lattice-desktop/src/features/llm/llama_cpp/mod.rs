@@ -236,8 +236,9 @@ impl LlamaCppLlm {
     /// server's own window replaces the configured one.
     pub(crate) async fn schedule(mut self, schedulers: &SchedulerRegistry) -> Arc<dyn LLMPort> {
         use crate::features::llm::scheduler::{
-            llama_server_capacity, BackendCapacity, ScheduledLlm, ServerTokenizer,
+            llama_server_capacity, BackendCapacity, ScheduledLlm,
         };
+        use crate::infrastructure::llama_server::ServerTokenizer;
         let (scheduler, is_llama_server) = match &self.process {
             Some(process) => {
                 let scheduler = process

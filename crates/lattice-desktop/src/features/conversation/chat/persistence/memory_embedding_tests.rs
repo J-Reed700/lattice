@@ -11,7 +11,7 @@ impl EmbeddingPort for LimitedEmbedder {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
-    fn split_text(&self, text: &str, _: &str) -> Result<Vec<EmbeddingTextChunk>> {
+    async fn split_text(&self, text: &str, _: &str) -> Result<Vec<EmbeddingTextChunk>> {
         Ok(text
             .split_whitespace()
             .map(|word| EmbeddingTextChunk {

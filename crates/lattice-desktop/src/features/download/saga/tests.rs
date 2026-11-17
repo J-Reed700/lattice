@@ -87,13 +87,12 @@ fn model_location_returns_directory_for_config_json() {
     );
 }
 
-/// An embedding GGUF download: the GGUF (whose completion finishes the
-/// download, with `gguf_digest` as its pinned checksum) and, when
-/// `with_tokenizer`, its `tokenizer.json`. Returns the active embedding model
-/// once the saga has handled the GGUF's completion, and the GGUF's path.
+/// An embedding GGUF download: the GGUF alone (whose completion finishes the
+/// download, with `gguf_digest` as its pinned checksum). Returns the active
+/// embedding model once the saga has handled the GGUF's completion, and the
+/// GGUF's path.
 async fn complete_gguf_embedding_download(
     gguf_digest: Option<String>,
-    with_tokenizer: bool,
     dir: &std::path::Path,
 ) -> (
     Option<lattice_core::domain::models::downloaded::DownloadedModel>,
@@ -117,15 +116,12 @@ async fn complete_gguf_embedding_download(
     .execute(&pool)
     .await
     .expect("insert model row");
-    let mut files = vec![(
+    let files = vec![(
         "model-f16.gguf",
         &b"weights"[..],
         gguf_digest,
         "downloading",
     )];
-    if with_tokenizer {
-        files.push(("tokenizer.json", &b"{}"[..], None, "completed"));
-    }
     for (name, contents, digest, status) in files {
         let path = dir.join(name);
         std::fs::write(&path, contents).expect("write model file");
@@ -173,8 +169,7 @@ async fn complete_gguf_embedding_download(
 async fn a_pinned_embedding_download_is_activated_with_its_verified_digest() {
     let dir = tempfile::tempdir().expect("create model directory");
     let digest = sha256_hex(b"weights");
-    let (active, gguf) =
-        complete_gguf_embedding_download(Some(digest.clone()), true, dir.path()).await;
+    let (active, gguf) = complete_gguf_embedding_download(Some(digest.clone()), dir.path()).await;
 
     let active = active.expect("the empty embedding slot is filled by the first download");
     assert_eq!(active.model_id(), "test-embed-model");
@@ -196,7 +191,7 @@ async fn a_pinned_embedding_download_is_activated_with_its_verified_digest() {
 async fn an_unpinned_embedding_download_is_activated_with_its_files_hash() {
     use crate::infrastructure::ml::artifact_identity;
     let dir = tempfile::tempdir().expect("create model directory");
-    let (active, gguf) = complete_gguf_embedding_download(None, true, dir.path()).await;
+    let (active, gguf) = complete_gguf_embedding_download(None, dir.path()).await;
 
     let active = active.expect("the empty embedding slot is filled by the first download");
     assert_eq!(
@@ -206,15 +201,18 @@ async fn an_unpinned_embedding_download_is_activated_with_its_files_hash() {
 }
 
 #[tokio::test]
-async fn an_embedding_download_without_a_tokenizer_is_not_activated() {
+async fn an_embedding_gguf_download_without_a_tokenizer_json_is_activated() {
     let dir = tempfile::tempdir().expect("create model directory");
-    let (active, _) =
-        complete_gguf_embedding_download(Some(sha256_hex(b"weights")), false, dir.path()).await;
+    let (active, gguf) =
+        complete_gguf_embedding_download(Some(sha256_hex(b"weights")), dir.path()).await;
 
     assert!(
-        active.is_none(),
-        "a GGUF its passages cannot be cut for stays inactive"
+        !dir.path().join("tokenizer.json").exists(),
+        "the download leaves no tokenizer.json"
     );
+    let active = active.expect("the empty embedding slot is filled by the GGUF alone");
+    assert_eq!(active.model_id(), "test-embed-model");
+    assert_eq!(active.location(), &ModelLocation::LocalFile { path: gguf });
 }
 
 /// A model row with one file, in the given states, and a saga over it.

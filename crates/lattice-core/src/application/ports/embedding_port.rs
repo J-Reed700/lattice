@@ -44,7 +44,7 @@ pub trait EmbeddingPort: Send + Sync {
 
     /// Split a passage with the same input policy used for inference. Offsets are UTF-8 bytes.
     /// Implementations without a tokenizer must reject unsupported lengths at inference.
-    fn split_text(&self, text: &str, _prefix: &str) -> Result<Vec<EmbeddingTextChunk>> {
+    async fn split_text(&self, text: &str, _prefix: &str) -> Result<Vec<EmbeddingTextChunk>> {
         Ok(if text.is_empty() {
             vec![]
         } else {
@@ -62,8 +62,8 @@ pub trait EmbeddingPort: Send + Sync {
     /// Re-embedding a stored chunk uses this rather than [`Self::split_text`]:
     /// the stored text already carries the context prefix it was sized with,
     /// so the chunk-size split would cut nearly every full chunk in two.
-    fn window_parts(&self, text: &str) -> Result<Vec<EmbeddingTextChunk>> {
-        self.split_text(text, "")
+    async fn window_parts(&self, text: &str) -> Result<Vec<EmbeddingTextChunk>> {
+        self.split_text(text, "").await
     }
 
     /// The error a model that failed to load left behind; `None` for every other port.
