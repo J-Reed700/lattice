@@ -235,21 +235,14 @@ pub async fn get_active_embedding_model(
         .map_err(ApiError::from)
 }
 
-/// Get active models (both chat and embedding)
+/// What a chat on the Settings default and utility work run on now.
 #[tauri::command]
 #[specta::specta]
 pub async fn get_active_models(container: State<'_, Container>) -> Result<ActiveModels, ApiError> {
-    let chat_model = get_active_chat_model_typed(container.inner())
+    container
+        .default_and_utility_models()
         .await
-        .map_err(ApiError::from)?;
-    let embedding_model = get_active_embedding_model_typed(container.inner())
-        .await
-        .map_err(ApiError::from)?;
-
-    Ok(ActiveModels {
-        chat_model,
-        embedding_model,
-    })
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -379,11 +372,7 @@ pub struct DownloadModelResponse {
     pub status: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-pub struct ActiveModels {
-    pub chat_model: Option<DownloadedModelResponse>,
-    pub embedding_model: Option<DownloadedModelResponse>,
-}
+pub use crate::features::llm::di::ActiveModels;
 
 /// Absolute path of the local models folder, created on first call.
 ///

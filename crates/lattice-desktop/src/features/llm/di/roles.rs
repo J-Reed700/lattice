@@ -3,10 +3,10 @@
 //! A chat runs on its request override, else its own choice, else the
 //! Settings default; the Learning and Verifier roles run on their own models
 //! (including cloud models); the router and
-//! utility roles on theirs. Only the Settings default keeps Auto's load-time
-//! fallback — the active local model, then a llama.cpp server that is up, then
-//! Ollama. A model named outright is used as named or refused, never swapped
-//! for another.
+//! utility roles on theirs. The Settings default and utility work try the
+//! models `chat_model_resolution` lists, and under Auto each gives way to the
+//! next when it fails to load. A model named outright is used as named or
+//! refused, never swapped for another.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -17,13 +17,15 @@ use lattice_core::application::ports::llm_port::{
 };
 use lattice_core::application::ports::{LLMPort, SettingsRepositoryPort};
 use lattice_core::application::services::chat_model_resolution::{
-    default_chat_model, resolve, resolve_learning, resolve_verifier,
+    default_chat_model, llama_cpp_connection, ollama_connection, ollama_saved, ollama_utility_tag,
+    resolve, resolve_learning, resolve_verifier, utility_candidates, UtilityRow,
 };
-use lattice_core::application::services::model_selection::select_model;
+use lattice_core::application::services::model_selection::AutoFailures;
 use lattice_core::domain::conversation::ChatModelChoice;
 use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
 use lattice_core::shared::error::{AppError, Result};
 
+use super::active_models::ActiveModels;
 use crate::features::llm::engine::factory::LocalServerOptions;
 use crate::features::llm::engine::vision::local_vision;
 use crate::features::llm::instances::refusal::{self, Window};
@@ -207,9 +209,10 @@ impl RoleModels {
     }
 
     /// The Settings default chat model, pinned for `holder`; `active_local`
-    /// is the active row's `model_id`. Under Auto the first of the active
-    /// local model, a llama.cpp server that lists its model, and Ollama that
-    /// loads.
+    /// is the active row's `model_id`. It pins the models
+    /// `default_chat_model` lists: a named provider's one model as named, or
+    /// under Auto the first that loads, a llama.cpp server only when it lists
+    /// its model.
     async fn default_model(
         &self,
         settings: &LLMSettingsDto,
@@ -227,44 +230,26 @@ impl RoleModels {
             tuning: Tuning::Standard,
             must_list_model,
         };
-        if settings.provider != LLMProvider::Auto {
-            let model = default_chat_model(settings, active_local.as_deref()).0?;
-            return self.pin(&model, settings, epoch, &want(false)).await;
+        let candidates = default_chat_model(settings, active_local.as_deref()).0?;
+        if !candidates.auto {
+            return self
+                .pin(&candidates.models[0], settings, epoch, &want(false))
+                .await;
         }
-        let llama_cpp = settings.llama_cpp.model.trim();
-        let listed = want(true);
-        select_model(
-            LLMProvider::Auto,
-            || async {
-                match &active_local {
-                    Some(model_id) => self
-                        .pin(
-                            &ModelRef::Local {
-                                model_id: model_id.clone(),
-                            },
-                            settings,
-                            epoch,
-                            &want(false),
-                        )
-                        .await
-                        .map(Some),
-                    None => Ok(None),
-                }
-            },
-            || self.configured_llama_cpp(llama_cpp, settings, epoch, &listed),
-            || async {
-                let ollama = ModelRef::Ollama {
-                    model: settings.model.clone(),
-                };
-                self.pin(&ollama, settings, epoch, &want(false)).await
-            },
-        )
-        .await
+        let mut failures = AutoFailures::default();
+        for model in &candidates.models {
+            let listed = matches!(model, ModelRef::LlamaCpp { .. });
+            match self.pin(model, settings, epoch, &want(listed)).await {
+                Ok(pinned) => return Ok(pinned),
+                Err(error) => failures.record(model, error),
+            }
+        }
+        Err(failures.into_error())
     }
 
     /// The router model. A downloaded model of that name runs locally;
     /// otherwise the configured provider serves the name, with Auto trying a
-    /// llama.cpp server that lists it before Ollama.
+    /// llama.cpp server that lists it before a saved Ollama connection.
     pub(crate) async fn router_llm(&self) -> Result<Arc<dyn LLMPort>> {
         let epoch = self.instances.epoch();
         let settings = self.llm_settings().await?;
@@ -324,15 +309,25 @@ impl RoleModels {
                     ))
                 })?,
             LLMProvider::Auto => {
-                let (listed, unlisted, ollama) = (want(true), want(false), ollama(name));
-                select_model(
-                    LLMProvider::Auto,
-                    // A downloaded router model was looked for above.
-                    || async { Ok(None) },
-                    || self.configured_llama_cpp(name, &settings, epoch, &listed),
-                    || self.pin(&ollama, &settings, epoch, &unlisted),
-                )
-                .await?
+                let mut failures = AutoFailures::default();
+                let candidates = [
+                    llama_cpp_connection(&settings).map(|_| ModelRef::LlamaCpp {
+                        model: name.to_owned(),
+                    }),
+                    ollama_saved(&settings).then(|| ollama(name)),
+                ];
+                let mut found = None;
+                for model in candidates.into_iter().flatten() {
+                    let listed = matches!(model, ModelRef::LlamaCpp { .. });
+                    match self.pin(&model, &settings, epoch, &want(listed)).await {
+                        Ok(acquired) => {
+                            found = Some(acquired);
+                            break;
+                        }
+                        Err(error) => failures.record(&model, error),
+                    }
+                }
+                found.ok_or_else(|| failures.into_error())?
             }
             provider => {
                 let model = remote_model(provider, name)?;
@@ -359,109 +354,77 @@ impl RoleModels {
             tuning: Tuning::Utility,
             must_list_model,
         };
-        if let Some(model) = &settings.utility_model {
-            return match self.pin(model, &settings, epoch, &want(false)).await {
-                Ok((_, acquired)) => Ok(Some(acquired.into_port())),
-                Err(error) if matches!(model, ModelRef::Local { .. }) => Err(error),
-                Err(e) => {
-                    tracing::warn!(
-                        utility_model = %model,
-                        error = %e,
-                        "Failed to reach the remote utility model — falling back to the default chat model"
-                    );
-                    Ok(None)
-                }
-            };
+        let row = self.utility_row(&settings).await;
+        let candidates = utility_candidates(
+            &settings,
+            row.as_ref().map(|row| UtilityRow {
+                model_id: row.model_id(),
+                local: row.location().is_local(),
+            }),
+        );
+        for model in &candidates.models {
+            let listed = candidates.auto && matches!(model, ModelRef::LlamaCpp { .. });
+            match self.pin(model, &settings, epoch, &want(listed)).await {
+                Ok((_, acquired)) => return Ok(Some(acquired.into_port())),
+                Err(error) if matches!(model, ModelRef::Local { .. }) => return Err(error),
+                Err(error) => tracing::warn!(
+                    utility_model = %model,
+                    %error,
+                    "Failed to reach the utility model — trying the next, else the default chat model"
+                ),
+            }
         }
-        let active = match self.loader.active_utility_model().await {
-            Ok(Some(active)) => active,
-            Ok(None) => return Ok(None),
-            Err(e) => {
+        Ok(None)
+    }
+
+    /// The row active for the utility role, or `None` when a utility model is
+    /// saved in Settings (the row then does not count), none is active, or the
+    /// query fails.
+    async fn utility_row(
+        &self,
+        settings: &LLMSettingsDto,
+    ) -> Option<lattice_core::domain::DownloadedModel> {
+        if settings.utility_model.is_some() {
+            return None;
+        }
+        match self.loader.active_utility_model().await {
+            Ok(row) => row,
+            Err(error) => {
                 tracing::warn!(
-                    error = %e,
+                    %error,
                     "Failed to query active utility model — falling back to the default chat model"
                 );
-                return Ok(None);
-            }
-        };
-        if active.location().is_local() {
-            let model = ModelRef::Local {
-                model_id: active.model_id().to_owned(),
-            };
-            let (_, acquired) = self.pin(&model, &settings, epoch, &want(false)).await?;
-            return Ok(Some(acquired.into_port()));
-        }
-        let tag = match settings.ollama_utility_model.trim() {
-            "" => settings.model.clone(),
-            tag => tag.to_owned(),
-        };
-        let remote = match settings.provider {
-            LLMProvider::Local => return Ok(None),
-            LLMProvider::Ollama => {
-                self.pin(&ollama(&tag), &settings, epoch, &want(false))
-                    .await
-            }
-            // The configured provider decides the wire protocol, not the label
-            // on the row: under Auto a llama.cpp server that lists the model is
-            // tried before Ollama, as the chat model is, so one host is never
-            // spoken to in two protocols.
-            LLMProvider::Auto => {
-                match self
-                    .configured_llama_cpp(&tag, &settings, epoch, &want(true))
-                    .await
-                {
-                    Ok(Some(acquired)) => Ok(acquired),
-                    Ok(None) => {
-                        self.pin(&ollama(&tag), &settings, epoch, &want(false))
-                            .await
-                    }
-                    Err(error) => {
-                        tracing::warn!(
-                            utility_model = %tag,
-                            %error,
-                            "llama.cpp not available for the utility role, trying Ollama"
-                        );
-                        self.pin(&ollama(&tag), &settings, epoch, &want(false))
-                            .await
-                    }
-                }
-            }
-            provider => match remote_model(provider, &tag) {
-                Ok(model) => self.pin(&model, &settings, epoch, &want(false)).await,
-                Err(error) => Err(error),
-            },
-        };
-        match remote {
-            Ok((_, acquired)) => Ok(Some(acquired.into_port())),
-            Err(e) => {
-                tracing::warn!(
-                    model_id = %active.model_id(),
-                    utility_model = %tag,
-                    error = %e,
-                    "Failed to reach the remote utility model — falling back to the default chat model"
-                );
-                Ok(None)
+                None
             }
         }
     }
 
-    /// `model` on the llama.cpp server, when a llama.cpp connection is
-    /// configured — Settings names a llama.cpp model — and the server lists
-    /// it.
-    async fn configured_llama_cpp(
-        &self,
-        model: &str,
-        settings: &LLMSettingsDto,
-        epoch: u64,
-        want: &Want<'_>,
-    ) -> Result<Option<(ModelKey, Acquired)>> {
-        if settings.llama_cpp.model.trim().is_empty() {
-            return Ok(None);
-        }
-        let llama_cpp = ModelRef::LlamaCpp {
-            model: model.to_owned(),
+    /// What a chat on the Settings default and utility work run on now, from
+    /// the functions the loader uses. Nothing is probed.
+    pub(crate) async fn active_models(&self) -> Result<ActiveModels> {
+        let settings = self.llm_settings().await?;
+        let active_local = self.loader.active_local_chat_model().await?;
+        let row = self.utility_row(&settings).await;
+        let (chat, chat_unset) = match default_chat_model(&settings, active_local.as_deref()).0 {
+            Ok(candidates) => (candidates.models, None),
+            Err(AppError::AiModelsNotInstalled(message)) => (Vec::new(), Some(message)),
+            Err(error) => (Vec::new(), Some(error.to_string())),
         };
-        self.pin(&llama_cpp, settings, epoch, want).await.map(Some)
+        let utility = utility_candidates(
+            &settings,
+            row.as_ref().map(|row| UtilityRow {
+                model_id: row.model_id(),
+                local: row.location().is_local(),
+            }),
+        );
+        Ok(ActiveModels {
+            chat,
+            chat_unset,
+            utility: utility.models,
+            llama_cpp: llama_cpp_connection(&settings),
+            ollama: ollama_connection(&settings),
+            ollama_utility_tag: ollama_utility_tag(&settings),
+        })
     }
 
     /// `model` loaded through the instances and pinned for `want`, refused

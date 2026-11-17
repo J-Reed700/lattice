@@ -31,8 +31,10 @@ use lattice_core::domain::repositories::downloaded_model_repository::DownloadedM
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Database;
 
+mod active_models;
 mod roles;
 
+pub use active_models::ActiveModels;
 use roles::{ModelRequest, ModelSelection, RoleModels};
 
 #[derive(Clone)]
@@ -144,6 +146,11 @@ impl Container {
             )),
             settings: Arc::clone(self.system.settings_repo()),
         }
+    }
+
+    /// What a chat on the Settings default and utility work run on now.
+    pub async fn default_and_utility_models(&self) -> Result<ActiveModels> {
+        self.role_models().active_models().await
     }
 
     /// The model `request` asks for, pinned for its work.
