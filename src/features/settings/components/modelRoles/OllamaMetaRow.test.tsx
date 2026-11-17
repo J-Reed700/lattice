@@ -57,6 +57,7 @@ describe('OllamaMetaRow utility status', () => {
     h.settings = makeAppSettings();
     h.settings.llm.provider = 'auto';
     h.settings.llm.model = TAG;
+    h.settings.llm.ollamaConfigured = true;
   });
 
   it('says what utility work tries first when this connection comes later', () => {

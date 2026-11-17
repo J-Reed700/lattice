@@ -9,7 +9,7 @@ import { useToastStore } from '@/stores/toastStore';
 import { makeAppSettings } from '@/tests/fixtures/appSettings';
 import type { LLMSettings } from '@/types/api/settings';
 import type { DownloadedModel } from '@/types/downloadedModels';
-import { resolveDefaultChatOption } from '@/utils/chatModelSelection';
+import { isCloudProvider, resolveDefaultChatOption } from '@/utils/chatModelSelection';
 
 import { AIModelsTab } from './AIModelsTab';
 import { LlmSettingsProvider } from './AITab/LlmSettingsProvider';
@@ -26,9 +26,12 @@ function activeFor(llm: LLMSettings, rows: DownloadedModel[]): ActiveModels {
   const ollama: ModelRef | null = (llm.ollamaConfigured || llm.provider === 'ollama') && llm.model.trim()
     ? { kind: 'ollama', model: llm.model.trim() }
     : null;
+  const cloud: ModelRef | null = isCloudProvider(llm.provider) && llm.model.trim()
+    ? { kind: 'cloud', provider: llm.provider, model: llm.model.trim() }
+    : null;
   const chat = {
     local, llamacpp: llamaCpp, ollama, auto: local ?? llamaCpp ?? ollama,
-    openai: null, anthropic: null, google: null,
+    openai: cloud, anthropic: cloud, google: cloud,
   }[llm.provider];
   return { chat: chat ? [chat] : [], chat_unset: null, utility: [], llama_cpp: llamaCpp, ollama, ollama_utility_tag: ollama ? llm.model.trim() : null };
 }
@@ -59,6 +62,9 @@ async function renderModels() {
     </QueryClientProvider>,
   );
   await screen.findByText('Local model', { exact: true });
+  const active = activeFor(settings.llm, models);
+  if (active.llama_cpp) await screen.findByText('llama.cpp connection', { exact: true });
+  if (active.ollama) await screen.findByText('Ollama connection', { exact: true });
   return userEvent.setup();
 }
 

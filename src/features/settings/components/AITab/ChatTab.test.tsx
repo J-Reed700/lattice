@@ -143,9 +143,10 @@ describe('ChatTab', () => {
     });
 
     it('names the cloud model as the active chat model', () => {
+      h.active = { activeModels: activeChat({ kind: 'cloud', provider: 'anthropic', model: 'claude-opus-5' }) };
       render(<ChatTab />);
       expect(screen.getAllByText('claude-opus-5').length).toBeGreaterThan(0);
-      expect(screen.getByText('anthropic')).toBeInTheDocument();
+      expect(screen.getByText('cloud:anthropic/claude-opus-5')).toBeInTheDocument();
     });
 
     it('clears an unsaved key when changing cloud providers', () => {

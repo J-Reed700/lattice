@@ -37,6 +37,7 @@ describe('the Chat role', () => {
     const settings = makeAppSettings().llm;
     settings.provider = 'auto';
     settings.model = 'qwen3:8b';
+    settings.ollamaConfigured = true;
     const connection = row({ model_id: '__ollama_server__', backend: 'ollama' });
     expect(chat.isActive(connection, settings, active([{ kind: 'ollama', model: 'qwen3:8b' }]))).toBe(true);
     expect(chat.isActive(connection, settings, active([{ kind: 'local', model_id: 'row-model' }]))).toBe(false);

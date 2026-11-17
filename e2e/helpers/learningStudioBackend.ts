@@ -31,6 +31,7 @@ import type {
   WorkspaceNoteDto,
 } from "../../src/lib/bindings";
 import { makeAppSettings } from "../../src/tests/fixtures/appSettings";
+import { mockActiveModels } from "../fixtures/activeModels";
 import { installTauriMock, mockCommands, type Fixture, type MockArgs } from "../fixtures/tauri";
 import { installClaimReviewBackend, type ClaimReviewBackend, type TrustOverrideRecord } from "./claimReviewBackend";
 import { installQuizBackend, type QuizBackend } from "./quizBackend";
@@ -237,6 +238,7 @@ type LabDraft = {
 /** Install a stateful Tauri command fixture for Learning Studio route tests. */
 export async function installLearningStudioBackend(page: Page) {
   await installTauriMock(page);
+  await mockActiveModels(page);
   await installClaimReviewBackend(page);
   await installQuizBackend(page);
   await mockCommands(page, (settings, ipc) => {

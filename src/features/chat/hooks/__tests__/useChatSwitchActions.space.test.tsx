@@ -13,7 +13,13 @@ vi.mock('@/shared/conversations/conversationsStore', () => ({
   useConversationsStore: (selector: (state: unknown) => unknown) => selector(h.state),
 }));
 vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({ useSettingsQuery: () => ({ data: undefined }) }));
-vi.mock('@/features/model/hooks/useActiveModels', () => ({ useActiveModels: () => ({ activeModels: null }) }));
+vi.mock('@/features/model/hooks/useActiveModels', () => ({
+  useActiveModels: () => ({
+    activeModels: {
+      chat: [], chat_unset: 'No chat model is selected in Settings → Downloaded', utility: [], llama_cpp: null, ollama: null, ollama_utility_tag: null,
+    },
+  }),
+}));
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => ({ downloadedModels: [] }) }));
 vi.mock('@/stores/toastStore', () => ({ toast: h.toast }));
 
@@ -58,7 +64,7 @@ describe('useChatSwitchActions spaces and defaults', () => {
     const { actions } = render();
     await act(() => actions.handleUseDefault());
     expect(h.state.setConversationModelChoice).toHaveBeenCalledWith('c1', { kind: 'default' });
-    expect(h.toast.success).toHaveBeenCalledWith('This chat now uses the app default', { message: 'No chat model is selected in Settings → Downloaded.' });
+    expect(h.toast.success).toHaveBeenCalledWith('This chat now uses the app default', { message: 'No chat model is selected in Settings → Downloaded' });
   });
 
   it('says why the default could not be restored', async () => {
