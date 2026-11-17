@@ -64,19 +64,20 @@ pub(super) fn stands_on(finding: &Finding) -> Vec<&EvidencePassage> {
 }
 
 /// The byte of a section's body a statement's citation goes at: the end of
-/// its quote, moved past an inline code span it ends inside; none when the
-/// quote is not in the body or ends inside a fenced code block.
+/// the quote's first copy outside a fenced code block, moved past an inline
+/// code span it ends inside; none when the quote is not in the body outside a
+/// fence.
 pub(super) fn citation_point(body: &str, quote: &str) -> Option<usize> {
     if quote.trim().is_empty() {
         return None;
     }
-    let end = body.find(quote)? + quote.len();
-    if code_fences(body).iter().any(|fence| {
-        let whole = fence.whole();
-        whole.start < end && end < whole.end
-    }) {
-        return None;
-    }
+    let fences = code_fences(body);
+    let end = body.match_indices(quote).map(|(at, _)| at + quote.len()).find(|&end| {
+        !fences.iter().any(|fence| {
+            let whole = fence.whole();
+            whole.start < end && end < whole.end
+        })
+    })?;
     let line_start = body.get(..end)?.rfind('\n').map_or(0, |at| at + 1);
     let line_end = body
         .get(end..)?
@@ -148,16 +149,16 @@ fn pieces(body: &str, marks: &BTreeMap<usize, BTreeSet<u32>>) -> Vec<ReplyPieceD
 }
 
 /// Numbers the passages the `findings` stand on down the lesson and cuts each
-/// body, `bodies[unit]`, at its citation points. A section's placed statements
-/// are numbered first, in reading order, then its others; passages only
-/// compared come last and get no chip.
+/// body, `bodies[unit]`, at its citation points: every placed statement first,
+/// block by block in reading order, then the statements without a chip;
+/// passages only compared come last and get no chip.
 pub(super) fn number<'f>(bodies: &[&str], findings: &[&'f Finding]) -> Numbered<'f> {
     let mut passages = Passages::default();
     let mut cites = vec![Vec::new(); findings.len()];
     let mut sections = Vec::with_capacity(bodies.len());
+    let mut unplaced = Vec::new();
     for (unit, body) in bodies.iter().enumerate() {
         let mut placed = Vec::new();
-        let mut unplaced = Vec::new();
         for (index, finding) in findings.iter().copied().enumerate() {
             if finding.unit != unit {
                 continue;
@@ -173,7 +174,6 @@ pub(super) fn number<'f>(bodies: &[&str], findings: &[&'f Finding]) -> Numbered<
         }
         placed.sort_by_key(|(point, index, _)| (*point, *index));
         let mut marks: BTreeMap<usize, BTreeSet<u32>> = BTreeMap::new();
-        let mut cited = Vec::new();
         for (point, index, stands) in placed {
             let numbers: Vec<u32> = stands
                 .into_iter()
@@ -183,21 +183,20 @@ pub(super) fn number<'f>(bodies: &[&str], findings: &[&'f Finding]) -> Numbered<
                 .entry(point)
                 .or_default()
                 .extend(numbers.iter().copied());
-            cited.push((index, numbers));
-        }
-        for (index, stands) in unplaced {
-            let numbers: Vec<u32> = stands
-                .into_iter()
-                .map(|passage| passages.number_of(passage))
-                .collect();
-            cited.push((index, numbers));
-        }
-        for (index, numbers) in cited {
             if let Some(slot) = cites.get_mut(index) {
                 *slot = numbers;
             }
         }
         sections.push(pieces(body, &marks));
+    }
+    for (index, stands) in unplaced {
+        let numbers: Vec<u32> = stands
+            .into_iter()
+            .map(|passage| passages.number_of(passage))
+            .collect();
+        if let Some(slot) = cites.get_mut(index) {
+            *slot = numbers;
+        }
     }
     for finding in findings.iter().copied() {
         for passage in &finding.evidence {

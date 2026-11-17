@@ -290,7 +290,13 @@ impl LessonVerificationReport {
         let bodies: Vec<&str> = lesson
             .blocks
             .iter()
-            .map(|block| block.body.as_str())
+            .map(|block| {
+                if block.check.is_some() {
+                    ""
+                } else {
+                    block.body.as_str()
+                }
+            })
             .collect();
         let Numbered {
             passages: numbered,
