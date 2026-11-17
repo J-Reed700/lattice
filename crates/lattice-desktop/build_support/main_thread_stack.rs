@@ -59,6 +59,14 @@ mod tests {
                 format!("cargo::rustc-link-arg-examples={arg}"),
             ]
         );
+        let arg = format!("-Wl,-stack_size,{MAIN_THREAD_STACK_BYTES:#x}");
+        assert_eq!(
+            directives("macos", ""),
+            vec![
+                format!("cargo::rustc-link-arg-bins={arg}"),
+                format!("cargo::rustc-link-arg-examples={arg}"),
+            ]
+        );
         assert!(directives("linux", "gnu").is_empty());
     }
 }
