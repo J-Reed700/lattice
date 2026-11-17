@@ -49,8 +49,8 @@ fn embed_windows_manifest() {
 fn reserve_main_thread_stack() {
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
-    for arg in main_thread_stack::link_args(&target_os, &target_env) {
-        println!("cargo::rustc-link-arg-bins={arg}");
+    for line in main_thread_stack::directives(&target_os, &target_env) {
+        println!("{line}");
     }
 }
 
