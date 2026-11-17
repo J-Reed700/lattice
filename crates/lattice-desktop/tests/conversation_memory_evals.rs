@@ -918,7 +918,9 @@ impl LLMPort for EvalLlm {
             self.record(
                 kind,
                 request_record,
-                outcome.as_ref().map_or(serde_json::Value::Null, Self::usage_record),
+                outcome
+                    .as_ref()
+                    .map_or(serde_json::Value::Null, Self::usage_record),
                 outcome
                     .as_ref()
                     .map_or("", |response| response.text.as_str()),
@@ -2130,7 +2132,8 @@ fn a_refusal_with_a_curly_apostrophe_counts_as_an_honest_abstention() {
 #[test]
 fn a_refusal_phrased_as_not_set_yet_counts_as_an_honest_abstention() {
     let fixture = Fixture::load("missing_fact");
-    let refusal = "Not set yet \u{2014} it was one of the two items I asked you for earlier (along \
+    let refusal =
+        "Not set yet \u{2014} it was one of the two items I asked you for earlier (along \
                    with a named rollout owner), and neither has been provided since.";
     assert!(contains_marker(refusal, &fixture.expect.abstain_markers));
 }
