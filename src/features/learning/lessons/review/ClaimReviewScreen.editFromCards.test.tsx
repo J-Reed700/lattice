@@ -38,12 +38,12 @@ const note = (overrides: Partial<TeachingFindingDto> = {}) => teachingFinding({
   findingKey: 'teaching:section-1', unitIndex: 1, unitTitle: 'Section 2: Freezing', sentence: FREEZING, passage: null, ...overrides,
 });
 
-const cut = (claimId: string, sentence: string, unitIndex: number, putBackUnit: number | null, contextBefore: string): ClaimReviewItemDto => claimItem({
+const cut = (claimId: string, sentence: string, unitIndex: number, putBackUnit: number | null, putBackBeside: string | null): ClaimReviewItemDto => claimItem({
   claimId, state: { state: 'removed', at: 5, by: 'machine' }, availableActions: ['put_back'], verdictKind: null, reason: null,
-  place: putBackUnit === null ? 'choose' : 'known', putBackUnit,
+  place: putBackUnit === null ? 'choose' : 'known', putBackUnit, putBackBeside,
   location: { unitIndex, unitKind: 'block', unitTitle: '', field: 'body', quote: sentence, span: null },
-  presentation: { statement: sentence, sentence, contextBefore, contextAfter: '', place: '' },
-});
+  presentation: { statement: sentence, sentence, contextBefore: '', contextAfter: '', place: '' },
+} as Partial<ClaimReviewItemDto>);
 
 const statement = claimItem({
   claimId: 'claim-1', statement: FREEZING, state: { state: 'unverified', at: 2, reason: 'unsupported' }, verdictKind: null, reason: null,
@@ -139,7 +139,7 @@ describe('Claim review screen: editing the section from a note or a taken-out se
   });
 
   it('offers it only on a taken-out sentence whose section the course has', async () => {
-    show(review([cut('a', BOILING, 0, 0, ''), cut('b', 'A sentence of a section that is gone.', 7, 7, '')], { state: 'ready', counts }));
+    show(review([cut('a', BOILING, 0, 0, null), cut('b', 'A sentence of a section that is gone.', 7, 7, null)], { state: 'ready', counts }));
     const list = await openTakenOut();
     expect(await within(list).findAllByRole('button', EDIT)).toHaveLength(1);
     expect(within(within(list).getByText(BOILING).closest('li') as HTMLElement).getByRole('button', EDIT)).toBeVisible();
@@ -155,7 +155,7 @@ describe('Claim review screen: editing the section from a note or a taken-out se
   });
 
   it('does not offer it on a taken-out sentence with no known place', async () => {
-    show(review([cut('a', BOILING, 0, null, '')], { state: 'ready', counts }));
+    show(review([cut('a', BOILING, 0, null, null)], { state: 'ready', counts }));
     const list = await openTakenOut();
     expect(within(list).getByText(BOILING)).toBeVisible();
     expect(within(list).queryByRole('button', EDIT)).not.toBeInTheDocument();
