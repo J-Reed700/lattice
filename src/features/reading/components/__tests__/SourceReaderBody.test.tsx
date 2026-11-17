@@ -410,7 +410,7 @@ describe('SourceReaderBody saved web articles', () => {
     expect(screen.queryByTestId('html-viewer')).toBeNull();
   });
 
-  it('asks the archive about the document's current path when the cited path is stale', async () => {
+  it("asks the archive about the document's current path when the cited path is stale", async () => {
     const folder = '/vault/current/web-archive/example.com/a-1/';
     mocks.resolveSourcePath.mockResolvedValue({ ok: true, data: `${folder}article.md` });
     mocks.savedWebArticle.mockImplementation(async (path: string) => ({
