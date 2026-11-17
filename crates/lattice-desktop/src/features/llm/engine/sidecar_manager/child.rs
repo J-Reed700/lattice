@@ -47,6 +47,13 @@ impl ServerProcess {
     pub(in crate::features::llm::engine) fn kill(&self) {
         self.kill.notify_one();
     }
+
+    #[cfg(test)]
+    pub(in crate::features::llm::engine) fn detached() -> Self {
+        Self {
+            kill: Arc::new(Notify::new()),
+        }
+    }
 }
 
 /// Starts `command` with its output piped into the returned events.
