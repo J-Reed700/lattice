@@ -55,7 +55,8 @@ impl VisionOcr {
 #[async_trait]
 impl OcrPort for VisionOcr {
     async fn recognize_page(&self, document: &Path, page: u32) -> Result<String, OcrError> {
-        // Before rendering: without a model there is nothing to render for.
+        // Before the model: a model cannot help on a platform that cannot render the page.
+        render::check_renderable(document)?;
         let Some(model) = self.models.locate().await? else {
             return Err(OcrError::NotConfigured);
         };
