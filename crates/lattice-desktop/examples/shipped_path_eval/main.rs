@@ -113,7 +113,7 @@ fn main() -> Res<()> {
         )
         .with_writer(std::io::stderr)
         .init();
-    let runtime = lattice_desktop::bootstrap::async_runtime::install()?;
+    let runtime = lattice::bootstrap::async_runtime::install()?;
     let result = runtime.block_on(run(&args, &real_home, workdir.path()));
     if args.keep_data {
         let kept = workdir.keep();
