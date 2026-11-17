@@ -231,16 +231,12 @@ impl RoleModels {
             must_list_model,
         };
         let candidates = default_chat_model(settings, active_local.as_deref()).0?;
-        if !candidates.auto {
-            return self
-                .pin(&candidates.models[0], settings, epoch, &want(false))
-                .await;
-        }
         let mut failures = AutoFailures::default();
         for model in &candidates.models {
-            let listed = matches!(model, ModelRef::LlamaCpp { .. });
+            let listed = candidates.auto && matches!(model, ModelRef::LlamaCpp { .. });
             match self.pin(model, settings, epoch, &want(listed)).await {
                 Ok(pinned) => return Ok(pinned),
+                Err(error) if !candidates.auto => return Err(error),
                 Err(error) => failures.record(model, error),
             }
         }
