@@ -134,6 +134,30 @@ describe('a lesson section drawn like a chat answer', () => {
     expect(useReaderStore.getState().session).toBeNull();
   });
 
+  it('draws a verified section’s text as written, as an unverified one is', async () => {
+    const opening = 'Step one  \nStep two.';
+    const rest = '\n\n```python\ndef a():\n    pass\n\n\ndef b():\n    pass\n```';
+    const written = `${opening}${rest}`;
+    const verified = report({ teachingClaims: [], sections: [{ sectionIndex: 1, pieces: [said(opening), cites(1), said(rest)] }] });
+    const drawWritten = (data: LearningLessonEvidenceDto | null) => render(
+      <CitedSection
+        lessonId="lesson-1" sectionIndex={1} body={written} report={data} sources={data ? sources : []}
+        showCitations wrap={(viewer) => <div data-testid="wrapped">{viewer}</div>}
+      />,
+    );
+
+    const first = drawWritten(verified);
+    await waitFor(() => expect(document.querySelector('pre')).not.toBeNull());
+    const drawn = document.querySelector('pre')!.textContent;
+    expect(drawn).toContain('pass\n\n\ndef b');
+    expect(screen.getByTestId('wrapped').querySelector('br')).not.toBeNull();
+    first.unmount();
+
+    drawWritten(null);
+    await waitFor(() => expect(document.querySelector('pre')).not.toBeNull());
+    expect(document.querySelector('pre')!.textContent).toBe(drawn);
+  });
+
   it.each([
     ['without a report', null],
     ['with a report that has no text for this section', report({ sections: [] })],

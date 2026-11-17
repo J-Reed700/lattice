@@ -92,4 +92,26 @@ describe('Learning Studio page: a lesson’s citations open the source reader', 
     await waitFor(() => expect(useReaderStore.getState().session).toBeNull());
     expect(screen.queryByTestId('reader-overlay')).not.toBeInTheDocument();
   }, 3 * PAGE_WAIT.timeout);
+
+  it('closes the source reader when the lesson’s text leaves the screen', async () => {
+    show();
+    await userEvent.click(await screen.findByRole('button', { name: /A thoughtful course/ }, PAGE_WAIT));
+    const openChip = async () => {
+      await waitFor(() => expect(document.querySelector('[data-cite="1"]')).not.toBeNull(), PAGE_WAIT);
+      fireEvent.click(document.querySelector('[data-cite="1"]')!);
+      expect(await screen.findByTestId('reader-overlay')).toBeInTheDocument();
+      expect(useReaderStore.getState().session).not.toBeNull();
+    };
+
+    await openChip();
+    await userEvent.click(screen.getByRole('tab', { name: /Sources/ }));
+    await waitFor(() => expect(useReaderStore.getState().session).toBeNull(), PAGE_WAIT);
+    expect(screen.queryByTestId('reader-overlay')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('tab', { name: /Lessons/ }));
+    await openChip();
+    await userEvent.click(screen.getByRole('button', { name: 'Start with the idea', expanded: true }));
+    await waitFor(() => expect(useReaderStore.getState().session).toBeNull(), PAGE_WAIT);
+    expect(screen.queryByTestId('reader-overlay')).not.toBeInTheDocument();
+  }, 3 * PAGE_WAIT.timeout);
 });

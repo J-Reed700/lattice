@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -42,10 +43,10 @@ const report: LearningLessonEvidenceDto = {
   ],
 };
 
-function show() {
+function show({ isCurrent = true }: { isCurrent?: boolean } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<QueryClientProvider client={client}><MemoryRouter>
-    <LessonCard lesson={lesson} moduleId="module-1" program={program} isCurrent selected={false} pending={false}
+    <LessonCard lesson={lesson} moduleId="module-1" program={program} isCurrent={isCurrent} selected={false} pending={false}
       onPrepare={vi.fn()} onComplete={vi.fn()} onSelect={vi.fn()} onPractice={vi.fn()} onReview={vi.fn()} />
   </MemoryRouter></QueryClientProvider>);
 }
@@ -103,5 +104,17 @@ describe('Lesson card with citations drawn in its text', () => {
     expect(section).toHaveTextContent(BOILING);
     expect(section.querySelector('[data-cite]')).toBeNull();
     expect(within(section).queryByText('Sources')).not.toBeInTheDocument();
+  });
+
+  it('loads the cited pages’ full text only once the lesson is open', async () => {
+    show({ isCurrent: false });
+    await waitFor(() => expect(api.evidence).toHaveBeenCalled());
+    await act(async () => {});
+    await act(async () => {});
+    await act(async () => {});
+    expect(api.version).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Phase changes', expanded: false }));
+    await waitFor(() => expect(api.version).toHaveBeenCalled());
   });
 });

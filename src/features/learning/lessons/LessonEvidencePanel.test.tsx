@@ -128,6 +128,17 @@ describe('lesson evidence', () => {
       expect(session?.index).toBe(1);
       expect(session?.citations[1]?.fileName).toBe('Lecture notes');
     });
+
+    it('closes the reader it opened when the panel leaves the screen', async () => {
+      mocks.evidence.mockResolvedValue({ ok: true, data });
+      const view = show();
+      await userEvent.click(screen.getByRole('button', { name: 'View lesson evidence' }));
+      await userEvent.click(await screen.findByText('Lecture notes'));
+      await userEvent.click(screen.getAllByRole('button', { name: /Open original page/ })[0]!);
+      expect(useReaderStore.getState().session?.ownerKey).toBe('lesson:lesson:evidence');
+      view.unmount();
+      expect(useReaderStore.getState().session).toBeNull();
+    });
   });
 
   describe('statements sorted into classes', () => {
