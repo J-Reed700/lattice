@@ -8,6 +8,7 @@ import { render } from '@/tests/renderWithQueryClient';
 import type { SourceWithMetadata } from '@/types/conversation';
 
 
+vi.mock('@/features/model/hooks/useActiveModels', () => ({ useActiveModels: () => ({ activeModels: null }) }));
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({
   useDownloadedModels: () => ({ downloadedModels: [] }),
 }));

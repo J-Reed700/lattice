@@ -139,12 +139,9 @@ export const modelApi = {
   getModelDownloadPath: async (): Promise<ApiResult<string>> =>
     apiCall('get_model_download_path'),
 
-  getActiveModels: async (): Promise<
-    ApiResult<{
-      chat_model: DownloadedModel | null;
-      embedding_model: DownloadedModel | null;
-    }>
-  > => apiCall('get_active_models'),
+  /** What a chat on the Settings default and utility work run on now, as the backend decides it. */
+  getActiveModels: async (): Promise<ApiResult<Wire.ActiveModels>> =>
+    apiCall('get_active_models'),
 
   /**
    * Deletes a downloaded model record and optionally its file.

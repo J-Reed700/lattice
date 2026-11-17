@@ -31,19 +31,19 @@ import { LocalModelConfigModal } from './LocalModelConfigModal';
 import { LocalVisionControl } from './LocalVisionControl';
 import { useModelRoles } from './ModelRolesContext';
 import { ActiveRoleBadge } from './RoleButton';
-import { canModelFulfillRole, isChatModelSelected, isLearningModel, isUtilityModel, ROLES } from './roleConfig';
+import { canModelFulfillRole, isLearningModel, isUtilityModel, roleDescriptor, ROLES } from './roleConfig';
 
 interface Props {
   model: DownloadedModel;
 }
 
 export function LocalModelRow({ model }: Props) {
-  const { refresh, chatProvider, llmSettings } = useModelRoles();
-  const chatActive = isChatModelSelected(model, chatProvider);
+  const { refresh, llmSettings, activeModels } = useModelRoles();
+  const chatActive = roleDescriptor('chat').isActive(model, llmSettings, activeModels);
   const utilityActive = isUtilityModel(model, llmSettings);
   const learningActive = isLearningModel(model, llmSettings);
   const roles = ROLES.filter((role) => canModelFulfillRole(model, role));
-  const activeRoles = roles.filter((role) => role.isActive(model, llmSettings));
+  const activeRoles = roles.filter((role) => role.isActive(model, llmSettings, activeModels));
   const { deleteDownloadedModel, warmUpActiveChatModel, warmUpActiveUtilityModel, warmUpLearningModel } =
     useDownloadedModels();
   const loadedModels = useLoadedModels();
