@@ -201,10 +201,12 @@ pub struct Each<K, V>(PhantomData<(K, V)>);
 /// unmarked item is unmarked only in an answer read to its end.
 pub struct Flagged<K, V>(PhantomData<(K, V)>);
 
-/// Only the items that keep some of their own things, one line each: the
-/// item's handle, then the handles of its own `C` it keeps, as `p2: u1 u4`.
-/// A text form. An item no line names keeps nothing, but only in an answer
-/// read to its end; the single word `none` says that of every item.
+/// Only the items that keep some of their own things: an item's handle, then
+/// the handles of its own `C` it keeps, as `p2: u1 u4`, one item to a line.
+/// A text form, read as the handles in each line; every other word, number
+/// and mark is passed over. An item no entry names keeps nothing, but only in
+/// an answer read to its end that placed every handle in it; the word `none`
+/// says that of every item.
 pub struct Keeps<K, C>(PhantomData<(K, C)>);
 
 /// A verdict word first, then free text, then exactly one pointer line

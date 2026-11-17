@@ -572,45 +572,29 @@ pub(super) fn read_flagged<K: Kind, V: Authored + PartialEq>(
     })
 }
 
-/// One line of a `Keeps` answer: a shown item and what it keeps. `Err` holds
-/// whether the line's first token has the form of a handle, for a line that
-/// does not name a shown item.
-fn keeps_line<K: Kind, C: Kind>(
-    line: &str,
-    showing: &Showing<'_>,
-) -> Result<(Picked<K>, Settled<Vec<Picked<C>>>), bool> {
-    let mut tokens = line
-        .split(|c: char| c.is_whitespace() || c == ',')
-        .filter(|token| !token.is_empty());
-    let first = tokens.next().ok_or(false)?;
-    let first = first.strip_suffix(':').unwrap_or(first);
-    let Some(item) = showing.resolve::<K>(first) else {
-        let handle_like = Name::pointed(first).is_some();
-        trace(
-            if handle_like {
-                "unplaced-entry"
-            } else {
-                "unread-item"
-            },
-            Some(first),
-        );
-        return Err(handle_like);
-    };
-    let mut kept: Vec<Picked<C>> = Vec::new();
-    for token in tokens {
-        match showing.resolve_under::<C>(item.handle.name(), token) {
-            Some(own) => {
-                if !kept.contains(&own) {
-                    kept.push(own);
-                }
-            }
-            None => {
-                trace("unplaced-keep", Some(token));
-                return Ok((item, Settled::Unanswered(Why::Unplaced)));
-            }
-        }
+/// Whether a line is the word for absence, in any case and with whatever
+/// punctuation or markup surrounds it.
+fn says_none(line: &str) -> bool {
+    line.trim_matches(|c: char| !c.is_ascii_alphanumeric())
+        .eq_ignore_ascii_case("none")
+}
+
+/// An entry being read: the item, what it keeps, and whether an own handle of
+/// it did not resolve.
+type Entry<K, C> = (Picked<K>, Vec<Picked<C>>, bool);
+
+fn close_entry<K: Kind, C: Kind>(
+    entries: &mut Rows<K, Vec<Picked<C>>>,
+    current: Option<Entry<K, C>>,
+) {
+    if let Some((item, kept, unplaced)) = current {
+        let settled = if unplaced {
+            Settled::Unanswered(Why::Unplaced)
+        } else {
+            Settled::Answered(kept)
+        };
+        entries.push((item, settled));
     }
-    Ok((item, Settled::Answered(kept)))
 }
 
 pub(super) fn read_keeps<K: Kind, C: Kind>(
@@ -622,12 +606,6 @@ pub(super) fn read_keeps<K: Kind, C: Kind>(
         return all_unanswered(shown, &Why::Declined);
     }
     let complete = written.ended == Ended::Complete;
-    if complete && written.text.trim() == "none" {
-        return shown
-            .into_iter()
-            .map(|item| (item, Settled::Answered(Vec::new())))
-            .collect();
-    }
     let mut lines: Vec<&str> = written
         .text
         .split('\n')
@@ -638,27 +616,60 @@ pub(super) fn read_keeps<K: Kind, C: Kind>(
         lines.pop();
     }
     let mut entries: Rows<K, Vec<Picked<C>>> = Vec::new();
-    let mut every_line_usable = true;
-    let mut stray_handle = false;
+    let mut stray = false;
+    let mut none_said = false;
     for line in &lines {
-        match keeps_line::<K, C>(line, showing) {
-            Ok(entry) => entries.push(entry),
-            Err(handle_like) => {
-                every_line_usable = false;
-                stray_handle |= handle_like;
+        none_said |= says_none(line);
+        let mut current: Option<Entry<K, C>> = None;
+        let tokens = line
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|token| !token.is_empty());
+        for token in tokens {
+            let Some(name) = Name::pointed(token) else {
+                continue;
+            };
+            if name.prefix == K::PREFIX {
+                close_entry(&mut entries, current.take());
+                match showing.resolve::<K>(token) {
+                    Some(item) => current = Some((item, Vec::new(), false)),
+                    None => {
+                        trace("unplaced-entry", Some(token));
+                        stray = true;
+                    }
+                }
+            } else if name.prefix == C::PREFIX {
+                match current.as_mut() {
+                    Some((_, _, true)) => {}
+                    Some((item, kept, unplaced)) => {
+                        match showing.resolve_under::<C>(item.handle.name(), token) {
+                            Some(own) => {
+                                if !kept.contains(&own) {
+                                    kept.push(own);
+                                }
+                            }
+                            None => {
+                                trace("unplaced-keep", Some(token));
+                                *unplaced = true;
+                            }
+                        }
+                    }
+                    None => {
+                        trace("unplaced-keep", Some(token));
+                        stray = true;
+                    }
+                }
             }
         }
+        close_entry(&mut entries, current.take());
     }
     let unnamed = if !complete {
         Some(Why::CutOff)
-    } else if lines.is_empty() {
-        Some(Why::NotRead)
-    } else if every_line_usable {
-        None
-    } else if stray_handle {
+    } else if stray {
         Some(Why::Unplaced)
-    } else {
+    } else if entries.is_empty() && !none_said {
         Some(Why::NotRead)
+    } else {
+        None
     };
     per_item(shown, entries, |joined| match joined {
         Some(settled) => settled,
@@ -718,12 +729,13 @@ pub(super) fn read_lead<W: Vocabulary, K: Kind>(
     let Some((line_start, line)) = last.filter(|(start, _)| *start >= after_word) else {
         return Settled::Unanswered(Why::Unplaced);
     };
-    let pointer = match line.trim() {
-        "none" => None,
-        handle => match showing.resolve::<K>(handle) {
+    let pointer = if says_none(line) {
+        None
+    } else {
+        match showing.resolve::<K>(line.trim()) {
             Some(picked) => Some(picked),
             None => return Settled::Unanswered(Why::Unplaced),
-        },
+        }
     };
     let between = text
         .get(after_word..line_start)
