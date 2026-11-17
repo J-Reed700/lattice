@@ -106,7 +106,10 @@ fn rebuilt(pieces: &[ReplyPieceDto]) -> String {
 #[test]
 fn a_citation_goes_after_the_sentence_it_backs() {
     assert_eq!(
-        citation_point("Rust has ownership. It frees memory.", "Rust has ownership."),
+        citation_point(
+            "Rust has ownership. It frees memory.",
+            "Rust has ownership."
+        ),
         Some(19)
     );
 }

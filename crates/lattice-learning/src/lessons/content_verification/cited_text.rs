@@ -72,12 +72,15 @@ pub(super) fn citation_point(body: &str, quote: &str) -> Option<usize> {
         return None;
     }
     let fences = code_fences(body);
-    let end = body.match_indices(quote).map(|(at, _)| at + quote.len()).find(|&end| {
-        !fences.iter().any(|fence| {
-            let whole = fence.whole();
-            whole.start < end && end < whole.end
-        })
-    })?;
+    let end = body
+        .match_indices(quote)
+        .map(|(at, _)| at + quote.len())
+        .find(|&end| {
+            !fences.iter().any(|fence| {
+                let whole = fence.whole();
+                whole.start < end && end < whole.end
+            })
+        })?;
     let line_start = body.get(..end)?.rfind('\n').map_or(0, |at| at + 1);
     let line_end = body
         .get(end..)?
