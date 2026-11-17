@@ -15,8 +15,8 @@ pub use history::{
     ClaimEventPayloadDto, EvidenceSeenDto, ProvenanceDto, UserActionDto,
 };
 pub use presentation::{
-    ClaimPresentationDto, ClaimSupportCountsDto, ClaimSupportDto, ClaimSupportRoleDto,
-    ResearchSummaryDto,
+    ClaimExcerptDto, ClaimPresentationDto, ClaimSupportCountsDto, ClaimSupportDto,
+    ClaimSupportRoleDto, ResearchSummaryDto,
 };
 pub use trust::{
     source_kind, CountedSupportDto, SourceKindDto, StandingAssessedDto, TrustCauseDto,
@@ -442,6 +442,9 @@ impl From<&ReopenCause> for ReopenCauseDto {
 pub struct ClaimEvidencePassageDto {
     pub passage: LearningEvidencePassageDto,
     pub added_by: Option<SourceAddedByDto>,
+    /// The passage's first sentence in its excerpt: what the review marks in
+    /// a passage the user added that does not state the claim.
+    pub opening: ClaimExcerptDto,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type)]

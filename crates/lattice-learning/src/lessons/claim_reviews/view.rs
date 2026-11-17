@@ -4,6 +4,7 @@
 //! checker's latest verdict (the local checker's and the Verifier's, side by
 //! side, §14.5), and the actions the claim allows now.
 
+mod excerpt;
 mod presentation;
 mod support;
 
@@ -375,6 +376,7 @@ fn evidence_passage(
             }),
         },
         added_by: facts.map(|facts| facts.added_by),
+        opening: excerpt::opening(text),
     }
 }
 
