@@ -58,8 +58,11 @@
 //!
 //! # Traces
 //!
-//! Each run appends a JSONL trace — prompts, answers and per-item decisions —
-//! to `<log dir>/lattice-conversation-memory-evals-<pid>.jsonl`. That file
+//! Each run appends a JSONL trace to
+//! `<log dir>/lattice-conversation-memory-evals-<pid>.jsonl`: every model
+//! call's request (input items, offered tool names, output limit), its
+//! answer, and what the backend reported for it (tokens, finish reason,
+//! timing), plus per-item decisions. That file
 //! contains conversation text and **must never be committed**; the default
 //! location is the system temp dir precisely so it cannot be added by accident.
 //!
@@ -374,7 +377,7 @@ for the full command.";
 /// Bump whenever scoring, corpus traversal, retry semantics, or trace meaning
 /// changes. A checkpoint from a different harness must never be mixed into a
 /// release result merely because it used the same model.
-const EVAL_HARNESS_VERSION: &str = "conversation-memory-eval/2026-11-06.2";
+const EVAL_HARNESS_VERSION: &str = "conversation-memory-eval/2026-11-17.1";
 
 impl EvalConfig {
     fn from_env() -> Self {
@@ -609,6 +612,8 @@ struct EvalLlm {
 struct CallRecord {
     kind: &'static str,
     response: String,
+    request: serde_json::Value,
+    usage: serde_json::Value,
     tool_calls: Vec<String>,
     error: Option<String>,
     /// Operations the response proposed, for an extraction call. Counted here
@@ -648,9 +653,28 @@ impl EvalLlm {
         std::mem::take(&mut *self.calls.lock())
     }
 
+    fn request_record(request: &CompletionRequest) -> serde_json::Value {
+        serde_json::json!({
+            "input": request.input(),
+            "tools": request.tools().iter().map(|tool| tool.name.as_str()).collect::<Vec<_>>(),
+            "max_output_tokens": request.max_output_tokens(),
+        })
+    }
+
+    fn usage_record(response: &CompletionResponse) -> serde_json::Value {
+        serde_json::json!({
+            "input_tokens": response.input_tokens,
+            "output_tokens": response.output_tokens,
+            "finish_reason": response.finish_reason,
+            "timing": response.timing,
+        })
+    }
+
     fn record(
         &self,
         kind: &'static str,
+        request: serde_json::Value,
+        usage: serde_json::Value,
         text: &str,
         tool_calls: Vec<String>,
         elapsed: Duration,
@@ -666,6 +690,8 @@ impl EvalLlm {
         self.calls.lock().push(CallRecord {
             kind,
             response: text.to_owned(),
+            request,
+            usage,
             tool_calls,
             failed: error.is_some(),
             error,
@@ -803,12 +829,15 @@ impl LLMPort for EvalLlm {
             })
             .unwrap_or_default();
         let kind = Self::classify(&system);
+        let request_record = Self::request_record(request);
         let started = Instant::now();
         if let Some(intercepted) = self.intercept(kind, &user).await {
             return match intercepted {
                 Ok(text) => {
                     self.record(
                         kind,
+                        request_record,
+                        serde_json::Value::Null,
                         &text,
                         Vec::new(),
                         started.elapsed(),
@@ -824,6 +853,8 @@ impl LLMPort for EvalLlm {
                 Err(error) => {
                     self.record(
                         kind,
+                        request_record,
+                        serde_json::Value::Null,
                         "",
                         Vec::new(),
                         started.elapsed(),
@@ -859,6 +890,8 @@ impl LLMPort for EvalLlm {
                 };
                 self.record(
                     kind,
+                    request_record,
+                    serde_json::Value::Null,
                     "",
                     Vec::new(),
                     started.elapsed(),
@@ -884,6 +917,8 @@ impl LLMPort for EvalLlm {
             );
             self.record(
                 kind,
+                request_record,
+                outcome.as_ref().map_or(serde_json::Value::Null, Self::usage_record),
                 outcome
                     .as_ref()
                     .map_or("", |response| response.text.as_str()),
@@ -1989,6 +2024,8 @@ fn call_record(kind: &'static str, failed: bool) -> CallRecord {
     CallRecord {
         kind,
         response: String::new(),
+        request: serde_json::Value::Null,
+        usage: serde_json::Value::Null,
         tool_calls: Vec::new(),
         error: failed.then(|| "provider error".to_string()),
         operations: 0,
@@ -2399,6 +2436,8 @@ async fn run_once(
                         "attempts": call.attempts,
                         "retry_reasons": &call.retry_reasons,
                         "response": call.response,
+                        "request": call.request,
+                        "usage": call.usage,
                     }),
                 );
                 metrics.provider_retries += call.attempts.saturating_sub(1);
@@ -2707,6 +2746,8 @@ async fn run_once(
                     "attempts": call.attempts,
                     "retry_reasons": &call.retry_reasons,
                     "response": call.response,
+                    "request": call.request,
+                    "usage": call.usage,
                     "tool_calls": call.tool_calls,
                 }),
             );
