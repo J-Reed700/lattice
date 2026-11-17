@@ -615,8 +615,10 @@ pub(super) fn shown_in(request: &CompletionRequest) -> String {
 #[cfg(test)]
 type ShownResult = (String, String, Vec<(String, String)>);
 
-/// An answer for the results the prompt shows: an entry for each whose
-/// heading `answered` takes, keeping the sentences `keep` takes.
+/// An answer for the results the prompt shows, as lines: one for each result
+/// whose heading `answered` takes and that keeps a sentence `keep` takes. A
+/// result `answered` does not take gets a line naming a sentence that does not
+/// exist, which the reading cannot place; `none` when no result has a line.
 #[cfg(test)]
 pub(super) fn scripted_answer(
     prompt: &str,
@@ -636,19 +638,25 @@ pub(super) fn scripted_answer(
             }
         }
     }
-    let entries: Vec<serde_json::Value> = shown
+    let lines: Vec<String> = shown
         .iter()
-        .filter(|(_, heading, _)| answered(heading))
-        .map(|(handle, _, sentences)| {
-            let kept: Vec<&String> = sentences
+        .filter_map(|(handle, heading, sentences)| {
+            if !answered(heading) {
+                return Some(format!("{handle}: u0"));
+            }
+            let kept: Vec<&str> = sentences
                 .iter()
                 .filter(|(_, text)| keep(text))
-                .map(|(handle, _)| handle)
+                .map(|(handle, _)| handle.as_str())
                 .collect();
-            serde_json::json!({ "of": handle, "keep": kept })
+            (!kept.is_empty()).then(|| format!("{handle}: {}", kept.join(" ")))
         })
         .collect();
-    serde_json::json!({ "entries": entries }).to_string()
+    if lines.is_empty() {
+        "none".to_owned()
+    } else {
+        lines.join("\n")
+    }
 }
 
 #[cfg(test)]

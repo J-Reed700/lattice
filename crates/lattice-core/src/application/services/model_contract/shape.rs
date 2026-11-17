@@ -5,12 +5,15 @@
 //! evidence; absence is evidence only in an answer read to its end. A pointer
 //! counts only after it resolved against what its request shows.
 //!
-//! Every schema is written in one dialect, the subset every backend's
-//! translator enforces as written: closed objects, every property required,
+//! Every shape with a schema is written in one dialect, the subset every
+//! backend's translator enforces as written: closed objects, every property required,
 //! string `enum`s, lists with no count keyword but `minItems: 1`, `anyOf`
 //! only between closed objects. No optional property, no nullable, no
 //! integer, no range, no `$ref`. Absence is the named member `"none"`, never
 //! a missing field.
+//!
+//! The text forms, [`Lead`] and [`Keeps`], have no schema: they are written as
+//! plain lines and read as lines.
 
 use std::marker::PhantomData;
 
@@ -198,6 +201,12 @@ pub struct Each<K, V>(PhantomData<(K, V)>);
 /// unmarked item is unmarked only in an answer read to its end.
 pub struct Flagged<K, V>(PhantomData<(K, V)>);
 
+/// Only the items that keep some of their own things, one line each: the
+/// item's handle, then the handles of its own `C` it keeps, as `p2: u1 u4`.
+/// A text form. An item no line names keeps nothing, but only in an answer
+/// read to its end; the single word `none` says that of every item.
+pub struct Keeps<K, C>(PhantomData<(K, C)>);
+
 /// A verdict word first, then free text, then exactly one pointer line
 /// (`none` is a member). A text form: its verdict's confidence is read from
 /// the probabilities of the first token.
@@ -316,6 +325,22 @@ impl<K: Kind, W: Content> Shape for Change<K, W> {
 impl<K: Kind, W: Content> Single for Change<K, W> {
     fn read(written: &Written<'_>, showing: &Showing<'_>) -> Settled<Consistent<K, W>> {
         shapes::read_change(written, showing)
+    }
+}
+
+impl<K: Kind, C: Kind> Shape for Keeps<K, C> {
+    type Statement = Vec<Picked<C>>;
+
+    fn schema(_showing: &Showing<'_>, _pointers: Pointers) -> Option<Schema> {
+        None
+    }
+}
+
+impl<K: Kind, C: Kind> PerItem for Keeps<K, C> {
+    type Item = K;
+
+    fn read(written: &Written<'_>, showing: &Showing<'_>) -> Rows<K, Vec<Picked<C>>> {
+        shapes::read_keeps(written, showing)
     }
 }
 

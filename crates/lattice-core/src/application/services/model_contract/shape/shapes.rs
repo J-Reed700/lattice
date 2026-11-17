@@ -572,6 +572,13 @@ pub(super) fn read_flagged<K: Kind, V: Authored + PartialEq>(
     })
 }
 
+pub(super) fn read_keeps<K: Kind, C: Kind>(
+    _written: &Written<'_>,
+    showing: &Showing<'_>,
+) -> Rows<K, Vec<Picked<C>>> {
+    all_unanswered(showing.shown::<K>(), &Why::NotRead)
+}
+
 pub(super) fn read_change<K: Kind, W: Content>(
     written: &Written<'_>,
     showing: &Showing<'_>,
