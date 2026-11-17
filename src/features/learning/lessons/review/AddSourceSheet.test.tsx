@@ -7,7 +7,7 @@ import { AddSourceSheet, type AddSourceTarget } from '@/features/learning/lesson
 import { ClaimReviewScreen } from '@/features/learning/lessons/review/ClaimReviewScreen';
 import { waitingOnSource } from '@/features/learning/lessons/review/claimReviewScreenFixtures';
 import { review } from '@/features/learning/lessons/review/claimReviewTestData';
-import type { AttachFailureKindDto, AttachNextStepDto, ClaimAttachProgressDto, ClaimAttachReportDto } from '@/lib/bindings';
+import type { AttachFailureKindDto, AttachNextStepDto, ClaimAttachProgressDto, ClaimAttachReportDto, ClaimEvidencePassageDto, ClaimExcerptDto } from '@/lib/bindings';
 
 const api = vi.hoisted(() => ({
   attach: vi.fn(), capture: vi.fn(), review: vi.fn(), audit: vi.fn(), plan: vi.fn(), importFiles: vi.fn(), batchStatus: vi.fn(),
@@ -143,6 +143,21 @@ describe('Add a source', () => {
     expect(screen.getByText('Added Monarch Watch; it does not say this. The closest passage is shown: edit the sentence to match it, or add another source.')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Edit the sentence' }).className).toMatch(/--action\)/);
     expect(screen.getByRole('button', { name: 'Add another source' })).toBeVisible();
+  });
+
+  it('marks the opening sentence the backend found in the closest passage', async () => {
+    const user = userEvent.setup();
+    const item = waitingOnSource(1);
+    const text = 'Dr. Smith tagged monarchs that flew 2,500 miles. Some flew farther.';
+    const opening = { before: '', quote: 'Dr. Smith tagged monarchs that flew 2,500 miles.', after: ' Some flew farther.', clippedStart: false, clippedEnd: false };
+    const closest = { passage: { sourceVersionId: 'version-watch', title: 'Monarch Watch', url: URL_, text, startByte: 0, endByte: text.length, retrievalKind: 'hybrid', trust: null }, addedBy: 'user' as const, opening } as ClaimEvidencePassageDto & { opening: ClaimExcerptDto };
+    screenWith(review([item]), review([{ ...item, evidence: [closest] }], { revision: 8 }));
+    api.attach.mockResolvedValue(ok(report({ outcome: checked(false) })));
+    await user.click(await screen.findByRole('button', { name: 'Add a source' }));
+    await user.type(screen.getByLabelText('Page address'), URL_);
+    await user.click(screen.getByRole('button', { name: 'Add and check' }));
+    const passage = await screen.findByRole('region', { name: 'closest passage in what you added' });
+    expect(within(passage).getByText('Dr. Smith tagged monarchs that flew 2,500 miles.', { selector: 'mark' })).toBeVisible();
   });
 
   const failures: Array<[AttachFailureKindDto, string, string, AttachNextStepDto[], string[]]> = [

@@ -7,7 +7,7 @@ import { whyItWaits } from '@/features/learning/lessons/review/claimReviewCopy';
 import { ClaimReviewScreen } from '@/features/learning/lessons/review/ClaimReviewScreen';
 import { support, sufficiency, thirtyThreeClaims, tried, waitingOnSource } from '@/features/learning/lessons/review/claimReviewScreenFixtures';
 import { review, teachingFinding, unsupportedItem } from '@/features/learning/lessons/review/claimReviewTestData';
-import type { ClaimReviewItemDto, LessonClaimReviewDto } from '@/lib/bindings';
+import type { ClaimExcerptDto, ClaimReviewItemDto, ClaimSupportDto, LessonClaimReviewDto } from '@/lib/bindings';
 
 const api = vi.hoisted(() => ({
   review: vi.fn(), resolve: vi.fn(), resume: vi.fn(), audit: vi.fn(), settle: vi.fn(), trust: vi.fn(), setTrust: vi.fn(), clearTrust: vi.fn(), version: vi.fn(), plan: vi.fn(),
@@ -141,6 +141,33 @@ describe('Claim review screen', () => {
     // The code block is highlighted token by token, so read the passage's text rather than one element.
     await waitFor(() => expect(best.textContent).toMatch(/"route":\s*"south"/));
     expect(best.textContent).not.toMatch(/jsonjson/);
+  });
+
+  const excerptCard = async (text: string, quote: string, excerpt: ClaimExcerptDto) => {
+    const evidence = support({ passage: { ...support().passage, text }, quote, excerpt } as Partial<ClaimSupportDto>);
+    show(review([{ ...waitingOnSource(1), support: evidence }]));
+    const best = await screen.findByRole('region', { name: 'best evidence' });
+    return { best, blockquote: best.querySelector('blockquote') };
+  };
+
+  it('shows the excerpt the backend cut, not one cut at an abbreviation', async () => {
+    const { best, blockquote } = await excerptCard('Dr. Smith tagged the monarchs. They flew south in October. Few returned.', 'They flew south in October.',
+      { before: 'Dr. Smith tagged the monarchs. ', quote: 'They flew south in October.', after: ' Few returned.', clippedStart: false, clippedEnd: false });
+    expect(blockquote?.textContent).toBe('Dr. Smith tagged the monarchs. They flew south in October. Few returned.');
+    expect(within(best).getByText('They flew south in October.', { selector: 'mark' })).toBeVisible();
+  });
+
+  it('marks the quote as the passage words it', async () => {
+    const { best, blockquote } = await excerptCard('Monarchs breed in the north. It’s a long trip south. The return takes generations.', "It's a long trip south.",
+      { before: 'Monarchs breed in the north. ', quote: 'It’s a long trip south.', after: ' The return takes generations.', clippedStart: false, clippedEnd: false });
+    expect(blockquote?.textContent).toBe('Monarchs breed in the north. It’s a long trip south. The return takes generations.');
+    expect(within(best).getByText('It’s a long trip south.', { selector: 'mark' })).toBeVisible();
+  });
+
+  it('shows where the backend clipped the passage', async () => {
+    const { blockquote } = await excerptCard('Show the fence itself:\n~~~\n```\n~~~\nRecord the result here. Then check it twice.', 'Record the result here.',
+      { before: '', quote: 'Record the result here.', after: ' Then check it twice.', clippedStart: true, clippedEnd: false });
+    expect(blockquote?.textContent).toBe('…Record the result here. Then check it twice.');
   });
 
   it('sums what was tried into one line and lists only relevant pages in its details', async () => {
