@@ -400,7 +400,7 @@ test('opens imported PDF bytes in the library and renders pages after reopening'
       get_settings: () => settings,
       list_all_documents: () => [{
         id: 'imported-pdf', fileName: 'preview.pdf', filePath, fileType: 'pdf',
-        category: 'Document', language: 'en', wordCount: 100,
+        category: 'Document', language: 'en', wordCount: 100, web: false, typeBucket: 'PDF',
         modifiedAt: '2026-09-15T00:00:00Z', indexedAt: '2026-09-15T00:00:00Z',
       }],
       read_file_bytes: (args) => {
@@ -454,7 +454,7 @@ test.describe('Library collections', () => {
       const documents = ['Field guide.pdf', 'Interview notes.pdf', 'Planning.pdf'].map((fileName, index) => ({
         id: `collection-doc-${index}`, fileName,
         filePath: `/home/test/.lattice/files/${String(index).repeat(64)}/${fileName}`,
-        fileType: 'pdf', category: 'Document', language: 'en', wordCount: 1200 + index * 200,
+        fileType: 'pdf', category: 'Document', language: 'en', wordCount: 1200 + index * 200, web: false, typeBucket: 'PDF',
         modifiedAt: '2026-09-15T00:00:00Z', indexedAt: '2026-09-15T00:00:00Z',
       }));
       return {
@@ -648,7 +648,7 @@ test('HTML and code previews follow light and dark themes', async ({ page }, tes
       get_settings: () => settings,
       list_all_documents: () => ['article.html', 'example.ts'].map((fileName, index) => ({
         id: `preview-${index}`, fileName, filePath: `${fileRoot}/${fileName}`, fileType: index ? 'ts' : 'html',
-        category: 'Document', language: 'en', wordCount: 100,
+        category: 'Document', language: 'en', wordCount: 100, web: false, typeBucket: index ? 'Code' : 'HTML',
         modifiedAt: '2026-09-15T00:00:00Z', indexedAt: '2026-09-15T00:00:00Z',
       })),
       read_file_content: (args) => (args as { path: string }).path.endsWith('.ts')
@@ -1502,7 +1502,7 @@ test('creates a subject-agnostic flashcard deck in Studio, reviews, quizzes, ope
       list_downloads: () => [],
       activity_snapshot: () => ({ items: [], running: 0 }),
       get_batch_history: () => ({ jobs: [] }),
-      list_all_documents: () => [{ id: 'biology', fileName: source.fileName, filePath: source.filePath, fileType: 'md', category: 'Document', wordCount: 20 }],
+      list_all_documents: () => [{ id: 'biology', fileName: source.fileName, filePath: source.filePath, fileType: 'md', category: 'Document', wordCount: 20, web: false, typeBucket: 'Markdown' }],
       read_file_content: (args) => {
         if ((args as { path: string }).path !== source.filePath) throw new Error('Unexpected source');
         return '# Photosynthesis notes\n\nChlorophyll absorbs the light used in photosynthesis.\n\nPhotosynthesis converts light energy into chemical energy.';
@@ -1817,7 +1817,7 @@ test('cancels a 43-document deletion after the pending document completes', asyn
     let documents = Array.from({ length: 43 }, (_, index) => ({
       id: `delete-${index}`, fileName: `Delete ${index}.pdf`,
       filePath: `/home/test/.lattice/files/${String(index).padStart(64, '0')}/Delete ${index}.pdf`,
-      fileType: 'pdf', category: 'Document', language: 'en', wordCount: 100,
+      fileType: 'pdf', category: 'Document', language: 'en', wordCount: 100, web: false, typeBucket: 'PDF',
       modifiedAt: '2026-09-15T00:00:00Z', indexedAt: '2026-09-15T00:00:00Z',
     }));
     let calls = 0;

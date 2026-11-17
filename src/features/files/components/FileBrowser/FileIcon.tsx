@@ -51,7 +51,7 @@ const FORMAT_LABELS: Record<string, string> = {
  * label fall back to a glyph.
  */
 export function FileIcon({ file, className = '', size = 16 }: FileIconProps) {
-  const isWeb = file.filePath.includes('/.lattice/web-archive/');
+  const isWeb = file.web;
   const ext = (file.fileType || getFileExtension(file.fileName) || '').toLowerCase();
   const label = isWeb ? null : FORMAT_LABELS[ext];
   const tile = Math.round(size * 1.75);
@@ -80,8 +80,7 @@ export function FileIcon({ file, className = '', size = 16 }: FileIconProps) {
 }
 
 function getIconComponent(file: DocumentMetadata): React.ComponentType<{ className?: string; size?: number }> {
-  // Web archive files get Globe icon
-  if (file.filePath.includes('/.lattice/web-archive/')) {
+  if (file.web) {
     return Globe;
   }
 

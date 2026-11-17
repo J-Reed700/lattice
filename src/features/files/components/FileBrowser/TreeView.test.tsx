@@ -32,6 +32,8 @@ const document = (id: string, filePath: string, fileName = 'Research.pdf'): Docu
   modifiedAt: '2026-09-15T00:00:00Z',
   indexedAt: '2026-09-15T00:00:00Z',
   wordCount: 100,
+  web: filePath.startsWith('https://') || filePath.includes('/.lattice/web-archive/'),
+  typeBucket: filePath.startsWith('https://') || filePath.includes('/.lattice/web-archive/') ? 'Web' : 'PDF',
 });
 
 const setDocuments = (documents: DocumentMetadata[], filteredDocuments = documents) => {

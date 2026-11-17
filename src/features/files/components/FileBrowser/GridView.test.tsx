@@ -49,6 +49,8 @@ describe('GridView', () => {
       modifiedAt: '2024-01-01',
       indexedAt: '2024-01-01',
       wordCount: 1024,
+      web: false,
+      typeBucket: 'PDF',
     },
     {
       id: '2',
@@ -60,6 +62,8 @@ describe('GridView', () => {
       modifiedAt: '2024-01-02',
       indexedAt: '2024-01-02',
       wordCount: 256,
+      web: false,
+      typeBucket: 'PNG',
     },
     {
       id: '3',
@@ -71,6 +75,8 @@ describe('GridView', () => {
       modifiedAt: '2024-01-03',
       indexedAt: '2024-01-03',
       wordCount: 0,
+      web: false,
+      typeBucket: 'FOLDER',
     },
   ];
 

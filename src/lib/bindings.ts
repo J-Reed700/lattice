@@ -6420,7 +6420,15 @@ indexedAt: string;
 /**
  * Word count for document
  */
-wordCount: number }
+wordCount: number;
+/**
+ * True when the web archive owns the file: a saved web article
+ */
+web: boolean;
+/**
+ * The type bucket the document counts in, as the Library's facets and the corpus shape count it
+ */
+typeBucket: string }
 export type DocumentRefDto = { documentId: string; filePath: string; title: string | null }
 export type DocumentSpaceMembershipDto = { spaceId: string; spaceName: string; isArchived: boolean; createdAt: string | null }
 /**
