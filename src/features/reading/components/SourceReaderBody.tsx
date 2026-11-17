@@ -144,14 +144,30 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
 
   const mimeType = source.mimeType || '';
   const sourcePreviewKind = getSourcePreviewKind(source);
-  const { article: savedArticle, deciding } = useSavedWebArticle(source);
+  const hasDocumentId = Boolean(source.documentId && UUID_PATTERN.test(source.documentId));
+  const looksUpDocumentPath = hasDocumentId && !isHttpUrl(source.filePath);
+  const documentPathQuery = useQuery({
+    queryKey: readingKeys.documentPath(source.documentId ?? ''),
+    queryFn: async () => {
+      const result = await resolveSourcePath(source.documentId!, api);
+      return result.ok ? result.data : null;
+    },
+    enabled: looksUpDocumentPath,
+    retry: false,
+    staleTime: 0,
+  });
+  const archivePath = !looksUpDocumentPath
+    ? source.filePath
+    : documentPathQuery.isPending
+      ? undefined
+      : documentPathQuery.data ?? source.filePath;
+  const { article: savedArticle, deciding } = useSavedWebArticle(source, archivePath);
   const isWebArchiveArticle = savedArticle !== null;
   const isExternalWebSource = !isWebArchiveArticle && sourcePreviewKind === 'external-web';
   const normalizedCategory = normalizeCategory(source.category ?? '');
   const isWebCategory =
     normalizedCategory.includes('web article') || normalizedCategory === 'web';
   const externalSourceUrl = getSourceExternalUrl(source);
-  const hasDocumentId = Boolean(source.documentId && UUID_PATTERN.test(source.documentId));
   const isWebDocumentId = Boolean(source.documentId?.startsWith('web:'));
   // An HTML file on disk is a page to render, not a web citation to read as
   // text: the sandboxed, theme-aware HTML viewer reads and shows it.
@@ -205,17 +221,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   // Citation metadata can retain the path from when it was indexed. A stable
   // document ID is authoritative when the file has moved; a failed lookup
   // falls back to the cited path.
-  const resolvesFromDocument = shouldResolveDocumentPath && !isHttpUrl(source.filePath);
-  const documentPathQuery = useQuery({
-    queryKey: readingKeys.documentPath(source.documentId ?? ''),
-    queryFn: async () => {
-      const result = await resolveSourcePath(source.documentId!, api);
-      return result.ok ? result.data : null;
-    },
-    enabled: resolvesFromDocument,
-    retry: false,
-    staleTime: 0,
-  });
+  const resolvesFromDocument = shouldResolveDocumentPath && looksUpDocumentPath;
   const isResolvingPreviewPath = resolvesFromDocument && documentPathQuery.isPending;
   const resolvedPreviewPath = !shouldResolveDocumentPath
     ? undefined
