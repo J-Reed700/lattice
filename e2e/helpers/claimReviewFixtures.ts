@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 
-import type { ClaimExcerptDto } from '../../src/lib/bindings';
+import { claimReviewBackend } from './claimReviewBackend';
 
 /*
  * Claims for the review screen's specs, in the shapes of
@@ -10,7 +10,7 @@ import type { ClaimExcerptDto } from '../../src/lib/bindings';
  * override commands then re-decide (§5.4).
  */
 
-export const quoteAlone = (quote: string): ClaimExcerptDto => ({ before: '', quote, after: '', clippedStart: false, clippedEnd: false });
+export const { quoteAlone } = claimReviewBackend();
 
 export type SourceFixture = { sourceId: string; title: string; site: string | null; kind: string; url: string | null };
 
