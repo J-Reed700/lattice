@@ -49,6 +49,7 @@ vi.mock('@/shared/conversations/conversationsStore', async (importOriginal) => (
   useConversationsStore: (selector: (state: Record<string, unknown>) => unknown) => selector(h.store),
 }));
 vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({ useSettingsQuery: () => ({ data: h.settings }) }));
+vi.mock('@/features/model/hooks/useActiveModels', () => ({ useActiveModels: () => ({ activeModels: null }) }));
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => ({ downloadedModels: h.downloadedModels }) }));
 vi.mock('@/features/model/hooks/useLoadedModels', () => ({
   useLoadedModels: () => h.loadedModels,

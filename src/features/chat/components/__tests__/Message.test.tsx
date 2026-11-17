@@ -45,6 +45,7 @@ vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({
   useUpdateSettingsMutation: () => ({ mutateAsync: vi.fn() }),
 }));
 vi.mock('@/features/reading/hooks/usePassageReferencesQuery', () => ({ usePassageReferenceIds: () => [] }));
+vi.mock('@/features/model/hooks/useActiveModels', () => ({ useActiveModels: () => ({ activeModels: null }) }));
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => ({ downloadedModels: [] }) }));
 vi.mock('@/features/model/hooks/useLoadedModels', () => ({ useLoadedModels: () => [], degradedReasonFor: () => null }));
 // The chips the answer body draws are what the reader is opened from, so the

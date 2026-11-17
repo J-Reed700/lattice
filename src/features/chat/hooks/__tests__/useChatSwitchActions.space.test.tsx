@@ -13,6 +13,7 @@ vi.mock('@/shared/conversations/conversationsStore', () => ({
   useConversationsStore: (selector: (state: unknown) => unknown) => selector(h.state),
 }));
 vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({ useSettingsQuery: () => ({ data: undefined }) }));
+vi.mock('@/features/model/hooks/useActiveModels', () => ({ useActiveModels: () => ({ activeModels: null }) }));
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => ({ downloadedModels: [] }) }));
 vi.mock('@/stores/toastStore', () => ({ toast: h.toast }));
 
