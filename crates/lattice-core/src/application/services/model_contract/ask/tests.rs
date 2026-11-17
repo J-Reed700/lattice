@@ -526,6 +526,32 @@ impl Answered for OneDefault {
 
 one_runner!(run_one_default, OneDefault);
 
+struct OneHalf;
+
+impl Contract for OneHalf {
+    const ID: ContractId = ContractId::new("test-one-half");
+    type Input = Input;
+}
+
+impl Answered for OneHalf {
+    type Answer = Word;
+    const ALONE: Alone = Alone::Pending;
+
+    fn says(_input: &Input, _showing: &mut Showing<'_>) -> Result<Says> {
+        let mut says = Says::new("You judge tiles.", "Judge the tile.");
+        says.output_tokens = HALF_WINDOW;
+        Ok(says)
+    }
+
+    fn accept(_input: &Input, statement: &String) -> std::result::Result<(), Refusal> {
+        refuse(statement)
+    }
+}
+
+const HALF_WINDOW: usize = 2_000;
+
+one_runner!(run_one_half, OneHalf);
+
 macro_rules! new_runner {
     ($name:ident, $contract:ty) => {
         async fn $name(script: &Script, limit: usize) -> Result<Found<String>> {
@@ -642,6 +668,22 @@ async fn a_larger_send_doubles_the_room_a_request_set() {
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].max_output_tokens(), Some(100));
     assert_eq!(requests[1].max_output_tokens(), Some(200));
+}
+
+#[tokio::test]
+async fn a_cut_off_answer_whose_room_is_already_half_the_window_is_corrected_not_sent_again() {
+    let script = Script::new(&[("", LENGTH), ("fine", STOP)]).window(HALF_WINDOW * 2);
+    let settled = run_one_half(&script, &Input::of(&[])).await.unwrap();
+    assert_eq!(settled, Settled::Answered("fine".to_owned()));
+    assert_eq!(
+        script.requests()[0].max_output_tokens(),
+        Some(HALF_WINDOW as u32)
+    );
+    assert_eq!(script.sent(), 2);
+    assert!(
+        script.prompt(1).contains(CUT_OFF),
+        "the second send is the correction, not the same request again"
+    );
 }
 
 #[tokio::test]
