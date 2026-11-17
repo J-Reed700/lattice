@@ -25,21 +25,25 @@ pub struct WebDi {
     pub get_url_preview_use_case: Arc<GetUrlPreviewUseCase>,
 }
 
+/// The one web archive the app has: saving, deleting, opening and naming
+/// articles all ask this instance, so it is built once and handed to each.
+pub fn build_archive() -> Result<Arc<dyn WebArchiveServiceTrait>> {
+    Ok(Arc::new(WebArchiveService::new().map_err(|e| {
+        AppError::Other(format!("Failed to create web archive service: {}", e))
+    })?) as Arc<dyn WebArchiveServiceTrait>)
+}
+
 pub fn build(
     embedding: Arc<dyn lattice_core::application::ports::EmbeddingPort>,
     store: Arc<dyn lattice_core::application::ports::IngestedDocumentStorePort>,
     vector_search: Arc<dyn lattice_core::application::ports::VectorSearchPort>,
     query_cache: Arc<dyn lattice_core::application::ports::SearchResultCachePort>,
+    web_archive: Arc<dyn WebArchiveServiceTrait>,
 ) -> Result<WebDi> {
     let web_capture_service =
         Arc::new(WebCaptureService::new()?) as Arc<dyn WebCaptureServiceTrait>;
     let article_extractor_service =
         Arc::new(ArticleExtractorService::new()?) as Arc<dyn ArticleExtractorServiceTrait>;
-    let web_archive = Arc::new(
-        WebArchiveService::new()
-            .map_err(|e| AppError::Other(format!("Failed to create web archive service: {}", e)))?,
-    ) as Arc<dyn WebArchiveServiceTrait>;
-
     let web_ingestion_service = Arc::new(
         WebIngestionService::builder()
             .article_extractor(article_extractor_service.clone())

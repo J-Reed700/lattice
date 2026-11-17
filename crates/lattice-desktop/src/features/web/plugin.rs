@@ -5,6 +5,8 @@
 use crate::features::web::snapshots::{commands as snapshots, WebPageSnapshotDto};
 use crate::{features::web::commands as web_ingest, interfaces::di::Container};
 use lattice_core::application::contracts::settings::{KeyServiceDto, SourcesStatusDto};
+use lattice_core::application::contracts::web::SavedWebArticleDto;
+use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::shared::ipc::ApiError;
 use tauri::{
     plugin::{Builder, TauriPlugin},
@@ -144,6 +146,21 @@ pub async fn remove_source_key(
     .map_err(ApiError::from)
 }
 
+/// The saved web article whose text file is `path`, with its page, title,
+/// address and links, or nothing when `path` is not one.
+#[tauri::command]
+#[specta::specta]
+pub async fn saved_web_article(
+    path: String,
+    container: State<'_, Container>,
+) -> Result<Option<SavedWebArticleDto>, ApiError> {
+    Ok(container
+        .web_archive()
+        .saved_article(std::path::Path::new(&path))
+        .await
+        .map(SavedWebArticleDto::from))
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("web")
         .setup(|app, _api| {
@@ -174,6 +191,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             get_sources_status,
             save_source_key,
             remove_source_key,
+            saved_web_article,
         ])
         .build()
 }

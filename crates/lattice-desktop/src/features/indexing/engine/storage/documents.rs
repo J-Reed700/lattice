@@ -4,6 +4,7 @@ use super::checksum::calculate_checksum;
 use super::types::DocumentRecord;
 use crate::features::indexing::engine::error::{IndexingError, Result};
 use chrono::Utc;
+use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::shared::error::ResultExt;
 use lattice_core::shared::fs::path::path_to_string;
 use lattice_core::shared::persistence::Database;
@@ -173,6 +174,7 @@ pub async fn remove_document(db: &Database, path: &Path) -> Result<()> {
 /// Store only file metadata without indexing content.
 pub async fn store_file_metadata_only(
     db: &Database,
+    _archive: &dyn ArticleArchive,
     path: &Path,
     _file_id: &str,
     mime_type: &str,
@@ -267,4 +269,66 @@ pub async fn store_file_metadata_only(
     tx.commit().await?;
 
     Ok(actual_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::features::web::services::archive::WebArchiveService;
+    use std::path::PathBuf;
+
+    async fn database() -> Database {
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+            .await
+            .expect("open in-memory db");
+        Database::new(pool)
+    }
+
+    fn write_file_beside_metadata(dir: &Path, name: &str, metadata: &str) -> PathBuf {
+        std::fs::create_dir_all(dir).expect("directory");
+        let path = dir.join(name);
+        std::fs::write(&path, "body").expect("write file");
+        std::fs::write(dir.join("metadata.json"), metadata).expect("write metadata");
+        path
+    }
+
+    async fn stored_name(db: &Database, archive: &WebArchiveService, path: &Path) -> String {
+        store_file_metadata_only(db, archive, path, "", "text/markdown")
+            .await
+            .expect("store metadata");
+        get_document_by_path(db, path)
+            .await
+            .expect("read document")
+            .expect("document row")
+            .file_name
+    }
+
+    #[tokio::test]
+    async fn a_stored_file_beside_a_metadata_file_outside_the_archive_keeps_its_file_name() {
+        let db = database().await;
+        let root = tempfile::tempdir().expect("temp dir");
+        let archive = WebArchiveService::with_base_dir(root.path().join("web-archive"));
+        let path = write_file_beside_metadata(
+            &root.path().join("notes"),
+            "note.md",
+            r#"{"title": "Not An Article"}"#,
+        );
+
+        assert_eq!(stored_name(&db, &archive, &path).await, "note.md");
+    }
+
+    #[tokio::test]
+    async fn a_stored_article_in_the_archive_is_named_by_its_saved_title() {
+        let db = database().await;
+        let root = tempfile::tempdir().expect("temp dir");
+        let base = root.path().join("web-archive");
+        let archive = WebArchiveService::with_base_dir(base.clone());
+        let path = write_file_beside_metadata(
+            &base.join("example.org").join("essay-1"),
+            "article.md",
+            r#"{"title": "Saved Title"}"#,
+        );
+
+        assert_eq!(stored_name(&db, &archive, &path).await, "Saved Title");
+    }
 }

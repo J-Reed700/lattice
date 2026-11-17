@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use lattice_core::domain::ports::article_archive::ArticleArchive;
+use lattice_core::domain::ports::article_archive::{ArticleArchive, SavedArticle};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::path_safety::reject_parent_components;
 
@@ -263,6 +263,10 @@ impl ArticleArchive for WebArchiveService {
     fn owns(&self, path: &Path) -> bool {
         // Component-wise, and never through a `..` that climbs back out.
         reject_parent_components(path).is_ok() && path.starts_with(&self.base_dir)
+    }
+
+    async fn saved_article(&self, _path: &Path) -> Option<SavedArticle> {
+        None
     }
 }
 

@@ -132,3 +132,119 @@ fn test_generate_fallback_title_with_good_title() {
     let result = WebArchiveService::generate_fallback_title("https://example.com", good_title);
     assert_eq!(result, good_title);
 }
+
+fn lay_out_article(dir: &Path, metadata: Option<&str>, page: bool) -> PathBuf {
+    std::fs::create_dir_all(dir).expect("article directory");
+    let text = dir.join("article.md");
+    std::fs::write(&text, "body").expect("write text");
+    if page {
+        std::fs::write(dir.join("page.html"), "<html></html>").expect("write page");
+    }
+    if let Some(metadata) = metadata {
+        std::fs::write(dir.join("metadata.json"), metadata).expect("write metadata");
+    }
+    text
+}
+
+const FULL_METADATA: &str = r#"{
+    "url": "https://example.com/essay",
+    "title": "The Essay",
+    "links": ["https://example.com/a", "https://example.com/b"]
+}"#;
+
+#[tokio::test]
+async fn an_article_laid_out_in_the_archive_gives_its_text_page_title_url_and_links() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let service = WebArchiveService::with_base_dir(temp.path().to_path_buf());
+    let dir = temp.path().join("example.com").join("essay-1");
+    let text = lay_out_article(&dir, Some(FULL_METADATA), true);
+
+    let article = service.saved_article(&text).await.expect("a saved article");
+
+    assert_eq!(article.text, text);
+    assert_eq!(article.page, Some(dir.join("page.html")));
+    assert_eq!(article.title.as_deref(), Some("The Essay"));
+    assert_eq!(article.url.as_deref(), Some("https://example.com/essay"));
+    assert_eq!(
+        article.links,
+        vec!["https://example.com/a", "https://example.com/b"]
+    );
+}
+
+#[tokio::test]
+async fn the_same_three_files_outside_the_archive_give_no_article() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let service = WebArchiveService::with_base_dir(temp.path().join("web-archive"));
+    let text = lay_out_article(&temp.path().join("elsewhere"), Some(FULL_METADATA), true);
+
+    assert_eq!(service.saved_article(&text).await, None);
+}
+
+#[tokio::test]
+async fn a_page_that_is_gone_gives_no_page_and_keeps_the_text() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let service = WebArchiveService::with_base_dir(temp.path().to_path_buf());
+    let dir = temp.path().join("example.com").join("essay-1");
+    let text = lay_out_article(&dir, Some(FULL_METADATA), false);
+
+    let article = service.saved_article(&text).await.expect("a saved article");
+
+    assert_eq!(article.text, text);
+    assert_eq!(article.page, None);
+}
+
+#[tokio::test]
+async fn a_metadata_file_holding_only_a_title_still_gives_the_title() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let service = WebArchiveService::with_base_dir(temp.path().to_path_buf());
+    let dir = temp.path().join("example.com").join("essay-1");
+    let text = lay_out_article(&dir, Some(r#"{"title": "Only A Title"}"#), true);
+
+    let article = service.saved_article(&text).await.expect("a saved article");
+
+    assert_eq!(article.title.as_deref(), Some("Only A Title"));
+    assert_eq!(article.url, None);
+    assert!(article.links.is_empty());
+}
+
+#[tokio::test]
+async fn an_unparsable_metadata_file_still_gives_the_article_without_a_title() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let service = WebArchiveService::with_base_dir(temp.path().to_path_buf());
+    let dir = temp.path().join("example.com").join("essay-1");
+    let text = lay_out_article(&dir, Some("invalid json"), true);
+
+    let article = service.saved_article(&text).await.expect("a saved article");
+
+    assert_eq!(article.text, text);
+    assert_eq!(article.page, Some(dir.join("page.html")));
+    assert_eq!(article.title, None);
+    assert_eq!(article.url, None);
+    assert!(article.links.is_empty());
+}
+
+#[tokio::test]
+async fn a_path_that_climbs_out_of_the_archive_with_parent_segments_gives_no_article() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let base = temp.path().join("web-archive");
+    let service = WebArchiveService::with_base_dir(base.clone());
+    lay_out_article(&temp.path().join("outside"), Some(FULL_METADATA), true);
+    let climbing = base
+        .join("example.com")
+        .join("..")
+        .join("..")
+        .join("outside")
+        .join("article.md");
+
+    assert_eq!(service.saved_article(&climbing).await, None);
+}
+
+#[tokio::test]
+async fn the_page_file_of_an_archived_article_gives_no_article() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let service = WebArchiveService::with_base_dir(temp.path().to_path_buf());
+    let dir = temp.path().join("example.com").join("essay-1");
+    lay_out_article(&dir, Some(FULL_METADATA), true);
+
+    assert_eq!(service.saved_article(&dir.join("page.html")).await, None);
+}

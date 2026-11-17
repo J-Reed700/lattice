@@ -29,9 +29,11 @@ use crate::features::indexing::engine::error::Result;
 use crate::features::indexing::IndexStorageTrait;
 use async_trait::async_trait;
 use lattice_core::application::ports::IngestedDocumentStorePort;
+use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::domain::value_objects::ContextualizedChunk;
 use lattice_core::shared::persistence::{Database, WriteTx};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Main storage interface for indexed documents.
 ///
@@ -39,12 +41,14 @@ use std::path::{Path, PathBuf};
 /// with their associated text chunks and embeddings.
 pub struct IndexStorage {
     db: Database,
+    archive: Arc<dyn ArticleArchive>,
 }
 
 impl IndexStorage {
-    /// Create a new storage instance.
-    pub fn new(db: Database) -> Self {
-        Self { db }
+    /// Create a new storage instance. Documents the archive holds are named
+    /// by the titles it saved them under.
+    pub fn new(db: Database, archive: Arc<dyn ArticleArchive>) -> Self {
+        Self { db, archive }
     }
 
     // Document operations
@@ -92,7 +96,14 @@ impl IndexStorage {
         file_id: &str,
         mime_type: &str,
     ) -> Result<String> {
-        documents::store_file_metadata_only(&self.db, path, file_id, mime_type).await
+        documents::store_file_metadata_only(
+            &self.db,
+            self.archive.as_ref(),
+            path,
+            file_id,
+            mime_type,
+        )
+        .await
     }
 
     // Statistics
@@ -127,7 +138,15 @@ impl IndexStorage {
         chunks: Vec<ContextualizedChunk>,
         embeddings: Vec<Vec<f32>>,
     ) -> Result<String> {
-        context::store_document_with_context(&self.db, path, mime_type, chunks, embeddings).await
+        context::store_document_with_context(
+            &self.db,
+            self.archive.as_ref(),
+            path,
+            mime_type,
+            chunks,
+            embeddings,
+        )
+        .await
     }
 
     /// Store document with context and file ID.
@@ -140,7 +159,13 @@ impl IndexStorage {
         embeddings: Vec<Vec<f32>>,
     ) -> Result<String> {
         context::store_document_with_context_and_file(
-            &self.db, path, file_id, mime_type, chunks, embeddings,
+            &self.db,
+            self.archive.as_ref(),
+            path,
+            file_id,
+            mime_type,
+            chunks,
+            embeddings,
         )
         .await
     }
@@ -243,7 +268,7 @@ impl IndexStorageTrait for IndexStorage {
         embeddings: Vec<Vec<f32>>,
         model_identity: &str,
     ) -> Result<String> {
-        let facts = context::read_document_facts(path).await?;
+        let facts = context::read_document_facts(self.archive.as_ref(), path).await?;
         let mut tx = self.db.begin_write().await?;
         let id = context::store_document_with_context_and_file_tx(
             &mut tx, &facts, "", mime_type, chunks, embeddings,

@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::features::web::WebArchiveServiceTrait;
 use lattice_core::application::contracts::web::CleanArticle;
-use lattice_core::domain::ports::article_archive::ArticleArchive;
+use lattice_core::domain::ports::article_archive::{ArticleArchive, SavedArticle};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::path_safety::reject_parent_components;
 
@@ -90,6 +90,20 @@ impl ArticleArchive for MockWebArchiveService {
 
     fn owns(&self, path: &Path) -> bool {
         reject_parent_components(path).is_ok() && path.starts_with(&self.base_dir)
+    }
+
+    async fn saved_article(&self, path: &Path) -> Option<SavedArticle> {
+        if !self.owns(path) {
+            return None;
+        }
+        let title = self.articles.lock().get(path)?.title.clone();
+        Some(SavedArticle {
+            text: path.to_path_buf(),
+            page: None,
+            title: Some(title),
+            url: None,
+            links: Vec::new(),
+        })
     }
 }
 

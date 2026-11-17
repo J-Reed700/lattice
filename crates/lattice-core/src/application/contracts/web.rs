@@ -10,6 +10,7 @@ pub use crate::domain::provenance::{
     NamedEntity, Origin, OriginKey, OutboundLink, PageSignals, PastedSignals, ProvenanceSignals,
     RegistryKind, SourceDates, TldRegistry, PAGE_SIGNALS_VERSION,
 };
+use crate::domain::ports::article_archive::SavedArticle;
 use crate::domain::sourcing::FinderOutcome;
 
 /// The version stamped on every reference text the web reader extracts for a
@@ -397,6 +398,35 @@ pub struct CleanArticle {
     /// Excerpt (first ~200 characters of text)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub excerpt: Option<String>,
+}
+
+/// A saved web article's files and the facts the archive keeps about it.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedWebArticleDto {
+    /// The article's text (`article.md`).
+    pub text_path: String,
+    /// The saved page (`page.html`), when it is still on disk.
+    pub page_path: Option<String>,
+    pub title: Option<String>,
+    /// The address the article was saved from.
+    pub url: Option<String>,
+    /// Outgoing links captured from the page.
+    pub links: Vec<String>,
+}
+
+impl From<SavedArticle> for SavedWebArticleDto {
+    fn from(article: SavedArticle) -> Self {
+        Self {
+            text_path: article.text.to_string_lossy().to_string(),
+            page_path: article
+                .page
+                .map(|page| page.to_string_lossy().to_string()),
+            title: article.title,
+            url: article.url,
+            links: article.links,
+        }
+    }
 }
 
 #[cfg(test)]
