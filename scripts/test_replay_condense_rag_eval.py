@@ -14,6 +14,7 @@ NOTES_RS = ROOT / "crates/lattice-desktop/src/features/conversation/chat/tool_lo
 NOTES_TESTS_RS = ROOT / "crates/lattice-desktop/src/features/conversation/chat/tool_loop/research_notes/tests.rs"
 ASK_RS = ROOT / "crates/lattice-core/src/application/services/model_contract/ask.rs"
 SCRIPTED_RS = ROOT / "crates/lattice-core/src/application/services/model_contract/test_support/scripted.rs"
+LLM_PORT_RS = ROOT / "crates/lattice-core/src/application/ports/llm_port.rs"
 SNAPSHOT = ROOT / "crates/lattice-desktop/tests/prompt-snapshots/research-notes.txt"
 STRING = r'"((?:[^"\\]|\\.)*)"'
 
@@ -72,6 +73,10 @@ class Literals(unittest.TestCase):
             self.assertEqual(getattr(replay, name), rust_string(rs, name), name)
         self.assertIn('"' + replay.MISSING + '"', rs)
         self.assertIn('"' + replay.CONTRADICTED + '"', rs)
+
+    def test_the_cut_off_markers_are_the_apps(self):
+        markers = re.search(r"const CUT_OFF_MARKERS: \[&str; \d+\] = \[(.*?)\];", text_of(LLM_PORT_RS)).group(1)
+        self.assertEqual(replay.CUT_OFF_MARKERS, tuple(re.findall(STRING, markers)))
 
 
 class Snapshot(unittest.TestCase):
@@ -147,9 +152,19 @@ class Reading(unittest.TestCase):
         got = replay.read(reply("not json"), self.shown)
         self.assertEqual({row for row in got.values()}, {("unanswered", "not_read")})
 
-    def test_a_declined_answer_declines_everything(self):
-        got = replay.read(reply("{}", "content_filter"), self.shown)
+    def test_a_refused_answer_declines_everything(self):
+        got = replay.read(reply("{}", "refusal"), self.shown)
         self.assertEqual({row for row in got.values()}, {("unanswered", "declined")})
+
+    def test_a_filtered_answer_is_read_as_cut_off(self):
+        got = replay.read(reply('{"entries":[{"of":"r1","keep":["u1"]}', "content_filter"), self.shown)
+        self.assertEqual(got, {0: ("answered", [1]), 1: ("unanswered", "cut_off"), 2: ("unanswered", "cut_off")})
+
+    def test_finish_reasons_end_as_the_contract_reads_them(self):
+        for finish, ended in (("stop", "complete"), (None, "complete"), ("tool_calls", "complete"),
+                              ("length", "cut_off"), ("MAX_TOKENS", "cut_off"), ("content_filter", "cut_off"),
+                              ("refusal", "declined")):
+            self.assertEqual(replay.ended_of(finish), ended, finish)
 
 
 class Notes(unittest.TestCase):

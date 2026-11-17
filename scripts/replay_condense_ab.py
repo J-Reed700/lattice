@@ -64,6 +64,8 @@ UNPLACED = ("Your answer pointed at something that is not shown. Point only at w
 # ask.rs `told`.
 MISSING = "Your answer said nothing about {handle}. Answer for it."
 CONTRADICTED = "{what} Answer again and say one thing."
+# llm_port.rs CUT_OFF_MARKERS.
+CUT_OFF_MARKERS = ("length", "max_tokens", "max_output_tokens", "incomplete")
 # SamplingOverride::deterministic().
 SAMPLING = {"temperature": 0.0, "top_p": 1.0, "top_k": 1, "presence_penalty": 0.0}
 OUTPUT_RESERVATION_CAP = 32_768
@@ -401,12 +403,20 @@ def pointed(written):
     return (m.group(1), int(m.group(2))) if m else None
 
 
+def ended_of(finish):
+    """How the contract reads a finish reason (llm_port.rs `Finish::of`, then ask.rs `ended`): complete, cut_off
+    or declined."""
+    reason = (finish or "").lower()
+    if any(marker in reason for marker in CUT_OFF_MARKERS) or "content_filter" in reason:
+        return "cut_off"
+    return "declined" if reason == "refusal" else "complete"
+
+
 def read(reply, shown):
     """What an answer says of each of `shown`, a list of (index, source): {index: row} with row
     ("answered", [sentence numbers]), ("contradicted", text) or ("unanswered", why), why one of not_read,
     cut_off, missing, declined."""
-    finish = reply.get("finish")
-    ended = "complete" if finish == "stop" else "cut_off" if finish == "length" else "declined"
+    ended = ended_of(reply.get("finish"))
     indices = [i for i, _ in shown]
 
     def everyone(why):
@@ -519,7 +529,7 @@ def ask_each(question, asked, send, enum=True):
         rest = [i for i in batch if i not in accepted]
         if not rest:
             continue
-        if reply.get("finish") == "stop" and accepted:
+        if ended_of(reply.get("finish")) == "complete" and accepted:
             queue.appendleft(rest)
         else:
             size = max(len(batch) // 2, 1)
@@ -587,7 +597,7 @@ def turn(ctx, mode, send, window):
             "lost": [f for f, (k, _) in facts.items() if not k], "split_facts": split,
             "answered_first": len(got["first"]), "kept_whole": sum(1 for row in got["rows"] if row[0] != "answered"),
             "contradicted": len(got["contradicted"]), "requests": len(replies),
-            "cut_off": sum(1 for r in replies if r.get("finish") == "length"), "resends": got["resends"],
+            "cut_off": sum(1 for r in replies if ended_of(r.get("finish")) == "cut_off"), "resends": got["resends"],
             "corrections": got["corrections"], "prompt_tokens": max(prompts, default=0), "prompt_new": s("prompt_n"),
             "output_tokens": s("predicted_n"), "secs": round(sum(r.get("secs") or 0 for r in replies), 1),
             "notes": message, "replies": got["log"]}
