@@ -32,7 +32,7 @@ pub(super) const READ_INSTRUCTION: &str =
 /// Closes it, after the passages and the question. The criterion must follow
 /// the passages, and the question is said again because the passages put it
 /// far back.
-pub(super) const BEARING_INSTRUCTION: &str = "Answer with one line for each passage that has sentences bearing on my question, including any exception or condition: the passage's handle, then the handles of those sentences, as in `p2: u1 u4`. Leave out a passage that says nothing bearing on my question, however near its subject. When my question names a document, leave out every passage from any other document. If no passage bears on my question, answer `none`. Write nothing else.";
+pub(super) const BEARING_INSTRUCTION: &str = "Answer with one line for each passage that has sentences bearing on my question, including any exception or condition: the passage's handle, then the handle of each of those sentences, written out in full, as in `p2: u1 u4`. Leave out a passage that says nothing bearing on my question, however near its subject. When my question names a document, leave out every passage from any other document. If no passage bears on my question, answer `none`. Write nothing else.";
 
 /// The call that chooses the sentences of each passage that bear on the question.
 pub(super) struct PassageNotes;
