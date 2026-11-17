@@ -183,9 +183,9 @@ export function ModelPickerPopover({
                     {defaultOption ? `Use default (${defaultOption.label})` : 'Use default'}
                   </span>
                   <span className="block truncate text-xs leading-snug text-[hsl(var(--text-muted))]">
-                    {defaultOption
+                    {defaultOption || !activeModels?.chat_unset
                       ? 'Follows the chat model set in Settings'
-                      : 'No chat model is selected in Settings → Downloaded.'}
+                      : activeModels.chat_unset}
                   </span>
                 </span>
                 {choice.kind === 'default' && <CheckMark />}

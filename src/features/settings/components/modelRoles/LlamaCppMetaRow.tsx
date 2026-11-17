@@ -18,7 +18,7 @@ import { IconButton } from '@/components/ui';
 import { useSettingsQuery, useUpdateSettingsMutation } from '@/features/settings/hooks/useSettingsQuery';
 import { cn } from '@/lib/utils';
 import { toast } from '@/stores/toastStore';
-import { LLAMACPP_SERVER_MODEL_ID, modelRefForOption, modelRefLabel, sameModelRef } from '@/utils/chatModelSelection';
+import { modelRefLabel, sameModelRef } from '@/utils/chatModelSelection';
 
 import { ConnectionRolesDialog } from './ConnectionRolesDialog';
 import { LearningWindowNotice } from './LearningWindowNotice';
@@ -39,10 +39,8 @@ export function LlamaCppMetaRow() {
   const connection = settings?.llm.llamaCpp;
   const url = connection?.url.trim() ?? '';
   const model = connection?.model.trim() ?? '';
-  const isConfigured = Boolean(url && model);
-  const servedRef = settings && isConfigured
-    ? modelRefForOption({ id: LLAMACPP_SERVER_MODEL_ID, backend: 'llamacpp' }, settings.llm)
-    : null;
+  const servedRef = activeModels?.llama_cpp ?? null;
+  const isConfigured = servedRef !== null;
   const held: Record<ConnectionRole, boolean> = {
     chat: sameModelRef(activeModels?.chat[0], servedRef),
     utility: sameModelRef(settings?.llm.utilityModel, servedRef),
