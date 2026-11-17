@@ -11,6 +11,39 @@ fn nested_mount_is_more_specific_than_root_mount() {
     );
 }
 
+#[cfg(windows)]
+#[test]
+fn a_canonicalized_windows_path_is_owned_by_its_drive() {
+    assert_eq!(
+        owning_mount(
+            Path::new(r"\\?\C:\Users\me\.cache\lattice\models\m"),
+            [Path::new(r"C:\"), Path::new(r"D:\")]
+        ),
+        Some(Path::new(r"C:\"))
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn a_verbatim_unc_path_is_not_put_on_a_drive() {
+    assert_eq!(
+        owning_mount(Path::new(r"\\?\UNC\server\share\m"), [Path::new(r"C:\")]),
+        None
+    );
+}
+
+#[test]
+fn the_most_specific_mount_owns_the_path() {
+    #[cfg(not(windows))]
+    let (path, root, nested) = ("/Volumes/External/models/m", "/", "/Volumes/External");
+    #[cfg(windows)]
+    let (path, root, nested) = (r"C:\mnt\ext\models\m", r"C:\", r"C:\mnt\ext");
+    assert_eq!(
+        owning_mount(Path::new(path), [Path::new(root), Path::new(nested)]),
+        Some(Path::new(nested))
+    );
+}
+
 #[test]
 fn redirect_location_is_resolved_against_request_url() {
     assert_eq!(

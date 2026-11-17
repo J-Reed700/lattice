@@ -122,10 +122,9 @@ impl HttpDownloadEngine {
         // Several mount points can prefix one path (`/` and
         // `/Volumes/External` on macOS). The most specific/longest mount is
         // the volume that actually owns the destination.
-        if let Some(disk) = disks
-            .iter()
-            .filter(|disk| dest_path.starts_with(disk.mount_point()))
-            .max_by_key(|disk| mount_point_specificity(disk.mount_point()))
+        let mount = owning_mount(dest_path, disks.iter().map(|disk| disk.mount_point()));
+        if let Some(disk) =
+            mount.and_then(|mount| disks.iter().find(|disk| disk.mount_point() == mount))
         {
             let available_bytes = disk.available_space();
 
@@ -177,6 +176,14 @@ impl HttpDownloadEngine {
 
 fn mount_point_specificity(path: &Path) -> usize {
     path.components().count()
+}
+
+/// The most specific mount point that `path` sits under.
+fn owning_mount<'a>(path: &Path, mounts: impl IntoIterator<Item = &'a Path>) -> Option<&'a Path> {
+    mounts
+        .into_iter()
+        .filter(|mount| path.starts_with(mount))
+        .max_by_key(|mount| mount_point_specificity(mount))
 }
 
 /// Validates whether a Content-Length value from HEAD response is reliable.

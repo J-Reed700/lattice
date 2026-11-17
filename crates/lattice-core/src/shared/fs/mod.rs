@@ -8,5 +8,5 @@ pub mod roots;
 pub mod sweep_gate;
 
 pub use atomic::AtomicFs;
-pub use path::{path_to_string, validate_path};
+pub use path::{path_to_string, plainly_spelled, validate_path};
 pub use sweep_gate::SweepGate;
