@@ -6502,7 +6502,7 @@ indexedAt: string;
  */
 wordCount: number;
 /**
- * True when the web archive owns the file: a saved web article
+ * True when the file is a saved web article's text in the web archive
  */
 web: boolean;
 /**

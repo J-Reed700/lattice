@@ -315,14 +315,11 @@ impl ArticleArchive for WebArchiveService {
     }
 
     fn is_saved_article(&self, path: &Path) -> bool {
-        self.owns(path)
+        path.file_name() == Some(std::ffi::OsStr::new("article.md")) && self.owns(path)
     }
 
     async fn saved_article(&self, path: &Path) -> Option<SavedArticle> {
-        if path.file_name() != Some(std::ffi::OsStr::new("article.md")) || !self.owns(path) {
-            return None;
-        }
-        if !is_file(path).await {
+        if !self.is_saved_article(path) || !is_file(path).await {
             return None;
         }
         let dir = path.parent()?;

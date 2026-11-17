@@ -82,7 +82,10 @@ impl CorpusShapeRepositoryPort for SqliteCorpusShapeRepository {
             let file_type: String = row.try_get("file_type").unwrap_or_default();
             total += 1;
             *buckets
-                .entry(type_bucket(archive.owns(Path::new(&file_path)), &file_type))
+                .entry(type_bucket(
+                    archive.is_saved_article(Path::new(&file_path)),
+                    &file_type,
+                ))
                 .or_insert(0) += 1;
         }
 

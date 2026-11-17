@@ -65,7 +65,7 @@ pub struct DocumentMetadataDto {
     pub indexed_at: String,
     /// Word count for document
     pub word_count: i32,
-    /// True when the web archive owns the file: a saved web article
+    /// True when the file is a saved web article's text in the web archive
     pub web: bool,
     /// The type bucket the document counts in, as the Library's facets and the corpus shape count it
     pub type_bucket: String,
@@ -74,7 +74,7 @@ pub struct DocumentMetadataDto {
 /// Map a stored document to its display metadata.
 fn document_metadata(doc: &Document, archive: &dyn ArticleArchive) -> DocumentMetadataDto {
     let file_type = doc.file_type().map(|s| s.to_string()).unwrap_or_default();
-    let web = archive.owns(doc.file_path());
+    let web = archive.is_saved_article(doc.file_path());
     DocumentMetadataDto {
         id: doc.id().as_str().to_string(),
         file_name: doc.file_name().to_string(),

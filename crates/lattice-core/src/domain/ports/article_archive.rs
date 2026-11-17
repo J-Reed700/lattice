@@ -41,7 +41,7 @@ pub trait ArticleArchive: Send + Sync {
     /// the file its document indexes.
     fn is_saved_article(&self, path: &Path) -> bool;
 
-    /// The archived article whose text file is `path`, or `None` when `path` is
-    /// not an article's text file inside this archive.
+    /// The saved article whose text file is `path`, or `None` when
+    /// [`Self::is_saved_article`] does not hold for `path` or the file is gone.
     async fn saved_article(&self, path: &Path) -> Option<SavedArticle>;
 }
