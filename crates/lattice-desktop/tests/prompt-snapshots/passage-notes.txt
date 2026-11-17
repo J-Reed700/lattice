@@ -19,7 +19,7 @@ Do not answer my question yet. First read these passages, each on its own.
 
 My question is: "Question: What happened at the harbour?"
 
-Answer with one line for each passage that has sentences bearing on my question, including any exception or condition: the passage's handle, then the handle of each of those sentences, written out in full, as in `p2: u1 u4`. Leave out a passage that says nothing bearing on my question, however near its subject. When my question names a document, leave out every passage from any other document. If no passage bears on my question, answer `none`. Write nothing else.
+Answer with one line for each passage that has sentences bearing on my question, including any exception or condition: the passage's handle, a colon, then the handle of each of those sentences, written out in full and separated by spaces. Leave out a passage that says nothing bearing on my question, however near its subject. When my question names a document, leave out every passage from any other document. If no passage bears on my question, answer `none`. Write nothing else.
 
 === sent with ===
 {
@@ -49,7 +49,7 @@ Do not answer my question yet. First read these passages, each on its own.
 
 My question is: "Question: What happened at the harbour?"
 
-Answer with one line for each passage that has sentences bearing on my question, including any exception or condition: the passage's handle, then the handle of each of those sentences, written out in full, as in `p2: u1 u4`. Leave out a passage that says nothing bearing on my question, however near its subject. When my question names a document, leave out every passage from any other document. If no passage bears on my question, answer `none`. Write nothing else.
+Answer with one line for each passage that has sentences bearing on my question, including any exception or condition: the passage's handle, a colon, then the handle of each of those sentences, written out in full and separated by spaces. Leave out a passage that says nothing bearing on my question, however near its subject. When my question names a document, leave out every passage from any other document. If no passage bears on my question, answer `none`. Write nothing else.
 
 === sent with ===
 {

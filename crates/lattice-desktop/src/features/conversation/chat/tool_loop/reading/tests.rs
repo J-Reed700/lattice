@@ -163,8 +163,8 @@ async fn a_sentence_the_passage_does_not_have_makes_no_note() {
     assert_eq!(notes.lines.get(&1), Some(&Some(SLUICE_FIRST.to_string())));
     assert_eq!(
         notes.lines.get(&2),
-        Some(&None),
-        "the weir has one sentence: u2 is another passage's"
+        None,
+        "the weir has one sentence, so its u2 cannot be placed and the weir is not judged"
     );
 }
 

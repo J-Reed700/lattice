@@ -41,7 +41,7 @@ pub(super) const CONDENSE_AT_WINDOW_SHARE: f64 = 0.6;
 pub(super) const MAX_CONDENSES_PER_TURN: usize = 2;
 
 /// What the notes request tells the model.
-pub(super) const CONDENSE_INSTRUCTION: &str = "Your context window is nearly full. Before you continue, choose from all the tool results you have so far the sentences that make up compact research notes. Keep every sentence with a fact, number, date, name, short quotation or URL that could matter to my question. Drop navigation text, boilerplate, repetition and anything that does not bear on my question. Do not answer my question yet. Answer with one line for each result that has sentences to keep: the result's handle, then the handle of each of those sentences, written out in full, as in `r2: u1 u4`. Leave out a result with nothing to keep. If nothing is worth keeping, answer `none`. Write nothing else.";
+pub(super) const CONDENSE_INSTRUCTION: &str = "Your context window is nearly full. Before you continue, choose from all the tool results you have so far the sentences that make up compact research notes. Keep every sentence with a fact, number, date, name, short quotation or URL that could matter to my question. Drop navigation text, boilerplate, repetition and anything that does not bear on my question. Do not answer my question yet. Answer with one line for each result that has sentences to keep: the result's handle, a colon, then the handle of each of those sentences, written out in full and separated by spaces. Leave out a result with nothing to keep. If nothing is worth keeping, answer `none`. Write nothing else.";
 
 /// Opens the message the notes replace the results with. Also how a later
 /// condensing recognises the notes as results.
