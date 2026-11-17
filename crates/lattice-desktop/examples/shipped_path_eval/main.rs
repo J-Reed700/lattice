@@ -126,6 +126,9 @@ fn main() -> Res<()> {
 }
 
 fn repo_root() -> PathBuf {
+    if let Some(root) = std::env::var_os("LATTICE_EVAL_REPO_ROOT") {
+        return PathBuf::from(root);
+    }
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(2)
@@ -255,6 +258,7 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
     let proxy_url = proxy::start(
         upstream,
         recipe.thinking_off()?,
+        recipe.reported_ctx()?,
         auth,
         Arc::clone(&recorder),
     )

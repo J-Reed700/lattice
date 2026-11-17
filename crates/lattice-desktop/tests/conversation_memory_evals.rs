@@ -292,9 +292,11 @@ struct Fixture {
 
 impl Fixture {
     fn load(family: &str) -> Self {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join(FIXTURE_DIR)
-            .join(format!("{family}.json"));
+        let crate_dir = std::env::var_os("LATTICE_EVAL_REPO_ROOT").map_or_else(
+            || PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+            |root| PathBuf::from(root).join("crates/lattice-desktop"),
+        );
+        let path = crate_dir.join(FIXTURE_DIR).join(format!("{family}.json"));
         let raw = std::fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("fixture {} is missing: {error}", path.display()));
         serde_json::from_str(&raw)
