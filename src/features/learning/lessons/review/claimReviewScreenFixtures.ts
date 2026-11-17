@@ -11,7 +11,6 @@ const FIELD_GUIDE_TEXT = 'Monarchs breed across the northern range in summer. Ea
 
 export function support(overrides: Partial<ClaimSupportDto> = {}): ClaimSupportDto {
   const quote = 'Each autumn the eastern population migrates up to 3,000 miles to wintering sites in central Mexico.';
-  const start = new TextEncoder().encode(FIELD_GUIDE_TEXT.slice(0, FIELD_GUIDE_TEXT.indexOf(quote))).length;
   return {
     role: 'supports',
     source: { sourceId: 'source-guide', sourceVersionId: 'version-guide', title: 'Field Guide to North American Butterflies', url: 'https://butterflies.example.org/monarch', addedBy: 'research' },
@@ -20,7 +19,7 @@ export function support(overrides: Partial<ClaimSupportDto> = {}): ClaimSupportD
     standing: 'unknown',
     counts: { outcome: 'not_enough' },
     quote,
-    quoteSpan: [start, start + new TextEncoder().encode(quote).length],
+    excerpt: { before: 'Monarchs breed across the northern range in summer. ', quote, after: ' The return trip takes several generations.', clippedStart: false, clippedEnd: false },
     passage: { sourceVersionId: 'version-guide', title: 'Field Guide to North American Butterflies', url: 'https://butterflies.example.org/monarch', text: FIELD_GUIDE_TEXT, startByte: 0, endByte: FIELD_GUIDE_TEXT.length, retrievalKind: 'hybrid', trust: null },
     ...overrides,
   };

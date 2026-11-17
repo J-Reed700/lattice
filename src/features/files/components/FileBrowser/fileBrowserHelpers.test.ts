@@ -6,7 +6,6 @@ import {
   canSearchByContent,
   errorMessage,
   isAbsolutePath,
-  matchesTypeFilter,
   normalizeSearchToken,
   plural,
 } from './fileBrowserHelpers';
@@ -36,28 +35,6 @@ describe('fileBrowserHelpers', () => {
 
   it('normalizes search tokens', () => {
     expect(normalizeSearchToken('  Photosynthesis ')).toBe('photosynthesis');
-  });
-
-  describe('matchesTypeFilter', () => {
-    it('matches everything with no filter', () => {
-      expect(matchesTypeFilter(doc({}), null)).toBe(true);
-    });
-
-    it('matches by type bucket, category words, or file type', () => {
-      expect(matchesTypeFilter(doc({ fileType: 'pdf' }), 'pdf')).toBe(true);
-      expect(matchesTypeFilter(doc({ category: 'Lecture_Notes' }), 'lecture notes')).toBe(true);
-      expect(matchesTypeFilter(doc({ fileType: 'epub', category: 'book' }), 'epub')).toBe(true);
-      expect(matchesTypeFilter(doc({ fileType: 'pdf' }), 'audio')).toBe(false);
-    });
-
-    it('treats web articles as web', () => {
-      expect(matchesTypeFilter(doc({ category: 'web-article', filePath: '/x' }), 'web')).toBe(true);
-      expect(matchesTypeFilter(doc({ filePath: 'https://example.org/bread' }), 'web')).toBe(true);
-    });
-
-    it('copes with a missing file type', () => {
-      expect(matchesTypeFilter(doc({ fileType: undefined as never }), 'pdf')).toBe(false);
-    });
   });
 
   describe('canSearchByContent', () => {

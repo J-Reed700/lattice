@@ -16,12 +16,12 @@ use lattice_core::shared::error::Result;
 use super::super::dto::{source_kind, ClaimSupportCountsDto, ClaimSupportDto, ClaimSupportRoleDto};
 use super::super::repository::ShownPassage;
 use super::super::service::ClaimReviewService;
+use super::excerpt::excerpt;
 use super::{evidence_passage, latest_check, PassageKey, PassageText, SourceFacts};
 use crate::dto::LearningTrustLevel;
 use crate::references::trust::dto_map;
 use crate::references::trust::repository::SqliteSourceTrustStore;
 use crate::references::trust::source_view::latest_standing;
-use lattice_core::shared::text::same_text;
 
 /// What the review knows of a version beyond the library: the site it was
 /// served from and its publisher's judged standing.
@@ -275,7 +275,7 @@ fn support(
                 &assessment.work,
             )
         });
-    let quote_span = same_text::find(&passage.text, &quote);
+    let shown = excerpt(&passage.text, &quote);
     Some(ClaimSupportDto {
         role,
         source: facts.reference(version),
@@ -286,7 +286,7 @@ fn support(
         standing,
         counts,
         quote,
-        quote_span,
+        excerpt: shown,
         passage,
     })
 }

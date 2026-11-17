@@ -17,7 +17,6 @@ import {
   useLibraryDocumentActions,
 } from '@/features/files/hooks/useLibraryDocumentActions';
 import { useLibraryDocumentsQuery } from '@/features/files/hooks/useLibraryDocumentsQuery';
-import { isHttpUrl, isWebDocument } from '@/features/files/model/documentMetadata';
 import { useFileBrowserStore } from '@/features/files/stores/fileBrowserStore';
 import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
 import { fromDocumentMetadata } from '@/features/reading/model/sourceAdapter';
@@ -27,6 +26,7 @@ import type { SourceWithMetadata } from '@/types/conversation';
 import { type DocumentMetadata, type SortField, type SortOrder } from '@/types/fileBrowser';
 import { isSupportedFileType } from '@/utils/fileTypeDetector';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
+import { isHttpUrl } from '@/utils/sourcePreview';
 
 import { ContextMenu } from './ContextMenu';
 import { isAbsolutePath } from './fileBrowserHelpers';
@@ -166,7 +166,7 @@ export function FileBrowser() {
   const handleFileOpen = useCallback(async (doc: DocumentMetadata) => {
     setFocusedDocument(doc.id);
 
-    if (isWebDocument(doc)) {
+    if (doc.web) {
       setPreviewSource(fromDocumentMetadata(doc).source);
       return;
     }
