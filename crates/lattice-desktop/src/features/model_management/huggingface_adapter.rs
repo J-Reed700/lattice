@@ -306,9 +306,8 @@ impl HuggingFaceModel {
     }
 
     /// Whether Lattice can run this embedding repository: a single-file GGUF of
-    /// an architecture the pinned engine lists, with the tokenizer.json its
-    /// passages are cut with. When Hugging Face has not indexed the GGUF
-    /// header, the download's own header check decides.
+    /// an architecture the pinned engine lists. When Hugging Face has not
+    /// indexed the GGUF header, the download's own header check decides.
     fn embedding_compatibility(&self, has_gguf: bool) -> EmbeddingCompatibility {
         let architecture = self
             .gguf_architecture()
@@ -329,16 +328,6 @@ impl HuggingFaceModel {
             return EmbeddingCompatibility::Incompatible {
                 architecture,
                 reason: "The repository ships no single-file GGUF. Lattice runs embedding models from GGUF files in its bundled llama.cpp; look for a GGUF conversion of this model.".to_string(),
-            };
-        }
-        let has_tokenizer = self
-            .siblings
-            .iter()
-            .any(|s| s.filename == lattice_core::domain::models::checkpoint::TOKENIZER_JSON);
-        if !has_tokenizer {
-            return EmbeddingCompatibility::Incompatible {
-                architecture,
-                reason: "The repository ships no tokenizer.json. Lattice cuts passages with the tokenizer.json beside the GGUF, so it cannot index with this model; look for a GGUF repository that includes one.".to_string(),
             };
         }
         EmbeddingCompatibility::Compatible { architecture }
