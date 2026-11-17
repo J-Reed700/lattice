@@ -4254,6 +4254,18 @@ async removeSourceKey(service: KeyServiceDto) : Promise<Result<SourcesStatusDto,
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Settings → Sources: whether `value` is an address the setting `field`
+ * accepts, by the rule the settings check applies on save.
+ */
+async checkSourcingAddress(field: SourcingAddress, value: string) : Promise<Result<boolean, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:web|check_sourcing_address", { field, value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async rescanVault() : Promise<Result<RescanSummary, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:vault|rescan_vault") };
@@ -11137,6 +11149,11 @@ sourceId: string; sourceVersionId: string; title: string; url: string | null; ad
  */
 export type SourcesStatusDto = { finders: FinderStatusDto[]; keys: KeyStatusDto[] }
 /**
+ * A Sources setting that holds an address the user types: the SearXNG
+ * server, or the polite-pool contact.
+ */
+export type SourcingAddress = "searxngUrl" | "contact"
+/**
  * Source-finding settings.
  */
 export type SourcingSettingsDto = {
@@ -12421,6 +12438,7 @@ export type CommandArgs = {
 	check_llm_health: void;
 	check_practice_fit: { request: PracticeFitRequestDto };
 	check_practice_piece: { request: CheckPracticePieceRequestDto };
+	check_sourcing_address: { field: SourcingAddress; value: string };
 	clear_active_chat_model: void;
 	clear_active_embedding_model: void;
 	clear_active_utility_model: void;
@@ -12887,6 +12905,7 @@ export type CommandResults = {
 	check_llm_health: LLMHealthStatusDto;
 	check_practice_fit: PracticeFitDto;
 	check_practice_piece: PracticeSessionDto;
+	check_sourcing_address: boolean;
 	clear_active_chat_model: null;
 	clear_active_embedding_model: null;
 	clear_active_utility_model: null;
