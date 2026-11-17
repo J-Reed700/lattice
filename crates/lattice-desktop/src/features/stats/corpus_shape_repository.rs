@@ -6,12 +6,14 @@
 //! the whole contract.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Local, NaiveTime, Utc};
 use sqlx::Row;
 
-use crate::features::stats::type_label::type_label;
+use crate::features::stats::type_bucket::type_bucket;
+use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Database;
 
@@ -40,7 +42,7 @@ fn start_of_local_day(now: DateTime<Local>) -> DateTime<Local> {
 
 #[async_trait]
 pub trait CorpusShapeRepositoryPort: Send + Sync {
-    async fn corpus_shape(&self) -> Result<CorpusShape>;
+    async fn corpus_shape(&self, archive: &dyn ArticleArchive) -> Result<CorpusShape>;
 }
 
 pub struct SqliteCorpusShapeRepository {
@@ -55,7 +57,7 @@ impl SqliteCorpusShapeRepository {
 
 #[async_trait]
 impl CorpusShapeRepositoryPort for SqliteCorpusShapeRepository {
-    async fn corpus_shape(&self) -> Result<CorpusShape> {
+    async fn corpus_shape(&self, archive: &dyn ArticleArchive) -> Result<CorpusShape> {
         let mut tx = self
             .db
             .begin_read()
@@ -63,12 +65,10 @@ impl CorpusShapeRepositoryPort for SqliteCorpusShapeRepository {
             .map_err(|e| AppError::Database(format!("corpus shape begin: {}", e)))?;
         let rows = sqlx::query(
             r#"
-            SELECT COALESCE(NULLIF(source_type, ''), 'local') AS source_type,
-                   LOWER(COALESCE(file_type, ''))             AS file_type,
-                   COUNT(*)                                   AS n
+            SELECT file_path,
+                   LOWER(COALESCE(file_type, '')) AS file_type
             FROM documents
             WHERE owner_conversation_id IS NULL
-            GROUP BY source_type, file_type
             "#,
         )
         .fetch_all(&mut *tx)
@@ -78,13 +78,12 @@ impl CorpusShapeRepositoryPort for SqliteCorpusShapeRepository {
         let mut buckets: HashMap<String, i64> = HashMap::new();
         let mut total: i64 = 0;
         for row in rows {
-            let source_type: String = row.try_get("source_type").unwrap_or_default();
+            let file_path: String = row.try_get("file_path").unwrap_or_default();
             let file_type: String = row.try_get("file_type").unwrap_or_default();
-            let n: i64 = row.try_get("n").unwrap_or(0);
-            total += n;
+            total += 1;
             *buckets
-                .entry(type_label(&source_type, &file_type))
-                .or_insert(0) += n;
+                .entry(type_bucket(archive.owns(Path::new(&file_path)), &file_type))
+                .or_insert(0) += 1;
         }
 
         let mut by_type: Vec<(String, i64)> = buckets.into_iter().collect();

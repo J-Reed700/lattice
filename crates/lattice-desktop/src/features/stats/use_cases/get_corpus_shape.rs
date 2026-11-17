@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use crate::features::stats::corpus_shape_repository::{CorpusShape, CorpusShapeRepositoryPort};
+use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::shared::error::Result;
 
 pub struct GetCorpusShapeUseCase {
@@ -18,8 +19,8 @@ impl GetCorpusShapeUseCase {
         Self { repo }
     }
 
-    pub async fn execute(&self) -> Result<CorpusShape> {
-        self.repo.corpus_shape().await
+    pub async fn execute(&self, archive: &dyn ArticleArchive) -> Result<CorpusShape> {
+        self.repo.corpus_shape(archive).await
     }
 }
 

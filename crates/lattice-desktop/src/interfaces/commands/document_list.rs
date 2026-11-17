@@ -31,7 +31,10 @@
 //! Pure delegation pattern - command delegates directly to DocumentRepository
 //! via RepositoryPort trait. No rate limiting or audit logging needed for read operations.
 
+use crate::features::stats::type_bucket::type_bucket;
 use crate::interfaces::di::Container;
+use lattice_core::domain::entities::Document;
+use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::shared::error::{AppError, Result, ResultExt};
 use lattice_core::shared::persistence::Page;
 use serde::{Deserialize, Serialize};
@@ -62,6 +65,29 @@ pub struct DocumentMetadataDto {
     pub indexed_at: String,
     /// Word count for document
     pub word_count: i32,
+    /// True when the web archive owns the file: a saved web article
+    pub web: bool,
+    /// The type bucket the document counts in, as the Library's facets and the corpus shape count it
+    pub type_bucket: String,
+}
+
+/// Map a stored document to its display metadata.
+fn document_metadata(doc: &Document, archive: &dyn ArticleArchive) -> DocumentMetadataDto {
+    let file_type = doc.file_type().map(|s| s.to_string()).unwrap_or_default();
+    let web = archive.owns(doc.file_path());
+    DocumentMetadataDto {
+        id: doc.id().as_str().to_string(),
+        file_name: doc.file_name().to_string(),
+        file_path: doc.file_path().display().to_string(),
+        type_bucket: type_bucket(web, &file_type),
+        file_type,
+        category: doc.category().to_string(),
+        language: doc.language().to_string(),
+        modified_at: doc.modified_at().to_rfc3339(),
+        indexed_at: doc.indexed_at().to_rfc3339(),
+        word_count: doc.word_count(),
+        web,
+    }
 }
 
 /// List all indexed documents with metadata.
@@ -85,20 +111,12 @@ pub async fn list_all_documents(
         .await
         .context("Failed to query documents table")?;
 
+    let archive = container.web_archive();
+
     // Map domain entities to DTOs
     let dtos: Vec<DocumentMetadataDto> = documents
         .into_iter()
-        .map(|doc| DocumentMetadataDto {
-            id: doc.id().as_str().to_string(),
-            file_name: doc.file_name().to_string(),
-            file_path: doc.file_path().display().to_string(),
-            file_type: doc.file_type().map(|s| s.to_string()).unwrap_or_default(),
-            category: doc.category().to_string(),
-            language: doc.language().to_string(),
-            modified_at: doc.modified_at().to_rfc3339(),
-            indexed_at: doc.indexed_at().to_rfc3339(),
-            word_count: doc.word_count(),
-        })
+        .map(|doc| document_metadata(&doc, archive.as_ref()))
         .collect();
 
     Ok(dtos)
@@ -126,17 +144,7 @@ pub async fn get_document_impl(
         .ok_or_else(|| AppError::NotFound(format!("Document not found: {}", document_id)))?;
 
     // 4. Map domain entity to DTO
-    let dto = DocumentMetadataDto {
-        id: doc.id().as_str().to_string(),
-        file_name: doc.file_name().to_string(),
-        file_path: doc.file_path().display().to_string(),
-        file_type: doc.file_type().map(|s| s.to_string()).unwrap_or_default(),
-        category: doc.category().to_string(),
-        language: doc.language().to_string(),
-        modified_at: doc.modified_at().to_rfc3339(),
-        indexed_at: doc.indexed_at().to_rfc3339(),
-        word_count: doc.word_count(),
-    };
+    let dto = document_metadata(&doc, container.web_archive().as_ref());
 
     Ok(dto)
 }

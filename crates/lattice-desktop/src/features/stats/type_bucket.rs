@@ -1,11 +1,8 @@
-//! The one rule that maps a document to a display type.
-//!
-//! Mirrors `src/components/FileBrowser/docMeta.ts::typeBucket` — same words,
-//! same precedence. If you change one, change the other and both tests.
+//! The type bucket a library document counts in, for the Library's facets and the corpus shape.
 
-/// `source_type` is `"web"` or `"local"`; `file_type` is the bare extension, any case.
-pub fn type_label(source_type: &str, file_type: &str) -> String {
-    if source_type.eq_ignore_ascii_case("web") {
+/// `web` is true for a saved web article; `file_type` is the bare extension, any case.
+pub fn type_bucket(web: bool, file_type: &str) -> String {
+    if web {
         return "Web".to_string();
     }
     match file_type.trim().to_ascii_lowercase().as_str() {
