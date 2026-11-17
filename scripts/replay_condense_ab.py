@@ -1,66 +1,80 @@
-"""Offline A/B for condensing a turn's tool results (chat/tool_loop/research_notes.rs): one request that rewrites
-every result into notes against one request per result, and where its instruction is said.
+"""Offline replay of the app's note step (chat/tool_loop/research_notes.rs) on saved turns.
 
 The saved reading prompts' passages stand in for what a research turn has read: the message keeps its
 instructions and question with the Knowledge Base Results block taken out, and the passages come back as the
 results of the turn's calls (`semantic_search` for the question, then `get_document` for the section a result
 opens with), RESULT_SIZE passages to a result, in label order, while they stay within RESULTS_CHARS: the share
-of a 16k window the loop's results reach before they are condensed, less the room the message and the
-reservation take. Every request is the shipped condensing request: the transcript, CONDENSE_INSTRUCTION said last,
-the same tools forbidden, deterministic sampling, thinking off, the round's reservation.
+of a window the loop's results reach before they are condensed, less the room the message and the reservation take.
 
-  ONE    every result rewritten in one request, the instruction after the last result (`say_last`), as
-         shipped until 2026-10-28.
-  EACH   one request per result: CONDENSE_EACH names the result's call and shows the result again after it.
-  NAMED  one request per result, naming its call only: the transcript's cached prompt and a line more.
-  ONE-USER  ONE with the instruction as a user message of its own after the last result, as shipped.
-  ONE-BARE  ONE sent without the tools, so the model has no call to make (the prompt is read again from its head).
+What is replayed is the request the app sends when those results pass 60% of the window. Every labelled passage is
+a source named r1, r2, ... and its sentences u1, u2, ...; one request asks the model, with a JSON schema, which
+sentences of each source to keep, by handle. The answer is read as the app reads it (the first JSON object, what
+closed of it, handles checked against what was shown). A source the answer does not settle is asked about again
+in smaller requests, alone with one resend after a cut-off, and with one correction; one still unsettled is kept
+whole. The notes are the kept sentences, unchanged, under the source's heading, and are used only when they are
+shorter than the results. A fact is kept when the text after condensing holds one of the rubric's spellings for it
+(case-insensitive), of the facts whose passage is among the results; it is cited when it sits in its own
+passage's block of the notes.
 
-Each reply is taken as `usable_notes` takes it: the text before any call written into it, and nothing when it
-was cut off or holds nothing else; an unusable reply leaves its results as they were, as the app carries on
-without condensing them. A fact is kept when the transcript after condensing holds one of the rubric's spellings
-for it (case-insensitive), of the facts whose passage is among the results; it keeps its citation when the
-passage's label is on the same line or the last one cited before it.
+`--question message` (arm SHIPPED) asks with the whole last user message before the results, as the app does.
+`--question line` (arm LINE) asks with the question's line alone.
 
-  python -I -u scripts/replay_condense_ab.py --out OUT --llama http://127.0.0.1:8089 --rubric R ... \\
-    --calls A.calls.jsonl ... [--arms ONE,EACH,NAMED,ONE-USER,ONE-BARE]
-  python -I -u scripts/replay_condense_ab.py --out OUT --claude claude-haiku-5-5 --budget 3 ...
+Approximations: `sentences` is not the app's splitter (UAX#29 boundaries with suppression rules) and splits where
+its own rules say; headings are `[s<label>] <title>` without the file name and score the app's search headings
+carry; the replay's results hold nothing but passages, so there is no rest source and no legend lines; the replay
+does not check that a request fits the window, so it never splits a batch for size and never restates a
+correction as the task with the correction appended. Each reply's prompt_tokens is recorded so a request that
+would not have fitted shows.
+
+  python -I -u scripts/replay_condense_ab.py --out OUT --llama URL --rubric R ... --calls A.calls.jsonl ... --window 16384
+  python -I -u scripts/replay_condense_ab.py --out OUT --llama URL ... --pack 4 --result-size 8 --results-chars 130000 --window 65536
   python -I scripts/replay_condense_ab.py --out OUT --summary
 """
 import argparse, json, os, re, statistics, sys
+from collections import deque
+from dataclasses import dataclass, field
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import replay_claude as claude  # noqa: E402
 import replay_close_read_ab as base  # noqa: E402
 import replay_cut_evidence_ab as cut  # noqa: E402
 import replay_grouped_reading_ab as grouped  # noqa: E402
+import replay_model  # noqa: E402
 
 RESULT_SIZE = 4
 RESULTS_CHARS = 26_000
-ARMS = ("ONE", "ONE-USER", "ONE-BARE", "EACH", "NAMED")
-CALL_MARKERS = ("<tool_call>", "<function=", "[TOOL_CALLS]", "<|tool_call")  # final_round.rs LEAKED_CALL_MARKERS
-SEPARATOR = "\n\n---\nFrom me, not part of the result above: "
 # research_notes.rs CONDENSE_INSTRUCTION.
-CONDENSE = ("Your context window is nearly full. Before you continue, rewrite all the tool results you have so far into "
-            "compact research notes. Keep every fact, number, date, name, short quotation and URL that could matter to my "
-            "question, and keep each citation number exactly as it is written, for example [3], next to the facts it "
-            "supports. Drop navigation text, boilerplate, repetition and anything that does not bear on my question. "
-            "Group the notes by source, one short line per fact. Do not answer my question yet and do not call any "
-            "tools: write only the notes.")
-CONDENSE_EACH = ("Your context window is nearly full. Before you continue, rewrite the result of your call {call} into "
-                 "compact research notes. Here it is again:\n\n{result}\n\nKeep every fact, number, date, name, short "
-                 "quotation and URL in it that could matter to my question, and keep each citation number exactly as it "
-                 "is written, for example [3], next to the facts it supports. Drop navigation text, boilerplate, "
-                 "repetition and anything that does not bear on my question. Group the notes by source, one short line "
-                 "per fact. Do not answer my question yet and do not call any tools: write only the notes.")
-CONDENSE_NAMED = ("Your context window is nearly full. Before you continue, rewrite the result of your call {call} into "
-                  "compact research notes. Keep every fact, number, date, name, short quotation and URL in it that could "
-                  "matter to my question, and keep each citation number exactly as it is written, for example [3], next "
-                  "to the facts it supports. Drop navigation text, boilerplate, repetition and anything that does not "
-                  "bear on my question. Group the notes by source, one short line per fact. Do not answer my question "
-                  "yet and do not call any tools: write only the notes.")
-DETERMINISTIC = {"temperature": 0.0, "top_p": 1.0, "top_k": 1, "presence_penalty": 0.0,
-                 "chat_template_kwargs": {"enable_thinking": False}}
+CONDENSE = ("Your context window is nearly full. Before you continue, choose from all the tool results you have so far "
+            "the sentences that make up compact research notes. Keep every sentence with a fact, number, date, name, "
+            "short quotation or URL that could matter to my question. Drop navigation text, boilerplate, repetition "
+            "and anything that does not bear on my question. Do not answer my question yet. Answer with an entries "
+            "list: each entry names a result in `of` by the handle shown beside it, and lists in `keep` the handles "
+            "of that result's sentences to keep, which may be none.")
+# research_notes.rs NOTES_HEADER.
+NOTES_HEADER = ("Research notes so far. These condense the tool results you gathered earlier in this turn, to make room "
+                "in your context window. Every citation label in them still refers to the same source. Continue the "
+                "research from them, or answer if they are enough.")
+# research_notes.rs NOTHING_KEPT.
+NOTHING_KEPT = "Nothing here bears on the question."
+# ask.rs NOT_READ, CUT_OFF, UNPLACED.
+NOT_READ = "Your answer could not be read. Answer again in the form asked for."
+CUT_OFF = "Your answer was cut off before it ended. Answer again, more briefly."
+UNPLACED = ("Your answer pointed at something that is not shown. Point only at what is shown, by the name it is "
+            "shown under.")
+# ask.rs `told`.
+MISSING = "Your answer said nothing about {handle}. Answer for it."
+CONTRADICTED = "{what} Answer again and say one thing."
+# SamplingOverride::deterministic().
+SAMPLING = {"temperature": 0.0, "top_p": 1.0, "top_k": 1, "presence_penalty": 0.0}
+OUTPUT_RESERVATION_CAP = 32_768
+ABBREVIATIONS = {"mr", "mrs", "ms", "dr", "st", "mt", "jr", "sr", "co", "no", "vs", "etc", "e.g", "i.e"}
+
+
+@dataclass
+class Source:
+    label: int
+    heading: str
+    sentences: list = field(default_factory=list)
 
 
 def transcript(ctx):
@@ -87,38 +101,6 @@ def transcript(ctx):
                      {"role": "tool", "tool_call_id": call_id, "content": text}]
         results.append((call_id, text, labels[i:i + RESULT_SIZE]))
     return messages, results
-
-
-def said_last(messages, instruction):
-    out = [dict(m) for m in messages]
-    out[-1]["content"] += SEPARATOR + instruction
-    return out
-
-
-def condense(ctx, messages, instruction, kind, how="said"):
-    req = ctx["read_req"]
-    if how == "user":
-        return base.call(req, kind, messages=[dict(m) for m in messages] + [{"role": "user", "content": instruction}],
-                         tool_choice="none", max_tokens=req.get("max_tokens"), **DETERMINISTIC)
-    if how == "bare":
-        bare = {k: v for k, v in req.items() if k not in ("tools", "tool_choice")}
-        return base.call(bare, kind, messages=said_last(messages, instruction), max_tokens=req.get("max_tokens"),
-                         **DETERMINISTIC)
-    return base.call(req, kind, messages=said_last(messages, instruction), tool_choice="none",
-                     max_tokens=req.get("max_tokens"), **DETERMINISTIC)
-
-
-def arm(ctx, name):
-    messages, results = transcript(ctx)
-    base.call(ctx["read_req"], "warmup", messages=messages, tool_choice="none", max_tokens=1, **DETERMINISTIC)
-    if name.startswith("ONE"):
-        how = {"ONE": "said", "ONE-USER": "user", "ONE-BARE": "bare"}[name]
-        replies = [condense(ctx, messages, CONDENSE, name, how)]
-    else:
-        template = CONDENSE_EACH if name == "EACH" else CONDENSE_NAMED
-        replies = [condense(ctx, messages, template.format(call=call_id, result=text), name)
-                   for call_id, text, _ in results]
-    return replies, results
 
 
 def packed(ctxs, k):
@@ -151,57 +133,464 @@ def facts_of(ctx):
     return [f for q in ctx.get("qids") or [ctx["qid"]] for f in base.facts(q)]
 
 
-def kept_facts(facts, texts, notes):
-    """fact -> (kept, cited): of `facts`, the ones whose passage is among `texts`."""
-    out = {}
-    lines = notes.splitlines()
-    for spellings in facts:
-        label = next((l for l, (t, _) in texts.items() if any(v in t for v in spellings)), None)
-        if label is None:
-            continue
-        hit = next((i for i, line in enumerate(lines) if any(v.lower() in line.lower() for v in spellings)), None)
-        cited = False
-        if hit is not None:
-            near = next((base.cited(lines[j]) for j in range(hit, -1, -1) if base.cited(lines[j])), set())
-            cited = label in near
-        out[spellings[0]] = (hit is not None, cited)
+# ---------- sentences, sources and the question ----------
+def one_line(text):
+    return text.replace("\r", " ").replace("\n", " ")
+
+
+def sentences(text):
+    """An approximation of lattice_core::shared::text::sentences, which cuts at UAX#29 sentence boundaries with
+    suppression rules and at every line break; Python cannot port it exactly. Here a line is cut after a run of
+    . ! ? and closing quotes or brackets when whitespace follows, the next word does not start in lowercase and the
+    run does not end an abbreviation or an initial."""
+    pieces = []
+    for line in text.replace("\r\n", "\n").split("\n"):
+        start = 0
+        for m in re.finditer(r"([.!?]+)([\"'”’)\]]*)(?=\s)", line):
+            rest = line[m.end():].lstrip()
+            if rest[:1].islower():
+                continue
+            if m.group(1).endswith("."):
+                token = re.search(r"(\S*)$", line[:m.start(1) + len(m.group(1)) - 1]).group(1)
+                token = re.sub(r"^[^A-Za-z0-9]+", "", token).lower()
+                if token in ABBREVIATIONS or (len(token) == 1 and token.isalpha()):
+                    continue
+            pieces.append(line[start:m.end()])
+            start = m.end()
+        pieces.append(line[start:])
+    return [p.strip() for p in pieces if p.strip()]
+
+
+def sources_of(ctx, results):
+    """research_notes.rs `sources_in` for labelled passages: each passage of each result is a source under
+    `[s<label>] <title>`."""
+    every, _, _ = cut.blocks(ctx["bare"])
+    out = []
+    for _, _, labels in results:
+        for label in labels:
+            first = every[label].split("\n", 1)[0]
+            m = re.match(r"^\[\d+\] Document: (.*)$", first)
+            title = m.group(1) if m else ""
+            out.append(Source(label, one_line(f"[s{label}] {title}"),
+                              [one_line(s) for s in sentences(ctx["texts"][label][1])]))
     return out
 
 
-def usable(reply):
-    """research_notes.rs `usable_notes`: the text before a call written into the reply, unless the reply was cut
-    off or nothing is left. (The app also refuses a reply that is wholly a JSON call; the 9B writes its calls in
-    its own markup, which the markers catch.)"""
-    if reply["finish"] in ("length", "max_tokens", "incomplete", "failed"):
+def question_of(messages, mode="message"):
+    """The last user message before the results (research_notes.rs `question_of`), or its question line."""
+    content = next(m["content"] for m in reversed(messages) if m["role"] == "user")
+    if mode == "line":
+        return re.search(r"(?m)^Question: (.*)$", content).group(1)
+    return content
+
+
+# ---------- one request ----------
+def render(question, shown):
+    """The notes request's messages for `shown`, a list of (index, source): handles r<index + 1> and u<k>."""
+    task = f"My question: {question}\n\nThe tool results:"
+    for index, source in shown:
+        task += f"\n\n[r{index + 1}] {source.heading}"
+        for k, sentence in enumerate(source.sentences, 1):
+            task += f"\n[u{k}] {sentence}"
+    return [{"role": "system", "content": CONDENSE}, {"role": "user", "content": task}]
+
+
+def schema(shown, enum=False):
+    """The answer's JSON schema. Plain is what the app's contract writes; enum is what a backend that enforces
+    schemas (llama.cpp) is given, each pointer limited to the handles shown."""
+    handles = [f"r{index + 1}" for index, _ in shown]
+    most = max((len(source.sentences) for _, source in shown), default=0)
+    if enum:
+        of, keep = {"type": "string", "enum": handles}, {"type": "string", "enum": [f"u{k}" for k in range(1, most + 1)]}
+    else:
+        of = {"type": "string",
+              "description": f"One of the names the request shows, such as {handles[0] if handles else 'r1'}."}
+        keep = {"type": "string", "description": "One of the names the request shows, such as u1."}
+    entry = {"type": "object", "properties": {"of": of, "keep": {"type": "array", "items": keep}},
+             "required": ["of", "keep"], "additionalProperties": False}
+    return {"type": "object", "properties": {"entries": {"type": "array", "items": entry}},
+            "required": ["entries"], "additionalProperties": False}
+
+
+def max_tokens_for(window):
+    """The planner's default output reservation, which a contract call that asks for no output size gets."""
+    return min(window // 4, OUTPUT_RESERVATION_CAP)
+
+
+def body(model, messages, schema, window):
+    return {"model": model, "messages": messages, **SAMPLING, "repeat_penalty": 1.0,
+            "max_tokens": max_tokens_for(window), "chat_template_kwargs": {"enable_thinking": False},
+            "response_format": {"type": "json_schema", "json_schema": {"name": "response", "schema": schema}}}
+
+
+def sender(window):
+    def send(messages, schema):
+        return base.call(body(base.running_model(), messages, schema, window), "condense")
+    return send
+
+
+# ---------- reading an answer (model_contract/shape/document.rs and shapes.rs `read_each`) ----------
+_BAD = object()
+_SPACE = " \t\n\r\x0c"
+
+
+@dataclass
+class Document:
+    fields: dict = field(default_factory=dict)
+    open_list: tuple = None
+    closed: bool = False
+
+
+def _skip(text, at):
+    while at < len(text) and text[at] in _SPACE:
+        at += 1
+    return at
+
+
+def _string_end(text, start):
+    at = start + 1
+    while at < len(text):
+        if text[at] == "\\":
+            at += 2
+        elif text[at] == '"':
+            return "closed", at + 1
+        else:
+            at += 1
+    return "open", None
+
+
+def _nested_end(text, start):
+    depth, at = 0, start
+    while at < len(text):
+        c = text[at]
+        if c == '"':
+            kind, end = _string_end(text, at)
+            if kind != "closed":
+                return kind, None
+            at = end
+            continue
+        if c in "{[":
+            depth += 1
+        elif c in "}]":
+            depth = max(depth - 1, 0)
+            if depth == 0:
+                return "closed", at + 1
+        at += 1
+    return "open", None
+
+
+def _literal_end(text, start):
+    at = start
+    while at < len(text):
+        if text[at] in _SPACE or text[at] in ",}]":
+            return ("bad", None) if at == start else ("closed", at)
+        at += 1
+    return "open", None
+
+
+def _value_end(text, start):
+    if start >= len(text):
+        return "open", None
+    if text[start] == '"':
+        return _string_end(text, start)
+    if text[start] in "{[":
+        return _nested_end(text, start)
+    return _literal_end(text, start)
+
+
+def _parse(text, start, end):
+    try:
+        return json.loads(text[start:end])
+    except ValueError:
+        return _BAD
+
+
+def _list_at(text, open_at):
+    items, at, need_comma = [], open_at + 1, False
+    while True:
+        at = _skip(text, at)
+        if at >= len(text):
+            return "cut", items, None
+        c = text[at]
+        if c == "]":
+            return "closed", items, at + 1
+        if c == ",":
+            if not need_comma:
+                return "cut", items, None
+            need_comma, at = False, at + 1
+        elif need_comma:
+            return "cut", items, None
+        else:
+            kind, end = _value_end(text, at)
+            if kind != "closed":
+                return "cut", items, None
+            value = _parse(text, at, end)
+            if value is _BAD:
+                return "cut", items, None
+            items.append(value)
+            at, need_comma = end, True
+
+
+def _object_at(text, open_at):
+    first = _skip(text, open_at + 1)
+    if text[first:first + 1] not in ("}", '"'):
         return None
-    text = reply["content"].strip()
-    starts = [text.find(m) for m in CALL_MARKERS if m in text]
-    if starts:
-        text = text[:min(starts)].strip()
-    return text or None
+    doc, at = Document(), first
+    while True:
+        at = _skip(text, at)
+        c = text[at:at + 1]
+        if c == "}":
+            doc.closed = True
+            return doc
+        if c != '"':
+            return doc
+        kind, key_end = _string_end(text, at)
+        if kind != "closed":
+            return doc
+        key = _parse(text, at, key_end)
+        if not isinstance(key, str):
+            return doc
+        at = _skip(text, key_end)
+        if text[at:at + 1] != ":":
+            return doc
+        at = _skip(text, at + 1)
+        if text[at:at + 1] == "[":
+            kind, items, end = _list_at(text, at)
+            if kind == "cut":
+                doc.open_list = (key, items)
+                return doc
+            doc.fields[key] = items
+            at = end
+        else:
+            kind, end = _value_end(text, at)
+            if kind != "closed":
+                return doc
+            value = _parse(text, at, end)
+            if value is _BAD:
+                return doc
+            doc.fields[key] = value
+            at = end
+        at = _skip(text, at)
+        c = text[at:at + 1]
+        if c == ",":
+            at += 1
+        elif c == "}":
+            doc.closed = True
+            return doc
+        else:
+            return doc
 
 
-def record(ctx, name, replies, results):
-    """What the transcript holds after condensing: each usable reply's notes in place of the results it covers,
-    and the results themselves wherever the reply was unusable (the app carries on without condensing them)."""
-    notes = [usable(r) for r in replies]
-    covered = [[text for _, text, _ in results]] if name.startswith("ONE") else [[text] for _, text, _ in results]
-    after = "\n".join(n if n else "\n".join(texts) for n, texts in zip(notes, covered))
-    shown = {l for _, _, ls in results for l in ls}
-    facts = kept_facts(facts_of(ctx), {l: t for l, t in ctx["texts"].items() if l in shown}, after)
-    results_chars = sum(len(t) for _, t, _ in results)
-    written = "\n".join(n for n in notes if n)
+def read_document(text):
+    """The first JSON object in `text` as far as it was written: what closed, never repaired or completed."""
+    for m in re.finditer(r"\{", text):
+        doc = _object_at(text, m.start())
+        if doc is not None:
+            return doc
+    return None
+
+
+def pointed(written):
+    """shown.rs `Name::pointed`: a handle bare or in square brackets -> (prefix, ordinal), else None."""
+    if not isinstance(written, str):
+        return None
+    written = written.strip()
+    if written.startswith("[") and written.endswith("]"):
+        written = written[1:-1].strip()
+    m = re.fullmatch(r"([a-z]+)([1-9][0-9]*)", written)
+    return (m.group(1), int(m.group(2))) if m else None
+
+
+def read(reply, shown):
+    """What an answer says of each of `shown`, a list of (index, source): {index: row} with row
+    ("answered", [sentence numbers]), ("contradicted", text) or ("unanswered", why), why one of not_read,
+    cut_off, missing, declined."""
+    finish = reply.get("finish")
+    ended = "complete" if finish == "stop" else "cut_off" if finish == "length" else "declined"
+    indices = [i for i, _ in shown]
+
+    def everyone(why):
+        return {i: ("unanswered", why) for i in indices}
+
+    def unfinished():
+        return {"complete": "not_read", "cut_off": "cut_off", "declined": "declined"}[ended]
+
+    if ended == "declined":
+        return everyone("declined")
+    doc = read_document(reply.get("content") or "")
+    if doc is None:
+        return everyone(unfinished())
+    entries = doc.fields.get("entries")
+    if not isinstance(entries, list):
+        if "entries" in doc.fields or not doc.open_list or doc.open_list[0] != "entries":
+            return everyone("not_read" if doc.closed else unfinished())
+        entries = doc.open_list[1]
+    sentence_counts = {i: len(source.sentences) for i, source in shown}
+    written = {i: [] for i in indices}
+    for element in entries:
+        if not isinstance(element, dict):
+            continue
+        name = pointed(element.get("of"))
+        if not name or name[0] != "r" or name[1] - 1 not in written:
+            continue
+        index, kept = name[1] - 1, []
+        if isinstance(element.get("keep"), list):
+            for handle in element["keep"]:
+                sentence = pointed(handle)
+                if sentence and sentence[0] == "u" and 1 <= sentence[1] <= sentence_counts[index] \
+                        and sentence[1] not in kept:
+                    kept.append(sentence[1])
+        written[index].append(kept)
+    rows = {}
+    for index in indices:
+        mine = written[index]
+        if not mine:
+            rows[index] = ("unanswered", "missing" if doc.closed else unfinished())
+        elif any(kept != mine[0] for kept in mine):
+            rows[index] = ("contradicted", f"r{index + 1} has two entries that differ.")
+        else:
+            rows[index] = ("answered", mine[0])
+    return rows
+
+
+# ---------- asking again (model_contract/ask.rs `ask_each`, `ask_alone`, `alone`) ----------
+def told(row, index):
+    """The correction a row is due, or None."""
+    kind, why = row
+    if kind == "contradicted":
+        return CONTRADICTED.format(what=why)
+    return {"not_read": NOT_READ, "cut_off": CUT_OFF,
+            "missing": MISSING.format(handle=f"r{index + 1}")}.get(why)
+
+
+def ask_each(question, asked, send, enum=True):
+    """Asks which sentences of each of `asked` to keep, in as few requests as settle them; `send(messages,
+    schema)` returns one reply. Returns the settlement of each source (answered, or unanswered and so kept
+    whole) and what the asking cost."""
+    raw, log, rows = [], [], {}
+    count = {"resends": 0, "corrections": 0}
+    contradicted, first = set(), []
+
+    def post(messages, shown):
+        reply = send(messages, schema(shown, enum))
+        raw.append(reply)
+        usage = reply.get("usage") or {}
+        log.append({"shown": [f"r{i + 1}" for i, _ in shown], "content": reply.get("content"),
+                    "finish": reply.get("finish"), "prompt_tokens": usage.get("prompt_tokens"),
+                    "secs": reply.get("secs")})
+        return reply
+
+    def note(reply, shown):
+        got = read(reply, shown)
+        contradicted.update(i for i, row in got.items() if row[0] == "contradicted")
+        if not first:
+            first.append({i for i, row in got.items() if row[0] == "answered"})
+        return got
+
+    def alone(index):
+        shown = [(index, asked[index])]
+        messages = render(question, shown)
+        reply = post(messages, shown)
+        row = note(reply, shown)[index]
+        if row == ("unanswered", "cut_off"):
+            count["resends"] += 1
+            reply = post(messages, shown)
+            row = note(reply, shown)[index]
+        if row[0] != "answered":
+            due = told(row, index)
+            if due:
+                count["corrections"] += 1
+                again = messages + [{"role": "assistant", "content": reply.get("content") or ""},
+                                    {"role": "user", "content": due}]
+                row = note(post(again, shown), shown)[index]
+        rows[index] = row
+
+    queue = deque([list(range(len(asked)))] if asked else [])
+    while queue:
+        batch = queue.popleft()
+        if len(batch) == 1:
+            alone(batch[0])
+            continue
+        shown = [(i, asked[i]) for i in batch]
+        reply = post(render(question, shown), shown)
+        got = note(reply, shown)
+        accepted = [i for i in batch if got[i][0] == "answered"]
+        rows.update({i: got[i] for i in accepted})
+        rest = [i for i in batch if i not in accepted]
+        if not rest:
+            continue
+        if reply.get("finish") == "stop" and accepted:
+            queue.appendleft(rest)
+        else:
+            size = max(len(batch) // 2, 1)
+            for chunk in reversed([rest[i:i + size] for i in range(0, len(rest), size)]):
+                queue.appendleft(chunk)
+    return {"rows": [rows[i] for i in range(len(asked))], "first": first[0] if first else set(),
+            "contradicted": contradicted, "raw": raw, "log": log, **count}
+
+
+# ---------- the notes (research_notes.rs `block`, `notes_of`) ----------
+def blocks_of(sources, settled):
+    """Each source's block of the notes. `settled` holds one row for each source that has sentences, in order."""
+    rows, out = iter(settled), []
+    for source in sources:
+        row = next(rows) if source.sentences else None
+        if row and row[0] == "answered":
+            lines = [source.sentences[n - 1] for n in sorted(set(row[1]))]
+            entries = [f"- {line}" for line in lines] or [NOTHING_KEPT]
+        else:
+            entries = [f"- {line}" for line in source.sentences]
+        out.append("\n".join([f"{source.heading}:", *entries]))
+    return out
+
+
+def notes_of(sources, settled):
+    return "\n\n".join(blocks_of(sources, settled))
+
+
+def message_of(sources, settled):
+    return f"{NOTES_HEADER}\n\n{notes_of(sources, settled)}"
+
+
+# ---------- one turn ----------
+def turn(ctx, mode, send, window):
+    """One record: the notes request asked and settled on `ctx`'s results, and what the notes hold."""
+    messages, results = transcript(ctx)
+    sources = sources_of(ctx, results)
+    asked = [s for s in sources if s.sentences]
+    got = ask_each(question_of(messages, mode), asked, send)
+    message = message_of(sources, got["rows"])
+    chars_before = sum(len(text) for _, text, _ in results)
+    used = len(message) < chars_before
+    after = message if used else "\n".join(text for _, text, _ in results)
+    blocks = dict(zip((s.label for s in sources), blocks_of(sources, got["rows"])))
+    by_label = {s.label: s for s in sources}
+    facts, split = {}, []
+    for spellings in facts_of(ctx):
+        label = next((l for l in sorted(by_label) if any(v in ctx["texts"][l][0] for v in spellings)), None)
+        if label is None:
+            continue
+        if not any(v.lower() in sentence.lower() for v in spellings for sentence in by_label[label].sentences):
+            split.append(spellings[0])
+            continue
+        kept = any(v.lower() in after.lower() for v in spellings)
+        cited = kept and (not used or any(v.lower() in blocks[label].lower() for v in spellings))
+        facts[spellings[0]] = (kept, cited)
+    replies = got["raw"]
     s = lambda key: sum(((r.get("timings") or {}).get(key) or 0) for r in replies)
-    return {"key": ctx["key"], "set": ctx["set"], "arm": name, "results": len(results), "passages": len(shown),
-            "results_chars": results_chars, "after_chars": len(after), "facts": len(facts),
+    prompts = [(r.get("usage") or {}).get("prompt_tokens") or 0 for r in replies]
+    return {"key": ctx["key"], "set": ctx["set"], "arm": "LINE" if mode == "line" else "SHIPPED",
+            "question_mode": mode, "window": window, "max_tokens": max_tokens_for(window),
+            "results": len(results), "sources": len(asked), "sentences": sum(len(a.sentences) for a in asked),
+            "results_chars": chars_before, "after_chars": len(message), "used": used, "facts": len(facts),
             "kept": sum(k for k, _ in facts.values()), "cited": sum(c for _, c in facts.values()),
-            "lost": [f for f, (k, _) in facts.items() if not k],
-            "unknown_citations": sorted(base.cited(written) - set(ctx["texts"])),
-            "usable": sum(1 for n in notes if n), "calls_written": sum(1 for r in replies if r.get("tool_calls") or any(m in r["content"] for m in CALL_MARKERS)),
-            "cut_off": sum(1 for r in replies if r["finish"] == "length"), "requests": len(replies),
-            "prompt_new": s("prompt_n"), "output_tokens": s("predicted_n"),
-            "secs": round(sum(r["secs"] for r in replies), 1),
-            "replies": [{"content": r["content"], "finish": r["finish"]} for r in replies]}
+            "lost": [f for f, (k, _) in facts.items() if not k], "split_facts": split,
+            "answered_first": len(got["first"]), "kept_whole": sum(1 for row in got["rows"] if row[0] != "answered"),
+            "contradicted": len(got["contradicted"]), "requests": len(replies),
+            "cut_off": sum(1 for r in replies if r.get("finish") == "length"), "resends": got["resends"],
+            "corrections": got["corrections"], "prompt_tokens": max(prompts, default=0), "prompt_new": s("prompt_n"),
+            "output_tokens": s("predicted_n"), "secs": round(sum(r.get("secs") or 0 for r in replies), 1),
+            "notes": message, "replies": got["log"]}
 
 
 def run(args):
@@ -212,45 +601,62 @@ def run(args):
     if args.pack > 1:
         ctxs = packed(ctxs, args.pack)
     print(f"{len(ctxs)} turns", flush=True)
-    for i, ctx in enumerate(ctxs):
-        line = []
-        order = args.arms if i % 2 == 0 else list(reversed(args.arms))
-        for name in order:
-            if (ctx["key"], name) in done:
-                continue
-            rec = record(ctx, name, *arm(ctx, name))
-            out.write(json.dumps({"model": base.running_model(), **rec}) + "\n")
-            out.flush()
-            line.append(f"{name} {rec['kept']}/{rec['facts']} cited {rec['cited']} usable {rec['usable']}/"
-                        f"{rec['requests']} calls {rec['calls_written']} {rec['results_chars']}->{rec['after_chars']} "
-                        f"{rec['secs']}s")
-        if line:
-            print(ctx["key"], " | ".join(line), flush=True)
+    send = sender(args.window)
+    arm = "LINE" if args.question == "line" else "SHIPPED"
+    for ctx in ctxs:
+        if (ctx["key"], arm) in done:
+            continue
+        rec = turn(ctx, args.question, send, args.window)
+        out.write(json.dumps({"model": base.running_model(), **rec}) + "\n")
+        out.flush()
+        print(f"{ctx['key']} {arm} {rec['kept']}/{rec['facts']} cited {rec['cited']} "
+              f"answered_first {rec['answered_first']}/{rec['sources']} kept_whole {rec['kept_whole']} "
+              f"requests {rec['requests']} {rec['results_chars']}->{rec['after_chars']} {rec['secs']}s", flush=True)
+
+
+def dry(args):
+    """Builds the first turn's first request and prints it; nothing is sent or written."""
+    ctxs = grouped.contexts(args)
+    if args.pack > 1:
+        ctxs = packed(ctxs, args.pack)
+    if not ctxs:
+        sys.exit("no turns to build")
+    messages, results = transcript(ctxs[0])
+    asked = [s for s in sources_of(ctxs[0], results) if s.sentences]
+    shown = list(enumerate(asked))
+    request = render(question_of(messages, args.question), shown)
+    print(request[0]["content"], "\n")
+    print(request[1]["content"][:3000], "\n")
+    print(f"{len(asked)} sources, {sum(len(a.sentences) for a in asked)} sentences, "
+          f"max_tokens {max_tokens_for(args.window)}")
+    print(json.dumps(schema(shown, enum=True)))
 
 
 def summary(args):
     recs = base.read_out(os.path.join(args.out, "records.jsonl"))
+    print(f"model: {replay_model.one_model(recs)}")
     arms = list(dict.fromkeys(r["arm"] for r in recs))
     keys = set.intersection(*({r["key"] for r in recs if r["arm"] == a} for a in arms)) if arms else set()
-    print(f"{len(keys)} turns every arm ran\n")
-    print("| Arm | Facts kept | with citation | Turns losing a fact | Usable replies | Replies writing a call | "
-          "After / before chars | Cut off | Unknown citations | Requests | Prompt tokens processed | Output tokens | "
-          "Seconds | Median s/turn |")
-    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    print(f"{len(keys)} turns\n")
+    print("| Arm | Facts kept | with citation | Turns losing a fact | Facts the splitter cut | "
+          "Sources answered first time | Sources kept whole | Notes used | After / before chars | Requests | "
+          "Cut off | Prompt tokens processed | Output tokens | Seconds | Median s/turn |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for subset in ("all", "long", "short", "pack"):
         for a in arms:
             rs = [r for r in recs if r["arm"] == a and r["key"] in keys and subset in ("all", r["set"])]
             if not rs:
                 continue
             name = a if subset == "all" else f"{a} ({subset})"
-            print(f"| {name} | {sum(r['kept'] for r in rs)}/{sum(r['facts'] for r in rs)} | {sum(r['cited'] for r in rs)} | "
-                  f"{sum(1 for r in rs if r['lost'])} | {sum(r['usable'] for r in rs)}/{sum(r['requests'] for r in rs)} | "
-                  f"{sum(r['calls_written'] for r in rs)} | "
-                  f"{sum(r['after_chars'] for r in rs) / sum(r['results_chars'] for r in rs):.2f} | "
-                  f"{sum(r['cut_off'] for r in rs)} | {sum(len(r['unknown_citations']) for r in rs)} | "
-                  f"{sum(r['requests'] for r in rs)} | {sum(r['prompt_new'] for r in rs):,} | "
-                  f"{sum(r['output_tokens'] for r in rs):,} | {sum(r['secs'] for r in rs):,.0f} | "
-                  f"{statistics.median(r['secs'] for r in rs):.1f} |")
+            print(f"| {name} | {sum(r['kept'] for r in rs)}/{sum(r['facts'] for r in rs)} | "
+                  f"{sum(r['cited'] for r in rs)} | {sum(1 for r in rs if r['lost'])} | "
+                  f"{sum(len(r['split_facts']) for r in rs)} | "
+                  f"{sum(r['answered_first'] for r in rs)}/{sum(r['sources'] for r in rs)} | "
+                  f"{sum(r['kept_whole'] for r in rs)} | {sum(1 for r in rs if r['used'])}/{len(rs)} | "
+                  f"{sum(r['after_chars'] for r in rs) / max(sum(r['results_chars'] for r in rs), 1):.2f} | "
+                  f"{sum(r['requests'] for r in rs)} | {sum(r['cut_off'] for r in rs)} | "
+                  f"{sum(r['prompt_new'] for r in rs):,} | {sum(r['output_tokens'] for r in rs):,} | "
+                  f"{sum(r['secs'] for r in rs):,.0f} | {statistics.median(r['secs'] for r in rs):.1f} |")
     for a in arms:
         lost = [f"{r['key']} {r['lost']}" for r in recs if r["arm"] == a and r["key"] in keys and r["lost"]]
         print(f"\n{a} lost: {lost or 'none'}")
@@ -263,22 +669,22 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--rubric", action="append", default=[])
     ap.add_argument("--calls", action="append", default=[])
-    ap.add_argument("--arms", default="ONE,EACH,NAMED")
+    ap.add_argument("--question", choices=("message", "line"), default="message",
+                    help="ask with the whole last user message (SHIPPED) or its question line (LINE)")
+    ap.add_argument("--window", type=int, default=16384, help="the context window the turn is sized to")
     ap.add_argument("--pack", type=int, default=1, help="long questions asked together in one turn")
     ap.add_argument("--result-size", type=int, default=RESULT_SIZE)
     ap.add_argument("--results-chars", type=int, default=RESULTS_CHARS)
     ap.add_argument("--summary", action="store_true")
+    ap.add_argument("--dry", action="store_true", help="print the first turn's first request and exit")
     ap.add_argument("--llama", default=os.environ.get("LLAMA", "http://127.0.0.1:8089"))
     claude.add_arguments(ap)
     args = ap.parse_args()
     RESULT_SIZE, RESULTS_CHARS = args.result_size, args.results_chars
-    args.arms = [a for a in args.arms.split(",") if a]
-    bad = [a for a in args.arms if a not in ARMS]
-    if bad:
-        sys.exit(f"unknown arms {bad}")
     os.makedirs(args.out, exist_ok=True)
     if args.summary:
         return summary(args)
+    base.DRY = args.dry
     if args.claude:
         claude.use(args.claude, os.path.join(args.out, "claude-spend.jsonl"), args.budget, thinking=args.thinking)
         base.CLAUDE = claude
@@ -286,6 +692,8 @@ def main():
         base.URL = args.llama
     for p in args.rubric:
         base.items.update({i["id"]: i for i in json.load(open(p, encoding="utf-8"))["items"]})
+    if args.dry:
+        return dry(args)
     run(args)
 
 
