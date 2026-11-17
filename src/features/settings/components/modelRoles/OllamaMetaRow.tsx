@@ -28,6 +28,7 @@ import {
   CLOUD_PROVIDER_NAMES,
   isCloudProvider,
   modelRefLabel,
+  OLLAMA_SERVER_MODEL_ID,
   remoteOption,
   sameModelRef,
 } from '@/utils/chatModelSelection';
@@ -39,8 +40,6 @@ import { ModelWindowControls } from './ModelWindowControls';
 import { ActiveRoleBadge, RoleButton, RoleToggle } from './RoleButton';
 import { CONNECTION_ROLES, isLearningModel, isUtilityModel, roleDescriptor } from './roleConfig';
 import { ModelVisionDeclaration } from '../AITab/VisionDeclarationEditor';
-
-const OLLAMA_SERVER_MODEL_ID = '__ollama_server__';
 
 function providerName(provider: LLMSettings['provider'] | undefined): string {
   if (!provider) return '';

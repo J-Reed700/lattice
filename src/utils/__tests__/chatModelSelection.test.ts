@@ -15,7 +15,6 @@ import {
   formatServerEndpoint,
   isUnavailableChatModel,
   LLAMACPP_SERVER_MODEL_ID,
-  modelRefForOption,
   modelRefForRow,
   OLLAMA_SERVER_MODEL_ID,
   resolveDefaultChatOption,
@@ -66,7 +65,6 @@ describe('discovered cloud models', () => {
     const options = buildChatModelOptions(settings, [makeModel({})], catalogs, makeActive({ chat: [gptNew] }));
     expect(options.filter((option) => option.backend === 'cloud').map((option) => option.label)).toEqual(['GPT New', 'GPT Small', 'Claude New']);
     expect(options.find((option) => option.isDefault)?.ref).toEqual({ kind: 'cloud', provider: 'openai', model: 'gpt-new' });
-    for (const option of options) expect(modelRefForOption(option, settings)).toEqual(option.ref);
     settings.model = 'gpt-small';
     const after = buildChatModelOptions(settings, [], catalogs);
     for (const option of options.filter((entry) => entry.backend === 'cloud')) {
@@ -99,10 +97,10 @@ describe('the Settings default as a picker row', () => {
     expect(resolveDefaultChatOption(settings, [local])).toBeNull();
   });
 
-  it('finds the Ollama connection under Auto when its URL is only the default and nothing is downloaded', () => {
+  it('is the Ollama connection row when the backend runs a chat on the saved Ollama connection', () => {
     const settings = settingsWith((llm) => {
       llm.provider = 'auto';
-      llm.ollamaConfigured = false;
+      llm.ollamaConfigured = true;
       llm.model = 'ollama-model';
     });
     const active = makeActive({
@@ -157,49 +155,6 @@ describe('the Settings default as a picker row', () => {
     const option = resolveDefaultChatOption(settings, [makeModel({})], {}, makeActive({ chat: [google] }));
     expect(option?.ref).toEqual(google);
     expect(option?.triggerLabel).toBe('Google · gemini-2.5-flash');
-  });
-});
-
-describe('modelRefForOption', () => {
-  const settings = settingsWith((llm) => {
-    llm.provider = 'openai';
-    llm.model = ' gpt-x ';
-    llm.llamaCpp.model = '/models/served.gguf';
-  });
-
-  it('maps all five row shapes to the model they name', () => {
-    expect(modelRefForOption({ id: LLAMACPP_SERVER_MODEL_ID, backend: 'llamacpp' }, settings))
-      .toEqual({ kind: 'llama_cpp', model: '/models/served.gguf' });
-    expect(modelRefForOption({ id: OLLAMA_SERVER_MODEL_ID, backend: 'ollama' }, settings))
-      .toEqual({ kind: 'ollama', model: 'gpt-x' });
-    expect(modelRefForOption({ id: 'cloud:openai/gpt-x', backend: 'cloud' }, settings))
-      .toEqual({ kind: 'cloud', provider: 'openai', model: 'gpt-x' });
-    expect(modelRefForOption({ id: 'ornith-1.5-9b', backend: 'local' }, settings))
-      .toEqual({ kind: 'local', model_id: 'ornith-1.5-9b' });
-    // An explicit Ollama row names its own tag, not the Settings tag.
-    expect(modelRefForOption({ id: 'qwen3:8b', backend: 'ollama' }, settings))
-      .toEqual({ kind: 'ollama', model: 'qwen3:8b' });
-  });
-
-  it('names a cloud model independently of the provider currently set in Settings', () => {
-    const local = settingsWith((llm) => { llm.provider = 'local'; });
-    expect(modelRefForOption({ id: 'cloud:anthropic/claude-new', backend: 'cloud' }, local))
-      .toEqual({ kind: 'cloud', provider: 'anthropic', model: 'claude-new' });
-    expect(() => modelRefForOption({ id: 'missing-model', backend: 'cloud' }, local)).toThrow();
-  });
-
-  it('puts the same reference on each built row', () => {
-    const withConnections = settingsWith((llm) => {
-      llm.provider = 'ollama';
-      llm.model = 'llama3.2:latest';
-      llm.llamaCpp.url = 'http://127.0.0.1:8080';
-      llm.llamaCpp.model = 'served.gguf';
-    });
-    const rows = [makeModel({ model_id: 'local-a' }), makeModel({ id: 'o2', model_id: 'qwen3:8b', backend: 'ollama' })];
-    const active = makeActive({ llama_cpp: llamaRef('served.gguf'), ollama: ollamaRef('llama3.2:latest') });
-    for (const option of buildChatModelOptions(withConnections, rows, {}, active)) {
-      expect(option.ref).toEqual(modelRefForOption(option, withConnections));
-    }
   });
 });
 

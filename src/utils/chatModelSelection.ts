@@ -193,32 +193,6 @@ export function remoteSeesImages(ref: ModelRef, settings: LLMSettings | null | u
 }
 
 /**
- * The model a picker row names. The two server connection rows name whatever
- * Settings serves on that connection now; a downloaded row names itself, and
- * an explicit Ollama row names its own tag rather than the Settings tag.
- */
-export function modelRefForOption(
-  option: Pick<ChatModelOption, 'id' | 'backend'>,
-  settings: LLMSettings,
-): ModelRef {
-  switch (option.id) {
-    case LLAMACPP_SERVER_MODEL_ID:
-      return { kind: 'llama_cpp', model: settings.llamaCpp.model.trim() };
-    case OLLAMA_SERVER_MODEL_ID:
-      return { kind: 'ollama', model: settings.model.trim() };
-    default:
-      if (option.backend === 'cloud') {
-        const match = /^cloud:(openai|anthropic|google)\/(.+)$/.exec(option.id);
-        if (!match) throw new Error('The cloud model row has no model identity.');
-        return { kind: 'cloud', provider: match[1] as CloudProvider, model: match[2] };
-      }
-      return option.backend === 'ollama'
-        ? { kind: 'ollama', model: option.id }
-        : { kind: 'local', model_id: option.id };
-  }
-}
-
-/**
  * The model a row in Settings → Downloaded names. The synthetic Ollama row stands
  * for the connection, so it names the chat tag saved in Settings, and names
  * nothing until that tag is known.
