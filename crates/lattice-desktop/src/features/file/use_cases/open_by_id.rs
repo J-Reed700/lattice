@@ -3,7 +3,6 @@
 //! Opens a file by document ID, looking up the file path first.
 
 use crate::features::file::dto::{OpenFileByIdRequestDto, OpenFileResponseDto};
-use crate::infrastructure::adapters::fs::web_article::WebArticleDetector;
 use crate::infrastructure::security::FileAccessConfig;
 use lattice_core::application::ports::{DocumentRepositoryPort, FileStoragePort, FileSystemPort};
 use lattice_core::domain::ports::article_archive::ArticleArchive;
@@ -83,18 +82,13 @@ impl OpenFileByIdUseCase {
             )));
         }
 
-        if WebArticleDetector::is_web_article(&validated_path) {
-            let html_path = WebArticleDetector::get_html_path(&validated_path)
-                .ok_or_else(|| AppError::NotFound("page.html not found".to_string()))?;
-
-            let title = WebArticleDetector::get_title(&validated_path)
-                .await
-                .unwrap_or_else(|_| "Web Article".to_string());
-
-            return Ok(OpenFileResponseDto::render_internal(
-                html_path.to_string_lossy().to_string(),
-                title,
-            ));
+        if let Some(article) = self.archive.saved_article(&validated_path).await {
+            if let Some(page) = article.page {
+                return Ok(OpenFileResponseDto::render_internal(
+                    page.to_string_lossy().to_string(),
+                    article.title.unwrap_or_else(|| "Web Article".to_string()),
+                ));
+            }
         }
 
         self.file_system.open_file(&validated_path).await?;

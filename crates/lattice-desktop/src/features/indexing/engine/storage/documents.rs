@@ -8,49 +8,9 @@ use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::shared::error::ResultExt;
 use lattice_core::shared::fs::path::path_to_string;
 use lattice_core::shared::persistence::Database;
-use serde::Deserialize;
 use sqlx::Row;
 use std::path::Path;
 use uuid::Uuid;
-
-/// Metadata structure from web article metadata.json
-#[derive(Debug, Deserialize)]
-struct WebArticleMetadata {
-    title: String,
-}
-
-/// Check if path is a web article (has sibling metadata.json)
-fn is_web_article(path: &Path) -> bool {
-    if let Some(parent) = path.parent() {
-        parent.join("metadata.json").exists()
-    } else {
-        false
-    }
-}
-
-/// Extract title from web article metadata.json
-async fn get_web_article_title(path: &Path) -> Result<String> {
-    let parent = path.parent().ok_or_else(|| IndexingError::FileRead {
-        path: path.display().to_string(),
-        reason: "Path has no parent directory".to_string(),
-    })?;
-
-    let metadata_path = parent.join("metadata.json");
-    let metadata_content = tokio::fs::read_to_string(&metadata_path)
-        .await
-        .map_err(|e| IndexingError::FileRead {
-            path: metadata_path.display().to_string(),
-            reason: format!("Failed to read metadata.json: {}", e),
-        })?;
-
-    let metadata: WebArticleMetadata =
-        serde_json::from_str(&metadata_content).map_err(|e| IndexingError::FileRead {
-            path: metadata_path.display().to_string(),
-            reason: format!("Failed to parse metadata.json: {}", e),
-        })?;
-
-    Ok(metadata.title)
-}
 
 /// Check if a document exists in the database by path.
 pub async fn document_exists(db: &Database, path: &Path) -> Result<bool> {
@@ -174,7 +134,7 @@ pub async fn remove_document(db: &Database, path: &Path) -> Result<()> {
 /// Store only file metadata without indexing content.
 pub async fn store_file_metadata_only(
     db: &Database,
-    _archive: &dyn ArticleArchive,
+    archive: &dyn ArticleArchive,
     path: &Path,
     _file_id: &str,
     mime_type: &str,
@@ -184,27 +144,13 @@ pub async fn store_file_metadata_only(
         reason: format!("Invalid path encoding: {}", e),
     })?;
 
-    let filename = if is_web_article(path) {
-        // Web article: extract title from metadata.json
-        match get_web_article_title(path).await {
-            Ok(title) => title,
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to extract title from web article metadata.json, using filename: {}",
-                    e
-                );
-                path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown")
-                    .to_string()
-            }
-        }
-    } else {
-        // Local file: use filename
-        path.file_name()
+    let filename = match archive.saved_article(path).await.and_then(|article| article.title) {
+        Some(title) => title,
+        None => path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
-            .to_string()
+            .to_string(),
     };
 
     let checksum = calculate_checksum(path).await?;

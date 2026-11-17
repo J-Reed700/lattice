@@ -48,6 +48,25 @@ pub struct ArticleMetadata {
     pub links: Vec<String>,
 }
 
+async fn is_file(path: &Path) -> bool {
+    fs::metadata(path)
+        .await
+        .map(|metadata| metadata.is_file())
+        .unwrap_or(false)
+}
+
+/// What `metadata.json` says about a saved article, read leniently: older
+/// files lack fields `ArticleMetadata` requires.
+#[derive(Debug, Default, Deserialize)]
+struct SavedFacts {
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    links: Vec<String>,
+}
+
 /// README content explaining the web archive structure
 const README_CONTENT: &str = r#"# Lattice Web Archive
 
@@ -265,8 +284,27 @@ impl ArticleArchive for WebArchiveService {
         reject_parent_components(path).is_ok() && path.starts_with(&self.base_dir)
     }
 
-    async fn saved_article(&self, _path: &Path) -> Option<SavedArticle> {
-        None
+    async fn saved_article(&self, path: &Path) -> Option<SavedArticle> {
+        if !self.owns(path) || path.file_name() != Some(std::ffi::OsStr::new("article.md")) {
+            return None;
+        }
+        if !is_file(path).await {
+            return None;
+        }
+        let dir = path.parent()?;
+        let page = dir.join("page.html");
+        let page = is_file(&page).await.then_some(page);
+        let facts = match fs::read_to_string(dir.join("metadata.json")).await {
+            Ok(content) => serde_json::from_str::<SavedFacts>(&content).unwrap_or_default(),
+            Err(_) => SavedFacts::default(),
+        };
+        Some(SavedArticle {
+            text: path.to_path_buf(),
+            page,
+            title: facts.title,
+            url: facts.url,
+            links: facts.links,
+        })
     }
 }
 

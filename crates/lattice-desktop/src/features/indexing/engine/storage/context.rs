@@ -8,48 +8,8 @@ use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::domain::value_objects::ContextualizedChunk;
 use lattice_core::shared::fs::path::path_to_string;
 use lattice_core::shared::persistence::{Database, WriteTx};
-use serde::Deserialize;
 use std::path::Path;
 use uuid::Uuid;
-
-/// Metadata structure from web article metadata.json
-#[derive(Debug, Deserialize)]
-struct WebArticleMetadata {
-    title: String,
-}
-
-/// Check if path is a web article (has sibling metadata.json)
-fn is_web_article(path: &Path) -> bool {
-    if let Some(parent) = path.parent() {
-        parent.join("metadata.json").exists()
-    } else {
-        false
-    }
-}
-
-/// Extract title from web article metadata.json
-async fn get_web_article_title(path: &Path) -> Result<String> {
-    let parent = path.parent().ok_or_else(|| IndexingError::FileRead {
-        path: path.display().to_string(),
-        reason: "Path has no parent directory".to_string(),
-    })?;
-
-    let metadata_path = parent.join("metadata.json");
-    let metadata_content = tokio::fs::read_to_string(&metadata_path)
-        .await
-        .map_err(|e| IndexingError::FileRead {
-            path: metadata_path.display().to_string(),
-            reason: format!("Failed to read metadata.json: {}", e),
-        })?;
-
-    let metadata: WebArticleMetadata =
-        serde_json::from_str(&metadata_content).map_err(|e| IndexingError::FileRead {
-            path: metadata_path.display().to_string(),
-            reason: format!("Failed to parse metadata.json: {}", e),
-        })?;
-
-    Ok(metadata.title)
-}
 
 /// File facts read before a write unit opens.
 pub struct DocumentFacts {
@@ -62,28 +22,16 @@ pub struct DocumentFacts {
 
 /// Read the name, size, modification time and checksum of a document's file.
 pub async fn read_document_facts(
-    _archive: &dyn ArticleArchive,
+    archive: &dyn ArticleArchive,
     path: &Path,
 ) -> Result<DocumentFacts> {
-    let file_name = if is_web_article(path) {
-        match get_web_article_title(path).await {
-            Ok(title) => title,
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to extract title from web article metadata.json, using filename: {}",
-                    e
-                );
-                path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown")
-                    .to_string()
-            }
-        }
-    } else {
-        path.file_name()
+    let file_name = match archive.saved_article(path).await.and_then(|article| article.title) {
+        Some(title) => title,
+        None => path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
-            .to_string()
+            .to_string(),
     };
 
     let file_path = path_to_string(path).map_err(|e| IndexingError::FileRead {
