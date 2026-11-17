@@ -56,11 +56,18 @@ fn a_row_keeps_the_pieces_the_chat_drew_its_last_answer_from() {
         message("user", None),
         message("assistant", Some(vec![text("Earlier.")])),
         message("user", None),
-        message("assistant", Some(vec![text("Renews on 2025-10-14 "), source(2), text(".")])),
+        message(
+            "assistant",
+            Some(vec![text("Renews on 2025-10-14 "), source(2), text(".")]),
+        ),
     ];
     assert_eq!(
         reply::shown(&messages),
-        json!([text_json("Renews on 2025-10-14 "), source_json(2), text_json(".")])
+        json!([
+            text_json("Renews on 2025-10-14 "),
+            source_json(2),
+            text_json(".")
+        ])
     );
 }
 

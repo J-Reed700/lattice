@@ -28,11 +28,10 @@ import re
 from collections import Counter
 from pathlib import Path
 
-from chat_rag_eval import CITATION_RE
 from replay_model import one_model
-from shipped_path_eval import declines
+from shipped_path_eval import cited_marks, declines
 
-ROW_SCHEMA = "lattice-shipped-path-answers/1"
+ROW_SCHEMA = "lattice-shipped-path-answers/2"
 SUMMARY_SCHEMA = "lattice-tutor-eval-summary/1"
 COURSE_SCHEMA = "lattice-tutor-course/1"
 SESSIONS_SCHEMA = "lattice-tutor-sessions/1"
@@ -116,8 +115,9 @@ def asks_the_learner(reply):
     return "?" in (reply or "").rstrip().rsplit("\n\n", 1)[-1]
 
 
-def cited_numbers(answer):
-    return sorted({int(number) for number in CITATION_RE.findall(answer or "")})
+def cited_numbers(turn):
+    """The sources the app resolved in the turn's reply."""
+    return sorted({number for _, number in cited_marks(turn)})
 
 
 def verdicts_of(turn):
@@ -213,7 +213,7 @@ def score_session(row, course):
         tools.update(tool_names(turn))
         refused += refused_calls(turn)
         known = {int(number) for number in turn.get("citation_map") or {}}
-        invalid += [number for number in cited_numbers(turn.get("answer")) if number not in known]
+        invalid += [number for number in cited_numbers(turn) if number not in known]
         after = turn.get("course_after") or {}
         if previous is not None:
             moves += schedule_moves(previous.get("cards", []), after.get("cards", []))
@@ -229,13 +229,13 @@ def score_session(row, course):
         "index_mode": row.get("index_mode"),
         "verdicts": {verdict: verdicts[verdict] for verdict in VERDICTS},
         "invalid_citations": invalid,
-        "turns_citing": sum(1 for turn in turns if cited_numbers(turn.get("answer"))),
+        "turns_citing": sum(1 for turn in turns if cited_numbers(turn)),
         "tools": dict(tools),
         "refused_calls": refused,
         "first_check_turn": first_check,
         "reached_a_check": first_check is not None and first_check < MAX_TURNS_TO_A_CHECK,
         "opened_with_due": opened_with_due(opening, modules_of_card),
-        "answered_first": bool(cited_numbers(opening.get("answer"))),
+        "answered_first": bool(turns) and bool(cited_numbers(opening)),
         "declined": [declines(turn.get("answer"), turn.get("question")) for turn in turns],
         "modules_due": sorted(modules_shown(opening, modules_of_card)),
         "reviews": moves,
