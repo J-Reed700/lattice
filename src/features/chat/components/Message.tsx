@@ -23,7 +23,7 @@ import { useRevealStreamingRef } from '@/features/chat/hooks/useRevealStreamingR
 import { useChatFigures } from '@/features/chat/images/useChatFigures';
 import { openInFolder, revealInFolder } from '@/features/chat/model/folderThreadHost';
 import { SourceCitations } from '@/features/reading/components/SourceCitations';
-import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
+import { useReaderStore } from '@/features/reading/stores/readerStore';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
@@ -83,7 +83,7 @@ export const Message = memo(({
 
   // One reader serves the whole thread. A message hands it a citation to show
   // and reads back where the viewer found it.
-  const resolvedLocations = useChatReaderStore((s) => s.resolvedLocations);
+  const resolvedLocations = useReaderStore((s) => s.resolvedLocations);
   const showCitations = useCitationDisplayStore((s) => s.visible);
 
   const messageId = 'id' in message ? message.id : undefined;

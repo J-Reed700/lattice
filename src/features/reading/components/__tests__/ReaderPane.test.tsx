@@ -5,8 +5,8 @@ import { ReaderPane } from '@/features/reading/components/ReaderPane';
 import {
   READER_DEFAULT_WIDTH,
   READER_MIN_WIDTH,
-  useChatReaderStore,
-} from '@/features/reading/stores/chatReaderStore';
+  useReaderStore,
+} from '@/features/reading/stores/readerStore';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import type { SourceWithMetadata } from '@/types/conversation';
 
@@ -41,13 +41,13 @@ const NARROW = { rowWidth: 1100, availableWidth: 840, resetKey: 'conversation-1'
 
 const openReader = () =>
   act(() => {
-    useChatReaderStore.getState().open('message-1', [source], 0);
+    useReaderStore.getState().open('message-1', [source], 0);
   });
 
 beforeEach(() => {
   localStorage.clear();
   useCitationDisplayStore.setState({ visible: true });
-  useChatReaderStore.setState({
+  useReaderStore.setState({
     session: null,
     width: READER_DEFAULT_WIDTH,
     resolvedLocations: new Map(),
@@ -87,19 +87,19 @@ describe('resizing the docked reader', () => {
     const handle = screen.getByRole('separator', { name: 'Resize source reader' });
 
     fireEvent.keyDown(handle, { key: 'ArrowLeft' });
-    expect(useChatReaderStore.getState().width).toBe(READER_DEFAULT_WIDTH + 16);
+    expect(useReaderStore.getState().width).toBe(READER_DEFAULT_WIDTH + 16);
     fireEvent.keyDown(handle, { key: 'ArrowRight' });
-    expect(useChatReaderStore.getState().width).toBe(READER_DEFAULT_WIDTH);
+    expect(useReaderStore.getState().width).toBe(READER_DEFAULT_WIDTH);
 
     fireEvent.keyDown(handle, { key: 'ArrowRight' });
     fireEvent.doubleClick(handle);
-    expect(useChatReaderStore.getState().width).toBe(READER_DEFAULT_WIDTH);
+    expect(useReaderStore.getState().width).toBe(READER_DEFAULT_WIDTH);
   });
 
   it('never gives the answer less room than it needs', () => {
     // 1000px to share: 560 for the answer leaves 440 for the reader, whatever
     // the remembered width says.
-    useChatReaderStore.setState({ width: 900 });
+    useReaderStore.setState({ width: 900 });
     render(<ReaderPane rowWidth={1260} availableWidth={1000} resetKey="conversation-1" />);
     openReader();
 
@@ -120,7 +120,7 @@ describe('closing the reader', () => {
     expect(screen.getByTestId('reader-body')).toBeInTheDocument();
     act(() => useCitationDisplayStore.getState().setVisible(false));
     expect(screen.queryByTestId('reader-body')).not.toBeInTheDocument();
-    expect(useChatReaderStore.getState().session).toBeNull();
+    expect(useReaderStore.getState().session).toBeNull();
     act(() => useCitationDisplayStore.getState().setVisible(true));
     expect(screen.queryByTestId('reader-body')).not.toBeInTheDocument();
   });
@@ -139,7 +139,7 @@ describe('closing the reader', () => {
 
     fireEvent.keyDown(document, { key: 'Escape' });
 
-    expect(useChatReaderStore.getState().session).toBeNull();
+    expect(useReaderStore.getState().session).toBeNull();
     expect(chip).toHaveFocus();
   });
 
@@ -150,6 +150,6 @@ describe('closing the reader', () => {
 
     rerender(<ReaderPane {...WIDE} resetKey="conversation-2" />);
 
-    expect(useChatReaderStore.getState().session).toBeNull();
+    expect(useReaderStore.getState().session).toBeNull();
   });
 });

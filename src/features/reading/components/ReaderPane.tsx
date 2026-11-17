@@ -7,8 +7,8 @@ import {
   READER_MAX_WIDTH,
   READER_MIN_CHAT_WIDTH,
   READER_MIN_WIDTH,
-  useChatReaderStore,
-} from '@/features/reading/stores/chatReaderStore';
+  useReaderStore,
+} from '@/features/reading/stores/readerStore';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import { focusReturnTarget } from '@/lib/focusReturn';
 import { locatorFromSource, rememberLocation } from '@/shared/sources/passageLocator';
@@ -43,12 +43,12 @@ export interface ReaderPaneProps {
 }
 
 export function ReaderPane({ rowWidth, availableWidth, resetKey }: ReaderPaneProps) {
-  const session = useChatReaderStore((state) => state.session);
-  const storedWidth = useChatReaderStore((state) => state.width);
-  const setStoredWidth = useChatReaderStore((state) => state.setWidth);
-  const setIndex = useChatReaderStore((state) => state.setIndex);
-  const close = useChatReaderStore((state) => state.close);
-  const rememberResolvedLocation = useChatReaderStore((state) => state.rememberResolvedLocation);
+  const session = useReaderStore((state) => state.session);
+  const storedWidth = useReaderStore((state) => state.width);
+  const setStoredWidth = useReaderStore((state) => state.setWidth);
+  const setIndex = useReaderStore((state) => state.setIndex);
+  const close = useReaderStore((state) => state.close);
+  const rememberResolvedLocation = useReaderStore((state) => state.rememberResolvedLocation);
   const showCitations = useCitationDisplayStore((state) => state.visible);
 
   const [isFocused, setIsFocused] = useState(false);

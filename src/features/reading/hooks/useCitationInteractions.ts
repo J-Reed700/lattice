@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 
 import type { CitationHover } from '@/features/reading/components/CitationHoverCard';
 import type { ClaimHover } from '@/features/reading/components/SentenceHoverCard';
-import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
+import { useReaderStore } from '@/features/reading/stores/readerStore';
 import type { SourceWithMetadata } from '@/types/conversation';
 import { createCitationMap } from '@/utils/citations';
 
@@ -25,8 +25,8 @@ interface CitationInteractionOptions {
 export function useCitationInteractions({
   sources, ownerKey, numbered, showCitations, claims, codeRefs,
 }: CitationInteractionOptions) {
-  const openReader = useChatReaderStore((state) => state.open);
-  const readerSession = useChatReaderStore((state) => state.session);
+  const openReader = useReaderStore((state) => state.open);
+  const readerSession = useReaderStore((state) => state.session);
   const citationMap = useMemo(() => createCitationMap(sources), [sources]);
   // The ordered list behind the citation numbers — what `[` / `]` travel over.
   const citationSources = useMemo(
