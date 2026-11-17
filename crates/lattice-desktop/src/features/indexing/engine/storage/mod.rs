@@ -89,23 +89,6 @@ impl IndexStorage {
         documents::remove_document(&self.db, path).await
     }
 
-    /// Store file metadata only.
-    pub async fn store_file_metadata_only(
-        &self,
-        path: &Path,
-        file_id: &str,
-        mime_type: &str,
-    ) -> Result<String> {
-        documents::store_file_metadata_only(
-            &self.db,
-            self.archive.as_ref(),
-            path,
-            file_id,
-            mime_type,
-        )
-        .await
-    }
-
     // Statistics
 
     /// Get count of indexed documents.
@@ -218,16 +201,6 @@ impl IndexStorageTrait for IndexStorage {
 
     async fn remove_document(&self, path: &Path) -> Result<()> {
         self.remove_document(path).await
-    }
-
-    async fn store_file_metadata_only(
-        &self,
-        path: &Path,
-        file_id: &str,
-        mime_type: &str,
-    ) -> Result<String> {
-        self.store_file_metadata_only(path, file_id, mime_type)
-            .await
     }
 
     async fn get_indexed_count(&self) -> Result<i64> {
