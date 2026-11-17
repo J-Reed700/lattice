@@ -1,16 +1,13 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ChatReaderPane } from '@/features/chat/components/reader/ChatReaderPane';
+import { ReaderPane } from '@/features/reading/components/ReaderPane';
 import { READER_DEFAULT_WIDTH, READER_MIN_WIDTH, useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import type { SourceWithMetadata } from '@/types/conversation';
 
 const h = vi.hoisted(() => ({ rememberLocation: vi.fn() }));
 
-vi.mock('@/shared/conversations/conversationsStore', () => ({
-  useConversationsStore: (selector: (state: unknown) => unknown) => selector({ activeConversationId: 'c1' }),
-}));
 vi.mock('@/shared/sources/passageLocator', () => ({
   locatorFromSource: () => null,
   rememberLocation: h.rememberLocation,
@@ -27,17 +24,17 @@ vi.mock('@/features/reading/components/SourceReaderBody', () => ({
 }));
 
 const source = { documentId: 'd1', chunkId: 'chunk-1', fileName: 'Herodotus.pdf', filePath: '/lib/herodotus.pdf', citationId: 1 } as unknown as SourceWithMetadata;
-const WIDE = { rowWidth: 1800, availableWidth: 1500 };
+const WIDE = { rowWidth: 1800, availableWidth: 1500, resetKey: 'c1' };
 
 const renderPane = () => {
-  render(<ChatReaderPane {...WIDE} />);
+  render(<ReaderPane {...WIDE} />);
   act(() => useChatReaderStore.getState().open('answer-1', [source], 0));
 };
 
 const pane = () => screen.getByRole('complementary', { name: 'Source reader' });
 const handle = () => screen.getByRole('separator', { name: 'Resize source reader' });
 
-describe('ChatReaderPane resizing and focus', () => {
+describe('ReaderPane resizing and focus', () => {
   beforeAll(() => {
     Element.prototype.setPointerCapture = function () {};
     Element.prototype.hasPointerCapture = () => true;

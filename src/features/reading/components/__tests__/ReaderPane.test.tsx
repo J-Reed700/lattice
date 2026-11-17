@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ChatReaderPane } from '@/features/chat/components/reader/ChatReaderPane';
+import { ReaderPane } from '@/features/reading/components/ReaderPane';
 import {
   READER_DEFAULT_WIDTH,
   READER_MIN_WIDTH,
@@ -11,12 +11,6 @@ import { useCitationDisplayStore } from '@/features/reading/stores/citationDispl
 import type { SourceWithMetadata } from '@/types/conversation';
 
 
-let activeConversationId: string | null = 'conversation-1';
-
-vi.mock('@/shared/conversations/conversationsStore', () => ({
-  useConversationsStore: (selector: (_state: unknown) => unknown) =>
-    selector({ activeConversationId }),
-}));
 // The document itself is `SourceReaderBody`'s business and is tested through
 // the reader it is shown in; this file is about the pane around it.
 vi.mock('@/features/reading/components/SourceReaderBody', () => ({
@@ -41,9 +35,9 @@ const source: SourceWithMetadata = {
 };
 
 /** Wide enough for a 560px answer beside the reader, and then some. */
-const WIDE = { rowWidth: 1728, availableWidth: 1468 };
+const WIDE = { rowWidth: 1728, availableWidth: 1468, resetKey: 'conversation-1' };
 /** Not wide enough for both. */
-const NARROW = { rowWidth: 1100, availableWidth: 840 };
+const NARROW = { rowWidth: 1100, availableWidth: 840, resetKey: 'conversation-1' };
 
 const openReader = () =>
   act(() => {
@@ -51,7 +45,6 @@ const openReader = () =>
   });
 
 beforeEach(() => {
-  activeConversationId = 'conversation-1';
   localStorage.clear();
   useCitationDisplayStore.setState({ visible: true });
   useChatReaderStore.setState({
@@ -63,13 +56,13 @@ beforeEach(() => {
 
 describe('where the reader appears', () => {
   it('takes no room at all until a citation is opened', () => {
-    render(<ChatReaderPane {...WIDE} />);
+    render(<ReaderPane {...WIDE} />);
     expect(screen.queryByTestId('reader-body')).not.toBeInTheDocument();
     expect(screen.queryByTestId('reader-overlay')).not.toBeInTheDocument();
   });
 
   it('docks beside the answer when the row can hold both', () => {
-    render(<ChatReaderPane {...WIDE} />);
+    render(<ReaderPane {...WIDE} />);
     openReader();
 
     expect(screen.getByTestId('reader-body')).toBeInTheDocument();
@@ -79,7 +72,7 @@ describe('where the reader appears', () => {
   });
 
   it('falls back to the overlay rather than squeezing the answer', () => {
-    render(<ChatReaderPane {...NARROW} />);
+    render(<ReaderPane {...NARROW} />);
     openReader();
 
     expect(screen.getByTestId('reader-overlay')).toBeInTheDocument();
@@ -89,7 +82,7 @@ describe('where the reader appears', () => {
 
 describe('resizing the docked reader', () => {
   it('moves with the arrow keys and returns to its default on a double click', () => {
-    render(<ChatReaderPane {...WIDE} />);
+    render(<ReaderPane {...WIDE} />);
     openReader();
     const handle = screen.getByRole('separator', { name: 'Resize source reader' });
 
@@ -107,7 +100,7 @@ describe('resizing the docked reader', () => {
     // 1000px to share: 560 for the answer leaves 440 for the reader, whatever
     // the remembered width says.
     useChatReaderStore.setState({ width: 900 });
-    render(<ChatReaderPane rowWidth={1260} availableWidth={1000} />);
+    render(<ReaderPane rowWidth={1260} availableWidth={1000} resetKey="conversation-1" />);
     openReader();
 
     expect(screen.getByLabelText('Source reader')).toHaveStyle({ width: '440px' });
@@ -122,7 +115,7 @@ describe('resizing the docked reader', () => {
 
 describe('closing the reader', () => {
   it('closes when clean reading is enabled outside the chat toggle', () => {
-    render(<ChatReaderPane {...WIDE} />);
+    render(<ReaderPane {...WIDE} />);
     openReader();
     expect(screen.getByTestId('reader-body')).toBeInTheDocument();
     act(() => useCitationDisplayStore.getState().setVisible(false));
@@ -136,7 +129,7 @@ describe('closing the reader', () => {
     render(
       <>
         <button type="button">Citation 1</button>
-        <ChatReaderPane {...WIDE} />
+        <ReaderPane {...WIDE} />
       </>
     );
     const chip = screen.getByRole('button', { name: 'Citation 1' });
@@ -150,13 +143,12 @@ describe('closing the reader', () => {
     expect(chip).toHaveFocus();
   });
 
-  it('closes when the chat moves to another conversation', () => {
-    const { rerender } = render(<ChatReaderPane {...WIDE} />);
+  it('closes when the text it was opened from changes', () => {
+    const { rerender } = render(<ReaderPane {...WIDE} />);
     openReader();
     expect(screen.getByTestId('reader-body')).toBeInTheDocument();
 
-    activeConversationId = 'conversation-2';
-    rerender(<ChatReaderPane {...WIDE} rowWidth={WIDE.rowWidth + 1} />);
+    rerender(<ReaderPane {...WIDE} resetKey="conversation-2" />);
 
     expect(useChatReaderStore.getState().session).toBeNull();
   });

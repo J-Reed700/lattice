@@ -1,7 +1,7 @@
 /**
  * Single canonical source-of-truth adapter: turns every source or document
  * representation across Lattice into a `SourceWithMetadata` + optional
- * `PassageLocator` for `SourceReaderBody` / `FilePreviewModal` / `ChatReaderPane`.
+ * `PassageLocator` for `SourceReaderBody` / `FilePreviewModal` / `ReaderPane`.
  *
  * No surface constructs ad-hoc reader payloads or kicks users out to external
  * browsers or legacy viewers: every surface speaks through these constructors.
