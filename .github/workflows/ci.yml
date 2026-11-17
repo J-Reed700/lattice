@@ -362,9 +362,25 @@ jobs:
           "TMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
           "TEMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
 
+      - name: Sample memory through the tests
+        if: runner.os == 'Linux'
+        run: nohup bash scripts/ci/sample_memory.sh "$RUNNER_TEMP/test-memory.tsv" > /dev/null 2>&1 &
+
       - name: All desktop Rust unit, command and integration tests
         working-directory: crates/lattice-desktop
         run: cargo nextest run --locked ${{ env.PACKAGE_ARGS }} --features lattice-desktop/bindings-export --lib --bins --tests --no-fail-fast --profile ci
+
+      - name: Memory peaks during the tests
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: bash scripts/ci/sample_memory.sh --peaks "$RUNNER_TEMP/test-memory.tsv"
+
+      - name: Upload the memory samples
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-test-memory
+          path: ${{ runner.temp }}/test-memory.tsv
+          if-no-files-found: warn
 
       - name: Upload the test timings
         if: ${{ !cancelled() }}
