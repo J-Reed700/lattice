@@ -5,6 +5,7 @@ import type {
   ClaimAttachProgressDto,
   CheckDto,
   ClaimAttachReportDto,
+  ClaimExcerptDto,
   ClaimReviewItemDto,
   ClaimSupportDto,
   LearningSourceTrustEntryDto,
@@ -15,7 +16,6 @@ import type {
   ResearchSummaryDto,
   WaitingClaimsRecheckDto,
 } from "../../src/lib/bindings";
-import { quoteAlone } from "./claimReviewFixtures";
 
 /**
  * The claim review side of the Learning Studio fixture (claim review UI
@@ -42,6 +42,11 @@ export type TrustOverrideRecord = {
  */
 export function claimReviewBackend() {
   const WAITING_STATES = new Set(["queued", "open", "reopened", "unchecked"]);
+
+  /** The quote as its own excerpt: the fixture cuts no sentences. */
+  function quoteAlone(quote: string): ClaimExcerptDto {
+    return { before: "", quote, after: "", clippedStart: false, clippedEnd: false };
+  }
 
   /** A statement as the fixture compares it with pasted text. */
   function normalized(text: string): string {
@@ -358,7 +363,7 @@ export function claimReviewBackend() {
     });
   }
 
-  return { states, withReviewFields, attachEvidence, recheckWaiting, setTrustOverride, clearTrustOverride, trustImpacts };
+  return { states, quoteAlone, withReviewFields, attachEvidence, recheckWaiting, setTrustOverride, clearTrustOverride, trustImpacts };
 }
 
 export type ClaimReviewBackend = ReturnType<typeof claimReviewBackend>;
