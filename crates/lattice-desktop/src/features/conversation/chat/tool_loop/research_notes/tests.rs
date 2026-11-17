@@ -644,3 +644,17 @@ async fn prompt_snapshot_research_notes() {
     let requests: Vec<_> = model.sent().into_iter().map(|sent| sent.request).collect();
     assert_requests(env!("CARGO_MANIFEST_DIR"), "research-notes", &requests);
 }
+
+#[tokio::test]
+async fn the_condensing_request_asks_for_no_thinking() {
+    let model = ScriptedModel::new().on_request::<ResearchNotes>(|sent, _| {
+        reply(scripted_answer(&prompt_of(sent), |_| true, cites))
+    });
+    let mut request = request_of(two_pages());
+    condensed(&model, &mut request).await.expect("notes");
+    let sent = model.sent();
+    assert!(!sent.is_empty());
+    for sent in &sent {
+        assert_eq!(sent.request.reasoning_effort.as_deref(), Some("none"));
+    }
+}
