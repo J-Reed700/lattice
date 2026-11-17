@@ -19,10 +19,10 @@ import { ArrowUpRight, HardDrive, Network } from 'lucide-react';
 
 import { EmptyState } from '@/components/EmptyState/EmptyState';
 import { PageHeader, SettingsSection, SidebarSearch, TooltipProvider } from '@/components/ui';
+import { useActiveModels } from '@/features/model/hooks/useActiveModels';
 import type { ModelRef } from '@/lib/bindings';
 import type { LLMSettings } from '@/types/api/settings';
 import { isCloudProvider, sameModelRef } from '@/utils/chatModelSelection';
-import { configuredConnections } from '@/utils/configuredConnections';
 
 import { useSettingsQuery } from '../hooks/useSettingsQuery';
 import { CloudMetaRow } from './modelRoles/CloudMetaRow';
@@ -60,7 +60,7 @@ function AIModelsTabContent() {
   const { localModels, isLoading, error, refresh } = useModelRoles();
   const { data: settings } = useSettingsQuery();
   const [searchQuery, setSearchQuery] = useState('');
-  const connections = configuredConnections(settings?.llm);
+  const { activeModels } = useActiveModels();
   const cloudModels = configuredCloudModels(settings?.llm);
 
   const filteredLocal = useMemo(() => {
@@ -135,10 +135,10 @@ function AIModelsTabContent() {
         />
       )}
       </SettingsSection>
-      {!isLoading && (connections.llamaCpp || connections.ollama || cloudModels.length > 0) ? (
+      {!isLoading && (activeModels?.llama_cpp || activeModels?.ollama || cloudModels.length > 0) ? (
         <SettingsSection title="Connected servers" description="Use models served by your configured connections." actions={<Network className="h-4 w-4 text-text-muted" aria-hidden="true" />}>
-          {connections.llamaCpp ? <LlamaCppMetaRow /> : null}
-          {connections.ollama ? <OllamaMetaRow /> : null}
+          {activeModels?.llama_cpp ? <LlamaCppMetaRow /> : null}
+          {activeModels?.ollama ? <OllamaMetaRow /> : null}
           {cloudModels.map(({ ref, roles }) => (
             <CloudMetaRow key={`${ref.provider}/${ref.model}`} modelRef={ref} roles={roles} />
           ))}

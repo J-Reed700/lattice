@@ -8,7 +8,6 @@ import {
   claimFilterOf,
   confirmNeedsNote,
   describeEvent,
-  excerptAround,
   groupClaims,
   groupCountLabel,
   repairOutcomeLabel,
@@ -165,26 +164,7 @@ describe('grouping by what fixes a claim', () => {
   });
 });
 
-describe('excerpts and checks', () => {
-  it('falls back to the quote alone when it is not in the passage', () => {
-    expect(excerptAround('Carthage fell in 146 BC.', null, 'Rome burned')).toEqual({ before: '', quote: 'Rome burned', after: '', clippedStart: false, clippedEnd: false });
-  });
-
-  it('finds the quote by text when the byte span does not match', () => {
-    const text = 'Rome grew. Carthage fell in 146 BC. Greece followed.';
-    const excerpt = excerptAround(text, [0, 3], 'Carthage fell in 146 BC.');
-    expect(excerpt.quote).toBe('Carthage fell in 146 BC.');
-    expect(excerpt.before).toBe('Rome grew. ');
-    expect(excerpt.after).toBe(' Greece followed.');
-  });
-
-  it('leaves code out of the context around a quote', () => {
-    const text = 'Run the tally.\n```\ncount = 3\n```\nThen record the result here.';
-    const excerpt = excerptAround(text, null, 'Then record the result here.');
-    expect(excerpt.before).toBe('');
-    expect(excerpt.clippedStart).toBe(true);
-  });
-
+describe('checks', () => {
   it('needs no note for a claim with no verdict', () => {
     expect(confirmNeedsNote(claimItem({ verdictKind: null } as Partial<ClaimReviewItemDto>))).toBe(false);
   });

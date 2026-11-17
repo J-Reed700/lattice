@@ -10,7 +10,6 @@ import { ChevronDown, ChevronRight, Folder } from 'lucide-react';
 
 import { FileBrowserSkeleton } from '@/components/Skeleton';
 import { useLibraryDocumentsQuery } from '@/features/files/hooks/useLibraryDocumentsQuery';
-import { isWebDocument } from '@/features/files/model/documentMetadata';
 import { useFileBrowserStore } from '@/features/files/stores/fileBrowserStore';
 import { type DocumentMetadata } from '@/types/fileBrowser';
 
@@ -55,7 +54,7 @@ const directorySegments = (doc: DocumentMetadata): string[] => {
 
 const documentGroup = (doc: DocumentMetadata): { path: string; name: string } | null => {
   // Virtual roots use keys that cannot collide with real filesystem folders.
-  if (isWebDocument(doc)) return { path: '\0web', name: 'Web' };
+  if (doc.web) return { path: '\0web', name: 'Web' };
 
   // ContentAddressedStorage keeps imports at .lattice/files/{sha256}/{filename}.
   // Recognize that layout specifically; hash-named user folders are still folders.

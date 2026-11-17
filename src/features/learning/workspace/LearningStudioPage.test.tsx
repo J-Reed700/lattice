@@ -146,7 +146,7 @@ describe('Learning Studio program workflow', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     localStorage.clear();
-    mocks.documents.mockReturnValue([{ id: 'document-1', fileName: 'Field guide.pdf', filePath: '/Field guide.pdf', fileType: 'pdf', category: 'document', language: 'en', modifiedAt: '', indexedAt: '', wordCount: 12 } satisfies DocumentMetadata]);
+    mocks.documents.mockReturnValue([{ id: 'document-1', fileName: 'Field guide.pdf', filePath: '/Field guide.pdf', fileType: 'pdf', category: 'document', language: 'en', modifiedAt: '', indexedAt: '', wordCount: 12, web: false, typeBucket: 'PDF' } satisfies DocumentMetadata]);
     mocks.memory.mockResolvedValue(ok({ programId: 'program-1', journalId: null, lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0 }));
     mocks.flush.mockResolvedValue(true);
     mocks.outlineEvidence.mockResolvedValue(ok(null));

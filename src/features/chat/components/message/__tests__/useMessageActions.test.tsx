@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useMessageActions } from '@/features/chat/components/message/useMessageActions';
 import { VaultAPI } from '@/lib/api';
-import type { ChatModelChoice } from '@/lib/bindings';
+import type { ActiveModels, ChatModelChoice } from '@/lib/bindings';
 import type { GenerationOutcome } from '@/shared/conversations/conversationsStore.types';
 import { useToastStore } from '@/stores/toastStore';
 import { makeAppSettings } from '@/tests/fixtures/appSettings';
@@ -24,6 +24,7 @@ const state = vi.hoisted(() => ({
 }));
 const appSettings = vi.hoisted(() => ({ current: undefined as ReturnType<typeof makeAppSettings> | undefined }));
 const models = vi.hoisted(() => ({ current: [] as DownloadedModel[] }));
+const active = vi.hoisted(() => ({ current: null as ActiveModels | null }));
 
 vi.mock('@/shared/conversations/conversationsStore', () => ({
   useConversationsStore: (selector: (_s: typeof state) => unknown) => selector(state),
@@ -31,6 +32,7 @@ vi.mock('@/shared/conversations/conversationsStore', () => ({
 vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({
   useSettingsQuery: () => ({ data: appSettings.current }),
 }));
+vi.mock('@/features/model/hooks/useActiveModels', () => ({ useActiveModels: () => ({ activeModels: active.current }) }));
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({
   useDownloadedModels: () => ({ downloadedModels: models.current }),
 }));
@@ -69,6 +71,7 @@ describe('Try with another model', () => {
     settings.llm.provider = 'local';
     appSettings.current = settings;
     models.current = [row({ id: 'big' }), row({ id: 'small', model_id: 'ornith-1.5-9b', model_name: 'Ornith-1.5-9B', is_active_for_chat: false })];
+    active.current = { chat: [{ kind: 'local', model_id: 'qwen3.5-27b' }], chat_unset: null, utility: [], llama_cpp: null, ollama: null, ollama_utility_tag: null };
     state.conversations = [{ id: 'chat-a', modelChoice: { kind: 'default' } }];
     state.regenerateResponse = vi.fn().mockResolvedValue('answered' satisfies GenerationOutcome);
     state.setConversationModelChoice = vi.fn().mockResolvedValue({});

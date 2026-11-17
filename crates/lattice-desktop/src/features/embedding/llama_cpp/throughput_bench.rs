@@ -16,7 +16,7 @@
 //! ```
 //!
 //! `passages.json` is an object of named sets, each an array of passage
-//! texts as an index stores them. `tokenizer.json` must sit beside the GGUF.
+//! texts as an index stores them.
 
 use super::parity_tests::{live_facts, LiveServer};
 use super::*;
@@ -125,27 +125,24 @@ async fn embedding_throughput_on_the_llama_server() {
         serde_json::from_slice(&std::fs::read(env_path(PASSAGES_ENV)).unwrap()).unwrap();
 
     for slots in SLOT_SWEEP {
-        let (facts, policy) = live_facts(&gguf).await;
+        let facts = live_facts(&gguf).await;
         let window = facts.window_tokens();
         let live = LiveServer::start(&gguf, slots, window).await;
         let prefixes = resolve_prefixes("qwen3-embedding-0.6b", &facts.architecture);
         let service = Arc::new(
-            LlamaEmbeddingService::connect(Arc::clone(&live.server), facts, policy, prefixes)
+            LlamaEmbeddingService::connect(Arc::clone(&live.server), facts, prefixes)
                 .expect("loopback client"),
         );
         println!(
             "\n-np {slots}, window {window} tokens a slot, {BATCH_SIZE} passages per index call"
         );
         for (name, texts) in &sets {
-            let tokens: usize = texts
-                .iter()
-                .map(|text| {
-                    service
-                        .policy
-                        .count(&prefixes.document_input(text))
-                        .unwrap()
-                })
-                .sum();
+            let mut tokens = 0;
+            for text in texts {
+                tokens += TokenCounter::count(&*service, &prefixes.document_input(text))
+                    .await
+                    .unwrap();
+            }
             println!("{name}: {} passages", texts.len());
             model_alone(&service, texts, tokens, BATCH_SIZE, "model, index batches").await;
             model_alone(

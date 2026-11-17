@@ -304,7 +304,8 @@ impl ProductionIndex {
             .execute(&pool)
             .await?;
 
-            let prepared = prepare_chunks(&model, &chunker, &title, &file_name, &document.text)?;
+            let prepared =
+                prepare_chunks(&model, &chunker, &title, &file_name, &document.text).await?;
             // The texts `IndexingActor` hands the embedder: prefix plus chunk, once each.
             let contextualized: Vec<ContextualizedChunk> =
                 prepared.iter().map(|p| p.chunk.clone()).collect();
@@ -706,7 +707,7 @@ async fn embed_chunks(
 }
 
 /// `IndexingActor::process_file`'s chunk preparation, over an in-memory document.
-fn prepare_chunks(
+async fn prepare_chunks(
     model: &LlamaEmbeddingService,
     chunker: &SemanticChunker,
     title: &str,
@@ -724,7 +725,10 @@ fn prepare_chunks(
             metadata.section = extract_metadata(&path, &chunk.text, 0)?.section;
         }
         let prefix = context_prefix(&metadata);
-        for part in model.split_text(&chunk.text, &format!("{prefix}\n\n"))? {
+        for part in model
+            .split_text(&chunk.text, &format!("{prefix}\n\n"))
+            .await?
+        {
             prepared.push(PreparedChunk {
                 chunk: ContextualizedChunk {
                     contextualized_content: format!("{prefix}\n\n{}", part.text),

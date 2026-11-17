@@ -51,6 +51,17 @@ pub fn is_supported_llm_architecture(architecture: &str) -> bool {
     classify_llm_architecture(&lower) == LlmArchitectureSupport::Standalone
 }
 
+/// Architectures `llama.cpp` writes into files a server loads beside a model,
+/// never as the model: a projector (`--mmproj`) and a control vector.
+const ACCOMPANYING_FILE_ARCHITECTURES: &[&str] = &["clip", "controlvector"];
+
+/// True when `architecture`, ignoring case and surrounding whitespace, is that
+/// of a file a server loads beside a model.
+pub fn is_accompanying_file_architecture(architecture: &str) -> bool {
+    let lower = architecture.trim().to_ascii_lowercase();
+    ACCOMPANYING_FILE_ARCHITECTURES.contains(&lower.as_str())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

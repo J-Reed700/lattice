@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use crate::features::stats::corpus_shape_repository::{CorpusShape, CorpusShapeRepositoryPort};
+use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::shared::error::Result;
 
 pub struct GetCorpusShapeUseCase {
@@ -18,8 +19,8 @@ impl GetCorpusShapeUseCase {
         Self { repo }
     }
 
-    pub async fn execute(&self) -> Result<CorpusShape> {
-        self.repo.corpus_shape().await
+    pub async fn execute(&self, archive: &dyn ArticleArchive) -> Result<CorpusShape> {
+        self.repo.corpus_shape(archive).await
     }
 }
 
@@ -27,12 +28,27 @@ impl GetCorpusShapeUseCase {
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use lattice_core::domain::ports::article_archive::ArticleArchive;
+    use std::path::Path;
+
+    struct NoArchive;
+
+    #[async_trait]
+    impl ArticleArchive for NoArchive {
+        async fn delete_article(&self, _path: &Path) -> Result<()> {
+            Ok(())
+        }
+
+        fn owns(&self, _path: &Path) -> bool {
+            false
+        }
+    }
 
     struct StubRepo(CorpusShape);
 
     #[async_trait]
     impl CorpusShapeRepositoryPort for StubRepo {
-        async fn corpus_shape(&self) -> Result<CorpusShape> {
+        async fn corpus_shape(&self, _archive: &dyn ArticleArchive) -> Result<CorpusShape> {
             Ok(self.0.clone())
         }
     }
@@ -47,6 +63,6 @@ mod tests {
             last_indexed_at: Some("2026-05-15T09:00:00+00:00".to_string()),
         };
         let use_case = GetCorpusShapeUseCase::new(Arc::new(StubRepo(expected.clone())));
-        assert_eq!(use_case.execute().await.unwrap(), expected);
+        assert_eq!(use_case.execute(&NoArchive).await.unwrap(), expected);
     }
 }

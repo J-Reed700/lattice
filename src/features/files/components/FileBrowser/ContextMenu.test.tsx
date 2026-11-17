@@ -33,9 +33,11 @@ vi.mock('@/stores/toastStore', () => ({ toast: h.toast }));
 
 const herbal = {
   id: 'd1', fileName: 'herbal.pdf', filePath: '/library/herbal.pdf', fileType: 'pdf', category: 'document',
+  web: false, typeBucket: 'PDF',
 } as DocumentMetadata;
 const article = {
   id: 'w1', fileName: 'Bread history', filePath: 'https://example.org/bread', fileType: 'html', category: 'Web_Article',
+  web: true, typeBucket: 'Web',
 } as DocumentMetadata;
 
 const renderMenu = (props: Partial<Parameters<typeof ContextMenu>[0]> = {}) => {
@@ -216,8 +218,23 @@ describe('ContextMenu', () => {
   });
 
   it('treats an archived web copy as a web page', () => {
-    renderMenu({ doc: { ...herbal, filePath: '/data/.lattice/web-archive/x.html', category: 'web' } });
+    renderMenu({ doc: { ...herbal, filePath: '/data/.lattice/web-archive/x.html', category: 'web', web: true, typeBucket: 'Web' } });
     expect(item('Reindex')).toBeDisabled();
+  });
+
+  it('treats a document the web archive owns as a web page wherever it is stored', () => {
+    renderMenu({
+      doc: { ...herbal, fileName: 'article.md', filePath: 'C:/data/articles/x/article.md', fileType: 'md', category: 'Notes', web: true, typeBucket: 'Web' },
+    });
+    expect(item('View in Lattice')).toBeEnabled();
+    expect(item('Reindex')).toBeDisabled();
+    expect(item('Remove from index')).toBeDisabled();
+  });
+
+  it('keeps the local actions for a file the web archive does not own, whatever its category says', () => {
+    renderMenu({ doc: { ...herbal, category: 'Web article notes', web: false } });
+    expect(item('Reindex')).toBeEnabled();
+    expect(item('Remove from index')).toBeEnabled();
   });
 
   describe('spaces', () => {

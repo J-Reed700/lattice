@@ -5,6 +5,7 @@
 
 use super::state::{DownloadManagerService, StopReason};
 use super::task::{send_control_event, send_terminal_event};
+use crate::infrastructure::adapters::fs::model_paths::ModelPaths;
 use async_trait::async_trait;
 use lattice_core::application::ports::download_manager::{
     DownloadBatchItem, DownloadEvent, DownloadManager, DownloadRequest,
@@ -337,10 +338,7 @@ impl DownloadManagerService {
         })?;
 
         let cache_root = dirs::cache_dir().map(|p| p.join("lattice"));
-        let dot_cache_root = std::env::var("HOME")
-            .ok()
-            .map(std::path::PathBuf::from)
-            .map(|p| p.join(".cache").join("lattice"));
+        let dot_cache_root = ModelPaths::cache_root().ok();
         // Model files arrive confined, so canonicalized (on Windows with the
         // `\\?\` prefix), while the roots are plain paths: each root is matched
         // in both forms, or no model could ever download on Windows.

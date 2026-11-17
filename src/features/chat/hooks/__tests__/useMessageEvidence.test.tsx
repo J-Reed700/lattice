@@ -11,8 +11,8 @@ const h = vi.hoisted(() => ({
   latest: null as null | ReturnType<typeof useMessageEvidence>,
 }));
 
-vi.mock('@/features/reading/stores/chatReaderStore', () => ({
-  useChatReaderStore: (selector: (state: unknown) => unknown) => selector(h.reader),
+vi.mock('@/features/reading/stores/readerStore', () => ({
+  useReaderStore: (selector: (state: unknown) => unknown) => selector(h.reader),
 }));
 vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({ useSettingsQuery: () => ({ data: h.settings }) }));
 vi.mock('@/features/reading/hooks/usePassageReferencesQuery', () => ({ usePassageReferenceIds: () => h.references }));

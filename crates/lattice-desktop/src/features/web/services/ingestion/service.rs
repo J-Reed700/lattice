@@ -98,7 +98,7 @@ impl WebIngestionServiceTrait for WebIngestionService {
 
         // 2. Chunk text content (fixed-size chunks)
         let model_identity = self.embedding_service.model_identity();
-        let chunks = self.chunk_text(&article.text_content)?;
+        let chunks = self.chunk_text(&article.text_content).await?;
 
         // 3. Generate embeddings
         let chunk_texts: Vec<String> = chunks

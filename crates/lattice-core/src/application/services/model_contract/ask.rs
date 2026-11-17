@@ -883,12 +883,7 @@ async fn alone<C: Answered, P>(
 
 /// The written handle `showing` gives `item`; `None` when it shows none.
 fn handle_of<K: Kind>(showing: &Showing<'_>, item: &K) -> Option<String> {
-    let reference = item.reference();
-    showing
-        .shown::<K>()
-        .into_iter()
-        .find(|picked| picked.reference == reference)
-        .map(|picked| picked.handle.written())
+    showing.handle(item).map(|handle| handle.written())
 }
 
 /// What a reply said about the item `reference` names.

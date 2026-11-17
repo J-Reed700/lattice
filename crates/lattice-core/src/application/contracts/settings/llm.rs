@@ -528,6 +528,9 @@ pub const MIN_LLM_STALL_TIMEOUT_SECONDS: u32 = 1;
 /// dead backend surfaces while the user is still looking at the answer.
 pub const DEFAULT_LLM_STALL_TIMEOUT_SECONDS: u32 = 30;
 
+/// The address Settings suggests for Ollama before the user saves one.
+pub const DEFAULT_OLLAMA_URL: &str = "http://localhost:11434";
+
 impl Default for LLMSettingsDto {
     fn default() -> Self {
         Self {
@@ -548,7 +551,7 @@ impl Default for LLMSettingsDto {
             vision_declarations: BTreeMap::new(),
             model_windows: BTreeMap::new(),
             speculative_decoding: SpeculativeDecodingDto::Off,
-            ollama_url: "http://localhost:11434".to_string(),
+            ollama_url: DEFAULT_OLLAMA_URL.to_string(),
             ollama_configured: false,
             ollama_utility_model: String::new(),
             ollama_auth_header_name: String::new(),

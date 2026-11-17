@@ -17,6 +17,7 @@ use crate::infrastructure::adapters::fs::TokioFileSystemAdapter;
 use crate::infrastructure::adapters::system_info::SystemInfoAdapter;
 use crate::infrastructure::file_system::FileSystemAdapter;
 use crate::interfaces::di::Container;
+use lattice_core::application::contracts::active_models::ActiveModels;
 use lattice_core::application::ports::download_manager::DownloadManager;
 use lattice_core::application::ports::llm_port::{
     InvalidationCause, ModelRequirements, ModelRole, OptionalLlmLoader, PinnedModel,
@@ -144,6 +145,11 @@ impl Container {
             )),
             settings: Arc::clone(self.system.settings_repo()),
         }
+    }
+
+    /// What a chat on the Settings default and utility work run on now.
+    pub async fn default_and_utility_models(&self) -> Result<ActiveModels> {
+        self.role_models().active_models().await
     }
 
     /// The model `request` asks for, pinned for its work.

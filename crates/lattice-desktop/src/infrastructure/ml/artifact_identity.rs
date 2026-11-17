@@ -2,10 +2,10 @@
 //!
 //! The identity is the SHA-256 of the model's one GGUF file: the weights, the
 //! quantisation and the pooling mode are all bytes of it, and llama-server's
-//! normalisation is pinned. `tokenizer.json` is left out on purpose: it
-//! decides where chunks are cut, not what a stored chunk's vector is. It is
-//! computed when a model is activated for embedding and stored on its row;
-//! launch and model load read the stored value and never hash model files.
+//! normalisation is pinned. The GGUF is the whole model, so nothing beside it
+//! enters the identity. It is computed when a model is activated for
+//! embedding and stored on its row; launch and model load read the stored
+//! value and never hash model files.
 //! It lives with the downloaded-model records because it describes the files
 //! on disk, and the download saga establishes it when it auto-activates one.
 

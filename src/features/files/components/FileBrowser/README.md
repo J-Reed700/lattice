@@ -25,10 +25,12 @@ FileBrowser              shell: PageHeader + toolbar + rail + main + dialogs
 └── EmptyStates          "Nothing indexed yet." / "No files match."
 ```
 
-`docMeta.ts` holds the shared document predicates and the meta-line formatter
-(`9,800 words · 1h ago · PDF`). `hooks/useCorpusIdentity.ts` produces the corpus
-readout — the type counts `TypeFacets` renders as one muted line under the scope
-heading. `contentSearchCache.ts` bounds the file text held for content search.
+`model/documentMetadata.ts` holds the meta-line formatter
+(`9,800 words · 1h ago · PDF`). Whether a document is a saved web article, and
+which type bucket it counts in, come from the backend on each document (`web`,
+`typeBucket`). `hooks/useCorpusIdentity.ts` produces the corpus readout — the
+type counts `TypeFacets` renders as one muted line under the scope heading.
+`contentSearchCache.ts` bounds the file text held for content search.
 
 ## Organizing documents
 
