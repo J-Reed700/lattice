@@ -409,4 +409,28 @@ describe('SourceReaderBody saved web articles', () => {
     expect(container.querySelector('.animate-spin')).not.toBeNull();
     expect(screen.queryByTestId('html-viewer')).toBeNull();
   });
+
+  it('asks the archive about the document's current path when the cited path is stale', async () => {
+    const folder = '/vault/current/web-archive/example.com/a-1/';
+    mocks.resolveSourcePath.mockResolvedValue({ ok: true, data: `${folder}article.md` });
+    mocks.savedWebArticle.mockImplementation(async (path: string) => ({
+      ok: true,
+      data: path === `${folder}article.md` ? savedArticle(folder) : null,
+    }));
+    renderBody(
+      source({
+        fileName: 'article.md',
+        filePath: '/old/home/web-archive/example.com/a-1/article.md',
+        mimeType: 'text/markdown',
+        category: 'local file',
+      }),
+    );
+
+    const viewer = await screen.findByTestId('html-viewer');
+    expect(viewer.getAttribute('data-page')).toBe(`${folder}page.html`);
+    expect(mocks.savedWebArticle).toHaveBeenCalledWith(`${folder}article.md`);
+    expect(mocks.savedWebArticle).not.toHaveBeenCalledWith(
+      '/old/home/web-archive/example.com/a-1/article.md',
+    );
+  });
 });

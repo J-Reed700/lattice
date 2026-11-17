@@ -248,3 +248,45 @@ async fn the_page_file_of_an_archived_article_gives_no_article() {
 
     assert_eq!(service.saved_article(&dir.join("page.html")).await, None);
 }
+
+#[tokio::test]
+async fn a_base_directory_that_was_never_canonicalized_still_holds_the_canonical_spelling_of_its_article(
+) {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let service = WebArchiveService::with_base_dir(temp.path().to_path_buf());
+    let dir = temp.path().join("example.com").join("essay-1");
+    let text = lay_out_article(&dir, Some(FULL_METADATA), true);
+    let canonical = text.canonicalize().expect("canonical article");
+    #[cfg(windows)]
+    assert!(
+        canonical.to_string_lossy().starts_with("\\\\?\\"),
+        "the canonical spelling carries the verbatim prefix: {}",
+        canonical.display()
+    );
+
+    let article = service
+        .saved_article(&canonical)
+        .await
+        .expect("a saved article");
+
+    assert_eq!(article.title.as_deref(), Some("The Essay"));
+}
+
+#[tokio::test]
+async fn a_canonical_base_directory_still_holds_the_raw_spelling_of_its_article() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let base = temp.path().canonicalize().expect("canonical base");
+    let service = WebArchiveService::with_base_dir(base);
+    let dir = temp.path().join("example.com").join("essay-1");
+    let text = lay_out_article(&dir, Some(FULL_METADATA), true);
+    #[cfg(windows)]
+    assert_ne!(
+        text,
+        text.canonicalize().expect("canonical article"),
+        "the raw spelling differs from the canonical one"
+    );
+
+    let article = service.saved_article(&text).await.expect("a saved article");
+
+    assert_eq!(article.title.as_deref(), Some("The Essay"));
+}

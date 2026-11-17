@@ -497,7 +497,9 @@ mod tests {
             file_storage,
             Arc::new(FileAccessConfig::new(vec![root.clone()])),
             root.clone(),
-            Arc::new(WebArchiveService::with_base_dir(base)),
+            Arc::new(WebArchiveService::with_base_dir(
+                temp.path().join("web-archive"),
+            )),
         );
 
         let response = use_case

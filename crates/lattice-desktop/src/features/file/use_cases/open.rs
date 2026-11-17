@@ -365,7 +365,9 @@ mod tests {
         let base = root.join("web-archive");
         let dir = base.join("example.org").join("essay-1");
         let article = write_article(&dir);
-        let archive = Arc::new(WebArchiveService::with_base_dir(base));
+        let archive = Arc::new(WebArchiveService::with_base_dir(
+            temp.path().join("web-archive"),
+        ));
         let file_system = Arc::new(MockFileSystem::new());
         let file_storage = Arc::new(MockFileStorage::new().with_file(&article.to_string_lossy()));
         let use_case = OpenFileUseCase::new(
