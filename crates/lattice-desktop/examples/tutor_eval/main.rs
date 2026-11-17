@@ -147,10 +147,7 @@ fn main() -> Res<()> {
         )
         .with_writer(std::io::stderr)
         .init();
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .thread_stack_size(8 * 1024 * 1024)
-        .build()?;
+    let runtime = lattice::bootstrap::async_runtime::install()?;
     let result = runtime.block_on(run(&args, &real_home, workdir.path()));
     if args.keep_data {
         let kept = workdir.keep();
