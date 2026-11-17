@@ -5585,6 +5585,12 @@ place: PutBackPlaceDto | null;
  */
 putBackUnit: number | null;
 /**
+ * For a sentence the machine took out whose place is known: the
+ * sentence of that unit it goes back beside, as the unit's text has it;
+ * null when it goes at the end.
+ */
+putBackBeside: string | null;
+/**
  * For a claim the machine rewrote: what it said and what it says now.
  */
 rewritten: RewrittenDto | null }

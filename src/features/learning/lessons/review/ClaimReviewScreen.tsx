@@ -119,7 +119,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
     const claim = review?.claims.find((candidate) => candidate.claimId === entry.statements[0]?.claimId);
     const place = claim?.location;
     if (!claim || !place || claim.putBackUnit === null || place.unitKind !== 'block' || place.field !== 'body') return null;
-    const section = sectionAt(claim.putBackUnit, []);
+    const section = sectionAt(claim.putBackUnit, [claim.putBackBeside]);
     return section ? () => setEditing(section) : null;
   };
   const selection = useReviewSelection(useMemo(() => ordered.map((claim) => claim.claimId), [ordered]));

@@ -53,7 +53,7 @@ export function claimFixture(options: ClaimOptions) {
     } : null,
     alsoSupported: [],
     tried: { searches: 3, pagesRead: 12, pagesMentioning: 0, stated: false, relevant: [] },
-    place: null, putBackUnit: null, rewritten: null,
+    place: null, putBackUnit: null, putBackBeside: null, rewritten: null,
   };
 }
 

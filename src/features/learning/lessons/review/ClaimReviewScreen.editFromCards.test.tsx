@@ -43,7 +43,7 @@ const cut = (claimId: string, sentence: string, unitIndex: number, putBackUnit: 
   place: putBackUnit === null ? 'choose' : 'known', putBackUnit, putBackBeside,
   location: { unitIndex, unitKind: 'block', unitTitle: '', field: 'body', quote: sentence, span: null },
   presentation: { statement: sentence, sentence, contextBefore: '', contextAfter: '', place: '' },
-} as Partial<ClaimReviewItemDto>);
+});
 
 const statement = claimItem({
   claimId: 'claim-1', statement: FREEZING, state: { state: 'unverified', at: 2, reason: 'unsupported' }, verdictKind: null, reason: null,
