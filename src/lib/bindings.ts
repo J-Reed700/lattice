@@ -4178,17 +4178,6 @@ async extractArticle(url: string) : Promise<Result<CleanArticle, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * The saved web article whose text file is `path`, if the web archive holds one.
- */
-async savedWebArticle(path: string) : Promise<Result<SavedWebArticleDto | null, AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:web|saved_web_article", { path }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async readWebPage(url: string) : Promise<Result<WebPageDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:web|read_web_page", { url }) };
@@ -4260,6 +4249,18 @@ async saveSourceKey(service: KeyServiceDto, key: string) : Promise<Result<Source
 async removeSourceKey(service: KeyServiceDto) : Promise<Result<SourcesStatusDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:web|remove_source_key", { service }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The saved web article whose text file is `path`, with its page, title,
+ * address and links, or nothing when `path` is not one.
+ */
+async savedWebArticle(path: string) : Promise<Result<SavedWebArticleDto | null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:web|saved_web_article", { path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -10784,10 +10785,25 @@ expectedRevision: number }
 export type SaveLearningRecallCardRequestDto = { operationId: string; programId: string; cardId: string; expectedContentRevision: number | null; format: LearningRecallCardFormat; content: LearningRecallContentDto; sourceVersionIds: string[]; changeReason: string }
 export type SaveLearningRuntimeProfileRequestDto = { operationId: string; programId: string; profileId: string; expectedRevision: number | null; name: string; engine: LearningContainerEngine; imageId: string; command: string[]; limits: LearningLabLimits }
 /**
- * A web article the app saved: where its text and page are, and what the
- * archive recorded about it.
+ * A saved web article's files and the facts the archive keeps about it.
  */
-export type SavedWebArticleDto = { textPath: string; pagePath: string | null; title: string | null; url: string | null; links: string[] }
+export type SavedWebArticleDto = {
+/**
+ * The article's text (`article.md`).
+ */
+textPath: string;
+/**
+ * The saved page (`page.html`), when it is still on disk.
+ */
+pagePath: string | null; title: string | null;
+/**
+ * The address the article was saved from.
+ */
+url: string | null;
+/**
+ * Outgoing links captured from the page.
+ */
+links: string[] }
 /**
  * Whether a row was scored.
  */
