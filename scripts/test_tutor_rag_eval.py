@@ -5,6 +5,7 @@ from pathlib import Path
 
 import replay_session_talk as talk
 import tutor_eval
+from test_shipped_path_rag_eval import source_piece, text_piece
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -100,6 +101,25 @@ class ScoreTests(unittest.TestCase):
         rows = [row([turn(0, "Leases last 45 seconds [1], renewals 15 minutes [2].", citations={"1": "x"})])]
         summary = tutor_eval.summarize(rows, load_course())
         self.assertEqual(summary["citations"]["invalid"], {"s": [2]})
+
+    def test_a_source_the_app_resolved_is_a_citation(self):
+        cited = turn(0, "Leases last 45 seconds [s1], renewals 15 minutes [s2].", citations={"1": "x"})
+        cited["reply"] = [text_piece("Leases last 45 seconds "), source_piece(1),
+                          text_piece(", renewals 15 minutes "), source_piece(2), text_piece(".")]
+        summary = tutor_eval.summarize([row([cited])], load_course())
+        self.assertEqual(summary["citations"]["invalid"], {"s": [2]})
+
+    def test_brackets_the_app_left_as_text_are_not_citations(self):
+        plain = turn(0, "Leases last 45 seconds [1], renewals 15 minutes [2].", citations={"1": "x"})
+        plain["reply"] = [text_piece("Leases last 45 seconds [1], renewals 15 minutes [2].")]
+        summary = tutor_eval.summarize([row([plain])], load_course())
+        self.assertEqual(summary["citations"]["invalid"], {})
+
+    def test_rows_written_before_turns_kept_their_pieces_are_refused(self):
+        old = row([turn(0, "A lease lasts 45 seconds.")])
+        old["schema"] = "lattice-shipped-path-answers/1"
+        with self.assertRaises(SystemExit):
+            tutor_eval.summarize([old], load_course())
 
     def test_the_supported_share_counts_every_verdict(self):
         verdicts = {"supported": 3, "unsupported": 1}

@@ -34,6 +34,14 @@ def rubric(**fields):
     return base
 
 
+def text_piece(text):
+    return {"type": "text", "text": text}
+
+
+def source_piece(number):
+    return {"type": "reference", "reference": {"written": f"[s{number}]", "kind": "source", "number": number}}
+
+
 QUESTIONS = {
     "tags": {"t": "a tag", "u": "another"},
     "items": [
@@ -179,6 +187,63 @@ class MechanicalChecks(unittest.TestCase):
         failed = turn("14 days [1].")
         failed["error"] = "timed out"
         self.assertFalse(spe.mechanical(rubric(), failed)["passed"])
+
+
+class CitationsComeFromTheReplyPieces(unittest.TestCase):
+    def test_a_source_the_app_resolved_is_cited(self):
+        checks = spe.mechanical(rubric(), turn(
+            "It is 14 days [s1].", reply=[text_piece("It is 14 days "), source_piece(1), text_piece(".")]))
+        self.assertEqual(checks["cited_ids"], [1])
+        self.assertTrue(checks["passed"])
+
+    def test_brackets_the_app_left_as_text_are_not_citations(self):
+        checks = spe.mechanical(rubric(), turn("It is 14 days [1].", reply=[text_piece("It is 14 days [1].")]))
+        self.assertEqual(checks["cited_ids"], [])
+        self.assertFalse(checks["passed"])
+
+    def test_a_quote_a_resolved_source_follows_is_checked_against_the_passages(self):
+        quoted = 'It is 14 days: "page Anneke Voskuil and quote TCK-1836." '
+        checks = spe.mechanical(rubric(), turn(quoted + "[s1]", reply=[text_piece(quoted), source_piece(1)]))
+        self.assertEqual(checks["invented_quotes"], ["page Anneke Voskuil and quote TCK-1836."])
+
+    def test_a_quote_followed_by_brackets_the_app_left_as_text_is_not_cited(self):
+        rest = ': "page Anneke Voskuil and quote TCK-1836." [2]'
+        checks = spe.mechanical(rubric(), turn(
+            "It is 14 days [s1]" + rest, reply=[text_piece("It is 14 days "), source_piece(1), text_piece(rest)]))
+        self.assertEqual(checks["invented_quotes"], [])
+
+    def test_a_correction_that_cites_a_resolved_source_is_not_a_refusal(self):
+        lead = "There is no mention of using the prior release; instead use v5.7.3 "
+        checks = spe.mechanical(rubric(must_mention=[["v5.7.3"]]), turn(
+            lead + "[s1].", reply=[text_piece(lead), source_piece(1), text_piece(".")]))
+        self.assertFalse(checks["abstained"])
+
+    def test_rows_written_before_turns_kept_their_pieces_are_refused(self):
+        old = row("one", [turn("14 days [1].")])
+        old["schema"] = "lattice-shipped-path-answers/1"
+        with self.assertRaisesRegex(ValueError, "rescore"):
+            spe.validate_row(old)
+
+    def test_a_turn_without_reply_pieces_is_refused(self):
+        bare = turn("14 days [s1].")
+        bare.pop("reply", None)
+        with self.assertRaisesRegex(ValueError, "reply"):
+            spe.validate_row(row("one", [bare]))
+
+    def test_reply_pieces_must_spell_the_answer(self):
+        drifted = turn("14 days [s1].", reply=[text_piece("14 days "), source_piece(2), text_piece(".")])
+        with self.assertRaisesRegex(ValueError, "spell"):
+            spe.validate_row(row("one", [drifted]))
+
+    def test_a_labelled_run_cites_what_the_app_resolved(self):
+        dataset = {"documents": [{"id": "a", "text": "Kept for 14 days."}, {"id": "b", "text": "Other."}],
+                   "queries": [{"id": "one", "text": "How long?", "relevance": {"a": 3}}]}
+        expectations = {"queries": [{"id": "one", "required_patterns": [["14 days"]],
+                                     "required_citation_docs": ["a"]}]}
+        cited = row("one", [turn("Kept for 14 days [s1].",
+                                 reply=[text_piece("Kept for 14 days "), source_piece(1), text_piece(".")])])
+        scored = spe.score_dataset(dataset, expectations, [cited])
+        self.assertEqual(scored[0]["cited_ids"], [1])
 
 
 class RowShape(unittest.TestCase):
