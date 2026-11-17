@@ -32,7 +32,9 @@ fn around(text: &str, (from, to): (usize, usize)) -> ClaimExcerptDto {
     let fences: Vec<Range<usize>> = code_fences(text).iter().map(CodeFence::whole).collect();
     let prose = |&(start, end): &(usize, usize)| {
         text.get(start..end).is_some_and(|piece| words(piece) >= 2)
-            && !fences.iter().any(|fence| start < fence.end && end > fence.start)
+            && !fences
+                .iter()
+                .any(|fence| start < fence.end && end > fence.start)
     };
     let bounds = sentences(text);
     let first = bounds.iter().position(|&(_, end)| end > from);

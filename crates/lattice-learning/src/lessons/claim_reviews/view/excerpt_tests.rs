@@ -179,7 +179,9 @@ fn a_quote_over_two_sentences_takes_both() {
 #[test]
 fn a_passage_opens_with_its_first_sentence() {
     assert_eq!(
-        opening("Dr. Smith tagged monarchs that flew 2,500 miles. Some flew farther. Most did not."),
+        opening(
+            "Dr. Smith tagged monarchs that flew 2,500 miles. Some flew farther. Most did not."
+        ),
         shown(
             "",
             "Dr. Smith tagged monarchs that flew 2,500 miles.",
