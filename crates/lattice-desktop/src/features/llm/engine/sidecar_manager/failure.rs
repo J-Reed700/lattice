@@ -1,4 +1,5 @@
 use super::*;
+use lattice_core::shared::fs::plainly_spelled;
 
 /// Why a bundled build cannot run, at the granularity the user can act on: a
 /// missing Vulkan runtime is not fixed by reinstalling.
@@ -644,34 +645,6 @@ pub(super) fn resolved_sidecar_path(binary: SidecarBinary) -> PathBuf {
         .installed_path()
         .map(plainly_spelled)
         .unwrap_or_else(|_| PathBuf::from(binary.file_name()))
-}
-
-/// A path spelled the way a person writes it, for messages and logs: Windows
-/// canonicalisation yields a verbatim `\\?\` path, which nobody should have to
-/// read and many Win32 programs reject.
-#[cfg(not(windows))]
-pub(super) fn plainly_spelled(path: PathBuf) -> PathBuf {
-    path
-}
-
-#[cfg(windows)]
-pub(super) fn plainly_spelled(path: PathBuf) -> PathBuf {
-    use std::path::{Component, Prefix};
-
-    let mut components = path.components();
-    let Some(Component::Prefix(prefix)) = components.next() else {
-        return path;
-    };
-    // Only the drive form is safe to simplify. Verbatim UNC (`\\?\UNC\…`) and
-    // device paths (`\\?\PIPE\…`) are not the same path without their prefix,
-    // so they keep it even though they read badly.
-    let Prefix::VerbatimDisk(letter) = prefix.kind() else {
-        return path;
-    };
-    // The prefix is consumed; `RootDir` is the separator we just rewrote.
-    let mut plain = PathBuf::from(format!("{}:\\", letter as char));
-    plain.extend(components.filter(|component| !matches!(component, Component::RootDir)));
-    plain
 }
 
 pub(super) fn describe_exit(code: Option<i32>, signal: Option<i32>) -> String {
