@@ -688,8 +688,9 @@ impl<K: Kind, C: Kind> Entry<K, C> {
     }
 }
 
-/// The lines of an answer read one by one. An item named with none of its own
-/// handles stays open: the lines after it that name no item are its own.
+/// The lines of an answer read one by one. An item named on a line that holds
+/// none of its own handles stays open: the lines after it that name no item are
+/// its own.
 struct KeepsReader<'a, 'b, K: Kind, C: Kind> {
     showing: &'a Showing<'b>,
     entries: Rows<K, Vec<Picked<C>>>,
@@ -790,7 +791,7 @@ impl<K: Kind, C: Kind> KeepsReader<'_, '_, K, C> {
             at += 1;
         }
         match current {
-            Some(entry) if !entry.names_own => self.open = Some(entry),
+            Some(entry) if !names_item || !entry.names_own => self.open = Some(entry),
             other => self.close(other),
         }
     }
