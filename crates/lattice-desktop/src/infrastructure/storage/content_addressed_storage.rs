@@ -571,6 +571,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn owns_a_library_path_however_it_is_spelled() {
+        let temp_dir = TempDir::new().unwrap();
+        let library_root = temp_dir.path().join("library");
+        let blob = library_root.join("a".repeat(64));
+        std::fs::create_dir_all(&blob).unwrap();
+        let path = blob.join("paper.pdf");
+        std::fs::write(&path, "body").unwrap();
+        let canonical = std::fs::canonicalize(&path).unwrap();
+        #[cfg(windows)]
+        assert_ne!(
+            path, canonical,
+            "the raw spelling differs from the canonical one"
+        );
+
+        let raw_root = ContentAddressedStorage::with_root(library_root.clone());
+        assert!(raw_root.owns(&path));
+        assert!(raw_root.owns(&canonical));
+
+        let canonical_root =
+            ContentAddressedStorage::with_root(std::fs::canonicalize(&library_root).unwrap());
+        assert!(canonical_root.owns(&path));
+    }
+
+    #[tokio::test]
     async fn owns_refuses_a_backslash_separated_parent_on_every_platform() {
         let temp_dir = TempDir::new().unwrap();
         let library_root = temp_dir.path().join("library");

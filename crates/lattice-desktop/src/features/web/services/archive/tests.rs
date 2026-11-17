@@ -290,3 +290,34 @@ async fn a_canonical_base_directory_still_holds_the_raw_spelling_of_its_article(
 
     assert_eq!(article.title.as_deref(), Some("The Essay"));
 }
+
+#[test]
+fn owns_a_path_inside_the_archive_however_it_is_spelled() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let base = temp.path().to_path_buf();
+    let text = lay_out_article(&base.join("a1"), None, false);
+    let canonical = std::fs::canonicalize(&text).expect("canonical article");
+    #[cfg(windows)]
+    assert_ne!(
+        text, canonical,
+        "the raw spelling differs from the canonical one"
+    );
+
+    let raw_base = WebArchiveService::with_base_dir(base.clone());
+    assert!(raw_base.owns(&text));
+    assert!(raw_base.owns(&canonical));
+
+    let canonical_base =
+        WebArchiveService::with_base_dir(std::fs::canonicalize(&base).expect("canonical base"));
+    assert!(canonical_base.owns(&text));
+}
+
+#[test]
+fn still_owns_an_article_whose_file_is_already_gone() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let base = temp.path().to_path_buf();
+    std::fs::create_dir_all(base.join("a1")).expect("article directory");
+    let service = WebArchiveService::with_base_dir(base.clone());
+
+    assert!(service.owns(&base.join("a1").join("article.md")));
+}
