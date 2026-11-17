@@ -21,8 +21,13 @@ vi.mock('@/features/files/stores/fileBrowserStore', () => ({
   }),
 }));
 
+const BUCKETS: Record<string, string> = { md: 'Markdown', txt: 'Text' };
+
 const doc = (id: string, fileName: string, fileType = 'md', extra: Partial<DocumentMetadata> = {}) =>
-  ({ id, fileName, filePath: `/notes/${fileName}`, fileType, category: 'document', modifiedAt: '1', indexedAt: '1', ...extra }) as DocumentMetadata;
+  ({
+    id, fileName, filePath: `/notes/${fileName}`, fileType, category: 'document', modifiedAt: '1', indexedAt: '1',
+    web: false, typeBucket: BUCKETS[fileType] ?? fileType.toUpperCase(), ...extra,
+  }) as DocumentMetadata;
 
 const texts: Record<string, string> = {
   '/notes/bread.md': 'Knead the DOUGH for ten minutes',
@@ -70,8 +75,8 @@ describe('useLibraryContentSearch', () => {
 
   it('searches only the active type facet', async () => {
     const docs = [doc('1', 'bread.md'), doc('3', 'yeast.txt', 'txt')];
-    const { result } = renderHook(() => useLibraryContentSearch(docs, 'dough', ' TXT '));
-    expect(result.current.activeFilter).toBe('txt');
+    const { result } = renderHook(() => useLibraryContentSearch(docs, 'dough', ' TEXT '));
+    expect(result.current.activeFilter).toBe('text');
     await act(async () => { await vi.advanceTimersByTimeAsync(220); });
     expect(h.readDocumentText).toHaveBeenCalledTimes(1);
     expect(matchesOf(h.setContentSearchMatches.mock.calls.at(-1)!)).toEqual(['3']);

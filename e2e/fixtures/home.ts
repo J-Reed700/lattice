@@ -21,7 +21,7 @@ function conversation(id: string, title: string, spaceId: string, updatedDaysAgo
 function document(id: string, fileName: string, fileType: string, indexedDaysAgo: number): Fixture<DocumentMetadataDto> {
   return {
     id, fileName, filePath: `${FILES}/${id}/${fileName}`, fileType, category: 'Document', language: 'en',
-    wordCount: 2400, modifiedAt: daysAgo(indexedDaysAgo), indexedAt: daysAgo(indexedDaysAgo),
+    wordCount: 2400, web: false, typeBucket: fileType === 'pdf' ? 'PDF' : 'Markdown', modifiedAt: daysAgo(indexedDaysAgo), indexedAt: daysAgo(indexedDaysAgo),
   };
 }
 

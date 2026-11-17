@@ -62,7 +62,7 @@ export async function installCompareFixture(page: Page) {
   await serveCommands(page, () => ({
     list_all_documents: () => RECIPES.map(recipe => ({
       id: recipe.id, fileName: recipe.fileName, filePath: recipe.filePath,
-      fileType: 'md', category: 'Document', language: 'en', wordCount: 300,
+      fileType: 'md', category: 'Document', language: 'en', wordCount: 300, web: false, typeBucket: 'Markdown',
       modifiedAt: STAMP, indexedAt: STAMP,
     })),
     list_custom_collections: () => [],

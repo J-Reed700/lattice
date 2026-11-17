@@ -3,10 +3,11 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useApi } from '@/contexts/ApiContext';
 import { readDocumentText } from '@/features/files/hooks/useLibraryDocumentActions';
 import { useFileBrowserStore } from '@/features/files/stores/fileBrowserStore';
+import { matchesTypeFilter } from '@/features/files/stores/libraryDocumentFilters';
 import { type DocumentMetadata } from '@/types/fileBrowser';
 
 import { ContentSearchCache } from './contentSearchCache';
-import { canSearchByContent, matchesTypeFilter, normalizeSearchToken } from './fileBrowserHelpers';
+import { canSearchByContent, normalizeSearchToken } from './fileBrowserHelpers';
 
 /**
  * Searches the text of the documents in the active type facet for the search

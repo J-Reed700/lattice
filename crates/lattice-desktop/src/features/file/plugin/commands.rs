@@ -64,7 +64,7 @@ pub struct CorpusShapeDto {
 pub async fn get_corpus_shape(container: State<'_, Container>) -> Result<CorpusShapeDto, ApiError> {
     let shape = container
         .get_corpus_shape_use_case()
-        .execute()
+        .execute(container.web_archive().as_ref())
         .await
         .map_err(ApiError::from)?;
 

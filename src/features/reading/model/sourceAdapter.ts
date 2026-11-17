@@ -80,10 +80,7 @@ export function fromFilePath(filePath: string, title?: string): ResolvedReaderTa
 
 /** Library (`FileBrowser`) document -> unified reader target. */
 export function fromDocumentMetadata(doc: DocumentMetadata): ResolvedReaderTarget {
-  const web =
-    isHttpUrl(doc.filePath) ||
-    doc.category.toLowerCase().includes('web') ||
-    doc.fileType.toLowerCase().includes('web');
+  const web = doc.web;
   return {
     source: {
       documentId: doc.id,
