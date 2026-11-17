@@ -8,11 +8,16 @@ export const readSourceText = (path: string, api: ApiClient = VaultAPI) => api.r
 /** A source file's bytes, for the readers that parse a binary format (PDF, DOCX). */
 export const readSourceBytes = (path: string, api: ApiClient = VaultAPI) => api.readFileBytes(path);
 
+/** The saved web article the archive holds for a file, or null when it holds none. */
+export const readSavedWebArticle = (path: string, api: ApiClient = VaultAPI) => api.savedWebArticle(path);
+
 export const readingKeys = {
   all: ['reading'] as const,
   /** A file's text, by path. */
   fileText: (path: string) => ['reading', 'file-text', path] as const,
-  /** A saved web page (or its markdown fallback) with its archive metadata. */
+  /** Whether the web archive holds a file as a saved article, by path. */
+  savedWebArticle: (path: string) => ['reading', 'saved-web-article', path] as const,
+  /** A saved web page, or its markdown fallback. */
   archivedPage: (path: string) => ['reading', 'archived-page', path] as const,
   /** A DOCX converted to sanitized HTML. */
   docxHtml: (path: string) => ['reading', 'docx-html', path] as const,

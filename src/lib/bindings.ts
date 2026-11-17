@@ -4178,6 +4178,17 @@ async extractArticle(url: string) : Promise<Result<CleanArticle, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * The saved web article whose text file is `path`, if the web archive holds one.
+ */
+async savedWebArticle(path: string) : Promise<Result<SavedWebArticleDto | null, AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:web|saved_web_article", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async readWebPage(url: string) : Promise<Result<WebPageDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:web|read_web_page", { url }) };
@@ -10664,6 +10675,11 @@ expectedRevision: number }
 export type SaveLearningRecallCardRequestDto = { operationId: string; programId: string; cardId: string; expectedContentRevision: number | null; format: LearningRecallCardFormat; content: LearningRecallContentDto; sourceVersionIds: string[]; changeReason: string }
 export type SaveLearningRuntimeProfileRequestDto = { operationId: string; programId: string; profileId: string; expectedRevision: number | null; name: string; engine: LearningContainerEngine; imageId: string; command: string[]; limits: LearningLabLimits }
 /**
+ * A web article the app saved: where its text and page are, and what the
+ * archive recorded about it.
+ */
+export type SavedWebArticleDto = { textPath: string; pagePath: string | null; title: string | null; url: string | null; links: string[] }
+/**
  * Whether a row was scored.
  */
 export type ScoreStatus = "observed" | "insufficient_evidence"
@@ -12762,6 +12778,7 @@ export type CommandArgs = {
 	save_remote_auth_header_value: { server: RemoteServer; value?: string | null };
 	save_source_key: { service: KeyServiceDto; key: string };
 	save_text_file: { suggestedName: string; filters: FileFilterDto[]; contents: string };
+	saved_web_article: { path: string };
 	search_documents: { options: SearchOptions };
 	search_fast: { query: string; limit: number };
 	search_learning_sources: { request: SearchLearningSourcesRequestDto };
@@ -13228,6 +13245,7 @@ export type CommandResults = {
 	save_remote_auth_header_value: null;
 	save_source_key: SourcesStatusDto;
 	save_text_file: boolean;
+	saved_web_article: SavedWebArticleDto | null;
 	search_documents: EnhancedSearchResponse;
 	search_fast: ([string, number])[];
 	search_learning_sources: LearningSourceSearchResultDto[];

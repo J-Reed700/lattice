@@ -395,6 +395,7 @@ export const COMMAND_PLUGINS = {
   save_remote_auth_header_value: 'settings',
   save_source_key: 'web',
   save_text_file: 'settings',
+  saved_web_article: 'web',
   search_documents: 'search',
   search_fast: 'search',
   search_learning_sources: 'learning',

@@ -1,9 +1,7 @@
 import { createElement, type ReactNode } from 'react';
 
-export type SourcePreviewKind = 'local-file' | 'archived-web' | 'external-web';
+export type SourcePreviewKind = 'local-file' | 'external-web';
 
-const WEB_ARCHIVE_SEGMENT = '/.lattice/web-archive/';
-const WEB_ARCHIVE_MARKDOWN_NAMES = new Set(['article.md', 'weblink.md']);
 const WEB_ARTICLE_CATEGORY = 'web article';
 
 export function isHttpUrl(value: string): boolean {
@@ -85,26 +83,6 @@ function unwrapRedirectUrl(value: string): string {
   return normalized;
 }
 
-export function isWebArchiveArticlePath(filePath: string): boolean {
-  const normalizedPath = filePath.trim().toLowerCase();
-  if (!normalizedPath.includes(WEB_ARCHIVE_SEGMENT)) {
-    return false;
-  }
-  const fileName = normalizedPath.split('/').pop() || '';
-  return WEB_ARCHIVE_MARKDOWN_NAMES.has(fileName);
-}
-
-export function getWebArchiveHtmlPath(filePath: string): string | null {
-  if (!isWebArchiveArticlePath(filePath)) {
-    return null;
-  }
-  const slashIndex = filePath.lastIndexOf('/');
-  if (slashIndex === -1) {
-    return null;
-  }
-  return `${filePath.slice(0, slashIndex)}/page.html`;
-}
-
 interface SourcePathLike {
   filePath?: string | null;
   path?: string | null;
@@ -137,10 +115,6 @@ export function getSourcePreviewKind(source: SourcePathLike): SourcePreviewKind 
   const filePath = source.filePath ?? '';
   const category = source.category?.toLowerCase().replace(/[_-]+/g, ' ').trim() ?? '';
   const mimeType = source.mimeType?.toLowerCase() ?? '';
-
-  if (isWebArchiveArticlePath(filePath)) {
-    return 'archived-web';
-  }
 
   if (getSourceExternalUrl(source)) {
     return 'external-web';

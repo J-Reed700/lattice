@@ -21,6 +21,7 @@ import {
 import { useCitationTravel } from '@/features/reading/hooks/useCitationTravel';
 import { useFileContent } from '@/features/reading/hooks/useFileContent';
 import { usePassageCapture } from '@/features/reading/hooks/usePassageCapture';
+import { useSavedWebArticle } from '@/features/reading/hooks/useSavedWebArticle';
 import { useSourceUrlImport } from '@/features/reading/hooks/useSourceUrlImport';
 import { passageMatchNotice, sourceHeaderMeta } from '@/features/reading/model/filePreviewMeta';
 import { textFragmentUrl } from '@/features/reading/model/textFragment';
@@ -39,7 +40,6 @@ import { sanitizeFileName } from '@/utils/sanitize';
 import {
   getSourceExternalUrl,
   getSourcePreviewKind,
-  getWebArchiveHtmlPath,
   isCourseSource,
   isHttpUrl,
 } from '@/utils/sourcePreview';
@@ -144,11 +144,12 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
 
   const mimeType = source.mimeType || '';
   const sourcePreviewKind = getSourcePreviewKind(source);
-  const isExternalWebSource = sourcePreviewKind === 'external-web';
+  const { article: savedArticle, deciding } = useSavedWebArticle(source);
+  const isWebArchiveArticle = savedArticle !== null;
+  const isExternalWebSource = !isWebArchiveArticle && sourcePreviewKind === 'external-web';
   const normalizedCategory = normalizeCategory(source.category ?? '');
   const isWebCategory =
     normalizedCategory.includes('web article') || normalizedCategory === 'web';
-  const isWebArchiveArticle = sourcePreviewKind === 'archived-web';
   const externalSourceUrl = getSourceExternalUrl(source);
   const hasDocumentId = Boolean(source.documentId && UUID_PATTERN.test(source.documentId));
   const isWebDocumentId = Boolean(source.documentId?.startsWith('web:'));
@@ -179,9 +180,8 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     mimeType.startsWith('image/') ||
     mimeType.startsWith('audio/') ||
     isDocx;
-  const webArchiveHtmlPath = getWebArchiveHtmlPath(source.filePath);
   /** A web citation rendered from its saved page text or saved excerpt. */
-  const showsWebArticle = isWebSourceLike && !isWebArchiveArticle;
+  const showsWebArticle = isWebSourceLike && !isWebArchiveArticle && !deciding;
   // A frozen copy belongs to a conversation, so the Page view needs one.
   const snapshotConversationId = showsWebArticle && openableUrl
     ? (source.conversationId ?? activeConversationId ?? '')
@@ -195,6 +195,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   const canShowInFolder = hasDocumentId || (!shouldUseUrlActions && !isHttpUrl(source.filePath ?? ''));
 
   const shouldFetchContent =
+    !deciding &&
     !isFileTooLarge &&
     !isBinaryPreview &&
     !isWebArchiveArticle &&
@@ -382,7 +383,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
       isFileTooLarge={isFileTooLarge}
       isFileLarge={isFileLarge}
       maxPreviewSize={MAX_PREVIEW_SIZE}
-      isLoading={isLoading || isResolvingPreviewPath}
+      isLoading={isLoading || isResolvingPreviewPath || deciding}
       content={isCourseSource(source) ? source.content : content}
       error={error}
       savedCitationText={savedCitationText}
@@ -390,8 +391,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
       initialLocator={initialLocator}
       onLocationResolved={handleLocationResolved}
       onMatch={setMatchTier}
-      isWebArchiveArticle={isWebArchiveArticle}
-      webArchiveHtmlPath={webArchiveHtmlPath}
+      savedArticle={savedArticle}
       webArticle={
         showsWebArticle ? (
           <WebSourceView

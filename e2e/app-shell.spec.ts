@@ -651,6 +651,7 @@ test('HTML and code previews follow light and dark themes', async ({ page }, tes
         category: 'Document', language: 'en', wordCount: 100,
         modifiedAt: '2026-09-15T00:00:00Z', indexedAt: '2026-09-15T00:00:00Z',
       })),
+      saved_web_article: () => null,
       read_file_content: (args) => (args as { path: string }).path.endsWith('.ts')
         ? 'const answer = 42;'
         : '<style>body { color: black; background: white; }</style><h1>Theme preview</h1><p style="color: black; background: white">Readable article</p><pre>const answer = 42;</pre>',
@@ -1503,6 +1504,7 @@ test('creates a subject-agnostic flashcard deck in Studio, reviews, quizzes, ope
       activity_snapshot: () => ({ items: [], running: 0 }),
       get_batch_history: () => ({ jobs: [] }),
       list_all_documents: () => [{ id: 'biology', fileName: source.fileName, filePath: source.filePath, fileType: 'md', category: 'Document', wordCount: 20 }],
+      saved_web_article: () => null,
       read_file_content: (args) => {
         if ((args as { path: string }).path !== source.filePath) throw new Error('Unexpected source');
         return '# Photosynthesis notes\n\nChlorophyll absorbs the light used in photosynthesis.\n\nPhotosynthesis converts light energy into chemical energy.';
