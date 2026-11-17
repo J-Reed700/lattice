@@ -17,7 +17,6 @@ const guideSource: SourceRefDto = {
 };
 
 export function fieldGuideSupport(overrides: Partial<ClaimSupportDto> = {}): ClaimSupportDto {
-  const at = GUIDE_TEXT.indexOf(GUIDE_QUOTE);
   return {
     role: 'supports',
     source: guideSource,
@@ -26,7 +25,7 @@ export function fieldGuideSupport(overrides: Partial<ClaimSupportDto> = {}): Cla
     standing: 'established',
     counts: { outcome: 'not_enough' },
     quote: GUIDE_QUOTE,
-    quoteSpan: [at, at + GUIDE_QUOTE.length],
+    excerpt: { before: 'Each autumn, ', quote: GUIDE_QUOTE, after: ' to wintering sites in central Mexico.', clippedStart: false, clippedEnd: false },
     passage: {
       sourceVersionId: guideSource.sourceVersionId, title: guideSource.title, url: guideSource.url,
       text: GUIDE_TEXT, startByte: 2048, endByte: 2048 + GUIDE_TEXT.length, retrievalKind: 'hybrid', trust: null,
@@ -43,7 +42,7 @@ export function claimItem(overrides: Partial<ClaimReviewItemDto> = {}): ClaimRev
     state: { state: 'queued' },
     verdictKind: { kind: 'contradicted' },
     reason: 'The passage gives 99.97 °C at one atmosphere.',
-    evidence: [{ passage, addedBy: 'user' }],
+    evidence: [{ passage, addedBy: 'user', opening: { before: '', quote: 'At one atmosphere, pure water boils at 99.97 °C.', after: '', clippedStart: false, clippedEnd: false } }],
     supportingQuote: null,
     research: [{ queries: ['boiling point of water at sea level'], sourcesAdded: [], passagesFound: 0, at: 1_760_000_002_000 }],
     repairs: [{ attempt: 1, escalated: false, before: 'Water boils at 100 °C.', after: 'Water boils at about 100 °C.', outcome: { outcome: 'rejected', reason: 'The rewrite still contradicts the passage.' }, at: 1_760_000_003_000 }],
