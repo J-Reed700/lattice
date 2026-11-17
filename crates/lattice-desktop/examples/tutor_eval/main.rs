@@ -38,6 +38,9 @@ mod recipe;
 #[allow(dead_code)]
 #[path = "../shipped_path_eval/record.rs"]
 mod record;
+#[allow(dead_code)]
+#[path = "../shipped_path_eval/reply.rs"]
+mod reply;
 
 use async_trait::async_trait;
 use lattice::features::conversation::chat::headless::run_headless_turn;
@@ -652,6 +655,9 @@ async fn run_turn(
         ask,
         conversation_id: Some(conversation_id),
         answer: response.as_ref().map(|r| r.message.as_str()),
+        reply: response
+            .as_ref()
+            .map_or_else(|| json!([]), |r| reply::shown(&r.messages)),
         error: error.clone(),
         answered_ms,
         verification_wait_ms,

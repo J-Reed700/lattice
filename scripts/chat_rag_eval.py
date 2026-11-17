@@ -222,8 +222,11 @@ def extract_citations(answer):
     return list(dict.fromkeys(int(value) for value in CITATION_RE.findall(answer)))
 
 
-def evaluate_answer(query, expectation, answer, selected_ids, latency_ms, model):
-    citations = extract_citations(answer)
+def evaluate_answer(query, expectation, answer, selected_ids, latency_ms, model, *, citations):
+    """Grades one answer. `citations` are the source numbers it cites, in order, each once: this script's own
+    prompts read them from the answer with `extract_citations`; a harness whose app resolves its own references
+    passes those."""
+    citations = list(citations)
     valid_citations = [value for value in citations if 1 <= value <= len(selected_ids)]
     cited_documents = [selected_ids[value - 1] for value in valid_citations]
     invalid_citations = [value for value in citations if value not in valid_citations]
@@ -378,7 +381,8 @@ def main():
                 or cached.get("generation", {}).get("finish_reason") != "stop"):
             raise ValueError("Resume row content or context is incompatible")
         rows.append(evaluate_answer(queries[qid], expectations[qid], cached["answer"],
-                                    selected_ids, cached["latency_ms"], provider["model"]))
+                                    selected_ids, cached["latency_ms"], provider["model"],
+                                    citations=extract_citations(cached["answer"])))
     with args.output.open(mode, encoding="utf-8") as output:
         for index, query_id in enumerate(selected_queries, 1):
             if query_id in existing:
@@ -397,6 +401,7 @@ def main():
                 selected_ids,
                 latency_ms,
                 provider["model"],
+                citations=extract_citations(answer),
             )
             row["run_id"] = current["run_id"]
             row["generation"] = generation
