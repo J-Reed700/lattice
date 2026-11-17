@@ -15,8 +15,8 @@ pub use history::{
     ClaimEventPayloadDto, EvidenceSeenDto, ProvenanceDto, UserActionDto,
 };
 pub use presentation::{
-    ClaimPresentationDto, ClaimSupportCountsDto, ClaimSupportDto, ClaimSupportRoleDto,
-    ResearchSummaryDto,
+    ClaimExcerptDto, ClaimPresentationDto, ClaimSupportCountsDto, ClaimSupportDto,
+    ClaimSupportRoleDto, ResearchSummaryDto,
 };
 pub use trust::{
     source_kind, CountedSupportDto, SourceKindDto, StandingAssessedDto, TrustCauseDto,
@@ -150,6 +150,10 @@ pub struct ClaimReviewItemDto {
     /// For a sentence the machine took out whose place is known: the unit it goes
     /// back into, as the lesson stands now.
     pub put_back_unit: Option<usize>,
+    /// For a sentence the machine took out whose place is known: the
+    /// sentence of that unit it goes back beside, as the unit's text has it;
+    /// null when it goes at the end.
+    pub put_back_beside: Option<String>,
     /// For a claim the machine rewrote: what it said and what it says now.
     pub rewritten: Option<RewrittenDto>,
 }
@@ -442,6 +446,9 @@ impl From<&ReopenCause> for ReopenCauseDto {
 pub struct ClaimEvidencePassageDto {
     pub passage: LearningEvidencePassageDto,
     pub added_by: Option<SourceAddedByDto>,
+    /// The passage's first sentence in its excerpt: what the review marks in
+    /// a passage the user added that does not state the claim.
+    pub opening: ClaimExcerptDto,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type)]

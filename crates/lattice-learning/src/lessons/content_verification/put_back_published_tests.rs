@@ -478,6 +478,32 @@ async fn the_review_names_the_unit_a_taken_out_sentence_goes_back_into_as_the_le
 }
 
 #[tokio::test]
+async fn the_review_names_the_sentence_a_taken_out_sentence_goes_back_beside() -> Result<()> {
+    let course = published().await?;
+    let stale = taken_out(&course, "stale", 1, Some((Some(GOOD), None))).await?;
+    let unknown = taken_out(&course, "unknown", 9, None).await?;
+    let review = ClaimReviewService::new(course.db.clone())
+        .review(&course.program_id, &course.lesson_id)
+        .await?
+        .unwrap();
+    let item = |id: &ClaimId| {
+        review
+            .claims
+            .iter()
+            .find(|item| item.claim_id == id.0)
+            .unwrap()
+    };
+
+    assert_eq!(
+        item(&stale).put_back_beside.as_deref(),
+        Some(GOOD),
+        "the sentence it goes back after"
+    );
+    assert_eq!(item(&unknown).put_back_beside, None);
+    Ok(())
+}
+
+#[tokio::test]
 async fn the_review_names_the_section_a_sentence_goes_back_into_when_its_own_section_went_out(
 ) -> Result<()> {
     let course = published().await?;

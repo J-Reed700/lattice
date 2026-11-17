@@ -5477,7 +5477,31 @@ export type ClaimEventPayloadDto = { kind: "extracted"; field: string; quote: st
  * A compared passage and who added its source; `addedBy` is null for an
  * execution, which has no source.
  */
-export type ClaimEvidencePassageDto = { passage: LearningEvidencePassageDto; addedBy: SourceAddedByDto | null }
+export type ClaimEvidencePassageDto = { passage: LearningEvidencePassageDto; addedBy: SourceAddedByDto | null;
+/**
+ * The passage's first sentence in its excerpt: what the review marks in
+ * a passage the user added that does not state the claim.
+ */
+opening: ClaimExcerptDto }
+/**
+ * A quote in its passage as the review shows it (UI design §3.4): the
+ * sentences that hold it, with the sentence before and after them when it
+ * is prose, never code.
+ */
+export type ClaimExcerptDto = { before: string;
+/**
+ * The quote as the passage words it; the quote as given when the
+ * passage does not hold it.
+ */
+quote: string; after: string;
+/**
+ * More of the passage comes before `before`.
+ */
+clippedStart: boolean;
+/**
+ * More of the passage comes after `after`.
+ */
+clippedEnd: boolean }
 export type ClaimLocationDto = { unitIndex: number; unitKind: UnitKindDto; unitTitle: string; field: string; quote: string;
 /**
  * Byte span of `quote` in the field; null when it occurs more than once.
@@ -5561,6 +5585,12 @@ place: PutBackPlaceDto | null;
  */
 putBackUnit: number | null;
 /**
+ * For a sentence the machine took out whose place is known: the
+ * sentence of that unit it goes back beside, as the unit's text has it;
+ * null when it goes at the end.
+ */
+putBackBeside: string | null;
+/**
  * For a claim the machine rewrote: what it said and what it says now.
  */
 rewritten: RewrittenDto | null }
@@ -5600,10 +5630,9 @@ standing: LearningTrustLevel | null; counts: ClaimSupportCountsDto;
  */
 quote: string;
 /**
- * Byte span of `quote` inside `passage.text`; null when it is not found
- * there verbatim.
+ * `quote` in its passage.
  */
-quoteSpan: [number, number] | null; passage: LearningEvidencePassageDto }
+excerpt: ClaimExcerptDto; passage: LearningEvidencePassageDto }
 export type ClaimSupportRoleDto = "supports" | "contradicts"
 export type ClassDto = "sourced" | "reasoning" | "common" | "internal"
 export type ClassifiedByDto = "model" | "rule" | "writer" | "evidence"

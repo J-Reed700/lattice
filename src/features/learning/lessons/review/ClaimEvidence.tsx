@@ -4,7 +4,6 @@ import { ExternalLink } from 'lucide-react';
 
 import { TiptapViewer } from '@/components/TiptapEditor';
 import { countsAs, sourceLine } from '@/features/learning/lessons/review/claimReviewCopy';
-import { excerptAround } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { formatSourceForReader } from '@/features/learning/sources/sourceReaderFormat';
 import { useLearningSourceVersion } from '@/features/learning/sources/useLearningSources';
 import type { ClaimSupportDto, LearningSufficiencyDto } from '@/lib/bindings';
@@ -13,12 +12,12 @@ export type EvidenceHeading = 'BEST EVIDENCE' | 'SAYS OTHERWISE' | 'CLOSEST PASS
 
 /** The quoted sentence, marked, in up to a sentence of its context. */
 function Excerpt({ support }: { support: ClaimSupportDto }) {
-  const excerpt = excerptAround(support.passage.text, support.quoteSpan, support.quote);
+  const { before, quote, after, clippedStart, clippedEnd } = support.excerpt;
   return (
     <blockquote className="mt-2 border-l-2 border-accent/40 pl-3 font-serif text-[15px] leading-7 text-text-secondary">
-      {excerpt.clippedStart && '…'}{excerpt.before}
-      <mark className="rounded-sm bg-accent/25 px-0.5 text-text-primary">{excerpt.quote}</mark>
-      {excerpt.after}{excerpt.clippedEnd && '…'}
+      {clippedStart && '…'}{before}
+      <mark className="rounded-sm bg-accent/25 px-0.5 text-text-primary">{quote}</mark>
+      {after}{clippedEnd && '…'}
     </blockquote>
   );
 }

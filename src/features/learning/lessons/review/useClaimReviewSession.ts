@@ -31,13 +31,13 @@ const hostOf = (url: string | null) => { try { return url ? new URL(url).host : 
 
 /** A passage of what the user added, shown when it does not state the claim. */
 function closestOf(item: ClaimReviewItemDto | undefined, versionId: string, report: ClaimAttachReportDto | null): ClaimSupportDto | null {
-  const passage = item?.evidence.find((entry) => entry.passage.sourceVersionId === versionId)?.passage;
-  if (!item || !passage || !report?.source) return null;
-  const first = /^[\s\S]{1,320}?[.!?](?=\s|$)/.exec(passage.text.trim())?.[0] ?? passage.text.trim().slice(0, 320);
+  const shown = item?.evidence.find((entry) => entry.passage.sourceVersionId === versionId);
+  if (!shown || !report?.source) return null;
+  const { passage, opening } = shown;
   return {
     role: 'supports', source: report.source, site: hostOf(passage.url),
     kind: passage.url ? 'page' : 'pasted_text', standing: null, counts: { outcome: 'not_enough' },
-    quote: first, quoteSpan: null, passage,
+    quote: opening.quote, excerpt: opening, passage,
   };
 }
 
