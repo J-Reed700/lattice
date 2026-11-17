@@ -44,8 +44,8 @@ pub struct ModelCapacity {
     pub context_tokens: usize,
     /// Explicit generation limit, when the caller has one.
     pub configured_output_limit: Option<usize>,
-    /// How many times the output reservation is asked for: 1 is the plain
-    /// reservation, 2 a send that follows a cut-off.
+    /// How many times the output reservation, configured or default, is asked
+    /// for: 1 is the plain reservation, 2 a send that follows a cut-off.
     pub output_scale: usize,
     pub accounting: TokenAccounting,
 }
@@ -224,6 +224,7 @@ impl BudgetAllocation {
         let output_reserved = capacity
             .configured_output_limit
             .unwrap_or_else(|| default_output_reservation(total))
+            .saturating_mul(capacity.output_scale)
             // A configured limit larger than the window itself would leave no
             // input at all; clamp it rather than underflowing below.
             .min(total / 2);

@@ -253,7 +253,8 @@ fn plan(llm: &dyn LLMPort, request: &GroundedRequest) -> Result<Planned, Grounde
         .map(|item| message_tokens(llm, &item.role, &item.content))
         .sum();
     let mut capacity = ModelCapacity::new(llm.model_name(), llm.max_context_tokens())
-        .with_accounting(TokenAccounting::Estimated);
+        .with_accounting(TokenAccounting::Estimated)
+        .with_output_scale(request.output_scale());
     if request.output_tokens() > 0 {
         capacity = capacity.with_output_limit(request.output_tokens());
     }
