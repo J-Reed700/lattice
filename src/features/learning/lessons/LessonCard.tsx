@@ -11,8 +11,9 @@ import { LessonCheck } from '@/features/learning/lessons/active/LessonCheck';
 import { LessonFromMemory } from '@/features/learning/lessons/active/LessonFromMemory';
 import { LessonWarmUp } from '@/features/learning/lessons/active/LessonWarmUp';
 import { useLessonDraft } from '@/features/learning/lessons/active/useLessonDraft';
+import { CitedSection } from '@/features/learning/lessons/CitedSection';
 import { LessonSectionEditor } from '@/features/learning/lessons/edit/LessonSectionEditor';
-import { LessonEvidencePanel, LessonSectionEvidence, unverifiedCount } from '@/features/learning/lessons/LessonEvidencePanel';
+import { LessonEvidencePanel, unverifiedCount } from '@/features/learning/lessons/LessonEvidencePanel';
 import { preparingLine } from '@/features/learning/lessons/lessonPreparationActivity';
 import { preparationQueue, queuedLesson, queuedLine } from '@/features/learning/lessons/preparationQueue';
 import { claimsCount, claimsNeedYou, statementsNotVerified, teachingNotesForYou } from '@/features/learning/lessons/review/claimReviewCopy';
@@ -21,6 +22,7 @@ import { AuditLessonNow } from '@/features/learning/lessons/review/LessonAudit';
 import { isTeachingWaiting } from '@/features/learning/lessons/review/TeachingFindings';
 import { useLessonClaimReview } from '@/features/learning/lessons/review/useLessonClaimReview';
 import { UnverifiedStatements, unverifiedStatements } from '@/features/learning/lessons/UnverifiedStatements';
+import { useLessonCitationSources } from '@/features/learning/lessons/useLessonCitationSources';
 import { findOutlineCitation } from '@/features/learning/model/evidencePresentation';
 import { PracticeWorkbenchPanel } from '@/features/learning/practice/PracticeWorkbenchPanel';
 import { SourceLine } from '@/features/learning/sources/SourceLine';
@@ -91,6 +93,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
     program.summary.revision,
     lesson.preparation === 'ready',
   );
+  const citationSources = useLessonCitationSources(program.summary.id, evidenceReport.data, showCitations);
   const objectiveCitation = findOutlineCitation(
     outlineEvidence,
     'lesson_objective',
@@ -197,7 +200,8 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
                 open onClose={() => setEditing(null)} onSaved={() => setEditNote('Section saved.')} />}
               <div className="studio-lesson-sections">
                 {lesson.blocks.map((block, index) => {
-                  const prose = (content: string) => <StudyTangentSelection moduleId={moduleId} lessonId={lesson.id} sectionIndex={index} sectionTitle={block.title}><MarkdownViewer content={content} /></StudyTangentSelection>;
+                  const tangent = (viewer: ReactNode) => <StudyTangentSelection moduleId={moduleId} lessonId={lesson.id} sectionIndex={index} sectionTitle={block.title}>{viewer}</StudyTangentSelection>;
+                  const prose = (content: string) => tangent(<MarkdownViewer content={content} />);
                   const check = block.check ?? null;
                   const heldRecap = block.kind === 'recap' && recallFirst && !compared;
                   return <section id={`lesson-${lesson.id}-section-${index}`} key={`${lesson.id}-${index}`} className="studio-lesson-section">
@@ -209,10 +213,9 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
                   {!heldRecap && <div className="-mx-1.5 mt-1"><ListenButton sourceId={`lesson:${lesson.id}:${index}`} markdown={`# ${block.title}\n\n${check ? check.question : block.body}`} subject={`the section “${block.title}”`} className={LISTEN_CLASS} /></div>}
                   {check ? <LessonCheck programId={program.summary.id} lessonId={lesson.id} lessonTitle={lesson.title} section={index} body={block.body} parts={check} sourceIds={block.sourceIds} active={program.summary.status === 'active'} questionView={prose(check.question)} />
                     : heldRecap ? <p className="mt-3 text-sm leading-6 text-text-secondary">These open once you have explained the lesson from memory above, so you can see what you recalled and what you missed. <button type="button" onClick={compare} className="underline underline-offset-2 hover:text-text-primary">Show them now</button></p>
-                    : <div className="studio-lesson-prose">{prose(block.body)}</div>}
+                    : <div className="studio-lesson-prose"><CitedSection lessonId={lesson.id} sectionIndex={index} body={block.body} report={evidenceReport.data} sources={citationSources} showCitations={showCitations} wrap={tangent} /></div>}
                   {block.kind === 'reflection' && recallFirst && <LessonFromMemory lessonId={lesson.id} compared={compared} onCompare={compare} />}
                   <UnverifiedStatements programId={program.summary.id} lessonId={lesson.id} statements={unverifiedStatements(evidenceReport.data, index)} onReview={onReview} />
-                  {showCitations && <LessonSectionEvidence report={evidenceReport} sectionIndex={index} />}
                   {showCitations && evidenceReport.isSuccess && !evidenceReport.data && <SourceLine ids={block.sourceIds} sources={program.sources} />}
                   {block.kind === 'guided_practice' && selected && program.summary.status === 'active' && <div id={`guided-${lesson.id}`}><PracticeWorkbenchPanel key={lesson.id} program={program} lesson={lesson} taskKind="guided" embedded onContinue={onPractice} /></div>}
                   {block.kind === 'independent_practice' && <Button variant="outline" type="button" onClick={onPractice} className="studio-button studio-button-primary mt-5">Work on this assignment <ArrowRight size={15} /></Button>}
