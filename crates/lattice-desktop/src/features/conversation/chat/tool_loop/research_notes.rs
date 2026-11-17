@@ -6,15 +6,13 @@
 //! transcript, so an answer written after condensing cites as one written
 //! before. Done at most twice a turn.
 
+use super::choosing::choosing_call;
 use super::clock::TurnClock;
 use crate::features::conversation::chat::cancellation::cancelled_error;
 use crate::features::conversation::chat::retrieval::{Legend, Passage};
 use crate::features::conversation::chat::turn_record::{TurnRecorder, TurnStepKind};
-use lattice_core::application::ports::llm_port::{
-    CompletionInput, CompletionRequest, ContentPart, SamplingOverride,
-};
+use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest, ContentPart};
 use lattice_core::application::ports::LLMPort;
-use lattice_core::application::services::grounded_generation::CallOptions;
 use lattice_core::application::services::model_contract::ask::{
     ask_each, Alone, Answered, Plain, Says, Settled,
 };
@@ -542,16 +540,7 @@ async fn choose(
         .filter(|source| !source.sentences.is_empty())
         .cloned()
         .collect();
-    let call = CallOptions {
-        priority: request.priority,
-        cancel: request.cancel.clone(),
-        cache_key: request.cache_key.clone(),
-        // Notes are a selection, not a composition: the same results should
-        // condense the same way every time.
-        sampling: Some(SamplingOverride::deterministic()),
-        time_budget: Some(remaining),
-        ..Default::default()
-    };
+    let call = choosing_call(request, remaining);
     let mut scope = Scope::for_question();
     let settled = tokio::select! {
         biased;

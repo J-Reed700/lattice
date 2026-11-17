@@ -3,12 +3,12 @@
 //! own copy of the passage. One request shows every passage; the driver sends
 //! the passages left over again, alone, and splits what the window cannot hold.
 
+use super::super::choosing::choosing_call;
 use super::super::clock::TurnClock;
 use super::Passages;
 use crate::features::conversation::chat::cancellation::cancelled_error;
-use lattice_core::application::ports::llm_port::{CompletionRequest, SamplingOverride};
+use lattice_core::application::ports::llm_port::CompletionRequest;
 use lattice_core::application::ports::LLMPort;
-use lattice_core::application::services::grounded_generation::CallOptions;
 use lattice_core::application::services::model_contract::ask::{
     ask_each, Alone, Answered, Plain, Says, Settled,
 };
@@ -184,16 +184,7 @@ pub(super) async fn read(
         .map(|(label, passage)| Excerpt::of(*label, &passage.document, &passage.text))
         .collect();
     let question = Told(question.to_owned());
-    let call = CallOptions {
-        priority: request.priority,
-        cancel: request.cancel.clone(),
-        cache_key: request.cache_key.clone(),
-        sampling: Some(SamplingOverride::deterministic()),
-        time_budget: Some(remaining),
-        // Thinking did not help Claude read the passages and took two to three times as long.
-        reasoning_effort: Some("none".into()),
-        ..Default::default()
-    };
+    let call = choosing_call(request, remaining);
     let mut scope = Scope::for_question();
     let settled = tokio::select! {
         biased;
