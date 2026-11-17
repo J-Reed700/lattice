@@ -1,15 +1,17 @@
 //! The private report owns its public projection. No assessment text is copied
 //! into a learner DTO; malformed data is unavailable, never a checked claim.
+use super::cited_text::{number, Numbered};
 use super::claim_ledger::stands_in_part;
 use super::provenance_gate::FindingTrust;
 use super::resolution::{ended_mark, standing, Placed, Resolution, Standing};
-use super::{ClaimVerdict, Finding, LessonVerificationReport};
+use super::{ClaimVerdict, EvidencePassage, Finding, LessonVerificationReport};
 use crate::{
     dto::{LearningLessonDto, LearningSourceTrustDto, LearningSufficiencyDto},
     lesson_evidence::{
-        LearningClaimEvidenceDto, LearningClaimPartDto, LearningClaimPartKindDto,
-        LearningClaimResolutionDto, LearningEvidencePassageDto, LearningLessonEvidenceDto,
-        LearningStatementClassDto, SavedEvidenceVersion, UnverifiedReasonDto,
+        LearningCitationDto, LearningClaimEvidenceDto, LearningClaimPartDto,
+        LearningClaimPartKindDto, LearningClaimResolutionDto, LearningEvidencePassageDto,
+        LearningLessonEvidenceDto, LearningSectionTextDto, LearningStatementClassDto,
+        SavedEvidenceVersion, UnverifiedReasonDto,
     },
     references::trust::dto_map,
 };
@@ -69,13 +71,47 @@ fn sufficiency(trust: &FindingTrust) -> LearningSufficiencyDto {
 
 /// The class the learner is told of; a statement about the lesson itself, which
 /// the model sorted Internal and the veto passed, is told none.
-fn statement_class(class: Class) -> Option<LearningStatementClassDto> {
+pub(super) fn statement_class(class: Class) -> Option<LearningStatementClassDto> {
     match class {
         Class::Sourced => Some(LearningStatementClassDto::Sourced),
         Class::Reasoning => Some(LearningStatementClassDto::Reasoning),
         Class::Common => Some(LearningStatementClassDto::Common),
         Class::Internal => None,
     }
+}
+
+/// The DTO of `passage` as its saved version names it; a passage that is not
+/// a run and whose version is not saved is unavailable.
+fn passage_dto(
+    passage: &EvidencePassage,
+    by_id: &HashMap<&str, &SavedEvidenceVersion>,
+    trust: Option<LearningSourceTrustDto>,
+) -> Result<LearningEvidencePassageDto> {
+    let version = by_id.get(passage.source_id.as_str());
+    if version.is_none() && !passage.is_run() {
+        return Err(unavailable());
+    }
+    if passage.text.is_empty() || passage.end_byte < passage.start_byte {
+        return Err(unavailable());
+    }
+    Ok(LearningEvidencePassageDto {
+        source_version_id: passage.source_id.clone(),
+        title: version.map_or_else(
+            || "Executed example".into(),
+            |version| version.title.clone(),
+        ),
+        url: version.and_then(|version| {
+            version
+                .resolved_url
+                .clone()
+                .or_else(|| version.requested_url.clone())
+        }),
+        text: passage.text.clone(),
+        start_byte: passage.start_byte,
+        end_byte: passage.end_byte,
+        retrieval_kind: passage.retrieval_kind.clone(),
+        trust,
+    })
 }
 
 fn part_kind(kind: PartKind) -> LearningClaimPartKindDto {
@@ -248,41 +284,50 @@ impl LessonVerificationReport {
         let unverified = unverified_sentences(
             claims().map(|finding| (finding, resolved(finding, states, &finding_claims).0)),
         );
-        let teaching_claims = claims()
+        let teaching: Vec<&Finding> = claims()
             .filter(|finding| finding.unit < lesson.blocks.len())
-            .map(|finding| {
+            .collect();
+        let bodies: Vec<&str> = lesson
+            .blocks
+            .iter()
+            .map(|block| block.body.as_str())
+            .collect();
+        let Numbered {
+            passages: numbered,
+            cites,
+            sections,
+        } = number(&bodies, &teaching);
+        let citations = numbered
+            .iter()
+            .enumerate()
+            .map(|(index, passage)| {
+                Ok(LearningCitationDto {
+                    number: u32::try_from(index + 1).unwrap_or(u32::MAX),
+                    source_id: by_id
+                        .get(passage.source_id.as_str())
+                        .filter(|_| !passage.is_run())
+                        .map(|version| version.source_id.clone()),
+                    passage: passage_dto(passage, &by_id, None)?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let teaching_claims = teaching
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, finding)| {
                 let passages = finding
                     .evidence
                     .iter()
                     .map(|passage| {
-                        let version = by_id.get(passage.source_id.as_str());
-                        if version.is_none() && !passage.is_run() {
-                            return Err(unavailable());
-                        }
-                        if passage.text.is_empty() || passage.end_byte < passage.start_byte {
-                            return Err(unavailable());
-                        }
-                        Ok(LearningEvidencePassageDto {
-                            source_version_id: passage.source_id.clone(),
-                            title: version.map_or_else(
-                                || "Executed example".into(),
-                                |version| version.title.clone(),
-                            ),
-                            url: version.and_then(|version| {
-                                version
-                                    .resolved_url
-                                    .clone()
-                                    .or_else(|| version.requested_url.clone())
-                            }),
-                            text: passage.text.clone(),
-                            start_byte: passage.start_byte,
-                            end_byte: passage.end_byte,
-                            retrieval_kind: passage.retrieval_kind.clone(),
-                            trust: finding
+                        passage_dto(
+                            passage,
+                            &by_id,
+                            finding
                                 .trust
                                 .as_deref()
                                 .and_then(|trust| passage_trust(trust, &passage.source_id)),
-                        })
+                        )
                     })
                     .collect::<Result<Vec<_>>>()?;
                 let ledger_state = finding
@@ -325,6 +370,7 @@ impl LessonVerificationReport {
                     note,
                     unverified_reason,
                     claim_id: finding.claim_id.clone(),
+                    cites: cites.get(index).cloned().unwrap_or_default(),
                     sufficiency: finding.trust.as_deref().map(sufficiency),
                     class: finding
                         .class
@@ -360,6 +406,15 @@ impl LessonVerificationReport {
             unexecuted_languages: self.unexecuted_languages.clone(),
             sources_current,
             teaching_claims,
+            citations,
+            sections: sections
+                .into_iter()
+                .enumerate()
+                .map(|(section_index, pieces)| LearningSectionTextDto {
+                    section_index,
+                    pieces,
+                })
+                .collect(),
         })
     }
 }

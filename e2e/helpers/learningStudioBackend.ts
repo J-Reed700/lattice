@@ -1271,7 +1271,8 @@ export async function installLearningStudioBackend(page: Page) {
           claim: "A careful comparison records the chosen measure and observation period.", verdict: "supported",
           reason: "The saved reference supports this teaching claim.", supportingQuote: source.excerpt,
           passages: [{ sourceVersionId: source.id, title: source.title, url: source.url, text: source.excerpt,
-            startByte: 0, endByte: source.excerpt.length, retrievalKind: "hybrid" }], resolution: "verified", note: null }],
+            startByte: 0, endByte: source.excerpt.length, retrievalKind: "hybrid" }], resolution: "verified", note: null, cites: [] }],
+        citations: [], sections: [],
       }),
       get_learning_memory: () => copyMemory(),
       get_learning_practice_workspace: (args) => {

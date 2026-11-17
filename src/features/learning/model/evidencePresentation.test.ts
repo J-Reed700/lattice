@@ -9,7 +9,7 @@ const passage = (version: string, startByte = 0): LearningEvidencePassageDto => 
 });
 const claim = (sectionIndex: number, passages: LearningEvidencePassageDto[]): LearningClaimEvidenceDto => ({
   sectionIndex, passages, claim: 'Claim', contentQuote: 'Lesson text', verdict: 'supported', reason: 'Reason', supportingQuote: null,
-  resolution: 'verified', note: null, sufficiency: null,
+  resolution: 'verified', note: null, sufficiency: null, cites: [],
 });
 
 describe('lesson passage numbering', () => {
