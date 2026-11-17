@@ -367,7 +367,7 @@ fn compared_only_passages_are_numbered_after_every_cited_one_and_get_no_chip() {
 }
 
 #[test]
-fn a_statement_whose_quote_is_only_in_the_title_is_numbered_after_the_placed_ones_of_its_block() {
+fn a_statement_without_a_chip_is_numbered_after_every_placed_one_in_the_lesson() {
     let findings = vec![
         finding(0, "Title text.", None, vec![passage("t", 0, "pt")]),
         finding(0, "Body sentence.", None, vec![passage("b", 0, "pb")]),
@@ -375,13 +375,26 @@ fn a_statement_whose_quote_is_only_in_the_title_is_numbered_after_the_placed_one
     ];
     let numbered = numbering(&["Body sentence. More.", "Later."], &findings);
 
-    assert_eq!(ids(&numbered), vec![("b", 0), ("t", 0), ("l", 0)]);
-    assert_eq!(numbered.cites, vec![vec![2], vec![1], vec![3]]);
+    assert_eq!(ids(&numbered), vec![("b", 0), ("l", 0), ("t", 0)]);
+    assert_eq!(numbered.cites, vec![vec![3], vec![1], vec![2]]);
     assert_eq!(
         numbered.sections[0],
         vec![text("Body sentence."), cite(1), text(" More.")]
     );
-    assert_eq!(numbered.sections[1], vec![text("Later."), cite(3)]);
+    assert_eq!(numbered.sections[1], vec![text("Later."), cite(2)]);
+}
+
+#[test]
+fn a_quote_first_found_inside_a_fence_is_placed_at_its_copy_in_prose() {
+    let body = "```text
+Rust has ownership.
+```
+Rust has ownership. Next.";
+    let quote = "Rust has ownership.";
+    assert_eq!(
+        citation_point(body, quote),
+        Some(body.rfind(quote).unwrap() + quote.len())
+    );
 }
 
 #[test]
