@@ -603,14 +603,13 @@ fn tokens_of(line: &str) -> Vec<(usize, &str)> {
 
 /// Whether what stands between token `at` and the next one is a range sign.
 fn range_follows(line: &str, tokens: &[(usize, &str)], at: usize) -> bool {
-    let Some(&(next, _)) = tokens.get(at + 1) else {
+    let (Some(&(start, token)), Some(&(next, _))) = (tokens.get(at), tokens.get(at + 1)) else {
         return false;
     };
-    let (start, token) = tokens[at];
-    let between: String = line[start + token.len()..next]
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect();
+    let Some(between) = line.get(start + token.len()..next) else {
+        return false;
+    };
+    let between: String = between.chars().filter(|c| !c.is_whitespace()).collect();
     RANGE_SEPARATORS.contains(&between.as_str())
 }
 
@@ -732,8 +731,7 @@ impl<K: Kind, C: Kind> KeepsReader<'_, '_, K, C> {
             self.open.take()
         };
         let mut at = 0;
-        while at < words.len() {
-            let word = words[at].as_str();
+        while let Some(word) = words.get(at).map(String::as_str) {
             let next = words.get(at + 1).map(String::as_str);
             let ranged = range_follows(line, &tokens, at);
             match prefix_of(word) {
