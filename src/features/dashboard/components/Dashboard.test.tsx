@@ -240,7 +240,7 @@ describe('Dashboard', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
-  it('opens a local document in the reader only when the app renders it', async () => {
+  it('opens a local document in the reader, at its own path, only when the app renders it', async () => {
     const user = userEvent.setup();
     vi.mocked(openDocumentFile)
       .mockResolvedValueOnce({ ok: true, data: { action: 'opened_external' } } as never)
@@ -258,7 +258,8 @@ describe('Dashboard', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /\/library\/notes\.docx/ }));
-    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Reader' })).toHaveTextContent('/cache/notes.html'));
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Reader' })).toHaveTextContent('/library/notes.docx'));
+    expect(screen.getByRole('dialog', { name: 'Reader' })).not.toHaveTextContent('/cache/notes.html');
 
     // A row with no id at all has nothing to open.
     await user.click(screen.getByRole('button', { name: /^Untitled/ }));
