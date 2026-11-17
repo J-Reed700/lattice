@@ -157,7 +157,7 @@ export function useCitationInteractions({
 
     const codeRef =
       codeRefs && event.target instanceof Element ? event.target.closest<HTMLElement>('[data-code-ref]') : null;
-    if (codeRef) {
+    if (codeRefs && codeRef) {
       const path = codeRef.dataset.codeRef;
       if (!path) return;
       // A chip may sit inside a link whose address is the file; never follow it.

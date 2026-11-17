@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Message } from '@/features/chat/components/Message';
 import { setFolderThreadHost } from '@/features/chat/model/folderThreadHost';
-import { useReaderStore } from '@/features/reading/stores/readerStore';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
+import { useReaderStore } from '@/features/reading/stores/readerStore';
 import { render } from '@/tests/renderWithQueryClient';
 import { reply } from '@/tests/replyFixtures';
 import type { MessageVerificationSummary, SourceWithMetadata } from '@/types/conversation';

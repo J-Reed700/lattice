@@ -2,8 +2,8 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ReaderPane } from '@/features/reading/components/ReaderPane';
-import { READER_DEFAULT_WIDTH, READER_MIN_WIDTH, useReaderStore } from '@/features/reading/stores/readerStore';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
+import { READER_DEFAULT_WIDTH, READER_MIN_WIDTH, useReaderStore } from '@/features/reading/stores/readerStore';
 import type { SourceWithMetadata } from '@/types/conversation';
 
 const h = vi.hoisted(() => ({ rememberLocation: vi.fn() }));
