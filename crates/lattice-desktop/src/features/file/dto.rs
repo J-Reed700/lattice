@@ -4,6 +4,7 @@
 //!
 //! These DTOs represent file metadata and content across application boundaries.
 
+use lattice_core::domain::ports::article_archive::SavedArticle;
 use serde::{Deserialize, Serialize};
 
 /// File metadata representation.
@@ -163,6 +164,16 @@ impl OpenFileResponseDto {
             content_path: html_path,
             title: Some(title),
         }
+    }
+
+    /// Create response for a saved web article, which the app always renders
+    /// itself: its saved page when it has one, else its text.
+    pub fn saved_article(article: SavedArticle) -> Self {
+        let content = article.page.unwrap_or(article.text);
+        Self::render_internal(
+            content.to_string_lossy().to_string(),
+            article.title.unwrap_or_else(|| "Web Article".to_string()),
+        )
     }
 
     /// Create response for external opening.

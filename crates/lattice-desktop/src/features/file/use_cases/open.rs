@@ -73,12 +73,7 @@ impl OpenFileUseCase {
         }
 
         if let Some(article) = self.archive.saved_article(&validated_path).await {
-            if let Some(page) = article.page {
-                return Ok(OpenFileResponseDto::render_internal(
-                    page.to_string_lossy().to_string(),
-                    article.title.unwrap_or_else(|| "Web Article".to_string()),
-                ));
-            }
+            return Ok(OpenFileResponseDto::saved_article(article));
         }
 
         self.file_system.open_file(&validated_path).await?;
