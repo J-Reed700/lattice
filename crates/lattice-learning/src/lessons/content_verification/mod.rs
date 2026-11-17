@@ -25,6 +25,7 @@ use std::collections::{HashMap, HashSet};
 mod right_choice;
 pub(crate) use right_choice::clear_right_choice_reasons;
 mod citations;
+mod cited_text;
 mod claim_ledger;
 mod claim_sentences;
 pub(crate) use citations::names_a_source;

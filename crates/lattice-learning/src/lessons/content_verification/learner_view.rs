@@ -659,6 +659,90 @@ mod tests {
     }
 
     #[test]
+    fn a_lesson_reads_with_numbered_citations_its_statements_stand_on() {
+        use lattice_core::application::contracts::replies::{ReplyPieceDto, ReplyReferenceDto};
+
+        let (mut lesson, mut report) = fixture();
+        lesson.blocks[0].body = "Quillet reads source text. It then emits tokens.".into();
+        let source = |kind: &str, id: &str| EvidencePassage {
+            source_id: id.into(),
+            text: "Quillet reads source text.".into(),
+            start_byte: 0,
+            end_byte: 26,
+            retrieval_kind: kind.into(),
+            score: 1.0,
+        };
+        let cited = source(PassageKind::Cited.label(), "version-1");
+        report.findings[0].quote = "Quillet reads source text.".into();
+        report.findings[0].evidence = vec![cited.clone()];
+        report.findings[0].class = Some(Classed {
+            class: Class::Sourced,
+            by: ClassifiedBy::Writer,
+        });
+        report.findings[0].two_pass.parts = vec![CheckedPart {
+            part: "Quillet reads source text".into(),
+            kind: PartKind::Stated,
+            source_id: Some("version-1".into()),
+        }];
+        let mut second = report.findings[0].clone();
+        second.quote = "It then emits tokens.".into();
+        second.class = Some(Classed {
+            class: Class::Reasoning,
+            by: ClassifiedBy::Model,
+        });
+        second.two_pass.parts.clear();
+        second.evidence = vec![source(PassageKind::Run.label(), "run-1"), cited];
+        report.findings.push(second);
+        let versions = [SavedEvidenceVersion {
+            id: "version-1".into(),
+            source_id: "source-1".into(),
+            title: "The Quillet Guide".into(),
+            resolved_url: None,
+            requested_url: Some("https://example.com/quillet".into()),
+            content_sha256: "x".into(),
+            active_version_id: Some("version-1".into()),
+            deleted_at: None,
+        }];
+
+        let view = report
+            .learner_view(&lesson, &versions, &ClaimStates::default())
+            .unwrap();
+
+        assert_eq!(view.citations.len(), 2);
+        assert_eq!(view.citations[0].number, 1);
+        assert_eq!(view.citations[0].source_id.as_deref(), Some("source-1"));
+        assert_eq!(view.citations[0].passage.title, "The Quillet Guide");
+        assert_eq!(view.citations[0].passage.source_version_id, "version-1");
+        assert!(view.citations[0].passage.trust.is_none());
+        assert_eq!(view.citations[1].number, 2);
+        assert_eq!(view.citations[1].source_id, None);
+        assert_eq!(view.citations[1].passage.title, "Executed example");
+        assert_eq!(view.teaching_claims[0].cites, vec![1]);
+        assert_eq!(view.teaching_claims[1].cites, vec![1]);
+        let mark = ReplyPieceDto::Reference {
+            reference: ReplyReferenceDto {
+                written: "[1]".into(),
+                kind: "source".into(),
+                number: 1,
+                lines: None,
+                name: None,
+            },
+        };
+        let text = |text: &str| ReplyPieceDto::Text { text: text.into() };
+        assert_eq!(view.sections.len(), 1);
+        assert_eq!(view.sections[0].section_index, 0);
+        assert_eq!(
+            view.sections[0].pieces,
+            vec![
+                text("Quillet reads source text."),
+                mark.clone(),
+                text(" It then emits tokens."),
+                mark,
+            ]
+        );
+    }
+
+    #[test]
     fn malformed_findings_cannot_become_section_zero_or_an_unknown_verdict() {
         let (_, report) = fixture();
         let mut raw = serde_json::to_value(&report).unwrap();
