@@ -3,7 +3,9 @@ use lattice_core::application::contracts::web::CleanArticle;
 
 #[test]
 fn owns_refuses_a_backslash_separated_parent_on_every_platform() {
-    let base = PathBuf::from("/web-archive");
+    let temp = tempfile::tempdir().expect("temp dir");
+    let base = temp.path().join("web-archive");
+    std::fs::create_dir_all(&base).expect("archive directory");
     let service = WebArchiveService::with_base_dir(base.clone());
     assert!(!service.owns(&base.join("a\\..\\..\\x")));
 }
@@ -11,7 +13,9 @@ fn owns_refuses_a_backslash_separated_parent_on_every_platform() {
 #[cfg(windows)]
 #[test]
 fn owns_refuses_a_dots_only_segment_on_windows() {
-    let base = PathBuf::from("/web-archive");
+    let temp = tempfile::tempdir().expect("temp dir");
+    let base = temp.path().join("web-archive");
+    std::fs::create_dir_all(&base).expect("archive directory");
     let service = WebArchiveService::with_base_dir(base.clone());
     assert!(!service.owns(&base.join("...").join("x")));
 }
@@ -174,7 +178,9 @@ async fn an_article_laid_out_in_the_archive_gives_its_text_page_title_url_and_li
 #[tokio::test]
 async fn the_same_three_files_outside_the_archive_give_no_article() {
     let temp = tempfile::tempdir().expect("temp dir");
-    let service = WebArchiveService::with_base_dir(temp.path().join("web-archive"));
+    let base = temp.path().join("web-archive");
+    std::fs::create_dir_all(&base).expect("archive directory");
+    let service = WebArchiveService::with_base_dir(base);
     let text = lay_out_article(&temp.path().join("elsewhere"), Some(FULL_METADATA), true);
 
     assert_eq!(service.saved_article(&text).await, None);
@@ -227,6 +233,7 @@ async fn an_unparsable_metadata_file_still_gives_the_article_without_a_title() {
 async fn a_path_that_climbs_out_of_the_archive_with_parent_segments_gives_no_article() {
     let temp = tempfile::tempdir().expect("temp dir");
     let base = temp.path().join("web-archive");
+    std::fs::create_dir_all(&base).expect("archive directory");
     let service = WebArchiveService::with_base_dir(base.clone());
     lay_out_article(&temp.path().join("outside"), Some(FULL_METADATA), true);
     let climbing = base

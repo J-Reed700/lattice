@@ -40,7 +40,7 @@ use lattice_core::application::ports::content_addressed_storage_port::{
     ImportedBlob, RetainReason,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::path_safety::reject_parent_components;
+use lattice_core::shared::fs::confinement::confine_to_root;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -318,9 +318,7 @@ impl ContentAddressedStoragePort for ContentAddressedStorage {
     }
 
     fn owns(&self, path: &Path) -> bool {
-        // `starts_with` compares components, but `root/../../etc` also starts
-        // with `root`. A path that climbs out is not ours, whatever it prefixes.
-        reject_parent_components(path).is_ok() && path.starts_with(&self.library_root)
+        confine_to_root(&self.library_root, path).is_ok()
     }
 
     async fn list_hashes(&self) -> Result<Vec<String>> {
@@ -558,6 +556,7 @@ mod tests {
     async fn owns_only_paths_inside_the_library_root() {
         let temp_dir = TempDir::new().unwrap();
         let library_root = temp_dir.path().join("library");
+        std::fs::create_dir_all(&library_root).unwrap();
         let storage = ContentAddressedStorage::with_root(library_root.clone());
 
         assert!(storage.owns(&library_root.join("a".repeat(64)).join("paper.pdf")));
@@ -598,6 +597,7 @@ mod tests {
     async fn owns_refuses_a_backslash_separated_parent_on_every_platform() {
         let temp_dir = TempDir::new().unwrap();
         let library_root = temp_dir.path().join("library");
+        std::fs::create_dir_all(&library_root).unwrap();
         let storage = ContentAddressedStorage::with_root(library_root.clone());
         assert!(!storage.owns(&library_root.join("a\\..\\..\\x")));
     }
@@ -607,6 +607,7 @@ mod tests {
     async fn owns_refuses_a_dots_only_segment_on_windows() {
         let temp_dir = TempDir::new().unwrap();
         let library_root = temp_dir.path().join("library");
+        std::fs::create_dir_all(&library_root).unwrap();
         let storage = ContentAddressedStorage::with_root(library_root.clone());
         assert!(!storage.owns(&library_root.join("...").join("x")));
     }

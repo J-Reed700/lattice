@@ -11,7 +11,7 @@ use tokio::fs;
 
 use lattice_core::domain::ports::article_archive::{ArticleArchive, SavedArticle};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::path_safety::reject_parent_components;
+use lattice_core::shared::fs::confinement::confine_to_root;
 
 mod content;
 mod naming;
@@ -46,18 +46,6 @@ pub struct ArticleMetadata {
     /// Outgoing links captured from the article HTML
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub links: Vec<String>,
-}
-
-/// True when `base_dir` holds `path`, comparing both as the file system
-/// spells them; false when either does not resolve.
-pub(crate) async fn base_dir_holds(base_dir: &Path, path: &Path) -> bool {
-    match (
-        fs::canonicalize(base_dir).await,
-        fs::canonicalize(path).await,
-    ) {
-        (Ok(base), Ok(path)) => path.starts_with(base),
-        _ => false,
-    }
 }
 
 async fn is_file(path: &Path) -> bool {
@@ -292,14 +280,11 @@ impl ArticleArchive for WebArchiveService {
     }
 
     fn owns(&self, path: &Path) -> bool {
-        // Component-wise, and never through a `..` that climbs back out.
-        reject_parent_components(path).is_ok() && path.starts_with(&self.base_dir)
+        confine_to_root(&self.base_dir, path).is_ok()
     }
 
     async fn saved_article(&self, path: &Path) -> Option<SavedArticle> {
-        if path.file_name() != Some(std::ffi::OsStr::new("article.md"))
-            || !base_dir_holds(&self.base_dir, path).await
-        {
+        if path.file_name() != Some(std::ffi::OsStr::new("article.md")) || !self.owns(path) {
             return None;
         }
         if !is_file(path).await {
