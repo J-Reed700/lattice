@@ -36,7 +36,7 @@ const report: LearningLessonEvidenceDto = {
     sectionIndex: 0, contentQuote: BOILING, claim: BOILING, verdict: 'supported', reason: 'Checked.', supportingQuote: null,
     passages: [], resolution: 'verified', note: null, sufficiency: null, class: 'sourced', label: null, parts: [], unverifiedReason: null, cites: [1],
   }],
-  citations: [{ number: 1, sourceId: 'source-1', passage: { sourceVersionId: 'version-1', title: 'Steam tables', url: null, text: 'Boiling happens at equal pressures.', startByte: 0, endByte: 35, retrievalKind: 'hybrid', trust: null } }],
+  citations: [{ number: 1, sourceId: 'source-1', passage: { sourceVersionId: 'version-1', title: 'Steam tables', url: 'https://example.org/steam-tables', text: 'Boiling happens at equal pressures.', startByte: 0, endByte: 35, retrievalKind: 'hybrid', trust: null } }],
   sections: [
     { sectionIndex: 0, pieces: [said(BOILING), cites(1)] },
     { sectionIndex: 1, pieces: [said('- Pressure sets the boiling point.')] },

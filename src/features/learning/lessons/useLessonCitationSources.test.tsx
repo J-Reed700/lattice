@@ -54,33 +54,32 @@ describe('the sources behind a lesson’s citations', () => {
     expect(result.current[1]?.content).toBe('Passage 2');
   });
 
-  it('makes a cited version’s full text the source’s content, and the web snapshot’s text for a web passage', async () => {
+  it('gives a web passage its saved page to read, and keeps the passage as its content', async () => {
     const { result } = render(cited);
-    await waitFor(() => expect(result.current[0]?.content).toBe(FULL_TEXT['guide-v1']));
-    expect(result.current[0]?.webSnapshot?.text).toBe(FULL_TEXT['guide-v1']);
+    await waitFor(() => expect(result.current[0]?.webSnapshot?.text).toBe(FULL_TEXT['guide-v1']));
+    expect(result.current[0]?.content).toBe('Passage 1');
     expect(result.current[0]?.excerpt).toBe('Passage 1');
-    await waitFor(() => expect(result.current[1]?.content).toBe(FULL_TEXT['notes-v1']));
-    expect(result.current[1]?.webSnapshot).toBeUndefined();
     // Two passages of one saved version read the same page.
-    expect(result.current[3]?.content).toBe(FULL_TEXT['guide-v1']);
-    expect(result.current[3]?.excerpt).toBe('Passage 4');
+    expect(result.current[3]?.webSnapshot?.text).toBe(FULL_TEXT['guide-v1']);
+    expect(result.current[3]?.content).toBe('Passage 4');
+    expect(result.current[1]?.content).toBe('Passage 2');
+    expect(result.current[1]?.webSnapshot).toBeUndefined();
   });
 
-  it('fetches each saved version once, and never an executed example', async () => {
+  it('fetches each saved web page once, and never a passage without a page or an executed example', async () => {
     const { result } = render(cited);
-    await waitFor(() => expect(result.current[1]?.content).toBe(FULL_TEXT['notes-v1']));
-    expect(mocks.version).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(result.current[0]?.webSnapshot?.text).toBe(FULL_TEXT['guide-v1']));
+    expect(mocks.version).toHaveBeenCalledTimes(1);
     expect(mocks.version).toHaveBeenCalledWith({ programId: 'course-1', sourceId: 'guide', versionId: 'guide-v1' });
-    expect(mocks.version).toHaveBeenCalledWith({ programId: 'course-1', sourceId: 'notes', versionId: 'notes-v1' });
     expect(result.current[2]?.content).toBe('Passage 3');
   });
 
   it('keeps the passage for a version whose text could not be read', async () => {
     mocks.version.mockResolvedValue({ ok: false, error: 'The saved text is unavailable.' });
     const { result } = render(cited);
-    await waitFor(() => expect(mocks.version).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mocks.version).toHaveBeenCalledTimes(1));
+    expect(result.current[0]?.webSnapshot?.text).toBe('Passage 1');
     expect(result.current[0]?.content).toBe('Passage 1');
-    expect(result.current[1]?.content).toBe('Passage 2');
   });
 
   it('reads nothing while it is not enabled, and has no sources without a report', async () => {
