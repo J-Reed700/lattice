@@ -350,3 +350,38 @@ fn only_an_article_text_inside_the_archive_is_a_saved_article() {
     assert!(!service.is_saved_article(&base.join("some-article").join("page.html")));
     assert!(!service.is_saved_article(&outside.path().join("some-article").join("article.md")));
 }
+
+#[cfg(windows)]
+fn link_dir(target: &Path, link: &Path) {
+    let status = std::process::Command::new("cmd")
+        .arg("/C")
+        .arg("mklink")
+        .arg("/J")
+        .arg(link)
+        .arg(target)
+        .status()
+        .expect("cmd runs");
+    assert!(status.success(), "mklink made the junction");
+}
+
+#[cfg(unix)]
+fn link_dir(target: &Path, link: &Path) {
+    std::os::unix::fs::symlink(target, link).expect("symlink");
+}
+
+#[test]
+fn owns_an_article_reached_through_a_linked_folder() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let real = temp.path().join("real");
+    std::fs::create_dir_all(real.join("web-archive")).expect("archive folder");
+    let link = temp.path().join("link");
+    link_dir(&real, &link);
+    let service = WebArchiveService::with_base_dir(real.join("web-archive"));
+    let article = link
+        .join("web-archive")
+        .join("some-article")
+        .join("article.md");
+
+    assert!(service.owns(&article));
+    assert!(service.is_saved_article(&article));
+}
