@@ -4,7 +4,7 @@ use lattice_core::domain::entities::document::{
     Category, DocumentStatus, Language, StoredDocument,
 };
 use lattice_core::domain::entities::Document;
-use lattice_core::domain::ports::article_archive::ArticleArchive;
+use lattice_core::domain::ports::article_archive::{ArticleArchive, SavedArticle};
 use lattice_core::domain::value_objects::checksum::Checksum;
 use lattice_core::shared::types::{DocumentId, ValidatedFilePath};
 use std::path::{Path, PathBuf};
@@ -19,6 +19,10 @@ impl ArticleArchive for ArchiveAt {
 
     fn owns(&self, path: &Path) -> bool {
         path.starts_with(&self.0)
+    }
+
+    async fn saved_article(&self, _path: &Path) -> Option<SavedArticle> {
+        None
     }
 }
 

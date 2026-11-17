@@ -28,7 +28,7 @@ impl GetCorpusShapeUseCase {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use lattice_core::domain::ports::article_archive::ArticleArchive;
+    use lattice_core::domain::ports::article_archive::{ArticleArchive, SavedArticle};
     use std::path::Path;
 
     struct NoArchive;
@@ -41,6 +41,10 @@ mod tests {
 
         fn owns(&self, _path: &Path) -> bool {
             false
+        }
+
+        async fn saved_article(&self, _path: &Path) -> Option<SavedArticle> {
+            None
         }
     }
 

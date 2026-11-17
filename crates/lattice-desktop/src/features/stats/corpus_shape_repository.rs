@@ -130,7 +130,7 @@ impl CorpusShapeRepositoryPort for SqliteCorpusShapeRepository {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use lattice_core::domain::ports::article_archive::ArticleArchive;
+    use lattice_core::domain::ports::article_archive::{ArticleArchive, SavedArticle};
     use sqlx::SqlitePool;
     use std::path::Path;
     use std::path::PathBuf;
@@ -145,6 +145,10 @@ mod tests {
 
         fn owns(&self, path: &Path) -> bool {
             path.starts_with(&self.0)
+        }
+
+        async fn saved_article(&self, _path: &Path) -> Option<SavedArticle> {
+            None
         }
     }
 
