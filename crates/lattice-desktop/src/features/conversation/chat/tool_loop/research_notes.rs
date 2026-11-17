@@ -601,8 +601,8 @@ type ShownResult = (String, String, Vec<(String, String)>);
 
 /// An answer for the results the prompt shows, as lines: one for each result
 /// whose heading `answered` takes and that keeps a sentence `keep` takes. A
-/// result `answered` does not take gets a line naming a sentence that does not
-/// exist, which the reading cannot place; `none` when no result has a line.
+/// result `answered` does not take gets a line naming a sentence one past its
+/// last, which the reading cannot place; `none` when no result has a line.
 #[cfg(test)]
 pub(super) fn scripted_answer(
     prompt: &str,
@@ -626,7 +626,7 @@ pub(super) fn scripted_answer(
         .iter()
         .filter_map(|(handle, heading, sentences)| {
             if !answered(heading) {
-                return Some(format!("{handle}: u0"));
+                return Some(format!("{handle}: u{}", sentences.len() + 1));
             }
             let kept: Vec<&str> = sentences
                 .iter()

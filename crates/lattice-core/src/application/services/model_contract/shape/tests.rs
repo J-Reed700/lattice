@@ -1818,6 +1818,9 @@ fn lead_reads_verdict_text_and_pointer() {
 
         let read = via_lead("yes\nwords\n[s1]", Ended::Complete, showing);
         assert!(matches!(read, Settled::Answered(led) if led.pointer.is_some()));
+
+        let read = via_lead("yes\nwords\nNone.", Ended::Complete, showing);
+        assert!(matches!(read, Settled::Answered(led) if led.pointer.is_none()));
     });
 }
 
@@ -1918,7 +1921,7 @@ fn the_word_none_says_every_item_keeps_nothing() {
         }
         assert_eq!(
             kept(&via_keeps("s1: o1\nnone", Ended::Complete, showing)),
-            vec![handles(&["o1"]), Err(Why::NotRead), Err(Why::NotRead)]
+            vec![handles(&["o1"]), handles(&[]), handles(&[])]
         );
         assert_eq!(
             kept(&via_keeps("none", Ended::CutOff, showing)),
@@ -1973,7 +1976,7 @@ fn a_cut_off_answer_drops_its_last_line_and_leaves_the_rest_cut_off() {
 #[test]
 fn an_own_handle_that_does_not_resolve_leaves_only_its_item_unplaced() {
     with_showing(3, 2, |showing| {
-        for line in ["s1: o9", "s1: o1 o9", "s1: o1 words", "s1: s2"] {
+        for line in ["s1: o9", "s1: o1 o9"] {
             let text = format!("{line}\ns2: o1");
             let read = via_keeps(&text, Ended::Complete, showing);
             assert_eq!(
@@ -2001,21 +2004,93 @@ fn an_item_handle_that_is_not_shown_leaves_the_unnamed_items_unplaced() {
 }
 
 #[test]
-fn a_line_of_prose_leaves_the_unnamed_items_not_read() {
-    with_showing(3, 2, |showing| {
-        for line in [
-            "Here is my answer.",
-            "Passage two bears on it, see s2 and o1.",
-            ":",
-        ] {
-            let text = format!("s1: o1\n{line}");
-            let read = via_keeps(&text, Ended::Complete, showing);
+fn words_that_are_not_handles_are_passed_over() {
+    with_showing(3, 3, |showing| {
+        let read = via_keeps("Here is my answer:\ns1: o1", Ended::Complete, showing);
+        assert_eq!(
+            kept(&read),
+            vec![handles(&["o1"]), handles(&[]), handles(&[])]
+        );
+        let read = via_keeps("- s1: o1\n* s2: o2\n1. s3: o3", Ended::Complete, showing);
+        assert_eq!(
+            kept(&read),
+            vec![handles(&["o1"]), handles(&["o2"]), handles(&["o3"])]
+        );
+        let read = via_keeps("**s1**: `o1`", Ended::Complete, showing);
+        assert_eq!(
+            kept(&read),
+            vec![handles(&["o1"]), handles(&[]), handles(&[])]
+        );
+    });
+}
+
+#[test]
+fn items_on_one_line_each_keep_their_own() {
+    with_showing(3, 3, |showing| {
+        for text in ["s1: o1 o2; s2: o3", "s1: o1, o2, s2: o3"] {
+            let read = via_keeps(text, Ended::Complete, showing);
             assert_eq!(
                 kept(&read),
-                vec![handles(&["o1"]), Err(Why::NotRead), Err(Why::NotRead)],
+                vec![handles(&["o1", "o2"]), handles(&["o3"]), handles(&[])],
                 "{text:?}"
             );
         }
+    });
+}
+
+#[test]
+fn handles_are_read_whatever_punctuation_surrounds_them() {
+    with_showing(3, 3, |showing| {
+        let read = via_keeps("s1:o1,o2.\n[s2]: [o3].", Ended::Complete, showing);
+        assert_eq!(
+            kept(&read),
+            vec![handles(&["o1", "o2"]), handles(&["o3"]), handles(&[])]
+        );
+    });
+}
+
+#[test]
+fn an_answer_naming_no_item_is_not_read_unless_it_says_none() {
+    with_showing(3, 2, |showing| {
+        for text in ["None", "none.", "**NONE**"] {
+            let read = via_keeps(text, Ended::Complete, showing);
+            assert_eq!(
+                kept(&read),
+                vec![handles(&[]), handles(&[]), handles(&[])],
+                "{text:?}"
+            );
+        }
+        let read = via_keeps(
+            "I found nothing that bears on it.",
+            Ended::Complete,
+            showing,
+        );
+        assert_eq!(
+            kept(&read),
+            vec![Err(Why::NotRead), Err(Why::NotRead), Err(Why::NotRead)]
+        );
+    });
+}
+
+#[test]
+fn an_own_handle_before_any_item_leaves_the_unnamed_items_unplaced() {
+    with_showing(3, 2, |showing| {
+        let read = via_keeps("o1\ns2: o1", Ended::Complete, showing);
+        assert_eq!(
+            kept(&read),
+            vec![Err(Why::Unplaced), handles(&["o1"]), Err(Why::Unplaced)]
+        );
+    });
+}
+
+#[test]
+fn an_own_handle_on_a_line_after_an_unknown_word_is_not_given_to_the_line_above() {
+    with_showing(3, 2, |showing| {
+        let read = via_keeps("s2: o1\nx1: o2", Ended::Complete, showing);
+        assert_eq!(
+            kept(&read),
+            vec![Err(Why::Unplaced), handles(&["o1"]), Err(Why::Unplaced)]
+        );
     });
 }
 

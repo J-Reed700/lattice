@@ -241,7 +241,7 @@ pub(super) fn shown_in(request: &CompletionRequest) -> String {
 /// An answer for the passages the prompt shows, as lines: one for each
 /// passage whose document `answered` takes and that keeps a sentence `keep`
 /// takes. A passage `answered` does not take gets a line naming a sentence
-/// that does not exist, which the reading cannot place; `none` when no passage
+/// one past its last, which the reading cannot place; `none` when no passage
 /// has a line.
 #[cfg(test)]
 pub(super) fn scripted_answer(
@@ -267,7 +267,7 @@ pub(super) fn scripted_answer(
         .iter()
         .filter_map(|(handle, document, sentences)| {
             if !answered(document) {
-                return Some(format!("{handle}: u0"));
+                return Some(format!("{handle}: u{}", sentences.len() + 1));
             }
             let kept: Vec<&str> = sentences
                 .iter()
