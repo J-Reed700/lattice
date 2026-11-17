@@ -239,12 +239,6 @@ jobs:
           sudo swapon /ci-swapfile
           free -m
 
-      # The learning and desktop test crates reach 8 GB each and the desktop
-      # library 6.5 GB; three at once overflow the runner's 16 GB.
-      - name: Compile at most two crates at once
-        if: runner.os == 'Linux'
-        run: echo "CARGO_BUILD_JOBS=2" >> "$GITHUB_ENV"
-
       # Only main saves: each pull request's own cache pushed the repository
       # past GitHub's 10 GB, which evicted main's, so every job started cold.
       - uses: Swatinem/rust-cache@v2
@@ -374,6 +368,11 @@ jobs:
 
       - name: All desktop Rust unit, command and integration tests
         working-directory: crates/lattice-desktop
+        env:
+          # The learning and desktop test crates reach 8 GB each and the desktop library
+          # 6.5 GB; three at once overflow the ubuntu runner's 16 GB. Set on this step
+          # only, because rust-cache hashes the job's CARGO_* variables into its key.
+          CARGO_BUILD_JOBS: ${{ runner.os == 'Linux' && '2' || 'default' }}
         run: cargo nextest run --locked ${{ env.PACKAGE_ARGS }} --features lattice-desktop/bindings-export --lib --bins --tests --no-fail-fast --profile ci
 
       - name: Memory peaks during the tests
