@@ -68,6 +68,10 @@ export function auditFailures(audit, allowList, patched) {
       failures.push(`${entry.id} (${entry.package}) is no longer reported: remove it from scripts/ci/npm-audit-allow.json.`);
       continue;
     }
+    if (advisory.package !== entry.package) {
+      failures.push(`${entry.id} is reported for ${advisory.package}, not ${entry.package}: correct its entry in scripts/ci/npm-audit-allow.json.`);
+      continue;
+    }
     if (realFix(vulnerabilities[advisory.owner]?.fixAvailable) || patched(advisory.package, advisory.range)) {
       failures.push(`${entry.id} (${entry.package}) now has a fix available: update the dependency and remove it from scripts/ci/npm-audit-allow.json.`);
     }
