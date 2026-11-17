@@ -1,6 +1,6 @@
 //! Files a safetensors-era (Candle) embedding download left in its folder.
 //!
-//! The llama.cpp runtime reads a GGUF and its `tokenizer.json`; the folders
+//! The llama.cpp runtime reads the GGUF alone, which is the whole model; the folders
 //! the Candle runtime filled still hold its weights and configs (about 1.2 GB
 //! for Qwen3). Nothing removes them on its own: Settings lists them with their
 //! size and removes exactly them when the owner asks.

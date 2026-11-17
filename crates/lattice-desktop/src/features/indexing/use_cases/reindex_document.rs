@@ -199,7 +199,8 @@ impl ReindexDocumentUseCase {
             document,
             self.embedding_service.as_ref(),
             &pages,
-        )?;
+        )
+        .await?;
         // From this extraction alone: a page that has gained a text layer since
         // the last run loses its mark.
         document.mark_ocr_pages(&ocr_pages);

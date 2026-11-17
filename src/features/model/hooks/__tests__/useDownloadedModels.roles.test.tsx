@@ -58,10 +58,9 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('useDownloadedModels', () => {
-  it('names the active chat and embedding models', async () => {
+  it('names the active embedding model', async () => {
     const { result } = renderHook(() => useDownloadedModels(), { wrapper });
     await waitFor(() => expect(result.current.downloadedModels).toHaveLength(3));
-    expect(result.current.activeModel?.id).toBe('herb-chat');
     expect(result.current.activeEmbeddingModel?.id).toBe('herb-embed');
     expect(result.current.downloadedModelMap.get('spare')?.model_id).toBe('org/spare');
     expect(result.current.getDownloadedModel('spare')?.id).toBe('spare');
@@ -74,7 +73,6 @@ describe('useDownloadedModels', () => {
     mocks.api.getDownloadedModels.mockResolvedValue({ ok: true, data: [model('spare')] });
     const { result } = renderHook(() => useDownloadedModels(), { wrapper });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
-    expect(result.current.activeModel).toBeNull();
     await expect(result.current.getActiveModel()).resolves.toBeNull();
     await expect(result.current.getActiveEmbeddingModel()).resolves.toBeNull();
 

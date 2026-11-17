@@ -7,9 +7,9 @@
 //!   cargo test --lib embedding_parity -- --ignored --nocapture --test-threads=1
 //! ```
 //!
-//! `tokenizer.json` must sit beside the GGUF. `LATTICE_LLAMA_SERVER` names
-//! another binary than the bundled one; `LATTICE_EMBED_FLASH_ATTN=off`
-//! compares flash attention off against the default `auto`.
+//! `LATTICE_LLAMA_SERVER` names another binary than the bundled one;
+//! `LATTICE_EMBED_FLASH_ATTN=off` compares flash attention off against the
+//! default `auto`.
 
 use super::*;
 use crate::features::llm::engine::gguf_metadata::read_model_info;
@@ -118,7 +118,7 @@ impl Drop for LiveServer {
 }
 
 /// The facts of the model at `gguf`, from its header.
-pub(super) async fn live_facts(gguf: &Path) -> (EmbeddingModelFacts, InputPolicy) {
+pub(super) async fn live_facts(gguf: &Path) -> EmbeddingModelFacts {
     let info = read_model_info(gguf).expect("a readable GGUF header");
     let header = EmbeddingHeader {
         architecture: info.architecture,
@@ -128,9 +128,7 @@ pub(super) async fn live_facts(gguf: &Path) -> (EmbeddingModelFacts, InputPolicy
         file_type: info.file_type,
     };
     let identity = crate::infrastructure::ml::artifact_identity::compute(gguf).unwrap();
-    let facts = EmbeddingModelFacts::from_header(header, identity, "parity").unwrap();
-    let policy = tokenizer_policy(gguf, &facts).await.unwrap();
-    (facts, policy)
+    EmbeddingModelFacts::from_header(header, identity, "parity").unwrap()
 }
 
 #[derive(serde::Deserialize)]
@@ -192,10 +190,10 @@ async fn embedding_parity_with_the_candle_reference() {
     let queries: Vec<String> =
         serde_json::from_slice(&std::fs::read(reference.join("queries.json")).unwrap()).unwrap();
 
-    let (facts, policy) = live_facts(&gguf).await;
+    let facts = live_facts(&gguf).await;
     let live = LiveServer::start(&gguf, SERVER_SLOTS, facts.window_tokens()).await;
     let prefixes = resolve_prefixes("qwen3-embedding-0.6b", &facts.architecture);
-    let service = LlamaEmbeddingService::connect(Arc::clone(&live.server), facts, policy, prefixes)
+    let service = LlamaEmbeddingService::connect(Arc::clone(&live.server), facts, prefixes)
         .expect("loopback client");
 
     // The server counts the tokens the chunker sized each passage with.
@@ -255,5 +253,59 @@ async fn embedding_parity_with_the_candle_reference() {
         compared > 0,
         "no reference vectors under {}",
         reference.display()
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires LATTICE_EMBED_GGUF and a runnable llama-server"]
+async fn the_splitters_count_is_the_count_the_server_embeds() {
+    let gguf = env_path("LATTICE_EMBED_GGUF");
+    let facts = live_facts(&gguf).await;
+    let live = LiveServer::start(&gguf, SERVER_SLOTS, facts.window_tokens()).await;
+    let prefixes = resolve_prefixes("qwen3-embedding-0.6b", &facts.architecture);
+    let service = LlamaEmbeddingService::connect(Arc::clone(&live.server), facts, prefixes)
+        .expect("loopback client");
+
+    let texts = [
+        "The quick brown fox jumps over the lazy dog, twice.".to_owned(),
+        "これは日本語のテキストです。句読点で区切ります。".to_owned(),
+        "Launch day 🚀🎉 went well 🧪 for everyone 👩\u{200d}💻.".to_owned(),
+        "cafe\u{301} resume\u{301} naive\u{301} ".repeat(8),
+        "A sentence with <|endoftext|> in the middle of it.".to_owned(),
+    ];
+    for text in &texts {
+        let counted = TokenCounter::count(&service, text).await;
+        let embedded = client::embed(&service.http, &live.server, std::slice::from_ref(text)).await;
+        assert!(counted.is_ok(), "{text:?}: {counted:?}");
+        assert!(embedded.is_ok(), "{text:?}: {embedded:?}");
+        assert_eq!(
+            counted.ok(),
+            embedded.ok().map(|e| e.prompt_tokens as usize),
+            "{text:?}: the splitter and the server disagree about its length"
+        );
+    }
+
+    let raw: serde_json::Value = service
+        .http
+        .post(format!("{}/tokenize", live.server.endpoint()))
+        .bearer_auth(live.server.api_token())
+        .json(&serde_json::json!({
+            "content": "",
+            "add_special": true,
+            "parse_special": true
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let special = raw["tokens"].as_array().map(Vec::len);
+    let counted = TokenCounter::count(&service, "").await;
+    assert!(special.is_some(), "{raw}");
+    assert_eq!(
+        counted.ok(),
+        special,
+        "an empty prefix still counts the model's special tokens"
     );
 }

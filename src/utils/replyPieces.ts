@@ -21,6 +21,7 @@ const DIGIT_BASE = 0xe001;
 
 export const MARK = /\uE000([\uE001-\uE00A]+)\uE00B/g;
 export const FILE_MARK = /\uE00C([\uE001-\uE00A]+)\uE00D/g;
+const ANY_MARK = /[\uE000-\uE00D]/g;
 
 function digitsOf(index: number): string {
   return Array.from(String(index), (digit) => String.fromCharCode(DIGIT_BASE + Number(digit))).join('');
@@ -114,6 +115,11 @@ export function markReply(
     }
   }
   return { raw, numbers, files };
+}
+
+/** Text read out of a drawn viewer with the marks' private-use characters left out. */
+export function withoutMarks(text: string): string {
+  return text.replace(ANY_MARK, '');
 }
 
 /** The marks of a drawn reply found in a run of its text; `numbers` is the list `drawReply` gave. */

@@ -1,6 +1,7 @@
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { ActiveModels } from '@/lib/bindings';
 import { deferred } from '@/tests/deferred';
 import { render } from '@/tests/renderWithQueryClient';
 
@@ -8,7 +9,8 @@ import { ChatTab } from './ChatTab';
 
 const h = vi.hoisted(() => ({
   llm: { llmSettings: null as null | Record<string, any>, isLoading: false, authValueSet: { ollama: false, llamaCpp: false }, saveLlmUpdates: vi.fn(), saveAuthHeaderValue: vi.fn(), reload: vi.fn() },
-  models: { activeModel: null as null | Record<string, string>, activeEmbeddingModel: null as null | Record<string, string> },
+  models: { downloadedModels: [] as Record<string, string>[], activeEmbeddingModel: null as null | Record<string, string> },
+  active: { activeModels: null as ActiveModels | null },
   probe: vi.fn(),
   setCloudApiKey: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn() },
@@ -16,6 +18,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('./useLlmSettings', () => ({ useLlmSettings: () => h.llm }));
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => h.models }));
+vi.mock('@/features/model/hooks/useActiveModels', () => ({ useActiveModels: () => h.active }));
 vi.mock('@/features/settings/hooks/connectionProbes', () => ({ probeOllamaServer: h.probe }));
 vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({ useCloudApiKeyMutation: () => ({ setCloudApiKey: h.setCloudApiKey }) }));
 vi.mock('@/stores/toastStore', () => ({ toast: h.toast }));
@@ -33,6 +36,10 @@ const settings = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+const activeChat = (...chat: ActiveModels['chat']): ActiveModels => ({
+  chat, chat_unset: null, utility: [], llama_cpp: null, ollama: null, ollama_utility_tag: null,
+});
+
 const connected = async (models = ['mistral', 'phi']) => {
   h.probe.mockResolvedValueOnce({ ok: true, data: { models, endpoint: 'http://garden.local:11434/api/tags' } });
   fireEvent.click(screen.getByRole('button', { name: 'Test connection' }));
@@ -47,7 +54,8 @@ describe('ChatTab', () => {
     h.llm.llmSettings = settings();
     h.llm.saveLlmUpdates.mockResolvedValue(true);
     h.llm.saveAuthHeaderValue.mockResolvedValue(true);
-    h.models = { activeModel: null, activeEmbeddingModel: null };
+    h.models = { downloadedModels: [], activeEmbeddingModel: null };
+    h.active = { activeModels: null };
   });
 
   it('shows loading, then a retry when settings cannot be read', () => {
@@ -135,9 +143,10 @@ describe('ChatTab', () => {
     });
 
     it('names the cloud model as the active chat model', () => {
+      h.active = { activeModels: activeChat({ kind: 'cloud', provider: 'anthropic', model: 'claude-opus-5' }) };
       render(<ChatTab />);
       expect(screen.getAllByText('claude-opus-5').length).toBeGreaterThan(0);
-      expect(screen.getByText('anthropic')).toBeInTheDocument();
+      expect(screen.getByText('cloud:anthropic/claude-opus-5')).toBeInTheDocument();
     });
 
     it('clears an unsaved key when changing cloud providers', () => {
@@ -330,21 +339,38 @@ describe('ChatTab', () => {
     it('names the local chat and embedding models and the router', () => {
       h.llm.llmSettings = settings({ provider: 'local' });
       h.models = {
-        activeModel: { model_name: 'Qwen 9B', model_id: 'qwen-9b' },
+        downloadedModels: [{ model_name: 'Qwen 9B', model_id: 'qwen-9b' }],
         activeEmbeddingModel: { model_name: 'BGE small', model_id: 'bge-small' },
       };
+      h.active = { activeModels: activeChat({ kind: 'local', model_id: 'qwen-9b' }) };
       render(<ChatTab />);
       expect(screen.getByText('Qwen 9B')).toBeInTheDocument();
-      expect(screen.getByText('qwen-9b')).toBeInTheDocument();
+      expect(screen.getByText('local:qwen-9b')).toBeInTheDocument();
       expect(screen.getByText('BGE small')).toBeInTheDocument();
       expect(screen.getByText('tiny-router')).toBeInTheDocument();
     });
 
     it('names the llama.cpp model, and says Not set when nothing is chosen', () => {
       h.llm.llmSettings = settings({ provider: 'llamacpp', llamaCpp: { url: 'http://box', model: 'gemma-27b' }, router: { model: ' ' } });
+      h.active = { activeModels: activeChat({ kind: 'llama_cpp', model: 'gemma-27b' }) };
       render(<ChatTab />);
       expect(screen.getByText('gemma-27b')).toBeInTheDocument();
-      expect(screen.getByText('llamacpp')).toBeInTheDocument();
+      expect(screen.getByText('llamacpp:gemma-27b')).toBeInTheDocument();
+      expect(screen.getAllByText('Not set')).toHaveLength(2);
+    });
+
+    it('names the model the backend runs a chat on under Auto when nothing is downloaded', () => {
+      h.llm.llmSettings = settings({ provider: 'auto', llamaCpp: { url: 'http://box', model: 'qwen.gguf' } });
+      h.active = { activeModels: activeChat({ kind: 'llama_cpp', model: 'qwen.gguf' }) };
+      render(<ChatTab />);
+      expect(screen.getByText('qwen.gguf')).toBeInTheDocument();
+      expect(screen.getAllByText('Not set')).toHaveLength(1);
+    });
+
+    it('says Not set when the backend runs a chat on nothing', () => {
+      h.llm.llmSettings = settings({ provider: 'auto', router: { model: 'tiny-router' } });
+      h.active = { activeModels: activeChat() };
+      render(<ChatTab />);
       expect(screen.getAllByText('Not set')).toHaveLength(2);
     });
 

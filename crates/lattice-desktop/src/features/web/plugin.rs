@@ -4,7 +4,9 @@
 
 use crate::features::web::snapshots::{commands as snapshots, WebPageSnapshotDto};
 use crate::{features::web::commands as web_ingest, interfaces::di::Container};
-use lattice_core::application::contracts::settings::{KeyServiceDto, SourcesStatusDto};
+use lattice_core::application::contracts::settings::{
+    KeyServiceDto, SourcesStatusDto, SourcingAddress,
+};
 use lattice_core::application::contracts::web::SavedWebArticleDto;
 use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::shared::ipc::ApiError;
@@ -161,6 +163,17 @@ pub async fn saved_web_article(
         .map(SavedWebArticleDto::from))
 }
 
+/// Settings → Sources: whether `value` is an address the setting `field`
+/// accepts, by the rule the settings check applies on save.
+#[tauri::command]
+#[specta::specta]
+pub async fn check_sourcing_address(
+    field: SourcingAddress,
+    value: String,
+) -> Result<bool, ApiError> {
+    Ok(field.accepts(&value))
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("web")
         .setup(|app, _api| {
@@ -192,6 +205,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             save_source_key,
             remove_source_key,
             saved_web_article,
+            check_sourcing_address,
         ])
         .build()
 }

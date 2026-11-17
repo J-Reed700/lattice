@@ -174,6 +174,7 @@ export function createVaultAPIMock() {
     saveSourceKey: vi.fn().mockResolvedValue({ ok: true, data: { finders: [], keys: [] } }),
     removeSourceKey: vi.fn().mockResolvedValue({ ok: true, data: { finders: [], keys: [] } }),
     savedWebArticle: vi.fn().mockResolvedValue({ ok: true, data: null }),
+    checkSourcingAddress: vi.fn().mockResolvedValue({ ok: true, data: true }),
     // Default to the state a fresh install is really in: the reranker model is
     // downloaded on demand and is not there yet.
     getRerankerStatus: vi.fn().mockResolvedValue({

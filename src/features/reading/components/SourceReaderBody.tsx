@@ -53,7 +53,7 @@ import {
  * same document with the same passage marked, the same citation travel and the
  * same capture verbs. So the viewers, the rail and the footer live here once,
  * and the caller supplies only the box: `FilePreviewModal` wraps this in a
- * Radix dialog, `ChatReaderPane` in a plain aside.
+ * Radix dialog, `ReaderPane` in a plain aside.
  *
  * `presentation` says which, and that is the only thing this file branches on:
  * `dialog` is the full-screen modal, `reading-pane` the overlay on the right

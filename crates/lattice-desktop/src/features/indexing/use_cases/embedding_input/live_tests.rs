@@ -35,7 +35,7 @@ async fn real_pdf_context_and_vectors_keep_source_pages() -> anyhow::Result<()> 
             position: 0,
         },
     ));
-    let doc = prepare_structured(doc, &model, &extracted.page_ranges)?;
+    let doc = prepare_structured(doc, &model, &extracted.page_ranges).await?;
     assert!(!doc.chunks().is_empty());
     let mut covered = vec![false; extracted.text.len()];
     for chunk in doc.chunks() {

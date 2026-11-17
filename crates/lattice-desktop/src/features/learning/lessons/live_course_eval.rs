@@ -44,9 +44,8 @@ pub(super) struct CourseRecipe {
     #[serde(default)]
     settings: Value,
     web: RecipeWeb,
-    /// The embedding model's GGUF (with its `tokenizer.json` beside it) that
-    /// lessons search each course's evidence index with. Required: without
-    /// one a run would not be the shipped path.
+    /// The embedding model's GGUF that lessons search each course's evidence
+    /// index with. Required: without one a run would not be the shipped path.
     embedding_gguf: Option<String>,
     embedding_model_id: Option<String>,
 }

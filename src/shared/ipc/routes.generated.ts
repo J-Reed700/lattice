@@ -54,6 +54,7 @@ export const COMMAND_PLUGINS = {
   check_llm_health: 'qa',
   check_practice_fit: 'learning',
   check_practice_piece: 'learning',
+  check_sourcing_address: 'web',
   clear_active_chat_model: 'model',
   clear_active_embedding_model: 'model',
   clear_active_utility_model: 'model',

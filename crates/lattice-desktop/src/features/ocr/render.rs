@@ -55,6 +55,15 @@ pub fn image_mime(path: &Path) -> Option<&'static str> {
     }
 }
 
+/// Whether pages of `document` can be turned into images on this platform.
+/// Image files always can; PDFs only where a renderer exists.
+pub fn check_renderable(document: &Path) -> Result<(), OcrError> {
+    if image_mime(document).is_some() {
+        return Ok(());
+    }
+    pdf_renderer_available()
+}
+
 /// Produce the image for one-based `page` of `document`. Blocking: run it on
 /// the blocking pool.
 pub fn page_image(document: &Path, page: u32) -> Result<PageImage, OcrError> {
@@ -137,9 +146,24 @@ fn render_pdf_page(path: &Path, page: u32) -> Result<PageImage, OcrError> {
 
 #[cfg(not(target_os = "macos"))]
 fn render_pdf_page(_path: &Path, _page: u32) -> Result<PageImage, OcrError> {
-    Err(OcrError::Unavailable {
+    Err(pdf_unavailable())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn pdf_unavailable() -> OcrError {
+    OcrError::Unavailable {
         reason: "reading scanned PDF pages is only available on macOS for now".into(),
-    })
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn pdf_renderer_available() -> Result<(), OcrError> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn pdf_renderer_available() -> Result<(), OcrError> {
+    Err(pdf_unavailable())
 }
 
 #[cfg(target_os = "macos")]

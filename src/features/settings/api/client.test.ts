@@ -41,6 +41,7 @@ const cases: Case[] = [
   ['getSourcesStatus', () => settingsApi.getSourcesStatus(), 'get_sources_status', {}],
   ['saveSourceKey', () => settingsApi.saveSourceKey('brave' as never, 'k'), 'save_source_key', { service: 'brave', key: 'k' }],
   ['removeSourceKey', () => settingsApi.removeSourceKey('brave' as never), 'remove_source_key', { service: 'brave' }],
+  ['checkSourcingAddress', () => settingsApi.checkSourcingAddress('contact', 'me@example.org'), 'check_sourcing_address', { field: 'contact', value: 'me@example.org' }],
 ];
 
 describe('settingsApi', () => {

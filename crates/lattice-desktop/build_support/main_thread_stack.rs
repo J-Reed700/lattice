@@ -10,6 +10,19 @@ pub fn link_args(target_os: &str, target_env: &str) -> Vec<String> {
     }
 }
 
+/// The build script's lines that reserve `MAIN_THREAD_STACK_BYTES`.
+pub fn directives(target_os: &str, target_env: &str) -> Vec<String> {
+    link_args(target_os, target_env)
+        .into_iter()
+        .flat_map(|arg| {
+            [
+                format!("cargo::rustc-link-arg-bins={arg}"),
+                format!("cargo::rustc-link-arg-examples={arg}"),
+            ]
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -34,5 +47,26 @@ mod tests {
     fn other_targets_get_no_link_arguments() {
         assert!(link_args("windows", "gnu").is_empty());
         assert!(link_args("linux", "gnu").is_empty());
+    }
+
+    #[test]
+    fn the_examples_get_the_reserve_the_app_gets() {
+        let arg = format!("/STACK:{MAIN_THREAD_STACK_BYTES}");
+        assert_eq!(
+            directives("windows", "msvc"),
+            vec![
+                format!("cargo::rustc-link-arg-bins={arg}"),
+                format!("cargo::rustc-link-arg-examples={arg}"),
+            ]
+        );
+        let arg = format!("-Wl,-stack_size,{MAIN_THREAD_STACK_BYTES:#x}");
+        assert_eq!(
+            directives("macos", ""),
+            vec![
+                format!("cargo::rustc-link-arg-bins={arg}"),
+                format!("cargo::rustc-link-arg-examples={arg}"),
+            ]
+        );
+        assert!(directives("linux", "gnu").is_empty());
     }
 }

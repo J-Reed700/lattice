@@ -23,6 +23,7 @@ import { useChatSwitchActions } from '@/features/chat/hooks/useChatSwitchActions
 import { useComposer } from '@/features/chat/hooks/useComposer';
 import { useThreadMessages } from '@/features/chat/hooks/useThreadMessages';
 import { useThreadScroll } from '@/features/chat/hooks/useThreadScroll';
+import { useActiveModels } from '@/features/model/hooks/useActiveModels';
 import { useCloudModelCatalogs } from '@/features/model/hooks/useCloudModels';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { degradedReasonFor, useLoadedModels } from '@/features/model/hooks/useLoadedModels';
@@ -65,6 +66,7 @@ const NO_COMMANDS: PaletteCommand[] = [];
 
 export function ChatPanel({ composerNotice, composerChips, starters, startersNote, embedded = false, autoFocus = false }: ChatPanelProps = {}) {
   const { downloadedModels } = useDownloadedModels();
+  const { activeModels } = useActiveModels();
   const { catalogs } = useCloudModelCatalogs();
   const loadedModels = useLoadedModels();
   const activeConversationId = useConversationsStore((state) => state.activeConversationId);
@@ -157,16 +159,16 @@ export function ChatPanel({ composerNotice, composerChips, starters, startersNot
   const modelChoice = activeConversation?.modelChoice ?? DEFAULT_CHOICE;
   const onDefaultModel = modelChoice.kind === 'default';
   const effectiveModel = useMemo(
-    () => resolveEffectiveChatOption(modelChoice, llmSettings, downloadedModels, catalogs),
-    [modelChoice, llmSettings, downloadedModels, catalogs]
+    () => resolveEffectiveChatOption(modelChoice, llmSettings, downloadedModels, catalogs, activeModels),
+    [modelChoice, llmSettings, downloadedModels, catalogs, activeModels]
   );
   const defaultModelOption = useMemo(
-    () => resolveDefaultChatOption(llmSettings, downloadedModels, catalogs),
-    [llmSettings, downloadedModels, catalogs]
+    () => resolveDefaultChatOption(llmSettings, downloadedModels, catalogs, activeModels),
+    [llmSettings, downloadedModels, catalogs, activeModels]
   );
   const chatModelOptions = useMemo(
-    () => buildChatModelOptions(llmSettings, downloadedModels, catalogs),
-    [llmSettings, downloadedModels, catalogs]
+    () => buildChatModelOptions(llmSettings, downloadedModels, catalogs, activeModels),
+    [llmSettings, downloadedModels, catalogs, activeModels]
   );
   const effectiveRef = effectiveModel && !isUnavailableChatModel(effectiveModel) ? effectiveModel.ref : null;
   // While a turn runs, the model it is pinned to says whether it fell back to

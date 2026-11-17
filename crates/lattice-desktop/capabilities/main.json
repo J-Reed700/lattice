@@ -278,6 +278,7 @@
     "web:allow-save-source-key",
     "web:allow-remove-source-key",
     "web:allow-saved-web-article",
+    "web:allow-check-sourcing-address",
     "functions:allow-list-available-functions",
     "functions:allow-execute-function",
     "functions:allow-get-function-stats",

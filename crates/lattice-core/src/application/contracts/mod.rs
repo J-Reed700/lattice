@@ -1,5 +1,6 @@
 //! Data contracts shared by application ports and feature adapters.
 
+pub mod active_models;
 pub mod explorer;
 pub mod favorites;
 pub mod file_library;

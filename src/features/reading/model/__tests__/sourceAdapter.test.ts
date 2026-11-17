@@ -20,6 +20,7 @@ import type {
   RecentDocument,
   StudySourceDto,
 } from '@/lib/bindings';
+import { locatorFromSource } from '@/shared/sources/passageLocator';
 import type { DocumentMetadata, SearchResult } from '@/types';
 import type { SourceWithMetadata } from '@/types/conversation';
 
@@ -366,6 +367,35 @@ describe('sourceAdapter canonical mappings', () => {
         text: 'Backpropagation computes the gradient of the loss function.',
         chunkId: 'sv-123:100-165',
       });
+    });
+
+    it('keeps the passage as what a reader marks once the saved page has loaded', () => {
+      const passage: LearningEvidencePassageDto = {
+        sourceVersionId: 'sv-123',
+        title: 'Evidence on Backpropagation',
+        text: 'Backpropagation computes the gradient of the loss function.',
+        startByte: 100,
+        endByte: 165,
+        url: 'https://learn.example.com/backprop',
+        retrievalKind: 'lexical',
+        trust: null,
+      };
+
+      for (const url of ['https://learn.example.com/backprop', null]) {
+        const { source } = fromLearningEvidencePassage({ ...passage, url }, 0, 'Full backpropagation textbook text');
+        expect(locatorFromSource(source, source.chunkId).text).toBe(passage.text);
+        expect(source.content).toBe(passage.text);
+      }
+    });
+
+    it('reads a whole source with no passage as its full text', () => {
+      const passage: LearningEvidencePassageDto = {
+        sourceVersionId: 'sv-123', title: 'Lecture notes', text: '', startByte: 0, endByte: 0, url: null, retrievalKind: 'source', trust: null,
+      };
+
+      const target = fromLearningEvidencePassage(passage, 0, 'The whole of the lecture notes.');
+      expect(target.source.content).toBe('The whole of the lecture notes.');
+      expect(target.locator).toBeNull();
     });
   });
 });

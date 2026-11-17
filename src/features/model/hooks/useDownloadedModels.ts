@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo } from 'react';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type UnlistenFn } from '@tauri-apps/api/event';
 
 import { useApi } from '@/contexts/ApiContext';
@@ -21,19 +21,18 @@ async function loadDownloadedModels(api: ApiClient = VaultAPI): Promise<Download
   return result.data;
 }
 
-export const useDownloadedModels = () => {
-  const api = useApi();
-  const queryClient = useQueryClient();
-  const modelsQuery = useQuery<DownloadedModel[]>({
+export const downloadedModelsQueryOptions = (api: ApiClient = VaultAPI) =>
+  queryOptions<DownloadedModel[]>({
     queryKey: DOWNLOADED_MODELS_QUERY_KEY,
     queryFn: () => loadDownloadedModels(api),
     staleTime: 30_000,
   });
+
+export const useDownloadedModels = () => {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  const modelsQuery = useQuery(downloadedModelsQueryOptions(api));
   const downloadedModels = useMemo(() => modelsQuery.data ?? [], [modelsQuery.data]);
-  const activeModel = useMemo(
-    () => downloadedModels.find((model) => model.is_active_for_chat) ?? null,
-    [downloadedModels]
-  );
   const activeEmbeddingModel = useMemo(
     () => downloadedModels.find((model) => model.is_active_for_embedding) ?? null,
     [downloadedModels]
@@ -124,7 +123,6 @@ export const useDownloadedModels = () => {
   return {
     downloadedModels,
     downloadedModelMap,
-    activeModel,
     activeEmbeddingModel,
     isLoading: modelsQuery.isLoading,
     error: modelsQuery.error?.message ?? null,

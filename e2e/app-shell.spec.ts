@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { makePreviewPdf } from './fixtures/previewPdf';
+import { mockActiveModels } from './fixtures/activeModels';
 import { installCustomCollectionsFixture } from './fixtures/customCollections';
 import { installTauriMock, mockCommands, type CommandResult, type Fixture } from './fixtures/tauri';
 import type { JobDto, LearningLessonDto, StartJournalSynthesisRequestDto, LearningProgramDto, MessageDto, ModelCategoryDto, SynthesizeJournalEntriesResponseDto } from '../src/lib/bindings';
@@ -220,6 +221,7 @@ for (const [width, entry] of [[1440, 'menu'], [620, 'selection'], [1440, 'reply'
 
 test.beforeEach(async ({ page }) => {
   await installTauriMock(page);
+  await mockActiveModels(page);
   await installCustomCollectionsFixture(page);
   // Renderer checks must not wait for external font servers when DNS is offline.
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
@@ -1082,7 +1084,6 @@ test('Downloaded switches chat between llama.cpp and local while keeping the uti
       },
       get_active_chat_model: () => null,
       get_active_embedding_model: () => null,
-      get_active_models: () => ({ chat_model: null, embedding_model: null }),
       list_journals: () => [],
       list_downloads: () => [],
       activity_snapshot: () => ({ items: [], running: 0 }),
@@ -1158,7 +1159,6 @@ test('Downloaded assigns the Learning model in Settings without touching the cha
       },
       get_active_chat_model: () => null,
       get_active_embedding_model: () => null,
-      get_active_models: () => ({ chat_model: null, embedding_model: null }),
       list_journals: () => [],
       list_downloads: () => [],
       activity_snapshot: () => ({ items: [], running: 0 }),
@@ -1213,7 +1213,6 @@ test('Downloaded only lists configured connections and remembers a saved localho
       }],
       get_active_chat_model: () => null,
       get_active_embedding_model: () => null,
-      get_active_models: () => ({ chat_model: null, embedding_model: null }),
       list_journals: () => [],
       list_downloads: () => [],
       activity_snapshot: () => ({ items: [], running: 0 }),
@@ -1269,7 +1268,6 @@ test('keeps Ollama and llama.cpp connections separate across provider changes', 
       list_downloaded_models: () => [],
       get_active_chat_model: () => null,
       get_active_embedding_model: () => null,
-      get_active_models: () => ({ chat_model: null, embedding_model: null }),
     };
   }, makeAppSettings());
   await page.goto('/settings');

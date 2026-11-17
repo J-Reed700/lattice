@@ -592,7 +592,7 @@ async fn embed_memory(
     service: &dyn lattice_core::application::ports::EmbeddingPort,
     content: &str,
 ) -> Result<Vec<f32>> {
-    let chunks = service.split_text(content, "")?;
+    let chunks = service.split_text(content, "").await?;
     if chunks.is_empty() {
         return Err(AppError::InvalidInput(
             "Cannot embed empty conversation memory".into(),

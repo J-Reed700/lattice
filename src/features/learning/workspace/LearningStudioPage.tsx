@@ -31,6 +31,8 @@ import {
   usePrepareLearningModule,
 } from '@/features/learning/workspace/useLearningStudio';
 import { useStudioNavigationGuard } from '@/features/learning/workspace/useStudioNavigationGuard';
+import { ReaderPane } from '@/features/reading/components/ReaderPane';
+import { useReaderRoom } from '@/features/reading/hooks/useReaderRoom';
 import { useStopSpeechOnChange } from '@/features/speech/hooks/useSpeech';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { flushPendingSaves } from '@/lib/pendingSaves';
@@ -117,8 +119,10 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
   const complete = useCompleteLearningLesson();
   const handledNewRoute = useRef(false);
   const flashcardsRef = useRef<HTMLElement>(null);
+  const rowRef = useRef<HTMLDivElement>(null);
   const routedDestination = useRef<StudyDestination | undefined>(undefined);
   const flashcardRoute = searchParams.has('deck') || searchParams.get('newDeck') === '1';
+  const room = useReaderRoom(rowRef, undefined, [screen, flashcardRoute]);
   // A deck opened from inside a program, such as an interview's drill deck,
   // leaves the program for the deck.
   const requestedDeck = searchParams.get('deck');
@@ -286,7 +290,8 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
           : <p role="status" className="p-6 text-sm text-text-muted">Loading the review…</p>}
     </div>}
     {/* The course page stays mounted behind the review, so leaving it returns to the same tab and scroll. */}
-    <div hidden={reviewing} className="studio-page-scroll h-full min-h-0 overflow-y-auto bg-background">
+    <div ref={rowRef} hidden={reviewing} className="flex h-full min-h-0 w-full min-w-0 overflow-hidden">
+    <div className="studio-page-scroll h-full min-h-0 min-w-0 flex-1 overflow-y-auto bg-background">
     {navigation.error && <p role="alert" className="mx-auto mb-4 max-w-[1500px] rounded-xl border border-rose-500/25 bg-rose-500/5 p-3 text-sm text-text-primary">{navigation.error}</p>}
     {selectedId ? (
       detail.isLoading ? <div className="mx-auto flex max-w-5xl items-center justify-center rounded-2xl border border-border bg-surface p-16 text-sm text-text-muted">Loading your program…</div>
@@ -305,6 +310,8 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
       onOpenDestination={handleSelectDestination}
       flashcardsRef={flashcardsRef}
     />}
+    </div>
+    <ReaderPane rowWidth={room.width} availableWidth={room.available} resetKey={`${selectedId ?? ''}:${reviewing}`} />
     </div>
   </>;
 }

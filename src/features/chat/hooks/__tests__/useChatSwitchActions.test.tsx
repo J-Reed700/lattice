@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useChatSwitchActions } from '@/features/chat/hooks/useChatSwitchActions';
 import { VaultAPI } from '@/lib/api';
-import type { ChatModelChoice } from '@/lib/bindings';
+import type { ActiveModels, ChatModelChoice } from '@/lib/bindings';
 import { useToastStore } from '@/stores/toastStore';
 import { makeAppSettings } from '@/tests/fixtures/appSettings';
 import { stubGlobalChatModelWrites } from '@/tests/fixtures/globalChatModelWrites';
@@ -23,6 +23,7 @@ const state = vi.hoisted(() => ({
 }));
 const appSettings = vi.hoisted(() => ({ current: undefined as ReturnType<typeof makeAppSettings> | undefined }));
 const models = vi.hoisted(() => ({ current: [] as DownloadedModel[] }));
+const active = vi.hoisted(() => ({ current: null as ActiveModels | null }));
 
 vi.mock('@/shared/conversations/conversationsStore', () => ({
   useConversationsStore: (selector: (_s: typeof state) => unknown) => selector(state),
@@ -30,6 +31,7 @@ vi.mock('@/shared/conversations/conversationsStore', () => ({
 vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({
   useSettingsQuery: () => ({ data: appSettings.current }),
 }));
+vi.mock('@/features/model/hooks/useActiveModels', () => ({ useActiveModels: () => ({ activeModels: active.current }) }));
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({
   useDownloadedModels: () => ({ downloadedModels: models.current }),
 }));
@@ -56,6 +58,8 @@ describe('useChatSwitchActions', () => {
     settings.llm.llamaCpp = { url: 'http://localhost:8080', model: 'served.gguf', authHeaderName: '' };
     appSettings.current = settings;
     models.current = [row({ id: 'big', is_active_for_chat: true }), row({ id: 'small', model_id: 'ornith-1.5-9b', model_name: 'Ornith-1.5-9B' })];
+    const served = { kind: 'llama_cpp', model: 'served.gguf' } as const;
+    active.current = { chat: [served], chat_unset: null, utility: [], llama_cpp: served, ollama: null, ollama_utility_tag: null };
     state.conversations = [{ id: 'chat-b', modelChoice: { kind: 'default' } }];
     state.setConversationModelChoice = vi.fn().mockResolvedValue({});
     state.createConversation = vi.fn().mockResolvedValue('new-chat');
@@ -114,6 +118,18 @@ describe('useChatSwitchActions', () => {
     expect(state.setConversationModelChoice).toHaveBeenCalledWith('chat-b', { kind: 'default' });
     expect(toastTitles()).toEqual(['This chat now uses the app default (llama.cpp · served.gguf)']);
     expectNoGlobalWrite();
+  });
+
+  it("gives the backend's reason when it runs a default chat on nothing", async () => {
+    state.conversations = [{ id: 'chat-b', modelChoice: { kind: 'explicit', model: { kind: 'local', model_id: 'ornith-1.5-9b' } } }];
+    active.current = {
+      chat: [], chat_unset: 'No llama.cpp model is set in Settings → Chat', utility: [], llama_cpp: null, ollama: null, ollama_utility_tag: null,
+    };
+    const result = render();
+    await act(() => result.current.handleUseDefault());
+    const [toast] = useToastStore.getState().toasts;
+    expect(toast.title).toBe('This chat now uses the app default');
+    expect(toast.message).toBe('No llama.cpp model is set in Settings → Chat');
   });
 
   it('shows the reason when the model cannot be used, and claims nothing', async () => {
