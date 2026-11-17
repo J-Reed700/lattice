@@ -231,13 +231,16 @@ fn a_catalog_file_in_the_version_list_is_the_catalog_entry() {
 #[test]
 fn catalog_search_matches_every_term() {
     let ids = |query: &str| -> Vec<String> {
-        curated_chat_models_matching(query)
+        curated_models_matching(query)
             .into_iter()
             .map(|model| model.id)
             .collect()
     };
-    assert_eq!(ids("").len(), CURATED_CHAT_MODELS.len());
-    assert_eq!(ids("gguf").len(), CURATED_CHAT_MODELS.len());
+    let listed = CURATED_CHAT_MODELS.len() + get_curated_embedding_models().len();
+    assert_eq!(ids("").len(), listed);
+    assert_eq!(ids("gguf").len(), listed);
+    assert_eq!(ids("qwen embedding"), ["qwen3-embedding-0.6b".to_string()]);
+    assert!(ids("Qwen").contains(&"qwen3-embedding-0.6b".to_string()));
     assert_eq!(
         ids("gemma 12b"),
         [

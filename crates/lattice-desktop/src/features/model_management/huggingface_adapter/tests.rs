@@ -149,6 +149,67 @@ fn embedding_gguf_of_an_architecture_the_engine_lacks_is_incompatible() {
 }
 
 #[test]
+fn listings_ask_the_hub_for_gguf_repositories_and_their_architecture() {
+    for (query, limit) in [("filter:feature-extraction", 500), ("minilm", 40)] {
+        let url = HuggingFaceAdapter::search_url(query, limit);
+        assert!(url.contains("filter=gguf"), "{url}");
+        assert!(url.contains("expand[]=gguf"), "{url}");
+        assert!(url.contains("expand[]=siblings"), "{url}");
+        assert!(!url.contains("full=true"), "{url}");
+    }
+    let search = HuggingFaceAdapter::search_url("minilm", 40);
+    assert!(search.contains("search=minilm"), "{search}");
+}
+
+#[test]
+fn embedding_gguf_without_a_tokenizer_is_incompatible() {
+    let repo = embedding_repo_with(&["model-f16.gguf"], Some("bert"));
+    assert!(repo.to_external_metadata().preferred_filename.is_some());
+    match embedding_verdict(&repo) {
+        lattice_core::domain::models::selection::EmbeddingCompatibility::Incompatible {
+            reason,
+            ..
+        } => assert!(reason.contains("tokenizer.json"), "{reason}"),
+        other => panic!("expected an incompatible verdict, got {other:?}"),
+    }
+}
+
+#[test]
+fn embedding_gguf_of_an_unsupported_architecture_offers_no_file() {
+    let repo = embedding_repo_with(&["model-f16.gguf", "tokenizer.json"], Some("asr"));
+    assert_eq!(repo.to_external_metadata().preferred_filename, None);
+    assert!(repo.gguf_variants().is_empty());
+    match embedding_verdict(&repo) {
+        lattice_core::domain::models::selection::EmbeddingCompatibility::Incompatible {
+            reason,
+            ..
+        } => assert!(reason.contains("architecture"), "{reason}"),
+        other => panic!("expected an incompatible verdict, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_projector_summary_leaves_the_model_files_offered() {
+    for architecture in ["clip", "controlvector"] {
+        let repo: HuggingFaceModel = serde_json::from_value(serde_json::json!({
+            "id": "someone/Model-27B-GGUF",
+            "tags": ["text-generation", "gguf"],
+            "gguf": {"architecture": architecture},
+            "siblings": [
+                {"rfilename": "Model-27B-Q4_K_M.gguf", "size": 4},
+                {"rfilename": "mmproj-Model-27B-F16.gguf", "size": 4}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(
+            repo.to_external_metadata().preferred_filename.as_deref(),
+            Some("Model-27B-Q4_K_M.gguf"),
+            "{architecture}"
+        );
+    }
+}
+
+#[test]
 fn test_huggingface_adapter_creation() {
     let _adapter = HuggingFaceAdapter::new().unwrap();
 }

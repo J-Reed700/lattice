@@ -133,14 +133,7 @@ impl ModelPaths {
     /// it. Creates the directory if absent, because confinement checks need a
     /// canonicalizable root and a fresh install has none.
     pub fn models_root() -> Result<PathBuf, AppError> {
-        let home = std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .map_err(|_| AppError::InvalidConfig("Cannot determine home directory".into()))?;
-
-        let root = PathBuf::from(home)
-            .join(".cache")
-            .join("lattice")
-            .join("models");
+        let root = Self::cache_root()?.join("models");
 
         if !root.exists() {
             std::fs::create_dir_all(&root).map_err(|e| {
@@ -153,6 +146,15 @@ impl ModelPaths {
         }
 
         Ok(root)
+    }
+
+    /// `~/.cache/lattice`, the folder that holds [`Self::models_root`]. Home is
+    /// `HOME`, or `USERPROFILE` where Windows sets no `HOME`.
+    pub fn cache_root() -> Result<PathBuf, AppError> {
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .map_err(|_| AppError::InvalidConfig("Cannot determine home directory".into()))?;
+        Ok(PathBuf::from(home).join(".cache").join("lattice"))
     }
 
     fn build_unified_path(model_id: &str) -> Result<PathBuf, AppError> {
