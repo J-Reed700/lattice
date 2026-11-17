@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 
-import type { CitationHover } from '@/features/chat/components/CitationHoverCard';
+import type { CitationHover } from '@/features/reading/components/CitationHoverCard';
 import type { ClaimHover } from '@/features/chat/components/ClaimHoverCard';
 import { provenanceLabel, sourceProvenance } from '@/features/chat/model/sourceProvenance';
 import { usePassageReferenceIds } from '@/features/reading/hooks/usePassageReferencesQuery';

@@ -4,8 +4,8 @@ import { Paperclip } from 'lucide-react';
 
 import { TiptapViewer, textWithFormulas } from '@/components/TiptapEditor';
 import { ClaimActionsPopover } from '@/features/chat/components/actions/ClaimActionsPopover';
-import { CitationFootnote } from '@/features/chat/components/CitationFootnote';
-import { CitationHoverCard } from '@/features/chat/components/CitationHoverCard';
+import { CitationFootnote } from '@/features/reading/components/CitationFootnote';
+import { CitationHoverCard } from '@/features/reading/components/CitationHoverCard';
 import { ClaimHoverCard } from '@/features/chat/components/ClaimHoverCard';
 import { EvidenceMargin } from '@/features/chat/components/EvidenceMargin';
 import { MessageHeader } from '@/features/chat/components/message/MessageHeader';
