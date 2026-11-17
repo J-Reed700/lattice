@@ -39,7 +39,7 @@
 //! | `LATTICE_EVAL_ENDPOINT` | provider base URL; llama.cpp usually ends in `/v1` | `http://127.0.0.1:11434` |
 //! | `LATTICE_EVAL_AUTH_HEADER_NAME` | optional header name for authenticated endpoints | unset |
 //! | `LATTICE_EVAL_AUTH_HEADER_VALUE` | optional header value; never written to traces | unset |
-//! | `LATTICE_EVAL_CONTEXT_TOKENS` | continuation-model window to budget against | `8192` |
+//! | `LATTICE_EVAL_CONTEXT_TOKENS` | the window both models present, in place of the server's own | `8192` |
 //! | `LATTICE_EVAL_REQUEST_TIMEOUT_SECS` | timeout for one provider attempt | `300` |
 //! | `LATTICE_EVAL_COMPACTION_DEADLINE_SECS` | total deadline for one compaction job | none: the run ends by cancellation, as in production |
 //! | `LATTICE_EVAL_PROVIDER_ATTEMPTS` | logical attempts for a transient provider failure or empty completion | `3` |
@@ -602,6 +602,8 @@ enum Fault {
 /// two behaviours an ablation needs to change.
 struct EvalLlm {
     inner: Arc<dyn LLMPort>,
+    /// The window the run is measured at, presented as the model's own.
+    window: usize,
     always_supported: bool,
     fault: Mutex<Fault>,
     stall_for: Duration,
@@ -631,6 +633,7 @@ struct CallRecord {
 impl EvalLlm {
     fn new(
         inner: Arc<dyn LLMPort>,
+        window: usize,
         always_supported: bool,
         stall_for: Duration,
         provider_attempts: usize,
@@ -638,6 +641,7 @@ impl EvalLlm {
     ) -> Self {
         Self {
             inner,
+            window,
             always_supported,
             fault: Mutex::new(Fault::None),
             stall_for,
@@ -942,7 +946,7 @@ impl LLMPort for EvalLlm {
     }
 
     fn max_context_tokens(&self) -> usize {
-        self.inner.max_context_tokens()
+        self.window
     }
 
     fn count_tokens(&self, text: &str) -> usize {
@@ -1086,7 +1090,14 @@ async fn eval_adapter_retries_an_empty_completion_and_records_the_recovery() {
         calls: AtomicUsize::new(0),
         empty_responses: 1,
     });
-    let adapter = EvalLlm::new(inner.clone(), false, Duration::ZERO, 3, Duration::ZERO);
+    let adapter = EvalLlm::new(
+        inner.clone(),
+        8192,
+        false,
+        Duration::ZERO,
+        3,
+        Duration::ZERO,
+    );
 
     let response = adapter
         .complete(&legacy::completion(legacy::Completion::default()))
@@ -1108,7 +1119,14 @@ async fn eval_adapter_reports_when_empty_completion_retries_are_exhausted() {
         calls: AtomicUsize::new(0),
         empty_responses: usize::MAX,
     });
-    let adapter = EvalLlm::new(inner.clone(), false, Duration::ZERO, 3, Duration::ZERO);
+    let adapter = EvalLlm::new(
+        inner.clone(),
+        8192,
+        false,
+        Duration::ZERO,
+        3,
+        Duration::ZERO,
+    );
 
     let error = adapter
         .complete(&legacy::completion(legacy::Completion::default()))
@@ -1131,6 +1149,7 @@ async fn continuation_can_use_two_tools_before_returning_its_final_answer() {
     });
     let adapter = Arc::new(EvalLlm::new(
         inner.clone(),
+        8192,
         false,
         Duration::ZERO,
         3,
@@ -2245,6 +2264,7 @@ async fn build_models(config: &EvalConfig, arm: Arm) -> Models {
     let utility_inner = build_port(config, &config.utility_model).await;
     let continuation = Arc::new(EvalLlm::new(
         build_port(config, &config.continuation_model).await,
+        config.context_tokens,
         false,
         Duration::from_secs(4),
         config.provider_attempts,
@@ -2253,6 +2273,7 @@ async fn build_models(config: &EvalConfig, arm: Arm) -> Models {
     Models {
         utility: Arc::new(EvalLlm::new(
             utility_inner,
+            config.context_tokens,
             arm == Arm::NoSemanticReviewer,
             Duration::from_secs(4),
             config.provider_attempts,
