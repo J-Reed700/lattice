@@ -129,6 +129,7 @@ pub fn server_auth() -> Option<(String, String)> {
 pub async fn start(
     upstream: String,
     thinking_off: bool,
+    report_ctx: Option<u64>,
     auth: Option<(String, String)>,
     recorder: Arc<Recorder>,
 ) -> Res<String> {
@@ -153,6 +154,7 @@ pub async fn start(
                     &client,
                     &upstream,
                     thinking_off,
+                    report_ctx,
                     auth.as_ref(),
                     &recorder,
                 )
@@ -233,11 +235,36 @@ pub fn switch_thinking_off(body: &mut Value) -> bool {
     }
 }
 
+/// `/props` as the server answered it, with its window reported as `n_ctx`.
+pub fn reported_props(body: &[u8], n_ctx: u64) -> Res<Vec<u8>> {
+    let mut props: Value = serde_json::from_slice(body)?;
+    let mut found = false;
+    if let Some(object) = props.as_object_mut() {
+        if let Some(slot) = object
+            .get_mut("default_generation_settings")
+            .and_then(Value::as_object_mut)
+            .and_then(|settings| settings.get_mut("n_ctx"))
+        {
+            *slot = json!(n_ctx);
+            found = true;
+        }
+        if let Some(slot) = object.get_mut("n_ctx") {
+            *slot = json!(n_ctx);
+            found = true;
+        }
+    }
+    if !found {
+        return Err("the server's /props names no n_ctx".into());
+    }
+    Ok(serde_json::to_vec(&props)?)
+}
+
 async fn serve(
     stream: TcpStream,
     client: &reqwest::Client,
     upstream: &str,
     thinking_off: bool,
+    report_ctx: Option<u64>,
     auth: Option<&(String, String)>,
     recorder: &Recorder,
 ) -> Res<()> {
@@ -287,6 +314,8 @@ async fn serve(
         reply: None,
         error: None,
     };
+    let is_window_query =
+        head.method == "GET" && head.path.split('?').next().unwrap_or_default() == "/props";
     let client_stream = stream.get_mut();
     match forward.body(body).send().await {
         Ok(response) => {
@@ -304,27 +333,50 @@ async fn serve(
                 status.canonical_reason().unwrap_or("")
             );
             client_stream.write_all(head.as_bytes()).await?;
+            let window = report_ctx.filter(|_| is_window_query && status.is_success());
             let mut copy = Vec::new();
-            let mut chunks = response.bytes_stream();
-            while let Some(chunk) = chunks.next().await {
-                let chunk = match chunk {
-                    Ok(chunk) => chunk,
+            if let Some(n_ctx) = window {
+                let upstream_body = match response.bytes().await {
+                    Ok(bytes) => bytes.to_vec(),
                     Err(error) => {
                         record.error = Some(WithCauses(&error).to_string());
-                        break;
+                        Vec::new()
                     }
                 };
-                if record.first_byte_ms.is_none() {
-                    record.first_byte_ms = Some(elapsed_ms(started));
-                }
+                record.first_byte_ms = Some(elapsed_ms(started));
                 recorder.touch();
-                if is_chat {
-                    copy.extend_from_slice(&chunk);
-                }
-                // A client that gave up still gets its call recorded.
-                if let Err(error) = client_stream.write_all(&chunk).await {
+                let answer = match reported_props(&upstream_body, n_ctx) {
+                    Ok(rewritten) => rewritten,
+                    Err(error) => {
+                        record.error = Some(WithCauses(error.as_ref()).to_string());
+                        upstream_body
+                    }
+                };
+                if let Err(error) = client_stream.write_all(&answer).await {
                     record.error = Some(format!("client closed: {error}"));
-                    break;
+                }
+            } else {
+                let mut chunks = response.bytes_stream();
+                while let Some(chunk) = chunks.next().await {
+                    let chunk = match chunk {
+                        Ok(chunk) => chunk,
+                        Err(error) => {
+                            record.error = Some(WithCauses(&error).to_string());
+                            break;
+                        }
+                    };
+                    if record.first_byte_ms.is_none() {
+                        record.first_byte_ms = Some(elapsed_ms(started));
+                    }
+                    recorder.touch();
+                    if is_chat {
+                        copy.extend_from_slice(&chunk);
+                    }
+                    // A client that gave up still gets its call recorded.
+                    if let Err(error) = client_stream.write_all(&chunk).await {
+                        record.error = Some(format!("client closed: {error}"));
+                        break;
+                    }
                 }
             }
             // A refused request says why in its body; without it the run only

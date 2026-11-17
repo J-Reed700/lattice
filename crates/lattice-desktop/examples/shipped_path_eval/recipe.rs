@@ -71,10 +71,30 @@ pub struct Server {
     pub launch: Option<String>,
     pub expected_ctx: u64,
     pub expected_slots: u64,
+    /// A window for the proxy to report as the server's own: `/props` is
+    /// answered with this `n_ctx`, so the app sizes every request to it, as it
+    /// would for a server started with that window. The probe still checks
+    /// `expected_ctx` against the server itself.
+    #[serde(default)]
+    pub report_ctx: Option<u64>,
     /// `"off"`: add `chat_template_kwargs.enable_thinking: false` to every
     /// request that does not choose for itself. `"as-sent"`: forward
     /// requests untouched.
     pub thinking: String,
+}
+
+impl Server {
+    /// The window the proxy reports, which must be one the server has.
+    pub fn reported_ctx(&self) -> Res<Option<u64>> {
+        match self.report_ctx {
+            Some(n) if n == 0 || n > self.expected_ctx => Err(format!(
+                "server.report_ctx {n} must be at least 1 and at most expected_ctx {}",
+                self.expected_ctx
+            )
+            .into()),
+            reported => Ok(reported),
+        }
+    }
 }
 
 /// A model on a cloud provider's public API. The key is the one the desktop
