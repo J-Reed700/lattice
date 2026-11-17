@@ -7,6 +7,7 @@ import { ChatModelButton, type ChatModelButtonProps } from '@/features/chat/comp
 import { render } from '@/tests/renderWithQueryClient';
 import type { ChatModelOption } from '@/utils/chatModelSelection';
 
+vi.mock('@/features/model/hooks/useActiveModels', () => ({ useActiveModels: () => ({ activeModels: null }) }));
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => ({ downloadedModels: [] }) }));
 vi.mock('@/features/model/hooks/useLoadedModels', () => ({ useLoadedModels: () => [], degradedReasonFor: () => null }));
 vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({ useSettingsQuery: () => ({ data: undefined }) }));

@@ -15,7 +15,7 @@ use lattice_core::application::ports::llm_port::{
 use lattice_core::application::ports::{ChatImagesPort, ImageTurnScope};
 use lattice_core::application::ports::{EmbeddingPort, LLMPort};
 use lattice_core::application::services::chat_model_resolution::{
-    resolve, resolve_learning, DefaultChatModel,
+    resolve, resolve_learning, Candidates, DefaultChatModel,
 };
 use lattice_core::application::services::model_contract::kept::{
     KeptNames, MemoryNames, TurnNames,
@@ -422,12 +422,19 @@ impl ChatModels for FakeRuntime {
         _requirements: ModelRequirements,
     ) -> Result<PinnedModel> {
         let choice = self.conversations.model_choice(conversation_id)?;
-        let default =
-            DefaultChatModel(self.llm.as_ref().map(|_| default_model()).ok_or_else(|| {
-                AppError::AiModelsNotInstalled(
-                    "No chat model is selected in Settings → Downloaded".into(),
-                )
-            }));
+        let default = DefaultChatModel(
+            self.llm
+                .as_ref()
+                .map(|_| Candidates {
+                    models: vec![default_model()],
+                    auto: false,
+                })
+                .ok_or_else(|| {
+                    AppError::AiModelsNotInstalled(
+                        "No chat model is selected in Settings → Downloaded".into(),
+                    )
+                }),
+        );
         self.pinned(resolve(request_override, &choice, &default)?)
     }
     async fn learning_llm(&self, _requirements: ModelRequirements) -> Result<PinnedModel> {

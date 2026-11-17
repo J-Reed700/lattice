@@ -1,5 +1,6 @@
 import { expect, test as base, type Page } from '@playwright/test';
 import { makeAppSettings } from '../../src/tests/fixtures/appSettings';
+import { mockActiveModels } from './activeModels';
 import { installTauriMock, serveCommands, type MockArgs } from './tauri';
 
 /** One fixed instant, so relative dates in fixtures read the same on every run. */
@@ -26,6 +27,7 @@ export async function installShell(page: Page): Promise<ShellBackend> {
   // Renderer checks must not wait for external font servers when DNS is offline.
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
   const mock = await installTauriMock(page);
+  await mockActiveModels(page);
   const settings = makeAppSettings();
   const served = await serveCommands(page, () => ({
     get_settings: () => settings,
