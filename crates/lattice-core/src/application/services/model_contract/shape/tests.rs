@@ -420,16 +420,14 @@ fn via_flagged(
     <Flagged<Sheet, Note> as PerItem>::read(&written(text, ended), showing)
 }
 
-fn via_keeps(
-    text: &str,
-    ended: Ended,
-    showing: &Showing<'_>,
-) -> Vec<(Picked<Sheet>, Settled<Vec<Picked<Opt>>>)> {
+type KeptRow = (Picked<Sheet>, Settled<Vec<Picked<Opt>>>);
+
+fn via_keeps(text: &str, ended: Ended, showing: &Showing<'_>) -> Vec<KeptRow> {
     <Keeps<Sheet, Opt> as PerItem>::read(&written(text, ended), showing)
 }
 
 /// What each sheet kept, as handles, or why it is unanswered.
-fn kept(rows: &[(Picked<Sheet>, Settled<Vec<Picked<Opt>>>)]) -> Vec<Result<Vec<String>, Why>> {
+fn kept(rows: &[KeptRow]) -> Vec<Result<Vec<String>, Why>> {
     rows.iter()
         .map(|(_, settled)| match settled {
             Settled::Answered(picked) => {
