@@ -40,7 +40,7 @@ use lattice_core::application::ports::content_addressed_storage_port::{
     ImportedBlob, RetainReason,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::fs::confinement::confine_to_root;
+use lattice_core::shared::fs::owned_folder::OwnedFolder;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -68,6 +68,7 @@ const LOCK_CACHE_HIGH_WATER: usize = 256;
 pub struct ContentAddressedStorage {
     /// Root directory for library storage (~/.lattice/files/)
     library_root: PathBuf,
+    owned: OwnedFolder,
     /// Imports currently in flight, by hash.
     leases: Arc<BlobLeases>,
     /// Per-hash mutual exclusion for copy and remove.
@@ -90,6 +91,7 @@ impl ContentAddressedStorage {
     /// Create storage with custom library root.
     pub fn with_root(library_root: PathBuf) -> Self {
         Self {
+            owned: OwnedFolder::new(&library_root),
             library_root,
             leases: BlobLeases::new(),
             locks: Mutex::new(HashMap::new()),
@@ -318,7 +320,7 @@ impl ContentAddressedStoragePort for ContentAddressedStorage {
     }
 
     fn owns(&self, path: &Path) -> bool {
-        confine_to_root(&self.library_root, path).is_ok()
+        self.owned.holds(path)
     }
 
     async fn list_hashes(&self) -> Result<Vec<String>> {
