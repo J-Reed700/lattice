@@ -222,9 +222,36 @@ describe('ModelPickerPopover', () => {
     await userEvent.click(screen.getByText('Model'));
 
     expect(screen.getByRole('menuitemradio', { name: /^Use default/ })).toHaveAttribute('aria-checked', 'false');
-    expect(screen.getByText('No chat model is selected in Settings → Downloaded.')).toBeInTheDocument();
     expect(screen.getByRole('menuitemradio', { name: /^Ornith-1\.5-9B/ })).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByRole('menuitemradio', { name: /^Llama 3\.2 3B/ })).toHaveAttribute('aria-checked', 'false');
+  });
+
+  const openWithDefaultRow = async () => {
+    models.current = [model({})];
+    render(
+      <ModelPickerPopover
+        choice={{ kind: 'explicit', model: { kind: 'local', model_id: 'llama-3.2-3b' } }}
+        defaultOption={null}
+        onUseDefault={vi.fn()}
+        onSelect={vi.fn()}
+      >
+        <button type="button">Model</button>
+      </ModelPickerPopover>
+    );
+    await userEvent.click(screen.getByText('Model'));
+  };
+
+  it("gives the backend's reason under Use default when it runs a default chat on nothing", async () => {
+    active.current = activeWith({ chat_unset: 'No Ollama chat model is set in Settings → Chat' });
+    await openWithDefaultRow();
+    expect(screen.getByRole('menuitemradio', { name: /^Use default/ })).toHaveTextContent('No Ollama chat model is set in Settings → Chat');
+    expect(screen.queryByText(/Settings → Downloaded/)).not.toBeInTheDocument();
+  });
+
+  it('claims no reason under Use default before the backend has answered', async () => {
+    await openWithDefaultRow();
+    expect(screen.getByRole('menuitemradio', { name: /^Use default/ })).toHaveTextContent('Follows the chat model set in Settings');
+    expect(screen.queryByText(/Settings → Downloaded/)).not.toBeInTheDocument();
   });
 
   it('moves between rows with the arrow keys, Home and End', async () => {

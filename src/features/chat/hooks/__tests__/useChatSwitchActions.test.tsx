@@ -120,6 +120,18 @@ describe('useChatSwitchActions', () => {
     expectNoGlobalWrite();
   });
 
+  it("gives the backend's reason when it runs a default chat on nothing", async () => {
+    state.conversations = [{ id: 'chat-b', modelChoice: { kind: 'explicit', model: { kind: 'local', model_id: 'ornith-1.5-9b' } } }];
+    active.current = {
+      chat: [], chat_unset: 'No llama.cpp model is set in Settings → Chat', utility: [], llama_cpp: null, ollama: null, ollama_utility_tag: null,
+    };
+    const result = render();
+    await act(() => result.current.handleUseDefault());
+    const [toast] = useToastStore.getState().toasts;
+    expect(toast.title).toBe('This chat now uses the app default');
+    expect(toast.message).toBe('No llama.cpp model is set in Settings → Chat');
+  });
+
   it('shows the reason when the model cannot be used, and claims nothing', async () => {
     state.setConversationModelChoice = vi.fn().mockRejectedValue(new Error('No Ollama connection is configured. Add one in Settings → Chat.'));
     const result = render();
