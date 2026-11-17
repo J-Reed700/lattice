@@ -660,7 +660,7 @@ jobs:
 
       - name: npm vulnerability audit
         if: env.REDS != 'true'
-        run: npm audit --audit-level=high
+        run: node --test scripts/ci/npm_audit_gate.test.mjs && node scripts/ci/npm_audit_gate.mjs
 
       - name: Verify bundled Python interpreter and standard library
         continue-on-error: ${{ env.REDS == 'true' }}
