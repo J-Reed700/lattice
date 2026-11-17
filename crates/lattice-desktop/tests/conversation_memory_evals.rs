@@ -1160,6 +1160,45 @@ async fn continuation_can_use_two_tools_before_returning_its_final_answer() {
     assert!(calls[2].tool_calls.is_empty());
 }
 
+#[tokio::test]
+async fn a_server_with_a_larger_window_is_planned_for_at_the_eval_window() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/props"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "total_slots": 1,
+                "default_generation_settings": {"n_ctx": 196_608}
+            })),
+        )
+        .mount(&server)
+        .await;
+    let config = EvalConfig {
+        provider: EvalProvider::LlamaCpp,
+        utility_model: "served.gguf".into(),
+        continuation_model: "served.gguf".into(),
+        endpoint: format!("{}/v1", server.uri()),
+        auth_header_name: String::new(),
+        auth_header_value: String::new(),
+        context_tokens: 16_384,
+        request_timeout: Duration::from_secs(5),
+        compaction_deadline: None,
+        provider_attempts: 1,
+        retry_base_delay: Duration::ZERO,
+        runs: 1,
+        concurrency: 1,
+        max_cycles: None,
+        log_dir: std::env::temp_dir(),
+        resume_trace: None,
+        resume_metrics: Arc::new(HashMap::new()),
+    };
+
+    let models = build_models(&config, Arm::BoundedMemory).await;
+
+    assert_eq!(models.continuation.max_context_tokens(), 16_384);
+    assert_eq!(models.utility.max_context_tokens(), 16_384);
+}
+
 #[test]
 fn resume_loader_accepts_only_complete_cells_and_tolerates_an_interrupted_final_append() {
     let path = std::env::temp_dir().join(format!(
