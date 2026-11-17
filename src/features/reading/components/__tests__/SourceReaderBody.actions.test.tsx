@@ -15,14 +15,15 @@ const mocks = vi.hoisted(() => ({
   openSourcePath: vi.fn(),
   revealSourcePath: vi.fn(),
   readFileContent: vi.fn(),
+  savedWebArticle: vi.fn(),
   createPassageReference: vi.fn(),
   openExternal: vi.fn(),
   navigate: vi.fn(),
 }));
 
 vi.mock('@/lib/api', () => ({
-  default: { readFileContent: mocks.readFileContent, createPassageReference: mocks.createPassageReference },
-  VaultAPI: { readFileContent: mocks.readFileContent, createPassageReference: mocks.createPassageReference },
+  default: { readFileContent: mocks.readFileContent, savedWebArticle: mocks.savedWebArticle, createPassageReference: mocks.createPassageReference },
+  VaultAPI: { readFileContent: mocks.readFileContent, savedWebArticle: mocks.savedWebArticle, createPassageReference: mocks.createPassageReference },
 }));
 vi.mock('@tauri-apps/plugin-shell', () => ({ open: mocks.openExternal }));
 vi.mock('@/features/reading/hooks/sourceFileActions', () => ({
@@ -103,6 +104,7 @@ beforeEach(() => {
   useWebPageSnapshotStore.setState({ mode: null });
   mocks.resolveSourcePath.mockResolvedValue({ ok: true, data: '/vault/harvest.txt' });
   mocks.readFileContent.mockResolvedValue({ ok: true, data: 'Barley ripens in July.' });
+  mocks.savedWebArticle.mockResolvedValue({ ok: true, data: null });
   mocks.openSourceDocument.mockResolvedValue({ ok: true, data: { action: 'opened_external' } });
   mocks.openSourcePath.mockResolvedValue({ ok: true, data: null });
   mocks.revealSourcePath.mockResolvedValue({ ok: true, data: null });
