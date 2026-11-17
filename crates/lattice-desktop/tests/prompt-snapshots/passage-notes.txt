@@ -19,42 +19,7 @@ Do not answer my question yet. First read these passages, each on its own.
 
 My question is: "Question: What happened at the harbour?"
 
-Answer with an entries list: each entry names a passage in `of` by the handle shown beside it, and lists in `keep` the handles of the sentences of that passage that bear on my question, including any exception or condition, or no handle when it says nothing bearing on my question, however near its subject. When my question names a document, a passage from any other document gets no handle.
-
-=== schema ===
-{
-  "type": "object",
-  "properties": {
-    "entries": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "of": {
-            "type": "string",
-            "description": "One of the names the request shows, such as p1."
-          },
-          "keep": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "description": "One of the names the request shows, such as u1."
-            }
-          }
-        },
-        "required": [
-          "of",
-          "keep"
-        ],
-        "additionalProperties": false
-      }
-    }
-  },
-  "required": [
-    "entries"
-  ],
-  "additionalProperties": false
-}
+Answer with one line for each passage that has sentences bearing on my question, including any exception or condition: the passage's handle, then the handles of those sentences, as in `p2: u1 u4`. Leave out a passage that says nothing bearing on my question, however near its subject. When my question names a document, leave out every passage from any other document. If no passage bears on my question, answer `none`. Write nothing else.
 
 === sent with ===
 {
@@ -84,42 +49,7 @@ Do not answer my question yet. First read these passages, each on its own.
 
 My question is: "Question: What happened at the harbour?"
 
-Answer with an entries list: each entry names a passage in `of` by the handle shown beside it, and lists in `keep` the handles of the sentences of that passage that bear on my question, including any exception or condition, or no handle when it says nothing bearing on my question, however near its subject. When my question names a document, a passage from any other document gets no handle.
-
-=== schema ===
-{
-  "type": "object",
-  "properties": {
-    "entries": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "of": {
-            "type": "string",
-            "description": "One of the names the request shows, such as p4."
-          },
-          "keep": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "description": "One of the names the request shows, such as u1."
-            }
-          }
-        },
-        "required": [
-          "of",
-          "keep"
-        ],
-        "additionalProperties": false
-      }
-    }
-  },
-  "required": [
-    "entries"
-  ],
-  "additionalProperties": false
-}
+Answer with one line for each passage that has sentences bearing on my question, including any exception or condition: the passage's handle, then the handles of those sentences, as in `p2: u1 u4`. Leave out a passage that says nothing bearing on my question, however near its subject. When my question names a document, leave out every passage from any other document. If no passage bears on my question, answer `none`. Write nothing else.
 
 === sent with ===
 {

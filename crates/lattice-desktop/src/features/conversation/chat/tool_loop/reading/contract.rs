@@ -12,7 +12,7 @@ use lattice_core::application::services::grounded_generation::CallOptions;
 use lattice_core::application::services::model_contract::ask::{
     ask_each, Alone, Answered, Plain, Says, Settled,
 };
-use lattice_core::application::services::model_contract::shape::{Authored, Each, Fields, Form};
+use lattice_core::application::services::model_contract::shape::Keeps;
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Kind, Picked, Scope, Showing, Told,
 };
@@ -32,7 +32,7 @@ pub(super) const READ_INSTRUCTION: &str =
 /// Closes it, after the passages and the question. The criterion must follow
 /// the passages, and the question is said again because the passages put it
 /// far back.
-pub(super) const BEARING_INSTRUCTION: &str = "Answer with an entries list: each entry names a passage in `of` by the handle shown beside it, and lists in `keep` the handles of the sentences of that passage that bear on my question, including any exception or condition, or no handle when it says nothing bearing on my question, however near its subject. When my question names a document, a passage from any other document gets no handle.";
+pub(super) const BEARING_INSTRUCTION: &str = "Answer with one line for each passage that has sentences bearing on my question, including any exception or condition: the passage's handle, then the handles of those sentences, as in `p2: u1 u4`. Leave out a passage that says nothing bearing on my question, however near its subject. When my question names a document, leave out every passage from any other document. If no passage bears on my question, answer `none`. Write nothing else.";
 
 /// The call that chooses the sentences of each passage that bear on the question.
 pub(super) struct PassageNotes;
@@ -84,27 +84,8 @@ pub(super) struct Input {
     pub(super) passages: Vec<Excerpt>,
 }
 
-/// The sentences of one passage that bear on the question; none when it says
-/// nothing bearing on it.
-#[derive(Debug, Clone, PartialEq)]
-pub(super) struct Bearing {
-    pub(super) sentences: Vec<Picked<Sentence>>,
-}
-
-impl Authored for Bearing {
-    fn form() -> Form {
-        Form::new().cite_own::<Sentence>("keep")
-    }
-
-    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
-        Some(Self {
-            sentences: fields.cite_own("keep"),
-        })
-    }
-}
-
 impl Answered for PassageNotes {
-    type Answer = Each<Excerpt, Bearing>;
+    type Answer = Keeps<Excerpt, Sentence>;
     const ALONE: Alone = Alone::Pending;
 
     fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
@@ -155,12 +136,8 @@ impl Excerpt {
 
     /// The note the chosen sentences make, in the passage's own order, from the
     /// app's copy of them; `None` when none was chosen.
-    fn note(&self, bearing: &Bearing) -> Option<String> {
-        let mut at: Vec<usize> = bearing
-            .sentences
-            .iter()
-            .map(|picked| picked.reference)
-            .collect();
+    fn note(&self, picked: &[Picked<Sentence>]) -> Option<String> {
+        let mut at: Vec<usize> = picked.iter().map(|one| one.reference).collect();
         at.sort_unstable();
         at.dedup();
         let note = at
@@ -175,12 +152,15 @@ impl Excerpt {
 
 /// Each label's note (`None` when the model chose no sentence of it). A passage
 /// whose answer did not settle has no entry: it was not judged.
-fn lines_of(excerpts: &[Excerpt], settled: Vec<Settled<Bearing>>) -> BTreeMap<u32, Option<String>> {
+fn lines_of(
+    excerpts: &[Excerpt],
+    settled: Vec<Settled<Vec<Picked<Sentence>>>>,
+) -> BTreeMap<u32, Option<String>> {
     excerpts
         .iter()
         .zip(settled)
         .filter_map(|(excerpt, settled)| match settled {
-            Settled::Answered(bearing) => Some((excerpt.label, excerpt.note(&bearing))),
+            Settled::Answered(picked) => Some((excerpt.label, excerpt.note(&picked))),
             Settled::Unanswered(_) => None,
         })
         .collect()
