@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used)]
 use super::*;
 use crate::dto::LearningSourceKind;
-use crate::lessons::claim_reviews::dto::SourceAddedByDto;
+use crate::lessons::claim_reviews::dto::{ClaimExcerptDto, SourceAddedByDto};
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimId, ClaimLocation, EventProvenance, UnitKind,
 };
@@ -61,5 +61,40 @@ fn a_stored_quote_in_other_typography_is_highlighted() {
         "It's owned by the caller".into(),
     )
     .unwrap();
-    assert_eq!(card.quote_span, Some((0, 26)));
+    assert_eq!(
+        card.excerpt,
+        ClaimExcerptDto {
+            before: String::new(),
+            quote: "It\u{2019}s owned by the caller".into(),
+            after: ".".into(),
+            clipped_start: false,
+            clipped_end: false
+        }
+    );
+}
+
+#[test]
+fn an_evidence_passage_carries_its_opening() {
+    let text = "Tagged monarchs flew about 2,500 miles on average. Some flew farther.";
+    let sources = HashMap::from([(
+        "v1".to_owned(),
+        SourceFacts {
+            source_id: "s1".into(),
+            title: "Source".into(),
+            url: None,
+            added_by: SourceAddedByDto::User,
+            library_kind: LearningSourceKind::Pasted,
+        },
+    )]);
+    let passage = evidence_passage("v1", text, (0, text.len()), "lexical", &sources, None);
+    assert_eq!(
+        passage.opening,
+        ClaimExcerptDto {
+            before: String::new(),
+            quote: "Tagged monarchs flew about 2,500 miles on average.".into(),
+            after: " Some flew farther.".into(),
+            clipped_start: false,
+            clipped_end: false
+        }
+    );
 }
