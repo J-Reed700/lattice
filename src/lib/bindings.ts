@@ -1861,7 +1861,7 @@ async getActiveEmbeddingModel() : Promise<Result<DownloadedModelResponse | null,
 }
 },
 /**
- * Get active models (both chat and embedding)
+ * What a chat on the Settings default and utility work run on now.
  */
 async getActiveModels() : Promise<Result<ActiveModels, ApiError>> {
     try {
