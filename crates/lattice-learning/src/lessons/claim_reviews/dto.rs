@@ -150,6 +150,10 @@ pub struct ClaimReviewItemDto {
     /// For a sentence the machine took out whose place is known: the unit it goes
     /// back into, as the lesson stands now.
     pub put_back_unit: Option<usize>,
+    /// For a sentence the machine took out whose place is known: the
+    /// sentence of that unit it goes back beside, as the unit's text has it;
+    /// null when it goes at the end.
+    pub put_back_beside: Option<String>,
     /// For a claim the machine rewrote: what it said and what it says now.
     pub rewritten: Option<RewrittenDto>,
 }
