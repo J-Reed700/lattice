@@ -131,7 +131,35 @@ impl CorpusShapeRepositoryPort for SqliteCorpusShapeRepository {
 mod tests {
     use super::*;
     use chrono::Utc;
+    use lattice_core::domain::ports::article_archive::ArticleArchive;
     use sqlx::SqlitePool;
+    use std::path::Path;
+    use std::path::PathBuf;
+
+    struct ArchiveAt(PathBuf);
+
+    #[async_trait::async_trait]
+    impl ArticleArchive for ArchiveAt {
+        async fn delete_article(&self, _path: &Path) -> Result<()> {
+            Ok(())
+        }
+
+        fn owns(&self, path: &Path) -> bool {
+            path.starts_with(&self.0)
+        }
+    }
+
+    fn archive() -> ArchiveAt {
+        ArchiveAt(PathBuf::from("/archive"))
+    }
+
+    fn outside(id: &str, file_type: &str) -> String {
+        format!("/tmp/{}.{}", id, file_type)
+    }
+
+    fn inside(id: &str) -> String {
+        format!("/archive/{}/article.md", id)
+    }
 
     async fn pool() -> SqlitePool {
         lattice_core::shared::testing::sqlite::migrated_in_memory()
@@ -143,27 +171,59 @@ mod tests {
         pool: &SqlitePool,
         id: &str,
         file_type: &str,
-        source_type: &str,
+        file_path: &str,
         indexed_at: &str,
     ) {
         sqlx::query(
             r#"
             INSERT INTO documents
                 (id, file_path, file_name, file_type, size_bytes, modified_at,
-                 indexed_at, checksum, status, source_type)
-            VALUES (?, ?, ?, ?, 0, ?, ?, 'sum', 'indexed', ?)
+                 indexed_at, checksum, status)
+            VALUES (?, ?, ?, ?, 0, ?, ?, 'sum', 'indexed')
             "#,
         )
         .bind(id)
-        .bind(format!("/tmp/{}.{}", id, file_type))
+        .bind(file_path)
         .bind(format!("{}.{}", id, file_type))
         .bind(file_type)
         .bind(indexed_at)
         .bind(indexed_at)
-        .bind(source_type)
         .execute(pool)
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_file_inside_the_archive_counts_as_web() {
+        let pool = pool().await;
+        let now = Utc::now().to_rfc3339();
+        insert_doc(&pool, "saved", "md", &inside("saved"), &now).await;
+        insert_doc(&pool, "own", "md", &outside("own", "md"), &now).await;
+
+        let repo = SqliteCorpusShapeRepository::new(Database::new(pool));
+        let shape = repo.corpus_shape(&archive()).await.unwrap();
+
+        assert_eq!(shape.total, 2);
+        assert_eq!(
+            shape.by_type,
+            vec![("Markdown".to_string(), 1), ("Web".to_string(), 1)]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_web_source_type_outside_the_archive_counts_by_its_file_type() {
+        let pool = pool().await;
+        let now = Utc::now().to_rfc3339();
+        insert_doc(&pool, "odd", "pdf", &outside("odd", "pdf"), &now).await;
+        sqlx::query("UPDATE documents SET source_type = 'web' WHERE id = 'odd'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let repo = SqliteCorpusShapeRepository::new(Database::new(pool));
+        let shape = repo.corpus_shape(&archive()).await.unwrap();
+
+        assert_eq!(shape.by_type, vec![("PDF".to_string(), 1)]);
     }
 
     #[tokio::test]
@@ -171,15 +231,17 @@ mod tests {
         let pool = pool().await;
         let now = Utc::now().to_rfc3339();
         for i in 0..3 {
-            insert_doc(&pool, &format!("pdf{i}"), "pdf", "local", &now).await;
+            let id = format!("pdf{i}");
+            insert_doc(&pool, &id, "pdf", &outside(&id, "pdf"), &now).await;
         }
         for i in 0..2 {
-            insert_doc(&pool, &format!("md{i}"), "md", "local", &now).await;
+            let id = format!("md{i}");
+            insert_doc(&pool, &id, "md", &outside(&id, "md"), &now).await;
         }
-        insert_doc(&pool, "web0", "html", "web", &now).await;
+        insert_doc(&pool, "web0", "html", &inside("web0"), &now).await;
 
         let repo = SqliteCorpusShapeRepository::new(Database::new(pool));
-        let shape = repo.corpus_shape().await.unwrap();
+        let shape = repo.corpus_shape(&archive()).await.unwrap();
 
         assert_eq!(shape.total, 6);
         assert_eq!(
@@ -197,11 +259,11 @@ mod tests {
         let pool = pool().await;
         let recent = (Utc::now() - Duration::days(3)).to_rfc3339();
         let old = (Utc::now() - Duration::days(30)).to_rfc3339();
-        insert_doc(&pool, "recent", "pdf", "local", &recent).await;
-        insert_doc(&pool, "old", "pdf", "local", &old).await;
+        insert_doc(&pool, "recent", "pdf", &outside("recent", "pdf"), &recent).await;
+        insert_doc(&pool, "old", "pdf", &outside("old", "pdf"), &old).await;
 
         let repo = SqliteCorpusShapeRepository::new(Database::new(pool));
-        let shape = repo.corpus_shape().await.unwrap();
+        let shape = repo.corpus_shape(&archive()).await.unwrap();
 
         assert_eq!(shape.total, 2);
         assert_eq!(shape.grown_last_7_days, 1);
@@ -211,15 +273,15 @@ mod tests {
     async fn a_chat_attachment_is_not_part_of_the_library_summary() {
         let pool = pool().await;
         let now = Utc::now().to_rfc3339();
-        insert_doc(&pool, "kept", "pdf", "local", &now).await;
-        insert_doc(&pool, "attached", "pdf", "local", &now).await;
+        insert_doc(&pool, "kept", "pdf", &outside("kept", "pdf"), &now).await;
+        insert_doc(&pool, "attached", "pdf", &outside("attached", "pdf"), &now).await;
         sqlx::query("UPDATE documents SET owner_conversation_id = 'chat-1' WHERE id = 'attached'")
             .execute(&pool)
             .await
             .unwrap();
 
         let repo = SqliteCorpusShapeRepository::new(Database::new(pool));
-        let shape = repo.corpus_shape().await.unwrap();
+        let shape = repo.corpus_shape(&archive()).await.unwrap();
 
         assert_eq!(shape.total, 1);
         assert_eq!(shape.by_type, vec![("PDF".to_string(), 1)]);
@@ -234,13 +296,20 @@ mod tests {
         let stamp = |at: DateTime<Local>| at.with_timezone(&Utc).to_rfc3339();
         let before_midnight = stamp(midnight - Duration::minutes(1));
         let just_now = stamp(now);
-        insert_doc(&pool, "today", "pdf", "local", &just_now).await;
-        insert_doc(&pool, "yesterday", "pdf", "local", &before_midnight).await;
+        insert_doc(&pool, "today", "pdf", &outside("today", "pdf"), &just_now).await;
+        insert_doc(
+            &pool,
+            "yesterday",
+            "pdf",
+            &outside("yesterday", "pdf"),
+            &before_midnight,
+        )
+        .await;
         insert_doc(
             &pool,
             "chat",
             "pdf",
-            "local",
+            &outside("chat", "pdf"),
             &stamp(now + Duration::hours(1)),
         )
         .await;
@@ -250,7 +319,7 @@ mod tests {
             .unwrap();
 
         let repo = SqliteCorpusShapeRepository::new(Database::new(pool));
-        let shape = repo.corpus_shape().await.unwrap();
+        let shape = repo.corpus_shape(&archive()).await.unwrap();
 
         assert_eq!(shape.total, 2);
         assert_eq!(shape.grown_today, 1);
@@ -261,7 +330,7 @@ mod tests {
     #[tokio::test]
     async fn empty_vault_reports_zeroes() {
         let repo = SqliteCorpusShapeRepository::new(Database::new(pool().await));
-        let shape = repo.corpus_shape().await.unwrap();
+        let shape = repo.corpus_shape(&archive()).await.unwrap();
         assert_eq!(shape.total, 0);
         assert!(shape.by_type.is_empty());
         assert_eq!(shape.grown_last_7_days, 0);

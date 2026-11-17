@@ -150,3 +150,6 @@ pub async fn get_document(
 ) -> Result<DocumentMetadataDto> {
     get_document_impl(&container, document_id).await
 }
+
+#[cfg(test)]
+mod tests;
