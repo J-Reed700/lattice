@@ -189,6 +189,14 @@ pub fn evidence_room(
     Ok(plan(llm, request)?.budget.total())
 }
 
+/// The output room the planner gives a request, after its cap at half the window.
+pub fn output_room(
+    llm: &dyn LLMPort,
+    request: &GroundedRequest,
+) -> Result<usize, GroundedGenerationError> {
+    Ok(plan(llm, request)?.allocation.output_reserved)
+}
+
 /// Passage tokens the chunker aims for (the embedding input policy's
 /// retrieval target). Used only when the library's passages cannot be
 /// measured, to size how deep a search reads.
