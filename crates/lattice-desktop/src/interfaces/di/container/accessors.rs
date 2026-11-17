@@ -3,7 +3,6 @@
 
 use super::Container;
 use crate::infrastructure::security::{FileAccessConfig, SecurityContext};
-use crate::infrastructure::storage::ContentAddressedStorage;
 use lattice_core::shared::persistence::Database;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -154,68 +153,11 @@ impl Container {
         self.core.data_dir().join("exports")
     }
 
-    /// Recompute which directories file-read IPC is allowed to reach.
-    ///
-    /// The policy is: the app's own data and imported-file library directories,
-    /// plus the user's vault and every folder they have asked us to index.
-    /// Anything else in `$HOME` — SSH keys, cloud credentials, browser profiles — stays
-    /// unreadable over IPC.
-    ///
-    /// Must be called at startup once settings are readable, and again after
-    /// any change to the vault path or the indexed-folder list; otherwise a
-    /// newly added folder is unreadable, or a removed one stays readable.
+    /// Recompute which directories file-read IPC is allowed to reach: the
+    /// data and library directories, the vault, and every indexed or watched
+    /// folder. Run at startup; every settings write runs it through
+    /// `ContainerSettingsSideEffects`.
     pub async fn refresh_allowed_roots(&self) -> lattice_core::shared::error::Result<()> {
-        let settings = self.system.settings_repo().get_all().await?;
-
-        let mut roots = vec![
-            self.core.data_dir().to_path_buf(),
-            ContentAddressedStorage::default_library_root()?,
-        ];
-
-        if settings.vault.enabled && !settings.vault.vault_path.is_empty() {
-            roots.push(PathBuf::from(&settings.vault.vault_path));
-        }
-
-        for indexed in &settings.indexing.indexed_paths {
-            if !indexed.is_empty() {
-                roots.push(PathBuf::from(indexed));
-            }
-        }
-
-        // Folders being watched are also legitimately readable, and the watch
-        // list is authoritative in the database rather than in settings.
-        match crate::infrastructure::persistence::repositories::file_library::watch_folder_paths(
-            self.database(),
-        )
-        .await
-        {
-            Ok(paths) => roots.extend(paths.into_iter().map(PathBuf::from)),
-            Err(e) => tracing::warn!(
-                error = %e,
-                "could not read watch folders while recomputing allowed roots"
-            ),
-        }
-
-        // The viewers load images and audio over `asset://`, whose static
-        // scope is only the app data and the library; the user's own folders
-        // are opened to it here, as to IPC. Tauri cannot take a directory back
-        // out of the scope, so a removed folder stays viewable until restart.
-        if let Some(handle) = &self.app_handle {
-            use tauri::Manager;
-            let scope = handle.asset_protocol_scope();
-            for root in &roots {
-                scope.allow_directory(root, true).map_err(|e| {
-                    lattice_core::shared::error::AppError::InternalError(format!(
-                        "could not open {} to the asset protocol: {e}",
-                        root.display()
-                    ))
-                })?;
-            }
-        }
-
-        let count = roots.len();
-        self.file_access_config().set_allowed_roots(roots)?;
-        tracing::info!(count, "recomputed file-access allowed roots");
-        Ok(())
+        self.allowed_roots.refresh().await
     }
 }

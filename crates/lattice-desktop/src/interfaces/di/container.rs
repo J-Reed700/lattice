@@ -196,6 +196,10 @@ pub struct Container {
     /// methods. The long-term cleanup is to split Container into a
     /// wiring layer + a runtime-state layer (audit P1-2).
     pub(crate) app_handle: Option<tauri::AppHandle>,
+
+    /// The readable-folder policy; same `Arc` as the one in
+    /// `ContainerSettingsSideEffects`.
+    pub(crate) allowed_roots: Arc<super::allowed_roots::AllowedRoots>,
 }
 
 impl Container {
@@ -414,8 +418,16 @@ impl Container {
             core.background(),
         );
 
+        let allowed_roots = Arc::new(super::allowed_roots::AllowedRoots::new(
+            system.settings_repo().clone(),
+            core.database().clone(),
+            core.data_dir().clone(),
+            Arc::clone(core.file_access_config()),
+        ));
+
         let settings_side_effects: Arc<dyn SettingsSideEffectsPort> =
             Arc::new(ContainerSettingsSideEffects {
+                allowed_roots: Arc::clone(&allowed_roots),
                 llm_instances: llm_instances.clone(),
                 function_executor: function_executor.clone(),
                 settings_repository: system.settings_repo().clone(),
@@ -489,6 +501,7 @@ impl Container {
             course_indexes: None,
             index_turns: None,
             app_handle: None,
+            allowed_roots,
         })
     }
 
@@ -524,6 +537,7 @@ impl Container {
     /// `.with_app_handle(handle)`; tests skip it.
     pub fn with_app_handle(mut self, handle: tauri::AppHandle) -> Self {
         self.vault_writer.set_app_handle(handle.clone());
+        self.allowed_roots.set_app_handle(handle.clone());
         self.web_snapshot_events.attach(handle.clone());
         // A page that refuses the HTTP client is read in a hidden window of
         // the app's own browser engine, which exists only from here on.

@@ -28,6 +28,7 @@
 #[cfg(test)]
 use std::sync::Arc;
 
+pub(crate) mod allowed_roots;
 mod chat_runtime;
 // DDD Container - Unified DI container for DDD architecture
 pub mod container;

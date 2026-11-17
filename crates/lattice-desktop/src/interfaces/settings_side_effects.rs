@@ -9,6 +9,7 @@ use crate::features::function_calling::FunctionExecutorTrait;
 use crate::features::llm::instances::LlmInstances;
 use crate::features::vault::writeback::VaultWriterHandle;
 use crate::features::web::services::web::WebService;
+use crate::interfaces::di::allowed_roots::AllowedRoots;
 use lattice_core::application::ports::llm_port::InvalidationCause;
 use lattice_core::application::ports::{
     CredentialsPort, SettingsRepositoryPort, SettingsSideEffectsPort,
@@ -19,7 +20,8 @@ use lattice_core::shared::persistence::Database;
 /// Container-bound implementation of `SettingsSideEffectsPort`, so a
 /// settings update, reset or import through any code path (Tauri command,
 /// internal helper, test) invalidates the loaded LLMs it makes stale and
-/// refreshes the custom-tool runtime configuration.
+/// refreshes the custom-tool runtime configuration, and recomputes the
+/// folders file-read IPC may reach when the vault or indexed folders change.
 ///
 /// Each field is the same `Arc` that lives on Container, so this impl
 /// observes the same state the rest of Container does.
@@ -46,6 +48,9 @@ pub(crate) struct ContainerSettingsSideEffects {
 
     /// The keyring the keyed finders' keys are read from.
     pub(crate) credentials: Arc<dyn CredentialsPort>,
+
+    /// The readable folders. Same `Arc` as `Container::allowed_roots`.
+    pub(crate) allowed_roots: Arc<AllowedRoots>,
 }
 
 #[async_trait::async_trait]
@@ -87,6 +92,18 @@ impl SettingsSideEffectsPort for ContainerSettingsSideEffects {
                     error = %e,
                     "Vault enabled but settings re-read failed — skipping backfill"
                 ),
+            }
+        }
+
+        if matches!(
+            category,
+            Some(SettingsCategory::Indexing) | Some(SettingsCategory::Vault) | None
+        ) {
+            if let Err(e) = self.allowed_roots.refresh().await {
+                tracing::warn!(
+                    error = %e,
+                    "failed to refresh file-access allowed roots after settings update"
+                );
             }
         }
 
