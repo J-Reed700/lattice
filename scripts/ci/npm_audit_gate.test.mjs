@@ -78,6 +78,12 @@ test("a fix on an unrelated vulnerability does not count", () => {
   assert.deepEqual(auditFailures(report, allow, noPatch), []);
 });
 
+test("an allow-listed advisory reported for a different package fails", () => {
+  const failures = auditFailures(picomatchOnly(), [{ ...allow[0], package: "micromatch" }], noPatch);
+  assert.equal(failures.length, 1);
+  assert.match(failures[0], /GHSA-fc5q-39xc-vjpf is reported for picomatch, not micromatch/);
+});
+
 test("an allow-listed advisory that is no longer reported fails", () => {
   const failures = auditFailures(audit({}), allow, noPatch);
   assert.equal(failures.length, 1);
