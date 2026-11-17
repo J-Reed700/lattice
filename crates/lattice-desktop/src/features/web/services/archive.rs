@@ -48,6 +48,18 @@ pub struct ArticleMetadata {
     pub links: Vec<String>,
 }
 
+/// True when `base_dir` holds `path`, comparing both as the file system
+/// spells them; false when either does not resolve.
+pub(crate) async fn base_dir_holds(base_dir: &Path, path: &Path) -> bool {
+    match (
+        fs::canonicalize(base_dir).await,
+        fs::canonicalize(path).await,
+    ) {
+        (Ok(base), Ok(path)) => path.starts_with(base),
+        _ => false,
+    }
+}
+
 async fn is_file(path: &Path) -> bool {
     fs::metadata(path)
         .await
@@ -285,7 +297,9 @@ impl ArticleArchive for WebArchiveService {
     }
 
     async fn saved_article(&self, path: &Path) -> Option<SavedArticle> {
-        if !self.owns(path) || path.file_name() != Some(std::ffi::OsStr::new("article.md")) {
+        if path.file_name() != Some(std::ffi::OsStr::new("article.md"))
+            || !base_dir_holds(&self.base_dir, path).await
+        {
             return None;
         }
         if !is_file(path).await {
