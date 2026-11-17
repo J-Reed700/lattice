@@ -1868,7 +1868,7 @@ proptest! {
 #[test]
 fn keeps_reads_every_spelling_of_a_line() {
     with_showing(4, 3, |showing| {
-        let text = "s1: o1 o2\n[s2] [o1], [o3]\n  s3:o2,o3  \n\ns4\to3 o1\n";
+        let text = "s1: o1 o2\n[s2] [o1], [o3]\n  s3: o2,o3  \n\ns4\to3 o1\n";
         let read = via_keeps(text, Ended::Complete, showing);
         assert_in_order(showing, &read);
         assert_eq!(

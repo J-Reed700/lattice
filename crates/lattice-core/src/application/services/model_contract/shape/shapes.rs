@@ -5,7 +5,7 @@
 use serde_json::{json, Map, Value};
 
 use super::super::edit::{Consistent, Content};
-use super::super::shown::{Kind, Picked, Showing};
+use super::super::shown::{Kind, Name, Picked, Showing};
 use super::document::{self, Document};
 use super::fields::trace;
 use super::form::{Among, Field, Form};
@@ -572,11 +572,101 @@ pub(super) fn read_flagged<K: Kind, V: Authored + PartialEq>(
     })
 }
 
+/// One line of a `Keeps` answer: a shown item and what it keeps. `Err` holds
+/// whether the line's first token has the form of a handle, for a line that
+/// does not name a shown item.
+fn keeps_line<K: Kind, C: Kind>(
+    line: &str,
+    showing: &Showing<'_>,
+) -> Result<(Picked<K>, Settled<Vec<Picked<C>>>), bool> {
+    let mut tokens = line
+        .split(|c: char| c.is_whitespace() || c == ',')
+        .filter(|token| !token.is_empty());
+    let first = tokens.next().ok_or(false)?;
+    let first = first.strip_suffix(':').unwrap_or(first);
+    let Some(item) = showing.resolve::<K>(first) else {
+        let handle_like = Name::pointed(first).is_some();
+        trace(
+            if handle_like {
+                "unplaced-entry"
+            } else {
+                "unread-item"
+            },
+            Some(first),
+        );
+        return Err(handle_like);
+    };
+    let mut kept: Vec<Picked<C>> = Vec::new();
+    for token in tokens {
+        match showing.resolve_under::<C>(item.handle.name(), token) {
+            Some(own) => {
+                if !kept.contains(&own) {
+                    kept.push(own);
+                }
+            }
+            None => {
+                trace("unplaced-keep", Some(token));
+                return Ok((item, Settled::Unanswered(Why::Unplaced)));
+            }
+        }
+    }
+    Ok((item, Settled::Answered(kept)))
+}
+
 pub(super) fn read_keeps<K: Kind, C: Kind>(
-    _written: &Written<'_>,
+    written: &Written<'_>,
     showing: &Showing<'_>,
 ) -> Rows<K, Vec<Picked<C>>> {
-    all_unanswered(showing.shown::<K>(), &Why::NotRead)
+    let shown = showing.shown::<K>();
+    if written.ended == Ended::Declined {
+        return all_unanswered(shown, &Why::Declined);
+    }
+    let complete = written.ended == Ended::Complete;
+    if complete && written.text.trim() == "none" {
+        return shown
+            .into_iter()
+            .map(|item| (item, Settled::Answered(Vec::new())))
+            .collect();
+    }
+    let mut lines: Vec<&str> = written
+        .text
+        .split('\n')
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    if !complete {
+        lines.pop();
+    }
+    let mut entries: Rows<K, Vec<Picked<C>>> = Vec::new();
+    let mut every_line_usable = true;
+    let mut stray_handle = false;
+    for line in &lines {
+        match keeps_line::<K, C>(line, showing) {
+            Ok(entry) => entries.push(entry),
+            Err(handle_like) => {
+                every_line_usable = false;
+                stray_handle |= handle_like;
+            }
+        }
+    }
+    let unnamed = if !complete {
+        Some(Why::CutOff)
+    } else if lines.is_empty() {
+        Some(Why::NotRead)
+    } else if every_line_usable {
+        None
+    } else if stray_handle {
+        Some(Why::Unplaced)
+    } else {
+        Some(Why::NotRead)
+    };
+    per_item(shown, entries, |joined| match joined {
+        Some(settled) => settled,
+        None => match &unnamed {
+            Some(why) => Settled::Unanswered(why.clone()),
+            None => Settled::Answered(Vec::new()),
+        },
+    })
 }
 
 pub(super) fn read_change<K: Kind, W: Content>(
