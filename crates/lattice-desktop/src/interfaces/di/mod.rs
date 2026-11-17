@@ -34,6 +34,8 @@ pub mod container;
 pub use container::Container;
 
 #[cfg(test)]
+mod allowed_roots_tests;
+#[cfg(test)]
 mod file_preview_tests;
 pub mod modules;
 #[cfg(test)]
