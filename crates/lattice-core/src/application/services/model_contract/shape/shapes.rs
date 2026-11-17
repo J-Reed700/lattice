@@ -579,7 +579,7 @@ fn says_none(line: &str) -> bool {
         .eq_ignore_ascii_case("none")
 }
 
-const RANGE_SEPARATORS: [&str; 6] = ["-", "–", "—", "..", "...", "…"];
+const RANGE_SEPARATORS: [&str; 7] = ["-", "--", "–", "—", "..", "...", "…"];
 
 /// The runs of ASCII letters and digits in a line, with where each starts.
 fn tokens_of(line: &str) -> Vec<(usize, &str)> {
