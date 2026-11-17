@@ -517,4 +517,42 @@ mod tests {
         assert_eq!(response.title.as_deref(), Some("Saved Title"));
         assert!(file_system.get_opened_files().is_empty());
     }
+
+    #[tokio::test]
+    async fn an_article_in_the_archive_without_its_page_opens_in_the_reader_at_its_text() {
+        use crate::infrastructure::security::FileAccessConfig;
+
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path().canonicalize().expect("canonical root");
+        let dir = root.join("web-archive").join("example.org").join("essay-1");
+        let article = write_article(&dir);
+        std::fs::remove_file(dir.join("page.html")).expect("remove page");
+        let doc_repo = Arc::new(
+            MockDocumentRepository::new()
+                .with_document("doc-1", "web-archive/example.org/essay-1/article.md"),
+        );
+        let file_system = Arc::new(MockFileSystem::new());
+        let file_storage =
+            Arc::new(MockFileStorage::new().with_file(&article.display().to_string()));
+        let use_case = OpenFileByIdUseCase::new(
+            doc_repo,
+            file_system.clone(),
+            file_storage,
+            Arc::new(FileAccessConfig::new(vec![root.clone()])),
+            root.clone(),
+            Arc::new(WebArchiveService::with_base_dir(root.join("web-archive"))),
+        );
+
+        let response = use_case
+            .execute(OpenFileByIdRequestDto {
+                document_id: "doc-1".to_string(),
+            })
+            .await
+            .expect("open");
+
+        assert_eq!(response.action, "render_internal");
+        assert_eq!(response.content_path, article.to_string_lossy());
+        assert_eq!(response.title.as_deref(), Some("Saved Title"));
+        assert!(file_system.get_opened_files().is_empty());
+    }
 }

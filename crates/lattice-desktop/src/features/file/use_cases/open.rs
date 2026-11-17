@@ -392,4 +392,34 @@ mod tests {
         assert_eq!(response.title.as_deref(), Some("Saved Title"));
         assert!(file_system.get_opened_files().is_empty());
     }
+
+    #[tokio::test]
+    async fn an_article_in_the_archive_without_its_page_opens_in_the_reader_at_its_text() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path().canonicalize().expect("canonical root");
+        let dir = root.join("web-archive").join("example.org").join("essay-1");
+        let article = write_article(&dir);
+        std::fs::remove_file(dir.join("page.html")).expect("remove page");
+        let archive = Arc::new(WebArchiveService::with_base_dir(root.join("web-archive")));
+        let file_system = Arc::new(MockFileSystem::new());
+        let file_storage = Arc::new(MockFileStorage::new().with_file(&article.to_string_lossy()));
+        let use_case = OpenFileUseCase::new(
+            file_system.clone(),
+            file_storage,
+            Arc::new(FileAccessConfig::new(vec![root.clone()])),
+            archive,
+        );
+
+        let response = use_case
+            .execute(OpenFileRequestDto {
+                path: article.to_string_lossy().to_string(),
+            })
+            .await
+            .expect("open");
+
+        assert_eq!(response.action, "render_internal");
+        assert_eq!(response.content_path, article.to_string_lossy());
+        assert_eq!(response.title.as_deref(), Some("Saved Title"));
+        assert!(file_system.get_opened_files().is_empty());
+    }
 }

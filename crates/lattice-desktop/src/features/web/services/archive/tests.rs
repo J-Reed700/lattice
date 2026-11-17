@@ -328,3 +328,12 @@ fn still_owns_an_article_whose_file_is_already_gone() {
 
     assert!(service.owns(&base.join("a1").join("article.md")));
 }
+
+#[test]
+fn owns_a_path_under_an_archive_folder_that_does_not_exist_yet() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let base = temp.path().join("missing").join("web-archive");
+    let service = WebArchiveService::with_base_dir(base.clone());
+
+    assert!(service.owns(&base.join("some-article").join("article.md")));
+}
