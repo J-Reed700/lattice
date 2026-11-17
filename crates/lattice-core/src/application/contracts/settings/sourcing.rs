@@ -101,9 +101,7 @@ impl SourcingSettingsDto {
         self.searxng_url
             .as_deref()
             .map(str::trim)
-            .filter(|raw| !raw.is_empty())
-            .and_then(|raw| Url::parse(raw).ok())
-            .filter(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
+            .and_then(http_url)
     }
 
     /// The polite-pool contact, when set.
@@ -127,13 +125,17 @@ impl SourcingSettingsDto {
     /// runs at least one finder. Clearing a field is `None`, never blank.
     pub fn problems(&self) -> Vec<String> {
         let mut problems = Vec::new();
-        if self.searxng_url.is_some() && self.searxng_url().is_none() {
+        if self
+            .searxng_url
+            .as_deref()
+            .is_some_and(|url| !SourcingAddress::SearxngUrl.accepts(url))
+        {
             problems.push("searxngUrl must be an http:// or https:// address".to_string());
         }
         if self
             .contact
             .as_deref()
-            .is_some_and(|contact| !is_contact(contact.trim()))
+            .is_some_and(|contact| !SourcingAddress::Contact.accepts(contact))
         {
             problems.push(
                 "contact must be an email address or an http:// or https:// address".to_string(),
@@ -185,15 +187,41 @@ impl SourcingSettingsDto {
     }
 }
 
+/// A Sources setting that holds an address the user types: the SearXNG
+/// server, or the polite-pool contact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub enum SourcingAddress {
+    SearxngUrl,
+    Contact,
+}
+
+impl SourcingAddress {
+    /// Whether this setting accepts `value`, trimmed as it is saved: the
+    /// rule `SourcingSettingsDto::problems` applies.
+    pub fn accepts(self, value: &str) -> bool {
+        let value = value.trim();
+        match self {
+            Self::SearxngUrl => http_url(value).is_some(),
+            Self::Contact => is_contact(value),
+        }
+    }
+}
+
 /// An email address (see [`is_email`]) or an http(s) URL with a host. The
 /// services that pool by contact accept either; the check is shape only.
 fn is_contact(contact: &str) -> bool {
     if contact.is_empty() || contact.chars().any(char::is_whitespace) {
         return false;
     }
-    is_email(contact)
-        || Url::parse(contact)
-            .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
+    is_email(contact) || http_url(contact).is_some()
+}
+
+/// An http(s) URL with a host.
+fn http_url(value: &str) -> Option<Url> {
+    Url::parse(value)
+        .ok()
+        .filter(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
 }
 
 #[cfg(test)]

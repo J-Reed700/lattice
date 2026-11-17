@@ -19,6 +19,7 @@ import type {
   JsonValue,
   KeyStatusDto,
   ReachGroupDto,
+  SourcingAddress,
   SourcingSettingsDto,
 } from '@/lib/bindings';
 import { cn } from '@/lib/utils';
@@ -26,12 +27,13 @@ import { toast } from '@/stores/toastStore';
 import { openExternalUrl } from '@/utils/openExternalUrl';
 
 import { GHOST_BUTTON_CLASS, SECONDARY_BUTTON_CLASS, SWITCH_CLASS } from './settingsStyles';
-import { isContact, isHttpUrl, keyServiceOf, REACH_LABELS, statusLine, type Tone } from './sourcesLabels';
+import { keyServiceOf, REACH_LABELS, statusLine, type Tone } from './sourcesLabels';
 import { useSettingsQuery, useUpdateSettingsMutation } from '../hooks/useSettingsQuery';
 import {
   useRefreshSourcesStatus,
   useSourceKeyMutations,
   useSourcesStatus,
+  useSourcingAddressCheck,
 } from '../hooks/useSourcesStatus';
 
 /** The backend's defaults, shown until the settings load. */
@@ -130,7 +132,7 @@ export function SourcesTab() {
           hint="Your own instance, on this computer, your network or the web, with its JSON output turned on. Lattice sends it nothing until you set one, and asks that address for nothing but searches."
           saved={sourcing.searxngUrl}
           placeholder="https://search.example.org"
-          check={isHttpUrl}
+          field="searxngUrl"
           invalidMessage="Enter an address that starts with http:// or https://"
           disabled={busy}
           onSave={(searxngUrl, done) =>
@@ -154,7 +156,7 @@ export function SourcesTab() {
           }
           saved={sourcing.contact}
           placeholder="you@example.org"
-          check={isContact}
+          field="contact"
           invalidMessage="Enter an email address, or a web address that starts with http:// or https://"
           disabled={busy}
           onSave={(contact, done) => updateSourcing({ contact }, "Couldn't save the contact", done)}
@@ -341,14 +343,14 @@ function KeyField({ keyStatus }: { keyStatus: KeyStatusDto }) {
   );
 }
 
-/** An address the backend checks too; Save sends it, or clears it when empty. */
+/** An address the backend checks as it is typed; Save sends it, or clears it when empty. */
 function AddressField({
   id,
   label,
   hint,
   saved,
   placeholder,
-  check,
+  field,
   invalidMessage,
   disabled,
   onSave,
@@ -358,7 +360,7 @@ function AddressField({
   hint: ReactNode;
   saved: string | null;
   placeholder: string;
-  check: (value: string) => boolean;
+  field: SourcingAddress;
   invalidMessage: string;
   disabled: boolean;
   onSave: (value: string | null, done: () => void) => void;
@@ -366,7 +368,9 @@ function AddressField({
   const [draft, setDraft] = useState<string | null>(null);
   const value = draft ?? saved ?? '';
   const trimmed = value.trim();
-  const invalid = trimmed !== '' && !check(trimmed);
+  const accepted = useSourcingAddressCheck(field, trimmed);
+  const invalid = accepted === false;
+  const unanswered = trimmed !== '' && accepted === undefined;
   const changed = trimmed !== (saved ?? '');
   const messageId = `${id}-error`;
 
@@ -387,7 +391,7 @@ function AddressField({
         <button
           type="button"
           className={SECONDARY_BUTTON_CLASS}
-          disabled={disabled || invalid || !changed}
+          disabled={disabled || invalid || unanswered || !changed}
           onClick={() => onSave(trimmed === '' ? null : trimmed, () => setDraft(null))}
         >
           {trimmed === '' && saved ? 'Clear' : 'Save'}

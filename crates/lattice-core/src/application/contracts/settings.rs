@@ -41,7 +41,7 @@ pub use retrieval::{
     VectorIndexCompressionModeDto, VectorIndexCompressionSettingsDto, VectorQuantizationDto,
     DEFAULT_VECTOR_COMPRESSION_DIMS,
 };
-pub use sourcing::{FinderSettingDto, SourcingSettingsDto};
+pub use sourcing::{FinderSettingDto, SourcingAddress, SourcingSettingsDto};
 pub use sourcing_status::{
     FinderGateDto, FinderHealthDto, FinderHealthStateDto, FinderNeedDto, FinderStatusDto,
     KeyServiceDto, KeyStatusDto, ReachGroupDto, SourcesStatusDto,
