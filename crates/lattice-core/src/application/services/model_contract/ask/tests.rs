@@ -504,6 +504,28 @@ macro_rules! one_runner {
 one_runner!(run_one, One);
 one_runner!(run_one_fails, OneFails);
 
+struct OneDefault;
+
+impl Contract for OneDefault {
+    const ID: ContractId = ContractId::new("test-one-default");
+    type Input = Input;
+}
+
+impl Answered for OneDefault {
+    type Answer = Word;
+    const ALONE: Alone = Alone::Pending;
+
+    fn says(_input: &Input, _showing: &mut Showing<'_>) -> Result<Says> {
+        Ok(Says::new("You judge tiles.", "Judge the tile."))
+    }
+
+    fn accept(_input: &Input, statement: &String) -> std::result::Result<(), Refusal> {
+        refuse(statement)
+    }
+}
+
+one_runner!(run_one_default, OneDefault);
+
 macro_rules! new_runner {
     ($name:ident, $contract:ty) => {
         async fn $name(script: &Script, limit: usize) -> Result<Found<String>> {
@@ -597,6 +619,29 @@ async fn a_cut_off_answer_with_room_gets_exactly_one_larger_send() {
         !script.prompt(1).contains(CUT_OFF),
         "a larger send is not a correction"
     );
+}
+
+#[tokio::test]
+async fn a_larger_send_doubles_the_default_room_of_a_request_that_set_none() {
+    let script = Script::new(&[("", LENGTH), ("fine", STOP)]).window(65_536);
+    let settled = run_one_default(&script, &Input::of(&[])).await.unwrap();
+    assert_eq!(settled, Settled::Answered("fine".to_owned()));
+    let requests = script.requests();
+    assert_eq!(requests.len(), 2);
+    let first = requests[0].max_output_tokens().unwrap();
+    let second = requests[1].max_output_tokens().unwrap();
+    assert_eq!(second, first * 2);
+}
+
+#[tokio::test]
+async fn a_larger_send_doubles_the_room_a_request_set() {
+    let script = Script::new(&[("", LENGTH), ("fine", STOP)]).window(65_536);
+    let settled = run_one(&script, &Input::of(&[])).await.unwrap();
+    assert_eq!(settled, Settled::Answered("fine".to_owned()));
+    let requests = script.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].max_output_tokens(), Some(100));
+    assert_eq!(requests[1].max_output_tokens(), Some(200));
 }
 
 #[tokio::test]
