@@ -30,6 +30,10 @@ impl ArticleArchive for RecordingArchive {
         path.starts_with("/archive")
     }
 
+    fn is_saved_article(&self, _path: &Path) -> bool {
+        false
+    }
+
     async fn saved_article(&self, _path: &Path) -> Option<SavedArticle> {
         None
     }

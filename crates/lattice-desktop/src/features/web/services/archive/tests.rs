@@ -337,3 +337,16 @@ fn owns_a_path_under_an_archive_folder_that_does_not_exist_yet() {
 
     assert!(service.owns(&base.join("some-article").join("article.md")));
 }
+
+#[test]
+fn only_an_article_text_inside_the_archive_is_a_saved_article() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let outside = tempfile::tempdir().expect("temp dir");
+    let base = temp.path().join("web-archive");
+    let service = WebArchiveService::with_base_dir(base.clone());
+
+    assert!(service.is_saved_article(&base.join("some-article").join("article.md")));
+    assert!(!service.is_saved_article(&base.join("example.com").join("old-article-1.md")));
+    assert!(!service.is_saved_article(&base.join("some-article").join("page.html")));
+    assert!(!service.is_saved_article(&outside.path().join("some-article").join("article.md")));
+}

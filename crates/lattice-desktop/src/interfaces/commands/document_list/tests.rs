@@ -21,6 +21,10 @@ impl ArticleArchive for ArchiveAt {
         path.starts_with(&self.0)
     }
 
+    fn is_saved_article(&self, path: &Path) -> bool {
+        path.file_name() == Some(std::ffi::OsStr::new("article.md")) && self.owns(path)
+    }
+
     async fn saved_article(&self, _path: &Path) -> Option<SavedArticle> {
         None
     }
@@ -68,6 +72,22 @@ fn a_file_inside_the_archive_is_web() {
 
     assert!(dto.web);
     assert_eq!(dto.type_bucket, "Web");
+}
+
+#[test]
+fn a_file_the_archive_owns_that_is_not_an_article_text_is_not_web() {
+    let dir = archive_dir();
+    let archive = ArchiveAt(dir.path().to_path_buf());
+    let doc = document(
+        dir.path().join("example.com").join("old-article-1.md"),
+        "md",
+        Category::Uncategorized,
+    );
+
+    let dto = document_metadata(&doc, &archive);
+
+    assert!(!dto.web);
+    assert_eq!(dto.type_bucket, "Markdown");
 }
 
 #[test]

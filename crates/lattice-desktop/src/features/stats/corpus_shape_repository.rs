@@ -147,6 +147,10 @@ mod tests {
             path.starts_with(&self.0)
         }
 
+        fn is_saved_article(&self, path: &Path) -> bool {
+            path.file_name() == Some(std::ffi::OsStr::new("article.md")) && self.owns(path)
+        }
+
         async fn saved_article(&self, _path: &Path) -> Option<SavedArticle> {
             None
         }
@@ -207,6 +211,29 @@ mod tests {
         let shape = repo.corpus_shape(&archive()).await.unwrap();
 
         assert_eq!(shape.total, 2);
+        assert_eq!(
+            shape.by_type,
+            vec![("Markdown".to_string(), 1), ("Web".to_string(), 1)]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_file_the_archive_owns_that_is_not_an_article_text_counts_by_its_file_type() {
+        let pool = pool().await;
+        let now = Utc::now().to_rfc3339();
+        insert_doc(&pool, "saved", "md", &inside("saved"), &now).await;
+        insert_doc(
+            &pool,
+            "legacy",
+            "md",
+            "/archive/example.com/old-article-1.md",
+            &now,
+        )
+        .await;
+
+        let repo = SqliteCorpusShapeRepository::new(Database::new(pool));
+        let shape = repo.corpus_shape(&archive()).await.unwrap();
+
         assert_eq!(
             shape.by_type,
             vec![("Markdown".to_string(), 1), ("Web".to_string(), 1)]

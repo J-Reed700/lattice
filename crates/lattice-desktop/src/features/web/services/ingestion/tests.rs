@@ -27,6 +27,10 @@ impl ArticleArchive for MockWebArchiveService {
         path.starts_with("/mock/web-archive")
     }
 
+    fn is_saved_article(&self, _path: &Path) -> bool {
+        false
+    }
+
     async fn saved_article(&self, _path: &Path) -> Option<SavedArticle> {
         None
     }

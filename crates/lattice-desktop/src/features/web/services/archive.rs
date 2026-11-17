@@ -314,6 +314,10 @@ impl ArticleArchive for WebArchiveService {
             && self.owned_roots.iter().any(|root| path.starts_with(root))
     }
 
+    fn is_saved_article(&self, path: &Path) -> bool {
+        self.owns(path)
+    }
+
     async fn saved_article(&self, path: &Path) -> Option<SavedArticle> {
         if path.file_name() != Some(std::ffi::OsStr::new("article.md")) || !self.owns(path) {
             return None;

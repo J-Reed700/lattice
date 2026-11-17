@@ -37,6 +37,10 @@ pub trait ArticleArchive: Send + Sync {
     /// where its own base directory is, so only it can answer.
     fn owns(&self, path: &Path) -> bool;
 
+    /// True when `path` is a saved article's text file inside this archive,
+    /// the file its document indexes.
+    fn is_saved_article(&self, path: &Path) -> bool;
+
     /// The archived article whose text file is `path`, or `None` when `path` is
     /// not an article's text file inside this archive.
     async fn saved_article(&self, path: &Path) -> Option<SavedArticle>;

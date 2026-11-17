@@ -92,6 +92,10 @@ impl ArticleArchive for MockWebArchiveService {
         reject_parent_components(path).is_ok() && path.starts_with(&self.base_dir)
     }
 
+    fn is_saved_article(&self, path: &Path) -> bool {
+        self.owns(path)
+    }
+
     async fn saved_article(&self, path: &Path) -> Option<SavedArticle> {
         if !self.owns(path) {
             return None;
