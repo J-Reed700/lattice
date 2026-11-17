@@ -1,20 +1,45 @@
-//! The failures of an Auto chain of models, so every candidate that fails
-//! gives way to the next and the last error is the one worth reporting.
+//! How a list of candidate models is tried: the first that loads is used, an
+//! explicit choice never falls back, and when every Auto candidate fails the
+//! error worth reporting is kept.
 
+use std::future::Future;
+
+use crate::application::services::chat_model_resolution::Candidates;
 use crate::domain::models::model_ref::ModelRef;
-use crate::shared::error::AppError;
+use crate::shared::error::{AppError, Result};
+
+/// The first of `candidates` that loads. `load` gets each model and whether
+/// its server must list it ([`Candidates::must_list`]). An explicit choice
+/// never falls back: its own failure is the error. Under Auto each failure
+/// gives way to the next model, and when all fail, a local model's failure is
+/// the error, else "No LLM available".
+pub async fn first_that_loads<'a, T, F, Fut>(candidates: &'a Candidates, mut load: F) -> Result<T>
+where
+    F: FnMut(&'a ModelRef, bool) -> Fut,
+    Fut: Future<Output = Result<T>>,
+{
+    let mut failures = AutoFailures::default();
+    for model in &candidates.models {
+        match load(model, candidates.must_list(model)).await {
+            Ok(loaded) => return Ok(loaded),
+            Err(error) if !candidates.auto => return Err(error),
+            Err(error) => failures.record(model, error),
+        }
+    }
+    Err(failures.into_error())
+}
 
 /// The failures of an Auto chain: each candidate that fails gives way to the
 /// next, and when all fail a local model's failure is the error worth
 /// reporting, not "nothing is installed".
 #[derive(Debug, Default)]
-pub struct AutoFailures {
+struct AutoFailures {
     local: Option<AppError>,
 }
 
 impl AutoFailures {
     /// Logs that `model` failed and keeps the first failure of a local model.
-    pub fn record(&mut self, model: &ModelRef, error: AppError) {
+    fn record(&mut self, model: &ModelRef, error: AppError) {
         tracing::warn!(%model, %error, "model not available, trying the next");
         if matches!(model, ModelRef::Local { .. }) && self.local.is_none() {
             self.local = Some(error);
@@ -22,7 +47,7 @@ impl AutoFailures {
     }
 
     /// The kept local failure, else "No LLM available".
-    pub fn into_error(self) -> AppError {
+    fn into_error(self) -> AppError {
         self.local.unwrap_or_else(|| {
             AppError::AiModelsNotInstalled(
                 "No LLM available. Please either:\n\

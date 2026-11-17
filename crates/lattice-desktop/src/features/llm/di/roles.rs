@@ -19,9 +19,9 @@ use lattice_core::application::ports::llm_port::{
 use lattice_core::application::ports::{LLMPort, SettingsRepositoryPort};
 use lattice_core::application::services::chat_model_resolution::{
     default_chat_model, llama_cpp_connection, ollama_connection, ollama_saved, ollama_utility_tag,
-    resolve, resolve_learning, resolve_verifier, utility_candidates, UtilityRow,
+    resolve, resolve_learning, resolve_verifier, utility_candidates, Candidates, UtilityRow,
 };
-use lattice_core::application::services::model_selection::AutoFailures;
+use lattice_core::application::services::model_selection::first_that_loads;
 use lattice_core::domain::conversation::ChatModelChoice;
 use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
 use lattice_core::shared::error::{AppError, Result};
@@ -231,16 +231,11 @@ impl RoleModels {
             must_list_model,
         };
         let candidates = default_chat_model(settings, active_local.as_deref()).0?;
-        let mut failures = AutoFailures::default();
-        for model in &candidates.models {
-            let listed = candidates.auto && matches!(model, ModelRef::LlamaCpp { .. });
-            match self.pin(model, settings, epoch, &want(listed)).await {
-                Ok(pinned) => return Ok(pinned),
-                Err(error) if !candidates.auto => return Err(error),
-                Err(error) => failures.record(model, error),
-            }
-        }
-        Err(failures.into_error())
+        first_that_loads(&candidates, |model, must_list| {
+            let want = want(must_list);
+            async move { self.pin(model, settings, epoch, &want).await }
+        })
+        .await
     }
 
     /// The router model. A downloaded model of that name runs locally;
@@ -305,25 +300,24 @@ impl RoleModels {
                     ))
                 })?,
             LLMProvider::Auto => {
-                let mut failures = AutoFailures::default();
-                let candidates = [
-                    llama_cpp_connection(&settings).map(|_| ModelRef::LlamaCpp {
-                        model: name.to_owned(),
-                    }),
-                    ollama_saved(&settings).then(|| ollama(name)),
-                ];
-                let mut found = None;
-                for model in candidates.into_iter().flatten() {
-                    let listed = matches!(model, ModelRef::LlamaCpp { .. });
-                    match self.pin(&model, &settings, epoch, &want(listed)).await {
-                        Ok(acquired) => {
-                            found = Some(acquired);
-                            break;
-                        }
-                        Err(error) => failures.record(&model, error),
-                    }
-                }
-                found.ok_or_else(|| failures.into_error())?
+                let candidates = Candidates {
+                    models: [
+                        llama_cpp_connection(&settings).map(|_| ModelRef::LlamaCpp {
+                            model: name.to_owned(),
+                        }),
+                        ollama_saved(&settings).then(|| ollama(name)),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect(),
+                    auto: true,
+                };
+                let settings = &settings;
+                first_that_loads(&candidates, |model, must_list| {
+                    let want = want(must_list);
+                    async move { self.pin(model, settings, epoch, &want).await }
+                })
+                .await?
             }
             provider => {
                 let model = remote_model(provider, name)?;
@@ -359,8 +353,10 @@ impl RoleModels {
             }),
         );
         for model in &candidates.models {
-            let listed = candidates.auto && matches!(model, ModelRef::LlamaCpp { .. });
-            match self.pin(model, &settings, epoch, &want(listed)).await {
+            match self
+                .pin(model, &settings, epoch, &want(candidates.must_list(model)))
+                .await
+            {
                 Ok((_, acquired)) => return Ok(Some(acquired.into_port())),
                 Err(error) if matches!(model, ModelRef::Local { .. }) => return Err(error),
                 Err(error) => tracing::warn!(

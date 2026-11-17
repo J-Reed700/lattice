@@ -25,6 +25,14 @@ pub struct Candidates {
     pub auto: bool,
 }
 
+impl Candidates {
+    /// Whether `model`'s server must list it: a llama.cpp server Auto chose,
+    /// so Auto moves on when the server lacks the model.
+    pub fn must_list(&self, model: &ModelRef) -> bool {
+        self.auto && matches!(model, ModelRef::LlamaCpp { .. })
+    }
+}
+
 /// The model the llama.cpp connection serves, when Settings names both its
 /// server URL and its model.
 pub fn llama_cpp_connection(settings: &LLMSettingsDto) -> Option<ModelRef> {
