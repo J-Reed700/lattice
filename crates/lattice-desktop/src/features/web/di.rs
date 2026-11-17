@@ -28,9 +28,10 @@ pub struct WebDi {
 /// The one web archive the app has: saving, deleting, opening and naming
 /// articles all ask this instance, so it is built once and handed to each.
 pub fn build_archive() -> Result<Arc<dyn WebArchiveServiceTrait>> {
-    Ok(Arc::new(WebArchiveService::new().map_err(|e| {
-        AppError::Other(format!("Failed to create web archive service: {}", e))
-    })?) as Arc<dyn WebArchiveServiceTrait>)
+    Ok(Arc::new(
+        WebArchiveService::new()
+            .map_err(|e| AppError::Other(format!("Failed to create web archive service: {}", e)))?,
+    ) as Arc<dyn WebArchiveServiceTrait>)
 }
 
 pub fn build(

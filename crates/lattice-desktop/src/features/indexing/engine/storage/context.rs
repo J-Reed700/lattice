@@ -25,7 +25,11 @@ pub async fn read_document_facts(
     archive: &dyn ArticleArchive,
     path: &Path,
 ) -> Result<DocumentFacts> {
-    let file_name = match archive.saved_article(path).await.and_then(|article| article.title) {
+    let file_name = match archive
+        .saved_article(path)
+        .await
+        .and_then(|article| article.title)
+    {
         Some(title) => title,
         None => path
             .file_name()

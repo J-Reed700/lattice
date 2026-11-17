@@ -144,7 +144,11 @@ pub async fn store_file_metadata_only(
         reason: format!("Invalid path encoding: {}", e),
     })?;
 
-    let filename = match archive.saved_article(path).await.and_then(|article| article.title) {
+    let filename = match archive
+        .saved_article(path)
+        .await
+        .and_then(|article| article.title)
+    {
         Some(title) => title,
         None => path
             .file_name()

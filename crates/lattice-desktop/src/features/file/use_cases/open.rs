@@ -279,7 +279,8 @@ mod tests {
         let file_access_config = Arc::new(FileAccessConfig::new(vec![temp_dir.clone()]));
         let file_system = Arc::new(MockFileSystem::new());
         let file_storage = Arc::new(MockFileStorage::new()); // No files
-        let use_case = OpenFileUseCase::new(file_system, file_storage, file_access_config, no_archive());
+        let use_case =
+            OpenFileUseCase::new(file_system, file_storage, file_access_config, no_archive());
 
         let nonexistent = temp_dir.join("nonexistent_test_file_xyz.txt");
         let request = OpenFileRequestDto {
@@ -310,7 +311,8 @@ mod tests {
             Arc::new(MockFileSystem::new().with_directory(&canonical_path.to_string_lossy()));
         let file_storage =
             Arc::new(MockFileStorage::new().with_file(&canonical_path.to_string_lossy()));
-        let use_case = OpenFileUseCase::new(file_system, file_storage, file_access_config, no_archive());
+        let use_case =
+            OpenFileUseCase::new(file_system, file_storage, file_access_config, no_archive());
 
         let request = OpenFileRequestDto {
             path: test_dir.to_string_lossy().to_string(),

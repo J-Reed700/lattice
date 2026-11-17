@@ -5,12 +5,12 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::domain::ports::article_archive::SavedArticle;
 pub use crate::domain::provenance::{
     ArchivedFrom, CanonicalElsewhere, DateBasis, DeclaredOrigin, DocumentSignals, HttpFacts,
     NamedEntity, Origin, OriginKey, OutboundLink, PageSignals, PastedSignals, ProvenanceSignals,
     RegistryKind, SourceDates, TldRegistry, PAGE_SIGNALS_VERSION,
 };
-use crate::domain::ports::article_archive::SavedArticle;
 use crate::domain::sourcing::FinderOutcome;
 
 /// The version stamped on every reference text the web reader extracts for a
@@ -419,9 +419,7 @@ impl From<SavedArticle> for SavedWebArticleDto {
     fn from(article: SavedArticle) -> Self {
         Self {
             text_path: article.text.to_string_lossy().to_string(),
-            page_path: article
-                .page
-                .map(|page| page.to_string_lossy().to_string()),
+            page_path: article.page.map(|page| page.to_string_lossy().to_string()),
             title: article.title,
             url: article.url,
             links: article.links,
