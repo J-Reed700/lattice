@@ -8,7 +8,6 @@ use lattice_core::application::contracts::settings::{
     KeyServiceDto, SourcesStatusDto, SourcingAddress,
 };
 use lattice_core::application::contracts::web::SavedWebArticleDto;
-use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::shared::ipc::ApiError;
 use tauri::{
     plugin::{Builder, TauriPlugin},
