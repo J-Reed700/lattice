@@ -93,7 +93,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
     program.summary.revision,
     lesson.preparation === 'ready',
   );
-  const citationSources = useLessonCitationSources(program.summary.id, evidenceReport.data, showCitations);
+  const citationSources = useLessonCitationSources(program.summary.id, evidenceReport.data, showCitations && expanded);
   const objectiveCitation = findOutlineCitation(
     outlineEvidence,
     'lesson_objective',

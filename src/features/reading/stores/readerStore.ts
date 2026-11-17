@@ -63,6 +63,7 @@ export interface ReaderState {
   ) => void;
   setIndex: (_index: number) => void;
   close: () => void;
+  release: (_ownerKey: string) => void;
   setWidth: (_px: number) => void;
   rememberResolvedLocation: (_chunkId: string, _label: string) => void;
 }
@@ -116,6 +117,11 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
 
   close: () => {
     if (!get().session) return;
+    set({ session: null });
+  },
+
+  release: (ownerKey) => {
+    if (get().session?.ownerKey !== ownerKey) return;
     set({ session: null });
   },
 

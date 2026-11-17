@@ -7,6 +7,7 @@ import { useLessonCitationSources } from '@/features/learning/lessons/useLessonC
 import { checkWords, citationNumbers, citationsByNumber, partsOfKind, passageKey, resolutionText, UNSTATED_PARTS } from '@/features/learning/model/evidencePresentation';
 import { TrustLevelChip } from '@/features/learning/sources/trust/TrustBadge';
 import { sufficiencyNote, verifiedByLevel } from '@/features/learning/sources/trust/trustPresentation';
+import { useReaderClosesWithOwner } from '@/features/reading/hooks/useReaderClosesWithOwner';
 import { useReaderStore } from '@/features/reading/stores/readerStore';
 import type {
   LearningCitationDto,
@@ -200,10 +201,12 @@ export function LessonEvidencePanel({
   const citations = useMemo(() => citationsByNumber(data), [data]);
   const sources = useLessonCitationSources(programId, data, open);
   const openReader = useReaderStore((state) => state.open);
+  const ownerKey = `lesson:${lessonId}:evidence`;
+  useReaderClosesWithOwner(ownerKey);
 
   const handleOpenPassage = (_passage: LearningEvidencePassageDto, number: number) => {
     const index = data?.citations.findIndex((citation) => citation.number === number) ?? -1;
-    if (index >= 0) openReader(`lesson:${lessonId}:evidence`, sources, index);
+    if (index >= 0) openReader(ownerKey, sources, index);
   };
 
   return (

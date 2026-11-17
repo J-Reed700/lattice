@@ -6,10 +6,11 @@ import { citationsByNumber, claimMarkVerdict } from '@/features/learning/model/e
 import { CitationFootnote } from '@/features/reading/components/CitationFootnote';
 import { CitationHoverCard } from '@/features/reading/components/CitationHoverCard';
 import { useCitationInteractions } from '@/features/reading/hooks/useCitationInteractions';
+import { useReaderClosesWithOwner } from '@/features/reading/hooks/useReaderClosesWithOwner';
 import { useReaderStore } from '@/features/reading/stores/readerStore';
 import type { LearningLessonEvidenceDto } from '@/lib/bindings';
 import type { SourceWithMetadata } from '@/types/conversation';
-import { drawReply } from '@/utils/replyPieces';
+import { markReply } from '@/utils/replyPieces';
 
 /** One lesson section drawn as a chat answer is: chips after the sentences that stand on a source, each checked sentence marked, and the sources it cites listed beneath. */
 export function CitedSection({ lessonId, sectionIndex, body, report, sources, showCitations, wrap }: {
@@ -24,15 +25,16 @@ export function CitedSection({ lessonId, sectionIndex, body, report, sources, sh
 }) {
   const resolvedLocations = useReaderStore((state) => state.resolvedLocations);
   const pieces = report?.sections.find((section) => section.sectionIndex === sectionIndex)?.pieces;
-  const drawn = useMemo(() => (pieces ? drawReply(pieces) : null), [pieces]);
+  const marked = useMemo(() => (pieces ? markReply(pieces) : null), [pieces]);
   const claims = useMemo(
-    () => (drawn ? (report?.teachingClaims ?? []).filter((claim) => claim.sectionIndex === sectionIndex) : []),
-    [drawn, report, sectionIndex],
+    () => (marked ? (report?.teachingClaims ?? []).filter((claim) => claim.sectionIndex === sectionIndex) : []),
+    [marked, report, sectionIndex],
   );
   const claimMarks = useMemo(
-    () => (drawn ? claims.map((claim) => ({ sentence: claim.contentQuote, verdict: claimMarkVerdict(claim) })) : undefined),
-    [drawn, claims],
+    () => (marked ? claims.map((claim) => ({ sentence: claim.contentQuote, verdict: claimMarkVerdict(claim) })) : undefined),
+    [marked, claims],
   );
+  const ownerKey = `lesson:${lessonId}:${sectionIndex}`;
   const citationClaims = useMemo(() => claims.map((claim) => ({ citationIds: claim.cites ?? [] })), [claims]);
 
   const {
@@ -40,11 +42,13 @@ export function CitedSection({ lessonId, sectionIndex, body, report, sources, sh
     handleBodyClick, handleBodyMouseOver, handleBodyMouseLeave, hoveredSource,
   } = useCitationInteractions({
     sources,
-    ownerKey: `lesson:${lessonId}:${sectionIndex}`,
+    ownerKey,
     numbered: sources.length > 0,
     showCitations,
     claims: citationClaims,
   });
+
+  useReaderClosesWithOwner(ownerKey);
 
   const cited = useMemo(() => {
     const numbers = new Set<number>();
@@ -67,9 +71,9 @@ export function CitedSection({ lessonId, sectionIndex, body, report, sources, sh
       >
         {wrap(
           <TiptapViewer
-            content={drawn ? drawn.markdown : body}
+            content={marked ? marked.raw : body}
             citationNumbers={citationNumbers}
-            marks={drawn?.numbers}
+            marks={marked?.numbers}
             claims={claimMarks}
             showEvidence={showCitations}
           />,
