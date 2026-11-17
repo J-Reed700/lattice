@@ -4,11 +4,11 @@ import { useQueries } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
 import { learningSourceVersionQuery } from '@/features/learning/sources/useLearningSources';
-import { fromLearningEvidencePassage } from '@/features/reading/model/sourceAdapter';
+import { fromLearningEvidencePassage, learningPassageUrl } from '@/features/reading/model/sourceAdapter';
 import type { LearningLessonEvidenceDto } from '@/lib/bindings';
 import type { SourceWithMetadata } from '@/types/conversation';
 
-/** The sources a lesson's citations open, numbered as its chips are, each with the saved page its passage came from once that has loaded. */
+/** The sources a lesson's citations open, numbered as its chips are, each web passage with the saved page it came from once that has loaded. */
 export function useLessonCitationSources(
   programId: string,
   report: LearningLessonEvidenceDto | null | undefined,
@@ -19,7 +19,7 @@ export function useLessonCitationSources(
   const versions = useMemo(() => {
     const distinct = new Map<string, { programId: string; sourceId: string; versionId: string }>();
     for (const citation of citations ?? []) {
-      if (!citation.sourceId) continue;
+      if (!citation.sourceId || !learningPassageUrl(citation.passage)) continue;
       const versionId = citation.passage.sourceVersionId;
       distinct.set(`${citation.sourceId}:${versionId}`, { programId, sourceId: citation.sourceId, versionId });
     }
