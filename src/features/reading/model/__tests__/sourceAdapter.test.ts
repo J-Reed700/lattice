@@ -67,6 +67,20 @@ describe('sourceAdapter canonical mappings', () => {
       );
       expect(target.source.category).toBe('document');
     });
+
+    it('takes web-ness from the web flag, not from the category or file type wording', () => {
+      const base = {
+        id: 'doc-2', fileName: 'notes', filePath: '/vault/notes.pdf', fileType: 'pdf',
+        createdAt: '2026-01-01T00:00:00Z', modifiedAt: '2026-02-01T00:00:00Z', indexedAt: '2026-02-01T00:00:00Z',
+      };
+      const design = fromDocumentMetadata({ ...base, category: 'Web design notes', web: false } as unknown as DocumentMetadata);
+      expect(design.source.category).toBe('Web design notes');
+      expect(design.source.mimeType).toBe('application/pdf');
+      const image = fromDocumentMetadata({ ...base, fileType: 'webp', category: '', web: false } as unknown as DocumentMetadata);
+      expect(image.source.category).toBe('document');
+      const archived = fromDocumentMetadata({ ...base, filePath: 'C:/data/articles/x/article.md', fileType: 'md', category: '', web: true } as unknown as DocumentMetadata);
+      expect(archived.source.category).toBe('web');
+    });
   });
 
   describe('fromSearchResult', () => {
