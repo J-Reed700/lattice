@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use lattice_core::domain::download::DownloadError;
 use lattice_core::shared::error::WithCauses;
+use lattice_core::shared::fs::plainly_spelled;
 use lattice_core::shared::http::reqwest_client_builder;
 use reqwest::{header, Client, StatusCode};
 use std::path::{Path, PathBuf};
@@ -180,6 +181,7 @@ fn mount_point_specificity(path: &Path) -> usize {
 
 /// The most specific mount point that `path` sits under.
 fn owning_mount<'a>(path: &Path, mounts: impl IntoIterator<Item = &'a Path>) -> Option<&'a Path> {
+    let path = plainly_spelled(path.to_path_buf());
     mounts
         .into_iter()
         .filter(|mount| path.starts_with(mount))
