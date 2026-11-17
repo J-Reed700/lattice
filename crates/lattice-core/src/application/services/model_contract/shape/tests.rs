@@ -2127,6 +2127,7 @@ fn a_range_of_own_handles_keeps_every_handle_from_the_first_through_the_second()
             "s1: o1—o4",
             "s1: o1-4",
             "s1: o1 – 4",
+            "s1: o1 -- o4",
         ] {
             let read = via_keeps(text, Ended::Complete, showing);
             assert_eq!(
