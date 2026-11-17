@@ -2114,6 +2114,173 @@ fn equal_lines_for_one_item_count_once_and_differing_lines_contradict() {
     });
 }
 
+#[test]
+fn a_range_of_own_handles_keeps_every_handle_from_the_first_through_the_second() {
+    with_showing(3, 4, |showing| {
+        for text in [
+            "s1: o1-o4",
+            "s1: o1–o4",
+            "s1: o1 - o4",
+            "s1: o1..o4",
+            "s1: o1...o4",
+            "s1: o1…o4",
+            "s1: o1—o4",
+            "s1: o1-4",
+            "s1: o1 – 4",
+        ] {
+            let read = via_keeps(text, Ended::Complete, showing);
+            assert_eq!(
+                kept(&read),
+                vec![
+                    handles(&["o1", "o2", "o3", "o4"]),
+                    handles(&[]),
+                    handles(&[])
+                ],
+                "{text:?}"
+            );
+        }
+    });
+}
+
+#[test]
+fn a_range_counts_a_handle_already_kept_once() {
+    with_showing(2, 4, |showing| {
+        let read = via_keeps("s1: o3 o1-o3", Ended::Complete, showing);
+        assert_eq!(
+            kept(&read),
+            vec![handles(&["o3", "o1", "o2"]), handles(&[])]
+        );
+    });
+}
+
+#[test]
+fn a_reversed_range_or_one_past_the_last_own_handle_leaves_its_item_unplaced() {
+    with_showing(3, 4, |showing| {
+        for line in ["s1: o3-o1", "s1: o2-o5", "s1: o2-5", "s1: o3-2"] {
+            let text = format!("{line}\ns2: o1");
+            let read = via_keeps(&text, Ended::Complete, showing);
+            assert_eq!(
+                kept(&read),
+                vec![Err(Why::Unplaced), handles(&["o1"]), handles(&[])],
+                "{text:?}"
+            );
+        }
+    });
+}
+
+#[test]
+fn a_range_of_items_is_not_an_entry() {
+    with_showing(3, 4, |showing| {
+        for text in ["s1-s3: o1", "s1-3: o1", "s1 – s3: o1"] {
+            let read = via_keeps(text, Ended::Complete, showing);
+            assert_eq!(
+                kept(&read),
+                vec![Err(Why::Unplaced), Err(Why::Unplaced), Err(Why::Unplaced)],
+                "{text:?}"
+            );
+        }
+    });
+}
+
+#[test]
+fn handles_are_read_in_any_case() {
+    with_showing(3, 3, |showing| {
+        let read = via_keeps("S1: O1 O2\ns2: O3", Ended::Complete, showing);
+        assert_eq!(
+            kept(&read),
+            vec![handles(&["o1", "o2"]), handles(&["o3"]), handles(&[])]
+        );
+    });
+}
+
+#[test]
+fn an_item_named_above_its_sentences_keeps_the_sentences_listed_under_it() {
+    with_showing(3, 3, |showing| {
+        let read = via_keeps("s1:\n- o1\n- o2\ns2:\n- o3", Ended::Complete, showing);
+        assert_eq!(
+            kept(&read),
+            vec![handles(&["o1", "o2"]), handles(&["o3"]), handles(&[])]
+        );
+        let read = via_keeps("s1\no1 o2", Ended::Complete, showing);
+        assert_eq!(
+            kept(&read),
+            vec![handles(&["o1", "o2"]), handles(&[]), handles(&[])]
+        );
+        let read = via_keeps("s1:\n- o1-o3", Ended::Complete, showing);
+        assert_eq!(
+            kept(&read),
+            vec![handles(&["o1", "o2", "o3"]), handles(&[]), handles(&[])]
+        );
+    });
+}
+
+#[test]
+fn an_item_named_above_a_line_that_says_none_keeps_nothing() {
+    with_showing(3, 3, |showing| {
+        let read = via_keeps("s1:\nnone\ns2: o1", Ended::Complete, showing);
+        assert_eq!(
+            kept(&read),
+            vec![handles(&[]), handles(&["o1"]), handles(&[])]
+        );
+    });
+}
+
+#[test]
+fn an_entry_holding_a_word_or_number_it_cannot_read_is_not_read() {
+    with_showing(3, 3, |showing| {
+        for text in ["s1: 2 3\ns2: o1", "s1: sentence two\ns2: o1"] {
+            let read = via_keeps(text, Ended::Complete, showing);
+            assert_eq!(
+                kept(&read),
+                vec![Err(Why::NotRead), handles(&["o1"]), handles(&[])],
+                "{text:?}"
+            );
+        }
+    });
+}
+
+#[test]
+fn an_entry_of_only_punctuation_or_none_keeps_nothing() {
+    with_showing(3, 3, |showing| {
+        for text in ["s1: -\ns2: o1", "s1: none\ns2: o1", "s1:\ns2: o1"] {
+            let read = via_keeps(text, Ended::Complete, showing);
+            assert_eq!(
+                kept(&read),
+                vec![handles(&[]), handles(&["o1"]), handles(&[])],
+                "{text:?}"
+            );
+        }
+    });
+}
+
+#[test]
+fn an_entry_that_says_none_and_names_what_it_keeps_contradicts_itself() {
+    with_showing(3, 3, |showing| {
+        let contradicted = Err(Why::Contradicted(
+            "s1 both says none and names what it keeps.".to_owned(),
+        ));
+        for text in ["s1: none o1\ns2: o2", "s1:\nnone\no1\ns2: o2"] {
+            let read = via_keeps(text, Ended::Complete, showing);
+            assert_eq!(
+                kept(&read),
+                vec![contradicted.clone(), handles(&["o2"]), handles(&[])],
+                "{text:?}"
+            );
+        }
+    });
+}
+
+#[test]
+fn a_cut_off_answer_with_an_item_still_open_leaves_every_item_cut_off() {
+    with_showing(3, 3, |showing| {
+        let read = via_keeps("s1:\n- o1\n- o2", Ended::CutOff, showing);
+        assert_eq!(
+            kept(&read),
+            vec![Err(Why::CutOff), Err(Why::CutOff), Err(Why::CutOff)]
+        );
+    });
+}
+
 // ---- any answer ----
 
 fn arbitrary_json() -> impl Strategy<Value = Value> {
