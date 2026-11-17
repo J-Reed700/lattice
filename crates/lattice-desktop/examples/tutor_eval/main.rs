@@ -289,6 +289,7 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
     let proxy_url = proxy::start(
         server.url.clone(),
         recipe.thinking_off()?,
+        server.reported_ctx()?,
         auth.clone(),
         Arc::clone(&recorder),
     )

@@ -267,24 +267,6 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
     )
     .await?;
     if let (Some(n), Some(server)) = (report_ctx, &recipe.server) {
-        let props: Value = lattice_core::shared::http::reqwest_client_builder()
-            .build()?
-            .get(format!("{proxy_url}/props"))
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-        let seen = props
-            .pointer("/default_generation_settings/n_ctx")
-            .or_else(|| props.get("n_ctx"))
-            .and_then(Value::as_u64);
-        if seen != Some(n) {
-            return Err(format!(
-                "the proxy reports n_ctx {seen:?}; the recipe asks it to report {n}"
-            )
-            .into());
-        }
         eprintln!(
             "the app is shown a window of {n} tokens; the server has {}",
             server.expected_ctx

@@ -167,7 +167,28 @@ pub async fn start(
             });
         }
     });
-    Ok(format!("http://{address}"))
+    let base = format!("http://{address}");
+    if let Some(n) = report_ctx {
+        let props: Value = lattice_core::shared::http::reqwest_client_builder()
+            .build()?
+            .get(format!("{base}/props"))
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<Value>()
+            .await?;
+        let seen = props
+            .pointer("/default_generation_settings/n_ctx")
+            .or_else(|| props.get("n_ctx"))
+            .and_then(Value::as_u64);
+        if seen != Some(n) {
+            return Err(format!(
+                "the proxy reports n_ctx {seen:?}; the recipe asks it to report {n}"
+            )
+            .into());
+        }
+    }
+    Ok(base)
 }
 
 struct Head {
