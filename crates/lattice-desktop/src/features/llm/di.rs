@@ -17,6 +17,7 @@ use crate::infrastructure::adapters::fs::TokioFileSystemAdapter;
 use crate::infrastructure::adapters::system_info::SystemInfoAdapter;
 use crate::infrastructure::file_system::FileSystemAdapter;
 use crate::interfaces::di::Container;
+use lattice_core::application::contracts::active_models::ActiveModels;
 use lattice_core::application::ports::download_manager::DownloadManager;
 use lattice_core::application::ports::llm_port::{
     InvalidationCause, ModelRequirements, ModelRole, OptionalLlmLoader, PinnedModel,
@@ -31,10 +32,8 @@ use lattice_core::domain::repositories::downloaded_model_repository::DownloadedM
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Database;
 
-mod active_models;
 mod roles;
 
-pub use active_models::ActiveModels;
 use roles::{ModelRequest, ModelSelection, RoleModels};
 
 #[derive(Clone)]

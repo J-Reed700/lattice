@@ -4420,7 +4420,8 @@ export const FILE_TYPES = [{"extension":"txt","mimeType":"text/plain","category"
 
 export type AcceptLearningProgramRequestDto = { programId: string; expectedRevision: number; title: string }
 /**
- * What a chat on the Settings default and utility work run on now, worked out by the functions the model loader uses. Nothing is probed.
+ * What a chat on the Settings default and utility work run on now, worked
+ * out by the functions the model loader uses. Nothing is probed.
  */
 export type ActiveModels = {
 /**

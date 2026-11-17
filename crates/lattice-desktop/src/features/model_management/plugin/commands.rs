@@ -4,6 +4,7 @@
 //! NO GATEWAY WRAPPER - calls *_impl functions directly like search plugin does
 
 use crate::interfaces::di::Container;
+use lattice_core::application::contracts::active_models::ActiveModels;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::ipc::{ApiError, ErrorCode};
 use serde::{Deserialize, Serialize};
@@ -371,8 +372,6 @@ pub struct DownloadModelResponse {
     pub download_id: String,
     pub status: String,
 }
-
-pub use crate::features::llm::di::ActiveModels;
 
 /// Absolute path of the local models folder, created on first call.
 ///

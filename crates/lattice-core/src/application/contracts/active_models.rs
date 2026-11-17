@@ -1,7 +1,7 @@
 //! What a chat on the Settings default and utility work run on, as the UI
 //! reads it.
 
-use lattice_core::domain::models::model_ref::ModelRef;
+use crate::domain::models::model_ref::ModelRef;
 use serde::{Deserialize, Serialize};
 
 /// What a chat on the Settings default and utility work run on now, worked

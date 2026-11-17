@@ -135,16 +135,20 @@ pub fn default_chat_model(
             .flatten()
             .collect();
             if models.is_empty() {
-                Err(AppError::AiModelsNotInstalled(
-                    "No chat model is selected in Settings → Downloaded, and no llama.cpp or Ollama \
-                     server is configured in Settings → Chat"
-                        .into(),
-                ))
+                Err(nothing_configured())
             } else {
                 Ok(Candidates { models, auto: true })
             }
         }
     })
+}
+
+fn nothing_configured() -> AppError {
+    AppError::AiModelsNotInstalled(
+        "No chat model is selected in Settings → Downloaded, and no llama.cpp or Ollama server is \
+         configured in Settings → Chat"
+            .into(),
+    )
 }
 
 /// The row active for the utility role, as far as which models utility work
@@ -221,7 +225,8 @@ pub fn resolve(
         (Some(model), _) => (model.clone(), ModelOrigin::RequestOverride),
         (None, ChatModelChoice::Explicit { model }) => (model.clone(), ModelOrigin::ChatOverride),
         (None, ChatModelChoice::Default) => {
-            (default.0.clone()?.models[0].clone(), ModelOrigin::Default)
+            let first = default.0.clone()?.models.into_iter().next();
+            (first.ok_or_else(nothing_configured)?, ModelOrigin::Default)
         }
     };
     Ok(ResolvedModel { model, origin })

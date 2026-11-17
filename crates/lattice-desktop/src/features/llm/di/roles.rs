@@ -11,6 +11,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use lattice_core::application::contracts::active_models::ActiveModels;
 use lattice_core::application::contracts::settings::{LLMProvider, LLMSettingsDto};
 use lattice_core::application::ports::llm_port::{
     ModelOrigin, ModelRequirements, ModelRole, PinnedModel, ResolvedModel, ToolSupport,
@@ -25,7 +26,6 @@ use lattice_core::domain::conversation::ChatModelChoice;
 use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
 use lattice_core::shared::error::{AppError, Result};
 
-use super::active_models::ActiveModels;
 use crate::features::llm::engine::factory::LocalServerOptions;
 use crate::features::llm::engine::vision::local_vision;
 use crate::features::llm::instances::refusal::{self, Window};
