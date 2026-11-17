@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
@@ -60,7 +60,7 @@ function main() {
   const allowList = JSON.parse(readFileSync(allowPath, "utf8"));
   let output;
   try {
-    output = execFileSync(process.platform === "win32" ? "npm.cmd" : "npm", ["audit", "--json"], { encoding: "utf8", maxBuffer: 1 << 28 });
+    output = execSync("npm audit --json", { encoding: "utf8", maxBuffer: 1 << 28 });
   } catch (error) {
     output = error.stdout;
   }
