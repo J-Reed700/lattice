@@ -16,7 +16,6 @@ import {
   confirmNeedsNote,
   defaultGroupMode,
   describeEvent,
-  excerptAround,
   groupBySection,
   groupBySource,
   heldLessonIds,
@@ -85,7 +84,7 @@ describe('claim review presentation', () => {
   });
 
   it('puts the first check and the independent check side by side', () => {
-    const passage = claimItem().evidence[0] ?? { passage: support().passage, addedBy: 'research' as const };
+    const passage = claimItem().evidence[0] ?? { passage: support().passage, addedBy: 'research' as const, opening: { before: '', quote: 'Monarchs breed across the northern range in summer.', after: ' Each autumn the eastern population migrates up to 3,000 miles to wintering sites in central Mexico.', clippedStart: false, clippedEnd: true } };
     const local: CheckerVerdictDto = { checker: { role: 'local', model: 'qwen' }, result: { verdict: 'supported', sourceVersionId: 'v1', supportingQuote: 'migrates up to 3,000 miles' }, reason: 'Entailed.', quotedSource: null, passages: [passage], at: 1 };
     const verifier: CheckerVerdictDto = { checker: { role: 'verifier', model: 'claude' }, result: { verdict: 'failed', kind: { kind: 'contradicted' } }, reason: 'The guide says 2,500 miles.', quotedSource: null, passages: [passage], at: 2 };
     expect(checkerColumns(claimItem({ localCheck: local, verifierCheck: verifier }))).toMatchObject({
@@ -137,13 +136,6 @@ describe('claim review presentation', () => {
     expect(triedLine(tried())).toBe('Searched the web 9 times and read 214 pages; none stated it.');
     expect(triedLine(tried({ pagesMentioning: 2 }))).toBe('Searched the web 9 times and read 214 pages; 2 pages mention it but do not state it.');
     expect(triedLine(tried({ searches: 0, pagesRead: 0 }))).toBeNull();
-  });
-
-  it('cuts the excerpt at one sentence either side of the quote, from a byte span', () => {
-    const evidence = support();
-    const excerpt = excerptAround(evidence.passage.text, evidence.quoteSpan, evidence.quote);
-    expect(excerpt).toMatchObject({ before: 'Monarchs breed across the northern range in summer. ', quote: evidence.quote, after: ' The return trip takes several generations.' });
-    expect(excerptAround('Nothing here.', null, 'Absent sentence.')).toMatchObject({ before: '', quote: 'Absent sentence.', after: '' });
   });
 
   it('sums an attach for a group into one line', () => {

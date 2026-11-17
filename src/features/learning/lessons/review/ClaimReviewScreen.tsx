@@ -11,7 +11,7 @@ import { AddSourceSheet, type AddSourceTarget } from '@/features/learning/lesson
 import { ClaimInFocus } from '@/features/learning/lessons/review/ClaimInFocus';
 import { ClaimQueue, queueRowId } from '@/features/learning/lessons/review/ClaimQueue';
 import { ALL_RESOLVED, NEEDS_NOTE_HINT, cannotHere, tallyLine, teachingNotesWait, unverifiedReviewLine } from '@/features/learning/lessons/review/claimReviewCopy';
-import { NOTHING_CHANGED, confirmNeedsNote, currentPreparationJobs, reviewHold, sentenceBefore, type ClaimGroup, type TakenOutSentence } from '@/features/learning/lessons/review/claimReviewPresentation';
+import { NOTHING_CHANGED, confirmNeedsNote, currentPreparationJobs, reviewHold, type ClaimGroup, type TakenOutSentence } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { LessonAuditLine } from '@/features/learning/lessons/review/LessonAudit';
 import { RemovedStatements } from '@/features/learning/lessons/review/RemovedStatements';
 import { AuditHold, FocusMessage, StopReason } from '@/features/learning/lessons/review/ReviewHolds';
@@ -119,7 +119,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
     const claim = review?.claims.find((candidate) => candidate.claimId === entry.statements[0]?.claimId);
     const place = claim?.location;
     if (!claim || !place || claim.putBackUnit === null || place.unitKind !== 'block' || place.field !== 'body') return null;
-    const section = sectionAt(claim.putBackUnit, [sentenceBefore(claim.presentation.contextBefore)]);
+    const section = sectionAt(claim.putBackUnit, []);
     return section ? () => setEditing(section) : null;
   };
   const selection = useReviewSelection(useMemo(() => ordered.map((claim) => claim.claimId), [ordered]));

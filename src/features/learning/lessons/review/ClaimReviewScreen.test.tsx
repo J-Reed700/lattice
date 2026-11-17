@@ -7,7 +7,7 @@ import { whyItWaits } from '@/features/learning/lessons/review/claimReviewCopy';
 import { ClaimReviewScreen } from '@/features/learning/lessons/review/ClaimReviewScreen';
 import { support, sufficiency, thirtyThreeClaims, tried, waitingOnSource } from '@/features/learning/lessons/review/claimReviewScreenFixtures';
 import { review, teachingFinding, unsupportedItem } from '@/features/learning/lessons/review/claimReviewTestData';
-import type { ClaimExcerptDto, ClaimReviewItemDto, ClaimSupportDto, LessonClaimReviewDto } from '@/lib/bindings';
+import type { ClaimExcerptDto, ClaimReviewItemDto, LessonClaimReviewDto } from '@/lib/bindings';
 
 const api = vi.hoisted(() => ({
   review: vi.fn(), resolve: vi.fn(), resume: vi.fn(), audit: vi.fn(), settle: vi.fn(), trust: vi.fn(), setTrust: vi.fn(), clearTrust: vi.fn(), version: vi.fn(), plan: vi.fn(),
@@ -129,7 +129,7 @@ describe('Claim review screen', () => {
 
   it('highlights the supporting sentence with context, names the source’s kind and site, and keeps the full passage behind a disclosure', async () => {
     const fenced = 'Tagged monarchs report their route.\n\n```json\n{"route": "south", "miles": 3000}\n```\n\nEach autumn the eastern population migrates up to 3,000 miles to wintering sites in central Mexico.';
-    const evidence = support({ passage: { ...support().passage, text: fenced }, quoteSpan: null });
+    const evidence = support({ passage: { ...support().passage, text: fenced }, excerpt: { before: '', quote: support().quote, after: '', clippedStart: true, clippedEnd: false } });
     api.version.mockResolvedValue(ok({ sourceId: 'source-guide', version: { id: 'version-guide', versionNumber: 1, title: 'Field Guide', publisher: null, resolvedUrl: null, excerpt: '', contentSha256: 's', wordCount: 20, truncated: false, extractionVersion: 'text-v1', acquiredAt: 1 }, fullText: fenced, usage: [] }));
     show(review([{ ...waitingOnSource(1), support: evidence }]));
     const best = await screen.findByRole('region', { name: 'best evidence' });
@@ -144,7 +144,7 @@ describe('Claim review screen', () => {
   });
 
   const excerptCard = async (text: string, quote: string, excerpt: ClaimExcerptDto) => {
-    const evidence = support({ passage: { ...support().passage, text }, quote, excerpt } as Partial<ClaimSupportDto>);
+    const evidence = support({ passage: { ...support().passage, text }, quote, excerpt });
     show(review([{ ...waitingOnSource(1), support: evidence }]));
     const best = await screen.findByRole('region', { name: 'best evidence' });
     return { best, blockquote: best.querySelector('blockquote') };
@@ -257,7 +257,8 @@ describe('Claim review screen', () => {
   });
 
   it('keeps the first and the independent check under More › History', async () => {
-    const passage = { passage: support().passage, addedBy: 'research' as const };
+    const passage = { passage: support().passage, addedBy: 'research' as const,
+      opening: { before: '', quote: 'Monarchs breed across the northern range in summer.', after: ' Each autumn the eastern population migrates up to 3,000 miles to wintering sites in central Mexico.', clippedStart: false, clippedEnd: true } };
     const item = { ...waitingOnSource(1), verdictKind: { kind: 'disputed' as const, verifier: { kind: 'contradicted' as const } },
       localCheck: { checker: { role: 'local' as const, model: 'qwen' }, result: { verdict: 'supported' as const, sourceVersionId: 'v', supportingQuote: 'up to 3,000 miles' }, reason: 'Stated.', quotedSource: null, passages: [passage], at: 1 },
       verifierCheck: { checker: { role: 'verifier' as const, model: 'claude' }, result: { verdict: 'failed' as const, kind: { kind: 'contradicted' as const } }, reason: 'The guide gives 2,500 miles.', quotedSource: null, passages: [passage], at: 2 } };

@@ -1,5 +1,7 @@
 import type { Page } from '@playwright/test';
 
+import type { ClaimExcerptDto } from '../../src/lib/bindings';
+
 /*
  * Claims for the review screen's specs, in the shapes of
  * `ClaimReviewItemDto` (UI design §5.1): the statement in its sentence, the
@@ -7,6 +9,8 @@ import type { Page } from '@playwright/test';
  * to the mock's state, which `attach_learning_claim_evidence` and the trust
  * override commands then re-decide (§5.4).
  */
+
+export const quoteAlone = (quote: string): ClaimExcerptDto => ({ before: '', quote, after: '', clippedStart: false, clippedEnd: false });
 
 export type SourceFixture = { sourceId: string; title: string; site: string | null; kind: string; url: string | null };
 
@@ -33,7 +37,7 @@ export function claimFixture(options: ClaimOptions) {
     state: { state: 'queued' },
     verdictKind: verdict === 'insufficient_standing' ? { kind: verdict, bar: 'established', have: [] } : { kind: verdict },
     reason: null,
-    evidence: passage ? [{ passage, addedBy: 'research' }] : [],
+    evidence: passage ? [{ passage, addedBy: 'research', opening: quoteAlone(passage.text) }] : [],
     supportingQuote: null, research: [], repairs: [], executions: [], human: null,
     availableActions: ['confirm', 'edit', 'remove', 'attach_evidence', 'research_with_hint'],
     history: [], localCheck: null, verifierCheck: null,
@@ -45,7 +49,7 @@ export function claimFixture(options: ClaimOptions) {
       role,
       source: { sourceId: source.sourceId, sourceVersionId: passage.sourceVersionId, title: source.title, url: source.url, addedBy: 'research' },
       site: source.site, kind: source.kind, standing: 'unknown', counts: { outcome: 'not_enough' },
-      quote, quoteSpan: null, passage,
+      quote, excerpt: quoteAlone(quote), passage,
     } : null,
     alsoSupported: [],
     tried: { searches: 3, pagesRead: 12, pagesMentioning: 0, stated: false, relevant: [] },

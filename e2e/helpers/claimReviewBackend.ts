@@ -15,6 +15,7 @@ import type {
   ResearchSummaryDto,
   WaitingClaimsRecheckDto,
 } from "../../src/lib/bindings";
+import { quoteAlone } from "./claimReviewFixtures";
 
 /**
  * The claim review side of the Learning Studio fixture (claim review UI
@@ -75,7 +76,6 @@ export function claimReviewBackend() {
     const { passage } = shown;
     const contradicts = claim.verdictKind?.kind === "contradicted";
     const quote = claim.supportingQuote ?? "";
-    const at = quote ? passage.text.indexOf(quote) : -1;
     return {
       role: contradicts ? "contradicts" : "supports",
       source: { sourceId: passage.sourceVersionId, sourceVersionId: passage.sourceVersionId, title: passage.title, url: passage.url, addedBy: shown.addedBy ?? "research" },
@@ -86,7 +86,7 @@ export function claimReviewBackend() {
         ? { outcome: "not_counted", reason: "it contradicts the statement" }
         : claim.state.state === "resolved_by_evidence" ? { outcome: "enough" } : { outcome: "not_enough" },
       quote,
-      quoteSpan: at >= 0 ? [at, at + quote.length] : null,
+      excerpt: quoteAlone(quote),
       passage,
     };
   }
@@ -167,7 +167,7 @@ export function claimReviewBackend() {
       standing: null,
       counts: { outcome: "enough" },
       quote,
-      quoteSpan: at >= 0 ? [at, at + quote.length] : null,
+      excerpt: quoteAlone(quote),
       passage: { sourceVersionId: versionId, title, url, text, startByte: 0, endByte: text.length, retrievalKind: "lexical", trust: null },
     };
   }

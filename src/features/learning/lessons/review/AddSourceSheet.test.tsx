@@ -132,7 +132,8 @@ describe('Add a source', () => {
   it('shows the closest passage when the page does not say it', async () => {
     const user = userEvent.setup();
     const item = waitingOnSource(1);
-    const closest = { passage: { sourceVersionId: 'version-watch', title: 'Monarch Watch', url: URL_, text: 'Tagged monarchs flew about 2,500 miles on average. Some flew farther.', startByte: 0, endByte: 68, retrievalKind: 'hybrid', trust: null }, addedBy: 'user' as const };
+    const closest = { passage: { sourceVersionId: 'version-watch', title: 'Monarch Watch', url: URL_, text: 'Tagged monarchs flew about 2,500 miles on average. Some flew farther.', startByte: 0, endByte: 68, retrievalKind: 'hybrid', trust: null }, addedBy: 'user' as const,
+      opening: { before: '', quote: 'Tagged monarchs flew about 2,500 miles on average.', after: ' Some flew farther.', clippedStart: false, clippedEnd: false } };
     screenWith(review([item]), review([{ ...item, evidence: [closest] }], { revision: 8 }));
     api.attach.mockResolvedValue(ok(report({ outcome: checked(false) })));
     await user.click(await screen.findByRole('button', { name: 'Add a source' }));
@@ -149,8 +150,8 @@ describe('Add a source', () => {
     const user = userEvent.setup();
     const item = waitingOnSource(1);
     const text = 'Dr. Smith tagged monarchs that flew 2,500 miles. Some flew farther.';
-    const opening = { before: '', quote: 'Dr. Smith tagged monarchs that flew 2,500 miles.', after: ' Some flew farther.', clippedStart: false, clippedEnd: false };
-    const closest = { passage: { sourceVersionId: 'version-watch', title: 'Monarch Watch', url: URL_, text, startByte: 0, endByte: text.length, retrievalKind: 'hybrid', trust: null }, addedBy: 'user' as const, opening } as ClaimEvidencePassageDto & { opening: ClaimExcerptDto };
+    const opening: ClaimExcerptDto = { before: '', quote: 'Dr. Smith tagged monarchs that flew 2,500 miles.', after: ' Some flew farther.', clippedStart: false, clippedEnd: false };
+    const closest: ClaimEvidencePassageDto = { passage: { sourceVersionId: 'version-watch', title: 'Monarch Watch', url: URL_, text, startByte: 0, endByte: text.length, retrievalKind: 'hybrid', trust: null }, addedBy: 'user', opening };
     screenWith(review([item]), review([{ ...item, evidence: [closest] }], { revision: 8 }));
     api.attach.mockResolvedValue(ok(report({ outcome: checked(false) })));
     await user.click(await screen.findByRole('button', { name: 'Add a source' }));
