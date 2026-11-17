@@ -18,7 +18,7 @@ import { IconButton } from '@/components/ui';
 import { useSettingsQuery, useUpdateSettingsMutation } from '@/features/settings/hooks/useSettingsQuery';
 import { cn } from '@/lib/utils';
 import { toast } from '@/stores/toastStore';
-import { LLAMACPP_SERVER_MODEL_ID, modelRefForOption, sameModelRef } from '@/utils/chatModelSelection';
+import { LLAMACPP_SERVER_MODEL_ID, modelRefForOption, modelRefLabel, sameModelRef } from '@/utils/chatModelSelection';
 
 import { ConnectionRolesDialog } from './ConnectionRolesDialog';
 import { LearningWindowNotice } from './LearningWindowNotice';
@@ -32,24 +32,24 @@ const NOT_CONFIGURED = 'Set a server URL and model in connection settings first'
 export function LlamaCppMetaRow() {
   const { data: settings } = useSettingsQuery();
   const { mutateAsync: updateSettings } = useUpdateSettingsMutation();
-  const { assignUtilityReference } = useModelRoles();
+  const { assignUtilityReference, activeModels, models } = useModelRoles();
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [pendingRole, setPendingRole] = useState<RoleId | null>(null);
 
   const connection = settings?.llm.llamaCpp;
   const url = connection?.url.trim() ?? '';
   const model = connection?.model.trim() ?? '';
-  const isActive = settings?.llm.provider === 'llamacpp';
   const isConfigured = Boolean(url && model);
   const servedRef = settings && isConfigured
     ? modelRefForOption({ id: LLAMACPP_SERVER_MODEL_ID, backend: 'llamacpp' }, settings.llm)
     : null;
   const held: Record<ConnectionRole, boolean> = {
-    chat: isActive && isConfigured,
+    chat: sameModelRef(activeModels?.chat[0], servedRef),
     utility: sameModelRef(settings?.llm.utilityModel, servedRef),
     learning: sameModelRef(settings?.llm.learningModel, servedRef),
     verifier: sameModelRef(settings?.llm.verifierModel, servedRef),
   };
+  const chatRef = activeModels?.chat[0] ?? null;
   const activeRoles = CONNECTION_ROLES.filter((id) => held[id]).map(roleDescriptor);
 
   const run = async (role: RoleId, action: () => Promise<void>) => {
@@ -100,9 +100,9 @@ export function LlamaCppMetaRow() {
           <div className="truncate text-sm font-medium text-text-primary">llama.cpp connection</div>
           {url ? <div className="truncate font-mono text-xs text-text-muted">{url}</div> : null}
           <p className="mt-1 wrap-break-word text-xs text-text-muted">{meta}</p>
-          {settings?.llm.provider === 'auto' && isConfigured ? (
+          {settings?.llm.provider === 'auto' && !held.chat && chatRef ? (
             <p className="mt-1 text-xs text-text-muted">
-              Auto tries local models first. Select Chat to always use this connection.
+              Chat runs on {modelRefLabel(chatRef, models)} under Auto. Select Chat to always use this connection.
             </p>
           ) : null}
           {held.learning ? <LearningWindowNotice model={servedRef} savedWindow={null} /> : null}

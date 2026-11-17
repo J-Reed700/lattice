@@ -4419,7 +4419,34 @@ export const FILE_TYPES = [{"extension":"txt","mimeType":"text/plain","category"
 /** user-defined types **/
 
 export type AcceptLearningProgramRequestDto = { programId: string; expectedRevision: number; title: string }
-export type ActiveModels = { chat_model: DownloadedModelResponse | null; embedding_model: DownloadedModelResponse | null }
+/**
+ * What a chat on the Settings default and utility work run on now, worked out by the functions the model loader uses. Nothing is probed.
+ */
+export type ActiveModels = {
+/**
+ * The models a chat on the Settings default tries, in order. Empty when none is set.
+ */
+chat: ModelRef[];
+/**
+ * Why `chat` is empty, in the words the refusal uses.
+ */
+chat_unset: string | null;
+/**
+ * The models utility work tries, in order. Empty when none is set.
+ */
+utility: ModelRef[];
+/**
+ * The model the llama.cpp connection serves, when Settings names its server URL and model.
+ */
+llama_cpp: ModelRef | null;
+/**
+ * The chat model the Ollama connection serves, when the connection is saved and names a chat tag.
+ */
+ollama: ModelRef | null;
+/**
+ * The tag utility work asks the Ollama connection for: its utility tag, else its chat tag.
+ */
+ollama_utility_tag: string | null }
 /**
  * One live item, with why it waits and what it holds put into words.
  */

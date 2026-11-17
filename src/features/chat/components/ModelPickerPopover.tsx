@@ -3,6 +3,7 @@ import { type KeyboardEvent, type ReactNode, useId, useMemo, useRef, useState } 
 import * as Popover from '@radix-ui/react-popover';
 import { Check, Cloud, HardDrive, Network, Settings2 } from 'lucide-react';
 
+import { useActiveModels } from '@/features/model/hooks/useActiveModels';
 import { useCloudModelCatalogs } from '@/features/model/hooks/useCloudModels';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { degradedReasonFor, useLoadedModels } from '@/features/model/hooks/useLoadedModels';
@@ -77,14 +78,15 @@ export function ModelPickerPopover({
   };
   const { downloadedModels } = useDownloadedModels();
   const { data: settings } = useSettingsQuery();
+  const { activeModels } = useActiveModels();
   const cloud = useCloudModelCatalogs(open);
   const loadedModels = useLoadedModels();
   const menuRef = useRef<HTMLDivElement>(null);
   const groupIdPrefix = useId();
 
   const options = useMemo(
-    () => buildChatModelOptions(settings?.llm, downloadedModels, cloud.catalogs),
-    [settings?.llm, downloadedModels, cloud.catalogs]
+    () => buildChatModelOptions(settings?.llm, downloadedModels, cloud.catalogs, activeModels),
+    [settings?.llm, downloadedModels, cloud.catalogs, activeModels]
   );
 
   const groups = useMemo(() => {

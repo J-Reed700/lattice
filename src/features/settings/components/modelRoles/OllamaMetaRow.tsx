@@ -20,7 +20,17 @@ import { Network, SlidersHorizontal } from 'lucide-react';
 
 import { IconButton } from '@/components/ui';
 import { useSettingsQuery } from '@/features/settings/hooks/useSettingsQuery';
+import type { ActiveModels, ModelRef } from '@/lib/bindings';
 import { cn } from '@/lib/utils';
+import type { LLMSettings } from '@/types/api/settings';
+import type { DownloadedModel } from '@/types/downloadedModels';
+import {
+  CLOUD_PROVIDER_NAMES,
+  isCloudProvider,
+  modelRefLabel,
+  remoteOption,
+  sameModelRef,
+} from '@/utils/chatModelSelection';
 
 import { ConnectionRolesDialog } from './ConnectionRolesDialog';
 import { LearningWindowNotice } from './LearningWindowNotice';
@@ -32,8 +42,32 @@ import { ModelVisionDeclaration } from '../AITab/VisionDeclarationEditor';
 
 const OLLAMA_SERVER_MODEL_ID = '__ollama_server__';
 
+function providerName(provider: LLMSettings['provider'] | undefined): string {
+  if (!provider) return '';
+  if (provider === 'llamacpp') return 'llama.cpp';
+  if (isCloudProvider(provider)) return CLOUD_PROVIDER_NAMES[provider];
+  return provider.charAt(0).toUpperCase() + provider.slice(1);
+}
+
+function utilityNote(
+  active: ActiveModels,
+  ollamaRef: ModelRef | null,
+  settings: LLMSettings | undefined,
+  models: DownloadedModel[],
+): string | null {
+  const [first] = active.utility;
+  if (!first) {
+    return `Utility work does not run on this connection while the chat provider is ${providerName(settings?.provider)}.`;
+  }
+  if (sameModelRef(first, ollamaRef)) return null;
+  const firstLabel = first.kind === 'local' ? modelRefLabel(first, models) : remoteOption(first, settings).triggerLabel;
+  return active.utility.slice(1).some((ref) => sameModelRef(ref, ollamaRef))
+    ? `Utility work tries ${firstLabel} first, then this connection.`
+    : `Utility work runs on ${firstLabel} instead of this connection.`;
+}
+
 export function OllamaMetaRow() {
-  const { models, isLoading } = useModelRoles();
+  const { models, isLoading, activeModels } = useModelRoles();
   // The connection and tags live in LLM settings, and the settings repository
   // is the source of truth for them. Read-only here; Chat settings is where
   // they are edited.
@@ -48,24 +82,15 @@ export function OllamaMetaRow() {
 
   const ollamaUrl = settings?.llm.ollamaUrl.trim() ?? '';
   const chatTag = settings?.llm.model.trim() ?? '';
-  const provider = settings?.llm.provider;
-  const utilityRowActive = isUtilityModel(ollamaRow, settings?.llm);
-  // Chat and utility both resolve through the configured provider (see
-  // ModelLoader::load and load_utility_remote), so either assignment is
-  // overridden whenever the provider is not Ollama.
-  const providerOverride =
-    (ollamaRow.is_active_for_chat || utilityRowActive) &&
-    provider &&
-    provider !== 'ollama';
-  const utilityTag = settings?.llm.ollamaUtilityModel.trim() ?? '';
-
-  // Utility falls back to the chat tag when the user hasn't set a
-  // separate one (mirrors the Rust side in get_or_load_utility_llm).
-  const resolvedUtilityTag = utilityTag || chatTag;
+  const utilityTag = activeModels?.ollama_utility_tag ?? '';
+  const utilityStatus =
+    activeModels && isUtilityModel(ollamaRow, settings?.llm)
+      ? utilityNote(activeModels, utilityTag ? { kind: 'ollama', model: utilityTag } : null, settings?.llm, models)
+      : null;
 
   // Learning names the chat tag on this connection: `Ollama{tag}` in Settings.
   const ollamaRoles = CONNECTION_ROLES.map(roleDescriptor);
-  const activeOllamaRoles = ollamaRoles.filter((role) => role.isActive(ollamaRow, settings?.llm));
+  const activeOllamaRoles = ollamaRoles.filter((role) => role.isActive(ollamaRow, settings?.llm, activeModels));
 
   const goToChatSettings = () => {
     window.dispatchEvent(new CustomEvent('settings:navigate-tab', { detail: { tab: 'chat' } }));
@@ -84,7 +109,7 @@ export function OllamaMetaRow() {
 
   const meta = [
     chatTag ? `Chat · ${chatTag}` : 'Chat tag not set',
-    resolvedUtilityTag ? `Utility · ${resolvedUtilityTag}` : 'Utility tag not set',
+    utilityTag ? `Utility · ${utilityTag}` : 'Utility tag not set',
   ].join(' · ');
 
   return (
@@ -105,11 +130,9 @@ export function OllamaMetaRow() {
             </button>
           )}
           <p className="mt-1 wrap-break-word text-xs text-text-muted">{meta}</p>
-          {providerOverride && (
+          {utilityStatus && (
             <div role="status" className="mt-2 max-w-xl text-xs text-text-secondary">
-              {provider === 'auto'
-                ? 'Chat provider is Auto: for both chat and utility, local models and llama.cpp take priority over this Ollama assignment.'
-                : `Chat provider is ${provider === 'llamacpp' ? 'llama.cpp' : provider}: chat and utility use that provider, not this Ollama assignment.`}{' '}
+              {utilityStatus}{' '}
               <button type="button" onClick={goToChatSettings} className="text-accent underline underline-offset-2">
                 Change chat provider
               </button>
@@ -135,7 +158,7 @@ export function OllamaMetaRow() {
             </IconButton>
             {/* Outside the lg-only meta line: on a narrow window the missing-tag
                 state would otherwise be both invisible and unfixable. */}
-            {!chatTag || !resolvedUtilityTag ? (
+            {!chatTag || !utilityTag ? (
               <button
                 type="button"
                 onClick={goToChatSettings}
@@ -168,7 +191,7 @@ export function OllamaMetaRow() {
           ))}
         >
           {ollamaRoles.map((role) => {
-            const tagForRole = role.id === 'utility' ? resolvedUtilityTag : chatTag;
+            const tagForRole = role.id === 'utility' ? utilityTag : chatTag;
             return tagForRole ? (
               <RoleButton key={role.id} model={ollamaRow} role={role} />
             ) : (
