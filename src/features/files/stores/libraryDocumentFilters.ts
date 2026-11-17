@@ -1,4 +1,3 @@
-import { typeBucket, isWebDocument } from '@/features/files/model/documentMetadata';
 import {
   type CustomCollection,
   type LibraryScope,
@@ -38,6 +37,9 @@ export const sortLibraryDocuments = (
 };
 
 export const normalizeToken = (value: string): string => value.trim().toLowerCase();
+
+export const matchesTypeFilter = (doc: DocumentMetadata, filter: string | null): boolean =>
+  !filter || normalizeToken(doc.typeBucket) === normalizeToken(filter);
 
 const collectDescendantCollectionIds = (
   collections: CustomCollection[],
@@ -94,7 +96,6 @@ export const filterLibraryDocuments = (
   state: LibraryFilterState
 ): DocumentMetadata[] => {
   const query = normalizeToken(state.searchQuery);
-  const normalizedFilter = state.filterByType ? normalizeToken(state.filterByType) : null;
 
   let scopedDocIds: Set<string> | null = null;
   if (state.scope.kind === 'collection') {
@@ -119,25 +120,17 @@ export const filterLibraryDocuments = (
   const scopedFolder = state.scope.kind === 'folder' ? state.scope.path : null;
 
   return documents.filter(doc => {
-    const normalizedCategory = normalizeToken(doc.category).replace(/[_-]+/g, ' ');
-    const normalizedFileType = normalizeToken(doc.fileType);
     const normalizedFileName = normalizeToken(doc.fileName);
     const matchesQuery = query
       ? normalizedFileName.includes(query) || state.contentSearchMatches.has(doc.id)
       : true;
-    const matchesType = normalizedFilter
-      ? normalizeToken(typeBucket(doc)) === normalizedFilter ||
-        normalizedCategory.includes(normalizedFilter) ||
-        normalizedFileType === normalizedFilter ||
-        (normalizedFilter === 'web' && normalizedCategory.includes('web article'))
-      : true;
     const matchesSource =
       state.filterBySource === 'all' ||
-      (state.filterBySource === 'web' && isWebDocument(doc)) ||
-      (state.filterBySource === 'local' && !isWebDocument(doc));
+      (state.filterBySource === 'web' && doc.web) ||
+      (state.filterBySource === 'local' && !doc.web);
     const matchesScope =
       (!scopedDocIds || scopedDocIds.has(doc.id)) &&
       (!scopedFolder || isInsideFolder(doc.filePath, scopedFolder));
-    return matchesQuery && matchesType && matchesSource && matchesScope;
+    return matchesQuery && matchesTypeFilter(doc, state.filterByType) && matchesSource && matchesScope;
   });
 };

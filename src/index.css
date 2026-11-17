@@ -681,7 +681,7 @@
 /* The reader docked as the chat's third pane. Same material as the overlay,
    without the shadow and the rounded corners: it is part of the window now,
    not a sheet lying on top of it. */
-.chat-reader-pane {
+.reader-pane {
   position: relative;
   display: flex;
   flex: 0 0 auto;
@@ -695,11 +695,11 @@
   animation: reader-arrive var(--duration-base) var(--ease-out);
 }
 /* A dragged edge follows the pointer; every other width change eases. */
-.chat-reader-pane:not(.chat-reader-pane--dragging) {
+.reader-pane:not(.reader-pane--dragging) {
   transition: width var(--duration-slow) var(--ease-out);
 }
 /* The grab area is wider than the line it draws, so the edge is easy to catch. */
-.chat-reader-handle {
+.reader-pane-handle {
   position: absolute;
   top: 0;
   bottom: 0;
@@ -710,7 +710,7 @@
   touch-action: none;
   outline: none;
 }
-.chat-reader-handle::after {
+.reader-pane-handle::after {
   content: '';
   position: absolute;
   top: 0;
@@ -721,9 +721,9 @@
   background: transparent;
   transition: background-color var(--duration-fast) var(--ease-out);
 }
-.chat-reader-handle:hover::after,
-.chat-reader-handle:focus-visible::after,
-.chat-reader-pane--dragging .chat-reader-handle::after {
+.reader-pane-handle:hover::after,
+.reader-pane-handle:focus-visible::after,
+.reader-pane--dragging .reader-pane-handle::after {
   background: hsl(var(--accent) / 0.75);
 }
 
@@ -780,5 +780,5 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .source-reader,
-  .chat-reader-pane { animation: none !important; transition: none !important; }
+  .reader-pane { animation: none !important; transition: none !important; }
 }

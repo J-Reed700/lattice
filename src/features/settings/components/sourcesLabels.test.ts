@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isContact, isHttpUrl, keyServiceOf, statusLine } from './sourcesLabels';
+import { keyServiceOf, statusLine } from './sourcesLabels';
 
 const finder = (overrides: Record<string, unknown> = {}) => ({
   gate: 'ready',
@@ -48,28 +48,5 @@ describe('sourcesLabels', () => {
       expect(statusLine(finder({ health: { state: 'ok', calls: 12, medianMs: 2345, lastError: 'timeout' } }), keys).text)
         .toBe('Healthy · 12 calls · median 2.3 s · last error: timeout');
     });
-  });
-
-  it.each([
-    ['https://search.example.org', true],
-    ['http://localhost:8080', true],
-    ['ftp://files.example.org', false],
-    ['not a url', false],
-  ])('checks %s is an http address: %s', (value, expected) => {
-    expect(isHttpUrl(value)).toBe(expected);
-  });
-
-  it.each([
-    ['librarian@museum.org', true],
-    ['https://museum.org/contact', true],
-    ['', false],
-    ['has space@museum.org', false],
-    ['@museum.org', false],
-    ['a@b@museum.org', false],
-    ['curator@localhost', false],
-    ['curator@museum..org', false],
-    ['museum.org', false],
-  ])('checks %j is a contact: %s', (value, expected) => {
-    expect(isContact(value)).toBe(expected);
   });
 });

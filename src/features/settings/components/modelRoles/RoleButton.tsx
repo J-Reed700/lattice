@@ -77,7 +77,7 @@ export function RoleToggle({ role, active, disabled = false, pending = false, ti
 }
 
 export function RoleButton({ model, role }: RoleButtonProps) {
-  const { assignRole, chatProvider, llmSettings } = useModelRoles();
+  const { assignRole, chatProvider, llmSettings, activeModels } = useModelRoles();
   const [pending, setPending] = useState(false);
 
   if (!canModelFulfillRole(model, role)) {
@@ -85,7 +85,7 @@ export function RoleButton({ model, role }: RoleButtonProps) {
     return null;
   }
 
-  const isActive = role.isActive(model, llmSettings);
+  const isActive = role.isActive(model, llmSettings, activeModels);
   // Chat writes the provider, and Learning and Verifier write a model
   // reference, so each waits for the settings it writes into.
   const waitsForSettings = (role.id === 'chat' && !chatProvider) || (isReferenceRole(role.id) && !llmSettings);

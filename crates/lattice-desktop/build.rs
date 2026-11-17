@@ -44,13 +44,13 @@ fn embed_windows_manifest() {
     );
 }
 
-/// Reserve the main thread's stack in the app and `export_bindings`; the test
-/// harnesses run their tests on spawned threads.
+/// Reserve the main thread's stack in the app, `export_bindings` and the
+/// examples; the test harnesses run their tests on spawned threads.
 fn reserve_main_thread_stack() {
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
-    for arg in main_thread_stack::link_args(&target_os, &target_env) {
-        println!("cargo::rustc-link-arg-bins={arg}");
+    for line in main_thread_stack::directives(&target_os, &target_env) {
+        println!("{line}");
     }
 }
 
@@ -368,6 +368,7 @@ fn main() {
                     "get_sources_status",
                     "save_source_key",
                     "remove_source_key",
+                    "check_sourcing_address",
                 ]),
             )
             .plugin(

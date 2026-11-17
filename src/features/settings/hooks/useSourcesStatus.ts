@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
-import type { KeyServiceDto, SourcesStatusDto } from '@/lib/bindings';
+import type { KeyServiceDto, SourcesStatusDto, SourcingAddress } from '@/lib/bindings';
 
 export const SOURCES_STATUS_QUERY_KEY = ['sources-status'] as const;
 
@@ -21,6 +21,25 @@ export function useSourcesStatus() {
     },
     staleTime: 0,
   });
+}
+
+/**
+ * Whether the backend accepts `value` for a Sources address setting, by the
+ * rule it applies on save: undefined while it answers, and for a blank value.
+ */
+export function useSourcingAddressCheck(field: SourcingAddress, value: string): boolean | undefined {
+  const api = useApi();
+  const { data } = useQuery<boolean>({
+    queryKey: ['sourcing-address', field, value],
+    queryFn: async () => {
+      const result = await api.checkSourcingAddress(field, value);
+      if (!result.ok) throw new Error(result.error);
+      return result.data;
+    },
+    enabled: value !== '',
+    staleTime: Infinity,
+  });
+  return value === '' ? undefined : data;
 }
 
 /** Re-reads the status after a settings write re-registered the finders. */

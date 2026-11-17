@@ -1861,7 +1861,7 @@ async getActiveEmbeddingModel() : Promise<Result<DownloadedModelResponse | null,
 }
 },
 /**
- * Get active models (both chat and embedding)
+ * What a chat on the Settings default and utility work run on now.
  */
 async getActiveModels() : Promise<Result<ActiveModels, ApiError>> {
     try {
@@ -4254,6 +4254,18 @@ async removeSourceKey(service: KeyServiceDto) : Promise<Result<SourcesStatusDto,
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Settings → Sources: whether `value` is an address the setting `field`
+ * accepts, by the rule the settings check applies on save.
+ */
+async checkSourcingAddress(field: SourcingAddress, value: string) : Promise<Result<boolean, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:web|check_sourcing_address", { field, value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async rescanVault() : Promise<Result<RescanSummary, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:vault|rescan_vault") };
@@ -4419,7 +4431,35 @@ export const FILE_TYPES = [{"extension":"txt","mimeType":"text/plain","category"
 /** user-defined types **/
 
 export type AcceptLearningProgramRequestDto = { programId: string; expectedRevision: number; title: string }
-export type ActiveModels = { chat_model: DownloadedModelResponse | null; embedding_model: DownloadedModelResponse | null }
+/**
+ * What a chat on the Settings default and utility work run on now, worked
+ * out by the functions the model loader uses. Nothing is probed.
+ */
+export type ActiveModels = {
+/**
+ * The models a chat on the Settings default tries, in order. Empty when none is set.
+ */
+chat: ModelRef[];
+/**
+ * Why `chat` is empty, in the words the refusal uses.
+ */
+chat_unset: string | null;
+/**
+ * The models utility work tries, in order. Empty when none is set.
+ */
+utility: ModelRef[];
+/**
+ * The model the llama.cpp connection serves, when Settings names its server URL and model.
+ */
+llama_cpp: ModelRef | null;
+/**
+ * The chat model the Ollama connection serves, when the connection is saved and names a chat tag.
+ */
+ollama: ModelRef | null;
+/**
+ * The tag utility work asks the Ollama connection for: its utility tag, else its chat tag.
+ */
+ollama_utility_tag: string | null }
 /**
  * One live item, with why it waits and what it holds put into words.
  */
@@ -5477,7 +5517,31 @@ export type ClaimEventPayloadDto = { kind: "extracted"; field: string; quote: st
  * A compared passage and who added its source; `addedBy` is null for an
  * execution, which has no source.
  */
-export type ClaimEvidencePassageDto = { passage: LearningEvidencePassageDto; addedBy: SourceAddedByDto | null }
+export type ClaimEvidencePassageDto = { passage: LearningEvidencePassageDto; addedBy: SourceAddedByDto | null;
+/**
+ * The passage's first sentence in its excerpt: what the review marks in
+ * a passage the user added that does not state the claim.
+ */
+opening: ClaimExcerptDto }
+/**
+ * A quote in its passage as the review shows it (UI design §3.4): the
+ * sentences that hold it, with the sentence before and after them when it
+ * is prose, never code.
+ */
+export type ClaimExcerptDto = { before: string;
+/**
+ * The quote as the passage words it; the quote as given when the
+ * passage does not hold it.
+ */
+quote: string; after: string;
+/**
+ * More of the passage comes before `before`.
+ */
+clippedStart: boolean;
+/**
+ * More of the passage comes after `after`.
+ */
+clippedEnd: boolean }
 export type ClaimLocationDto = { unitIndex: number; unitKind: UnitKindDto; unitTitle: string; field: string; quote: string;
 /**
  * Byte span of `quote` in the field; null when it occurs more than once.
@@ -5561,6 +5625,12 @@ place: PutBackPlaceDto | null;
  */
 putBackUnit: number | null;
 /**
+ * For a sentence the machine took out whose place is known: the
+ * sentence of that unit it goes back beside, as the unit's text has it;
+ * null when it goes at the end.
+ */
+putBackBeside: string | null;
+/**
  * For a claim the machine rewrote: what it said and what it says now.
  */
 rewritten: RewrittenDto | null }
@@ -5600,10 +5670,9 @@ standing: LearningTrustLevel | null; counts: ClaimSupportCountsDto;
  */
 quote: string;
 /**
- * Byte span of `quote` inside `passage.text`; null when it is not found
- * there verbatim.
+ * `quote` in its passage.
  */
-quoteSpan: [number, number] | null; passage: LearningEvidencePassageDto }
+excerpt: ClaimExcerptDto; passage: LearningEvidencePassageDto }
 export type ClaimSupportRoleDto = "supports" | "contradicts"
 export type ClassDto = "sourced" | "reasoning" | "common" | "internal"
 export type ClassifiedByDto = "model" | "rule" | "writer" | "evidence"
@@ -6420,7 +6489,15 @@ indexedAt: string;
 /**
  * Word count for document
  */
-wordCount: number }
+wordCount: number;
+/**
+ * True when the web archive owns the file: a saved web article
+ */
+web: boolean;
+/**
+ * The type bucket the document counts in, as the Library's facets and the corpus shape count it
+ */
+typeBucket: string }
 export type DocumentRefDto = { documentId: string; filePath: string; title: string | null }
 export type DocumentSpaceMembershipDto = { spaceId: string; spaceName: string; isArchived: boolean; createdAt: string | null }
 /**
@@ -8090,6 +8167,20 @@ export type LearningCardOriginDto = { cardId: string; lessonId: string; origin: 
  * what is revealed once they commit an answer.
  */
 export type LearningCheckDto = { question: string; reveal: string }
+/**
+ * A passage a citation chip of the lesson opens, numbered down the lesson.
+ */
+export type LearningCitationDto = { number: number;
+/**
+ * The saved source the passage's version belongs to; none for an
+ * executed example.
+ */
+sourceId: string | null;
+/**
+ * Its trust is always none: a level belongs to each statement a passage
+ * supports, on that statement's own passages.
+ */
+passage: LearningEvidencePassageDto }
 export type LearningClaimEvidenceDto = { sectionIndex: number;
 /**
  * Exact lesson text selected by the claim inventory. This anchors the
@@ -8128,7 +8219,12 @@ parts?: LearningClaimPartDto[]; unverifiedReason?: UnverifiedReasonDto | null;
  * The claim behind this statement, for acting on it; none in a report
  * from before findings named theirs.
  */
-claimId?: string | null }
+claimId?: string | null;
+/**
+ * The numbers, in the lesson's `citations`, of the passages this
+ * statement stands on; empty when it cites none.
+ */
+cites?: number[] }
 /**
  * One part of a statement as the part-wise check read it.
  */
@@ -8473,7 +8569,15 @@ export type LearningLessonEvidenceDto = { policy: string; checkedAt: number; che
  * Of `claim_count`, the claims the user confirmed without a supporting
  * passage; shown apart from the machine-verified ones (§5.6).
  */
-confirmedCount: number; executedExamples: number; unexecutedLanguages: string[]; sourcesCurrent: boolean; teachingClaims: LearningClaimEvidenceDto[] }
+confirmedCount: number; executedExamples: number; unexecutedLanguages: string[]; sourcesCurrent: boolean; teachingClaims: LearningClaimEvidenceDto[];
+/**
+ * Every passage of the report, numbered from 1.
+ */
+citations: LearningCitationDto[];
+/**
+ * One per lesson block, in block order.
+ */
+sections: LearningSectionTextDto[] }
 export type LearningLessonNoteDto = { lessonId: string; note: WorkspaceNoteDto }
 export type LearningLessonQuizDto = { lessonId: string; quiz: LearningQuizStatusDto }
 /**
@@ -8841,6 +8945,11 @@ command: string[]; limits: LearningLabLimits;
 entrypointContract: string }
 export type LearningRuntimePresetId = "csharp" | "rust" | "node" | "python"
 export type LearningRuntimeProfileDto = { id: string; name: string; engine: LearningContainerEngine; imageId: string; command: string[]; limits: LearningLabLimits; enabled: boolean; revision: number; createdAt: number; updatedAt: number }
+/**
+ * One lesson block's body as the frontend draws it: text between citation
+ * chips.
+ */
+export type LearningSectionTextDto = { sectionIndex: number; pieces: ReplyPieceDto[] }
 export type LearningSimulationSessionDto = { id: string; programId: string; activityId: string; activityRevision: number; practiceSessionId: string | null; learnerRole: string; counterpartRole: string; status: LearningSimulationStatus; revision: number; turns: LearningSimulationTurnDto[]; createdAt: number; updatedAt: number; submittedAt: number | null }
 export type LearningSimulationSpeaker = "learner" | "counterpart" | "coach"
 export type LearningSimulationStatus = "active" | "submitted" | "cancelled"
@@ -11137,6 +11246,11 @@ sourceId: string; sourceVersionId: string; title: string; url: string | null; ad
  */
 export type SourcesStatusDto = { finders: FinderStatusDto[]; keys: KeyStatusDto[] }
 /**
+ * A Sources setting that holds an address the user types: the SearXNG
+ * server, or the polite-pool contact.
+ */
+export type SourcingAddress = "searxngUrl" | "contact"
+/**
  * Source-finding settings.
  */
 export type SourcingSettingsDto = {
@@ -12421,6 +12535,7 @@ export type CommandArgs = {
 	check_llm_health: void;
 	check_practice_fit: { request: PracticeFitRequestDto };
 	check_practice_piece: { request: CheckPracticePieceRequestDto };
+	check_sourcing_address: { field: SourcingAddress; value: string };
 	clear_active_chat_model: void;
 	clear_active_embedding_model: void;
 	clear_active_utility_model: void;
@@ -12887,6 +13002,7 @@ export type CommandResults = {
 	check_llm_health: LLMHealthStatusDto;
 	check_practice_fit: PracticeFitDto;
 	check_practice_piece: PracticeSessionDto;
+	check_sourcing_address: boolean;
 	clear_active_chat_model: null;
 	clear_active_embedding_model: null;
 	clear_active_utility_model: null;

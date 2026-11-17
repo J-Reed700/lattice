@@ -8,7 +8,6 @@ export { ConversationMemoryPanel } from '@/features/chat/components/Conversation
 export { Message } from '@/features/chat/components/Message';
 
 // Utility components
-export { CitationFootnote } from '@/features/chat/components/CitationFootnote';
 export { ChatDropStaging } from '@/features/chat/components/ChatDropStaging';
 export { ChatModelNotice } from '@/features/chat/components/ChatModelNotice';
 export { ChatStarters } from '@/features/chat/components/ChatStarters';

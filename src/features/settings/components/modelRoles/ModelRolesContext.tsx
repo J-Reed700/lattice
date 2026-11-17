@@ -19,9 +19,10 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 
+import { useActiveModels } from '@/features/model/hooks/useActiveModels';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { useSettingsQuery, useUpdateSettingsMutation } from '@/features/settings/hooks/useSettingsQuery';
-import type { ModelRef } from '@/lib/bindings';
+import type { ActiveModels, ModelRef } from '@/lib/bindings';
 import { toast } from '@/stores/toastStore';
 import type { LLMSettings } from '@/types/api/settings';
 import type { DownloadedModel } from '@/types/downloadedModels';
@@ -36,6 +37,8 @@ interface ModelRolesContextValue {
   chatProvider: LLMSettings['provider'] | undefined;
   /** The saved LLM settings; Chat and Learning read their state from them. */
   llmSettings: LLMSettings | undefined;
+  /** What a chat on the Settings default and utility work run on now. */
+  activeModels: ActiveModels | null;
   isLoading: boolean;
   /** Why the last refresh failed; null once one succeeds. */
   error: string | null;
@@ -66,6 +69,7 @@ export function ModelRolesProvider({ children }: ProviderProps) {
   const { mutateAsync: updateSettings } = useUpdateSettingsMutation();
   const llmSettings = settings?.llm;
   const chatProvider = llmSettings?.provider;
+  const { activeModels } = useActiveModels();
   const {
     fetchDownloadedModels,
     setActiveChatModel,
@@ -204,13 +208,14 @@ export function ModelRolesProvider({ children }: ProviderProps) {
       ollamaModels,
       chatProvider,
       llmSettings,
+      activeModels,
       isLoading,
       error,
       refresh,
       assignRole,
       assignUtilityReference,
     };
-  }, [models, chatProvider, llmSettings, isLoading, error, refresh, assignRole, assignUtilityReference]);
+  }, [models, chatProvider, llmSettings, activeModels, isLoading, error, refresh, assignRole, assignUtilityReference]);
 
   return <ModelRolesContext.Provider value={value}>{children}</ModelRolesContext.Provider>;
 }

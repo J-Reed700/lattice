@@ -29,6 +29,8 @@ const doc = (id: string, fileName: string): DocumentMetadata => ({
   modifiedAt: '2026-01-01',
   indexedAt: '2026-01-01',
   wordCount: 10,
+  web: false,
+  typeBucket: 'Markdown',
 });
 
 const subject = doc('doc-subject', 'Subject.md');

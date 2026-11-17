@@ -41,7 +41,7 @@ const ok = <T,>(data: T) => ({ ok: true, data });
 
 const evidenceClaim = (overrides: Record<string, unknown>) => ({
   sectionIndex: 0, contentQuote: 'The sentence.', claim: 'Ice floats on water.', verdict: 'supported', reason: 'Checked.', supportingQuote: null,
-  passages: [], resolution: 'verified', note: null, sufficiency: null, class: 'sourced', label: null, parts: [], unverifiedReason: null, claimId: 'claim-v', ...overrides,
+  passages: [], resolution: 'verified', note: null, sufficiency: null, class: 'sourced', label: null, parts: [], unverifiedReason: null, claimId: 'claim-v', cites: [], ...overrides,
 }) as LearningClaimEvidenceDto;
 const unverified = (reason: Reason, overrides: Record<string, unknown> = {}) => evidenceClaim({
   claim: STATEMENT, contentQuote: 'Everest water boils at 100 °C.', resolution: 'not_verified', unverifiedReason: reason, verdict: 'unsupported', claimId: 'claim-1', ...overrides,
@@ -49,7 +49,7 @@ const unverified = (reason: Reason, overrides: Record<string, unknown> = {}) => 
 const confirmed = () => evidenceClaim({ claim: STATEMENT, contentQuote: 'Everest water boils at 100 °C.', resolution: 'confirmed_by_you', claimId: 'claim-1' });
 const evidence = (teachingClaims: LearningClaimEvidenceDto[]): LearningLessonEvidenceDto => ({
   policy: 'lesson-evidence-v21', checkedAt: 1, checkerModel: 'checker', retrievalMode: 'hybrid', embeddingModel: null, contentSha256: 'hash',
-  claimCount: teachingClaims.length, confirmedCount: 0, executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true, teachingClaims,
+  claimCount: teachingClaims.length, confirmedCount: 0, executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true, teachingClaims, citations: [], sections: [],
 });
 
 /** The evidence reads as settled once the claim action has run, as the backend's evidence follows each claim's state. */

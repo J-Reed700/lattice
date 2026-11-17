@@ -5,6 +5,7 @@
 use super::*;
 use crate::features::llm::backend::{ModelBackend, Progress};
 use crate::features::llm::fitting::{Fitted, OutputLimits, Sent, Thinking};
+use crate::infrastructure::llama_server::ServerTokenizer;
 use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, ContentPart, ImagePart,

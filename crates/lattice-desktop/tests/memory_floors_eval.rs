@@ -42,7 +42,7 @@
 //!
 //! | Variable | Meaning | Default |
 //! |---|---|---|
-//! | `LATTICE_EMBED_GGUF` | the embedding model's GGUF, with `tokenizer.json` beside it | *required* |
+//! | `LATTICE_EMBED_GGUF` | the embedding model's GGUF | *required* |
 //! | `LATTICE_EVAL_FLOORS_OUT` | the JSONL file to write; it must not exist | *required* |
 //! | `LATTICE_LLAMA_SERVER` | the llama-server binary | the bundled build in `binaries/` |
 //! | `LATTICE_EVAL_FLOORS_SET` | the labelled set | `evals/conversation-memory/recall-floors-v1.json` |
@@ -419,12 +419,6 @@ impl Config {
             "LATTICE_EMBED_GGUF={} is not a file",
             self.gguf.display()
         );
-        let tokenizer = self.gguf.parent().map(|dir| dir.join("tokenizer.json"));
-        assert!(
-            tokenizer.as_ref().is_some_and(|path| path.is_file()),
-            "tokenizer.json must sit beside {}",
-            self.gguf.display()
-        );
         assert!(
             !self.out.exists(),
             "LATTICE_EVAL_FLOORS_OUT={} exists; a result is never overwritten, so name a new file",
@@ -517,6 +511,7 @@ impl Scorer {
         let chunks = self
             .service
             .split_text(text, "")
+            .await
             .expect("the embedder splits the message");
         assert_eq!(
             chunks.len(),
@@ -1007,7 +1002,7 @@ fn expected_rows(set: &FloorsSet) -> usize {
 }
 
 #[tokio::test]
-#[ignore = "needs LATTICE_EMBED_GGUF (tokenizer.json beside it), a runnable llama-server and LATTICE_EVAL_FLOORS_OUT; see the module comment"]
+#[ignore = "needs LATTICE_EMBED_GGUF, a runnable llama-server and LATTICE_EVAL_FLOORS_OUT; see the module comment"]
 async fn the_signals_behind_the_recall_and_shared_floors() {
     let config = Config::from_env();
     let set = FloorsSet::load(&config.set);

@@ -49,6 +49,8 @@ describe('ListView', () => {
       modifiedAt: '2024-01-01',
       indexedAt: '2024-01-01',
       wordCount: 10240,
+      web: false,
+      typeBucket: 'PDF',
     },
     {
       id: '2',
@@ -60,6 +62,8 @@ describe('ListView', () => {
       modifiedAt: '2024-01-02',
       indexedAt: '2024-01-02',
       wordCount: 5120,
+      web: false,
+      typeBucket: 'PNG',
     },
   ];
 

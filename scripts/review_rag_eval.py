@@ -8,7 +8,7 @@ import argparse
 import json
 from pathlib import Path
 
-from chat_rag_eval import aggregate, evaluate_answer, load_jsonl
+from chat_rag_eval import aggregate, evaluate_answer, extract_citations, load_jsonl
 from eval_integrity import digest, finite_number, unique_records, validate_expectations
 from rag_eval import validate_dataset, query_dimensions
 
@@ -107,7 +107,8 @@ def score_reviews(dataset, expectations, rows, reviews):
     for packet, row in zip(packet_list, rows):
         # Never trust cached PASS flags in imported artifacts.
         fresh = evaluate_answer(packet['query'], labels[row['query_id']], row['answer'],
-                                row['ranked_ids'], row['latency_ms'], row.get('model'))
+                                row['ranked_ids'], row['latency_ms'], row.get('model'),
+                                citations=extract_citations(row['answer']))
         if row['query_id'] in by_id:
             fresh.update(apply_review(packet, by_id[row['query_id']]))
             fresh['answer_correct'] &= fresh['citation_structure_passed']

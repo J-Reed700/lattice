@@ -72,7 +72,8 @@ describe('Learning Studio page: opening the claim review on a claim', () => {
     mocks.evidence.mockResolvedValue(ok({
       policy: 'lesson-evidence-v21', checkedAt: 1, checkerModel: 'checker', retrievalMode: 'hybrid', embeddingModel: null, contentSha256: 'hash', claimCount: 1, confirmedCount: 0,
       executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true,
-      teachingClaims: [{ sectionIndex: 0, contentQuote: STATEMENT, claim: STATEMENT, verdict: 'unsupported', reason: 'No passage.', supportingQuote: null, passages: [], resolution: 'not_verified', note: null, sufficiency: null, unverifiedReason: 'unsupported', claimId: 'claim-1' }],
+      teachingClaims: [{ sectionIndex: 0, contentQuote: STATEMENT, claim: STATEMENT, verdict: 'unsupported', reason: 'No passage.', supportingQuote: null, passages: [], resolution: 'not_verified', note: null, sufficiency: null, unverifiedReason: 'unsupported', claimId: 'claim-1', cites: [] }],
+      citations: [], sections: [],
     }));
   });
 

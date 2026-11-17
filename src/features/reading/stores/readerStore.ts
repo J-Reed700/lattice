@@ -1,11 +1,12 @@
 /**
- * The source reader that sits beside the thread.
+ * The source reader that sits beside a text.
  *
- * One reader for the whole chat, not one per message: the reader is a third
- * pane, and a pane that existed once per answer could only ever be an overlay
- * on top of the answer it belonged to.
+ * One reader for the surface it sits beside (a chat thread or a lesson), not
+ * one per message or section: the reader is a third pane, and a pane that
+ * existed once per answer could only ever be an overlay on top of the answer
+ * it belonged to.
  *
- * `ownerKey` is the message the open citations came from. It is what lets an
+ * `ownerKey` is the text the open citations came from. It is what lets an
  * answer light the citation the reader is showing without lighting the same
  * number in every other answer on screen.
  */
@@ -45,7 +46,7 @@ export interface ReaderSession {
   occurrence: number | null;
 }
 
-export interface ChatReaderState {
+export interface ReaderState {
   session: ReaderSession | null;
   width: number;
   /**
@@ -62,6 +63,7 @@ export interface ChatReaderState {
   ) => void;
   setIndex: (_index: number) => void;
   close: () => void;
+  release: (_ownerKey: string) => void;
   setWidth: (_px: number) => void;
   rememberResolvedLocation: (_chunkId: string, _label: string) => void;
 }
@@ -86,7 +88,7 @@ function writeStoredWidth(px: number): void {
   }
 }
 
-export const useChatReaderStore = create<ChatReaderState>((set, get) => ({
+export const useReaderStore = create<ReaderState>((set, get) => ({
   session: null,
   width: readStoredWidth(),
   resolvedLocations: new Map(),
@@ -115,6 +117,11 @@ export const useChatReaderStore = create<ChatReaderState>((set, get) => ({
 
   close: () => {
     if (!get().session) return;
+    set({ session: null });
+  },
+
+  release: (ownerKey) => {
+    if (get().session?.ownerKey !== ownerKey) return;
     set({ session: null });
   },
 

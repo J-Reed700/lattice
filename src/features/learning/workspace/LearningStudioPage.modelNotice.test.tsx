@@ -20,7 +20,7 @@ import type { AppSettings } from '@/types/api/settings';
  */
 
 const mocks = vi.hoisted(() => ({
-  getSettings: vi.fn(), updateSettings: vi.fn(), downloadedModels: vi.fn(),
+  getSettings: vi.fn(), updateSettings: vi.fn(), downloadedModels: vi.fn(), activeModels: vi.fn(),
 }));
 vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
   listConversationSpaces: async () => ({ ok: true, data: [] }),
@@ -31,6 +31,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeo
   getSettings: mocks.getSettings,
   updateSettings: mocks.updateSettings,
   getDownloadedModels: mocks.downloadedModels,
+  getActiveModels: mocks.activeModels,
 } }));
 
 const NOTICE = 'Courses need a model to write them.';
@@ -70,6 +71,15 @@ describe('Studio course builder with no Learning model', () => {
     vi.resetAllMocks();
     activityClient.removeQueries({ queryKey: STUDY_ACTIVITY_KEY });
     mocks.downloadedModels.mockResolvedValue(ok([]));
+    mocks.activeModels.mockImplementation(async () => {
+      const { data } = await mocks.getSettings();
+      const chat = data.llm.provider === 'anthropic' ? [CHAT_REF] : [];
+      return ok({
+        chat,
+        chat_unset: chat.length ? null : 'No chat model is selected in Settings → Downloaded, and no llama.cpp or Ollama server is configured in Settings → Chat',
+        utility: [], llama_cpp: null, ollama: null, ollama_utility_tag: null,
+      });
+    });
   });
 
   it('says courses need a model and offers the chat model in one click, which sets the Learning model', async () => {
@@ -81,7 +91,7 @@ describe('Studio course builder with no Learning model', () => {
     });
     show();
     expect(await screen.findByText(NOTICE)).toBeVisible();
-    await userEvent.click(screen.getByRole('button', { name: `Use ${CHAT_MODEL}` }));
+    await userEvent.click(await screen.findByRole('button', { name: `Use ${CHAT_MODEL}` }));
     // The same write the banner in Settings → Downloaded makes.
     expect(mocks.updateSettings).toHaveBeenCalledWith({ category: 'llm', updates: { learningModel: CHAT_REF } });
     await waitFor(() => expect(screen.queryByText(NOTICE)).not.toBeInTheDocument());

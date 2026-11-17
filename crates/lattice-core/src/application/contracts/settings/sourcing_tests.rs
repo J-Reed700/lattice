@@ -8,7 +8,7 @@ use chrono::{TimeZone, Utc};
 
 use super::super::{
     FinderGateDto, FinderHealthStateDto, FinderNeedDto, FinderSettingDto, KeyServiceDto,
-    SettingsCategory, SettingsDto, SourcesStatusDto, SourcingSettingsDto,
+    SettingsCategory, SettingsDto, SourcesStatusDto, SourcingAddress, SourcingSettingsDto,
 };
 use crate::domain::sourcing::{
     Auth, Cost, Destination, FailureCause, FinderDescriptor, FinderHealth, FinderId, HealthState,
@@ -137,6 +137,79 @@ fn a_contact_is_an_email_or_an_http_address() {
         };
         assert_eq!(settings.problems().len(), 1, "{bad:?}");
     }
+}
+
+fn saved(field: SourcingAddress, value: &str) -> SourcingSettingsDto {
+    let value = Some(value.to_string());
+    match field {
+        SourcingAddress::SearxngUrl => SourcingSettingsDto {
+            searxng_url: value,
+            ..SourcingSettingsDto::default()
+        },
+        SourcingAddress::Contact => SourcingSettingsDto {
+            contact: value,
+            ..SourcingSettingsDto::default()
+        },
+    }
+}
+
+#[test]
+fn an_address_is_checked_by_the_rule_the_settings_check_applies() {
+    use SourcingAddress::{Contact, SearxngUrl};
+    let cases = [
+        (SearxngUrl, "https://search.example.org", true),
+        (SearxngUrl, "http://searx.example.net:8080/", true),
+        (SearxngUrl, "http://localhost:8080", true),
+        (SearxngUrl, "  https://search.example.org  ", true),
+        (SearxngUrl, "", false),
+        (SearxngUrl, "   ", false),
+        (SearxngUrl, "search.example.org", false),
+        (SearxngUrl, "ftp://search.example.org", false),
+        (SearxngUrl, "https://", false),
+        (SearxngUrl, "not a url", false),
+        (Contact, "me@example.org", true),
+        (Contact, " me@example.org ", true),
+        (Contact, "me@example.org\n", true),
+        (Contact, "https://example.org/about", true),
+        (Contact, "https://user@host.example/x", true),
+        (Contact, "https://mastodon.social/@x", true),
+        (Contact, "librarian@museum.org", true),
+        (Contact, "", false),
+        (Contact, "   ", false),
+        (Contact, "me", false),
+        (Contact, "me@", false),
+        (Contact, "@example.org", false),
+        (Contact, "me@example", false),
+        (Contact, "me@.org", false),
+        (Contact, "me@@example.org", false),
+        (Contact, "me @example.org", false),
+        (Contact, "https://example.org/a b", false),
+        (Contact, "ftp://example.org", false),
+        (Contact, "a/b@x.org", false),
+        (Contact, "curator@localhost", false),
+        (Contact, "curator@museum..org", false),
+        (Contact, "museum.org", false),
+    ];
+    for (field, value, accepted) in cases {
+        assert_eq!(field.accepts(value), accepted, "{field:?} {value:?}");
+        assert_eq!(
+            saved(field, value).problems().is_empty(),
+            accepted,
+            "{field:?} {value:?}"
+        );
+    }
+}
+
+#[test]
+fn an_address_field_goes_by_its_settings_name() {
+    assert_eq!(
+        serde_json::to_value(SourcingAddress::SearxngUrl).unwrap(),
+        "searxngUrl"
+    );
+    assert_eq!(
+        serde_json::to_value(SourcingAddress::Contact).unwrap(),
+        "contact"
+    );
 }
 
 #[test]

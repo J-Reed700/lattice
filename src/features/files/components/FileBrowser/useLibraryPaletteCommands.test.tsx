@@ -11,8 +11,8 @@ vi.mock('@/features/palette/hooks/useRegisterPaletteCommands', () => ({
   useRegisterPaletteCommands: (commands: PaletteCommand[]) => { h.commands = commands; },
 }));
 
-const local = { id: 'd1', fileName: 'herbal.pdf', filePath: '/lib/herbal.pdf', category: 'document', fileType: 'pdf' } as DocumentMetadata;
-const web = { id: 'w1', fileName: 'Bread', filePath: 'https://example.org/bread', category: 'web', fileType: 'html' } as DocumentMetadata;
+const local = { id: 'd1', fileName: 'herbal.pdf', filePath: '/lib/herbal.pdf', category: 'document', fileType: 'pdf', web: false, typeBucket: 'PDF' } as DocumentMetadata;
+const web = { id: 'w1', fileName: 'Bread', filePath: 'https://example.org/bread', category: 'web', fileType: 'html', web: true, typeBucket: 'Web' } as DocumentMetadata;
 
 const setup = (overrides: Partial<Parameters<typeof useLibraryPaletteCommands>[0]> = {}) => {
   const props = {

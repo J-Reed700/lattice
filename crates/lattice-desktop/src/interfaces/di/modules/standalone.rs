@@ -193,10 +193,9 @@ impl Drop for StandaloneServers {
     }
 }
 
-/// The embedding model in `gguf` (with its `tokenizer.json` beside it) on a
-/// llama-server this process starts from [`StandaloneServers::from_env`]:
-/// what the app's loader does for the active model, from a file. The server
-/// stops when the service drops.
+/// The embedding model in `gguf` on a llama-server this process starts from
+/// [`StandaloneServers::from_env`]: what the app's loader does for the active
+/// model, from a file. The server stops when the service drops.
 pub async fn open_gguf(gguf: &Path) -> Result<LlamaEmbeddingService> {
     let identity =
         crate::infrastructure::ml::artifact_identity::compute_in_background(gguf.to_path_buf())

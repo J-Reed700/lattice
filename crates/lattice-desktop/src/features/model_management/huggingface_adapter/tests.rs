@@ -162,15 +162,14 @@ fn listings_ask_the_hub_for_gguf_repositories_and_their_architecture() {
 }
 
 #[test]
-fn embedding_gguf_without_a_tokenizer_is_incompatible() {
+fn an_embedding_gguf_without_a_tokenizer_json_is_compatible() {
     let repo = embedding_repo_with(&["model-f16.gguf"], Some("bert"));
     assert!(repo.to_external_metadata().preferred_filename.is_some());
     match embedding_verdict(&repo) {
-        lattice_core::domain::models::selection::EmbeddingCompatibility::Incompatible {
-            reason,
-            ..
-        } => assert!(reason.contains("tokenizer.json"), "{reason}"),
-        other => panic!("expected an incompatible verdict, got {other:?}"),
+        lattice_core::domain::models::selection::EmbeddingCompatibility::Compatible {
+            architecture,
+        } => assert_eq!(architecture, "bert"),
+        other => panic!("expected a compatible verdict, got {other:?}"),
     }
 }
 

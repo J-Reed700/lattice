@@ -1,7 +1,12 @@
 //! A bundled llama-server that answers one feature's requests: where it
 //! listens, the key it wants, what it holds on the GPU, and whether its
 //! process is still up. Starting one is the composition root's job; the
-//! embedding and reranking adapters only hold the handle.
+//! embedding and reranking adapters only hold the handle. `tokenize` asks a
+//! llama-server how many tokens a text is.
+
+mod tokenize;
+
+pub(crate) use tokenize::ServerTokenizer;
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;

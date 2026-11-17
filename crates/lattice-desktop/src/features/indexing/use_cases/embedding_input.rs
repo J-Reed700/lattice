@@ -12,7 +12,7 @@ use lattice_core::shared::error::{AppError, Result};
 /// the span's context prefix.
 ///
 /// Page ranges and offsets are UTF-8 bytes, never printed page labels.
-pub fn prepare_structured(
+pub async fn prepare_structured(
     document: Document,
     embedder: &dyn EmbeddingPort,
     pages: &[(usize, usize, usize)],
@@ -46,7 +46,8 @@ pub fn prepare_structured(
         }
         let mut prefix = context_prefix(&document, span.heading.as_deref());
         while embedder
-            .split_text(&prefix, "")?
+            .split_text(&prefix, "")
+            .await?
             .iter()
             .map(|p| p.token_count)
             .sum::<usize>()
@@ -60,10 +61,11 @@ pub fn prepare_structured(
         if !prefix.ends_with("\n\n") {
             prefix.push_str("\n\n");
         }
+        // The embedder validates the prefix + passage using its real tokenizer.
+        let parts = embedder.split_text(passage, &prefix).await?;
         let is_code = is_code_mime(document.mime_type());
         let extractor = MetadataExtractor::new();
-        // The embedder validates the prefix + passage using its real tokenizer.
-        for part in embedder.split_text(passage, &prefix)? {
+        for part in parts {
             let mut chunk = Chunk::new(document.id().clone(), part.text.clone(), chunks.len());
             chunk.set_language(document.language().clone());
             chunk.set_token_count(part.token_count as i32);
