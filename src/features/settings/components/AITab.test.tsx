@@ -80,6 +80,7 @@ vi.mock('@/features/model/hooks/useDownloadedModels', () => ({
     getActiveEmbeddingModel: vi.fn().mockResolvedValue(undefined),
   }),
 }));
+vi.mock('@/features/model/hooks/useActiveModels', () => ({ useActiveModels: () => ({ activeModels: null }) }));
 vi.mock('./ModelCatalog', () => ({
   ModelCatalogBrowser: () => <div data-testid="model-catalog-mock">Mocked Catalog</div>,
 }));

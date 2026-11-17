@@ -9,7 +9,7 @@
 //! - `crate::features::stats::use_cases::GetSystemStatsUseCase`
 //! - `crate::features::stats::use_cases::GetCorpusShapeUseCase`
 //! - `crate::features::stats::database_stats::DatabaseStatsAdapter`
-//! - `crate::features::stats::type_label::type_label`
+//! - `crate::features::stats::type_bucket::type_bucket`
 //!
 //! `DatabaseStatsPort` stays in `application/ports/`. No DTO, no
 //! plugin, no commands — the use case is invoked directly from the
@@ -19,5 +19,5 @@ pub mod corpus_shape_repository;
 pub mod database_stats;
 pub mod di;
 mod repository;
-pub mod type_label;
+pub mod type_bucket;
 pub mod use_cases;

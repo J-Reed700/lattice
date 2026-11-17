@@ -34,7 +34,7 @@ pub async fn prepare(database: &Database, model: &dyn EmbeddingPort) -> Result<u
             // Not `split_text`: that sizes to the chunk target, and a stored
             // chunk already fills the target *plus* its context prefix, so it
             // would cut nearly every full chunk in two and store an average.
-            let parts = model.window_parts(&text)?;
+            let parts = model.window_parts(&text).await?;
             if parts.is_empty() {
                 continue;
             }
@@ -122,14 +122,14 @@ mod tests {
         }
         /// A chunk-target split that always halves, as the real one does for a
         /// stored chunk that carries its context prefix.
-        fn split_text(&self, text: &str, _: &str) -> Result<Vec<EmbeddingTextChunk>> {
+        async fn split_text(&self, text: &str, _: &str) -> Result<Vec<EmbeddingTextChunk>> {
             let mid = text.len() / 2;
             Ok(vec![part(&text[..mid], 0), part(&text[mid..], mid)])
         }
         /// A window of eight bytes.
-        fn window_parts(&self, text: &str) -> Result<Vec<EmbeddingTextChunk>> {
+        async fn window_parts(&self, text: &str) -> Result<Vec<EmbeddingTextChunk>> {
             if text.len() > 8 {
-                self.split_text(text, "")
+                self.split_text(text, "").await
             } else {
                 Ok(vec![part(text, 0)])
             }

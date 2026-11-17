@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import type { ActiveModels, ModelRef } from '@/lib/bindings';
 import type { DownloadedModel } from '@/types/downloadedModels';
 
 import { makeAppSettings } from '../../tests/fixtures/appSettings';
@@ -14,7 +15,6 @@ import {
   formatServerEndpoint,
   isUnavailableChatModel,
   LLAMACPP_SERVER_MODEL_ID,
-  modelRefForOption,
   modelRefForRow,
   OLLAMA_SERVER_MODEL_ID,
   resolveDefaultChatOption,
@@ -45,6 +45,14 @@ const settingsWith = (patch: (llm: ReturnType<typeof makeAppSettings>['llm']) =>
   return llm;
 };
 
+const makeActive = (patch: Partial<ActiveModels> = {}): ActiveModels => ({
+  chat: [], chat_unset: null, utility: [], llama_cpp: null, ollama: null, ollama_utility_tag: null, ...patch,
+});
+
+const localRef = (model_id: string): ModelRef => ({ kind: 'local', model_id });
+const llamaRef = (model: string): ModelRef => ({ kind: 'llama_cpp', model });
+const ollamaRef = (model: string): ModelRef => ({ kind: 'ollama', model });
+
 describe('discovered cloud models', () => {
   const catalogs: CloudModelCatalogs = {
     openai: { hasApiKey: true, models: [{ id: 'gpt-new', name: 'GPT New' }, { id: 'gpt-small', name: 'GPT Small' }] },
@@ -53,10 +61,10 @@ describe('discovered cloud models', () => {
 
   it('offers both providers beside local models and deduplicates the configured default', () => {
     const settings = settingsWith((llm) => { llm.provider = 'openai'; llm.model = 'gpt-new'; });
-    const options = buildChatModelOptions(settings, [makeModel({})], catalogs);
+    const gptNew: ModelRef = { kind: 'cloud', provider: 'openai', model: 'gpt-new' };
+    const options = buildChatModelOptions(settings, [makeModel({})], catalogs, makeActive({ chat: [gptNew] }));
     expect(options.filter((option) => option.backend === 'cloud').map((option) => option.label)).toEqual(['GPT New', 'GPT Small', 'Claude New']);
     expect(options.find((option) => option.isDefault)?.ref).toEqual({ kind: 'cloud', provider: 'openai', model: 'gpt-new' });
-    for (const option of options) expect(modelRefForOption(option, settings)).toEqual(option.ref);
     settings.model = 'gpt-small';
     const after = buildChatModelOptions(settings, [], catalogs);
     for (const option of options.filter((entry) => entry.backend === 'cloud')) {
@@ -73,46 +81,69 @@ describe('discovered cloud models', () => {
 });
 
 describe('the Settings default as a picker row', () => {
-  it('prefers a configured llama.cpp over the legacy Ollama shortcut in Auto, and a local model over both', () => {
+  it('is the row naming the first model the backend tries for a chat', () => {
     const settings = settingsWith((llm) => {
       llm.provider = 'auto';
       llm.llamaCpp.url = 'http://127.0.0.1:8080';
       llm.llamaCpp.model = 'qwen.gguf';
     });
-    const ollamaRow = makeModel({ id: 'o', model_id: OLLAMA_SERVER_MODEL_ID, backend: 'ollama', is_active_for_chat: true });
-    expect(resolveDefaultChatOption(settings, [ollamaRow])?.ref).toEqual({ kind: 'llama_cpp', model: 'qwen.gguf' });
-    expect(resolveDefaultChatOption(settings, [])?.ref).toEqual({ kind: 'llama_cpp', model: 'qwen.gguf' });
-    const local = makeModel({ model_id: 'local.gguf', is_active_for_chat: true });
-    expect(resolveDefaultChatOption(settings, [local])?.ref).toEqual({ kind: 'local', model_id: 'local.gguf' });
-    settings.provider = 'local';
-    expect(resolveDefaultChatOption(settings, [ollamaRow])).toBeNull();
-  });
-
-  it('gives llama.cpp precedence over a local model when it is the provider, and nothing without its model', () => {
-    const settings = settingsWith((llm) => {
-      llm.provider = 'llamacpp';
-      llm.llamaCpp.url = 'http://127.0.0.1:8080';
-      llm.llamaCpp.model = 'qwen.gguf';
-    });
-    const local = makeModel({ model_id: 'local.gguf', is_active_for_chat: true });
-    expect(resolveDefaultChatOption(settings, [local])?.ref).toEqual({ kind: 'llama_cpp', model: 'qwen.gguf' });
-    settings.llamaCpp.model = '';
+    const local = makeModel({ model_id: 'local.gguf' });
+    const servers = { llama_cpp: llamaRef('qwen.gguf') };
+    expect(resolveDefaultChatOption(settings, [local], {}, makeActive({ ...servers, chat: [llamaRef('qwen.gguf')] }))?.ref)
+      .toEqual(llamaRef('qwen.gguf'));
+    expect(resolveDefaultChatOption(settings, [local], {}, makeActive({ ...servers, chat: [localRef('local.gguf'), llamaRef('qwen.gguf')] }))?.ref)
+      .toEqual(localRef('local.gguf'));
+    expect(resolveDefaultChatOption(settings, [local], {}, makeActive(servers))).toBeNull();
     expect(resolveDefaultChatOption(settings, [local])).toBeNull();
   });
 
-  it('follows an explicit Ollama provider, and falls back to it in Auto', () => {
+  it('is the Ollama connection row when the backend runs a chat on the saved Ollama connection', () => {
     const settings = settingsWith((llm) => {
-      llm.model = 'ollama-model';
-      llm.provider = 'ollama';
+      llm.provider = 'auto';
       llm.ollamaConfigured = true;
+      llm.model = 'ollama-model';
     });
-    const local = makeModel({ model_id: 'local.gguf', is_active_for_chat: true });
-    expect(resolveDefaultChatOption(settings, [local])?.ref).toEqual({ kind: 'ollama', model: 'ollama-model' });
-    settings.provider = 'local';
-    expect(resolveDefaultChatOption(settings, [])).toBeNull();
-    settings.provider = 'auto';
-    expect(resolveDefaultChatOption(settings, [local])?.ref).toEqual({ kind: 'local', model_id: 'local.gguf' });
-    expect(resolveDefaultChatOption(settings, [])?.ref).toEqual({ kind: 'ollama', model: 'ollama-model' });
+    const active = makeActive({
+      chat: [ollamaRef('ollama-model')], ollama: ollamaRef('ollama-model'), ollama_utility_tag: 'ollama-model',
+    });
+    expect(resolveDefaultChatOption(settings, [], {}, active)?.ref).toEqual(ollamaRef('ollama-model'));
+    expect(resolveDefaultChatOption(settings, [], {}, active)?.id).toBe(OLLAMA_SERVER_MODEL_ID);
+  });
+
+  it('marks exactly one option, the connection row, when the chat tag is also downloaded as an Ollama tag', () => {
+    const settings = settingsWith((llm) => { llm.provider = 'ollama'; llm.model = 'qwen3:8b'; });
+    const tagRow = makeModel({ id: 'o2', model_id: 'qwen3:8b', backend: 'ollama' });
+    const active = makeActive({ chat: [ollamaRef('qwen3:8b')], ollama: ollamaRef('qwen3:8b') });
+    const options = buildChatModelOptions(settings, [makeModel({ model_id: 'local-a' }), tagRow], {}, active);
+    expect(options.filter((option) => option.isDefault).map((option) => option.id)).toEqual([OLLAMA_SERVER_MODEL_ID]);
+    expect(options.find((option) => option.id === 'qwen3:8b')?.isDefault).toBe(false);
+  });
+
+  it('lists the server connections the backend names, not the ones Settings seems to hold', () => {
+    const configured = settingsWith((llm) => {
+      llm.provider = 'ollama';
+      llm.model = 'tag';
+      llm.ollamaConfigured = true;
+      llm.llamaCpp.url = 'http://127.0.0.1:8080';
+      llm.llamaCpp.model = 'qwen.gguf';
+    });
+    expect(buildChatModelOptions(configured, [], {}, makeActive()).map((option) => option.id)).toEqual([]);
+    const options = buildChatModelOptions(configured, [], {}, makeActive({ llama_cpp: llamaRef('served.gguf') }));
+    expect(options.map((option) => option.id)).toEqual([LLAMACPP_SERVER_MODEL_ID]);
+    expect(options[0]).toMatchObject({ ref: llamaRef('served.gguf'), triggerLabel: 'llama.cpp · served.gguf' });
+    const bare = settingsWith((llm) => { llm.provider = 'local'; });
+    const ollama = buildChatModelOptions(bare, [], {}, makeActive({ ollama: ollamaRef('tag') }));
+    expect(ollama).toMatchObject([{ id: OLLAMA_SERVER_MODEL_ID, ref: ollamaRef('tag'), triggerLabel: 'Ollama · tag' }]);
+  });
+
+  it('comes back as a remote row when the model a chat runs on is not listed', () => {
+    const settings = settingsWith((llm) => { llm.provider = 'local'; });
+    const cloud: ModelRef = { kind: 'cloud', provider: 'anthropic', model: 'claude-x' };
+    expect(resolveDefaultChatOption(settings, [], {}, makeActive({ chat: [cloud] })))
+      .toMatchObject({ ref: cloud, triggerLabel: 'Anthropic · claude-x', backend: 'cloud', isDefault: true });
+    expect(resolveDefaultChatOption(settings, [], {}, makeActive({ chat: [ollamaRef('gone')] })))
+      .toMatchObject({ ref: ollamaRef('gone'), backend: 'ollama', isDefault: true });
+    expect(resolveDefaultChatOption(settings, [], {}, makeActive({ chat: [localRef('gone')] }))).toBeNull();
   });
 
   it('names a cloud provider and its model, Google included', () => {
@@ -120,51 +151,10 @@ describe('the Settings default as a picker row', () => {
       llm.model = 'gemini-2.5-flash';
       llm.provider = 'google';
     });
-    const option = resolveDefaultChatOption(settings, [makeModel({ is_active_for_chat: true })]);
-    expect(option?.ref).toEqual({ kind: 'cloud', provider: 'google', model: 'gemini-2.5-flash' });
+    const google: ModelRef = { kind: 'cloud', provider: 'google', model: 'gemini-2.5-flash' };
+    const option = resolveDefaultChatOption(settings, [makeModel({})], {}, makeActive({ chat: [google] }));
+    expect(option?.ref).toEqual(google);
     expect(option?.triggerLabel).toBe('Google · gemini-2.5-flash');
-  });
-});
-
-describe('modelRefForOption', () => {
-  const settings = settingsWith((llm) => {
-    llm.provider = 'openai';
-    llm.model = ' gpt-x ';
-    llm.llamaCpp.model = '/models/served.gguf';
-  });
-
-  it('maps all five row shapes to the model they name', () => {
-    expect(modelRefForOption({ id: LLAMACPP_SERVER_MODEL_ID, backend: 'llamacpp' }, settings))
-      .toEqual({ kind: 'llama_cpp', model: '/models/served.gguf' });
-    expect(modelRefForOption({ id: OLLAMA_SERVER_MODEL_ID, backend: 'ollama' }, settings))
-      .toEqual({ kind: 'ollama', model: 'gpt-x' });
-    expect(modelRefForOption({ id: 'cloud:openai/gpt-x', backend: 'cloud' }, settings))
-      .toEqual({ kind: 'cloud', provider: 'openai', model: 'gpt-x' });
-    expect(modelRefForOption({ id: 'ornith-1.5-9b', backend: 'local' }, settings))
-      .toEqual({ kind: 'local', model_id: 'ornith-1.5-9b' });
-    // An explicit Ollama row names its own tag, not the Settings tag.
-    expect(modelRefForOption({ id: 'qwen3:8b', backend: 'ollama' }, settings))
-      .toEqual({ kind: 'ollama', model: 'qwen3:8b' });
-  });
-
-  it('names a cloud model independently of the provider currently set in Settings', () => {
-    const local = settingsWith((llm) => { llm.provider = 'local'; });
-    expect(modelRefForOption({ id: 'cloud:anthropic/claude-new', backend: 'cloud' }, local))
-      .toEqual({ kind: 'cloud', provider: 'anthropic', model: 'claude-new' });
-    expect(() => modelRefForOption({ id: 'missing-model', backend: 'cloud' }, local)).toThrow();
-  });
-
-  it('puts the same reference on each built row', () => {
-    const withConnections = settingsWith((llm) => {
-      llm.provider = 'ollama';
-      llm.model = 'llama3.2:latest';
-      llm.llamaCpp.url = 'http://127.0.0.1:8080';
-      llm.llamaCpp.model = 'served.gguf';
-    });
-    const rows = [makeModel({ model_id: 'local-a' }), makeModel({ id: 'o2', model_id: 'qwen3:8b', backend: 'ollama' })];
-    for (const option of buildChatModelOptions(withConnections, rows)) {
-      expect(option.ref).toEqual(modelRefForOption(option, withConnections));
-    }
   });
 });
 
@@ -190,7 +180,9 @@ describe('resolveEffectiveChatOption', () => {
   const small = makeModel({ id: 'r2', model_id: 'ornith-1.5-9b', model_name: 'Ornith-1.5-9B' });
 
   it('gives the Settings default to a chat on the default, and nothing when none is set', () => {
-    expect(resolveEffectiveChatOption({ kind: 'default' }, settings, [big, small])).toMatchObject({ id: 'qwen3.5-27b', isDefault: true });
+    const active = makeActive({ chat: [localRef('qwen3.5-27b')] });
+    expect(resolveEffectiveChatOption({ kind: 'default' }, settings, [big, small], {}, active)).toMatchObject({ id: 'qwen3.5-27b', isDefault: true });
+    expect(resolveEffectiveChatOption({ kind: 'default' }, settings, [small], {}, makeActive())).toBeNull();
     expect(resolveEffectiveChatOption({ kind: 'default' }, settings, [small])).toBeNull();
   });
 
@@ -345,7 +337,10 @@ describe('buildChatModelOptions', () => {
       backend: 'ollama',
     });
 
-    const options = buildChatModelOptions(settings, [localModel, syntheticOllama]);
+    const options = buildChatModelOptions(settings, [localModel, syntheticOllama], {}, makeActive({
+      chat: [llamaRef('/models/Qwen3.8-27B-Q5_K_S.gguf')],
+      llama_cpp: llamaRef('/models/Qwen3.8-27B-Q5_K_S.gguf'),
+    }));
 
     // Synthetic __ollama_server__ is NOT present because Ollama is not configured
     expect(options.some((o) => o.id === OLLAMA_SERVER_MODEL_ID)).toBe(false);
@@ -383,7 +378,9 @@ describe('resolveDefaultChatOption', () => {
     });
 
     // When provider is 'local'
-    const defaultLocalOption = resolveDefaultChatOption(settings, [localModel]);
+    const defaultLocalOption = resolveDefaultChatOption(settings, [localModel], {}, makeActive({
+      chat: [localRef('qwen-local')], llama_cpp: llamaRef('/models/Qwen3.8-27B-Q5_K_S.gguf'),
+    }));
     expect(defaultLocalOption).toBeDefined();
     expect(defaultLocalOption?.id).toBe('qwen-local');
     expect(defaultLocalOption?.isDefault).toBe(true);
@@ -391,7 +388,9 @@ describe('resolveDefaultChatOption', () => {
 
     // When provider is 'llamacpp'
     settings.provider = 'llamacpp';
-    const defaultLlamaOption = resolveDefaultChatOption(settings, [localModel]);
+    const defaultLlamaOption = resolveDefaultChatOption(settings, [localModel], {}, makeActive({
+      chat: [llamaRef('/models/Qwen3.8-27B-Q5_K_S.gguf')], llama_cpp: llamaRef('/models/Qwen3.8-27B-Q5_K_S.gguf'),
+    }));
     expect(defaultLlamaOption).toBeDefined();
     expect(defaultLlamaOption?.id).toBe(LLAMACPP_SERVER_MODEL_ID);
     expect(defaultLlamaOption?.triggerLabel).toBe('llama.cpp · Qwen3.8-27B-Q5_K_S.gguf');

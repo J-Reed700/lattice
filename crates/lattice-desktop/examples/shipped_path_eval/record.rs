@@ -2,16 +2,18 @@
 //!
 //! Field names follow `scripts/chat_rag_eval.py` where the meaning is the
 //! same (`query_id`, `answer`, `ranked_ids`, `citation_map`, `latency_ms`,
-//! `model`), so `review_rag_eval.py` and `compare_rag_eval.py` read a run of
-//! a labelled dataset without translation. Everything the desktop path adds —
-//! the evidence the model was handed, the grounding verdicts, the turn record,
-//! each model call — sits beside those fields.
+//! `model`), so `compare_rag_eval.py` reads a run of a labelled dataset without
+//! translation. Everything the desktop path adds — the evidence the model was
+//! handed, the grounding verdicts, the turn record, each model call — sits
+//! beside those fields. Each turn keeps `reply`, the pieces the chat drew its
+//! answer from: the scorers read citations from those, never from the answer's
+//! text.
 
 use crate::proxy::CallRecord;
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashMap};
 
-pub const SCHEMA: &str = "lattice-shipped-path-answers/1";
+pub const SCHEMA: &str = "lattice-shipped-path-answers/2";
 
 /// Everything one turn produced.
 pub struct TurnOutcome<'a> {
@@ -19,6 +21,8 @@ pub struct TurnOutcome<'a> {
     pub ask: &'a str,
     pub conversation_id: Option<&'a str>,
     pub answer: Option<&'a str>,
+    /// The pieces the chat drew the answer from (`reply::shown`); `[]` with no answer.
+    pub reply: Value,
     pub error: Option<String>,
     /// From the request until the answer returned.
     pub answered_ms: u64,
@@ -234,6 +238,7 @@ pub fn turn(outcome: &TurnOutcome<'_>, to_dataset: &HashMap<String, String>) -> 
         "question": outcome.ask,
         "conversation_id": outcome.conversation_id,
         "answer": outcome.answer,
+        "reply": outcome.reply,
         "error": outcome.error,
         "answered_ms": outcome.answered_ms,
         "verification_wait_ms": outcome.verification_wait_ms,

@@ -26,6 +26,23 @@ fn settings(provider: LLMProvider) -> LLMSettingsDto {
     settings
 }
 
+fn only(model: ModelRef) -> DefaultChatModel {
+    DefaultChatModel(Ok(Candidates {
+        models: vec![model],
+        auto: false,
+    }))
+}
+
+fn candidates(models: Vec<ModelRef>, auto: bool) -> Candidates {
+    Candidates { models, auto }
+}
+
+fn llama_cpp(model: &str) -> ModelRef {
+    ModelRef::LlamaCpp {
+        model: model.into(),
+    }
+}
+
 fn no_default() -> DefaultChatModel {
     DefaultChatModel(Err(AppError::AiModelsNotInstalled("nothing".into())))
 }
@@ -36,7 +53,7 @@ fn explicit(model: ModelRef) -> ChatModelChoice {
 
 #[test]
 fn a_request_override_wins_over_the_chat_and_the_default() {
-    let default = DefaultChatModel(Ok(local("default")));
+    let default = only(local("default"));
     for default in [default, no_default()] {
         let resolved =
             resolve(Some(&local("override")), &explicit(local("chat")), &default).unwrap();
@@ -52,7 +69,7 @@ fn a_request_override_wins_over_the_chat_and_the_default() {
 
 #[test]
 fn a_chat_choice_wins_over_the_default_and_never_falls_through() {
-    let default = DefaultChatModel(Ok(local("default")));
+    let default = only(local("default"));
     for default in [default, no_default()] {
         let resolved = resolve(None, &explicit(ollama("chat")), &default).unwrap();
         assert_eq!(
@@ -67,7 +84,7 @@ fn a_chat_choice_wins_over_the_default_and_never_falls_through() {
 
 #[test]
 fn a_default_chat_follows_the_settings_default_and_its_failure() {
-    let default = DefaultChatModel(Ok(local("default")));
+    let default = only(local("default"));
     assert_eq!(
         resolve(None, &ChatModelChoice::Default, &default).unwrap(),
         ResolvedModel {
@@ -99,7 +116,11 @@ fn each_explicit_provider_names_its_own_model_whatever_row_is_active() {
         (LLMProvider::Google, cloud(CloudProvider::Google)),
     ] {
         let default = default_chat_model(&settings(provider), Some("ornith-1.5-9b"));
-        assert_eq!(default.0.unwrap(), expected, "{provider:?}");
+        assert_eq!(
+            default.0.unwrap(),
+            candidates(vec![expected], false),
+            "{provider:?}"
+        );
     }
 }
 
@@ -130,28 +151,35 @@ fn auto_without_any_model_names_where_to_choose_one_and_where_to_add_a_server() 
 }
 
 #[test]
-fn auto_names_the_first_model_the_loader_tries() {
-    let auto = settings(LLMProvider::Auto);
+fn auto_lists_every_model_the_loader_tries_in_order() {
+    let mut auto = settings(LLMProvider::Auto);
+    auto.llama_cpp.url = "http://localhost:8080".into();
+    auto.ollama_configured = true;
     assert_eq!(
         default_chat_model(&auto, Some("ornith-1.5-9b")).0.unwrap(),
-        local("ornith-1.5-9b")
+        candidates(
+            vec![
+                local("ornith-1.5-9b"),
+                llama_cpp("qwen3.5-27b"),
+                ollama("qwen3:8b")
+            ],
+            true
+        )
     );
     assert_eq!(
         default_chat_model(&auto, None).0.unwrap(),
-        ModelRef::LlamaCpp {
-            model: "qwen3.5-27b".into()
-        }
+        candidates(vec![llama_cpp("qwen3.5-27b"), ollama("qwen3:8b")], true)
     );
 
     let mut no_llama_cpp = auto.clone();
     no_llama_cpp.llama_cpp.model = "  ".into();
     assert_eq!(
         default_chat_model(&no_llama_cpp, None).0.unwrap(),
-        ollama("qwen3:8b")
+        candidates(vec![ollama("qwen3:8b")], true)
     );
 
     let mut nothing = no_llama_cpp;
-    nothing.ollama_url.clear();
+    nothing.ollama_configured = false;
     assert!(matches!(
         default_chat_model(&nothing, None).0,
         Err(AppError::AiModelsNotInstalled(_))
@@ -159,19 +187,299 @@ fn auto_names_the_first_model_the_loader_tries() {
 }
 
 #[test]
-fn auto_falls_through_when_llama_cpp_url_is_empty_even_with_model() {
+fn auto_skips_llama_cpp_without_a_server_url() {
     let mut auto = settings(LLMProvider::Auto);
-    auto.llama_cpp.model = "qwen3.5-27b".into();
-    auto.llama_cpp.url = "".into();
+    auto.ollama_configured = true;
+    for url in ["", "   "] {
+        auto.llama_cpp.url = url.into();
+        assert_eq!(
+            default_chat_model(&auto, None).0.unwrap(),
+            candidates(vec![ollama("qwen3:8b")], true),
+            "url {url:?}"
+        );
+    }
+}
+
+fn fresh_install(model: &str) -> LLMSettingsDto {
+    LLMSettingsDto {
+        provider: LLMProvider::Auto,
+        model: model.into(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn auto_on_a_fresh_install_has_no_default_chat_model() {
+    assert!(default_chat_model(&fresh_install("qwen3:8b"), None)
+        .0
+        .is_err());
+}
+
+#[test]
+fn auto_does_not_take_a_leftover_cloud_model_name_for_an_ollama_tag() {
+    assert!(default_chat_model(&fresh_install("claude-opus-5-5"), None)
+        .0
+        .is_err());
+}
+
+#[test]
+fn auto_uses_ollama_once_its_connection_is_saved() {
+    let mut saved = fresh_install("qwen3:8b");
+    saved.ollama_configured = true;
     assert_eq!(
-        default_chat_model(&auto, None).0.unwrap(),
-        ollama("qwen3:8b")
+        default_chat_model(&saved, None).0.unwrap(),
+        candidates(vec![ollama("qwen3:8b")], true)
     );
 
-    auto.llama_cpp.url = "   ".into();
+    let mut elsewhere = fresh_install("qwen3:8b");
+    elsewhere.ollama_url = "https://ollama.example.com".into();
     assert_eq!(
-        default_chat_model(&auto, None).0.unwrap(),
-        ollama("qwen3:8b")
+        default_chat_model(&elsewhere, None).0.unwrap(),
+        candidates(vec![ollama("qwen3:8b")], true)
+    );
+
+    let mut default_address = fresh_install("qwen3:8b");
+    default_address.ollama_url = " http://localhost:11434/ ".into();
+    assert!(default_chat_model(&default_address, None).0.is_err());
+}
+
+#[test]
+fn a_llama_cpp_model_without_a_server_url_is_no_candidate() {
+    let mut auto = fresh_install("qwen3:8b");
+    auto.llama_cpp.model = "qwen3.5-27b".into();
+    auto.llama_cpp.url = String::new();
+    assert_eq!(llama_cpp_connection(&auto), None);
+    assert!(default_chat_model(&auto, None).0.is_err());
+    auto.llama_cpp.url = "http://localhost:8080".into();
+    assert_eq!(llama_cpp_connection(&auto), Some(llama_cpp("qwen3.5-27b")));
+}
+
+#[test]
+fn explicit_providers_trim_the_model_name() {
+    let mut ollama_settings = settings(LLMProvider::Ollama);
+    ollama_settings.model = "  qwen3:8b ".into();
+    assert_eq!(
+        default_chat_model(&ollama_settings, None).0.unwrap(),
+        candidates(vec![ollama("qwen3:8b")], false)
+    );
+    let mut llama = settings(LLMProvider::Llamacpp);
+    llama.llama_cpp.model = " qwen3.5-27b ".into();
+    assert_eq!(
+        default_chat_model(&llama, None).0.unwrap(),
+        candidates(vec![llama_cpp("qwen3.5-27b")], false)
+    );
+}
+
+#[test]
+fn explicit_providers_refuse_an_empty_model_name() {
+    let mut ollama_settings = settings(LLMProvider::Ollama);
+    ollama_settings.model = "  ".into();
+    let mut llama = settings(LLMProvider::Llamacpp);
+    llama.llama_cpp.model = String::new();
+    let mut anthropic = settings(LLMProvider::Anthropic);
+    anthropic.model = String::new();
+    for (settings, message) in [
+        (
+            ollama_settings,
+            "No Ollama chat model is set in Settings → Chat",
+        ),
+        (llama, "No llama.cpp model is set in Settings → Chat"),
+        (anthropic, "No Anthropic model is set in Settings → Chat"),
+    ] {
+        let error = default_chat_model(&settings, None).0.unwrap_err();
+        assert!(
+            matches!(&error, AppError::AiModelsNotInstalled(text) if text == message),
+            "{error:?}"
+        );
+    }
+}
+
+fn shared_model_only(provider: LLMProvider) -> LLMSettingsDto {
+    LLMSettingsDto {
+        provider,
+        model: "any-model-id".into(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn the_shared_model_alone_never_establishes_an_ollama_connection() {
+    for provider in [
+        LLMProvider::Auto,
+        LLMProvider::Local,
+        LLMProvider::Llamacpp,
+        LLMProvider::Openai,
+        LLMProvider::Anthropic,
+        LLMProvider::Google,
+    ] {
+        let settings = shared_model_only(provider);
+        assert!(!ollama_saved(&settings), "{provider:?}");
+        assert_eq!(ollama_connection(&settings), None, "{provider:?}");
+        assert_eq!(llama_cpp_connection(&settings), None, "{provider:?}");
+    }
+}
+
+#[test]
+fn a_saved_ollama_endpoint_counts_without_being_selected() {
+    let mut settings = shared_model_only(LLMProvider::Auto);
+    settings.ollama_url = "https://ollama.example.com".into();
+    assert!(ollama_saved(&settings));
+    assert_eq!(ollama_connection(&settings), Some(ollama("any-model-id")));
+}
+
+#[test]
+fn the_default_ollama_address_is_still_the_default_with_spaces_and_a_slash() {
+    let mut settings = shared_model_only(LLMProvider::Auto);
+    settings.ollama_url = " http://localhost:11434/ ".into();
+    assert!(!ollama_saved(&settings));
+}
+
+#[test]
+fn each_saved_ollama_setting_saves_the_connection() {
+    let mut selected = shared_model_only(LLMProvider::Ollama);
+    assert!(ollama_saved(&selected));
+    selected.ollama_url = "  ".into();
+    assert!(!ollama_saved(&selected));
+
+    let mut utility = shared_model_only(LLMProvider::Auto);
+    utility.ollama_utility_model = "utility:1b".into();
+    assert!(ollama_saved(&utility));
+
+    let mut header = shared_model_only(LLMProvider::Auto);
+    header.ollama_auth_header_name = "X-Token".into();
+    assert!(ollama_saved(&header));
+}
+
+#[test]
+fn an_incomplete_saved_ollama_connection_gives_no_connection() {
+    let mut no_url = shared_model_only(LLMProvider::Auto);
+    no_url.ollama_configured = true;
+    no_url.ollama_url = " ".into();
+    assert!(!ollama_saved(&no_url));
+    assert_eq!(ollama_connection(&no_url), None);
+
+    let mut no_model = shared_model_only(LLMProvider::Auto);
+    no_model.ollama_configured = true;
+    no_model.model = " ".into();
+    assert!(ollama_saved(&no_model));
+    assert_eq!(ollama_connection(&no_model), None);
+}
+
+fn utility_settings(provider: LLMProvider) -> LLMSettingsDto {
+    LLMSettingsDto {
+        provider,
+        model: "chat:8b".into(),
+        ollama_utility_model: "util:1b".into(),
+        ..Default::default()
+    }
+}
+
+fn remote_row() -> Option<UtilityRow<'static>> {
+    Some(UtilityRow {
+        model_id: "row",
+        local: false,
+    })
+}
+
+fn anthropic(model: &str) -> ModelRef {
+    cloud(CloudProvider::Anthropic, model)
+}
+
+#[test]
+fn a_saved_utility_reference_wins_over_any_row() {
+    let mut settings = utility_settings(LLMProvider::Auto);
+    settings.utility_model = Some(anthropic("claude-haiku"));
+    for row in [
+        None,
+        remote_row(),
+        Some(UtilityRow {
+            model_id: "row",
+            local: true,
+        }),
+    ] {
+        assert_eq!(
+            utility_candidates(&settings, row),
+            candidates(vec![anthropic("claude-haiku")], false)
+        );
+    }
+}
+
+#[test]
+fn utility_work_has_no_model_without_a_row_or_a_saved_reference() {
+    assert_eq!(
+        utility_candidates(&utility_settings(LLMProvider::Auto), None),
+        candidates(vec![], false)
+    );
+}
+
+#[test]
+fn a_local_utility_row_runs_locally() {
+    let row = Some(UtilityRow {
+        model_id: "ornith-1.5-9b",
+        local: true,
+    });
+    assert_eq!(
+        utility_candidates(&utility_settings(LLMProvider::Ollama), row),
+        candidates(vec![local("ornith-1.5-9b")], false)
+    );
+}
+
+#[test]
+fn the_ollama_utility_row_follows_the_provider() {
+    for (provider, expected) in [
+        (LLMProvider::Local, candidates(vec![], false)),
+        (
+            LLMProvider::Ollama,
+            candidates(vec![ollama("util:1b")], false),
+        ),
+        (
+            LLMProvider::Llamacpp,
+            candidates(vec![llama_cpp("util:1b")], false),
+        ),
+        (
+            LLMProvider::Anthropic,
+            candidates(vec![anthropic("util:1b")], false),
+        ),
+    ] {
+        assert_eq!(
+            utility_candidates(&utility_settings(provider), remote_row()),
+            expected,
+            "{provider:?}"
+        );
+    }
+}
+
+#[test]
+fn under_auto_utility_work_tries_llama_cpp_before_a_saved_ollama() {
+    let mut both = utility_settings(LLMProvider::Auto);
+    both.llama_cpp.model = "chat-27b".into();
+    assert_eq!(
+        utility_candidates(&both, remote_row()),
+        candidates(vec![llama_cpp("util:1b"), ollama("util:1b")], true)
+    );
+
+    let neither = LLMSettingsDto {
+        provider: LLMProvider::Auto,
+        model: "chat:8b".into(),
+        ..Default::default()
+    };
+    assert!(utility_candidates(&neither, remote_row()).models.is_empty());
+}
+
+#[test]
+fn the_utility_tag_falls_back_to_the_chat_tag() {
+    let mut settings = utility_settings(LLMProvider::Ollama);
+    settings.ollama_utility_model = " ".into();
+    assert_eq!(ollama_utility_tag(&settings).as_deref(), Some("chat:8b"));
+    assert_eq!(
+        utility_candidates(&settings, remote_row()),
+        candidates(vec![ollama("chat:8b")], false)
+    );
+    settings.model = String::new();
+    assert_eq!(ollama_utility_tag(&settings), None);
+    assert_eq!(
+        utility_candidates(&settings, remote_row()),
+        candidates(vec![], false)
     );
 }
 

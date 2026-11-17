@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { EntryEditor } from '@/features/journal/components/EntryEditor';
-import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
+import { useReaderStore } from '@/features/reading/stores/readerStore';
 
 
 vi.mock('@/components/TiptapEditor', () => ({
@@ -65,7 +65,7 @@ function renderEditor(sources = [source]) {
 
 describe('EntryEditor source citations', () => {
   beforeEach(() => {
-    useChatReaderStore.setState({ session: null });
+    useReaderStore.setState({ session: null });
   });
 
   it('names the writing surface so it can be found and announced', () => {

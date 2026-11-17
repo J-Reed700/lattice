@@ -39,11 +39,11 @@ const verifiedItem = claimItem({ claimId: 'claim-v', state: { state: 'resolved_b
 
 const evidenceClaim = (overrides: Partial<LearningClaimEvidenceDto>): LearningClaimEvidenceDto => ({
   sectionIndex: 0, contentQuote: 'The sentence.', claim: 'Ice floats on water.', verdict: 'supported', reason: 'Checked.', supportingQuote: null,
-  passages: [], resolution: 'verified', note: null, sufficiency: null, class: 'sourced', label: null, parts: [], unverifiedReason: null, ...overrides,
+  passages: [], resolution: 'verified', note: null, sufficiency: null, class: 'sourced', label: null, parts: [], unverifiedReason: null, cites: [], ...overrides,
 });
 const evidence = (teachingClaims: LearningClaimEvidenceDto[]): LearningLessonEvidenceDto => ({
   policy: 'lesson-evidence-v21', checkedAt: 1, checkerModel: 'checker', retrievalMode: 'hybrid', embeddingModel: null, contentSha256: 'hash',
-  claimCount: teachingClaims.length, confirmedCount: 0, executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true, teachingClaims,
+  claimCount: teachingClaims.length, confirmedCount: 0, executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true, teachingClaims, citations: [], sections: [],
 });
 const unverifiedClaim = (reason: Reason, sectionIndex = 0) => evidenceClaim({ claim: STATEMENT, sectionIndex, resolution: 'not_verified', unverifiedReason: reason, verdict: 'unsupported' });
 

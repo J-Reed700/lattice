@@ -18,6 +18,7 @@ const imported: DocumentMetadata = {
   id: 'imported', fileName: 'TR83ICSI.pdf', filePath: '/library/TR83ICSI.pdf',
   fileType: 'pdf', category: 'document', language: 'en',
   modifiedAt: '2026-09-16', indexedAt: '2026-09-16', wordCount: 100,
+  web: false, typeBucket: 'PDF',
 };
 
 it('asks for every document, with no limit', async () => {

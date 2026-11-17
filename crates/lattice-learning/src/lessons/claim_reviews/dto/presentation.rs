@@ -42,10 +42,26 @@ pub struct ClaimSupportDto {
     pub counts: ClaimSupportCountsDto,
     /// The supporting (or contradicting) sentences, as the judge cited them.
     pub quote: String,
-    /// Byte span of `quote` inside `passage.text`; null when it is not found
-    /// there verbatim.
-    pub quote_span: Option<(usize, usize)>,
+    /// `quote` in its passage.
+    pub excerpt: ClaimExcerptDto,
     pub passage: LearningEvidencePassageDto,
+}
+
+/// A quote in its passage as the review shows it (UI design §3.4): the
+/// sentences that hold it, with the sentence before and after them when it
+/// is prose, never code.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaimExcerptDto {
+    pub before: String,
+    /// The quote as the passage words it; the quote as given when the
+    /// passage does not hold it.
+    pub quote: String,
+    pub after: String,
+    /// More of the passage comes before `before`.
+    pub clipped_start: bool,
+    /// More of the passage comes after `after`.
+    pub clipped_end: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type)]

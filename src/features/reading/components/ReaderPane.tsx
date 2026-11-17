@@ -2,21 +2,20 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent a
 
 import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
 import { SourceReaderBody } from '@/features/reading/components/SourceReaderBody';
+import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import {
   READER_DEFAULT_WIDTH,
   READER_MAX_WIDTH,
   READER_MIN_CHAT_WIDTH,
   READER_MIN_WIDTH,
-  useChatReaderStore,
-} from '@/features/reading/stores/chatReaderStore';
-import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
+  useReaderStore,
+} from '@/features/reading/stores/readerStore';
 import { focusReturnTarget } from '@/lib/focusReturn';
-import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { locatorFromSource, rememberLocation } from '@/shared/sources/passageLocator';
 
 
 /**
- * The source reader as the third pane of the chat.
+ * The source reader as the third pane beside a thread of text.
  *
  * Mounted once, beside the thread rather than on top of it, because reading a
  * source and reading the answer that cites it is one act: the claim has to
@@ -34,21 +33,22 @@ const KEY_STEP = 16;
 /** What is left of the chat while the reader is expanded: enough to see it is still there. */
 const FOCUSED_CHAT_WIDTH = 320;
 
-export interface ChatReaderPaneProps {
+export interface ReaderPaneProps {
   /** Width of the flex row the pane is a child of. */
   rowWidth: number;
   /** That row minus the conversation sidebar: what the chat and the reader share. */
   availableWidth: number;
+  /** The text the citations belong to; the reader closes when it changes. */
+  resetKey: string | null;
 }
 
-export function ChatReaderPane({ rowWidth, availableWidth }: ChatReaderPaneProps) {
-  const session = useChatReaderStore((state) => state.session);
-  const storedWidth = useChatReaderStore((state) => state.width);
-  const setStoredWidth = useChatReaderStore((state) => state.setWidth);
-  const setIndex = useChatReaderStore((state) => state.setIndex);
-  const close = useChatReaderStore((state) => state.close);
-  const rememberResolvedLocation = useChatReaderStore((state) => state.rememberResolvedLocation);
-  const activeConversationId = useConversationsStore((state) => state.activeConversationId);
+export function ReaderPane({ rowWidth, availableWidth, resetKey }: ReaderPaneProps) {
+  const session = useReaderStore((state) => state.session);
+  const storedWidth = useReaderStore((state) => state.width);
+  const setStoredWidth = useReaderStore((state) => state.setWidth);
+  const setIndex = useReaderStore((state) => state.setIndex);
+  const close = useReaderStore((state) => state.close);
+  const rememberResolvedLocation = useReaderStore((state) => state.rememberResolvedLocation);
   const showCitations = useCitationDisplayStore((state) => state.visible);
 
   const [isFocused, setIsFocused] = useState(false);
@@ -60,18 +60,18 @@ export function ChatReaderPane({ rowWidth, availableWidth }: ChatReaderPaneProps
   const source = session ? session.citations[session.index] ?? null : null;
   const isOpen = Boolean(source);
 
-  // A reader left open across a conversation switch would be showing a source
-  // for an answer that is no longer on screen.
+  // A reader left open across a switch would be showing a source for text that
+  // is no longer on screen.
   useEffect(() => {
     close();
-  }, [activeConversationId, close]);
+  }, [resetKey, close]);
 
-  // Leaving chat closes it too: the pane is the only thing that draws it, and
+  // Leaving the surface closes it too: the pane is the only thing that draws it, and
   // a session that outlives its pane comes back unannounced.
   useEffect(() => close, [close]);
 
   // The reader owns its response to reading mode; the shared toggle must not
-  // know about Chat's state. This also handles changes from another surface.
+  // know about one surface's state. This also handles changes from another surface.
   useEffect(() => {
     if (!showCitations && session) close();
   }, [showCitations, session, close]);
@@ -122,7 +122,7 @@ export function ChatReaderPane({ rowWidth, availableWidth }: ChatReaderPaneProps
     [rememberResolvedLocation]
   );
 
-  // Esc closes from anywhere in the chat, except where it is someone's
+  // Esc closes from anywhere on the surface, except where it is someone's
   // character: a composer or a field owns its own Escape.
   useEffect(() => {
     if (!isOpen || !canDock) return;
@@ -219,7 +219,7 @@ export function ChatReaderPane({ rowWidth, availableWidth }: ChatReaderPaneProps
       ref={paneRef}
       tabIndex={-1}
       aria-label="Source reader"
-      className={`chat-reader-pane${isDragging ? ' chat-reader-pane--dragging' : ''}`}
+      className={`reader-pane${isDragging ? ' reader-pane--dragging' : ''}`}
       style={{ width: `${paneWidth}px` }}
     >
       <div
@@ -230,7 +230,7 @@ export function ChatReaderPane({ rowWidth, availableWidth }: ChatReaderPaneProps
         aria-valuemin={READER_MIN_WIDTH}
         aria-valuemax={Math.round(maxWidth)}
         tabIndex={0}
-        className="chat-reader-handle"
+        className="reader-pane-handle"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={endDrag}

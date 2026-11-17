@@ -16,6 +16,7 @@
  * same four language-model roles.
  */
 
+import type { ActiveModels } from '@/lib/bindings';
 import type { LLMSettings } from '@/types/api/settings';
 import type { DownloadedModel } from '@/types/downloadedModels';
 import { modelRefForRow, sameModelRef } from '@/utils/chatModelSelection';
@@ -34,22 +35,16 @@ export interface RoleDescriptor {
   pendingLabel: string;
   /** Verb shown when the role is already assigned. */
   activeLabel: string;
-  /** Whether `model` holds this role now, given the saved settings. */
-  isActive: (model: DownloadedModel, settings: LLMSettings | undefined) => boolean;
+  /** Whether `model` holds this role now, given the saved settings and what the backend runs. */
+  isActive: (
+    model: DownloadedModel,
+    settings: LLMSettings | undefined,
+    active: ActiveModels | null | undefined,
+  ) => boolean;
   /** Model types allowed for this role. Cards hide the button otherwise. */
   allowedTypes: ReadonlyArray<string>;
   /** Short helper text shown under the button / in the Ollama meta-card. */
   hint: string;
-}
-
-/** An explicit remote provider overrides any saved downloaded chat assignment. */
-export function isChatModelSelected(
-  model: DownloadedModel,
-  provider: LLMSettings['provider'] | undefined,
-): boolean {
-  return model.backend === 'ollama'
-    ? provider === 'ollama'
-    : model.is_active_for_chat && (provider === 'local' || provider === 'auto');
 }
 
 /**
@@ -83,7 +78,7 @@ export const ROLES: ReadonlyArray<RoleDescriptor> = [
     assignLabel: 'Set as Chat',
     pendingLabel: 'Setting…',
     activeLabel: 'Active (Chat)',
-    isActive: (model, settings) => isChatModelSelected(model, settings?.provider),
+    isActive: (model, settings, active) => sameModelRef(active?.chat[0], modelRefForRow(model, settings)),
     allowedTypes: ['language_model', 'chat', 'cloud'],
     hint: 'The main model that answers the user.',
   },

@@ -10,7 +10,6 @@ use lattice_core::application::contracts::settings::SettingsCategory;
 use lattice_core::application::ports::SettingsRepositoryPort;
 use lattice_core::domain::entities::model::Model;
 use lattice_core::domain::entities::model_file::ModelFile;
-use lattice_core::domain::models::checkpoint::has_tokenizer;
 use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::domain::value_objects::model_status::FileStatus;
@@ -348,17 +347,6 @@ impl DownloadSaga {
                 .get_active_embedding_model()
                 .await
             {
-                Ok(None)
-                    if !downloaded_model
-                        .location()
-                        .enclosing_dir()
-                        .is_some_and(|dir| has_tokenizer(&dir)) =>
-                {
-                    info!(
-                        model_id = %model_id,
-                        "Saga: embedding model has no tokenizer.json beside it; not auto-activated"
-                    )
-                }
                 Ok(None) => {
                     let verified = main_file.and_then(Self::verified_gguf_identity);
                     let activation = async {

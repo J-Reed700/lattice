@@ -576,7 +576,7 @@ With (i) and (ii), I1 reads: *every claim not in `targets` whose sentence is unc
 
 ### 18.6 The review screen (amends the last row of §17 and UI design §3.3, §3.5)
 
-The screen shares the locator through `located_quote` (18.3): `presentation.sentence` is the claim's sentence even for a claim the ledger still locates by a passage, so the owner's card shows "Before a model can call a tool, it needs a structured description of what the tool does, its arguments, and its return values." with the rest of the paragraph in `context_before` and `context_after`. Edit replaces that sentence; Remove deletes that sentence and refuses, as today, when the located quote is not a whole sentence. The support highlight (`support.quote_span`) is the judge's quotation in the evidence passage and is untouched.
+The screen shares the locator through `located_quote` (18.3): `presentation.sentence` is the claim's sentence even for a claim the ledger still locates by a passage, so the owner's card shows "Before a model can call a tool, it needs a structured description of what the tool does, its arguments, and its return values." with the rest of the paragraph in `context_before` and `context_after`. Edit replaces that sentence; Remove deletes that sentence and refuses, as today, when the located quote is not a whole sentence. The support highlight (`support.excerpt`) is the judge's quotation in the evidence passage and is untouched.
 
 One copy-deck row for builder B (UI design §4.1): state `queued` whose latest `RepairAttempted` is `NotAttempted` → chip "Waiting for you", reason "This sentence also states something already verified, so the machine left it to you.", fix "Edit the sentence · Accept".
 

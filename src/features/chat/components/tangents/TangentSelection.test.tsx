@@ -30,6 +30,25 @@ describe('TangentSelection', () => {
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 
+  it('captures a passage without the citation marks a selection crosses', () => {
+    const create = vi.fn();
+    render(<TangentSelectionContext.Provider value={{ create, creating: false }}>
+      <TangentSelection conversationId="parent" messageId="reply" enabled>
+        <p data-testid="cited">Uses a hash map.<span className="cite-chip" data-cite="2">{'\uE000\uE001\uE00B'}</span> Lookups are fast.</p>
+      </TangentSelection>
+    </TangentSelectionContext.Provider>);
+    const answer = screen.getByTestId('cited');
+    const range = document.createRange();
+    range.selectNodeContents(answer);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    fireEvent.contextMenu(answer, { clientX: 120, clientY: 80 });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Ask in a tangent' }));
+    const selectedText = create.mock.calls[0]![0].selectedText as string;
+    expect(selectedText).toBe('Uses a hash map. Lookups are fast.');
+    expect(selectedText).not.toMatch(/[\uE000-\uE00D]/);
+  });
+
   it('leaves the native menu available for a collapsed or cross-message selection', () => {
     render(<TangentSelectionContext.Provider value={{ create: vi.fn(), creating: false }}>
       <TangentSelection conversationId="parent" messageId="reply" enabled><p>First reply</p></TangentSelection>

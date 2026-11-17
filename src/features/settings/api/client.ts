@@ -225,4 +225,14 @@ export const settingsApi = {
     service: Wire.KeyServiceDto,
   ): Promise<ApiResult<Wire.SourcesStatusDto>> =>
     apiCall('remove_source_key', { service }),
+
+  /**
+   * Whether the backend accepts `value` for a Sources address setting, by
+   * the rule it applies when the settings are saved.
+   */
+  checkSourcingAddress: async (
+    field: Wire.SourcingAddress,
+    value: string,
+  ): Promise<ApiResult<boolean>> =>
+    apiCall('check_sourcing_address', { field, value }),
 };

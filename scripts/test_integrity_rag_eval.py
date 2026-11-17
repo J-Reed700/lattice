@@ -22,7 +22,8 @@ class IntegrityTests(unittest.TestCase):
         self.labels = {'queries': [{'id': 'q', 'required_patterns': [['14']],
                                    'required_citation_docs': ['a']}]}
         self.row = chat.evaluate_answer(self.dataset['queries'][0], self.labels['queries'][0],
-                                       'The period is 14 days [1].', ['a'], 10, 'hidden-model')
+                                       'The period is 14 days [1].', ['a'], 10, 'hidden-model',
+                                       citations=chat.extract_citations('The period is 14 days [1].'))
         self.row['run_id'] = 'run'
         self.packet = review.packets(self.dataset, [self.row])[0]
         self.judgment = {k: self.packet[k] for k in
@@ -39,19 +40,21 @@ class IntegrityTests(unittest.TestCase):
         for answer in ['The period is NOT 14 days [1].',
                        'The period is 14 days [1]. The moon is made of cheese.']:
             row = chat.evaluate_answer(self.dataset['queries'][0], self.labels['queries'][0],
-                                       answer, ['a'], 1, 'm')
+                                       answer, ['a'], 1, 'm', citations=chat.extract_citations(answer))
             self.assertIsNone(row['answer_correct'])
             self.assertIsNone(chat.aggregate([row])['answer_accuracy'])
 
     def test_empty_expectations_do_not_vacuously_pass(self):
-        row = chat.evaluate_answer(self.dataset['queries'][0], {}, 'Cheese [1].', ['a'], 1, 'm')
+        row = chat.evaluate_answer(self.dataset['queries'][0], {}, 'Cheese [1].', ['a'], 1, 'm',
+                                   citations=chat.extract_citations('Cheese [1].'))
         self.assertFalse(row['mechanical_checks_passed'])
         with self.assertRaises(ValueError):
             integrity.validate_expectations(self.dataset, {'queries': [{'id': 'q'}]})
 
     def test_abstention_with_hallucination_is_not_correct(self):
         row = chat.evaluate_answer({'id': 'u', 'relevance': {}}, {},
-                                   'Not provided. The secret code is 12345.', ['a'], 1, 'm')
+                                   'Not provided. The secret code is 12345.', ['a'], 1, 'm',
+                                   citations=chat.extract_citations('Not provided. The secret code is 12345.'))
         self.assertIsNone(row['answer_correct'])
 
     def test_blind_packet_hides_model_and_scores(self):
