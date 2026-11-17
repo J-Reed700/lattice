@@ -70,6 +70,8 @@ mod tests {
     use std::cell::RefCell;
     use std::future::ready;
 
+    use crate::domain::models::model_ref::ModelRef;
+
     async fn run(
         provider: LLMProvider,
         local_result: Result<Option<&'static str>>,
@@ -211,5 +213,65 @@ mod tests {
         .await;
         assert_eq!(result.unwrap(), "ollama");
         assert_eq!(calls, ["local", "llamacpp", "ollama"]);
+    }
+
+    fn local_model() -> ModelRef {
+        ModelRef::Local {
+            model_id: "ornith-1.5-9b".into(),
+        }
+    }
+
+    fn llama_cpp_model() -> ModelRef {
+        ModelRef::LlamaCpp {
+            model: "qwen3.5-27b".into(),
+        }
+    }
+
+    fn ollama_model() -> ModelRef {
+        ModelRef::Ollama {
+            model: "qwen3:8b".into(),
+        }
+    }
+
+    #[test]
+    fn auto_failures_report_the_local_failure_even_when_later_candidates_fail() {
+        let mut failures = AutoFailures::default();
+        failures.record(&local_model(), AppError::ModelLoadFailed("broken".into()));
+        failures.record(&llama_cpp_model(), AppError::Network("offline".into()));
+        failures.record(
+            &ollama_model(),
+            AppError::ServiceNotAvailable("offline".into()),
+        );
+        assert!(
+            matches!(failures.into_error(), AppError::ModelLoadFailed(message) if message == "broken")
+        );
+    }
+
+    #[test]
+    fn auto_failures_keep_the_first_local_failure() {
+        let mut failures = AutoFailures::default();
+        failures.record(&local_model(), AppError::ModelLoadFailed("first".into()));
+        failures.record(&local_model(), AppError::ModelLoadFailed("second".into()));
+        assert!(
+            matches!(failures.into_error(), AppError::ModelLoadFailed(message) if message == "first")
+        );
+    }
+
+    #[test]
+    fn auto_failures_without_a_local_failure_say_no_llm_is_available() {
+        let mut failures = AutoFailures::default();
+        failures.record(&llama_cpp_model(), AppError::Network("offline".into()));
+        failures.record(
+            &ollama_model(),
+            AppError::ServiceNotAvailable("offline".into()),
+        );
+        assert!(matches!(
+            failures.into_error(),
+            AppError::AiModelsNotInstalled(message) if message.starts_with("No LLM available. Please either:")
+        ));
+        assert!(matches!(
+            AutoFailures::default().into_error(),
+            AppError::AiModelsNotInstalled(_)
+        ));
     }
 }
