@@ -44,8 +44,8 @@ fn embed_windows_manifest() {
     );
 }
 
-/// Reserve the main thread's stack in the app and `export_bindings`; the test
-/// harnesses run their tests on spawned threads.
+/// Reserve the main thread's stack in the app, `export_bindings` and the
+/// examples; the test harnesses run their tests on spawned threads.
 fn reserve_main_thread_stack() {
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();

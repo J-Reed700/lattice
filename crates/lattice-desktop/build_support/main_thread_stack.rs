@@ -14,7 +14,12 @@ pub fn link_args(target_os: &str, target_env: &str) -> Vec<String> {
 pub fn directives(target_os: &str, target_env: &str) -> Vec<String> {
     link_args(target_os, target_env)
         .into_iter()
-        .map(|arg| format!("cargo::rustc-link-arg-bins={arg}"))
+        .flat_map(|arg| {
+            [
+                format!("cargo::rustc-link-arg-bins={arg}"),
+                format!("cargo::rustc-link-arg-examples={arg}"),
+            ]
+        })
         .collect()
 }
 
