@@ -44,7 +44,7 @@ fn around(text: &str, (from, to): (usize, usize)) -> ClaimExcerptDto {
             first
                 .checked_sub(1)
                 .and_then(|previous| bounds.get(previous))
-                .filter(|sentence| prose(*sentence))
+                .filter(|sentence| prose(sentence))
                 .or_else(|| bounds.get(first))
                 .map_or(from, |&(start, _)| start)
         })
@@ -53,7 +53,7 @@ fn around(text: &str, (from, to): (usize, usize)) -> ClaimExcerptDto {
         .map_or(to, |last| {
             bounds
                 .get(last + 1)
-                .filter(|sentence| prose(*sentence))
+                .filter(|sentence| prose(sentence))
                 .or_else(|| bounds.get(last))
                 .map_or(to, |&(_, end)| end)
         })
