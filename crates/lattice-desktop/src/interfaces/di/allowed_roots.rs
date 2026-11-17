@@ -1,7 +1,6 @@
 //! The directories file-read IPC is allowed to reach, recomputed from settings.
 
 use crate::infrastructure::security::FileAccessConfig;
-use crate::infrastructure::storage::ContentAddressedStorage;
 use lattice_core::application::ports::SettingsRepositoryPort;
 use lattice_core::shared::persistence::Database;
 use std::path::PathBuf;
@@ -12,7 +11,7 @@ use std::sync::{Arc, OnceLock};
 pub(crate) struct AllowedRoots {
     settings_repo: Arc<dyn SettingsRepositoryPort>,
     database: Database,
-    data_dir: PathBuf,
+    app_owned_roots: Vec<PathBuf>,
     file_access_config: Arc<FileAccessConfig>,
     /// Arrives in `Container::with_app_handle`, after construction.
     app_handle: OnceLock<tauri::AppHandle>,
@@ -22,13 +21,13 @@ impl AllowedRoots {
     pub(crate) fn new(
         settings_repo: Arc<dyn SettingsRepositoryPort>,
         database: Database,
-        data_dir: PathBuf,
+        app_owned_roots: Vec<PathBuf>,
         file_access_config: Arc<FileAccessConfig>,
     ) -> Self {
         Self {
             settings_repo,
             database,
-            data_dir,
+            app_owned_roots,
             file_access_config,
             app_handle: OnceLock::new(),
         }
@@ -40,8 +39,9 @@ impl AllowedRoots {
 
     /// Recompute which directories file-read IPC is allowed to reach.
     ///
-    /// The policy is: the app's own data and imported-file library directories,
-    /// plus the user's vault and every folder they have asked us to index.
+    /// The policy is: the app's own folders (its data, the imported-file
+    /// library and the web archive), plus the user's vault and every folder
+    /// they have asked us to index.
     /// Anything else in `$HOME` — SSH keys, cloud credentials, browser profiles — stays
     /// unreadable over IPC.
     ///
@@ -51,10 +51,7 @@ impl AllowedRoots {
     pub(crate) async fn refresh(&self) -> lattice_core::shared::error::Result<()> {
         let settings = self.settings_repo.get_all().await?;
 
-        let mut roots = vec![
-            self.data_dir.clone(),
-            ContentAddressedStorage::default_library_root()?,
-        ];
+        let mut roots = self.app_owned_roots.clone();
 
         if settings.vault.enabled && !settings.vault.vault_path.is_empty() {
             roots.push(PathBuf::from(&settings.vault.vault_path));

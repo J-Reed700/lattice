@@ -154,7 +154,7 @@ impl Container {
     }
 
     /// Recompute which directories file-read IPC is allowed to reach: the
-    /// data and library directories, the vault, and every indexed or watched
+    /// app's own folders, the vault, and every indexed or watched
     /// folder. Run at startup; every settings write runs it through
     /// `ContainerSettingsSideEffects`.
     pub async fn refresh_allowed_roots(&self) -> lattice_core::shared::error::Result<()> {

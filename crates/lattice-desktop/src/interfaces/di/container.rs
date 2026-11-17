@@ -421,7 +421,7 @@ impl Container {
         let allowed_roots = Arc::new(super::allowed_roots::AllowedRoots::new(
             system.settings_repo().clone(),
             core.database().clone(),
-            core.data_dir().clone(),
+            core.app_owned_roots().to_vec(),
             Arc::clone(core.file_access_config()),
         ));
 
