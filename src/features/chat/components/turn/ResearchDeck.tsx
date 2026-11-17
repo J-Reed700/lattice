@@ -18,7 +18,7 @@ import {
   useElapsedSeconds,
 } from '@/features/chat/components/turn/StepRow';
 import { fromConversationWebSource } from '@/features/reading/model/sourceAdapter';
-import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
+import { useReaderStore } from '@/features/reading/stores/readerStore';
 import type { TurnStep } from '@/types/conversation';
 
 import '@/features/chat/components/turn/research-deck.css';
@@ -230,7 +230,7 @@ function PageRow({ page, index }: { page: DeckPage; index: number }) {
       url: page.url,
       title: page.title ?? page.host,
     });
-    useChatReaderStore.getState().open('research-deck', [source], 0);
+    useReaderStore.getState().open('research-deck', [source], 0);
   };
 
   return (

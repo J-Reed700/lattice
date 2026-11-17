@@ -4,8 +4,6 @@ import { Paperclip } from 'lucide-react';
 
 import { TiptapViewer, textWithFormulas } from '@/components/TiptapEditor';
 import { ClaimActionsPopover } from '@/features/chat/components/actions/ClaimActionsPopover';
-import { CitationFootnote } from '@/features/chat/components/CitationFootnote';
-import { CitationHoverCard } from '@/features/chat/components/CitationHoverCard';
 import { ClaimHoverCard } from '@/features/chat/components/ClaimHoverCard';
 import { EvidenceMargin } from '@/features/chat/components/EvidenceMargin';
 import { MessageHeader } from '@/features/chat/components/message/MessageHeader';
@@ -22,9 +20,11 @@ import { useMessageEvidence } from '@/features/chat/hooks/useMessageEvidence';
 import { useRevealStreamingRef } from '@/features/chat/hooks/useRevealStreamingRef';
 import { useChatFigures } from '@/features/chat/images/useChatFigures';
 import { openInFolder, revealInFolder } from '@/features/chat/model/folderThreadHost';
+import { CitationFootnote } from '@/features/reading/components/CitationFootnote';
+import { CitationHoverCard } from '@/features/reading/components/CitationHoverCard';
 import { SourceCitations } from '@/features/reading/components/SourceCitations';
-import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
+import { useReaderStore } from '@/features/reading/stores/readerStore';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { useDrawnReply } from '@/shared/conversations/useDrawnReply';
@@ -83,7 +83,7 @@ export const Message = memo(({
 
   // One reader serves the whole thread. A message hands it a citation to show
   // and reads back where the viewer found it.
-  const resolvedLocations = useChatReaderStore((s) => s.resolvedLocations);
+  const resolvedLocations = useReaderStore((s) => s.resolvedLocations);
   const showCitations = useCitationDisplayStore((s) => s.visible);
 
   const messageId = 'id' in message ? message.id : undefined;

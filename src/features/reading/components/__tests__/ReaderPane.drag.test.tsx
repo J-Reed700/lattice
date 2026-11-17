@@ -1,16 +1,13 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ChatReaderPane } from '@/features/chat/components/reader/ChatReaderPane';
-import { READER_DEFAULT_WIDTH, READER_MIN_WIDTH, useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
+import { ReaderPane } from '@/features/reading/components/ReaderPane';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
+import { READER_DEFAULT_WIDTH, READER_MIN_WIDTH, useReaderStore } from '@/features/reading/stores/readerStore';
 import type { SourceWithMetadata } from '@/types/conversation';
 
 const h = vi.hoisted(() => ({ rememberLocation: vi.fn() }));
 
-vi.mock('@/shared/conversations/conversationsStore', () => ({
-  useConversationsStore: (selector: (state: unknown) => unknown) => selector({ activeConversationId: 'c1' }),
-}));
 vi.mock('@/shared/sources/passageLocator', () => ({
   locatorFromSource: () => null,
   rememberLocation: h.rememberLocation,
@@ -27,17 +24,17 @@ vi.mock('@/features/reading/components/SourceReaderBody', () => ({
 }));
 
 const source = { documentId: 'd1', chunkId: 'chunk-1', fileName: 'Herodotus.pdf', filePath: '/lib/herodotus.pdf', citationId: 1 } as unknown as SourceWithMetadata;
-const WIDE = { rowWidth: 1800, availableWidth: 1500 };
+const WIDE = { rowWidth: 1800, availableWidth: 1500, resetKey: 'c1' };
 
 const renderPane = () => {
-  render(<ChatReaderPane {...WIDE} />);
-  act(() => useChatReaderStore.getState().open('answer-1', [source], 0));
+  render(<ReaderPane {...WIDE} />);
+  act(() => useReaderStore.getState().open('answer-1', [source], 0));
 };
 
 const pane = () => screen.getByRole('complementary', { name: 'Source reader' });
 const handle = () => screen.getByRole('separator', { name: 'Resize source reader' });
 
-describe('ChatReaderPane resizing and focus', () => {
+describe('ReaderPane resizing and focus', () => {
   beforeAll(() => {
     Element.prototype.setPointerCapture = function () {};
     Element.prototype.hasPointerCapture = () => true;
@@ -47,7 +44,7 @@ describe('ChatReaderPane resizing and focus', () => {
   beforeEach(() => {
     h.rememberLocation.mockClear();
     useCitationDisplayStore.setState({ visible: true });
-    useChatReaderStore.setState({ session: null, width: READER_DEFAULT_WIDTH, resolvedLocations: new Map() });
+    useReaderStore.setState({ session: null, width: READER_DEFAULT_WIDTH, resolvedLocations: new Map() });
   });
 
   it('widens as the handle is dragged left, and stops at the minimum', () => {
@@ -95,14 +92,14 @@ describe('ChatReaderPane resizing and focus', () => {
     renderPane();
     fireEvent.click(screen.getByRole('button', { name: 'Resolve' }));
     expect(h.rememberLocation).toHaveBeenCalledWith('chunk-1', 'p. 12');
-    expect(useChatReaderStore.getState().resolvedLocations.get('chunk-1')).toBe('p. 12');
+    expect(useReaderStore.getState().resolvedLocations.get('chunk-1')).toBe('p. 12');
   });
 
   it('leaves Escape to a field inside the reader', () => {
     renderPane();
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Find in source' }), { key: 'Escape' });
-    expect(useChatReaderStore.getState().session).not.toBeNull();
+    expect(useReaderStore.getState().session).not.toBeNull();
     fireEvent.keyDown(document, { key: 'a' });
-    expect(useChatReaderStore.getState().session).not.toBeNull();
+    expect(useReaderStore.getState().session).not.toBeNull();
   });
 });

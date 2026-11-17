@@ -10,7 +10,7 @@ import {
   fromConversationLinkedDocument,
   fromConversationWebSource,
 } from '@/features/reading/model/sourceAdapter';
-import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
+import { useReaderStore } from '@/features/reading/stores/readerStore';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
 import type { SourceWithMetadata } from '@/types/conversation';
@@ -149,7 +149,7 @@ export function ConversationLinkedDocumentsPanel({
     const document = linkedDocuments.find((d) => d.documentId === documentId);
     if (document) {
       const { source } = fromConversationLinkedDocument(document, conversationId);
-      useChatReaderStore.getState().open(`linked-doc:${conversationId}`, [source], 0);
+      useReaderStore.getState().open(`linked-doc:${conversationId}`, [source], 0);
       return;
     }
     setOpeningDocumentId(documentId);
@@ -235,7 +235,7 @@ export function ConversationLinkedDocumentsPanel({
       conversationId,
       conversationSources,
     );
-    useChatReaderStore.getState().open(`web-source:${conversationId}`, [source], 0);
+    useReaderStore.getState().open(`web-source:${conversationId}`, [source], 0);
   };
 
   const handleLinkSource = async (

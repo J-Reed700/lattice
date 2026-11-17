@@ -1,7 +1,7 @@
 /**
  * Single canonical source-of-truth adapter: turns every source or document
  * representation across Lattice into a `SourceWithMetadata` + optional
- * `PassageLocator` for `SourceReaderBody` / `FilePreviewModal` / `ChatReaderPane`.
+ * `PassageLocator` for `SourceReaderBody` / `FilePreviewModal` / `ReaderPane`.
  *
  * No surface constructs ad-hoc reader payloads or kicks users out to external
  * browsers or legacy viewers: every surface speaks through these constructors.
@@ -421,13 +421,18 @@ export function fromLearningSource(
   };
 }
 
-/** Learning Studio lesson evidence passage (`LearningEvidencePassageDto`) -> unified reader target. */
+/** The web address a lesson's evidence passage was saved from; none when it has no http page. */
+export function learningPassageUrl(passage: Pick<LearningEvidencePassageDto, 'url'>): string | null {
+  return passage.url?.trim() && isHttpUrl(passage.url) ? passage.url.trim() : null;
+}
+
+/** Learning Studio lesson evidence passage (`LearningEvidencePassageDto`) -> unified reader target. A web passage's saved page is its snapshot; its content is the passage, which a reader marks, or the whole text when there is no passage. */
 export function fromLearningEvidencePassage(
   passage: LearningEvidencePassageDto,
   index = 0,
   fullText?: string | null,
 ): ResolvedReaderTarget {
-  const url = passage.url?.trim() && isHttpUrl(passage.url) ? passage.url.trim() : null;
+  const url = learningPassageUrl(passage);
   const web = Boolean(url);
   const text = passage.text?.trim() || '';
   const documentId = url ? `web:${url}` : passage.sourceVersionId || `passage-${index}`;
@@ -441,7 +446,7 @@ export function fromLearningEvidencePassage(
       filePath: url ?? passage.sourceVersionId,
       mimeType: web ? 'text/html' : 'text/plain',
       category: web ? 'web' : 'document',
-      content: fullText?.trim() || text,
+      content: text || fullText?.trim() || '',
       excerpt: text || undefined,
       webSnapshot:
         web && (fullText?.trim() || text)

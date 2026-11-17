@@ -409,7 +409,7 @@ export async function installLearningStudioBackend(page: Page) {
     const sourceVersionTexts = new Map<string, string>([
       [
         sourceV1.id,
-        "ACTIVE_SOURCE_SENTINEL: Record the same measure across the observation period. The original edition remains available for exact citation review.",
+        `${source.excerpt}\n\nACTIVE_SOURCE_SENTINEL: Record the same measure across the observation period. The original edition remains available for exact citation review.`,
       ],
     ]);
     const sourceOperations = new Map<
@@ -1273,7 +1273,12 @@ export async function installLearningStudioBackend(page: Page) {
           claim: "A careful comparison records the chosen measure and observation period.", verdict: "supported",
           reason: "The saved reference supports this teaching claim.", supportingQuote: source.excerpt,
           passages: [{ sourceVersionId: source.id, title: source.title, url: source.url, text: source.excerpt,
-            startByte: 0, endByte: source.excerpt.length, retrievalKind: "hybrid" }], resolution: "verified", note: null }],
+            startByte: 0, endByte: source.excerpt.length, retrievalKind: "hybrid" }], resolution: "verified", note: null, cites: [1] }],
+        citations: [{ number: 1, sourceId: "logical-source-field-notes", passage: { sourceVersionId: source.id, title: source.title, url: source.url,
+          text: source.excerpt, startByte: 0, endByte: source.excerpt.length, retrievalKind: "hybrid" } }],
+        sections: lesson.blocks.map((block, sectionIndex) => ({ sectionIndex, pieces: sectionIndex === 0
+          ? [{ type: "text", text: block.body }, { type: "reference", reference: { written: "[s1]", kind: "source", number: 1 } }]
+          : [{ type: "text", text: block.body }] })),
       }),
       get_learning_memory: () => copyMemory(),
       get_learning_practice_workspace: (args) => {

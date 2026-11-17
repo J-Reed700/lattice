@@ -8167,6 +8167,20 @@ export type LearningCardOriginDto = { cardId: string; lessonId: string; origin: 
  * what is revealed once they commit an answer.
  */
 export type LearningCheckDto = { question: string; reveal: string }
+/**
+ * A passage a citation chip of the lesson opens, numbered down the lesson.
+ */
+export type LearningCitationDto = { number: number;
+/**
+ * The saved source the passage's version belongs to; none for an
+ * executed example.
+ */
+sourceId: string | null;
+/**
+ * Its trust is always none: a level belongs to each statement a passage
+ * supports, on that statement's own passages.
+ */
+passage: LearningEvidencePassageDto }
 export type LearningClaimEvidenceDto = { sectionIndex: number;
 /**
  * Exact lesson text selected by the claim inventory. This anchors the
@@ -8205,7 +8219,12 @@ parts?: LearningClaimPartDto[]; unverifiedReason?: UnverifiedReasonDto | null;
  * The claim behind this statement, for acting on it; none in a report
  * from before findings named theirs.
  */
-claimId?: string | null }
+claimId?: string | null;
+/**
+ * The numbers, in the lesson's `citations`, of the passages this
+ * statement stands on; empty when it cites none.
+ */
+cites?: number[] }
 /**
  * One part of a statement as the part-wise check read it.
  */
@@ -8550,7 +8569,15 @@ export type LearningLessonEvidenceDto = { policy: string; checkedAt: number; che
  * Of `claim_count`, the claims the user confirmed without a supporting
  * passage; shown apart from the machine-verified ones (§5.6).
  */
-confirmedCount: number; executedExamples: number; unexecutedLanguages: string[]; sourcesCurrent: boolean; teachingClaims: LearningClaimEvidenceDto[] }
+confirmedCount: number; executedExamples: number; unexecutedLanguages: string[]; sourcesCurrent: boolean; teachingClaims: LearningClaimEvidenceDto[];
+/**
+ * Every passage of the report, numbered from 1.
+ */
+citations: LearningCitationDto[];
+/**
+ * One per lesson block, in block order.
+ */
+sections: LearningSectionTextDto[] }
 export type LearningLessonNoteDto = { lessonId: string; note: WorkspaceNoteDto }
 export type LearningLessonQuizDto = { lessonId: string; quiz: LearningQuizStatusDto }
 /**
@@ -8918,6 +8945,11 @@ command: string[]; limits: LearningLabLimits;
 entrypointContract: string }
 export type LearningRuntimePresetId = "csharp" | "rust" | "node" | "python"
 export type LearningRuntimeProfileDto = { id: string; name: string; engine: LearningContainerEngine; imageId: string; command: string[]; limits: LearningLabLimits; enabled: boolean; revision: number; createdAt: number; updatedAt: number }
+/**
+ * One lesson block's body as the frontend draws it: text between citation
+ * chips.
+ */
+export type LearningSectionTextDto = { sectionIndex: number; pieces: ReplyPieceDto[] }
 export type LearningSimulationSessionDto = { id: string; programId: string; activityId: string; activityRevision: number; practiceSessionId: string | null; learnerRole: string; counterpartRole: string; status: LearningSimulationStatus; revision: number; turns: LearningSimulationTurnDto[]; createdAt: number; updatedAt: number; submittedAt: number | null }
 export type LearningSimulationSpeaker = "learner" | "counterpart" | "coach"
 export type LearningSimulationStatus = "active" | "submitted" | "cancelled"

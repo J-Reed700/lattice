@@ -15,7 +15,7 @@ import type { JournalSourceSummary } from '@/features/journal/hooks/useJournalSo
 import { journalCitationMap, toJournalCitationSource } from '@/features/journal/model/journalCitationSources';
 import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
 import { SourceCitations } from '@/features/reading/components/SourceCitations';
-import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
+import { useReaderStore } from '@/features/reading/stores/readerStore';
 import { locatorFromSource } from '@/shared/sources/passageLocator';
 import type { SnapshotMessage, WorkspaceNote } from '@/types/api/dailyNotes';
 import type { SourceWithMetadata } from '@/types/conversation';
@@ -121,10 +121,10 @@ export function EntryEditor({
 }: EntryEditorProps) {
   const editorContainerRef = useRef<HTMLDivElement | null>(null);
   const [railOpen, setRailOpen] = useState(readRailOpen);
-  const readerSession = useChatReaderStore((state) => state.session);
-  const openReader = useChatReaderStore((state) => state.open);
-  const setReaderIndex = useChatReaderStore((state) => state.setIndex);
-  const closeReader = useChatReaderStore((state) => state.close);
+  const readerSession = useReaderStore((state) => state.session);
+  const openReader = useReaderStore((state) => state.open);
+  const setReaderIndex = useReaderStore((state) => state.setIndex);
+  const closeReader = useReaderStore((state) => state.close);
   const noteSources = useMemo(
     () => (activeNote?.sources ?? []).map(toJournalCitationSource),
     [activeNote?.sources],
@@ -138,7 +138,7 @@ export function EntryEditor({
   }, [activeNote?.id, closeReader, readerSession?.ownerKey]);
 
   useEffect(() => () => {
-    if (useChatReaderStore.getState().session?.ownerKey.startsWith('journal:')) closeReader();
+    if (useReaderStore.getState().session?.ownerKey.startsWith('journal:')) closeReader();
   }, [closeReader]);
 
   const openJournalCitation = useCallback((number: number, occurrence: number | null = null) => {

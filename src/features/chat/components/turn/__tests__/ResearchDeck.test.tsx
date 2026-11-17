@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ResearchDeck } from '@/features/chat/components/turn/ResearchDeck';
-import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
+import { useReaderStore } from '@/features/reading/stores/readerStore';
 import type { TurnStep } from '@/types/conversation';
 
 
@@ -115,13 +115,13 @@ describe('ResearchDeck', () => {
   });
 
   it('opens a page in the reader when it is clicked', async () => {
-    useChatReaderStore.getState().close();
+    useReaderStore.getState().close();
     render(<ResearchDeck live={false} steps={[search('s', 'q', ['https://a.example/1'])]} />);
 
     await userEvent.click(screen.getByRole('button', { name: /About a\.example/ }));
 
     expect(openExternalUrl).not.toHaveBeenCalled();
-    const session = useChatReaderStore.getState().session;
+    const session = useReaderStore.getState().session;
     expect(session).not.toBeNull();
     expect(session?.citations[0].filePath).toBe('https://a.example/1');
   });
