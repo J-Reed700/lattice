@@ -27,6 +27,8 @@ pub struct SavedArticle {
 #[async_trait::async_trait]
 pub trait ArticleArchive: Send + Sync {
     /// Remove the article at `path`. Succeeds when the file is already gone.
+    /// Fails, deleting nothing, when what it would delete is the archive
+    /// itself or lies outside it once every link is followed.
     async fn delete_article(&self, path: &Path) -> Result<()>;
 
     /// True when `path` is inside this archive.
@@ -42,6 +44,8 @@ pub trait ArticleArchive: Send + Sync {
     fn is_saved_article(&self, path: &Path) -> bool;
 
     /// The saved article whose text file is `path`, or `None` when
-    /// [`Self::is_saved_article`] does not hold for `path` or the file is gone.
+    /// [`Self::is_saved_article`] does not hold for `path`, the file is gone,
+    /// or it lies outside the archive once every link is followed. Its page
+    /// and facts are read only from inside the archive too.
     async fn saved_article(&self, path: &Path) -> Option<SavedArticle>;
 }
