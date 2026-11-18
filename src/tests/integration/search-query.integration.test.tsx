@@ -101,7 +101,8 @@ it('groups repeated chunks by document, uses the strongest hit and opens the dur
   fireEvent.click(screen.getByText('Best title'));
   await tick(10);
   expect(VaultAPI.openFileById).toHaveBeenCalledWith('document-1');
-  expect(screen.getByLabelText('Opened file')).toHaveTextContent('/saved/doc.md');
+  expect(screen.getByLabelText('Opened file')).toHaveTextContent('/Best title');
+  expect(screen.getByLabelText('Opened file')).not.toHaveTextContent('/saved/doc.md');
 });
 
 it('tries the known path when a result ID is stale and reports a second failure', async () => {
@@ -114,4 +115,17 @@ it('tries the known path when a result ID is stale and reports a second failure'
   await tick(10);
   expect(VaultAPI.openFile).toHaveBeenCalledWith('/Moved file');
   expect(screen.getByText('File was deleted')).toBeInTheDocument();
+});
+
+it('previews a result from its own path when the archive opens it by path', async () => {
+  vi.mocked(VaultAPI.searchHybrid).mockResolvedValue({ ok: true, data: [hit('Moved file')] });
+  vi.mocked(VaultAPI.openFileById).mockResolvedValue({ ok: false, error: 'ID missing' });
+  vi.mocked(VaultAPI.openFile).mockResolvedValue({ ok: true, data: { action: 'render_internal', contentPath: '/saved/page.html' } });
+  show();
+  await search('moved');
+  fireEvent.click(screen.getByText('Moved file'));
+  await tick(10);
+  expect(VaultAPI.openFile).toHaveBeenCalledWith('/Moved file');
+  expect(screen.getByLabelText('Opened file')).toHaveTextContent('/Moved file');
+  expect(screen.getByLabelText('Opened file')).not.toHaveTextContent('/saved/page.html');
 });

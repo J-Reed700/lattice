@@ -84,6 +84,7 @@ export async function installCompareFixture(page: Page) {
       };
       return table;
     },
+    saved_web_article: () => null,
     read_file_content: (args) => {
       const recipe = RECIPES.find(item => item.filePath === args.path);
       if (!recipe) throw new Error(`No such file: ${String(args.path)}`);

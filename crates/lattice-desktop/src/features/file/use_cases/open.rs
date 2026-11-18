@@ -3,9 +3,9 @@
 //! Opens a file with the system's default application.
 
 use crate::features::file::dto::{OpenFileRequestDto, OpenFileResponseDto};
-use crate::infrastructure::adapters::fs::web_article::WebArticleDetector;
 use crate::infrastructure::security::FileAccessConfig;
 use lattice_core::application::ports::{FileStoragePort, FileSystemPort};
+use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 
@@ -25,6 +25,7 @@ pub struct OpenFileUseCase {
     file_system: Arc<dyn FileSystemPort>,
     file_storage: Arc<dyn FileStoragePort>,
     file_access_config: Arc<FileAccessConfig>,
+    archive: Arc<dyn ArticleArchive>,
 }
 
 impl OpenFileUseCase {
@@ -33,11 +34,13 @@ impl OpenFileUseCase {
         file_system: Arc<dyn FileSystemPort>,
         file_storage: Arc<dyn FileStoragePort>,
         file_access_config: Arc<FileAccessConfig>,
+        archive: Arc<dyn ArticleArchive>,
     ) -> Self {
         Self {
             file_system,
             file_storage,
             file_access_config,
+            archive,
         }
     }
 
@@ -69,18 +72,8 @@ impl OpenFileUseCase {
             )));
         }
 
-        if WebArticleDetector::is_web_article(&validated_path) {
-            let html_path = WebArticleDetector::get_html_path(&validated_path)
-                .ok_or_else(|| AppError::NotFound("page.html not found".to_string()))?;
-
-            let title = WebArticleDetector::get_title(&validated_path)
-                .await
-                .unwrap_or_else(|_| "Web Article".to_string());
-
-            return Ok(OpenFileResponseDto::render_internal(
-                html_path.to_string_lossy().to_string(),
-                title,
-            ));
+        if let Some(article) = self.archive.saved_article(&validated_path).await {
+            return Ok(OpenFileResponseDto::saved_article(article));
         }
 
         self.file_system.open_file(&validated_path).await?;
@@ -94,11 +87,28 @@ impl OpenFileUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::web::services::archive::WebArchiveService;
     use async_trait::async_trait;
     use lattice_core::application::ports::file_system_port::FileSystemPort;
     use lattice_core::application::ports::FileStoragePort;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
+
+    fn no_archive() -> Arc<dyn ArticleArchive> {
+        Arc::new(WebArchiveService::with_base_dir(PathBuf::from(
+            "/no-web-archive",
+        )))
+    }
+
+    fn write_article(dir: &Path) -> PathBuf {
+        std::fs::create_dir_all(dir).expect("article directory");
+        let text = dir.join("article.md");
+        std::fs::write(&text, "body").expect("write text");
+        std::fs::write(dir.join("page.html"), "<html></html>").expect("write page");
+        std::fs::write(dir.join("metadata.json"), r#"{"title": "Saved Title"}"#)
+            .expect("write metadata");
+        text
+    }
 
     struct MockFileSystem {
         opened_files: Arc<Mutex<Vec<String>>>,
@@ -235,7 +245,12 @@ mod tests {
         let file_system = Arc::new(MockFileSystem::new());
         let file_storage =
             Arc::new(MockFileStorage::new().with_file(&canonical_path.to_string_lossy()));
-        let use_case = OpenFileUseCase::new(file_system.clone(), file_storage, file_access_config);
+        let use_case = OpenFileUseCase::new(
+            file_system.clone(),
+            file_storage,
+            file_access_config,
+            no_archive(),
+        );
 
         let request = OpenFileRequestDto {
             path: test_file.to_string_lossy().to_string(),
@@ -259,7 +274,8 @@ mod tests {
         let file_access_config = Arc::new(FileAccessConfig::new(vec![temp_dir.clone()]));
         let file_system = Arc::new(MockFileSystem::new());
         let file_storage = Arc::new(MockFileStorage::new()); // No files
-        let use_case = OpenFileUseCase::new(file_system, file_storage, file_access_config);
+        let use_case =
+            OpenFileUseCase::new(file_system, file_storage, file_access_config, no_archive());
 
         let nonexistent = temp_dir.join("nonexistent_test_file_xyz.txt");
         let request = OpenFileRequestDto {
@@ -290,7 +306,8 @@ mod tests {
             Arc::new(MockFileSystem::new().with_directory(&canonical_path.to_string_lossy()));
         let file_storage =
             Arc::new(MockFileStorage::new().with_file(&canonical_path.to_string_lossy()));
-        let use_case = OpenFileUseCase::new(file_system, file_storage, file_access_config);
+        let use_case =
+            OpenFileUseCase::new(file_system, file_storage, file_access_config, no_archive());
 
         let request = OpenFileRequestDto {
             path: test_dir.to_string_lossy().to_string(),
@@ -305,5 +322,99 @@ mod tests {
             result,
             Err(lattice_core::shared::error::AppError::InvalidInput(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn an_article_and_page_saved_outside_the_archive_open_in_the_system_app() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path().canonicalize().expect("canonical root");
+        let article = write_article(&root.join("elsewhere"));
+        let archive = Arc::new(WebArchiveService::with_base_dir(root.join("web-archive")));
+        let file_system = Arc::new(MockFileSystem::new());
+        let file_storage = Arc::new(MockFileStorage::new().with_file(&article.to_string_lossy()));
+        let use_case = OpenFileUseCase::new(
+            file_system.clone(),
+            file_storage,
+            Arc::new(FileAccessConfig::new(vec![root.clone()])),
+            archive,
+        );
+
+        let response = use_case
+            .execute(OpenFileRequestDto {
+                path: article.to_string_lossy().to_string(),
+            })
+            .await
+            .expect("open");
+
+        assert_eq!(response.action, "opened_external");
+        assert_eq!(
+            file_system.get_opened_files(),
+            vec![article.display().to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn an_article_in_the_archive_renders_its_saved_page_with_its_title() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path().canonicalize().expect("canonical root");
+        let base = root.join("web-archive");
+        let dir = base.join("example.org").join("essay-1");
+        let article = write_article(&dir);
+        let archive = Arc::new(WebArchiveService::with_base_dir(
+            temp.path().join("web-archive"),
+        ));
+        let file_system = Arc::new(MockFileSystem::new());
+        let file_storage = Arc::new(MockFileStorage::new().with_file(&article.to_string_lossy()));
+        let use_case = OpenFileUseCase::new(
+            file_system.clone(),
+            file_storage,
+            Arc::new(FileAccessConfig::new(vec![root.clone()])),
+            archive,
+        );
+
+        let response = use_case
+            .execute(OpenFileRequestDto {
+                path: article.to_string_lossy().to_string(),
+            })
+            .await
+            .expect("open");
+
+        assert_eq!(response.action, "render_internal");
+        assert_eq!(
+            response.content_path,
+            dir.join("page.html").to_string_lossy()
+        );
+        assert_eq!(response.title.as_deref(), Some("Saved Title"));
+        assert!(file_system.get_opened_files().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_article_in_the_archive_without_its_page_opens_in_the_reader_at_its_text() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path().canonicalize().expect("canonical root");
+        let dir = root.join("web-archive").join("example.org").join("essay-1");
+        let article = write_article(&dir);
+        std::fs::remove_file(dir.join("page.html")).expect("remove page");
+        let archive = Arc::new(WebArchiveService::with_base_dir(root.join("web-archive")));
+        let file_system = Arc::new(MockFileSystem::new());
+        let file_storage = Arc::new(MockFileStorage::new().with_file(&article.to_string_lossy()));
+        let use_case = OpenFileUseCase::new(
+            file_system.clone(),
+            file_storage,
+            Arc::new(FileAccessConfig::new(vec![root.clone()])),
+            archive,
+        );
+
+        let response = use_case
+            .execute(OpenFileRequestDto {
+                path: article.to_string_lossy().to_string(),
+            })
+            .await
+            .expect("open");
+
+        assert_eq!(response.action, "render_internal");
+        assert_eq!(response.content_path, article.to_string_lossy());
+        assert_eq!(response.title.as_deref(), Some("Saved Title"));
+        assert!(file_system.get_opened_files().is_empty());
     }
 }

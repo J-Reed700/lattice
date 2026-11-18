@@ -2,6 +2,7 @@
 
 pub mod atomic;
 pub mod confinement;
+pub mod owned_folder;
 pub mod path;
 pub mod removal;
 pub mod roots;

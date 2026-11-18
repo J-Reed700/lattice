@@ -309,12 +309,14 @@ impl Container {
         );
         tracing::debug!("LibraryModule initialized");
 
+        let web_archive = crate::features::web::di::build_archive()?;
         let file_ops = Arc::new(
             super::modules::FileOpsModule::new(
                 database.clone(),
                 core.clone(),
                 extraction_workers.clone(),
                 tag_service.clone(),
+                web_archive.clone(),
             )
             .await?,
         );
@@ -341,6 +343,7 @@ impl Container {
                 core.clone(),
                 embedding_runtime.clone(),
                 search.vector_search().clone(),
+                web_archive,
                 crate::features::indexing::di::IndexingShared {
                     query_cache: query_cache.clone(),
                     index_observer: summary_tier.trigger().clone(),

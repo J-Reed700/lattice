@@ -7,32 +7,21 @@ import { useApi } from '@/contexts/ApiContext';
 import { readingKeys, readSourceText } from '@/features/reading/hooks/readSourceFile';
 import { useEffectiveTheme } from '@/hooks/useApplyTheme';
 import type { ApiClient } from '@/lib/api';
+import type { SavedWebArticleDto } from '@/lib/bindings';
 import { openExternalUrl } from '@/utils/openExternalUrl';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 import { htmlReadingDocument } from './htmlReadingDocument';
 
-interface HTMLViewerProps {
-  htmlPath: string;
-  title?: string;
-  showTitle?: boolean;
-}
+type HTMLViewerProps =
+  | { htmlPath: string; title?: string; showTitle?: boolean }
+  | { article: SavedWebArticleDto; showTitle?: boolean };
 
 const EMPTY_LINKS: string[] = [];
 
-interface WebArchiveMetadata {
-  title?: string;
-  url?: string;
-  site_name?: string;
-  links?: string[];
-}
-
-interface ArchivedPage {
+interface LoadedPage {
   html: string;
   fallbackNotice: string | null;
-  originalUrl: string | null;
-  siteName: string | null;
-  links: string[];
 }
 
 const escapeHtml = (text: string) =>
@@ -43,48 +32,25 @@ const escapeHtml = (text: string) =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
-/** The saved page, or its markdown snapshot when the HTML is gone, with its archive metadata. */
-async function loadArchivedPage(htmlPath: string, api: ApiClient): Promise<ArchivedPage> {
-  const page: ArchivedPage = { html: '', fallbackNotice: null, originalUrl: null, siteName: null, links: [] };
+/** An HTML file, read as it is. */
+async function loadHtmlFile(htmlPath: string, api: ApiClient): Promise<LoadedPage> {
+  const result = await readSourceText(htmlPath, api);
+  if (!result.ok) throw new Error(result.error || 'Failed to load HTML');
+  return { html: result.data, fallbackNotice: null };
+}
 
-  const htmlResult = await readSourceText(htmlPath, api);
-  if (htmlResult.ok) {
-    page.html = htmlResult.data;
-  } else {
-    const lastSlashIndex = htmlPath.lastIndexOf('/');
-    const baseDir = lastSlashIndex >= 0 ? htmlPath.slice(0, lastSlashIndex) : htmlPath;
-    const fallbackCandidates = [`${baseDir}/article.md`, `${baseDir}/weblink.md`];
-
-    let fallbackMarkdown: string | null = null;
-    for (const candidate of fallbackCandidates) {
-      const fallbackResult = await readSourceText(candidate, api);
-      if (fallbackResult.ok) {
-        fallbackMarkdown = fallbackResult.data;
-        break;
-      }
-    }
-
-    if (!fallbackMarkdown) throw new Error(htmlResult.error || 'Failed to load HTML');
-    page.html = `<pre>${escapeHtml(fallbackMarkdown)}</pre>`;
-    page.fallbackNotice = 'Archived HTML missing. Showing markdown snapshot.';
+/** The saved page of an article, or its text when the page is gone or cannot be read. */
+async function loadSavedArticle(article: SavedWebArticleDto, api: ApiClient): Promise<LoadedPage> {
+  if (article.pagePath !== null) {
+    const page = await readSourceText(article.pagePath, api);
+    if (page.ok) return { html: page.data, fallbackNotice: null };
   }
-
-  if (htmlPath.endsWith('page.html')) {
-    const metadataPath = `${htmlPath.slice(0, -'page.html'.length)}metadata.json`;
-    const metadataResult = await readSourceText(metadataPath, api);
-    if (metadataResult.ok) {
-      try {
-        const metadata = JSON.parse(metadataResult.data) as WebArchiveMetadata;
-        if (typeof metadata.url === 'string' && metadata.url.length > 0) page.originalUrl = metadata.url;
-        if (typeof metadata.site_name === 'string' && metadata.site_name.length > 0) page.siteName = metadata.site_name;
-        if (Array.isArray(metadata.links)) page.links = metadata.links;
-      } catch (parseError) {
-        console.warn('Failed to parse metadata.json:', parseError);
-      }
-    }
-  }
-
-  return page;
+  const text = await readSourceText(article.textPath, api);
+  if (!text.ok) throw new Error(text.error || 'Failed to load HTML');
+  return {
+    html: `<pre>${escapeHtml(text.data)}</pre>`,
+    fallbackNotice: 'Archived HTML missing. Showing markdown snapshot.',
+  };
 }
 
 /**
@@ -93,28 +59,62 @@ async function loadArchivedPage(htmlPath: string, api: ApiClient): Promise<Archi
  * Security: Uses sandbox="allow-same-origin" to prevent script execution
  * while allowing styles and images to render.
  */
-export function HTMLViewer({ htmlPath, title, showTitle = false }: HTMLViewerProps) {
+export function HTMLViewer(props: HTMLViewerProps) {
   const api = useApi();
+  if ('article' in props) {
+    const { article } = props;
+    return (
+      <ReadingPage
+        readPath={article.pagePath ?? article.textPath}
+        load={() => loadSavedArticle(article, api)}
+        title={article.title}
+        showTitle={props.showTitle}
+        originalUrl={article.url}
+        links={article.links}
+      />
+    );
+  }
+  const { htmlPath } = props;
+  return (
+    <ReadingPage
+      readPath={htmlPath}
+      load={() => loadHtmlFile(htmlPath, api)}
+      title={props.title ?? null}
+      showTitle={props.showTitle}
+      originalUrl={null}
+      links={EMPTY_LINKS}
+    />
+  );
+}
+
+interface ReadingPageProps {
+  /** The file the page is read from; the query is keyed by it. */
+  readPath: string;
+  load: () => Promise<LoadedPage>;
+  title: string | null;
+  showTitle?: boolean;
+  originalUrl: string | null;
+  links: string[];
+}
+
+function ReadingPage({ readPath, load, title, showTitle = false, originalUrl, links }: ReadingPageProps) {
   const theme = useEffectiveTheme();
   const pageQuery = useQuery({
-    queryKey: readingKeys.archivedPage(htmlPath),
-    queryFn: () => loadArchivedPage(htmlPath, api),
+    queryKey: readingKeys.archivedPage(readPath),
+    queryFn: load,
     retry: false,
     staleTime: 0,
   });
   const page = pageQuery.data;
   const htmlContent = page?.html ?? '';
   const fallbackNotice = page?.fallbackNotice ?? null;
-  const originalUrl = page?.originalUrl ?? null;
-  const siteName = page?.siteName ?? null;
-  const links = page?.links ?? EMPTY_LINKS;
   const isLoading = pageQuery.isPending;
   const error = pageQuery.isError
     ? pageQuery.error instanceof Error ? pageQuery.error.message : 'Unknown error'
     : null;
   // The link list starts folded for every page.
   const [linksShownFor, setLinksShownFor] = useState<string | null>(null);
-  const showLinks = linksShownFor === htmlPath;
+  const showLinks = linksShownFor === readPath;
   const readingDocument = useMemo(() => htmlReadingDocument(htmlContent, theme), [htmlContent, theme]);
 
   if (isLoading) {
@@ -144,7 +144,7 @@ export function HTMLViewer({ htmlPath, title, showTitle = false }: HTMLViewerPro
           <h1 className="m-0 text-xl font-semibold text-[hsl(var(--text-primary))]">{title}</h1>
         </div>
       )}
-      {(originalUrl || siteName || links.length > 0) && (
+      {(originalUrl || links.length > 0) && (
         <div className="px-6 py-3 border-b bg-[hsl(var(--surface))]/10">
           <div className="flex flex-wrap items-center gap-3">
             {originalUrl && (
@@ -157,16 +157,11 @@ export function HTMLViewer({ htmlPath, title, showTitle = false }: HTMLViewerPro
                 Open Original URL
               </button>
             )}
-            {siteName && (
-              <span className="inline-flex items-center rounded-full border border-[hsl(var(--border-subtle))]/60 bg-[hsl(var(--surface))]/70 px-3 py-1 text-xs font-medium text-[hsl(var(--text-secondary))]">
-                {siteName}
-              </span>
-            )}
             {links.length > 0 && (
               <button
                 type="button"
                 className="inline-flex items-center gap-2 rounded-full border border-[hsl(var(--border-subtle))]/70 bg-[hsl(var(--surface))]/80 px-3 py-1 text-xs text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]"
-                onClick={() => setLinksShownFor(showLinks ? null : htmlPath)}
+                onClick={() => setLinksShownFor(showLinks ? null : readPath)}
               >
                 <Link2 size={12} />
                 {showLinks ? 'Hide' : 'Show'} links ({links.length})

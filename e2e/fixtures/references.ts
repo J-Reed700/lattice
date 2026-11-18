@@ -92,6 +92,7 @@ export async function installReferencesFixture(page: Page) {
     },
     list_journals: () => [],
     list_workspace_notes: () => ({ notes: [] }),
+    saved_web_article: () => null,
     read_file_content: (args) => {
       const found = state.passages.find(item => item.filePath === args.path) ?? savedPassages().find(item => item.filePath === args.path);
       if (!found) throw new Error(`No such file: ${String(args.path)}`);

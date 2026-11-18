@@ -4255,6 +4255,18 @@ async removeSourceKey(service: KeyServiceDto) : Promise<Result<SourcesStatusDto,
 }
 },
 /**
+ * The saved web article whose text file is `path`, with its page, title,
+ * address and links, or nothing when `path` is not one.
+ */
+async savedWebArticle(path: string) : Promise<Result<SavedWebArticleDto | null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:web|saved_web_article", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Settings → Sources: whether `value` is an address the setting `field`
  * accepts, by the rule the settings check applies on save.
  */
@@ -6491,7 +6503,7 @@ indexedAt: string;
  */
 wordCount: number;
 /**
- * True when the web archive owns the file: a saved web article
+ * True when the file is a saved web article's text in the web archive
  */
 web: boolean;
 /**
@@ -10773,6 +10785,26 @@ expectedRevision: number }
 export type SaveLearningRecallCardRequestDto = { operationId: string; programId: string; cardId: string; expectedContentRevision: number | null; format: LearningRecallCardFormat; content: LearningRecallContentDto; sourceVersionIds: string[]; changeReason: string }
 export type SaveLearningRuntimeProfileRequestDto = { operationId: string; programId: string; profileId: string; expectedRevision: number | null; name: string; engine: LearningContainerEngine; imageId: string; command: string[]; limits: LearningLabLimits }
 /**
+ * A saved web article's files and the facts the archive keeps about it.
+ */
+export type SavedWebArticleDto = {
+/**
+ * The article's text (`article.md`).
+ */
+textPath: string;
+/**
+ * The saved page (`page.html`), when it is still on disk.
+ */
+pagePath: string | null; title: string | null;
+/**
+ * The address the article was saved from.
+ */
+url: string | null;
+/**
+ * Outgoing links captured from the page.
+ */
+links: string[] }
+/**
  * Whether a row was scored.
  */
 export type ScoreStatus = "observed" | "insufficient_evidence"
@@ -12877,6 +12909,7 @@ export type CommandArgs = {
 	save_remote_auth_header_value: { server: RemoteServer; value?: string | null };
 	save_source_key: { service: KeyServiceDto; key: string };
 	save_text_file: { suggestedName: string; filters: FileFilterDto[]; contents: string };
+	saved_web_article: { path: string };
 	search_documents: { options: SearchOptions };
 	search_fast: { query: string; limit: number };
 	search_learning_sources: { request: SearchLearningSourcesRequestDto };
@@ -13344,6 +13377,7 @@ export type CommandResults = {
 	save_remote_auth_header_value: null;
 	save_source_key: SourcesStatusDto;
 	save_text_file: boolean;
+	saved_web_article: SavedWebArticleDto | null;
 	search_documents: EnhancedSearchResponse;
 	search_fast: ([string, number])[];
 	search_learning_sources: LearningSourceSearchResultDto[];

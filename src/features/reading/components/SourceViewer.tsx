@@ -7,6 +7,7 @@ import { ImageViewer } from '@/features/reading/components/viewers/ImageViewer';
 import { MarkdownViewer } from '@/features/reading/components/viewers/MarkdownViewer';
 import { PDFViewer } from '@/features/reading/components/viewers/PDFViewer';
 import { TextViewer } from '@/features/reading/components/viewers/TextViewer';
+import type { SavedWebArticleDto } from '@/lib/bindings';
 import type {
   PassageLocator,
   PassageMatchTier,
@@ -30,8 +31,8 @@ interface SourceViewerProps {
   initialLocator: PassageLocator | null;
   onLocationResolved: (_label: string) => void;
   onMatch: (_tier: PassageMatchTier) => void;
-  isWebArchiveArticle: boolean;
-  webArchiveHtmlPath: string | null;
+  /** The web archive's record of the file, when it is a saved article. */
+  savedArticle: SavedWebArticleDto | null;
   /** The web citation's view, when the source shows as a web article. */
   webArticle: ReactNode;
   onOpenPrimary: () => void;
@@ -52,8 +53,7 @@ export const SourceViewer = ({
   initialLocator,
   onLocationResolved,
   onMatch,
-  isWebArchiveArticle,
-  webArchiveHtmlPath,
+  savedArticle,
   webArticle,
   onOpenPrimary,
 }: SourceViewerProps) => {
@@ -119,8 +119,8 @@ export const SourceViewer = ({
   }
 
   // Web archive articles should render from captured HTML snapshot, not raw markdown text.
-  if (isWebArchiveArticle && webArchiveHtmlPath) {
-    return <HTMLViewer htmlPath={webArchiveHtmlPath} />;
+  if (savedArticle) {
+    return <HTMLViewer article={savedArticle} />;
   }
 
   // Route to appropriate viewer based on MIME type

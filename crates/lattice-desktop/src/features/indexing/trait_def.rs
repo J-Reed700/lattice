@@ -49,14 +49,6 @@ pub trait IndexStorageTrait: Send + Sync {
         path: &Path,
     ) -> crate::features::indexing::engine::error::Result<()>;
 
-    /// Store file metadata only.
-    async fn store_file_metadata_only(
-        &self,
-        path: &Path,
-        file_id: &str,
-        mime_type: &str,
-    ) -> crate::features::indexing::engine::error::Result<String>;
-
     /// Get count of indexed documents.
     async fn get_indexed_count(&self) -> crate::features::indexing::engine::error::Result<i64>;
 

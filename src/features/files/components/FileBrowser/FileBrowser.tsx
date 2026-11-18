@@ -167,15 +167,7 @@ export function FileBrowser() {
     setFocusedDocument(doc.id);
 
     if (doc.web) {
-      const { source } = fromDocumentMetadata(doc);
-      if (!isHttpUrl(doc.filePath)) {
-        const webOpen = await openDocumentFile(doc.id, api);
-        if (webOpen.ok && webOpen.data.action === 'render_internal') {
-          setPreviewSource({ ...source, filePath: webOpen.data.contentPath });
-          return;
-        }
-      }
-      setPreviewSource(source);
+      setPreviewSource(fromDocumentMetadata(doc).source);
       return;
     }
 

@@ -8,7 +8,7 @@ use crate::features::web::{WebArchiveServiceTrait, WebIngestionServiceTrait};
 use async_trait::async_trait;
 use lattice_core::application::contracts::web::CleanArticle;
 use lattice_core::application::ports::{EmbeddingPort, IngestedDocumentStorePort};
-use lattice_core::domain::ports::article_archive::ArticleArchive;
+use lattice_core::domain::ports::article_archive::{ArticleArchive, SavedArticle};
 use lattice_core::domain::value_objects::ContextualizedChunk;
 use lattice_core::shared::error::{AppError, Result};
 use std::fs;
@@ -25,6 +25,14 @@ impl ArticleArchive for MockWebArchiveService {
 
     fn owns(&self, path: &Path) -> bool {
         path.starts_with("/mock/web-archive")
+    }
+
+    fn is_saved_article(&self, _path: &Path) -> bool {
+        false
+    }
+
+    async fn saved_article(&self, _path: &Path) -> Option<SavedArticle> {
+        None
     }
 }
 

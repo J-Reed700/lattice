@@ -368,6 +368,7 @@ fn main() {
                     "get_sources_status",
                     "save_source_key",
                     "remove_source_key",
+                    "saved_web_article",
                     "check_sourcing_address",
                 ]),
             )
