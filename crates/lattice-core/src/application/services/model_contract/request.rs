@@ -173,6 +173,9 @@ pub struct GroundedRequest {
     /// Generation reservation, enforced on the request. Zero takes the
     /// planner's default for the model.
     pub(super) output_tokens: usize,
+    /// How many times the planner's reservation, `output_tokens` or its
+    /// default, this request is given. A larger send raises it.
+    pub(super) output_scale: usize,
     /// The answer may also use the input room the request leaves unused, so a
     /// reasoning model writing long structured output is not cut off by an
     /// estimate. `output_tokens` is then the least it is promised.
@@ -195,6 +198,7 @@ impl GroundedRequest {
             closing: String::new(),
             history: Vec::new(),
             output_tokens: 0,
+            output_scale: 1,
             output_fills_window: false,
             schema: None,
             call: CallOptions::default(),
@@ -235,6 +239,10 @@ impl GroundedRequest {
 
     pub fn output_tokens(&self) -> usize {
         self.output_tokens
+    }
+
+    pub fn output_scale(&self) -> usize {
+        self.output_scale
     }
 
     pub fn output_fills_window(&self) -> bool {

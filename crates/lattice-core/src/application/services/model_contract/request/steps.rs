@@ -65,10 +65,10 @@ impl GroundedRequest {
         request
     }
 
-    /// This request with its output room multiplied by `factor`.
+    /// This request with its output room, the planner's default when none was set, multiplied by `factor`.
     pub fn larger(&self, factor: usize) -> Self {
         let mut larger = self.clone();
-        larger.output_tokens = self.output_tokens.saturating_mul(factor);
+        larger.output_scale = self.output_scale.saturating_mul(factor);
         larger
     }
 }

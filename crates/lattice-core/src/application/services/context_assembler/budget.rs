@@ -44,6 +44,9 @@ pub struct ModelCapacity {
     pub context_tokens: usize,
     /// Explicit generation limit, when the caller has one.
     pub configured_output_limit: Option<usize>,
+    /// How many times the output reservation, configured or default, is asked
+    /// for: 1 is the plain reservation, 2 a send that follows a cut-off.
+    pub output_scale: usize,
     pub accounting: TokenAccounting,
 }
 
@@ -53,12 +56,18 @@ impl ModelCapacity {
             model_identity: model_identity.into(),
             context_tokens,
             configured_output_limit: None,
+            output_scale: 1,
             accounting: TokenAccounting::Estimated,
         }
     }
 
     pub fn with_output_limit(mut self, limit: usize) -> Self {
         self.configured_output_limit = Some(limit);
+        self
+    }
+
+    pub fn with_output_scale(mut self, scale: usize) -> Self {
+        self.output_scale = scale;
         self
     }
 
@@ -215,6 +224,7 @@ impl BudgetAllocation {
         let output_reserved = capacity
             .configured_output_limit
             .unwrap_or_else(|| default_output_reservation(total))
+            .saturating_mul(capacity.output_scale)
             // A configured limit larger than the window itself would leave no
             // input at all; clamp it rather than underflowing below.
             .min(total / 2);
@@ -561,6 +571,38 @@ mod tests {
                 .expect("plan");
         assert_eq!(allocation.output_reserved, 4096);
         assert!(allocation.input_budget < 8192);
+    }
+
+    #[test]
+    fn an_output_scale_multiplies_the_default_reservation() {
+        let plain = BudgetAllocation::plan(&capacity(8192), &fixed(0)).expect("plan");
+        let scaled =
+            BudgetAllocation::plan(&capacity(8192).with_output_scale(2), &fixed(0)).expect("plan");
+        assert_eq!(plain.output_reserved, 2048);
+        assert_eq!(scaled.output_reserved, 4096);
+    }
+
+    #[test]
+    fn an_output_scale_multiplies_a_configured_limit() {
+        let scaled = BudgetAllocation::plan(
+            &capacity(8192).with_output_limit(1024).with_output_scale(2),
+            &fixed(0),
+        )
+        .expect("plan");
+        assert_eq!(scaled.output_reserved, 2048);
+    }
+
+    #[test]
+    fn a_scaled_reservation_is_still_clamped_to_half_the_window() {
+        let default =
+            BudgetAllocation::plan(&capacity(8192).with_output_scale(4), &fixed(0)).expect("plan");
+        let configured = BudgetAllocation::plan(
+            &capacity(8192).with_output_limit(3000).with_output_scale(2),
+            &fixed(0),
+        )
+        .expect("plan");
+        assert_eq!(default.output_reserved, 4096);
+        assert_eq!(configured.output_reserved, 4096);
     }
 
     #[test]
