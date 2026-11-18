@@ -91,7 +91,7 @@ fn reply(text: &str) -> CompletionResponse {
     CompletionResponse::from_text(text)
 }
 
-const READING: &str = r#"{"entries":[{"of":"p1","keep":["u1"]},{"of":"p2","keep":["u1"]},{"of":"p3","keep":["u1"]},{"of":"p4","keep":[]}]}"#;
+const READING: &str = "p1: u1\np2: u1\np3: u1";
 const NOTES: &str = "[s2] The roof was mended in 1851.\n[s5] The bridge opened on 1932-05-01 to traffic.\n[s7] A toll of two pence was charged from the start.\n[s9] -";
 const ANSWER: &str = "The roof was mended in 1851 [s2]. The bridge opened on 1932-05-01 [s5].";
 
@@ -302,12 +302,7 @@ async fn a_safety_filter_that_stops_two_empty_replies_says_so() {
 
 #[tokio::test]
 async fn a_reading_that_finds_nothing_asks_for_a_search_in_its_place() {
-    let model = Model::new([
-        reply(
-            r#"{"entries":[{"of":"p1","keep":[]},{"of":"p2","keep":[]},{"of":"p3","keep":[]},{"of":"p4","keep":[]}]}"#,
-        ),
-        reply(ANSWER),
-    ]);
+    let model = Model::new([reply("none"), reply(ANSWER)]);
     let run = grounded(&model).await;
     assert_eq!(run.outcome.expect("an answer").response, ANSWER);
     let requests = model.requests();
@@ -398,12 +393,7 @@ async fn a_reading_the_provider_fails_is_taken_back_and_the_answer_asked_for_as_
 #[tokio::test]
 async fn the_writer_is_given_the_notes_as_kept_and_the_turn_record_shows_them() {
     let answer = "The bridge opened on 1932-05-01 [s5]. The parish paid for the roof [s2].";
-    let model = Model::new([
-        reply(
-            r#"{"entries":[{"of":"p1","keep":["u2"]},{"of":"p2","keep":["u1"]},{"of":"p3","keep":[]},{"of":"p4","keep":[]}]}"#,
-        ),
-        reply(answer),
-    ]);
+    let model = Model::new([reply("p1: u2\np2: u1"), reply(answer)]);
     let run = grounded(&model).await;
     assert_eq!(run.outcome.as_ref().expect("an answer").response, answer);
     let requests = model.requests();

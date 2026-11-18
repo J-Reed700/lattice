@@ -232,8 +232,9 @@ pub(crate) fn new_api_token() -> String {
 /// `ServerEvent` for the sidecar's life (the event channel is bounded, so an
 /// unread receiver would stop the output), logs each line
 /// under `target = "llama_server"`, keeps the startup `tail`, clears the child
-/// slot on `Terminated`, and fires the returned oneshot once: `Ok(())` at the
-/// readiness needle, or how the sidecar ended before it.
+/// slot on `Terminated` (an error if it was still occupied, a stop if not),
+/// and fires the returned oneshot once: `Ok(())` at the readiness needle, or
+/// how the sidecar ended before it.
 pub(super) fn spawn_event_drain(
     background: &lattice_core::shared::runtime::background::BackgroundTasks,
     rx: Receiver<ServerEvent>,
@@ -306,6 +307,7 @@ pub(super) fn spawn_event_drain(
                     }
                 }
                 ServerEvent::Terminated(payload) => {
+                    let died_on_its_own = child_arc.lock().take().is_some();
                     if readiness_pending {
                         signal_ready(
                             &mut ready_tx,
@@ -314,7 +316,7 @@ pub(super) fn spawn_event_drain(
                                 signal: payload.signal,
                             }),
                         );
-                    } else {
+                    } else if died_on_its_own {
                         tracing::error!(
                             target: "llama_server",
                             endpoint = %endpoint,
@@ -322,15 +324,17 @@ pub(super) fn spawn_event_drain(
                             signal = ?payload.signal,
                             "llama-server sidecar terminated unexpectedly"
                         );
+                    } else {
+                        tracing::debug!(
+                            target: "llama_server",
+                            endpoint = %endpoint,
+                            code = ?payload.code,
+                            signal = ?payload.signal,
+                            "llama-server sidecar exited after a stop"
+                        );
                     }
-                    // Clear the child slot so kill_all at shutdown
-                    // doesn't try to kill a dead PID. The Arc itself
-                    // stays alive — owned by SidecarHandle — but the
-                    // ServerProcess inside is gone. An empty slot is also
-                    // what `is_running` reads, so the role caches treat the
-                    // cached port as a miss and the next request starts a
-                    // new server instead of failing against this dead one.
-                    let _ = child_arc.lock().take();
+                    // The slot is empty now, so kill_all skips a dead PID and
+                    // `is_running` reads false.
                     // Channel will close after this; loop exits.
                 }
             }

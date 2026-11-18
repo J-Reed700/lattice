@@ -146,12 +146,8 @@ async fn a_note_is_the_chosen_sentences_written_from_the_passage() {
 
 #[tokio::test]
 async fn a_note_holds_its_sentences_in_the_passages_own_order() {
-    let model = ScriptedModel::new().on_request::<PassageNotes>(|_, _| {
-        reply(
-            r#"{"entries":[{"of":"p1","keep":[]},{"of":"p2","keep":[]},{"of":"p3","keep":["u2","u1","u2"]},{"of":"p4","keep":[]}]}"#
-                .into(),
-        )
-    });
+    let model =
+        ScriptedModel::new().on_request::<PassageNotes>(|_, _| reply("p3: u2 u1 u2".into()));
     let notes = read(&model).await.expect("notes");
     assert_eq!(
         notes.lines.get(&3),
@@ -161,18 +157,14 @@ async fn a_note_holds_its_sentences_in_the_passages_own_order() {
 
 #[tokio::test]
 async fn a_sentence_the_passage_does_not_have_makes_no_note() {
-    let model = ScriptedModel::new().on_request::<PassageNotes>(|_, _| {
-        reply(
-            r#"{"entries":[{"of":"p1","keep":["u1"]},{"of":"p2","keep":["u2"]},{"of":"p3","keep":[]},{"of":"p4","keep":[]}]}"#
-                .into(),
-        )
-    });
+    let model =
+        ScriptedModel::new().on_request::<PassageNotes>(|_, _| reply("p1: u1\np2: u2".into()));
     let notes = read(&model).await.expect("notes");
     assert_eq!(notes.lines.get(&1), Some(&Some(SLUICE_FIRST.to_string())));
     assert_eq!(
         notes.lines.get(&2),
-        Some(&None),
-        "the weir has one sentence: u2 is another passage's"
+        None,
+        "the weir has one sentence, so its u2 cannot be placed and the weir is not judged"
     );
 }
 

@@ -789,13 +789,21 @@ async fn fits(llm: &dyn LLMPort, request: &GroundedRequest) -> bool {
         .is_ok_and(|measured| measured.fits())
 }
 
-/// The step `sent` answers with twice the output room, when the backend has the room.
+/// The step `sent` answers with twice the output room, when the backend has the room
+/// and the planner's cap leaves the doubled room larger than the room it had.
 async fn larger_if_room(llm: &dyn LLMPort, sent: &Sent) -> Option<Followup> {
     if sent.request.output_fills_window() {
         return None;
     }
     let larger = at_its_largest(&sent.request);
-    fits(llm, &larger).await.then_some(Followup(larger))
+    let grows = matches!(
+        (
+            grounded_generation::output_room(llm, &larger),
+            grounded_generation::output_room(llm, &sent.request),
+        ),
+        (Ok(doubled), Ok(had)) if doubled > had
+    );
+    (grows && fits(llm, &larger).await).then_some(Followup(larger))
 }
 
 /// The step that asks again after `sent`, quoting `told`; restated when the reply does not fit.

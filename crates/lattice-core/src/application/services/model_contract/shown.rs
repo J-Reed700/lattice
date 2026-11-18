@@ -77,7 +77,7 @@ impl Name {
 
     /// The name a field or an argument holds, written bare or in the square
     /// brackets it is shown in.
-    fn pointed(written: &str) -> Option<Self> {
+    pub(super) fn pointed(written: &str) -> Option<Self> {
         let written = written.trim();
         let bare = written
             .strip_prefix('[')
