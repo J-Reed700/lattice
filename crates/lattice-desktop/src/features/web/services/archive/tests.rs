@@ -385,3 +385,67 @@ fn owns_an_article_reached_through_a_linked_folder() {
     assert!(service.owns(&article));
     assert!(service.is_saved_article(&article));
 }
+
+/// An archive holding a folder linked to one outside it, and an article in
+/// that outside folder. Gives the archive, the article's path spelled through
+/// the link, and its text where it really is.
+fn archive_linking_out(temp: &Path) -> (WebArchiveService, PathBuf, PathBuf) {
+    let base = temp.join("web-archive");
+    std::fs::create_dir_all(&base).expect("archive folder");
+    let outside = temp.join("outside");
+    let text = lay_out_article(&outside.join("essay-1"), Some(FULL_METADATA), true);
+    link_dir(&outside, &base.join("linked"));
+    let through_link = base.join("linked").join("essay-1").join("article.md");
+    (WebArchiveService::with_base_dir(base), through_link, text)
+}
+
+#[tokio::test]
+async fn an_article_reached_through_a_link_out_of_the_archive_gives_no_article() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let (service, through_link, _) = archive_linking_out(temp.path());
+
+    assert_eq!(service.saved_article(&through_link).await, None);
+}
+
+#[tokio::test]
+async fn deleting_an_article_reached_through_a_link_out_of_the_archive_leaves_it() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let (service, through_link, text) = archive_linking_out(temp.path());
+
+    assert!(service.delete_article(&through_link).await.is_err());
+    assert!(text.is_file(), "the outside article is still there");
+}
+
+#[tokio::test]
+async fn deleting_never_removes_the_archive_itself() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let base = temp.path().join("web-archive");
+    let text = lay_out_article(&base.join("example.com").join("essay-1"), None, true);
+    let loose = base.join("article.md");
+    std::fs::write(&loose, "a loose text").expect("write loose text");
+    let service = WebArchiveService::with_base_dir(base.clone());
+
+    assert!(service.delete_article(&loose).await.is_err());
+    assert!(service.delete_article(&base).await.is_err());
+    assert!(text.is_file(), "the archive still holds its articles");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_page_and_metadata_linked_from_outside_the_archive_are_left_out() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let base = temp.path().join("web-archive");
+    let dir = base.join("example.com").join("essay-1");
+    let text = lay_out_article(&dir, None, false);
+    let outside = temp.path().join("outside");
+    lay_out_article(&outside, Some(FULL_METADATA), true);
+    for name in ["page.html", "metadata.json"] {
+        std::os::unix::fs::symlink(outside.join(name), dir.join(name)).expect("link out");
+    }
+    let service = WebArchiveService::with_base_dir(base);
+
+    let article = service.saved_article(&text).await.expect("a saved article");
+
+    assert_eq!(article.page, None);
+    assert_eq!(article.title, None);
+}
