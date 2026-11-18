@@ -310,6 +310,18 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
       return;
     }
 
+    // A saved article's page opens in the browser; without it, the address it was saved from.
+    if (savedArticle) {
+      const page = savedArticle.pagePath ? await openSourcePath(savedArticle.pagePath, api) : null;
+      if (page?.ok) return;
+      const urlFailure = savedArticle.url
+        ? await whyExternalUrlDidNotOpen(savedArticle.url)
+        : 'It has no saved page or web address.';
+      if (urlFailure === null) return;
+      toast.error("Couldn't open file", { message: page && !page.ok ? page.error : urlFailure });
+      return;
+    }
+
     if (hasDocumentId) {
       const byId = await openSourceDocument(source.documentId, api);
       if (!byId.ok) {
