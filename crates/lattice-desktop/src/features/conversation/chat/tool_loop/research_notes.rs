@@ -6,20 +6,18 @@
 //! transcript, so an answer written after condensing cites as one written
 //! before. Done at most twice a turn.
 
+use super::choosing::choosing_call;
 use super::clock::TurnClock;
 use crate::features::conversation::chat::cancellation::cancelled_error;
 use crate::features::conversation::chat::retrieval::{Legend, Passage};
 use crate::features::conversation::chat::turn_record::{TurnRecorder, TurnStepKind};
-use lattice_core::application::ports::llm_port::{
-    CompletionInput, CompletionRequest, ContentPart, SamplingOverride,
-};
+use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest, ContentPart};
 use lattice_core::application::ports::LLMPort;
-use lattice_core::application::services::grounded_generation::CallOptions;
 use lattice_core::application::services::model_contract::ask::{
     ask_each, Alone, Answered, Plain, Says, Settled,
 };
 use lattice_core::application::services::model_contract::legacy;
-use lattice_core::application::services::model_contract::shape::{Authored, Each, Fields, Form};
+use lattice_core::application::services::model_contract::shape::Keeps;
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Kind, Picked, Scope, Showing, Told,
 };
@@ -43,7 +41,7 @@ pub(super) const CONDENSE_AT_WINDOW_SHARE: f64 = 0.6;
 pub(super) const MAX_CONDENSES_PER_TURN: usize = 2;
 
 /// What the notes request tells the model.
-pub(super) const CONDENSE_INSTRUCTION: &str = "Your context window is nearly full. Before you continue, choose from all the tool results you have so far the sentences that make up compact research notes. Keep every sentence with a fact, number, date, name, short quotation or URL that could matter to my question. Drop navigation text, boilerplate, repetition and anything that does not bear on my question. Do not answer my question yet. Answer with an entries list: each entry names a result in `of` by the handle shown beside it, and lists in `keep` the handles of that result's sentences to keep, which may be none.";
+pub(super) const CONDENSE_INSTRUCTION: &str = "Your context window is nearly full. Before you continue, choose from all the tool results you have so far the sentences that make up compact research notes. Keep every sentence with a fact, number, date, name, short quotation or URL that could matter to my question. Drop navigation text, boilerplate, repetition and anything that does not bear on my question. Do not answer my question yet. Answer with one line for each result that has sentences to keep: the result's handle, a colon, then the handle of each of those sentences, written out in full and separated by spaces. Leave out a result with nothing to keep. If nothing is worth keeping, answer `none`. Write nothing else.";
 
 /// Opens the message the notes replace the results with. Also how a later
 /// condensing recognises the notes as results.
@@ -198,26 +196,8 @@ struct Input {
     results: Vec<Source>,
 }
 
-/// The sentences of one result the notes keep.
-#[derive(Debug, Clone, PartialEq)]
-struct Kept {
-    sentences: Vec<Picked<Sentence>>,
-}
-
-impl Authored for Kept {
-    fn form() -> Form {
-        Form::new().cite_own::<Sentence>("keep")
-    }
-
-    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
-        Some(Self {
-            sentences: fields.cite_own("keep"),
-        })
-    }
-}
-
 impl Answered for ResearchNotes {
-    type Answer = Each<Source, Kept>;
+    type Answer = Keeps<Source, Sentence>;
     const ALONE: Alone = Alone::Pending;
 
     fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
@@ -401,14 +381,13 @@ fn question_of(input: &[CompletionInput], loop_start: usize) -> String {
 /// whose answer did not settle, is kept whole. Each block is a passage of the
 /// notes, and the source's legend lines follow what is kept of it. With the
 /// block comes the source as the notes now hold it, when it kept a sentence.
-fn block(source: &Source, kept: Option<&Settled<Kept>>) -> (String, Option<Source>) {
+fn block(
+    source: &Source,
+    kept: Option<&Settled<Vec<Picked<Sentence>>>>,
+) -> (String, Option<Source>) {
     let lines: Vec<&str> = match kept {
         Some(Settled::Answered(kept)) => {
-            let mut at: Vec<usize> = kept
-                .sentences
-                .iter()
-                .map(|picked| picked.reference)
-                .collect();
+            let mut at: Vec<usize> = kept.iter().map(|picked| picked.reference).collect();
             at.sort_unstable();
             at.dedup();
             at.into_iter()
@@ -457,7 +436,10 @@ fn block(source: &Source, kept: Option<&Settled<Kept>>) -> (String, Option<Sourc
 
 /// The notes: each result's kept sentences, in the order of the results, and
 /// the sources the notes now hold.
-fn notes_of(sources: &[Source], settled: Vec<Settled<Kept>>) -> (String, Vec<Source>) {
+fn notes_of(
+    sources: &[Source],
+    settled: Vec<Settled<Vec<Picked<Sentence>>>>,
+) -> (String, Vec<Source>) {
     let mut settled = settled.into_iter();
     let mut blocks = Vec::new();
     let mut written = Vec::new();
@@ -551,23 +533,14 @@ async fn choose(
     question: &Told<String>,
     cancel: &CancellationToken,
     clock: &TurnClock,
-) -> Result<Option<Vec<Settled<Kept>>>> {
+) -> Result<Option<Vec<Settled<Vec<Picked<Sentence>>>>>> {
     let remaining = clock.remaining()?;
     let asked: Vec<Source> = sources
         .iter()
         .filter(|source| !source.sentences.is_empty())
         .cloned()
         .collect();
-    let call = CallOptions {
-        priority: request.priority,
-        cancel: request.cancel.clone(),
-        cache_key: request.cache_key.clone(),
-        // Notes are a selection, not a composition: the same results should
-        // condense the same way every time.
-        sampling: Some(SamplingOverride::deterministic()),
-        time_budget: Some(remaining),
-        ..Default::default()
-    };
+    let call = choosing_call(request, remaining);
     let mut scope = Scope::for_question();
     let settled = tokio::select! {
         biased;
@@ -615,8 +588,10 @@ pub(super) fn shown_in(request: &CompletionRequest) -> String {
 #[cfg(test)]
 type ShownResult = (String, String, Vec<(String, String)>);
 
-/// An answer for the results the prompt shows: an entry for each whose
-/// heading `answered` takes, keeping the sentences `keep` takes.
+/// An answer for the results the prompt shows, as lines: one for each result
+/// whose heading `answered` takes and that keeps a sentence `keep` takes. A
+/// result `answered` does not take gets a line naming a sentence one past its
+/// last, which the reading cannot place; `none` when no result has a line.
 #[cfg(test)]
 pub(super) fn scripted_answer(
     prompt: &str,
@@ -636,19 +611,25 @@ pub(super) fn scripted_answer(
             }
         }
     }
-    let entries: Vec<serde_json::Value> = shown
+    let lines: Vec<String> = shown
         .iter()
-        .filter(|(_, heading, _)| answered(heading))
-        .map(|(handle, _, sentences)| {
-            let kept: Vec<&String> = sentences
+        .filter_map(|(handle, heading, sentences)| {
+            if !answered(heading) {
+                return Some(format!("{handle}: u{}", sentences.len() + 1));
+            }
+            let kept: Vec<&str> = sentences
                 .iter()
                 .filter(|(_, text)| keep(text))
-                .map(|(handle, _)| handle)
+                .map(|(handle, _)| handle.as_str())
                 .collect();
-            serde_json::json!({ "of": handle, "keep": kept })
+            (!kept.is_empty()).then(|| format!("{handle}: {}", kept.join(" ")))
         })
         .collect();
-    serde_json::json!({ "entries": entries }).to_string()
+    if lines.is_empty() {
+        "none".to_owned()
+    } else {
+        lines.join("\n")
+    }
 }
 
 #[cfg(test)]
