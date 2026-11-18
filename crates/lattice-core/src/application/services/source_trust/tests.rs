@@ -24,6 +24,7 @@ struct Scripted {
     window: usize,
     answers: Mutex<VecDeque<String>>,
     sent: Mutex<Vec<CompletionRequest>>,
+    holds: bool,
 }
 
 impl Scripted {
@@ -32,6 +33,15 @@ impl Scripted {
             window,
             answers: Mutex::new(answers.iter().map(|a| (*a).to_owned()).collect()),
             sent: Mutex::new(Vec::new()),
+            holds: false,
+        }
+    }
+
+    /// A backend that holds an answer to its schema.
+    fn enforcing(self) -> Self {
+        Self {
+            holds: true,
+            ..self
         }
     }
 
@@ -71,7 +81,7 @@ impl LLMPort for Scripted {
         &self,
         _schema: &crate::application::services::model_contract::shape::Schema,
     ) -> bool {
-        false
+        self.holds
     }
 }
 
@@ -101,6 +111,23 @@ fn page(title: &str) -> ProvenanceSignals {
 
 const PSF: &str = r#"{"standing":"institutional","publisher":{"kind":"named","name":"Python Software Foundation","publisher_kind":"vendor"},"editorial":"editorial","nature":"documentation","flags":[],"reasons":[{"code":"publisher_metadata","text":"JSON-LD publisher: Python Software Foundation"}]}"#;
 const NO_PUBLISHER: &str = r#"{"standing":"institutional","publisher":{"kind":"none"},"editorial":"editorial","nature":"documentation","flags":[],"reasons":[{"code":"origin_identity","text":"python.org"}]}"#;
+
+#[tokio::test]
+async fn an_enforcing_backend_is_asked_for_at_least_one_reason() {
+    let llm = Scripted::new(WINDOW, &[PSF]).enforcing();
+    judge_standing(
+        &llm,
+        &page("asyncio"),
+        &ContentEvidence::default(),
+        TrackRecord { right: 0, wrong: 0 },
+    )
+    .await
+    .unwrap();
+
+    let sent = llm.sent.lock().unwrap();
+    let schema = sent[0].schema().unwrap().as_json();
+    assert_eq!(schema["properties"]["reasons"]["minItems"], 1, "{schema}");
+}
 
 #[tokio::test]
 async fn standing_is_judged_with_a_schema_and_keyed_by_the_signals() {

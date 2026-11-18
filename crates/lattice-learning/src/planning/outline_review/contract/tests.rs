@@ -5,7 +5,7 @@ use futures::future::BoxFuture;
 use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};
 use lattice_core::application::services::model_contract::ask::{ask_new, Plain};
 use lattice_core::application::services::model_contract::shape::{
-    Ended, Found, Listed, Pointers, Written,
+    Ended, Found, Held, Listed, Written,
 };
 use lattice_core::application::services::model_contract::shown::Scope;
 use lattice_core::application::services::model_contract::test_support::samples::schema_of;
@@ -99,7 +99,7 @@ fn the_request_shows_open_findings_and_places_by_handle() {
 
 #[test]
 fn the_schema_points_at_what_is_shown_and_asks_for_no_claim() {
-    let schema = schema_of::<OutlineReview>(&input(&mut Marks::new()), Pointers::Enum).unwrap();
+    let schema = schema_of::<OutlineReview>(&input(&mut Marks::new()), Held::Enums).unwrap();
     let written = schema.as_json().to_string();
     for named in [
         "\"f1\"",

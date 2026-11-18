@@ -18,7 +18,9 @@ use lattice_core::application::services::model_contract::ask::{
     ask, Alone, Answered, Refusal, Says, Settled,
 };
 use lattice_core::application::services::model_contract::packed::Packed;
-use lattice_core::application::services::model_contract::shape::{self, Authored, Fields, Form};
+use lattice_core::application::services::model_contract::shape::{
+    self, Authored, Count, Fields, Form,
+};
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Internal, Kind, Picked, Scope, Showing, Told,
 };
@@ -351,6 +353,8 @@ pub async fn generate_activity(
 }
 
 struct PracticalActivity;
+
+const RUBRIC: Count = Count("rubric");
 impl Contract for PracticalActivity {
     const ID: ContractId = ContractId::new("practical-activity");
     type Input = ActivityInput;
@@ -433,7 +437,7 @@ impl Authored for PracticalDraft {
             .text("title")
             .text("brief")
             .cite::<SourceHeading>("sources")
-            .list::<RubricRow>("rubric")
+            .counted::<RubricRow>("rubric", &RUBRIC)
             .list::<DraftFile>("starterFiles")
             .list::<DraftFile>("referenceFiles")
     }
@@ -497,6 +501,7 @@ impl Answered for PracticalActivity {
     const ALONE: Alone = Alone::Fails;
 
     fn says(input: &ActivityInput, showing: &mut Showing<'_>) -> Result<Says> {
+        showing.asks(&RUBRIC, 1..);
         let groups = by_source(input.passages.iter());
         let headings: Vec<SourceHeading> = groups
             .iter()

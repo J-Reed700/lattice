@@ -119,6 +119,19 @@ async fn a_search_is_refused_only_when_no_terms_are_left_once_its_sites_are_lift
     );
 }
 
+#[tokio::test]
+async fn arguments_that_are_not_a_search_are_answered_with_what_did_not_parse() {
+    let web = Recording::default();
+    let (mut scope, mut research) = (Scope::for_question(), Research::default());
+    let need =
+        json!({"query": "tide table revision schedule", "kind": "web", "alternatives": null});
+    let refused = call(&web, SEARCH, &need, &mut scope, &mut research).await;
+    assert!(refused.starts_with("Search not run"), "{refused}");
+    assert!(refused.contains("sequence"), "{refused}");
+    assert!(!refused.contains("give a query"), "{refused}");
+    assert!(web.needs.lock().unwrap().is_empty());
+}
+
 /// Answers each site's search with one page on it, and fails the sites in
 /// `down`, as a provider failing for one scoped search would.
 struct PerSite {

@@ -8,7 +8,7 @@ use futures::future::BoxFuture;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::model_contract::packed::Packed;
-use lattice_core::application::services::model_contract::shape::Pointers;
+use lattice_core::application::services::model_contract::shape::Held;
 use lattice_core::application::services::model_contract::shown::Told;
 use lattice_core::application::services::model_contract::test_support::samples::schema_of;
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
@@ -285,7 +285,7 @@ fn the_tasks_schema_bounds_no_text_but_a_blank_one() {
         }],
         passages: Packed::default(),
     };
-    let schema = schema_of::<DiagnosticTasks>(&input, Pointers::Enum).unwrap();
+    let schema = schema_of::<DiagnosticTasks>(&input, Held::Enums).unwrap();
     let caps = crate::content_caps_tests::text_caps(schema.as_json());
     assert!(caps.is_empty(), "{caps:?}");
 }
@@ -332,7 +332,7 @@ fn the_evaluator_writes_its_grounds_before_its_signal() {
     let input = EvaluationInput {
         prompts: vec![harbour_prompt()],
     };
-    let schema = schema_of::<DiagnosticEvaluation>(&input, Pointers::Enum).unwrap();
+    let schema = schema_of::<DiagnosticEvaluation>(&input, Held::Enums).unwrap();
     let items = &schema.as_json()["properties"]["entries"]["items"];
     assert_eq!(
         items["required"],
@@ -350,7 +350,7 @@ fn the_evaluator_bounds_no_text_but_a_blank_one() {
     let input = EvaluationInput {
         prompts: vec![harbour_prompt()],
     };
-    let schema = schema_of::<DiagnosticEvaluation>(&input, Pointers::Enum).unwrap();
+    let schema = schema_of::<DiagnosticEvaluation>(&input, Held::Enums).unwrap();
     let caps = crate::content_caps_tests::text_caps(schema.as_json());
     assert!(caps.is_empty(), "{caps:?}");
 }

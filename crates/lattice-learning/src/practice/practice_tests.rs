@@ -731,7 +731,7 @@ mod contracts {
     };
     use futures::future::BoxFuture;
     use lattice_core::application::services::model_contract::packed::Packed;
-    use lattice_core::application::services::model_contract::shape::{Each, Pointers, Shape};
+    use lattice_core::application::services::model_contract::shape::{Each, Held, Shape};
     use lattice_core::application::services::model_contract::shown::{Scope, Told};
     use lattice_core::application::services::model_contract::test_support::snapshot::rendered;
     use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
@@ -1179,8 +1179,8 @@ mod contracts {
         let mut scope = Scope::for_question();
         let mut showing = scope.request();
         showing.show(&criteria).expect("the criteria are shown");
-        let schema = <Each<Criterion, Verdict> as Shape>::schema(&showing, Pointers::Plain)
-            .expect("a schema");
+        let schema =
+            <Each<Criterion, Verdict> as Shape>::schema(&showing, Held::Plain).expect("a schema");
         assert_eq!(
             schema
                 .as_json()

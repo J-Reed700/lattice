@@ -673,8 +673,8 @@ async fn research<'a>(
     let mut needs: Vec<(web_research::PlannedNeed, Option<usize>)> = Vec::new();
     for hint in hints {
         match web_research::PlannedNeed::web(hint.clone()).searches() {
-            Some(searches) => needs.extend(searches.into_iter().map(|need| (need, None))),
-            None => tracing::warn!(
+            Ok(searches) => needs.extend(searches.into_iter().map(|need| (need, None))),
+            Err(_) => tracing::warn!(
                 chars = hint.chars().count(),
                 "A research hint is not a search: no terms are left once any site: operators are lifted out"
             ),

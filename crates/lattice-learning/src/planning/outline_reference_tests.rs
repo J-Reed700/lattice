@@ -1184,9 +1184,9 @@ async fn a_plan_longer_than_the_course_depth_keeps_its_first_subtopics() -> Resu
     Ok(())
 }
 
-/// A subtopic the app cannot use is left out on its own; the others stand.
+/// A subtopic left with no usable search is left out on its own; the others stand.
 #[tokio::test]
-async fn a_subtopic_with_an_unusable_search_is_left_out_and_the_others_stand() -> Result<()> {
+async fn a_subtopic_with_no_usable_search_is_left_out_and_the_others_stand() -> Result<()> {
     let request = request(LearningCourseDepth::Focused);
     let unusable = json!({"title":"Harbour gates","needs":[crate::references::web_research::written_need(&json!({
         "query": "harbour gate opening times", "kind": "web", "after": "last spring"
@@ -1197,6 +1197,29 @@ async fn a_subtopic_with_an_unusable_search_is_left_out_and_the_others_stand() -
     ]);
     let plan = outline_references::plan(&llm, &request, &[], &OutlineProgress::default()).await?;
     assert_eq!(plan.subtopic_titles(), ["Tide tables"]);
+    Ok(())
+}
+
+/// A search the app cannot run costs only itself; its subtopic keeps the searches that can run.
+#[tokio::test]
+async fn an_unusable_search_is_dropped_alone_and_its_subtopic_keeps_the_rest() -> Result<()> {
+    let request = request(LearningCourseDepth::Focused);
+    let written = crate::references::web_research::written_need;
+    let llm = model(vec![json!({"items":[{"title":"Harbour gates","needs":[
+        written(&json!({"query": "harbour gate opening times", "kind": "web"})),
+        written(&json!({
+            "query": "harbour gate maintenance log", "kind": "web", "site": "the harbour office pages"
+        }))
+    ]}]})]);
+    let plan = outline_references::plan(&llm, &request, &[], &OutlineProgress::default()).await?;
+    assert_eq!(plan.subtopic_titles(), ["Harbour gates"]);
+    let queries: Vec<&str> = plan.subtopics[0]
+        .needs
+        .iter()
+        .map(|need| need.query.as_str())
+        .collect();
+    assert_eq!(queries, ["harbour gate opening times"]);
+    assert_eq!(llm.prompts.lock().unwrap().len(), 1, "no second ask");
     Ok(())
 }
 
@@ -1329,6 +1352,90 @@ async fn the_reference_plan_schema_bounds_no_text_but_a_blank_one() -> Result<()
     for schema in &schemas {
         let caps = crate::content_caps_tests::text_caps(schema);
         assert!(caps.is_empty(), "{caps:?}");
+    }
+    Ok(())
+}
+
+/// A backend that holds every answer to its schema.
+struct Enforcing<'a>(&'a dyn lattice_core::application::ports::LLMPort);
+
+#[async_trait::async_trait]
+impl lattice_core::application::ports::LLMPort for Enforcing<'_> {
+    async fn complete(
+        &self,
+        request: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        self.0.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        self.0.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.0.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.0.max_context_tokens()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        self.0.is_ready().await
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        true
+    }
+}
+
+#[tokio::test]
+async fn the_reference_plan_schema_holds_the_subtopics_to_the_modules_the_depth_asks() -> Result<()>
+{
+    let request = request(LearningCourseDepth::Focused);
+    let (_, max_modules, _, _) = LearningCourseDepth::bounds(request.course_depth);
+    let llm = model(vec![plan_output(&[(
+        "Randomized comparison",
+        &["randomized controlled trial design documentation"],
+    )])]);
+    let enforcing = Enforcing(&llm);
+    let recording = crate::content_caps_tests::Recording::new(&enforcing);
+    outline_references::plan(&recording, &request, &[], &OutlineProgress::default()).await?;
+    let schemas = recording.schemas_naming("needs");
+    assert!(!schemas.is_empty(), "the plan's schema was sent");
+    for schema in &schemas {
+        let subtopics = &schema["properties"]["items"];
+        assert_eq!(subtopics["minItems"], json!(1), "{schema}");
+        assert_eq!(subtopics["maxItems"], json!(max_modules), "{schema}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_reference_plan_schema_lists_the_registries_a_package_search_may_name() -> Result<()> {
+    fn ecosystem(value: &Value) -> Option<&Value> {
+        match value {
+            Value::Object(fields) => fields
+                .get("properties")
+                .and_then(|properties| properties.get("ecosystem"))
+                .or_else(|| fields.values().find_map(ecosystem)),
+            Value::Array(items) => items.iter().find_map(ecosystem),
+            _ => None,
+        }
+    }
+    let request = request(LearningCourseDepth::Focused);
+    let llm = model(vec![plan_output(&[(
+        "Randomized comparison",
+        &["randomized controlled trial design documentation"],
+    )])]);
+    let recording = crate::content_caps_tests::Recording::new(&llm);
+    outline_references::plan(&recording, &request, &[], &OutlineProgress::default()).await?;
+    let schemas = recording.schemas_naming("needs");
+    assert!(!schemas.is_empty(), "the plan's schema was sent");
+    for schema in &schemas {
+        let property = ecosystem(schema).expect("an ecosystem property");
+        assert_eq!(
+            property["enum"],
+            json!(["none", "crates", "pypi", "npm", "nuget", "rubygems", "maven", "go"])
+        );
     }
     Ok(())
 }

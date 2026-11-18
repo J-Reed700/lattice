@@ -7,8 +7,9 @@
 //!
 //! Every shape with a schema is written in one dialect, the subset every
 //! backend's translator enforces as written: closed objects, every property required,
-//! string `enum`s, lists with no count keyword but `minItems: 1`, `anyOf`
-//! only between closed objects. No optional property, no nullable, no
+//! string `enum`s, lists with no count keyword but `minItems: 1` (except the
+//! length a request sets for a list of new things, written only for a backend
+//! that holds lists to it), `anyOf` only between closed objects. No optional property, no nullable, no
 //! integer, no range, no `$ref`. Absence is the named member `"none"`, never
 //! a missing field.
 //!
@@ -31,7 +32,7 @@ mod shapes;
 mod tests;
 
 pub use fields::{Fields, Place};
-pub use form::Form;
+pub use form::{Count, Form};
 
 /// The answer schema a request carries. Made by a shape, by a tool's
 /// parameters and, until every call has moved, by `legacy::schema`.
@@ -100,14 +101,21 @@ pub struct Written<'a> {
     pub ended: Ended,
 }
 
-/// How a pointer field is written in a schema: the `enum` of its valid
-/// handles on a backend that enforces one of that size, a plain string
-/// otherwise. The reading is the same in both.
+/// What the backend holds an answer to, so how a schema is written: pointers
+/// as the `enum` of their valid handles on a backend that enforces one of that
+/// size, a plain string otherwise; and, where it holds lists to a length, the
+/// length a request sets. The reading is the same in all three.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Pointers {
-    Enum,
+pub enum Held {
+    /// Enumerated pointers and the lengths a request sets.
+    Counts,
+    /// Enumerated pointers.
+    Enums,
     Plain,
 }
+
+/// The `items` list of a `New` answer.
+pub const STATEMENTS: Count = Count("statements");
 
 /// A fixed vocabulary of a judgement: the words a model may write and what each means.
 pub trait Vocabulary: Sized + Copy + 'static {
@@ -139,7 +147,7 @@ pub trait Shape {
     type Statement;
 
     /// The schema of an answer to a request that shows `showing`. `None` for a text form.
-    fn schema(showing: &Showing<'_>, pointers: Pointers) -> Option<Schema>;
+    fn schema(showing: &Showing<'_>, pointers: Held) -> Option<Schema>;
 }
 
 /// A shape whose answer is one statement about the call's one subject.
@@ -225,7 +233,7 @@ pub struct Led<W, K: Kind> {
 impl<V: Authored> Shape for Value<V> {
     type Statement = V;
 
-    fn schema(showing: &Showing<'_>, pointers: Pointers) -> Option<Schema> {
+    fn schema(showing: &Showing<'_>, pointers: Held) -> Option<Schema> {
         shapes::value_schema::<V>(showing, pointers)
     }
 }
@@ -239,7 +247,7 @@ impl<V: Authored> Single for Value<V> {
 impl<K: Kind> Shape for Pick<K> {
     type Statement = Option<Picked<K>>;
 
-    fn schema(showing: &Showing<'_>, pointers: Pointers) -> Option<Schema> {
+    fn schema(showing: &Showing<'_>, pointers: Held) -> Option<Schema> {
         shapes::pick_schema::<K>(showing, pointers)
     }
 }
@@ -253,7 +261,7 @@ impl<K: Kind> Single for Pick<K> {
 impl<K: Kind> Shape for PickSome<K> {
     type Statement = Vec<Picked<K>>;
 
-    fn schema(showing: &Showing<'_>, pointers: Pointers) -> Option<Schema> {
+    fn schema(showing: &Showing<'_>, pointers: Held) -> Option<Schema> {
         shapes::pick_some_schema::<K>(showing, pointers)
     }
 }
@@ -267,7 +275,7 @@ impl<K: Kind> Single for PickSome<K> {
 impl<V: Authored> Shape for New<V> {
     type Statement = V;
 
-    fn schema(showing: &Showing<'_>, pointers: Pointers) -> Option<Schema> {
+    fn schema(showing: &Showing<'_>, pointers: Held) -> Option<Schema> {
         shapes::new_schema::<V>(showing, pointers)
     }
 }
@@ -281,7 +289,7 @@ impl<V: Authored> Listed for New<V> {
 impl<K: Kind, V: Authored + PartialEq> Shape for Each<K, V> {
     type Statement = V;
 
-    fn schema(showing: &Showing<'_>, pointers: Pointers) -> Option<Schema> {
+    fn schema(showing: &Showing<'_>, pointers: Held) -> Option<Schema> {
         shapes::each_schema::<K, V>(showing, pointers)
     }
 }
@@ -298,7 +306,7 @@ impl<K: Kind, V: Authored + PartialEq> Shape for Flagged<K, V> {
     /// The mark, or `None` for an item a complete answer left unmarked.
     type Statement = Option<V>;
 
-    fn schema(showing: &Showing<'_>, pointers: Pointers) -> Option<Schema> {
+    fn schema(showing: &Showing<'_>, pointers: Held) -> Option<Schema> {
         shapes::flagged_schema::<K, V>(showing, pointers)
     }
 }
@@ -319,7 +327,7 @@ impl<K: Kind, V: Authored + PartialEq> PerItem for Flagged<K, V> {
 impl<K: Kind, W: Content> Shape for Change<K, W> {
     type Statement = Consistent<K, W>;
 
-    fn schema(showing: &Showing<'_>, pointers: Pointers) -> Option<Schema> {
+    fn schema(showing: &Showing<'_>, pointers: Held) -> Option<Schema> {
         shapes::change_schema::<K, W>(showing, pointers)
     }
 }
@@ -333,7 +341,7 @@ impl<K: Kind, W: Content> Single for Change<K, W> {
 impl<K: Kind, C: Kind> Shape for Keeps<K, C> {
     type Statement = Vec<Picked<C>>;
 
-    fn schema(_showing: &Showing<'_>, _pointers: Pointers) -> Option<Schema> {
+    fn schema(_showing: &Showing<'_>, _pointers: Held) -> Option<Schema> {
         None
     }
 }
@@ -349,7 +357,7 @@ impl<K: Kind, C: Kind> PerItem for Keeps<K, C> {
 impl<W: Vocabulary, K: Kind> Shape for Lead<W, K> {
     type Statement = Led<W, K>;
 
-    fn schema(_showing: &Showing<'_>, _pointers: Pointers) -> Option<Schema> {
+    fn schema(_showing: &Showing<'_>, _pointers: Held) -> Option<Schema> {
         None
     }
 }

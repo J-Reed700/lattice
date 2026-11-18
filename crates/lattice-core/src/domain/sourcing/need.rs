@@ -216,7 +216,7 @@ impl Ecosystem {
     ];
 
     /// The name the tool and planner schemas use (`pypi`).
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Ecosystem::Crates => "crates",
             Ecosystem::PyPi => "pypi",

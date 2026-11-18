@@ -11,6 +11,10 @@ pub struct Form {
     pub(in super::super) fields: Vec<(&'static str, Field)>,
 }
 
+/// The name of a list whose length the request sets. Equal by name.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Count(pub &'static str);
+
 /// Where a pointer's valid set comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Among {
@@ -45,8 +49,11 @@ pub enum Field {
     },
     /// A closed object of fixed fields.
     Group(Form),
-    /// A list of new things.
-    List(Form),
+    /// A list of new things; `count` names the length its request sets.
+    List {
+        form: Form,
+        count: Option<&'static Count>,
+    },
     /// One entry per own thing of the item: `[{ "of": "o2", …fields }]`.
     EachOwn {
         prefix: &'static str,
@@ -159,7 +166,24 @@ impl Form {
 
     /// A list of new things, each a `V`.
     pub fn list<V: Authored>(self, name: &'static str) -> Self {
-        self.with(name, Field::List(V::form()))
+        self.with(
+            name,
+            Field::List {
+                form: V::form(),
+                count: None,
+            },
+        )
+    }
+
+    /// A list of new things, each a `V`, whose length the request sets under `count`.
+    pub fn counted<V: Authored>(self, name: &'static str, count: &'static Count) -> Self {
+        self.with(
+            name,
+            Field::List {
+                form: V::form(),
+                count: Some(count),
+            },
+        )
     }
 
     /// One entry for each own thing of the entry's item.

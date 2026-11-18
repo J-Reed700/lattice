@@ -4,13 +4,14 @@
 use crate::assessment::assessment_engine::{option_order, LearningItemFormat};
 use crate::dto::LearningSourceDto;
 use crate::lessons::rows::Quotes;
+use crate::lessons::shape::{self as lesson_shape, Lengths};
 use crate::lessons::structured_call::{Asking, CallKind, ReasonFirst};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::model_contract::ask::{
     self, ask, Alone, Answered, Says, Settled,
 };
 use lattice_core::application::services::model_contract::shape::{
-    self, Authored, Fields, Form, Vocabulary,
+    self, Authored, Count, Fields, Form, Vocabulary,
 };
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Internal, Kind, Picked, Scope, Showing, Told,
@@ -23,6 +24,11 @@ use serde_json::{json, Map, Value};
 
 /// Said after the lesson's own instructions: the answer's fields, in words.
 const FORM: &str = " Write the answer as one object. ideas lists the lesson's core ideas in teaching order, each with its sections in teaching order: every section has a kind (explanation, worked_example, contrast or check), a title, a body, cites and citations. guidedPractice, independentPractice, reflection and recap are one section each, written in their own fields; the two practice sections also have a rubric of criteria, each with a title, a description and a dimension. questions lists the questions, each with a kind, a prompt, the wrong choices in wrong (each with its option and its reason), then the right choice in right, an explanation, cites and citations. cites names, by their handles, the sentences of the excerpts shown in sources that the section or question rests on: at least one whenever sources are shown, whatever its kind. Each entry of citations has the sentence it cites and, in cites, the handles of the excerpt sentences that state it.";
+
+const IDEAS: Count = Count("ideas");
+const SECTIONS: Count = Count("sections");
+const QUESTIONS: Count = Count("questions");
+const WRONG: Count = Count("wrong");
 
 /// The lesson writer's call: its reasoning step and its answer.
 pub(crate) struct LessonWriter;
@@ -66,11 +72,17 @@ pub(crate) struct Input {
     sources: Vec<Source>,
     topics: Vec<Topic>,
     after: Told<Value>,
+    /// The list lengths the answer is held to. The request's words say them from the same shape policy.
+    lengths: Lengths,
 }
 
 impl Input {
     /// The request for the authoring `prompt`, whose `sources` are numbered as it numbers them.
-    pub(super) fn of(prompt: &str, sources: &[LearningSourceDto]) -> Result<Self> {
+    pub(super) fn of(
+        prompt: &str,
+        sources: &[LearningSourceDto],
+        lengths: Lengths,
+    ) -> Result<Self> {
         let Value::Object(object) = serde_json::from_str::<Value>(prompt)
             .map_err(|error| AppError::InternalError(error.to_string()))?
         else {
@@ -107,6 +119,7 @@ impl Input {
                 .collect(),
             topics,
             after: Told(Value::Object(after)),
+            lengths,
         })
     }
 }
@@ -301,7 +314,7 @@ struct Idea {
 
 impl Authored for Idea {
     fn form() -> Form {
-        Form::new().list::<Section>("sections")
+        Form::new().counted::<Section>("sections", &SECTIONS)
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
@@ -396,7 +409,7 @@ impl Authored for Question {
         Form::new()
             .word::<Asked>("kind")
             .text("prompt")
-            .list::<Wrong>("wrong")
+            .counted::<Wrong>("wrong", &WRONG)
             .text("right")
             .text("explanation")
             .cite_some::<Quoted>("cites")
@@ -430,12 +443,12 @@ pub(crate) struct Draft {
 impl Authored for Draft {
     fn form() -> Form {
         Form::new()
-            .list::<Idea>("ideas")
+            .counted::<Idea>("ideas", &IDEAS)
             .group::<Practice>("guidedPractice")
             .group::<Practice>("independentPractice")
             .group::<Part>("reflection")
             .group::<Part>("recap")
-            .list::<Question>("questions")
+            .counted::<Question>("questions", &QUESTIONS)
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
@@ -455,6 +468,11 @@ impl Answered for LessonWriter {
     const ALONE: Alone = Alone::Fails;
 
     fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
+        let lengths = input.lengths;
+        showing.asks(&IDEAS, lengths.ideas.0..=lengths.ideas.1);
+        showing.asks(&SECTIONS, lengths.sections.0..=lengths.sections.1);
+        showing.asks(&QUESTIONS, lengths.questions.0..=lengths.questions.1);
+        showing.asks(&WRONG, super::WRONG_CHOICES..=super::WRONG_CHOICES);
         let sources = showing.show(&input.sources)?;
         let quotes = quotes_of(input);
         let quoted = showing.show(quotes.all())?;
@@ -660,7 +678,7 @@ pub(super) async fn fits(
 
 /// What the writer is sent for `prompt` and its `sources`.
 pub(super) fn request(prompt: &str, sources: &[LearningSourceDto]) -> Result<Says> {
-    let input = Input::of(prompt, sources)?;
+    let input = Input::of(prompt, sources, lesson_shape::policy().lengths())?;
     let mut scope = Scope::for_question();
     LessonWriter::says(&input, &mut scope.request())
 }

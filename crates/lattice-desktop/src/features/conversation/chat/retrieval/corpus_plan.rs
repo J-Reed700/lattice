@@ -83,6 +83,9 @@ const WHOLE_DOCUMENT_PHRASES: [&str; 14] = [
 /// every row fits, the budget left over shows rows whole (see `prompt`).
 const SUMMARY_CATALOG_CHARS: usize = 600;
 
+/// The most search queries a plan holds.
+const MAX_QUERIES: usize = 3;
+
 /// Words in a query the code builds from the question.
 const MAX_QUERY_WORDS: usize = 24;
 
@@ -187,7 +190,7 @@ impl CorpusSearchPlan {
             .into_iter()
             .map(|q| q.split_whitespace().collect::<Vec<_>>().join(" "))
             .filter(|q| !q.is_empty() && seen_queries.insert(q.to_lowercase()))
-            .take(3)
+            .take(MAX_QUERIES)
             .collect();
         if self.queries.is_empty() {
             return Err(AppError::InvalidInput(

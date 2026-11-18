@@ -5,7 +5,7 @@ use crate::lessons::course_generation_tests::{length_bounds, RequestLog};
 use crate::lessons::structured_call::{is_draft_request, task_messages};
 use futures::future::BoxFuture;
 use lattice_core::application::ports::llm_port::CompletionResponse;
-use lattice_core::application::services::model_contract::shape::Pointers;
+use lattice_core::application::services::model_contract::shape::Held;
 use lattice_core::application::services::model_contract::test_support::samples::schema_of;
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use lattice_core::application::services::model_contract::test_support::{ScriptedModel, Sent};
@@ -1217,7 +1217,7 @@ fn the_decision_schema_points_at_what_is_shown() {
             recorded: &recorded_findings(),
         }),
     };
-    let schema = schema_of::<ReviewEvidence>(&input, Pointers::Enum)
+    let schema = schema_of::<ReviewEvidence>(&input, Held::Enums)
         .unwrap()
         .as_json()
         .to_string();
@@ -1253,7 +1253,7 @@ fn the_decision_schema_bounds_no_text_but_a_blank() {
         references: Packed::default(),
         rulers: Vec::new(),
     };
-    let schema = schema_of::<ReviewEvidence>(&input, Pointers::Enum).unwrap();
+    let schema = schema_of::<ReviewEvidence>(&input, Held::Enums).unwrap();
     let bounds = length_bounds(schema.as_json());
     assert!(bounds.is_empty(), "{bounds:?}");
 }

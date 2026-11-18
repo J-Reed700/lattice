@@ -3,7 +3,7 @@ use super::scripted::{answering, solved, solved_text};
 use super::*;
 use crate::lessons::course_generation_tests::RequestLog;
 use crate::lessons::structured_call::task_messages;
-use lattice_core::application::services::model_contract::shape::Pointers;
+use lattice_core::application::services::model_contract::shape::Held;
 use lattice_core::application::services::model_contract::test_support::samples::schema_of;
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use lattice_core::application::services::model_contract::test_support::ScriptedModel;
@@ -198,7 +198,7 @@ fn the_ordering_solve_asks_for_its_reasoning_before_the_order() {
         marks.told("Stamp the parcel.".to_owned()),
     ];
 
-    let schema = schema_of::<SolveOrder>(&questions(question), Pointers::Enum).unwrap();
+    let schema = schema_of::<SolveOrder>(&questions(question), Held::Enums).unwrap();
     let schema = schema.as_json();
 
     let properties: Vec<&str> = schema["properties"]

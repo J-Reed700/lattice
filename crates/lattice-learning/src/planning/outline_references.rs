@@ -21,7 +21,9 @@ use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::application::services::model_contract::ask::{
     self, ask_new, Alone, Answered, Refusal, Says, Why,
 };
-use lattice_core::application::services::model_contract::shape::{Authored, Fields, Form, New};
+use lattice_core::application::services::model_contract::shape::{
+    Authored, Fields, Form, New, STATEMENTS,
+};
 use lattice_core::application::services::model_contract::shown::{Scope, Showing, Told};
 use lattice_core::application::services::model_contract::{Contract, ContractId};
 use lattice_core::shared::hash::sha256_hex;
@@ -167,7 +169,8 @@ impl Answered for OutlineReferencePlan {
     type Answer = New<Subtopic>;
     const ALONE: Alone = Alone::Pending;
 
-    fn says(input: &PlanInput, _showing: &mut Showing<'_>) -> Result<Says> {
+    fn says(input: &PlanInput, showing: &mut Showing<'_>) -> Result<Says> {
+        showing.asks(&STATEMENTS, 1..=input.max_modules.0);
         let mut payload = json!({
             "goal":input.goal,"priorKnowledge":input.prior_knowledge,
             "minutesPerSession":input.minutes_per_session,
@@ -193,19 +196,21 @@ impl Answered for OutlineReferencePlan {
         if subtopic.title.trim().is_empty() {
             return Err(Refusal("Give this subtopic a title.".into()));
         }
-        if subtopic
+        let broken: Vec<Vec<web_research::Outside>> = subtopic
             .needs
             .iter()
-            .any(|need| need.clone().searches().is_none())
-        {
-            return Err(web_research::outside_a_search());
+            .filter_map(|need| need.clone().searches().err())
+            .collect();
+        if !broken.is_empty() && broken.len() == subtopic.needs.len() {
+            return Err(web_research::outside_a_search(&broken.concat()));
         }
         Ok(())
     }
 }
 
 /// One model call that breaks the goal into subtopics with public searches.
-/// Queries that copy the goal or prior knowledge are dropped, not failed; a
+/// Queries that copy the goal or prior knowledge are dropped, not failed, and
+/// so is a search outside what a search allows, alone; a
 /// plan left without any usable search is an error unless the planner saw
 /// existing sources and chose to add none.
 pub(crate) async fn plan(
@@ -248,13 +253,23 @@ pub(crate) async fn plan(
     let private = [request.goal.as_str(), request.prior_knowledge.as_str()];
     let mut planned = 0;
     let mut dropped = 0;
+    let mut unusable = 0;
     let mut subtopics = Vec::new();
     for subtopic in found.items.into_iter().take(max_modules) {
         let title = subtopic.title.trim();
         let mut needs: Vec<PlannedNeed> = Vec::new();
         for need in subtopic.needs {
-            let Some(searches) = need.searches() else {
-                continue;
+            let searches = match need.searches() {
+                Ok(searches) => searches,
+                Err(broken) => {
+                    unusable += 1;
+                    tracing::warn!(
+                        subtopic = title,
+                        rules = ?broken,
+                        "Dropped a reference search outside what a search allows"
+                    );
+                    continue;
+                }
             };
             for need in searches {
                 planned += 1;
@@ -287,6 +302,7 @@ pub(crate) async fn plan(
         queries = plan.query_count(),
         planned,
         dropped,
+        unusable,
         "Planned outline reference searches"
     );
     Ok(plan)

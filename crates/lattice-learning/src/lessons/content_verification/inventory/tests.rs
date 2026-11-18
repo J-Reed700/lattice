@@ -4,7 +4,7 @@ use crate::content_verification::tests::{fixture_prompts, fixture_task};
 use crate::lessons::course_generation_tests::ScriptedModel;
 use futures::future::BoxFuture;
 use lattice_core::application::ports::llm_port::CompletionResponse;
-use lattice_core::application::services::model_contract::shape::Pointers;
+use lattice_core::application::services::model_contract::shape::Held;
 use lattice_core::application::services::model_contract::test_support::samples::schema_of;
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use lattice_core::application::services::model_contract::test_support::{
@@ -712,7 +712,7 @@ fn the_inventory_schema_bounds_no_text_but_a_blank() {
             &inputs(&[json!({"body":"The measurements describe individual samples."})])[0],
         )],
     };
-    let schema = schema_of::<InventoryExtraction>(&input, Pointers::Enum).unwrap();
+    let schema = schema_of::<InventoryExtraction>(&input, Held::Enums).unwrap();
     let bounds = crate::lessons::course_generation_tests::length_bounds(schema.as_json());
     assert!(bounds.is_empty(), "{bounds:?}");
 }

@@ -8,7 +8,7 @@ use futures::future::BoxFuture;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
-use lattice_core::application::services::model_contract::shape::Pointers;
+use lattice_core::application::services::model_contract::shape::Held;
 use lattice_core::application::services::model_contract::test_support::samples::schema_of;
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use lattice_core::application::services::model_contract::test_support::{ScriptedModel, Sent};
@@ -1392,7 +1392,7 @@ fn the_schemas_point_only_at_what_is_shown() {
         issues,
         findings,
     };
-    let schema = schema_of::<GradeReview>(&input, Pointers::Enum)
+    let schema = schema_of::<GradeReview>(&input, Held::Enums)
         .map(|schema| schema.as_json().to_string())
         .unwrap_or_default();
     assert!(schema.contains("\"i1\""), "{schema}");

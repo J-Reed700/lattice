@@ -27,7 +27,7 @@ use lattice_core::application::services::model_contract::ask::{
     self, Alone, Answered, Says, Settled,
 };
 use lattice_core::application::services::model_contract::packed::Packed;
-use lattice_core::application::services::model_contract::shape::{New, Value as Whole};
+use lattice_core::application::services::model_contract::shape::{New, Value as Whole, STATEMENTS};
 use lattice_core::application::services::model_contract::shown::{Scope, Showing, Told};
 use lattice_core::application::services::model_contract::units::{Grain, Units};
 use lattice_core::application::services::model_contract::{Contract, ContractId};
@@ -65,6 +65,7 @@ impl<B: Body> Answered for QuizAuthor<B> {
     }
 
     fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
+        showing.asks(&STATEMENTS, input.count.0..=input.count.0);
         says::<B, Fresh>(
             input,
             showing,
@@ -210,6 +211,7 @@ fn says<B: Body, R: Role>(input: &Input, showing: &mut Showing<'_>, lead: &str) 
     if !input.written.0.is_empty() {
         instructions.push_str(" writtenSoFar lists the questions already written in this request: write the others, none of them repeating these.");
     }
+    B::asks(showing);
     let mut says = Says::new(instructions, task.to_string());
     says.output_tokens = input.count.0 * 900 + 400;
     Ok(says)

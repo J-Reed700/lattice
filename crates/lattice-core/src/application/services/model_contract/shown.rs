@@ -8,10 +8,12 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::marker::PhantomData;
+use std::ops::{Bound, RangeBounds};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+use super::shape::Count;
 use crate::shared::error::{AppError, Result};
 
 /// A kind of thing that can be shown. The feature that owns the type declares
@@ -358,6 +360,7 @@ impl Scope {
             request,
             top: BTreeMap::new(),
             under: BTreeMap::new(),
+            asked: BTreeMap::new(),
         }
     }
 
@@ -454,9 +457,30 @@ pub struct Showing<'s> {
     /// The ordinals this request shows as pointable, by prefix, in the order shown.
     top: BTreeMap<String, Vec<u32>>,
     under: BTreeMap<Name, BTreeMap<String, Vec<u32>>>,
+    /// What the request asks of each counted list: the fewest and the most new things.
+    asked: BTreeMap<&'static str, (usize, Option<usize>)>,
 }
 
 impl Showing<'_> {
+    /// The fewest and the most new things the list named `count` is asked to hold, e.g. `4..=6` or `1..`.
+    pub fn asks(&mut self, count: &'static Count, many: impl RangeBounds<usize>) {
+        let least = match many.start_bound() {
+            Bound::Included(least) => *least,
+            Bound::Excluded(before) => before.saturating_add(1),
+            Bound::Unbounded => 0,
+        };
+        let most = match many.end_bound() {
+            Bound::Included(most) => Some(*most),
+            Bound::Excluded(end) => Some(end.saturating_sub(1)),
+            Bound::Unbounded => None,
+        };
+        self.asked.insert(count.0, (least, most));
+    }
+
+    pub(super) fn asked(&self, count: &Count) -> Option<(usize, Option<usize>)> {
+        self.asked.get(count.0).copied()
+    }
+
     pub(super) fn request(&self) -> usize {
         self.request
     }

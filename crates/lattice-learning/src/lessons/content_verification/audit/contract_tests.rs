@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use lattice_core::application::services::grounded_generation::CallOptions;
 use lattice_core::application::services::model_contract::ask::ask_each;
-use lattice_core::application::services::model_contract::shape::{Pointers, Shape};
+use lattice_core::application::services::model_contract::shape::{Held, Shape};
 use lattice_core::application::services::model_contract::shown::Scope;
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use lattice_core::domain::learning::claim_review::ClaimId;
@@ -160,7 +160,7 @@ fn the_answer_form_cites_sentences_and_has_no_quote_or_label_fields() {
     let mut showing = scope.request();
     VerifierAudit::says(&input, &mut showing).unwrap();
 
-    for pointers in [Pointers::Enum, Pointers::Plain] {
+    for pointers in [Held::Enums, Held::Plain] {
         let schema = <<VerifierAudit as Answered>::Answer as Shape>::schema(&showing, pointers)
             .unwrap()
             .as_json()
@@ -193,7 +193,7 @@ fn the_answer_schema_has_no_text_length_rule() {
     let mut scope = Scope::for_question();
     let mut showing = scope.request();
     VerifierAudit::says(&input, &mut showing).unwrap();
-    let schema = <<VerifierAudit as Answered>::Answer as Shape>::schema(&showing, Pointers::Enum)
+    let schema = <<VerifierAudit as Answered>::Answer as Shape>::schema(&showing, Held::Enums)
         .unwrap()
         .as_json()
         .clone();
