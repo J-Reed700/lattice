@@ -462,3 +462,20 @@ async fn a_chat_answered_in_full_records_its_reply_and_no_error() -> Res<()> {
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn a_redirect_reaches_the_app_as_the_server_s_answer() -> Res<()> {
+    let (held, nobody) = refusing_address()?;
+    let moved = format!(
+        "HTTP/1.1 307 Temporary Redirect\r\nLocation: http://{nobody}/props\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+    let recorder = Recorder::new();
+    let upstream = server(vec![Answer::Once(moved.into_bytes())]).await?;
+    let base = start(upstream, false, None, None, Arc::clone(&recorder)).await?;
+    let (status, _, _) = exchange(&base, GET_PROPS).await?;
+    let calls = recorded(&recorder, 1).await?;
+    let call = calls.first().ok_or("no call was recorded")?;
+    assert_eq!((status, call.status), (307, Some(307)));
+    drop(held);
+    Ok(())
+}
