@@ -496,13 +496,13 @@ fn the_coach_relays_a_stage_as_the_learners_work_and_does_none_of_it() {
         let opening = policy.system(&Cue::Opening, &observation);
         assert!(opening.contains(&relay), "{stage:?}: {opening}");
         assert!(
-            opening.contains("then tell them in your own words what the"),
+            opening.contains("Do not summarize or restate the task"),
             "{stage:?}: {opening}"
         );
         let opened = policy.system(&Cue::StageOpened(stage), &observation);
         assert!(opened.contains(&relay), "{stage:?}: {opened}");
         assert!(
-            opened.contains("Tell them in your own words what it asks of them."),
+            opened.contains("Do not suggest an approach or strategy"),
             "{stage:?}: {opened}"
         );
         for system in [&opening, &opened] {
@@ -517,7 +517,7 @@ fn the_coach_relays_a_stage_as_the_learners_work_and_does_none_of_it() {
 #[test]
 fn every_setting_leaves_the_cause_of_a_failing_check_to_the_learner() {
     let kind = kind();
-    let sentence = "When a check fails, say what it shows and leave the cause to the learner: never say or hint which part of their work causes it, or why; that is what hints are for, when they ask.";
+    let sentence = "When a check fails, report only what failed and leave the cause entirely to the learner: never name, quote, or point at any part of their work (leave parts empty), and never say or hint what is wrong or why; that is what hints are for, when they ask.";
     for setting in SETTINGS {
         let observation = observation(setting, Form::Build, Stage::Make);
         let policy = policy_for(setting, &kind, Form::Build);
@@ -527,17 +527,52 @@ fn every_setting_leaves_the_cause_of_a_failing_check_to_the_learner() {
 }
 
 #[test]
-fn the_coached_check_review_reads_the_run_and_asks_without_pointing() {
+fn failed_check_and_submit_cues_forbid_pointing_or_diagnosing() {
     let kind = kind();
-    let observation = observation(Setting::Coached, Form::Build, Stage::Check);
-    let policy = policy_for(Setting::Coached, &kind, Form::Build);
+    let mut failed = observation(Setting::Coached, Form::Build, Stage::Check);
+    failed.last_check = Some(crate::practice::session::observation::CheckView {
+        id: "chk".to_owned(),
+        scope: CheckScope::All,
+        status: lattice_core::domain::learning::practice::work::CheckStatus::Failed,
+        cases: Vec::new(),
+        detail: serde_json::json!({}),
+    });
+    let coached = policy_for(Setting::Coached, &kind, Form::Build);
     for scope in SCOPES {
-        let system = policy.system(&Cue::CheckReview(scope), &observation);
-        assert!(!system.contains("point at what to look at"), "{system}");
+        let system = coached.system(&Cue::CheckReview(scope), &failed);
+        assert!(!system.contains("what to look at"), "{system}");
         assert!(
-            system
-                .contains("Read the last check. Say what it shows, and ask what they make of it."),
+            system.contains("do not name, quote, or point at any part of their work"),
             "{system}"
+        );
+        assert!(system.contains("leave parts empty"), "{system}");
+    }
+    let coached_submit = coached.system(&Cue::Submitted, &failed);
+    assert!(
+        !coached_submit.contains("what to look at"),
+        "{coached_submit}"
+    );
+    assert!(
+        coached_submit.contains("leave parts empty"),
+        "{coached_submit}"
+    );
+
+    for setting in [Setting::Mock, Setting::Watched] {
+        let mut obs = failed.clone();
+        obs.setting = setting;
+        let policy = policy_for(setting, &kind, Form::Build);
+        let system = policy.system(&Cue::Submitted, &obs);
+        assert!(
+            system.contains("Speak directly to the candidate"),
+            "{setting:?}: {system}"
+        );
+        assert!(
+            system.contains("Do not name, quote, or point at any part of their work"),
+            "{setting:?}: {system}"
+        );
+        assert!(
+            system.contains("leave parts empty"),
+            "{setting:?}: {system}"
         );
     }
 }
