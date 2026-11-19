@@ -6,9 +6,10 @@
 #[path = "../examples/shipped_path_eval/proxy.rs"]
 mod proxy;
 
+use lattice::features::llm::llama_cpp::remote_client;
 use lattice_core::application::ports::llm_port::RemoteHeader;
 use parking_lot::Mutex;
-use proxy::{ask_server, serve, start, upstream_client, CallRecord, Recorder};
+use proxy::{ask_server, serve, start, CallRecord, Recorder};
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -233,9 +234,9 @@ async fn recorded_for_an_app_that_hung_up(
     request: &str,
 ) -> Res<CallRecord> {
     let recorder = Recorder::new();
-    let client = upstream_client()?;
+    let client = remote_client(None)?;
     let app = HungUp(io::Cursor::new(request.as_bytes().to_vec()));
-    let served = serve(app, &client, upstream, false, reported, None, &recorder).await;
+    let served = serve(app, &client, upstream, false, reported, &recorder).await;
     match recorder.since(0).as_slice() {
         [call] => Ok(call.clone()),
         calls => Err(format!(
