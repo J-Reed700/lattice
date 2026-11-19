@@ -530,7 +530,7 @@ async fn a_refused_chat_whose_body_breaks_off_keeps_the_read_error() -> Res<()> 
     assert_eq!((status, call.status), (400, Some(400)));
     let error = call.error.as_deref().unwrap_or_default();
     assert!(
-        !error.is_empty() && error != cut,
+        !error.is_empty() && error != cut && !error.starts_with("client closed: "),
         "the call's error is {error:?}, not the error from reading the body"
     );
     Ok(())

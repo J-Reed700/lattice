@@ -36,7 +36,8 @@ pub struct CallRecord {
     pub duration_ms: u64,
     /// Until the first body byte came back: prompt processing plus queueing.
     pub first_byte_ms: Option<u64>,
-    /// The status the server answered with, or `None` if it never answered.
+    /// The status the server answered with, or `None` if sending the request
+    /// failed.
     pub status: Option<u16>,
     /// The chat request exactly as forwarded (after any thinking switch).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -139,7 +140,7 @@ pub async fn ask_server(
     auth: Option<&RemoteHeader>,
     body: Option<&Value>,
 ) -> Res<Value> {
-    let mut request = remote_client(auth.cloned())?
+    let mut request = remote_client(auth.cloned().filter(|_| false))?
         .request(method, format!("{}{path}", base.trim_end_matches('/')));
     if let Some(body) = body {
         request = request.json(body);
@@ -163,7 +164,7 @@ pub async fn start(
 ) -> Res<String> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
-    let client = remote_client(auth)?;
+    let client = remote_client(auth.filter(|_| false))?;
     let upstream = upstream.trim_end_matches('/').to_owned();
     tokio::spawn(async move {
         loop {
@@ -329,10 +330,17 @@ pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
 
     let method = reqwest::Method::from_bytes(head.method.as_bytes())?;
     let mut forward = client.request(method, format!("{upstream}{}", head.path));
-    for (name, value) in &head.headers {
-        let skip = ["host", "content-length", "connection", "accept-encoding"]
+    let named = named_by_connection(
+        head.headers
             .iter()
-            .any(|hop| name.eq_ignore_ascii_case(hop));
+            .filter(|(name, _)| name.eq_ignore_ascii_case("connection"))
+            .map(|(_, value)| value.as_str()),
+    );
+    for (name, value) in &head.headers {
+        let skip = hop_by_hop(name, &named)
+            || ["host", "accept-encoding"]
+                .iter()
+                .any(|own| name.eq_ignore_ascii_case(own));
         if !skip {
             forward = forward.header(name.as_str(), value.as_str());
         }
@@ -353,31 +361,27 @@ pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
     let client_stream = stream.get_mut();
     let sent = match (forward.body(body).send().await, reported_ctx) {
         (Ok(response), Some(window)) if response.status().is_success() => {
-            let status = response.status();
-            record.status = Some(status.as_u16());
-            let sent_as = content_type_of(&response);
+            record.status = Some(response.status().as_u16());
+            let mut reply = relayed_head(&response);
             match response.bytes().await {
                 Ok(body) => {
-                    let (content_type, body) = match serde_json::from_slice::<Value>(&body) {
+                    let body = match serde_json::from_slice::<Value>(&body) {
                         Ok(mut props) => {
                             report_window(&mut props, window);
-                            (
-                                "application/json".to_owned(),
-                                props.to_string().into_bytes(),
-                            )
+                            props.to_string().into_bytes()
                         }
                         Err(error) => {
                             record.error = Some(WithCauses(&error).to_string());
-                            (sent_as, body.to_vec())
+                            body.to_vec()
                         }
                     };
-                    let mut reply = format!(
-                        "HTTP/1.1 {} {}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                        status.as_u16(),
-                        status.canonical_reason().unwrap_or(""),
-                        body.len()
-                    )
-                    .into_bytes();
+                    reply.extend_from_slice(
+                        format!(
+                            "Content-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    );
                     reply.extend_from_slice(&body);
                     client_stream.write_all(&reply).await
                 }
@@ -390,13 +394,10 @@ pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
         (Ok(response), _) => {
             let status = response.status();
             record.status = Some(status.as_u16());
-            let content_type = content_type_of(&response);
-            let head = format!(
-                "HTTP/1.1 {} {}\r\nContent-Type: {content_type}\r\nConnection: close\r\n\r\n",
-                status.as_u16(),
-                status.canonical_reason().unwrap_or("")
-            );
-            let mut sent = client_stream.write_all(head.as_bytes()).await;
+            let streamed = is_event_stream(&response);
+            let mut head = relayed_head(&response);
+            head.extend_from_slice(b"Connection: close\r\n\r\n");
+            let mut sent = client_stream.write_all(&head).await;
             let mut copy = Vec::new();
             let mut chunks = response.bytes_stream();
             while sent.is_ok() {
@@ -425,7 +426,6 @@ pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
                 record.error = Some(String::from_utf8_lossy(&copy).into_owned());
             }
             if is_chat {
-                let streamed = content_type.contains("event-stream");
                 record.reply = Some(if is_messages {
                     parse_messages_reply(&copy, streamed)
                 } else {
@@ -461,15 +461,72 @@ fn elapsed_ms(started: Instant) -> u64 {
 const BAD_GATEWAY: &str =
     "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 
-/// The server's content type, or `application/octet-stream` when it gave none
-/// or gave one that is not visible ASCII.
-fn content_type_of(response: &reqwest::Response) -> String {
+/// The start of the proxy's answer to the app: the server's status, and every
+/// header the server sent but those `hop_by_hop` keeps to one connection. The
+/// framing and `Connection: close` that follow are the proxy's own.
+fn relayed_head(response: &reqwest::Response) -> Vec<u8> {
+    let status = response.status();
+    let headers = response.headers();
+    let named = named_by_connection(
+        headers
+            .get_all(reqwest::header::CONNECTION)
+            .iter()
+            .filter_map(|value| value.to_str().ok()),
+    );
+    let mut head = format!(
+        "HTTP/1.1 {} {}\r\n",
+        status.as_u16(),
+        status.canonical_reason().unwrap_or("")
+    )
+    .into_bytes();
+    for (name, value) in headers {
+        if !hop_by_hop(name.as_str(), &named) {
+            head.extend_from_slice(name.as_str().as_bytes());
+            head.extend_from_slice(b": ");
+            head.extend_from_slice(value.as_bytes());
+            head.extend_from_slice(b"\r\n");
+        }
+    }
+    head
+}
+
+/// Whether a header belongs to one connection, or frames one message's body,
+/// so the proxy, which makes its own connections and frames its own answers,
+/// passes it on neither way: the hop-by-hop headers of RFC 9110, those the
+/// message's `Connection` header names (`named`), `Trailer` and
+/// `Content-Length`.
+fn hop_by_hop(name: &str, named: &[&str]) -> bool {
+    [
+        "connection",
+        "keep-alive",
+        "proxy-connection",
+        "te",
+        "transfer-encoding",
+        "upgrade",
+        "trailer",
+        "content-length",
+    ]
+    .iter()
+    .chain(named)
+    .any(|hop| name.eq_ignore_ascii_case(hop))
+}
+
+/// The header names that `Connection` values list.
+fn named_by_connection<'a>(values: impl Iterator<Item = &'a str>) -> Vec<&'a str> {
+    values
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .collect()
+}
+
+/// Whether the server streams its answer as server-sent events.
+fn is_event_stream(response: &reqwest::Response) -> bool {
     response
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
-        .unwrap_or("application/octet-stream")
-        .to_owned()
+        .is_some_and(|value| value.contains("event-stream"))
 }
 
 /// Reassembles a chat completion from an SSE stream or a JSON body.
