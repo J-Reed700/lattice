@@ -511,6 +511,7 @@ async fn a_redirect_reaches_the_app_as_the_server_s_answer() -> Res<()> {
         lines_of(&head, "location"),
         [format!("location: http://{nobody}/props")]
     );
+    assert_eq!(lines_of(&head, "content-type"), Vec::<String>::new());
     drop(held);
     Ok(())
 }
@@ -619,7 +620,7 @@ async fn asking_the_server_sends_it_its_header() -> Res<()> {
 async fn the_app_gets_the_server_s_headers_but_not_its_connection_s() -> Res<()> {
     let reason = r#"{"error":"busy"}"#;
     let busy = format!(
-        "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nRetry-After: 7\r\nX-Hop: 1\r\nConnection: close, X-Hop\r\nContent-Length: {}\r\n\r\n{reason}",
+        "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nRetry-After: 7\r\nX-Hop: 1\r\nConnection: close, X-Hop\r\nKeep-Alive: timeout=5\r\nProxy-Connection: keep-alive\r\nTE: trailers\r\nTrailer: X-Sum\r\nUpgrade: h2c\r\nContent-Length: {}\r\n\r\n{reason}",
         reason.len()
     );
     let recorder = Recorder::new();
@@ -632,9 +633,67 @@ async fn the_app_gets_the_server_s_headers_but_not_its_connection_s() -> Res<()>
         lines_of(&head, "content-type"),
         ["content-type: application/json"]
     );
+    let connection_only: Vec<String> =
+        ["keep-alive", "proxy-connection", "te", "trailer", "upgrade"]
+            .iter()
+            .flat_map(|name| lines_of(&head, name))
+            .collect();
+    assert_eq!(connection_only, Vec::<String>::new());
     assert_eq!(lines_of(&head, "x-hop"), Vec::<String>::new());
     assert_eq!(lines_of(&head, "content-length"), Vec::<String>::new());
     assert_eq!(lines_of(&head, "connection"), ["connection: close"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_chunked_answer_reaches_the_app_whole_without_its_chunking() -> Res<()> {
+    let events = [
+        "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+    ];
+    let mut streamed =
+        b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n"
+            .to_vec();
+    for event in events {
+        streamed.extend_from_slice(format!("{:x}\r\n{event}\r\n", event.len()).as_bytes());
+    }
+    streamed.extend_from_slice(b"0\r\n\r\n");
+    let recorder = Recorder::new();
+    let upstream = server(vec![Answer::Once(streamed)]).await?;
+    let base = start(upstream, false, None, None, Arc::clone(&recorder)).await?;
+    let request = chat(r#"{"model":"m","messages":[],"stream":true}"#);
+    let (status, head, body) = exchange(&base, &request).await?;
+    let calls = recorded(&recorder, 1).await?;
+    let call = calls.first().ok_or("no call was recorded")?;
+    assert_eq!((status, body), (200, events.concat().into_bytes()));
+    assert_eq!(lines_of(&head, "transfer-encoding"), Vec::<String>::new());
+    assert_eq!(lines_of(&head, "connection"), ["connection: close"]);
+    assert_eq!((call.status, call.error.as_deref()), (Some(200), None));
+    assert_eq!(
+        call.reply
+            .as_ref()
+            .map(|reply| (reply.content.as_str(), reply.finish_reason.as_deref())),
+        Some(("hi", Some("stop")))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_connection_header_with_a_byte_beyond_ascii_still_keeps_back_the_headers_it_names(
+) -> Res<()> {
+    let reason = r#"{"error":"busy"}"#;
+    let mut busy = b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nX-Hop: 1\r\nConnection: close, X-Hop, caf\xe9\r\n".to_vec();
+    busy.extend_from_slice(format!("Content-Length: {}\r\n\r\n{reason}", reason.len()).as_bytes());
+    let recorder = Recorder::new();
+    let upstream = server(vec![Answer::Once(busy)]).await?;
+    let base = start(upstream, false, None, None, Arc::clone(&recorder)).await?;
+    let (status, head, body) = exchange(&base, &chat(r#"{"model":"m","messages":[]}"#)).await?;
+    assert_eq!((status, body.as_slice()), (503, reason.as_bytes()));
+    assert_eq!(
+        lines_of(&head, "content-type"),
+        ["content-type: application/json"]
+    );
+    assert_eq!(lines_of(&head, "x-hop"), Vec::<String>::new());
     Ok(())
 }
 
@@ -670,7 +729,7 @@ async fn the_server_gets_the_app_s_headers_but_not_its_connection_s() -> Res<()>
     let recorder = Recorder::new();
     let (upstream, heard) = heard_server(vec![ok("application/json", "{}")]).await?;
     let base = start(upstream, false, None, None, Arc::clone(&recorder)).await?;
-    let request = "GET /props HTTP/1.1\r\nHost: localhost\r\nConnection: close, X-Hop\r\nX-Hop: 1\r\nKeep-Alive: timeout=5\r\nX-End: 2\r\n\r\n";
+    let request = "GET /props HTTP/1.1\r\nHost: localhost\r\nConnection: close, X-Hop\r\nX-Hop: 1\r\nKeep-Alive: timeout=5\r\nProxy-Connection: keep-alive\r\nTE: trailers\r\nTrailer: X-Sum\r\nUpgrade: h2c\r\nX-End: 2\r\n\r\n";
     exchange(&base, request).await?;
     let heads = heard.lock().clone();
     let head: Vec<String> = heads
@@ -681,6 +740,17 @@ async fn the_server_gets_the_app_s_headers_but_not_its_connection_s() -> Res<()>
         .collect();
     assert_eq!(lines_of(&head, "x-end"), ["x-end: 2"]);
     assert_eq!(lines_of(&head, "x-hop"), Vec::<String>::new());
-    assert_eq!(lines_of(&head, "keep-alive"), Vec::<String>::new());
+    let connection_only: Vec<String> = [
+        "connection",
+        "keep-alive",
+        "proxy-connection",
+        "te",
+        "trailer",
+        "upgrade",
+    ]
+    .iter()
+    .flat_map(|name| lines_of(&head, name))
+    .collect();
+    assert_eq!(connection_only, Vec::<String>::new());
     Ok(())
 }
