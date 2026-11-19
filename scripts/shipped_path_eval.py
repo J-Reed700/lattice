@@ -216,7 +216,7 @@ def cited_marks(turn):
     """Each source the app resolved in the turn's reply, in order: where its marker begins in the
     answer, and the source's number. The app parses the reply; nothing here reads citations from text."""
     marks, at = [], 0
-    for piece in turn["reply"]:
+    for piece in turn.get("reply", []):
         if piece["type"] == "text":
             at += len(piece["text"])
             continue
