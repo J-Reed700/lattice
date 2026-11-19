@@ -480,7 +480,7 @@ fn relayed_head(response: &reqwest::Response) -> Vec<u8> {
     )
     .into_bytes();
     for (name, value) in headers {
-        if !hop_by_hop(name.as_str(), &named) || *name == reqwest::header::CONNECTION {
+        if !hop_by_hop(name.as_str(), &named) {
             head.extend_from_slice(name.as_str().as_bytes());
             head.extend_from_slice(b": ");
             head.extend_from_slice(value.as_bytes());
@@ -498,7 +498,6 @@ fn relayed_head(response: &reqwest::Response) -> Vec<u8> {
 fn hop_by_hop(name: &str, named: &[&str]) -> bool {
     [
         "connection",
-        "keep-alive",
         "proxy-connection",
         "te",
         "transfer-encoding",
