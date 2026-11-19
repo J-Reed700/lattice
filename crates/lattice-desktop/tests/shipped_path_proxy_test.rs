@@ -6,6 +6,8 @@
 #[path = "../examples/shipped_path_eval/proxy.rs"]
 mod proxy;
 
+use lattice_core::application::ports::llm_port::RemoteHeader;
+use parking_lot::Mutex;
 use proxy::{ask_server, serve, start, upstream_client, CallRecord, Recorder};
 use std::io;
 use std::net::SocketAddr;
@@ -39,16 +41,27 @@ enum Answer {
 /// A server that answers its connections in turn with `answers`, each once
 /// it has read the request.
 async fn server(answers: Vec<Answer>) -> Res<String> {
+    Ok(heard_server(answers).await?.0)
+}
+
+/// The head of each request a scripted server read, lowercased, in order.
+type Heard = Arc<Mutex<Vec<String>>>;
+
+/// `server`, keeping the head of each request it reads.
+async fn heard_server(answers: Vec<Answer>) -> Res<(String, Heard)> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
+    let heard = Heard::default();
+    let keep = Arc::clone(&heard);
     tokio::spawn(async move {
         for answer in answers {
             let Ok((mut stream, _)) = listener.accept().await else {
                 return;
             };
-            if read_request(&mut stream).await.is_err() {
+            let Ok(head) = read_request(&mut stream).await else {
                 return;
-            }
+            };
+            keep.lock().push(head);
             match answer {
                 Answer::Once(bytes) => {
                     stream.write_all(&bytes).await.ok();
@@ -63,12 +76,12 @@ async fn server(answers: Vec<Answer>) -> Res<String> {
             }
         }
     });
-    Ok(format!("http://{address}"))
+    Ok((format!("http://{address}"), heard))
 }
 
 /// Reads one request: its head, then as many body bytes as its
-/// Content-Length gives.
-async fn read_request(stream: &mut TcpStream) -> Res<()> {
+/// Content-Length gives. Returns the head, lowercased.
+async fn read_request(stream: &mut TcpStream) -> Res<String> {
     let mut bytes = Vec::new();
     let end = loop {
         if let Some(at) = find(&bytes, b"\r\n\r\n") {
@@ -89,7 +102,7 @@ async fn read_request(stream: &mut TcpStream) -> Res<()> {
             return Err("the request ended inside its body".into());
         }
     }
-    Ok(())
+    Ok(head)
 }
 
 /// Where `needle` first starts in `bytes`.
@@ -137,6 +150,14 @@ fn chat(body: &str) -> String {
         "POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
         body.len()
     )
+}
+
+/// The header a remote server asks for, as a run gives it.
+fn run_key() -> RemoteHeader {
+    RemoteHeader {
+        name: "X-Run-Key".to_owned(),
+        value: "k".to_owned(),
+    }
 }
 
 /// Sends `request` to the proxy at `base` and reads its whole answer: the
@@ -533,5 +554,49 @@ async fn asking_the_server_follows_no_redirect_and_names_the_status() -> Res<()>
         Err("/props answered 302 Found".to_owned())
     );
     drop(held);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_proxy_sends_the_server_its_header() -> Res<()> {
+    let recorder = Recorder::new();
+    let (upstream, heard) = heard_server(vec![ok("application/json", "{}")]).await?;
+    let base = start(
+        upstream,
+        false,
+        None,
+        Some(run_key()),
+        Arc::clone(&recorder),
+    )
+    .await?;
+    exchange(&base, GET_PROPS).await?;
+    let heads = heard.lock().clone();
+    assert!(
+        heads
+            .first()
+            .is_some_and(|head| head.lines().any(|line| line == "x-run-key: k")),
+        "{heads:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn asking_the_server_sends_it_its_header() -> Res<()> {
+    let (upstream, heard) = heard_server(vec![ok("application/json", "{}")]).await?;
+    ask_server(
+        &upstream,
+        reqwest::Method::GET,
+        "/props",
+        Some(&run_key()),
+        None,
+    )
+    .await?;
+    let heads = heard.lock().clone();
+    assert!(
+        heads
+            .first()
+            .is_some_and(|head| head.lines().any(|line| line == "x-run-key: k")),
+        "{heads:?}"
+    );
     Ok(())
 }
