@@ -11,7 +11,9 @@ citations with a pattern older than the chat's `[sN]` handles; #588 has it read 
 
 A turn took 65.4 s at the median, against 36.9 s and 36.3 s, and the reading's output accounts for more than the
 whole increase. Since #570 the reading answers in JSON under a schema. It writes 2.9 times the tokens it did, and at
-under half the speed, because the server drafts no request that has a schema.
+under half the speed, because the server drafts no request that has a schema. Since these runs #598 has the reading
+answer in plain lines with no schema, one line for each passage that keeps something (decision 3); no write-up in
+`evals/` measures it yet.
 
 **The note step has two halves, and the sets cover one each.** The reading's notes (`reading/notes.rs`) are written on
 every turn of the fifty questions. Condensing (`research_notes.rs`) has never fired in a chat turn, not in this run and
@@ -124,20 +126,19 @@ that `n_ctx`, and the app's context window setting matches. The server kept its 
 
 ## Condensing, replayed
 
-`scripts/replay_condense_ab.py` sends what `research_notes.rs` sends when a turn's results pass 60% of the window:
-every passage is a source with its sentences numbered, one request asks with a JSON schema which sentences of each to
-keep, the answer is read as the app reads it, and a source left unsettled is asked about again in smaller requests.
-It replaced the 2026-10-28 replay, which asked for free-text notes. A parity test
-(`scripts/test_replay_condense_rag_eval.py`) checks its wording, request, schema, sampling and reading of the answer
+`scripts/replay_condense_ab.py` sent what `research_notes.rs` sent at 616587e48 when a turn's results passed 60% of the
+window: every passage was a source with its sentences numbered, one request asked with a JSON schema which sentences of
+each to keep, the answer was read as the app read it, and a source left unsettled was asked about again in smaller
+requests. It replaced the 2026-10-28 replay, which asked for free-text notes. A parity test
+(`scripts/test_replay_condense_rag_eval.py`) checked its wording, request, schema, sampling and reading of the answer
 against the Rust source. The turns, rubrics and scoring are those of 2026-10-27 and 2026-10-28.
 
 **Since these runs (2026-11-19).** #598 (fe0cca7d0) has condensing answer in plain lines, one line for each result that
 keeps something, with no schema, and #596 (59c195557) sends a cut-off answer again with twice its room only when that
 room is larger. The replay now sends and reads as main does after both, and its parity test checks it against main's
-snapshot. The numbers below come from the replay at 38311e48a, which asked under a JSON schema as main at 616587e48
-did. That replay also sent a cut-off answer again with the same room, where main at 616587e48 already doubled it; no
-answer asked alone was cut off in these runs, so no answer was sent again and the difference touches none of their
-numbers.
+snapshot. The numbers below come from the replay at 38311e48a, which asked under a JSON schema and sent a cut-off
+answer again with the same room, as main at 616587e48 did (decision 2). No answer asked alone was cut off in these
+runs, so none was sent again; under #596 the replay would have sent the same requests.
 
 | Turns | Run | Facts kept | with citation | Notes used | After / before | Requests | Cut off | Median s/turn |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
@@ -206,7 +207,9 @@ main's nine turns with a call through that arithmetic at five windows:
    - A cut-off reply is asked again with "twice the output room" (`larger_if_room`, `ask.rs:788`), but `larger`
      doubles `output_tokens` (`request/steps.rs:69`), and every step built with `Says::new` leaves that at 0. The
      second request is the first one again. This is not condensing's alone: the reading, the verifier's judge and the
-     memory steps are built the same way, and only the comparison table and the corpus planner set it.
+     memory steps are built the same way, and only the comparison table and the corpus planner set it. Since these
+     runs #596 has `larger` double the step's room, the planner's default when the step sets none, and sends the
+     answer again only when that room is larger.
 3. **What the reading's answer costs.** On this server, the reading's longer output accounts for more than the run's
    added model time, and the median turn is about 29 s longer. Most of the reading's output is entries for passages that
    keep nothing, written with indentation, and no request with a schema is drafted. Three ways to cut it, each to be
@@ -214,6 +217,9 @@ main's nine turns with a call through that arithmetic at five windows:
    - entries for only the passages that keep something, with every other passage counted as keeping nothing;
    - the same schema with indentation ruled out;
    - or accepting the cost as the price of an answer the app can check.
+
+   Since these runs #598 has taken the first way, as plain lines with no schema; no write-up in `evals/` measures it on
+   the 27B or the 9B yet.
 4. **Which question a follow-up's reading judges against.** The reading gets the learner's own words ("Is there any
    way round it?"), as #316 chose. The planner had restated that question to name the standard, and a reading of the
    restatement would have excluded the other standard's passage by the contract's own rule. This is one miss in 67
