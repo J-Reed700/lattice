@@ -338,7 +338,7 @@ pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
             .map(|(_, value)| value.as_bytes()),
     );
     for (name, value) in &head.headers {
-        let skip = (hop_by_hop(name, &named) && !name.eq_ignore_ascii_case("connection"))
+        let skip = hop_by_hop(name, &named)
             || ["host", "accept-encoding"]
                 .iter()
                 .any(|own| name.eq_ignore_ascii_case(own));
@@ -500,11 +500,17 @@ fn hop_by_hop(name: &str, named: &[&[u8]]) -> bool {
     let name = name.as_bytes();
     [
         "connection",
+        "keep-alive",
+        "proxy-connection",
+        "te",
+        "transfer-encoding",
+        "upgrade",
+        "trailer",
         "content-length",
     ]
     .iter()
     .any(|hop| name.eq_ignore_ascii_case(hop.as_bytes()))
-        || named.iter().any(|hop| name.eq_ignore_ascii_case(hop))
+        || named.iter().filter(|hop| hop.is_empty()).any(|hop| name.eq_ignore_ascii_case(hop))
 }
 
 /// The header names that `Connection` values list, read from their bytes.
