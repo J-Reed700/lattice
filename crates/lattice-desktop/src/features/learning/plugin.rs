@@ -84,8 +84,6 @@ mod code_review;
 pub use code_review::*;
 mod coding;
 pub use coding::*;
-mod drafting;
-pub use drafting::*;
 
 /// The Python bundle shipped in the app's resources, verified once at startup.
 /// A missing or damaged bundle leaves Python labs reporting it unavailable.
@@ -273,8 +271,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            start_drafting,
-            cancel_learning_generation_job,
+            get_learning_plan,
             get_learning_portability_workspace,
             export_learning_pack,
             preview_learning_pack_import,
