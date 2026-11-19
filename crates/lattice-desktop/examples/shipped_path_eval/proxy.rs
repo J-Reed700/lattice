@@ -329,21 +329,38 @@ async fn serve(
         error: None,
     };
     let client_stream = stream.get_mut();
-    match (forward.body(body).send().await, reported_ctx) {
+    let sent = match (forward.body(body).send().await, reported_ctx) {
         (Ok(response), Some(window)) if response.status().is_success() => {
             let status = response.status();
             record.status = Some(status.as_u16());
-            let mut props: Value = serde_json::from_slice(&response.bytes().await?)?;
-            report_window(&mut props, window);
-            let props = serde_json::to_vec(&props)?;
-            let head = format!(
+            let props = match response.bytes().await {
+                Ok(body) => {
+                    record.first_byte_ms = Some(elapsed_ms(started));
+                    match serde_json::from_slice::<Value>(&body) {
+                        Ok(mut props) => {
+                            report_window(&mut props, window);
+                            props.to_string().into_bytes()
+                        }
+                        Err(error) => {
+                            record.error = Some(WithCauses(&error).to_string());
+                            body.to_vec()
+                        }
+                    }
+                }
+                Err(error) => {
+                    record.error = Some(WithCauses(&error).to_string());
+                    Vec::new()
+                }
+            };
+            let mut reply = format!(
                 "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                 status.as_u16(),
                 status.canonical_reason().unwrap_or(""),
                 props.len()
-            );
-            client_stream.write_all(head.as_bytes()).await?;
-            client_stream.write_all(&props).await?;
+            )
+            .into_bytes();
+            reply.extend_from_slice(&props);
+            client_stream.write_all(&reply).await
         }
         (Ok(response), _) => {
             let status = response.status();
@@ -359,10 +376,13 @@ async fn serve(
                 status.as_u16(),
                 status.canonical_reason().unwrap_or("")
             );
-            client_stream.write_all(head.as_bytes()).await?;
+            let mut sent = client_stream.write_all(head.as_bytes()).await;
             let mut copy = Vec::new();
             let mut chunks = response.bytes_stream();
-            while let Some(chunk) = chunks.next().await {
+            while sent.is_ok() {
+                let Some(chunk) = chunks.next().await else {
+                    break;
+                };
                 let chunk = match chunk {
                     Ok(chunk) => chunk,
                     Err(error) => {
@@ -377,15 +397,11 @@ async fn serve(
                 if is_chat {
                     copy.extend_from_slice(&chunk);
                 }
-                // A client that gave up still gets its call recorded.
-                if let Err(error) = client_stream.write_all(&chunk).await {
-                    record.error = Some(format!("client closed: {error}"));
-                    break;
-                }
+                sent = client_stream.write_all(&chunk).await;
             }
             // A refused request says why in its body; without it the run only
             // knows the status.
-            if is_chat && !status.is_success() && record.error.is_none() {
+            if is_chat && !status.is_success() && record.error.is_none() && sent.is_ok() {
                 record.error = Some(String::from_utf8_lossy(&copy).into_owned());
             }
             if is_chat {
@@ -396,13 +412,20 @@ async fn serve(
                     parse_reply(&copy, streamed)
                 });
             }
+            sent
         }
         (Err(error), _) => {
             record.error = Some(WithCauses(&error).to_string());
             let reply =
                 "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-            client_stream.write_all(reply.as_bytes()).await?;
+            client_stream.write_all(reply.as_bytes()).await
         }
+    };
+    // A client that gave up still gets its call recorded.
+    if let Err(error) = sent {
+        record
+            .error
+            .get_or_insert_with(|| format!("client closed: {error}"));
     }
     client_stream.shutdown().await.ok();
     record.duration_ms = elapsed_ms(started);
