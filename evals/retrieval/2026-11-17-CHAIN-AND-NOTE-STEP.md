@@ -39,8 +39,8 @@ main does, and has not been run that way.
 |---|---|---:|---:|---:|---:|---:|---:|
 | 2026-11-06 | f920d152, a combination tree | 50/50 | 48/50 | 7 | 29 | 0 | 36.9 |
 | 2026-11-06 | 31d92851, a combination tree | 50/50 | 46/50 | 9 | 28 | 0 | 36.3 |
-| **2026-11-17** | **main at 616587e48** | **49/50** | MAIN_RESCORED | **9** | **41** | **0** | **65.4** |
-| 2026-11-17 | main at 616587e48, the app shown 16K | 48/50 | WINDOW_RESCORED | 8 | 11 | 0 | 59.5 |
+| **2026-11-17** | **main at 616587e48** | **49/50** | **49/50** | **9** | **41** | **0** | **65.4** |
+| 2026-11-17 | main at 616587e48, the app shown 16K | 48/50 | 47/50 | 8 | 11 | 0 | 59.5 |
 
 - **The miss is a follow-up.** In `dp-mt-encryption-versions`, the third turn asks "Is there any way round it?" after
   two turns about the workstation encryption standard. The reading is asked the follow-up in the learner's words.
@@ -254,7 +254,7 @@ main's nine turns with a call through that arithmetic at five windows:
   loop's own tests pin.
 - **Reading by hand.** Every answer of both runs was read against its rubric. The mechanical scores judged none of
   them.
-- **The mechanical column.** Both runs wrote their rows before #588, so their scores here come from #588 (ea1122b41):
+- **The mechanical column.** Both runs wrote their rows before #588, so their scores here come from #588 (ff9e29174):
   `shipped_path_eval --rescore` reads each saved answer with the app's `ReplyText::read`, in a conversation that named
   `[s1]` up to the turn's highest citation so far, and its scorer scores the result. No model was called. The scorer
   at 616587e48 gave the same rows 5/50 and 4/50.
