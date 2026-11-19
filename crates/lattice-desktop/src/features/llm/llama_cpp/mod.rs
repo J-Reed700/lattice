@@ -494,6 +494,7 @@ fn remote_headers(header: Option<RemoteHeader>) -> Result<HeaderMap> {
 fn http_client(builder: reqwest::ClientBuilder, headers: HeaderMap) -> Result<reqwest::Client> {
     builder
         .default_headers(headers)
+        .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
         .build()
         .map_err(network_error)
