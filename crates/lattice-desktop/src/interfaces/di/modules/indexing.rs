@@ -24,6 +24,7 @@ use crate::features::embedding::repository::EmbeddingRepository;
 use crate::features::embedding::service::DynamicEmbedding;
 use crate::features::indexing::di::IndexingPorts;
 use crate::features::indexing::engine::storage::IndexStorage;
+use lattice_core::domain::ports::article_archive::ArticleArchive;
 
 // Service Traits
 use crate::features::web::{
@@ -55,15 +56,20 @@ impl IndexingModule {
         core: Arc<CoreModule>,
         model_provider: Arc<dyn lattice_core::application::ports::LoadedEmbeddingModelPort>,
         vector_search: Arc<dyn VectorSearchPort>,
+        web_archive: Arc<dyn WebArchiveServiceTrait>,
         shared: crate::features::indexing::di::IndexingShared,
     ) -> lattice_core::shared::error::Result<Self> {
         // Web first: deletion routes archived articles back through the very
         // archive service that wrote them, so indexing needs that instance.
         let web = crate::features::web::di::build(
             Arc::new(DynamicEmbedding::new(Arc::clone(&model_provider))),
-            Arc::new(IndexStorage::new(database.clone())),
+            Arc::new(IndexStorage::new(
+                database.clone(),
+                web_archive.clone() as Arc<dyn ArticleArchive>,
+            )),
             Arc::clone(&vector_search),
             Arc::clone(&shared.query_cache),
+            web_archive,
         )?;
         let ocr = crate::features::ocr::di::build(
             Arc::new(

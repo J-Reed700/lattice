@@ -283,6 +283,9 @@ enum Answering {
     Writer,
 }
 
+/// The wrong choices of a question: every choice but the right one.
+const WRONG_CHOICES: usize = CHOICES_PER_QUESTION.saturating_sub(1);
+
 fn requirements(answering: Answering) -> serde_json::Value {
     let rubric = match answering {
         Answering::Stored { .. } => "For guided_practice and independent_practice supply rubric entries, each with a specific title, dimension and observable description of a successful response. State what distinguishes incomplete, adequate and strong work without disclosing the answer. All other blocks use an empty rubric array.",
@@ -290,7 +293,7 @@ fn requirements(answering: Answering) -> serde_json::Value {
     };
     let choices = match answering {
         Answering::Stored { .. } => format!("Use exactly {CHOICES_PER_QUESTION} distinct choices and one correct index per question; rationales has one entry per choice, in the order of the choices. {}", crate::assessment::assessment_generation::alike_in_form!()),
-        Answering::Writer => format!("Use exactly {CHOICES_PER_QUESTION} distinct choices per question: the right one in right and the other {} in wrong, each with its reason. {}", CHOICES_PER_QUESTION.saturating_sub(1), crate::assessment::assessment_generation::alike_in_form!()),
+        Answering::Writer => format!("Use exactly {CHOICES_PER_QUESTION} distinct choices per question: the right one in right and the other {} in wrong, each with its reason. {}", WRONG_CHOICES, crate::assessment::assessment_generation::alike_in_form!()),
     };
     let reasons = match answering {
         Answering::Stored { .. } => "entry in rationales names the misconception it reflects and why it fails, never referring to a choice by its letter or position; the right choice's entry is an empty string.",
@@ -609,7 +612,7 @@ pub async fn prepare_lesson_with_references<'a>(
         );
         // Every later stage reads the draft as a lesson; the lesson's own
         // rules run once review and verification have finished with it.
-        let input = answer::Input::of(&prompt, &sources)?;
+        let input = answer::Input::of(&prompt, &sources, policy.lengths())?;
         let raw = answer::write(llm, &input, &brief).await?;
         crate::lesson_drafts::save(&raw).await?;
         trace::changed(trace::Stage::Drafting, &trace::Cause::none(), "", &raw);

@@ -307,6 +307,34 @@ async fn a_blank_outcome_is_corrected() -> Result<()> {
 }
 
 #[tokio::test]
+async fn the_outline_schema_carries_the_bounds_of_the_depth_for_a_backend_that_holds_lists_to_them(
+) -> Result<()> {
+    let model = ScriptedModel::new()
+        .enforcing()
+        .on_request::<OutlineDescription>(|sent, _| {
+            let bounds = describe_bounds(sent);
+            reply(answer(modules(bounds.min_modules, bounds.min_lessons)))
+        });
+    let input = describe(&model);
+    answered(asked(&model, &input).await?);
+    let sent = model.sent();
+    let schema = sent[0].request.schema().unwrap().as_json().clone();
+    let bounds = input.bounds.0;
+    let modules = &schema["properties"]["modules"];
+    assert_eq!(modules["minItems"], json!(bounds.min_modules), "{schema}");
+    assert_eq!(modules["maxItems"], json!(bounds.max_modules), "{schema}");
+    let module = &modules["items"]["properties"];
+    assert_eq!(module["lessons"]["minItems"], json!(bounds.min_lessons));
+    assert_eq!(module["lessons"]["maxItems"], json!(bounds.max_lessons));
+    assert_eq!(module["outcomes"]["minItems"], json!(1));
+    assert!(module["outcomes"].get("maxItems").is_none());
+    let project = &module["project"]["properties"];
+    assert_eq!(project["deliverables"]["minItems"], json!(1));
+    assert_eq!(project["successCriteria"]["minItems"], json!(1));
+    Ok(())
+}
+
+#[tokio::test]
 async fn the_modules_of_the_outline_ask_which_earlier_ones_they_build_on_by_handle() -> Result<()> {
     let stored: GeneratedOutline = serde_json::from_str(&outline(3, 2).0).unwrap();
     let model = ScriptedModel::new().on_request::<OutlinePrerequisites>(|sent, _| {

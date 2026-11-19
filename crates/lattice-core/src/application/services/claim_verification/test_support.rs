@@ -336,6 +336,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_enforcing_backend_is_asked_for_at_least_one_part() {
+        let model = ScriptedModel::judging(truth()).enforcing();
+        bridged(&model, PARTS, &shown()).await;
+
+        let sent = model.sent();
+        let schema = sent[0].request.schema().unwrap().as_json();
+        assert_eq!(schema["properties"]["parts"]["minItems"], 1, "{schema}");
+    }
+
+    #[tokio::test]
     async fn the_part_wise_judge_reads_every_kind_of_fact() {
         let model = ScriptedModel::judging(truth());
         let kinds = |parts: Vec<BridgePart>| -> Vec<(PartKind, Option<usize>)> {

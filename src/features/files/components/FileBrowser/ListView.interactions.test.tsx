@@ -25,6 +25,7 @@ const NOW = new Date(2026, 4, 15, 12);
 const doc = (id: string, daysAgo: number) => ({
   id, fileName: `${id}.md`, filePath: `/notes/${id}.md`, fileType: 'md', category: 'document',
   modifiedAt: new Date(NOW.getTime() - daysAgo * 86_400_000).toISOString(), indexedAt: '', wordCount: 10,
+  web: false, typeBucket: 'Markdown',
 }) as DocumentMetadata;
 
 const docs = [doc('rye', 0), doc('spelt', 1), doc('emmer', 3), doc('einkorn', 10), doc('barley', 20), doc('millet', 90)];

@@ -14,6 +14,7 @@
 //! is the caller's to name; nothing infers it from the lesson.
 use crate::dto::{LearningBlockKind, LessonQuestionKind};
 use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding, Rule};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
 
@@ -90,8 +91,19 @@ impl<'a> LessonShape<'a> {
     }
 }
 
+/// The fewest and the most ideas, sections of one idea and questions a draft is asked to hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Lengths {
+    pub ideas: (usize, usize),
+    pub sections: (usize, usize),
+    pub questions: (usize, usize),
+}
+
 /// The one reader of a lesson's shape.
 pub(crate) trait ShapePolicy: Send + Sync {
+    /// How many of each list the writer is asked for.
+    fn lengths(&self) -> Lengths;
+
     /// The lesson schema for `phase` and `source_count` saved sources. Both
     /// phases have the same item shapes; `Kept` has none of the margin's
     /// minimums.
@@ -172,6 +184,28 @@ const fn most_sections(mix: &[(LearningBlockKind, usize, bool)]) -> usize {
 
 const SECTIONS: (usize, usize) = (least_sections(&SECTION_MIX), most_sections(&SECTION_MIX));
 
+/// The sections of one idea: a section of each kind that is not exact, and of
+/// those, for the fewest, the kinds every idea must have.
+const fn idea_sections(mix: &[(LearningBlockKind, usize, bool)], fewest: bool) -> usize {
+    match mix {
+        [] => 0,
+        [(_, least, exact), rest @ ..] => {
+            let held = !*exact && !(fewest && *least < IDEAS.0);
+            (held as usize) + idea_sections(rest, fewest)
+        }
+    }
+}
+
+const IDEA_SECTIONS: (usize, usize) = (
+    idea_sections(&SECTION_MIX, true),
+    idea_sections(&SECTION_MIX, false),
+);
+
+/// The questions a draft is asked for: some of every kind.
+const fn question_count() -> usize {
+    QUESTIONS_PER_KIND * LessonQuestionKind::ALL.len()
+}
+
 /// A section that took a cut and has fewer teaching sentences than this has
 /// nothing left to teach with.
 const LEAST_TEACHING_SENTENCES: usize = 2;
@@ -246,9 +280,17 @@ impl StandardShape {
 }
 
 impl ShapePolicy for StandardShape {
+    fn lengths(&self) -> Lengths {
+        Lengths {
+            ideas: IDEAS,
+            sections: IDEA_SECTIONS,
+            questions: (question_count(), question_count()),
+        }
+    }
+
     fn schema(&self, phase: Phase, source_count: usize) -> LessonSchema {
         let kinds = LessonQuestionKind::ALL.len();
-        let asked = QUESTIONS_PER_KIND * kinds;
+        let asked = question_count();
         let (sections, questions) = match phase {
             Phase::Draft => (SECTIONS, (asked, asked)),
             Phase::Kept => ((1, SECTIONS.1), (kinds, asked)),
@@ -334,6 +376,10 @@ pub(crate) struct FixedSchema(pub(crate) Value);
 
 #[cfg(test)]
 impl ShapePolicy for FixedSchema {
+    fn lengths(&self) -> Lengths {
+        StandardShape.lengths()
+    }
+
     fn schema(&self, phase: Phase, _source_count: usize) -> LessonSchema {
         LessonSchema {
             phase,

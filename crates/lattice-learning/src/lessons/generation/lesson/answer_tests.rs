@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-use super::super::{requirements, Answering};
+use super::super::{requirements, Answering, WRONG_CHOICES};
 use super::*;
+use crate::lessons::shape::{ShapePolicy, StandardShape};
 use crate::lessons::structured_call::{is_draft_request, task_messages};
 use futures::future::BoxFuture;
 use lattice_core::application::ports::llm_port::CompletionResponse;
@@ -51,7 +52,7 @@ fn stored_prompt() -> String {
 }
 
 fn request_of(prompt: &str) -> (String, Value) {
-    let input = Input::of(prompt, &sources()).unwrap();
+    let input = Input::of(prompt, &sources(), StandardShape.lengths()).unwrap();
     let mut scope = Scope::for_question();
     let says = LessonWriter::says(&input, &mut scope.request()).unwrap();
     (says.instructions, serde_json::from_str(&says.task).unwrap())
@@ -146,6 +147,7 @@ fn the_request_shows_what_the_model_is_told_and_nothing_internal() {
             covering: marks.internal(vec!["source-harbour-17".to_owned()]),
         }],
         after: marks.told(json!({"referenceCatalog": []})),
+        lengths: StandardShape.lengths(),
     };
     holds::<LessonWriter>(&input, &marks);
 }
@@ -214,7 +216,7 @@ fn the_saved_prompt_keeps_asking_for_what_later_stages_read() {
 
 #[tokio::test]
 async fn the_answer_becomes_the_draft_later_stages_read() {
-    let input = Input::of(&stored_prompt(), &sources()).unwrap();
+    let input = Input::of(&stored_prompt(), &sources(), StandardShape.lengths()).unwrap();
     let model = writing(written);
 
     let stored: Value =
@@ -330,7 +332,7 @@ async fn a_scripted_saved_lesson_is_written_as_the_same_lesson() {
             item["quote"] = json!(GATE);
         }
     }
-    let input = Input::of(&stored_prompt(), &sources()).unwrap();
+    let input = Input::of(&stored_prompt(), &sources(), StandardShape.lengths()).unwrap();
     let saved = old.to_string();
     let model =
         writing(move |system, user| scripted_lesson(&saved, &format!("{system}\n\n{user}")));
@@ -367,7 +369,7 @@ fn a_sentence_under_the_quote_floor_carries_no_handle() {
         "Harbour almanac",
         &format!("{short} {CRANE}"),
     )];
-    let input = Input::of(&stored_prompt(), &sources).unwrap();
+    let input = Input::of(&stored_prompt(), &sources, StandardShape.lengths()).unwrap();
     let mut scope = Scope::for_question();
     let says = LessonWriter::says(&input, &mut scope.request()).unwrap();
     let task: Value = serde_json::from_str(&says.task).unwrap();
@@ -380,7 +382,7 @@ fn a_sentence_under_the_quote_floor_carries_no_handle() {
 
 #[test]
 fn the_stored_quote_of_a_cite_is_the_sentences_exact_words() {
-    let input = Input::of(&stored_prompt(), &sources()).unwrap();
+    let input = Input::of(&stored_prompt(), &sources(), StandardShape.lengths()).unwrap();
     let quotes = quotes_of(&input);
     let mut scope = Scope::for_question();
     let mut showing = scope.request();
@@ -408,10 +410,57 @@ async fn schema_for(held: &[LearningSourceDto]) -> Value {
         }
         reply("The lesson is planned.".to_owned())
     });
-    let input = Input::of(&stored_prompt(), held).unwrap();
+    let input = Input::of(&stored_prompt(), held, StandardShape.lengths()).unwrap();
     let _ = write(&model, &input, "Write it.").await;
     let schema = seen.lock().unwrap().clone();
     schema.unwrap()
+}
+
+/// The schema the writer sends to a backend that holds an answer to its schema.
+async fn enforced_schema() -> Value {
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let kept = seen.clone();
+    let model = ScriptedModel::new()
+        .enforcing()
+        .on_request::<LessonWriter>(move |sent, _| {
+            if let Some(schema) = sent.request.schema() {
+                *kept.lock().unwrap() = Some(schema.as_json().clone());
+            }
+            reply("The lesson is planned.".to_owned())
+        });
+    let input = Input::of(&stored_prompt(), &sources(), StandardShape.lengths()).unwrap();
+    let _ = write(&model, &input, "Write it.").await;
+    let schema = seen.lock().unwrap().clone();
+    schema.unwrap()
+}
+
+fn bounds(list: &Value) -> (Option<u64>, Option<u64>) {
+    (list["minItems"].as_u64(), list["maxItems"].as_u64())
+}
+
+fn asked(range: (usize, usize)) -> (Option<u64>, Option<u64>) {
+    (Some(range.0 as u64), Some(range.1 as u64))
+}
+
+#[tokio::test]
+async fn an_enforcing_backend_holds_the_writers_lists_to_their_lengths() {
+    let schema = enforced_schema().await;
+    let lengths = StandardShape.lengths();
+    let ideas = &schema["properties"]["ideas"];
+    let questions = &schema["properties"]["questions"];
+
+    assert_eq!(bounds(ideas), asked(lengths.ideas), "{schema}");
+    assert_eq!(
+        bounds(&ideas["items"]["properties"]["sections"]),
+        asked(lengths.sections),
+        "{schema}"
+    );
+    assert_eq!(bounds(questions), asked(lengths.questions), "{schema}");
+    assert_eq!(
+        bounds(&questions["items"]["properties"]["wrong"]),
+        asked((WRONG_CHOICES, WRONG_CHOICES)),
+        "{schema}"
+    );
 }
 
 /// The property names and the `minItems` of `cites` of every object of `schema` that has a `cites`.
@@ -548,7 +597,7 @@ fn assert_refused_for_citing_nothing(written: Result<String>) {
 
 #[tokio::test]
 async fn an_answer_with_an_uncited_section_is_not_read_when_sources_are_shown() {
-    let input = Input::of(&stored_prompt(), &sources()).unwrap();
+    let input = Input::of(&stored_prompt(), &sources(), StandardShape.lengths()).unwrap();
     let model = writing(|_, user| {
         let mut answer = written_answer(user);
         answer["ideas"][0]["sections"][0]["cites"] = json!([]);
@@ -560,7 +609,7 @@ async fn an_answer_with_an_uncited_section_is_not_read_when_sources_are_shown() 
 
 #[tokio::test]
 async fn an_answer_with_an_uncited_question_is_not_read_when_sources_are_shown() {
-    let input = Input::of(&stored_prompt(), &sources()).unwrap();
+    let input = Input::of(&stored_prompt(), &sources(), StandardShape.lengths()).unwrap();
     let model = writing(|_, user| {
         let mut answer = written_answer(user);
         answer["questions"][0]["cites"] = json!([]);
@@ -578,7 +627,7 @@ async fn an_answer_with_an_uncited_closing_section_is_not_read_when_sources_are_
         "reflection",
         "recap",
     ] {
-        let input = Input::of(&stored_prompt(), &sources()).unwrap();
+        let input = Input::of(&stored_prompt(), &sources(), StandardShape.lengths()).unwrap();
         let model = writing(move |_, user| {
             let mut answer = written_answer(user);
             answer[key]["cites"] = json!([]);
@@ -591,7 +640,7 @@ async fn an_answer_with_an_uncited_closing_section_is_not_read_when_sources_are_
 
 #[tokio::test]
 async fn an_answer_that_cites_nothing_is_read_when_no_sources_are_shown() {
-    let input = Input::of(&stored_prompt(), &[]).unwrap();
+    let input = Input::of(&stored_prompt(), &[], StandardShape.lengths()).unwrap();
     let (_, task) = request_of(&stored_prompt());
     let answer = uncited(&task.to_string()).to_string();
     let model = writing(move |_, _| answer.clone());

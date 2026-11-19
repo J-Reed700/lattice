@@ -86,12 +86,6 @@ export function ContextMenu({
   );
   const isLoadingSpaces = spacesQuery.isPending || membershipsQuery.isPending;
   const savingSpaceId = setSpaceMembership.isPending ? setSpaceMembership.variables?.spaceId ?? null : null;
-  const normalizedCategory = doc.category.toLowerCase().replace(/[_-]+/g, ' ').trim();
-  const isWebDocument =
-    normalizedCategory.includes('web article') ||
-    normalizedCategory === 'web' ||
-    /^https?:\/\//i.test(doc.filePath) ||
-    doc.filePath.includes('/.lattice/web-archive/');
 
   // Close on click outside
   useEffect(() => {
@@ -149,7 +143,7 @@ export function ContextMenu({
     }
   };
 
-  const canPreview = isSupportedFileType(doc.filePath) || isWebDocument;
+  const canPreview = isSupportedFileType(doc.filePath) || doc.web;
 
   const actions = [
     ...(onAddToCollection ? [{
@@ -265,7 +259,7 @@ export function ContextMenu({
         }
         onClose();
       },
-      disabled: isWebDocument,
+      disabled: doc.web,
     },
     {
       id: 'separator-2',
@@ -287,7 +281,7 @@ export function ContextMenu({
         }
         onClose();
       },
-      disabled: isWebDocument,
+      disabled: doc.web,
     },
     {
       id: 'delete',

@@ -3,7 +3,9 @@ use lattice_core::application::contracts::web::CleanArticle;
 
 #[test]
 fn owns_refuses_a_backslash_separated_parent_on_every_platform() {
-    let base = PathBuf::from("/web-archive");
+    let temp = tempfile::tempdir().expect("temp dir");
+    let base = temp.path().join("web-archive");
+    std::fs::create_dir_all(&base).expect("archive directory");
     let service = WebArchiveService::with_base_dir(base.clone());
     assert!(!service.owns(&base.join("a\\..\\..\\x")));
 }
@@ -11,7 +13,9 @@ fn owns_refuses_a_backslash_separated_parent_on_every_platform() {
 #[cfg(windows)]
 #[test]
 fn owns_refuses_a_dots_only_segment_on_windows() {
-    let base = PathBuf::from("/web-archive");
+    let temp = tempfile::tempdir().expect("temp dir");
+    let base = temp.path().join("web-archive");
+    std::fs::create_dir_all(&base).expect("archive directory");
     let service = WebArchiveService::with_base_dir(base.clone());
     assert!(!service.owns(&base.join("...").join("x")));
 }
@@ -131,4 +135,317 @@ fn test_generate_fallback_title_with_good_title() {
     let good_title = "A Comprehensive Guide to Rust Programming";
     let result = WebArchiveService::generate_fallback_title("https://example.com", good_title);
     assert_eq!(result, good_title);
+}
+
+fn lay_out_article(dir: &Path, metadata: Option<&str>, page: bool) -> PathBuf {
+    std::fs::create_dir_all(dir).expect("article directory");
+    let text = dir.join("article.md");
+    std::fs::write(&text, "body").expect("write text");
+    if page {
+        std::fs::write(dir.join("page.html"), "<html></html>").expect("write page");
+    }
+    if let Some(metadata) = metadata {
+        std::fs::write(dir.join("metadata.json"), metadata).expect("write metadata");
+    }
+    text
+}
+
+const FULL_METADATA: &str = r#"{
+    "url": "https://example.com/essay",
+    "title": "The Essay",
+    "links": ["https://example.com/a", "https://example.com/b"]
+}"#;
+
+#[tokio::test]
+async fn an_article_laid_out_in_the_archive_gives_its_text_page_title_url_and_links() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let service = WebArchiveService::with_base_dir(temp.path().to_path_buf());
+    let dir = temp.path().join("example.com").join("essay-1");
+    let text = lay_out_article(&dir, Some(FULL_METADATA), true);
+
+    let article = service.saved_article(&text).await.expect("a saved article");
+
+    assert_eq!(article.text, text);
+    assert_eq!(article.page, Some(dir.join("page.html")));
+    assert_eq!(article.title.as_deref(), Some("The Essay"));
+    assert_eq!(article.url.as_deref(), Some("https://example.com/essay"));
+    assert_eq!(
+        article.links,
+        vec!["https://example.com/a", "https://example.com/b"]
+    );
+}
+
+#[tokio::test]
+async fn the_same_three_files_outside_the_archive_give_no_article() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let base = temp.path().join("web-archive");
+    std::fs::create_dir_all(&base).expect("archive directory");
+    let service = WebArchiveService::with_base_dir(base);
+    let text = lay_out_article(&temp.path().join("elsewhere"), Some(FULL_METADATA), true);
+
+    assert_eq!(service.saved_article(&text).await, None);
+}
+
+#[tokio::test]
+async fn a_page_that_is_gone_gives_no_page_and_keeps_the_text() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let service = WebArchiveService::with_base_dir(temp.path().to_path_buf());
+    let dir = temp.path().join("example.com").join("essay-1");
+    let text = lay_out_article(&dir, Some(FULL_METADATA), false);
+
+    let article = service.saved_article(&text).await.expect("a saved article");
+
+    assert_eq!(article.text, text);
+    assert_eq!(article.page, None);
+}
+
+#[tokio::test]
+async fn a_metadata_file_holding_only_a_title_still_gives_the_title() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let service = WebArchiveService::with_base_dir(temp.path().to_path_buf());
+    let dir = temp.path().join("example.com").join("essay-1");
+    let text = lay_out_article(&dir, Some(r#"{"title": "Only A Title"}"#), true);
+
+    let article = service.saved_article(&text).await.expect("a saved article");
+
+    assert_eq!(article.title.as_deref(), Some("Only A Title"));
+    assert_eq!(article.url, None);
+    assert!(article.links.is_empty());
+}
+
+#[tokio::test]
+async fn an_unparsable_metadata_file_still_gives_the_article_without_a_title() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let service = WebArchiveService::with_base_dir(temp.path().to_path_buf());
+    let dir = temp.path().join("example.com").join("essay-1");
+    let text = lay_out_article(&dir, Some("invalid json"), true);
+
+    let article = service.saved_article(&text).await.expect("a saved article");
+
+    assert_eq!(article.text, text);
+    assert_eq!(article.page, Some(dir.join("page.html")));
+    assert_eq!(article.title, None);
+    assert_eq!(article.url, None);
+    assert!(article.links.is_empty());
+}
+
+#[tokio::test]
+async fn a_path_that_climbs_out_of_the_archive_with_parent_segments_gives_no_article() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let base = temp.path().join("web-archive");
+    std::fs::create_dir_all(&base).expect("archive directory");
+    let service = WebArchiveService::with_base_dir(base.clone());
+    lay_out_article(&temp.path().join("outside"), Some(FULL_METADATA), true);
+    let climbing = base
+        .join("example.com")
+        .join("..")
+        .join("..")
+        .join("outside")
+        .join("article.md");
+
+    assert_eq!(service.saved_article(&climbing).await, None);
+}
+
+#[tokio::test]
+async fn the_page_file_of_an_archived_article_gives_no_article() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let service = WebArchiveService::with_base_dir(temp.path().to_path_buf());
+    let dir = temp.path().join("example.com").join("essay-1");
+    lay_out_article(&dir, Some(FULL_METADATA), true);
+
+    assert_eq!(service.saved_article(&dir.join("page.html")).await, None);
+}
+
+#[tokio::test]
+async fn a_base_directory_that_was_never_canonicalized_still_holds_the_canonical_spelling_of_its_article(
+) {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let service = WebArchiveService::with_base_dir(temp.path().to_path_buf());
+    let dir = temp.path().join("example.com").join("essay-1");
+    let text = lay_out_article(&dir, Some(FULL_METADATA), true);
+    let canonical = text.canonicalize().expect("canonical article");
+    #[cfg(windows)]
+    assert!(
+        canonical.to_string_lossy().starts_with("\\\\?\\"),
+        "the canonical spelling carries the verbatim prefix: {}",
+        canonical.display()
+    );
+
+    let article = service
+        .saved_article(&canonical)
+        .await
+        .expect("a saved article");
+
+    assert_eq!(article.title.as_deref(), Some("The Essay"));
+}
+
+#[tokio::test]
+async fn a_canonical_base_directory_still_holds_the_raw_spelling_of_its_article() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let base = temp.path().canonicalize().expect("canonical base");
+    let service = WebArchiveService::with_base_dir(base);
+    let dir = temp.path().join("example.com").join("essay-1");
+    let text = lay_out_article(&dir, Some(FULL_METADATA), true);
+    #[cfg(windows)]
+    assert_ne!(
+        text,
+        text.canonicalize().expect("canonical article"),
+        "the raw spelling differs from the canonical one"
+    );
+
+    let article = service.saved_article(&text).await.expect("a saved article");
+
+    assert_eq!(article.title.as_deref(), Some("The Essay"));
+}
+
+#[test]
+fn owns_a_path_inside_the_archive_however_it_is_spelled() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let base = temp.path().to_path_buf();
+    let text = lay_out_article(&base.join("a1"), None, false);
+    let canonical = std::fs::canonicalize(&text).expect("canonical article");
+    #[cfg(windows)]
+    assert_ne!(
+        text, canonical,
+        "the raw spelling differs from the canonical one"
+    );
+
+    let raw_base = WebArchiveService::with_base_dir(base.clone());
+    assert!(raw_base.owns(&text));
+    assert!(raw_base.owns(&canonical));
+
+    let canonical_base =
+        WebArchiveService::with_base_dir(std::fs::canonicalize(&base).expect("canonical base"));
+    assert!(canonical_base.owns(&text));
+}
+
+#[test]
+fn still_owns_an_article_whose_file_is_already_gone() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let base = temp.path().to_path_buf();
+    std::fs::create_dir_all(base.join("a1")).expect("article directory");
+    let service = WebArchiveService::with_base_dir(base.clone());
+
+    assert!(service.owns(&base.join("a1").join("article.md")));
+}
+
+#[test]
+fn owns_a_path_under_an_archive_folder_that_does_not_exist_yet() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let base = temp.path().join("missing").join("web-archive");
+    let service = WebArchiveService::with_base_dir(base.clone());
+
+    assert!(service.owns(&base.join("some-article").join("article.md")));
+}
+
+#[test]
+fn only_an_article_text_inside_the_archive_is_a_saved_article() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let outside = tempfile::tempdir().expect("temp dir");
+    let base = temp.path().join("web-archive");
+    let service = WebArchiveService::with_base_dir(base.clone());
+
+    assert!(service.is_saved_article(&base.join("some-article").join("article.md")));
+    assert!(!service.is_saved_article(&base.join("example.com").join("old-article-1.md")));
+    assert!(!service.is_saved_article(&base.join("some-article").join("page.html")));
+    assert!(!service.is_saved_article(&outside.path().join("some-article").join("article.md")));
+}
+
+#[cfg(windows)]
+fn link_dir(target: &Path, link: &Path) {
+    let status = std::process::Command::new("cmd")
+        .arg("/C")
+        .arg("mklink")
+        .arg("/J")
+        .arg(link)
+        .arg(target)
+        .status()
+        .expect("cmd runs");
+    assert!(status.success(), "mklink made the junction");
+}
+
+#[cfg(unix)]
+fn link_dir(target: &Path, link: &Path) {
+    std::os::unix::fs::symlink(target, link).expect("symlink");
+}
+
+#[test]
+fn owns_an_article_reached_through_a_linked_folder() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let real = temp.path().join("real");
+    std::fs::create_dir_all(real.join("web-archive")).expect("archive folder");
+    let link = temp.path().join("link");
+    link_dir(&real, &link);
+    let service = WebArchiveService::with_base_dir(real.join("web-archive"));
+    let article = link
+        .join("web-archive")
+        .join("some-article")
+        .join("article.md");
+
+    assert!(service.owns(&article));
+    assert!(service.is_saved_article(&article));
+}
+
+/// An archive holding a folder linked to one outside it, and an article in
+/// that outside folder. Gives the archive, the article's path spelled through
+/// the link, and its text where it really is.
+fn archive_linking_out(temp: &Path) -> (WebArchiveService, PathBuf, PathBuf) {
+    let base = temp.join("web-archive");
+    std::fs::create_dir_all(&base).expect("archive folder");
+    let outside = temp.join("outside");
+    let text = lay_out_article(&outside.join("essay-1"), Some(FULL_METADATA), true);
+    link_dir(&outside, &base.join("linked"));
+    let through_link = base.join("linked").join("essay-1").join("article.md");
+    (WebArchiveService::with_base_dir(base), through_link, text)
+}
+
+#[tokio::test]
+async fn an_article_reached_through_a_link_out_of_the_archive_gives_no_article() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let (service, through_link, _) = archive_linking_out(temp.path());
+
+    assert_eq!(service.saved_article(&through_link).await, None);
+}
+
+#[tokio::test]
+async fn deleting_an_article_reached_through_a_link_out_of_the_archive_leaves_it() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let (service, through_link, text) = archive_linking_out(temp.path());
+
+    assert!(service.delete_article(&through_link).await.is_err());
+    assert!(text.is_file(), "the outside article is still there");
+}
+
+#[tokio::test]
+async fn deleting_never_removes_the_archive_itself() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let base = temp.path().join("web-archive");
+    let text = lay_out_article(&base.join("example.com").join("essay-1"), None, true);
+    let loose = base.join("article.md");
+    std::fs::write(&loose, "a loose text").expect("write loose text");
+    let service = WebArchiveService::with_base_dir(base.clone());
+
+    assert!(service.delete_article(&loose).await.is_err());
+    assert!(service.delete_article(&base).await.is_err());
+    assert!(text.is_file(), "the archive still holds its articles");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_page_and_metadata_linked_from_outside_the_archive_are_left_out() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let base = temp.path().join("web-archive");
+    let dir = base.join("example.com").join("essay-1");
+    let text = lay_out_article(&dir, None, false);
+    let outside = temp.path().join("outside");
+    lay_out_article(&outside, Some(FULL_METADATA), true);
+    for name in ["page.html", "metadata.json"] {
+        std::os::unix::fs::symlink(outside.join(name), dir.join(name)).expect("link out");
+    }
+    let service = WebArchiveService::with_base_dir(base);
+
+    let article = service.saved_article(&text).await.expect("a saved article");
+
+    assert_eq!(article.page, None);
+    assert_eq!(article.title, None);
 }

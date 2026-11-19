@@ -1328,13 +1328,12 @@ fn properties_holding<'a>(
 /// evidence before its kind and label, as the sorted keys did.
 #[test]
 fn the_extraction_grammar_asks_for_the_grounds_before_the_decision() {
-    use lattice_core::application::services::model_contract::shape::{Pointers, Shape};
+    use lattice_core::application::services::model_contract::shape::{Held, Shape};
     let mut scope =
         lattice_core::application::services::model_contract::shown::Scope::for_question();
     let showing = scope.request();
     type Answer = <super::extract::MemoryExtraction as lattice_core::application::services::model_contract::ask::Answered>::Answer;
-    let schema =
-        <Answer as Shape>::schema(&showing, Pointers::Plain).expect("the extraction schema");
+    let schema = <Answer as Shape>::schema(&showing, Held::Plain).expect("the extraction schema");
     let addition = properties_holding(schema.as_json(), "label").expect("an addition");
     assert_eq!(object_keys(Some(addition)), ["evidence", "kind", "label"]);
 }

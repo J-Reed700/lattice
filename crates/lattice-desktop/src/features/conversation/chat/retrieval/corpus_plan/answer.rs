@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use lattice_core::application::services::model_contract::ask::{Alone, Answered, Says};
 use lattice_core::application::services::model_contract::shape::{
-    Authored, Fields, Form, Value, Vocabulary,
+    Authored, Count, Fields, Form, Value, Vocabulary,
 };
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Kind, Picked, Showing, Told,
@@ -15,9 +15,11 @@ use lattice_core::shared::error::Result;
 
 use super::planner::CorrectionRequest;
 use super::prompt::PLANNER_OUTPUT_TOKENS;
-use super::{CORRECTION_INSTRUCTION, PLANNER_SYSTEM};
+use super::{CORRECTION_INSTRUCTION, MAX_QUERIES, PLANNER_SYSTEM};
 
 pub(super) struct PlanContract;
+
+const QUERIES: Count = Count("queries");
 
 impl Contract for PlanContract {
     const ID: ContractId = ContractId::new("corpus-plan");
@@ -146,7 +148,7 @@ pub(super) struct Plan {
 impl Authored for Plan {
     fn form() -> Form {
         Form::new()
-            .list::<Query>("queries")
+            .counted::<Query>("queries", &QUERIES)
             .cite::<Row>("opening_document_ids")
             .word::<Beginning>("start_at_beginning")
     }
@@ -168,6 +170,7 @@ impl Answered for PlanContract {
     const ALONE: Alone = Alone::Fails;
 
     fn says(input: &PlanInput, showing: &mut Showing<'_>) -> Result<Says> {
+        showing.asks(&QUERIES, 1..=MAX_QUERIES);
         let shown = showing.show(&input.documents)?;
         let rows = shown
             .iter()

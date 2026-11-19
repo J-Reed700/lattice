@@ -1039,6 +1039,8 @@ struct DrainHarness {
     ready: tokio::sync::oneshot::Receiver<Result<(), StartupEnd>>,
     tail: Arc<SyncMutex<OutputTail>>,
     signals: Arc<StartupSignals>,
+    child: Arc<SyncMutex<Option<ServerProcess>>>,
+    background: lattice_core::shared::runtime::background::BackgroundTasks,
 }
 
 /// The drain takes a `Receiver<ServerEvent>`, so a test can play a
@@ -1048,11 +1050,12 @@ fn drain_harness() -> DrainHarness {
     let tail = Arc::new(SyncMutex::new(OutputTail::default()));
     let signals = Arc::new(StartupSignals::default());
     let child = Arc::new(SyncMutex::new(None));
+    let background = lattice_core::shared::runtime::background::BackgroundTasks::default();
     let ready = spawn_event_drain(
-        &lattice_core::shared::runtime::background::BackgroundTasks::default(),
+        &background,
         rx,
         DEAD_ENDPOINT.to_string(),
-        child,
+        Arc::clone(&child),
         Arc::clone(&tail),
         Arc::clone(&signals),
     );
@@ -1061,6 +1064,8 @@ fn drain_harness() -> DrainHarness {
         ready,
         tail,
         signals,
+        child,
+        background,
     }
 }
 
@@ -1070,6 +1075,66 @@ async fn send(tx: &tokio::sync::mpsc::Sender<ServerEvent>, event: ServerEvent) {
 
 fn stderr(line: &str) -> ServerEvent {
     ServerEvent::Stderr(line.as_bytes().to_vec())
+}
+
+async fn ready_then_exit(harness: DrainHarness) -> DrainHarness {
+    for line in B8981_STARTUP {
+        send(&harness.tx, stderr(line)).await;
+    }
+    send(
+        &harness.tx,
+        ServerEvent::Terminated(ExitReport {
+            code: Some(1),
+            signal: None,
+        }),
+    )
+    .await;
+    harness
+}
+
+async fn drain_finished(harness: DrainHarness) -> Arc<SyncMutex<Option<ServerProcess>>> {
+    let DrainHarness {
+        tx,
+        background,
+        child,
+        ..
+    } = harness;
+    drop(tx);
+    background.close();
+    tokio::time::timeout(Duration::from_secs(2), background.wait())
+        .await
+        .expect("drain finished within 2 s");
+    child
+}
+
+#[tokio::test]
+async fn a_sidecar_we_stopped_is_not_logged_as_an_unexpected_exit() {
+    let logs = lattice_core::shared::testing::logs::capture_logs(tracing::Level::WARN);
+    let harness = ready_then_exit(drain_harness()).await;
+    drain_finished(harness).await;
+    assert!(
+        !logs.text().contains("terminated unexpectedly"),
+        "a sidecar whose slot stop() or kill_all already emptied was stopped on purpose: {}",
+        logs.text()
+    );
+}
+
+#[tokio::test]
+async fn a_sidecar_that_dies_on_its_own_is_logged_as_an_unexpected_exit() {
+    let logs = lattice_core::shared::testing::logs::capture_logs(tracing::Level::WARN);
+    let harness = drain_harness();
+    *harness.child.lock() = Some(ServerProcess::detached());
+    let harness = ready_then_exit(harness).await;
+    let child = drain_finished(harness).await;
+    assert!(
+        logs.text().contains("terminated unexpectedly"),
+        "a sidecar still in its slot died on its own: {}",
+        logs.text()
+    );
+    assert!(
+        child.lock().is_none(),
+        "the drain clears the dead sidecar's slot"
+    );
 }
 
 async fn startup_end(harness: DrainHarness) -> Result<(), StartupEnd> {

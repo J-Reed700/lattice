@@ -1,7 +1,6 @@
-import { configuredConnections } from './configuredConnections';
 import { cloudVisionDefault } from './visionGeometry';
 
-import type { ChatModelChoice, CloudModelCatalogDto, CloudProvider, ModelRef } from '../lib/bindings';
+import type { ActiveModels, ChatModelChoice, CloudModelCatalogDto, CloudProvider, ModelRef } from '../lib/bindings';
 import type { LLMSettings } from '../types/api/settings';
 import type { DownloadedModel } from '../types/downloadedModels';
 
@@ -194,32 +193,6 @@ export function remoteSeesImages(ref: ModelRef, settings: LLMSettings | null | u
 }
 
 /**
- * The model a picker row names. The two server connection rows name whatever
- * Settings serves on that connection now; a downloaded row names itself, and
- * an explicit Ollama row names its own tag rather than the Settings tag.
- */
-export function modelRefForOption(
-  option: Pick<ChatModelOption, 'id' | 'backend'>,
-  settings: LLMSettings,
-): ModelRef {
-  switch (option.id) {
-    case LLAMACPP_SERVER_MODEL_ID:
-      return { kind: 'llama_cpp', model: settings.llamaCpp.model.trim() };
-    case OLLAMA_SERVER_MODEL_ID:
-      return { kind: 'ollama', model: settings.model.trim() };
-    default:
-      if (option.backend === 'cloud') {
-        const match = /^cloud:(openai|anthropic|google)\/(.+)$/.exec(option.id);
-        if (!match) throw new Error('The cloud model row has no model identity.');
-        return { kind: 'cloud', provider: match[1] as CloudProvider, model: match[2] };
-      }
-      return option.backend === 'ollama'
-        ? { kind: 'ollama', model: option.id }
-        : { kind: 'local', model_id: option.id };
-  }
-}
-
-/**
  * The model a row in Settings → Downloaded names. The synthetic Ollama row stands
  * for the connection, so it names the chat tag saved in Settings, and names
  * nothing until that tag is known.
@@ -250,57 +223,12 @@ export function modelRefLabel(ref: ModelRef, downloadedModels: DownloadedModel[]
   }
 }
 
-/** Which picker row is the chat model set in Settings. */
-export function resolveDefaultChatOptionId(
-  settings: LLMSettings | null | undefined,
-  downloadedModels: DownloadedModel[],
-): string | null {
-  const activeLocal = downloadedModels.find(
-    (m) =>
-      m.is_active_for_chat &&
-      m.backend !== 'ollama' &&
-      m.model_id !== OLLAMA_SERVER_MODEL_ID &&
-      (m.model_type === 'language_model' || m.model_type === 'chat')
-  );
-
-  if (!settings) {
-    return (
-      activeLocal?.model_id ??
-      downloadedModels.find((m) => m.is_active_for_chat && m.model_id !== OLLAMA_SERVER_MODEL_ID)?.model_id ??
-      null
-    );
-  }
-
-  const connections = configuredConnections(settings);
-
-  switch (settings.provider) {
-    case 'llamacpp':
-      return connections.llamaCpp ? LLAMACPP_SERVER_MODEL_ID : null;
-    case 'ollama':
-      return connections.ollama ? OLLAMA_SERVER_MODEL_ID : null;
-    case 'openai':
-    case 'anthropic':
-    case 'google':
-      return settings.model.trim() ? modelRefKey({ kind: 'cloud', provider: settings.provider, model: settings.model.trim() }) : null;
-    case 'local':
-      return activeLocal?.model_id ?? null;
-    case 'auto':
-      if (activeLocal) return activeLocal.model_id;
-      if (connections.llamaCpp) return LLAMACPP_SERVER_MODEL_ID;
-      if (connections.ollama) return OLLAMA_SERVER_MODEL_ID;
-      return null;
-    default:
-      return null;
-  }
-}
-
 export function buildChatModelOptions(
   settings: LLMSettings | null | undefined,
   downloadedModels: DownloadedModel[],
   catalogs: CloudModelCatalogs = {},
+  active: ActiveModels | null | undefined = null,
 ): ChatModelOption[] {
-  const defaultId = resolveDefaultChatOptionId(settings, downloadedModels);
-  const connections = configuredConnections(settings);
   const options: ChatModelOption[] = [];
 
   // 1. Local models
@@ -328,14 +256,14 @@ export function buildChatModelOptions(
       // A downloaded model sees once the catalog's projector is beside it and
       // vision is not switched off.
       seesImages: m.vision ? m.vision.projector_downloaded && m.vision.enabled : false,
-      isDefault: defaultId === m.model_id,
+      isDefault: false,
     });
   }
 
   // 2. llama.cpp connection
-  if (connections.llamaCpp && settings) {
-    const modelLabel = cleanModelDisplayName(settings.llamaCpp.model);
-    const ref = modelRefForOption({ id: LLAMACPP_SERVER_MODEL_ID, backend: 'llamacpp' }, settings);
+  if (active?.llama_cpp && settings) {
+    const ref = active.llama_cpp;
+    const modelLabel = modelRefLabel(ref, downloadedModels);
     options.push({
       id: LLAMACPP_SERVER_MODEL_ID,
       ref,
@@ -347,14 +275,14 @@ export function buildChatModelOptions(
       contextLabel: null,
       supportsTools: null,
       seesImages: remoteSeesImages(ref, settings),
-      isDefault: defaultId === LLAMACPP_SERVER_MODEL_ID,
+      isDefault: false,
     });
   }
 
   // 3. Ollama connection, then the Ollama tags downloaded as rows of their own
-  if (connections.ollama && settings) {
-    const modelLabel = cleanModelDisplayName(settings.model);
-    const ref = modelRefForOption({ id: OLLAMA_SERVER_MODEL_ID, backend: 'ollama' }, settings);
+  if (active?.ollama && settings) {
+    const ref = active.ollama;
+    const modelLabel = modelRefLabel(ref, downloadedModels);
     options.push({
       id: OLLAMA_SERVER_MODEL_ID,
       ref,
@@ -366,7 +294,7 @@ export function buildChatModelOptions(
       contextLabel: null,
       supportsTools: null,
       seesImages: remoteSeesImages(ref, settings),
-      isDefault: defaultId === OLLAMA_SERVER_MODEL_ID,
+      isDefault: false,
     });
   }
 
@@ -390,7 +318,7 @@ export function buildChatModelOptions(
       contextLabel: null,
       supportsTools: null,
       seesImages: remoteSeesImages(ref, settings),
-      isDefault: defaultId === m.model_id,
+      isDefault: false,
     });
   }
 
@@ -411,7 +339,7 @@ export function buildChatModelOptions(
       contextLabel: null,
       supportsTools: null,
       seesImages: remoteSeesImages(ref, settings),
-      isDefault: defaultId === id,
+      isDefault: false,
     });
   }
 
@@ -433,16 +361,21 @@ export function buildChatModelOptions(
     }
   }
 
-  return options;
+  const defaultIndex = options.findIndex((option) => sameModelRef(option.ref, active?.chat[0]));
+  return options.map((option, index) => (index === defaultIndex ? { ...option, isDefault: true } : option));
 }
 
-/** The chat model set in Settings, as a picker row; `null` when none is set. */
+/** The model a chat on the Settings default runs on, as a picker row; `null` when none is set. */
 export function resolveDefaultChatOption(
   settings: LLMSettings | null | undefined,
   downloadedModels: DownloadedModel[],
   catalogs: CloudModelCatalogs = {},
+  active: ActiveModels | null | undefined = null,
 ): ChatModelOption | null {
-  return buildChatModelOptions(settings, downloadedModels, catalogs).find((o) => o.isDefault) ?? null;
+  const listed = buildChatModelOptions(settings, downloadedModels, catalogs, active).find((o) => o.isDefault);
+  if (listed) return listed;
+  const ref = active?.chat[0];
+  return ref && ref.kind !== 'local' ? { ...remoteOption(ref, settings), isDefault: true } : null;
 }
 
 function unavailable(label: string, reason: string): UnavailableChatModel {
@@ -454,7 +387,7 @@ function unavailable(label: string, reason: string): UnavailableChatModel {
  * this chat chose before Settings moved on. The chat still names it, and the
  * connection still serves it, so it is still what answers.
  */
-function remoteOption(ref: Exclude<ModelRef, { kind: 'local' }>, settings: LLMSettings | null | undefined): ChatModelOption {
+export function remoteOption(ref: Exclude<ModelRef, { kind: 'local' }>, settings: LLMSettings | null | undefined): ChatModelOption {
   const label = cleanModelDisplayName(ref.model) || ref.model;
   const base = {
     id: modelRefKey(ref), ref, label, contextLabel: null, supportsTools: null,
@@ -486,9 +419,10 @@ export function resolveEffectiveChatOption(
   settings: LLMSettings | null | undefined,
   downloadedModels: DownloadedModel[],
   catalogs: CloudModelCatalogs = {},
+  active: ActiveModels | null | undefined = null,
 ): EffectiveChatModel | null {
-  const options = buildChatModelOptions(settings, downloadedModels, catalogs);
-  if (choice.kind === 'default') return options.find((o) => o.isDefault) ?? null;
+  if (choice.kind === 'default') return resolveDefaultChatOption(settings, downloadedModels, catalogs, active);
+  const options = buildChatModelOptions(settings, downloadedModels, catalogs, active);
 
   const ref = choice.model;
   const listed = options.find((o) => sameModelRef(o.ref, ref));

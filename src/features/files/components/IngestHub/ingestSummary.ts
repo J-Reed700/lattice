@@ -25,7 +25,8 @@ export type IngestNoun = 'file' | 'URL' | 'item';
  * A bare `${label}s` gives "mostly Markdowns" and "mostly Codes", which is not
  * English. `Other` has no phrasing at all — "mostly Others" says nothing about
  * the library — so it suppresses the sentence.
- * Keep in sync with `TYPE_BUCKETS` in `components/FileBrowser/docMeta.ts`.
+ * Keep in sync with the backend's `type_bucket` in
+ * `crates/lattice-desktop/src/features/stats/type_bucket.rs`.
  */
 const BUCKET_PHRASE: Record<string, string | null> = {
   PDF: 'PDFs',

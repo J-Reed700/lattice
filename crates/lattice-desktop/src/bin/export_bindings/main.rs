@@ -540,6 +540,8 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::web::plugin::get_sources_status,
             lattice::features::web::plugin::save_source_key,
             lattice::features::web::plugin::remove_source_key,
+            lattice::features::web::plugin::saved_web_article,
+            lattice::features::web::plugin::check_sourcing_address,
             lattice::features::vault::plugin::rescan_vault,
             // Updates Plugin (2 commands)
             lattice::features::updates::plugin::check_for_updates,

@@ -28,6 +28,8 @@ const sampleDocuments: DocumentMetadata[] = [
     modifiedAt: '2024-01-01',
     indexedAt: '2024-01-03',
     wordCount: 100,
+    web: false,
+    typeBucket: 'Text',
   },
   {
     id: '2',
@@ -39,6 +41,8 @@ const sampleDocuments: DocumentMetadata[] = [
     modifiedAt: '2024-01-02',
     indexedAt: '2024-01-03',
     wordCount: 2000,
+    web: false,
+    typeBucket: 'PDF',
   },
 ];
 
@@ -145,12 +149,12 @@ describe('FileBrowserStore - Zustand Implementation (P0-3 Regression)', () => {
       {
         id: '1', fileName: 'alpha.txt', filePath: '/alpha.txt', fileType: 'txt',
         category: 'document', language: 'en', modifiedAt: '2026-01-01',
-        indexedAt: '2026-01-01', wordCount: 10,
+        indexedAt: '2026-01-01', wordCount: 10, web: false, typeBucket: 'Text',
       },
       {
         id: '2', fileName: 'beta.txt', filePath: '/beta.txt', fileType: 'txt',
         category: 'document', language: 'en', modifiedAt: '2026-01-01',
-        indexedAt: '2026-01-01', wordCount: 10,
+        indexedAt: '2026-01-01', wordCount: 10, web: false, typeBucket: 'Text',
       },
     ];
     const state = useFileBrowserStore.getState();
@@ -176,12 +180,12 @@ describe('FileBrowserStore - Zustand Implementation (P0-3 Regression)', () => {
       {
         id: '1', fileName: 'alpha.txt', filePath: '/Users/example/Notes/alpha.txt', fileType: 'txt',
         category: 'document', language: 'en', modifiedAt: '2026-01-01',
-        indexedAt: '2026-01-01', wordCount: 10,
+        indexedAt: '2026-01-01', wordCount: 10, web: false, typeBucket: 'Text',
       },
       {
         id: '2', fileName: 'beta.txt', filePath: '/Users/example/Research/beta.txt', fileType: 'txt',
         category: 'document', language: 'en', modifiedAt: '2026-01-01',
-        indexedAt: '2026-01-01', wordCount: 10,
+        indexedAt: '2026-01-01', wordCount: 10, web: false, typeBucket: 'Text',
       },
     ];
 

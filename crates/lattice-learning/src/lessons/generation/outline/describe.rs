@@ -11,7 +11,9 @@ use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::model_contract::ask::{Alone, Answered, Refusal, Says};
 use lattice_core::application::services::model_contract::packed::Packed;
 use lattice_core::application::services::model_contract::refusal;
-use lattice_core::application::services::model_contract::shape::{Authored, Fields, Form, Value};
+use lattice_core::application::services::model_contract::shape::{
+    Authored, Count, Fields, Form, Value,
+};
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Internal, Kind, Picked, Showing, Told,
 };
@@ -22,6 +24,12 @@ use serde_json::{json, Value as Json};
 use std::collections::HashMap;
 
 pub(crate) struct OutlineDescription;
+
+const MODULES: Count = Count("modules");
+const LESSONS: Count = Count("lessons");
+const OUTCOMES: Count = Count("outcomes");
+const DELIVERABLES: Count = Count("deliverables");
+const CRITERIA: Count = Count("successCriteria");
 
 impl Contract for OutlineDescription {
     const ID: ContractId = ContractId::new("outline-description");
@@ -328,8 +336,8 @@ impl Authored for Project {
         Form::new()
             .text("title")
             .text("brief")
-            .list::<Line>("deliverables")
-            .list::<Line>("successCriteria")
+            .counted::<Line>("deliverables", &DELIVERABLES)
+            .counted::<Line>("successCriteria", &CRITERIA)
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
@@ -383,9 +391,9 @@ impl Authored for ModuleDraft {
         Form::new()
             .text("title")
             .group::<Evidenced>("summary")
-            .list::<Evidenced>("outcomes")
+            .counted::<Evidenced>("outcomes", &OUTCOMES)
             .group::<Project>("project")
-            .list::<LessonDraft>("lessons")
+            .counted::<LessonDraft>("lessons", &LESSONS)
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
@@ -436,7 +444,7 @@ pub(crate) struct Outline {
 
 impl Authored for Outline {
     fn form() -> Form {
-        Form::new().list::<ModuleDraft>("modules")
+        Form::new().counted::<ModuleDraft>("modules", &MODULES)
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
@@ -462,6 +470,11 @@ impl Answered for OutlineDescription {
             bounds.min_lessons,
             bounds.max_lessons,
         );
+        showing.asks(&MODULES, min_modules..=max_modules);
+        showing.asks(&LESSONS, min_lessons..=max_lessons);
+        showing.asks(&OUTCOMES, 1..);
+        showing.asks(&DELIVERABLES, 1..);
+        showing.asks(&CRITERIA, 1..);
         let held: Vec<Passage> = input
             .material
             .iter()

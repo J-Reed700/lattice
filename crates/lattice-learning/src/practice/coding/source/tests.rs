@@ -8,7 +8,7 @@ use crate::practice::kinds::program::{kind, KIND};
 use crate::practice::session::author::Failed;
 use crate::practice::session::builder::{BuildSteps, MAX_PROOF_REASKS, STEP_PROVING, STEP_WRITING};
 use lattice_core::application::services::model_contract::ask::Answered;
-use lattice_core::application::services::model_contract::shape::{Pointers, Shape};
+use lattice_core::application::services::model_contract::shape::{Held, Shape};
 use lattice_core::application::services::model_contract::shown::Scope;
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use lattice_core::domain::learning::practice::work::{Draft as ExerciseDraft, Form};
@@ -618,7 +618,7 @@ fn answer_schema(input: &Input) -> Value {
     let mut scope = Scope::for_question();
     let mut showing = scope.request();
     showing.show(&input.others).unwrap();
-    <<AuthorProblem as Answered>::Answer as Shape>::schema(&showing, Pointers::Plain)
+    <<AuthorProblem as Answered>::Answer as Shape>::schema(&showing, Held::Plain)
         .unwrap()
         .as_json()
         .clone()

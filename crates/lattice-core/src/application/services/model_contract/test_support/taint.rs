@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use serde::Serialize;
 
 use crate::application::services::model_contract::ask::{Answered, Says};
-use crate::application::services::model_contract::shape::{Pointers, Shape};
+use crate::application::services::model_contract::shape::{Held, Shape};
 use crate::application::services::model_contract::shown::{Internal, Record, Scope, Told};
 use crate::application::services::model_contract::tools::{Parameters, View};
 
@@ -136,7 +136,7 @@ fn render<C: Answered>(input: &C::Input, mut scope: Scope, known: &BTreeSet<Stri
             Err(error) => panic!("{} could not say its request: {error}", C::ID.as_str()),
         };
         said = said_by(&says);
-        for pointers in [Pointers::Enum, Pointers::Plain] {
+        for pointers in [Held::Enums, Held::Plain] {
             if let Some(schema) = <C::Answer as Shape>::schema(&showing, pointers) {
                 said.push('\n');
                 said.push_str(&schema.as_json().to_string());

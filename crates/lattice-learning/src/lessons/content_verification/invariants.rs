@@ -136,6 +136,7 @@ fn versions(report: &LessonVerificationReport) -> Vec<SavedEvidenceVersion> {
         .iter()
         .map(|binding| SavedEvidenceVersion {
             id: binding.id.clone(),
+            source_id: binding.id.clone(),
             title: "Source".into(),
             resolved_url: None,
             requested_url: None,

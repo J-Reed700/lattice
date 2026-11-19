@@ -10,8 +10,8 @@ use crate::application::services::model_contract::ask::{Alone, Answered, Says};
 use crate::application::services::model_contract::edit::Change;
 use crate::application::services::model_contract::packed::Packed;
 use crate::application::services::model_contract::shape::{
-    Authored, Each, Fields, Flagged, Form, Lead, New, Pick, PickSome, Pointers, Schema, Shape,
-    Union, Value, Vocabulary,
+    Authored, Each, Fields, Flagged, Form, Held, Lead, New, Pick, PickSome, Schema, Shape, Union,
+    Value, Vocabulary,
 };
 use crate::application::services::model_contract::shown::{
     Drawn, Internal, Kind, Picked, Scope, Showing, Told,
@@ -682,7 +682,7 @@ impl SampleLead {
 }
 
 /// The schema `C` asks for `input`, written for `pointers`. `None` for a text form.
-pub fn schema_of<C: Answered>(input: &C::Input, pointers: Pointers) -> Option<Schema> {
+pub fn schema_of<C: Answered>(input: &C::Input, pointers: Held) -> Option<Schema> {
     let mut scope = Scope::for_question();
     let mut showing = scope.request();
     if let Err(error) = C::says(input, &mut showing) {
@@ -701,7 +701,7 @@ fn both<C: Answered<Input = Input>>(
     names: [&'static str; 2],
     input: &Input,
 ) {
-    for (name, pointers) in names.into_iter().zip([Pointers::Enum, Pointers::Plain]) {
+    for (name, pointers) in names.into_iter().zip([Held::Enums, Held::Plain]) {
         if let Some(schema) = schema_of::<C>(input, pointers) {
             out.push((name, schema));
         }

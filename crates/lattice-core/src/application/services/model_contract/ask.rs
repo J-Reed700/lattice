@@ -16,7 +16,7 @@ use std::sync::{Mutex, PoisonError};
 use async_trait::async_trait;
 
 use super::request::GroundedRequest;
-use super::shape::{Ended, Found, Listed, PerItem, Pointers, Rows, Schema, Shape, Single, Written};
+use super::shape::{Ended, Found, Held, Listed, PerItem, Rows, Schema, Shape, Single, Written};
 use super::shown::{Kind, Picked, Scope, Showing};
 use super::{tagged, Contract, ContractCall};
 use crate::application::ports::llm_port::{Finish, LLMPort};
@@ -689,13 +689,18 @@ fn request_of(says: Says, schema: Option<Schema>, call: &CallOptions) -> Grounde
     request
 }
 
-/// The schema with enumerated pointers where the backend enforces it, else with plain ones.
+/// The schema the backend holds the model to: with the lengths the request sets, else with enumerated
+/// pointers, else with plain ones.
 fn schema_for<C: Answered>(llm: &dyn LLMPort, showing: &Showing<'_>) -> Option<Schema> {
-    match <C::Answer as Shape>::schema(showing, Pointers::Enum) {
-        Some(schema) if llm.enforces(&schema) => Some(schema),
-        Some(_) => <C::Answer as Shape>::schema(showing, Pointers::Plain),
-        None => None,
+    let counts = <C::Answer as Shape>::schema(showing, Held::Counts)?;
+    if llm.enforces(&counts) {
+        return Some(counts);
     }
+    let enums = <C::Answer as Shape>::schema(showing, Held::Enums)?;
+    if enums != counts && llm.enforces(&enums) {
+        return Some(enums);
+    }
+    <C::Answer as Shape>::schema(showing, Held::Plain)
 }
 
 /// What `input` shows on a fresh request of `scope`, and the request that says it.
@@ -784,13 +789,21 @@ async fn fits(llm: &dyn LLMPort, request: &GroundedRequest) -> bool {
         .is_ok_and(|measured| measured.fits())
 }
 
-/// The step `sent` answers with twice the output room, when the backend has the room.
+/// The step `sent` answers with twice the output room, when the backend has the room
+/// and the planner's cap leaves the doubled room larger than the room it had.
 async fn larger_if_room(llm: &dyn LLMPort, sent: &Sent) -> Option<Followup> {
     if sent.request.output_fills_window() {
         return None;
     }
     let larger = at_its_largest(&sent.request);
-    fits(llm, &larger).await.then_some(Followup(larger))
+    let grows = matches!(
+        (
+            grounded_generation::output_room(llm, &larger),
+            grounded_generation::output_room(llm, &sent.request),
+        ),
+        (Ok(doubled), Ok(had)) if doubled > had
+    );
+    (grows && fits(llm, &larger).await).then_some(Followup(larger))
 }
 
 /// The step that asks again after `sent`, quoting `told`; restated when the reply does not fit.

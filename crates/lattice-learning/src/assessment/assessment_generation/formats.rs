@@ -4,7 +4,7 @@ use super::*;
 use crate::dto::LearningPracticeEvidenceDimension;
 use crate::generation::{long_enough_quote, MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
 use lattice_core::application::services::model_contract::shape::{
-    Authored, Fields, Form, Vocabulary,
+    Authored, Count, Fields, Form, Vocabulary,
 };
 use lattice_core::application::services::model_contract::shown::Picked;
 use lattice_core::application::services::model_contract::units::{Grain, Unit, Units};
@@ -13,6 +13,12 @@ use std::ops::RangeInclusive;
 
 /// How many ordered values a writer is asked for.
 pub(super) const ORDERING_ASKED: RangeInclusive<usize> = 3..=8;
+
+const OPTIONS: Count = Count("options");
+const PAIRS: Count = Count("pairs");
+const ORDERED: Count = Count("orderedValues");
+const ACCEPTED: Count = Count("acceptedAnswers");
+const BLANKS: Count = Count("blanks");
 
 /// One fill-in blank as the key keeps it.
 #[derive(Debug, Default)]
@@ -153,7 +159,7 @@ pub(crate) struct Blank {
 
 impl Authored for Blank {
     fn form() -> Form {
-        Form::new().list::<Phrase>("acceptedAnswers")
+        Form::new().counted::<Phrase>("acceptedAnswers", &ACCEPTED)
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
@@ -231,6 +237,9 @@ pub(crate) trait Body: 'static {
 
     fn fields(form: Form) -> Form;
 
+    /// What the request asks for the lists these fields count.
+    fn asks(_showing: &mut Showing<'_>) {}
+
     fn read(fields: &mut Fields<'_, '_>, raw: &mut RawItem) -> Option<()>;
 }
 
@@ -241,7 +250,11 @@ impl Body for ChoiceBody {
     const FIELDS: &'static str = CHOICE_FIELDS;
 
     fn fields(form: Form) -> Form {
-        form.list::<Choice>("options")
+        form.counted::<Choice>("options", &OPTIONS)
+    }
+
+    fn asks(showing: &mut Showing<'_>) {
+        showing.asks(&OPTIONS, CHOICES_PER_QUESTION..=CHOICES_PER_QUESTION);
     }
 
     fn read(fields: &mut Fields<'_, '_>, raw: &mut RawItem) -> Option<()> {
@@ -272,7 +285,11 @@ impl Body for SelectBody {
     const FIELDS: &'static str = CHOICE_FIELDS;
 
     fn fields(form: Form) -> Form {
-        form.list::<Choice>("options")
+        form.counted::<Choice>("options", &OPTIONS)
+    }
+
+    fn asks(showing: &mut Showing<'_>) {
+        showing.asks(&OPTIONS, MULTI_SELECT_OPTIONS);
     }
 
     fn read(fields: &mut Fields<'_, '_>, raw: &mut RawItem) -> Option<()> {
@@ -287,11 +304,15 @@ impl Body for ShortBody {
     const FIELDS: &'static str = "acceptedAnswers (a list of objects with text), isNumeric (the word true or false), numericValue and tolerance (numbers written as text), units (a list of objects with text)";
 
     fn fields(form: Form) -> Form {
-        form.list::<Phrase>("acceptedAnswers")
+        form.counted::<Phrase>("acceptedAnswers", &ACCEPTED)
             .word::<Truth>("isNumeric")
             .text("numericValue")
             .text("tolerance")
             .list::<Phrase>("units")
+    }
+
+    fn asks(showing: &mut Showing<'_>) {
+        showing.asks(&ACCEPTED, 1..);
     }
 
     fn read(fields: &mut Fields<'_, '_>, raw: &mut RawItem) -> Option<()> {
@@ -316,7 +337,12 @@ impl Body for ClozeBody {
         "blanks (a list; each blank has acceptedAnswers, a list of objects with text)";
 
     fn fields(form: Form) -> Form {
-        form.list::<Blank>("blanks")
+        form.counted::<Blank>("blanks", &BLANKS)
+    }
+
+    fn asks(showing: &mut Showing<'_>) {
+        showing.asks(&BLANKS, 1..);
+        showing.asks(&ACCEPTED, 1..);
     }
 
     fn read(fields: &mut Fields<'_, '_>, raw: &mut RawItem) -> Option<()> {
@@ -339,7 +365,11 @@ impl Body for PairsBody {
         "pairs (a list of objects with left and right), extraRight (text, empty for none)";
 
     fn fields(form: Form) -> Form {
-        form.list::<Pair>("pairs").text("extraRight")
+        form.counted::<Pair>("pairs", &PAIRS).text("extraRight")
+    }
+
+    fn asks(showing: &mut Showing<'_>) {
+        showing.asks(&PAIRS, MATCHING_PAIRS);
     }
 
     fn read(fields: &mut Fields<'_, '_>, raw: &mut RawItem) -> Option<()> {
@@ -364,7 +394,11 @@ impl Body for OrderBody {
         "orderedValues (a list of objects with text, in their correct order)";
 
     fn fields(form: Form) -> Form {
-        form.list::<Phrase>("orderedValues")
+        form.counted::<Phrase>("orderedValues", &ORDERED)
+    }
+
+    fn asks(showing: &mut Showing<'_>) {
+        showing.asks(&ORDERED, ORDERING_ASKED);
     }
 
     fn read(fields: &mut Fields<'_, '_>, raw: &mut RawItem) -> Option<()> {

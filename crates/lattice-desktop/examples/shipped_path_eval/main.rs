@@ -29,11 +29,16 @@
 //! `OUT_JSONL.calls.jsonl` (every model request verbatim) and
 //! `OUT_JSONL.run.json` (recipe, hashes, server properties, settings, index
 //! statistics). `scripts/shipped_path_eval.py` scores the rows.
+//!
+//! `--rescore ROWS_JSONL OUT_JSONL` writes saved rows again with each turn's
+//! reply pieces, read from its answer by the app's own parser (rows written
+//! since the chat cites `[sN]`), and copies `ROWS_JSONL.run.json` beside them.
 
 mod app;
 mod proxy;
 mod recipe;
 mod record;
+mod reply;
 
 use lattice::features::conversation::chat::headless::run_headless_turn;
 use lattice::features::conversation::chat::{ChatEventSink, ChatResponse, ChatStreamEventDto};
@@ -87,7 +92,58 @@ fn parse_args() -> Res<Args> {
     })
 }
 
+/// `--rescore ROWS_JSONL OUT_JSONL`: saved rows again, each turn given the
+/// pieces the chat draws its answer from, for rows written before turns kept them.
+fn rescore_files() -> Res<Option<(PathBuf, PathBuf)>> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.as_slice() {
+        [flag, rows, out] if flag == "--rescore" => Ok(Some((rows.into(), out.into()))),
+        [flag, ..] if flag == "--rescore" => {
+            Err("usage: shipped_path_eval --rescore ROWS_JSONL OUT_JSONL".into())
+        }
+        _ => Ok(None),
+    }
+}
+
+fn rescore(rows: &Path, out: &Path) -> Res<()> {
+    if out.exists() {
+        return Err(format!("{} exists; rescoring never overwrites rows", out.display()).into());
+    }
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let mut written = Vec::new();
+    for line in std::fs::read_to_string(rows)?
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+    {
+        let mut row: Value = serde_json::from_str(line)?;
+        runtime.block_on(reply::rescore_row(&mut row))?;
+        if let Some(row) = row.as_object_mut() {
+            row.insert("schema".into(), json!(record::SCHEMA));
+        }
+        written.push(serde_json::to_string(&row)?);
+    }
+    std::fs::write(out, written.join("\n") + "\n")?;
+    let run = with_suffix(rows, ".run.json");
+    if run.exists() {
+        let mut manifest: Value = serde_json::from_str(&std::fs::read_to_string(&run)?)?;
+        if let Some(manifest) = manifest.as_object_mut() {
+            manifest.insert("rescored_from".into(), json!(rows.display().to_string()));
+        }
+        std::fs::write(
+            with_suffix(out, ".run.json"),
+            serde_json::to_string_pretty(&manifest)?,
+        )?;
+    }
+    eprintln!("rescored {} rows into {}", written.len(), out.display());
+    Ok(())
+}
+
 fn main() -> Res<()> {
+    if let Some((rows, out)) = rescore_files()? {
+        return rescore(&rows, &out);
+    }
     let args = parse_args()?;
     if args.out.exists() {
         return Err(format!("{} exists; runs never overwrite", args.out.display()).into());
@@ -113,10 +169,7 @@ fn main() -> Res<()> {
         )
         .with_writer(std::io::stderr)
         .init();
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .thread_stack_size(8 * 1024 * 1024)
-        .build()?;
+    let runtime = lattice::bootstrap::async_runtime::install()?;
     let result = runtime.block_on(run(&args, &real_home, workdir.path()));
     if args.keep_data {
         let kept = workdir.keep();
@@ -126,6 +179,9 @@ fn main() -> Res<()> {
 }
 
 fn repo_root() -> PathBuf {
+    if let Some(root) = std::env::var_os("LATTICE_EVAL_REPO_ROOT") {
+        return PathBuf::from(root);
+    }
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(2)
@@ -234,12 +290,12 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
                 (None, None) => None,
                 _ => return Err("a recipe gives a server's gguf and gguf_sha256 together".into()),
             };
-            let reported = server.reported_ctx()?;
-            let mut probe = probe_server(server).await?;
-            if let Some(object) = probe.as_object_mut() {
-                object.insert("reported_n_ctx".into(), json!(reported));
-            }
-            (gguf_sha256, probe, server.url.clone(), None)
+            (
+                gguf_sha256,
+                probe_server(server).await?,
+                server.url.clone(),
+                None,
+            )
         }
         recipe::Answerer::Cloud(cloud) => {
             let (upstream, variable) = cloud.upstream()?;
@@ -252,26 +308,14 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
     // A cloud provider's key is the desktop's own; only a llama-server's
     // header is the proxy's to add.
     let auth = recipe.server.as_ref().and_then(|_| proxy::server_auth());
-    let report_ctx = recipe
-        .server
-        .as_ref()
-        .map(recipe::Server::reported_ctx)
-        .transpose()?
-        .flatten();
     let proxy_url = proxy::start(
         upstream,
         recipe.thinking_off()?,
-        report_ctx,
+        recipe.reported_ctx()?,
         auth,
         Arc::clone(&recorder),
     )
     .await?;
-    if let (Some(n), Some(server)) = (report_ctx, &recipe.server) {
-        eprintln!(
-            "the app is shown a window of {n} tokens; the server has {}",
-            server.expected_ctx
-        );
-    }
     if let Some(variable) = base_url_variable {
         // Read when the desktop builds its cloud client, so every request of
         // the run crosses the proxy and is recorded.
@@ -550,6 +594,7 @@ fn outcome_of<'a>(
         ask,
         conversation_id: response.map(|r| r.conversation_id.as_str()),
         answer: response.map(|r| r.message.as_str()),
+        reply: response.map_or_else(|| json!([]), |r| reply::shown(&r.messages)),
         error,
         answered_ms,
         verification_wait_ms,

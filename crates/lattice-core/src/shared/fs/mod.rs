@@ -2,11 +2,12 @@
 
 pub mod atomic;
 pub mod confinement;
+pub mod owned_folder;
 pub mod path;
 pub mod removal;
 pub mod roots;
 pub mod sweep_gate;
 
 pub use atomic::AtomicFs;
-pub use path::{path_to_string, validate_path};
+pub use path::{path_to_string, plainly_spelled, validate_path};
 pub use sweep_gate::SweepGate;

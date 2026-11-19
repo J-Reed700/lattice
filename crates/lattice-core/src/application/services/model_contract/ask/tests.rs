@@ -91,10 +91,11 @@ fn refuse(statement: &str) -> std::result::Result<(), Refusal> {
     }
 }
 
-fn schema_of(pointers: Pointers) -> Option<Schema> {
+fn schema_of(pointers: Held) -> Option<Schema> {
     let word = match pointers {
-        Pointers::Enum => "enum",
-        Pointers::Plain => "plain",
+        Held::Counts => "counts",
+        Held::Enums => "enum",
+        Held::Plain => "plain",
     };
     Some(Schema::made(serde_json::json!({ "pointers": word })))
 }
@@ -105,7 +106,7 @@ struct Verdicts;
 impl Shape for Verdicts {
     type Statement = String;
 
-    fn schema(_showing: &Showing<'_>, pointers: Pointers) -> Option<Schema> {
+    fn schema(_showing: &Showing<'_>, pointers: Held) -> Option<Schema> {
         schema_of(pointers)
     }
 }
@@ -156,7 +157,7 @@ struct Word;
 impl Shape for Word {
     type Statement = String;
 
-    fn schema(_showing: &Showing<'_>, pointers: Pointers) -> Option<Schema> {
+    fn schema(_showing: &Showing<'_>, pointers: Held) -> Option<Schema> {
         schema_of(pointers)
     }
 }
@@ -179,7 +180,7 @@ struct Names;
 impl Shape for Names {
     type Statement = String;
 
-    fn schema(_showing: &Showing<'_>, pointers: Pointers) -> Option<Schema> {
+    fn schema(_showing: &Showing<'_>, pointers: Held) -> Option<Schema> {
         schema_of(pointers)
     }
 }
@@ -249,6 +250,7 @@ contract!(NewFails, "test-new-fails", Names, Alone::Fails);
 
 type Responder = Box<dyn Fn(&str) -> (String, &'static str) + Send + Sync>;
 type TooLarge = Box<dyn Fn(&str) -> bool + Send + Sync>;
+type Holds = Box<dyn Fn(&Schema) -> bool + Send + Sync>;
 
 /// A model that returns queued replies, then the responder's, then the fallback, and records every request.
 struct Script {
@@ -258,6 +260,7 @@ struct Script {
     fallback: Option<(String, &'static str)>,
     seen: Mutex<Vec<CompletionRequest>>,
     enforcing: bool,
+    enforces_where: Option<Holds>,
     fail_at: Option<usize>,
     too_large: Option<TooLarge>,
 }
@@ -276,6 +279,7 @@ impl Script {
             fallback: None,
             seen: Mutex::new(Vec::new()),
             enforcing: false,
+            enforces_where: None,
             fail_at: None,
             too_large: None,
         }
@@ -296,6 +300,12 @@ impl Script {
 
     fn enforcing(mut self) -> Self {
         self.enforcing = true;
+        self
+    }
+
+    /// Enforces exactly the schemas `holds` says it does.
+    fn enforcing_where(mut self, holds: impl Fn(&Schema) -> bool + Send + Sync + 'static) -> Self {
+        self.enforces_where = Some(Box::new(holds));
         self
     }
 
@@ -388,8 +398,11 @@ impl LLMPort for Script {
         self.window
     }
 
-    fn enforces(&self, _schema: &Schema) -> bool {
-        self.enforcing
+    fn enforces(&self, schema: &Schema) -> bool {
+        match &self.enforces_where {
+            Some(holds) => holds(schema),
+            None => self.enforcing,
+        }
     }
 
     async fn is_ready(&self) -> Result<bool> {
@@ -504,6 +517,54 @@ macro_rules! one_runner {
 one_runner!(run_one, One);
 one_runner!(run_one_fails, OneFails);
 
+struct OneDefault;
+
+impl Contract for OneDefault {
+    const ID: ContractId = ContractId::new("test-one-default");
+    type Input = Input;
+}
+
+impl Answered for OneDefault {
+    type Answer = Word;
+    const ALONE: Alone = Alone::Pending;
+
+    fn says(_input: &Input, _showing: &mut Showing<'_>) -> Result<Says> {
+        Ok(Says::new("You judge tiles.", "Judge the tile."))
+    }
+
+    fn accept(_input: &Input, statement: &String) -> std::result::Result<(), Refusal> {
+        refuse(statement)
+    }
+}
+
+one_runner!(run_one_default, OneDefault);
+
+struct OneHalf;
+
+impl Contract for OneHalf {
+    const ID: ContractId = ContractId::new("test-one-half");
+    type Input = Input;
+}
+
+impl Answered for OneHalf {
+    type Answer = Word;
+    const ALONE: Alone = Alone::Pending;
+
+    fn says(_input: &Input, _showing: &mut Showing<'_>) -> Result<Says> {
+        let mut says = Says::new("You judge tiles.", "Judge the tile.");
+        says.output_tokens = HALF_WINDOW;
+        Ok(says)
+    }
+
+    fn accept(_input: &Input, statement: &String) -> std::result::Result<(), Refusal> {
+        refuse(statement)
+    }
+}
+
+const HALF_WINDOW: usize = 2_000;
+
+one_runner!(run_one_half, OneHalf);
+
 macro_rules! new_runner {
     ($name:ident, $contract:ty) => {
         async fn $name(script: &Script, limit: usize) -> Result<Found<String>> {
@@ -600,6 +661,45 @@ async fn a_cut_off_answer_with_room_gets_exactly_one_larger_send() {
 }
 
 #[tokio::test]
+async fn a_larger_send_doubles_the_default_room_of_a_request_that_set_none() {
+    let script = Script::new(&[("", LENGTH), ("fine", STOP)]).window(65_536);
+    let settled = run_one_default(&script, &Input::of(&[])).await.unwrap();
+    assert_eq!(settled, Settled::Answered("fine".to_owned()));
+    let requests = script.requests();
+    assert_eq!(requests.len(), 2);
+    let first = requests[0].max_output_tokens().unwrap();
+    let second = requests[1].max_output_tokens().unwrap();
+    assert_eq!(second, first * 2);
+}
+
+#[tokio::test]
+async fn a_larger_send_doubles_the_room_a_request_set() {
+    let script = Script::new(&[("", LENGTH), ("fine", STOP)]).window(65_536);
+    let settled = run_one(&script, &Input::of(&[])).await.unwrap();
+    assert_eq!(settled, Settled::Answered("fine".to_owned()));
+    let requests = script.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].max_output_tokens(), Some(100));
+    assert_eq!(requests[1].max_output_tokens(), Some(200));
+}
+
+#[tokio::test]
+async fn a_cut_off_answer_whose_room_is_already_half_the_window_is_corrected_not_sent_again() {
+    let script = Script::new(&[("", LENGTH), ("fine", STOP)]).window(HALF_WINDOW * 2);
+    let settled = run_one_half(&script, &Input::of(&[])).await.unwrap();
+    assert_eq!(settled, Settled::Answered("fine".to_owned()));
+    assert_eq!(
+        script.requests()[0].max_output_tokens(),
+        Some(HALF_WINDOW as u32)
+    );
+    assert_eq!(script.sent(), 2);
+    assert!(
+        script.prompt(1).contains(CUT_OFF),
+        "the second send is the correction, not the same request again"
+    );
+}
+
+#[tokio::test]
 async fn an_answer_cut_off_again_gets_one_correction_and_no_more() {
     let script = Script::new(&[]).always("", LENGTH);
     let settled = run_one(&script, &Input::of(&[])).await.unwrap();
@@ -643,8 +743,29 @@ async fn the_schema_is_the_enum_form_only_where_the_backend_enforces_it() {
             .schema()
             .map(|schema| schema.as_json()["pointers"].clone())
     };
-    assert_eq!(pointers(&enforcing), Some(serde_json::json!("enum")));
+    assert_eq!(pointers(&enforcing), Some(serde_json::json!("counts")));
     assert_eq!(pointers(&plain), Some(serde_json::json!("plain")));
+}
+
+#[tokio::test]
+async fn a_backend_that_refuses_the_lengths_is_sent_the_enum_form_without_them() {
+    let refuses_counts = Script::new(&[("ok", STOP)])
+        .enforcing_where(|schema| schema.as_json()["pointers"] != serde_json::json!("counts"));
+    run_one(&refuses_counts, &Input::of(&[])).await.unwrap();
+    let sent = refuses_counts.requests()[0]
+        .schema()
+        .map(|schema| schema.as_json()["pointers"].clone());
+    assert_eq!(sent, Some(serde_json::json!("enum")));
+}
+
+#[tokio::test]
+async fn a_backend_that_enforces_no_schema_is_sent_the_plain_form() {
+    let none = Script::new(&[("ok", STOP)]).enforcing_where(|_| false);
+    run_one(&none, &Input::of(&[])).await.unwrap();
+    let sent = none.requests()[0]
+        .schema()
+        .map(|schema| schema.as_json()["pointers"].clone());
+    assert_eq!(sent, Some(serde_json::json!("plain")));
 }
 
 #[tokio::test]

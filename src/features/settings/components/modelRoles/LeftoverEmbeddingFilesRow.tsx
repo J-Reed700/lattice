@@ -3,7 +3,7 @@
  * runtime left in an embedding model folder. Embeddings now run from a GGUF
  * in the bundled llama.cpp, which never reads them. The app never deletes
  * them on its own: this row shows their size and removes exactly them on
- * request. The GGUF and its tokenizer stay.
+ * request. The GGUF stays.
  */
 
 import { useState } from 'react';
@@ -57,7 +57,7 @@ export function LeftoverEmbeddingFilesRow() {
       <ConfirmDialog
         isOpen={confirming}
         title="Remove old embedding files?"
-        message={`Delete ${data.paths.length} old ${data.paths.length === 1 ? 'file' : 'files'} (${formatBytes(data.total_bytes)})? The current embedding model and its tokenizer stay. This cannot be undone.`}
+        message={`Delete ${data.paths.length} old ${data.paths.length === 1 ? 'file' : 'files'} (${formatBytes(data.total_bytes)})? The current embedding model stays. This cannot be undone.`}
         confirmLabel="Remove"
         variant="danger"
         onConfirm={() => {

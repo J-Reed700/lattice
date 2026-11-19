@@ -8,7 +8,7 @@ use crate::features::web::{WebArchiveServiceTrait, WebIngestionServiceTrait};
 use async_trait::async_trait;
 use lattice_core::application::contracts::web::CleanArticle;
 use lattice_core::application::ports::{EmbeddingPort, IngestedDocumentStorePort};
-use lattice_core::domain::ports::article_archive::ArticleArchive;
+use lattice_core::domain::ports::article_archive::{ArticleArchive, SavedArticle};
 use lattice_core::domain::value_objects::ContextualizedChunk;
 use lattice_core::shared::error::{AppError, Result};
 use std::fs;
@@ -25,6 +25,14 @@ impl ArticleArchive for MockWebArchiveService {
 
     fn owns(&self, path: &Path) -> bool {
         path.starts_with("/mock/web-archive")
+    }
+
+    fn is_saved_article(&self, _path: &Path) -> bool {
+        false
+    }
+
+    async fn saved_article(&self, _path: &Path) -> Option<SavedArticle> {
+        None
     }
 }
 
@@ -131,12 +139,12 @@ async fn test_ingest_url_with_mock_article() {
     assert_eq!(result.reading_time_minutes, Some(2));
 }
 
-#[test]
-fn chunk_text_prefixes_each_part_the_embedder_returns() {
+#[tokio::test]
+async fn chunk_text_prefixes_each_part_the_embedder_returns() {
     let service = create_test_service();
 
     let text = "This is a sentence. ".repeat(100);
-    let chunks = service.chunk_text(&text).unwrap();
+    let chunks = service.chunk_text(&text).await.unwrap();
 
     assert_eq!(chunks.len(), 1, "the test embedder splits nothing");
     for (index, chunk) in chunks.iter().enumerate() {
@@ -148,7 +156,7 @@ fn chunk_text_prefixes_each_part_the_embedder_returns() {
             format!("[Document: Web Article]\n\n{text}")
         );
     }
-    assert!(service.chunk_text("").unwrap().is_empty());
+    assert!(service.chunk_text("").await.unwrap().is_empty());
 }
 
 #[test]
@@ -668,7 +676,7 @@ mod article_vectors {
             Ok(true)
         }
 
-        fn split_text(
+        async fn split_text(
             &self,
             text: &str,
             _prefix: &str,

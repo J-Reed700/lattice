@@ -1,15 +1,17 @@
 //! The private report owns its public projection. No assessment text is copied
 //! into a learner DTO; malformed data is unavailable, never a checked claim.
+use super::cited_text::{number, Numbered};
 use super::claim_ledger::stands_in_part;
 use super::provenance_gate::FindingTrust;
 use super::resolution::{ended_mark, standing, Placed, Resolution, Standing};
-use super::{ClaimVerdict, Finding, LessonVerificationReport};
+use super::{ClaimVerdict, EvidencePassage, Finding, LessonVerificationReport};
 use crate::{
     dto::{LearningLessonDto, LearningSourceTrustDto, LearningSufficiencyDto},
     lesson_evidence::{
-        LearningClaimEvidenceDto, LearningClaimPartDto, LearningClaimPartKindDto,
-        LearningClaimResolutionDto, LearningEvidencePassageDto, LearningLessonEvidenceDto,
-        LearningStatementClassDto, SavedEvidenceVersion, UnverifiedReasonDto,
+        LearningCitationDto, LearningClaimEvidenceDto, LearningClaimPartDto,
+        LearningClaimPartKindDto, LearningClaimResolutionDto, LearningEvidencePassageDto,
+        LearningLessonEvidenceDto, LearningSectionTextDto, LearningStatementClassDto,
+        SavedEvidenceVersion, UnverifiedReasonDto,
     },
     references::trust::dto_map,
 };
@@ -69,13 +71,47 @@ fn sufficiency(trust: &FindingTrust) -> LearningSufficiencyDto {
 
 /// The class the learner is told of; a statement about the lesson itself, which
 /// the model sorted Internal and the veto passed, is told none.
-fn statement_class(class: Class) -> Option<LearningStatementClassDto> {
+pub(super) fn statement_class(class: Class) -> Option<LearningStatementClassDto> {
     match class {
         Class::Sourced => Some(LearningStatementClassDto::Sourced),
         Class::Reasoning => Some(LearningStatementClassDto::Reasoning),
         Class::Common => Some(LearningStatementClassDto::Common),
         Class::Internal => None,
     }
+}
+
+/// The DTO of `passage` as its saved version names it; a passage that is not
+/// a run and whose version is not saved is unavailable.
+fn passage_dto(
+    passage: &EvidencePassage,
+    by_id: &HashMap<&str, &SavedEvidenceVersion>,
+    trust: Option<LearningSourceTrustDto>,
+) -> Result<LearningEvidencePassageDto> {
+    let version = by_id.get(passage.source_id.as_str());
+    if version.is_none() && !passage.is_run() {
+        return Err(unavailable());
+    }
+    if passage.text.is_empty() || passage.end_byte < passage.start_byte {
+        return Err(unavailable());
+    }
+    Ok(LearningEvidencePassageDto {
+        source_version_id: passage.source_id.clone(),
+        title: version.map_or_else(
+            || "Executed example".into(),
+            |version| version.title.clone(),
+        ),
+        url: version.and_then(|version| {
+            version
+                .resolved_url
+                .clone()
+                .or_else(|| version.requested_url.clone())
+        }),
+        text: passage.text.clone(),
+        start_byte: passage.start_byte,
+        end_byte: passage.end_byte,
+        retrieval_kind: passage.retrieval_kind.clone(),
+        trust,
+    })
 }
 
 fn part_kind(kind: PartKind) -> LearningClaimPartKindDto {
@@ -248,41 +284,56 @@ impl LessonVerificationReport {
         let unverified = unverified_sentences(
             claims().map(|finding| (finding, resolved(finding, states, &finding_claims).0)),
         );
-        let teaching_claims = claims()
+        let teaching: Vec<&Finding> = claims()
             .filter(|finding| finding.unit < lesson.blocks.len())
-            .map(|finding| {
+            .collect();
+        let bodies: Vec<&str> = lesson
+            .blocks
+            .iter()
+            .map(|block| {
+                if block.check.is_some() {
+                    ""
+                } else {
+                    block.body.as_str()
+                }
+            })
+            .collect();
+        let Numbered {
+            passages: numbered,
+            cites,
+            sections,
+        } = number(&bodies, &teaching);
+        let citations = numbered
+            .iter()
+            .enumerate()
+            .map(|(index, passage)| {
+                Ok(LearningCitationDto {
+                    number: u32::try_from(index + 1).unwrap_or(u32::MAX),
+                    source_id: by_id
+                        .get(passage.source_id.as_str())
+                        .filter(|_| !passage.is_run())
+                        .map(|version| version.source_id.clone()),
+                    passage: passage_dto(passage, &by_id, None)?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let teaching_claims = teaching
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, finding)| {
                 let passages = finding
                     .evidence
                     .iter()
                     .map(|passage| {
-                        let version = by_id.get(passage.source_id.as_str());
-                        if version.is_none() && !passage.is_run() {
-                            return Err(unavailable());
-                        }
-                        if passage.text.is_empty() || passage.end_byte < passage.start_byte {
-                            return Err(unavailable());
-                        }
-                        Ok(LearningEvidencePassageDto {
-                            source_version_id: passage.source_id.clone(),
-                            title: version.map_or_else(
-                                || "Executed example".into(),
-                                |version| version.title.clone(),
-                            ),
-                            url: version.and_then(|version| {
-                                version
-                                    .resolved_url
-                                    .clone()
-                                    .or_else(|| version.requested_url.clone())
-                            }),
-                            text: passage.text.clone(),
-                            start_byte: passage.start_byte,
-                            end_byte: passage.end_byte,
-                            retrieval_kind: passage.retrieval_kind.clone(),
-                            trust: finding
+                        passage_dto(
+                            passage,
+                            &by_id,
+                            finding
                                 .trust
                                 .as_deref()
                                 .and_then(|trust| passage_trust(trust, &passage.source_id)),
-                        })
+                        )
                     })
                     .collect::<Result<Vec<_>>>()?;
                 let ledger_state = finding
@@ -325,6 +376,7 @@ impl LessonVerificationReport {
                     note,
                     unverified_reason,
                     claim_id: finding.claim_id.clone(),
+                    cites: cites.get(index).cloned().unwrap_or_default(),
                     sufficiency: finding.trust.as_deref().map(sufficiency),
                     class: finding
                         .class
@@ -360,6 +412,15 @@ impl LessonVerificationReport {
             unexecuted_languages: self.unexecuted_languages.clone(),
             sources_current,
             teaching_claims,
+            citations,
+            sections: sections
+                .into_iter()
+                .enumerate()
+                .map(|(section_index, pieces)| LearningSectionTextDto {
+                    section_index,
+                    pieces,
+                })
+                .collect(),
         })
     }
 }
@@ -656,6 +717,170 @@ mod tests {
             view.teaching_claims[0].passages[0].title,
             "Executed example"
         );
+    }
+
+    #[test]
+    fn a_lesson_reads_with_numbered_citations_its_statements_stand_on() {
+        use lattice_core::application::contracts::replies::{ReplyPieceDto, ReplyReferenceDto};
+
+        let (mut lesson, mut report) = fixture();
+        lesson.blocks[0].body = "Quillet reads source text. It then emits tokens.".into();
+        let source = |kind: &str, id: &str| EvidencePassage {
+            source_id: id.into(),
+            text: "Quillet reads source text.".into(),
+            start_byte: 0,
+            end_byte: 26,
+            retrieval_kind: kind.into(),
+            score: 1.0,
+        };
+        let cited = source(PassageKind::Cited.label(), "version-1");
+        report.findings[0].quote = "Quillet reads source text.".into();
+        report.findings[0].evidence = vec![cited.clone()];
+        report.findings[0].class = Some(Classed {
+            class: Class::Sourced,
+            by: ClassifiedBy::Writer,
+        });
+        report.findings[0].two_pass.parts = vec![CheckedPart {
+            part: "Quillet reads source text".into(),
+            kind: PartKind::Stated,
+            source_id: Some("version-1".into()),
+        }];
+        let mut second = report.findings[0].clone();
+        second.quote = "It then emits tokens.".into();
+        second.class = Some(Classed {
+            class: Class::Reasoning,
+            by: ClassifiedBy::Model,
+        });
+        second.two_pass.parts.clear();
+        second.evidence = vec![source(PassageKind::Run.label(), "run-1"), cited];
+        report.findings.push(second);
+        let versions = [SavedEvidenceVersion {
+            id: "version-1".into(),
+            source_id: "source-1".into(),
+            title: "The Quillet Guide".into(),
+            resolved_url: None,
+            requested_url: Some("https://example.com/quillet".into()),
+            content_sha256: "x".into(),
+            active_version_id: Some("version-1".into()),
+            deleted_at: None,
+        }];
+
+        let view = report
+            .learner_view(&lesson, &versions, &ClaimStates::default())
+            .unwrap();
+
+        assert_eq!(view.citations.len(), 2);
+        assert_eq!(view.citations[0].number, 1);
+        assert_eq!(view.citations[0].source_id.as_deref(), Some("source-1"));
+        assert_eq!(view.citations[0].passage.title, "The Quillet Guide");
+        assert_eq!(view.citations[0].passage.source_version_id, "version-1");
+        assert!(view.citations[0].passage.trust.is_none());
+        assert_eq!(view.citations[1].number, 2);
+        assert_eq!(view.citations[1].source_id, None);
+        assert_eq!(view.citations[1].passage.title, "Executed example");
+        assert_eq!(view.teaching_claims[0].cites, vec![1]);
+        assert_eq!(view.teaching_claims[1].cites, vec![1]);
+        let mark = ReplyPieceDto::Reference {
+            reference: ReplyReferenceDto {
+                written: "[1]".into(),
+                kind: "source".into(),
+                number: 1,
+                lines: None,
+                name: None,
+            },
+        };
+        let text = |text: &str| ReplyPieceDto::Text { text: text.into() };
+        assert_eq!(view.sections.len(), 1);
+        assert_eq!(view.sections[0].section_index, 0);
+        assert_eq!(
+            view.sections[0].pieces,
+            vec![
+                text("Quillet reads source text."),
+                mark.clone(),
+                text(" It then emits tokens."),
+                mark,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_checks_statements_get_no_chip_and_are_numbered_after_every_placed_one() {
+        use crate::dto::LearningCheckDto;
+        use lattice_core::application::contracts::replies::ReplyPieceDto;
+
+        let (mut lesson, mut report) = fixture();
+        lesson.blocks[0].body = "Quillet reads source text.".into();
+        lesson.blocks[0].check = Some(LearningCheckDto {
+            question: "Quillet reads source text.".into(),
+            reveal: "It does.".into(),
+        });
+        lesson.blocks.push(LearningBlockDto::new(
+            LearningBlockKind::Explanation,
+            "Second".into(),
+            "It then emits tokens.".into(),
+            vec![],
+            vec![],
+        ));
+        let passage = |text: &str, start: usize| EvidencePassage {
+            source_id: "version-1".into(),
+            text: text.into(),
+            start_byte: start,
+            end_byte: start + text.len(),
+            retrieval_kind: PassageKind::Cited.label().into(),
+            score: 1.0,
+        };
+        report.findings[0].unit = 0;
+        report.findings[0].quote = "Quillet reads source text.".into();
+        report.findings[0].evidence = vec![passage("Quillet reads source text.", 0)];
+        report.findings[0].class = Some(Classed {
+            class: Class::Sourced,
+            by: ClassifiedBy::Writer,
+        });
+        report.findings[0].two_pass.parts = vec![CheckedPart {
+            part: "Quillet reads source text".into(),
+            kind: PartKind::Stated,
+            source_id: Some("version-1".into()),
+        }];
+        let mut second = report.findings[0].clone();
+        second.unit = 1;
+        second.quote = "It then emits tokens.".into();
+        second.evidence = vec![passage("It then emits tokens.", 100)];
+        report.findings.push(second);
+        let versions = [SavedEvidenceVersion {
+            id: "version-1".into(),
+            source_id: "source-1".into(),
+            title: "The Quillet Guide".into(),
+            resolved_url: None,
+            requested_url: Some("https://example.com/quillet".into()),
+            content_sha256: "x".into(),
+            active_version_id: Some("version-1".into()),
+            deleted_at: None,
+        }];
+
+        let view = report
+            .learner_view(&lesson, &versions, &ClaimStates::default())
+            .unwrap();
+
+        assert_eq!(view.citations.len(), 2);
+        assert_eq!(view.citations[0].passage.start_byte, 100);
+        assert_eq!(view.citations[1].passage.start_byte, 0);
+        assert_eq!(view.teaching_claims[0].cites, vec![2]);
+        assert_eq!(view.teaching_claims[1].cites, vec![1]);
+        let pieces = |index: usize| {
+            &view
+                .sections
+                .iter()
+                .find(|section| section.section_index == index)
+                .unwrap()
+                .pieces
+        };
+        assert!(!pieces(0)
+            .iter()
+            .any(|piece| matches!(piece, ReplyPieceDto::Reference { .. })));
+        assert!(pieces(1).iter().any(|piece| matches!(
+            piece,
+            ReplyPieceDto::Reference { reference } if reference.number == 1
+        )));
     }
 
     #[test]

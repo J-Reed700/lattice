@@ -25,6 +25,7 @@ use lattice_core::application::ports::{
 
 // Service Traits
 use lattice_core::application::ports::TagServiceTrait;
+use lattice_core::domain::ports::article_archive::ArticleArchive;
 
 /// File operations module for opening files, metadata, wikilinks
 ///
@@ -51,6 +52,7 @@ impl FileOpsModule {
         core: Arc<CoreModule>,
         extraction_workers: crate::features::indexing::engine::extraction::ExtractionWorkers,
         tag_service: Arc<dyn TagServiceTrait>,
+        web_archive: Arc<dyn ArticleArchive>,
     ) -> lattice_core::shared::error::Result<Self> {
         use crate::features::indexing::content_extraction_adapter::ContentExtractionAdapter;
         use crate::features::indexing::engine::extraction::ContentExtractor;
@@ -90,6 +92,7 @@ impl FileOpsModule {
             vault_path,
             database,
             preview_extractor,
+            web_archive,
         );
         let extraction = crate::features::extraction::di::build(
             document_repo as Arc<dyn DocumentRepositoryPort>,

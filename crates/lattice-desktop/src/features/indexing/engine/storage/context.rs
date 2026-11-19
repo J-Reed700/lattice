@@ -4,51 +4,12 @@ use super::checksum::calculate_checksum;
 use crate::features::indexing::engine::error::{IndexingError, Result};
 use chrono::Utc;
 use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;
+use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::domain::value_objects::ContextualizedChunk;
 use lattice_core::shared::fs::path::path_to_string;
 use lattice_core::shared::persistence::{Database, WriteTx};
-use serde::Deserialize;
 use std::path::Path;
 use uuid::Uuid;
-
-/// Metadata structure from web article metadata.json
-#[derive(Debug, Deserialize)]
-struct WebArticleMetadata {
-    title: String,
-}
-
-/// Check if path is a web article (has sibling metadata.json)
-fn is_web_article(path: &Path) -> bool {
-    if let Some(parent) = path.parent() {
-        parent.join("metadata.json").exists()
-    } else {
-        false
-    }
-}
-
-/// Extract title from web article metadata.json
-async fn get_web_article_title(path: &Path) -> Result<String> {
-    let parent = path.parent().ok_or_else(|| IndexingError::FileRead {
-        path: path.display().to_string(),
-        reason: "Path has no parent directory".to_string(),
-    })?;
-
-    let metadata_path = parent.join("metadata.json");
-    let metadata_content = tokio::fs::read_to_string(&metadata_path)
-        .await
-        .map_err(|e| IndexingError::FileRead {
-            path: metadata_path.display().to_string(),
-            reason: format!("Failed to read metadata.json: {}", e),
-        })?;
-
-    let metadata: WebArticleMetadata =
-        serde_json::from_str(&metadata_content).map_err(|e| IndexingError::FileRead {
-            path: metadata_path.display().to_string(),
-            reason: format!("Failed to parse metadata.json: {}", e),
-        })?;
-
-    Ok(metadata.title)
-}
 
 /// File facts read before a write unit opens.
 pub struct DocumentFacts {
@@ -60,26 +21,21 @@ pub struct DocumentFacts {
 }
 
 /// Read the name, size, modification time and checksum of a document's file.
-pub async fn read_document_facts(path: &Path) -> Result<DocumentFacts> {
-    let file_name = if is_web_article(path) {
-        match get_web_article_title(path).await {
-            Ok(title) => title,
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to extract title from web article metadata.json, using filename: {}",
-                    e
-                );
-                path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown")
-                    .to_string()
-            }
-        }
-    } else {
-        path.file_name()
+pub async fn read_document_facts(
+    archive: &dyn ArticleArchive,
+    path: &Path,
+) -> Result<DocumentFacts> {
+    let file_name = match archive
+        .saved_article(path)
+        .await
+        .and_then(|article| article.title)
+    {
+        Some(title) => title,
+        None => path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
-            .to_string()
+            .to_string(),
     };
 
     let file_path = path_to_string(path).map_err(|e| IndexingError::FileRead {
@@ -256,6 +212,7 @@ async fn insert_chunks_and_embeddings(
 /// Store document with contextualized chunks.
 pub async fn store_document_with_context(
     db: &Database,
+    archive: &dyn ArticleArchive,
     path: &Path,
     mime_type: &str,
     chunks: Vec<ContextualizedChunk>,
@@ -269,7 +226,7 @@ pub async fn store_document_with_context(
         )));
     }
 
-    let facts = read_document_facts(path).await?;
+    let facts = read_document_facts(archive, path).await?;
     let mut tx = db.begin_write().await?;
     let doc_id = Uuid::new_v4().to_string();
 
@@ -284,6 +241,7 @@ pub async fn store_document_with_context(
 /// Store document with context and file ID.
 pub async fn store_document_with_context_and_file(
     db: &Database,
+    archive: &dyn ArticleArchive,
     path: &Path,
     _file_id: &str,
     mime_type: &str,
@@ -298,7 +256,7 @@ pub async fn store_document_with_context_and_file(
         )));
     }
 
-    let facts = read_document_facts(path).await?;
+    let facts = read_document_facts(archive, path).await?;
     let mut tx = db.begin_write().await?;
     let doc_id = Uuid::new_v4().to_string();
 
@@ -338,7 +296,9 @@ pub async fn store_document_with_context_and_file_tx(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::web::services::archive::WebArchiveService;
     use sqlx::SqlitePool;
+    use std::path::PathBuf;
 
     async fn setup_pool() -> SqlitePool {
         let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
@@ -382,10 +342,12 @@ mod tests {
         let db = Database::new(pool.clone());
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("note.md");
+        let archive = WebArchiveService::with_base_dir(dir.path().join("web-archive"));
 
         std::fs::write(&path, "first version").expect("write file");
         let first_id = store_document_with_context(
             &db,
+            &archive,
             &path,
             "text/markdown",
             vec![chunk("first version", 0)],
@@ -401,6 +363,7 @@ mod tests {
         std::fs::write(&path, "second version, longer").expect("rewrite file");
         let second_id = store_document_with_context(
             &db,
+            &archive,
             &path,
             "text/markdown",
             vec![chunk("second version, longer", 0), chunk("extra chunk", 1)],
@@ -452,10 +415,12 @@ mod tests {
         let db = Database::new(pool.clone());
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("note.md");
+        let archive = WebArchiveService::with_base_dir(dir.path().join("web-archive"));
 
         std::fs::write(&path, "v1").expect("write file");
         store_document_with_context(
             &db,
+            &archive,
             &path,
             "text/markdown",
             vec![chunk("v1", 0)],
@@ -467,6 +432,7 @@ mod tests {
         std::fs::write(&path, "v2").expect("rewrite file");
         store_document_with_context(
             &db,
+            &archive,
             &path,
             "text/markdown",
             vec![chunk("v2", 0)],
@@ -484,5 +450,44 @@ mod tests {
             lattice_core::shared::persistence::embedding_encoding::decode_embedding(&blob)
                 .expect("embedding must decode");
         assert_eq!(decoded, vec![0.5, 0.6, 0.7, 0.8]);
+    }
+
+    fn write_file_beside_metadata(dir: &Path, name: &str, metadata: &str) -> PathBuf {
+        std::fs::create_dir_all(dir).expect("directory");
+        let path = dir.join(name);
+        std::fs::write(&path, "body").expect("write file");
+        std::fs::write(dir.join("metadata.json"), metadata).expect("write metadata");
+        path
+    }
+
+    #[tokio::test]
+    async fn a_file_beside_a_metadata_file_outside_the_archive_keeps_its_file_name() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let archive = WebArchiveService::with_base_dir(root.path().join("web-archive"));
+        let path = write_file_beside_metadata(
+            &root.path().join("notes"),
+            "note.md",
+            r#"{"title": "Not An Article"}"#,
+        );
+
+        let facts = read_document_facts(&archive, &path).await.expect("facts");
+
+        assert_eq!(facts.file_name, "note.md");
+    }
+
+    #[tokio::test]
+    async fn an_article_in_the_archive_is_named_by_its_saved_title() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let base = root.path().join("web-archive");
+        let archive = WebArchiveService::with_base_dir(base.clone());
+        let path = write_file_beside_metadata(
+            &base.join("example.org").join("essay-1"),
+            "article.md",
+            r#"{"title": "Saved Title"}"#,
+        );
+
+        let facts = read_document_facts(&archive, &path).await.expect("facts");
+
+        assert_eq!(facts.file_name, "Saved Title");
     }
 }

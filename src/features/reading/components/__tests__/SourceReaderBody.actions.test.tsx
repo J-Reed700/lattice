@@ -15,14 +15,15 @@ const mocks = vi.hoisted(() => ({
   openSourcePath: vi.fn(),
   revealSourcePath: vi.fn(),
   readFileContent: vi.fn(),
+  savedWebArticle: vi.fn(),
   createPassageReference: vi.fn(),
   openExternal: vi.fn(),
   navigate: vi.fn(),
 }));
 
 vi.mock('@/lib/api', () => ({
-  default: { readFileContent: mocks.readFileContent, createPassageReference: mocks.createPassageReference },
-  VaultAPI: { readFileContent: mocks.readFileContent, createPassageReference: mocks.createPassageReference },
+  default: { readFileContent: mocks.readFileContent, savedWebArticle: mocks.savedWebArticle, createPassageReference: mocks.createPassageReference },
+  VaultAPI: { readFileContent: mocks.readFileContent, savedWebArticle: mocks.savedWebArticle, createPassageReference: mocks.createPassageReference },
 }));
 vi.mock('@tauri-apps/plugin-shell', () => ({ open: mocks.openExternal }));
 vi.mock('@/features/reading/hooks/sourceFileActions', () => ({
@@ -70,6 +71,9 @@ vi.mock('@/features/reading/components/JournalCapturePreview', () => ({
 vi.mock('@/features/reading/components/viewers/TextViewer', () => ({
   TextViewer: ({ content }: { content: string }) => <div data-testid="file-content">{content}</div>,
 }));
+vi.mock('@/features/reading/components/viewers/HTMLViewer', () => ({
+  HTMLViewer: () => <div data-testid="html-viewer" />,
+}));
 
 const DOCUMENT_ID = '123e4567-e89b-12d3-a456-426614174000';
 
@@ -103,6 +107,7 @@ beforeEach(() => {
   useWebPageSnapshotStore.setState({ mode: null });
   mocks.resolveSourcePath.mockResolvedValue({ ok: true, data: '/vault/harvest.txt' });
   mocks.readFileContent.mockResolvedValue({ ok: true, data: 'Barley ripens in July.' });
+  mocks.savedWebArticle.mockResolvedValue({ ok: true, data: null });
   mocks.openSourceDocument.mockResolvedValue({ ok: true, data: { action: 'opened_external' } });
   mocks.openSourcePath.mockResolvedValue({ ok: true, data: null });
   mocks.revealSourcePath.mockResolvedValue({ ok: true, data: null });
@@ -182,6 +187,66 @@ describe('SourceReaderBody footer actions', () => {
     click('Open URL');
     await waitFor(() => expect(open).toHaveBeenCalledWith('https://example.com/grain', '_blank', 'noopener,noreferrer'));
     expect(toasts()).toEqual([{ title: "Couldn't open URL", message: 'shell blocked' }]);
+  });
+});
+
+describe('SourceReaderBody opening a saved web article', () => {
+  const folder = '/home/me/.lattice/web-archive/example.com/grain-1/';
+  const textPath = `${folder}article.md`;
+  const pagePath = `${folder}page.html`;
+  const address = 'https://example.com/grain';
+  const rendersPage = { ok: true, data: { action: 'render_internal', contentPath: pagePath } };
+  const rendersText = { ok: true, data: { action: 'render_internal', contentPath: textPath } };
+
+  async function showArticle(saved: { pagePath: string | null; url: string | null }, documentId = DOCUMENT_ID) {
+    mocks.resolveSourcePath.mockResolvedValue({ ok: true, data: textPath });
+    mocks.savedWebArticle.mockResolvedValue({ ok: true, data: { textPath, title: 'Grain history', links: [], ...saved } });
+    renderBody(source({ documentId, fileName: 'article.md', filePath: textPath, mimeType: 'text/markdown' }));
+    await screen.findByTestId('html-viewer');
+  }
+
+  it('opens the saved page in the browser', async () => {
+    mocks.openSourceDocument.mockResolvedValue(rendersPage);
+    await showArticle({ pagePath, url: address });
+    click('Open file');
+    await waitFor(() => expect(mocks.openSourcePath).toHaveBeenCalledWith(pagePath, VaultAPI));
+    expect(mocks.openExternal).not.toHaveBeenCalled();
+    expect(toasts()).toEqual([]);
+  });
+
+  it('opens the saved page of an article cited without a library id', async () => {
+    await showArticle({ pagePath, url: address }, 'loose-file');
+    click('Open file');
+    await waitFor(() => expect(mocks.openSourcePath).toHaveBeenCalledWith(pagePath, VaultAPI));
+    expect(mocks.openSourcePath).not.toHaveBeenCalledWith(textPath, VaultAPI);
+  });
+
+  it('opens the address it was saved from when the saved page will not open', async () => {
+    mocks.openSourceDocument.mockResolvedValue(rendersPage);
+    mocks.openSourcePath.mockResolvedValue({ ok: false, error: 'no app for html' });
+    await showArticle({ pagePath, url: address });
+    click('Open file');
+    await waitFor(() => expect(mocks.openExternal).toHaveBeenCalledWith(address));
+    expect(toasts()).toEqual([]);
+  });
+
+  it('opens the address it was saved from when its page is gone', async () => {
+    mocks.openSourceDocument.mockResolvedValue(rendersText);
+    mocks.openSourcePath.mockResolvedValue(rendersText);
+    await showArticle({ pagePath: null, url: address });
+    click('Open file');
+    await waitFor(() => expect(mocks.openExternal).toHaveBeenCalledWith(address));
+    expect(toasts()).toEqual([]);
+  });
+
+  it('says so when it has neither its page nor an address', async () => {
+    mocks.openSourceDocument.mockResolvedValue(rendersText);
+    mocks.openSourcePath.mockResolvedValue(rendersText);
+    await showArticle({ pagePath: null, url: null });
+    click('Open file');
+    await waitFor(() =>
+      expect(toasts()).toEqual([{ title: "Couldn't open file", message: 'It has no saved page or web address.' }]),
+    );
   });
 });
 

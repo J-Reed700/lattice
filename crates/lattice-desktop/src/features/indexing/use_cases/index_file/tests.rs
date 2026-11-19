@@ -168,7 +168,7 @@ impl EmbeddingPort for MockSplittingEmbedder {
         Ok(texts.iter().map(|_| vec![0.1, 0.2, 0.3]).collect())
     }
 
-    fn split_text(
+    async fn split_text(
         &self,
         text: &str,
         _prefix: &str,
@@ -741,7 +741,7 @@ async fn prepare_for_indexing_preserves_tokenizer_counts_code_flags_and_avoids_f
             Ok(texts.iter().map(|_| vec![0.1, 0.2, 0.3]).collect())
         }
 
-        fn split_text(
+        async fn split_text(
             &self,
             passage: &str,
             _prefix: &str,

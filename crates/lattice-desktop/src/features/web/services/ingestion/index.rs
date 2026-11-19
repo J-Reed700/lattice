@@ -14,12 +14,13 @@ impl WebIngestionService {
     /// # Errors
     ///
     /// - `AppError::TokenizationError` if tokenization fails
-    pub(super) fn chunk_text(&self, text: &str) -> Result<Vec<ContextualizedChunk>> {
+    pub(super) async fn chunk_text(&self, text: &str) -> Result<Vec<ContextualizedChunk>> {
         let context_prefix = WEB_ARTICLE_CONTEXT_PREFIX;
         let prefix = format!("{context_prefix}\n\n");
         Ok(self
             .embedding_service
-            .split_text(text, &prefix)?
+            .split_text(text, &prefix)
+            .await?
             .into_iter()
             .enumerate()
             .map(|(index, part)| ContextualizedChunk {

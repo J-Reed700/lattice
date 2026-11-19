@@ -38,6 +38,9 @@ mod recipe;
 #[allow(dead_code)]
 #[path = "../shipped_path_eval/record.rs"]
 mod record;
+#[allow(dead_code)]
+#[path = "../shipped_path_eval/reply.rs"]
+mod reply;
 
 use async_trait::async_trait;
 use lattice::features::conversation::chat::headless::run_headless_turn;
@@ -147,10 +150,7 @@ fn main() -> Res<()> {
         )
         .with_writer(std::io::stderr)
         .init();
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .thread_stack_size(8 * 1024 * 1024)
-        .build()?;
+    let runtime = lattice::bootstrap::async_runtime::install()?;
     let result = runtime.block_on(run(&args, &real_home, workdir.path()));
     if args.keep_data {
         let kept = workdir.keep();
@@ -289,7 +289,7 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
     let proxy_url = proxy::start(
         server.url.clone(),
         recipe.thinking_off()?,
-        server.reported_ctx()?,
+        recipe.reported_ctx()?,
         auth.clone(),
         Arc::clone(&recorder),
     )
@@ -656,6 +656,9 @@ async fn run_turn(
         ask,
         conversation_id: Some(conversation_id),
         answer: response.as_ref().map(|r| r.message.as_str()),
+        reply: response
+            .as_ref()
+            .map_or_else(|| json!([]), |r| reply::shown(&r.messages)),
         error: error.clone(),
         answered_ms,
         verification_wait_ms,

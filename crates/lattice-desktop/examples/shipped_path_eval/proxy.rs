@@ -129,7 +129,7 @@ pub fn server_auth() -> Option<(String, String)> {
 pub async fn start(
     upstream: String,
     thinking_off: bool,
-    report_ctx: Option<u64>,
+    reported_ctx: Option<u64>,
     auth: Option<(String, String)>,
     recorder: Arc<Recorder>,
 ) -> Res<String> {
@@ -154,7 +154,7 @@ pub async fn start(
                     &client,
                     &upstream,
                     thinking_off,
-                    report_ctx,
+                    reported_ctx,
                     auth.as_ref(),
                     &recorder,
                 )
@@ -167,28 +167,7 @@ pub async fn start(
             });
         }
     });
-    let base = format!("http://{address}");
-    if let Some(n) = report_ctx {
-        let props: Value = lattice_core::shared::http::reqwest_client_builder()
-            .build()?
-            .get(format!("{base}/props"))
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<Value>()
-            .await?;
-        let seen = props
-            .pointer("/default_generation_settings/n_ctx")
-            .or_else(|| props.get("n_ctx"))
-            .and_then(Value::as_u64);
-        if seen != Some(n) {
-            return Err(format!(
-                "the proxy reports n_ctx {seen:?}; the recipe asks it to report {n}"
-            )
-            .into());
-        }
-    }
-    Ok(base)
+    Ok(format!("http://{address}"))
 }
 
 struct Head {
@@ -256,28 +235,14 @@ pub fn switch_thinking_off(body: &mut Value) -> bool {
     }
 }
 
-/// `/props` as the server answered it, with its window reported as `n_ctx`.
-pub fn reported_props(body: &[u8], n_ctx: u64) -> Res<Vec<u8>> {
-    let mut props: Value = serde_json::from_slice(body)?;
-    let mut found = false;
-    if let Some(object) = props.as_object_mut() {
-        if let Some(slot) = object
-            .get_mut("default_generation_settings")
-            .and_then(Value::as_object_mut)
-            .and_then(|settings| settings.get_mut("n_ctx"))
-        {
-            *slot = json!(n_ctx);
-            found = true;
-        }
-        if let Some(slot) = object.get_mut("n_ctx") {
-            *slot = json!(n_ctx);
-            found = true;
-        }
+/// Puts `window` wherever `/props` reports the server's `n_ctx`.
+pub fn report_window(props: &mut Value, window: u64) {
+    if let Some(n_ctx) = props.pointer_mut("/default_generation_settings/n_ctx") {
+        *n_ctx = json!(window);
     }
-    if !found {
-        return Err("the server's /props names no n_ctx".into());
+    if let Some(n_ctx) = props.get_mut("n_ctx") {
+        *n_ctx = json!(window);
     }
-    Ok(serde_json::to_vec(&props)?)
 }
 
 async fn serve(
@@ -285,7 +250,7 @@ async fn serve(
     client: &reqwest::Client,
     upstream: &str,
     thinking_off: bool,
-    report_ctx: Option<u64>,
+    reported_ctx: Option<u64>,
     auth: Option<&(String, String)>,
     recorder: &Recorder,
 ) -> Res<()> {
@@ -293,6 +258,13 @@ async fn serve(
     let head = read_request(&mut stream).await?;
     let started_ms = recorder.elapsed_ms();
     let started = Instant::now();
+    let is_props = head.method == "GET"
+        && head
+            .path
+            .split('?')
+            .next()
+            .is_some_and(|path| path.trim_end_matches('/').ends_with("/props"));
+    let reported_ctx = reported_ctx.filter(|_| is_props);
     let is_completions = head.path.ends_with("/chat/completions");
     // Anthropic's Messages API, for a run whose answering model is Claude.
     let is_messages = head.path.ends_with("/v1/messages");
@@ -335,11 +307,24 @@ async fn serve(
         reply: None,
         error: None,
     };
-    let is_window_query =
-        head.method == "GET" && head.path.split('?').next().unwrap_or_default() == "/props";
     let client_stream = stream.get_mut();
-    match forward.body(body).send().await {
-        Ok(response) => {
+    match (forward.body(body).send().await, reported_ctx) {
+        (Ok(response), Some(window)) if response.status().is_success() => {
+            let status = response.status();
+            record.status = Some(status.as_u16());
+            let mut props: Value = serde_json::from_slice(&response.bytes().await?)?;
+            report_window(&mut props, window);
+            let props = serde_json::to_vec(&props)?;
+            let head = format!(
+                "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                status.as_u16(),
+                status.canonical_reason().unwrap_or(""),
+                props.len()
+            );
+            client_stream.write_all(head.as_bytes()).await?;
+            client_stream.write_all(&props).await?;
+        }
+        (Ok(response), _) => {
             let status = response.status();
             record.status = Some(status.as_u16());
             let content_type = response
@@ -354,50 +339,27 @@ async fn serve(
                 status.canonical_reason().unwrap_or("")
             );
             client_stream.write_all(head.as_bytes()).await?;
-            let window = report_ctx.filter(|_| is_window_query && status.is_success());
             let mut copy = Vec::new();
-            if let Some(n_ctx) = window {
-                let upstream_body = match response.bytes().await {
-                    Ok(bytes) => bytes.to_vec(),
+            let mut chunks = response.bytes_stream();
+            while let Some(chunk) = chunks.next().await {
+                let chunk = match chunk {
+                    Ok(chunk) => chunk,
                     Err(error) => {
                         record.error = Some(WithCauses(&error).to_string());
-                        Vec::new()
-                    }
-                };
-                record.first_byte_ms = Some(elapsed_ms(started));
-                recorder.touch();
-                let answer = match reported_props(&upstream_body, n_ctx) {
-                    Ok(rewritten) => rewritten,
-                    Err(error) => {
-                        record.error = Some(WithCauses(error.as_ref()).to_string());
-                        upstream_body
-                    }
-                };
-                if let Err(error) = client_stream.write_all(&answer).await {
-                    record.error = Some(format!("client closed: {error}"));
-                }
-            } else {
-                let mut chunks = response.bytes_stream();
-                while let Some(chunk) = chunks.next().await {
-                    let chunk = match chunk {
-                        Ok(chunk) => chunk,
-                        Err(error) => {
-                            record.error = Some(WithCauses(&error).to_string());
-                            break;
-                        }
-                    };
-                    if record.first_byte_ms.is_none() {
-                        record.first_byte_ms = Some(elapsed_ms(started));
-                    }
-                    recorder.touch();
-                    if is_chat {
-                        copy.extend_from_slice(&chunk);
-                    }
-                    // A client that gave up still gets its call recorded.
-                    if let Err(error) = client_stream.write_all(&chunk).await {
-                        record.error = Some(format!("client closed: {error}"));
                         break;
                     }
+                };
+                if record.first_byte_ms.is_none() {
+                    record.first_byte_ms = Some(elapsed_ms(started));
+                }
+                recorder.touch();
+                if is_chat {
+                    copy.extend_from_slice(&chunk);
+                }
+                // A client that gave up still gets its call recorded.
+                if let Err(error) = client_stream.write_all(&chunk).await {
+                    record.error = Some(format!("client closed: {error}"));
+                    break;
                 }
             }
             // A refused request says why in its body; without it the run only
@@ -414,7 +376,7 @@ async fn serve(
                 });
             }
         }
-        Err(error) => {
+        (Err(error), _) => {
             record.error = Some(WithCauses(&error).to_string());
             let reply =
                 "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";

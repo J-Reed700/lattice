@@ -13,12 +13,12 @@ vi.mock('@/lib/api', () => ({ default: { getLearningLessonEvidence: mocks.eviden
 
 const claim = (overrides: Partial<LearningClaimEvidenceDto>): LearningClaimEvidenceDto => ({
   sectionIndex: 0, contentQuote: 'The sentence.', claim: 'A statement.', verdict: 'supported', reason: 'Checked.', supportingQuote: null,
-  passages: [], resolution: 'verified', note: null, sufficiency: null, class: 'sourced', label: null, parts: [], unverifiedReason: null, ...overrides,
+  passages: [], resolution: 'verified', note: null, sufficiency: null, class: 'sourced', label: null, parts: [], unverifiedReason: null, cites: [], ...overrides,
 });
 
 const report = (teachingClaims: LearningClaimEvidenceDto[], overrides: Partial<LearningLessonEvidenceDto> = {}): LearningLessonEvidenceDto => ({
   policy: 'lesson-evidence-v21', checkedAt: 1, checkerModel: 'checker', retrievalMode: 'hybrid', embeddingModel: null, contentSha256: 'hash',
-  claimCount: teachingClaims.length, confirmedCount: 0, executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true, teachingClaims, ...overrides,
+  claimCount: teachingClaims.length, confirmedCount: 0, executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true, teachingClaims, citations: [], sections: [], ...overrides,
 });
 
 const unverified = (text: string, reason: 'unchecked' | 'unsupported' | 'contradicted') =>

@@ -409,14 +409,6 @@ pub async fn update_settings(
         .await
         .map_err(ApiError::from)?;
 
-    // The vault path and the indexed-folder list determine what file-read IPC
-    // is permitted to reach, so the policy has to be recomputed here. Skipping
-    // it leaves a newly added folder unreadable until restart, and — worse — a
-    // just-removed folder still readable.
-    if let Err(e) = container.refresh_allowed_roots().await {
-        tracing::warn!(error = %e, "failed to refresh file-access allowed roots after settings update");
-    }
-
     Ok(updated)
 }
 

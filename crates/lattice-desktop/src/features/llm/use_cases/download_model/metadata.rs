@@ -1,7 +1,6 @@
 //! Resolving what to download: curated or Hugging Face metadata and embedding file lists.
 
 use lattice_core::application::ports::model_catalog::ExternalModelMetadata;
-use lattice_core::application::services::credentials::CredentialKey;
 use lattice_core::domain::models::curated::get_all_curated_models;
 use lattice_core::shared::error::AppError;
 
@@ -9,59 +8,23 @@ use super::DownloadModelUseCase;
 
 impl DownloadModelUseCase {
     /// The files of an embedding model picked from a Hugging Face search: the
-    /// chosen GGUF, plus the repository's `tokenizer.json` when it has one.
-    ///
-    /// The embedding runtime cuts passages with the model's own tokenizer, so
-    /// a GGUF without one beside it downloads but cannot be activated for
-    /// search; activation says so. Sizes are left unknown (0): the transfer
-    /// engine takes them from the server rather than from a catalog estimate.
-    async fn build_gguf_embedding_file_list(
+    /// chosen GGUF alone, which is the whole model. Its size is left unknown
+    /// (0): the transfer engine takes it from the server rather than from a
+    /// catalog estimate.
+    fn build_gguf_embedding_file_list(
         repo_id: &str,
         gguf_filename: &str,
-        auth_token: Option<&str>,
     ) -> Vec<lattice_core::domain::models::metadata::ModelFileMetadata> {
-        use lattice_core::domain::models::checkpoint::TOKENIZER_JSON;
         use lattice_core::domain::models::metadata::ModelFileMetadata;
 
-        let base_url = format!("https://huggingface.co/{}/resolve/main", repo_id);
-        let mut files = vec![ModelFileMetadata::new(
+        vec![ModelFileMetadata::new(
             gguf_filename.to_string(),
-            format!("{}/{}", base_url, gguf_filename),
+            format!(
+                "https://huggingface.co/{}/resolve/main/{}",
+                repo_id, gguf_filename
+            ),
             0,
-        )];
-
-        let tokenizer_url = format!("{}/{}", base_url, TOKENIZER_JSON);
-        if Self::remote_file_exists(&tokenizer_url, auth_token).await {
-            files.push(ModelFileMetadata::new(
-                TOKENIZER_JSON.to_string(),
-                tokenizer_url,
-                0,
-            ));
-        }
-
-        files
-    }
-
-    /// HEAD-check a URL on Hugging Face to confirm a file exists before adding
-    /// it to the download list. HF returns 200 on HEAD (after redirects) for
-    /// existing files and 404 otherwise.
-    async fn remote_file_exists(url: &str, auth_token: Option<&str>) -> bool {
-        let client = match lattice_core::shared::http::reqwest_client_builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .redirect(reqwest::redirect::Policy::limited(5))
-            .build()
-        {
-            Ok(c) => c,
-            Err(_) => return false,
-        };
-        let mut req = client.head(url);
-        if let Some(token) = auth_token {
-            req = req.bearer_auth(token);
-        }
-        req.send()
-            .await
-            .map(|r| r.status().is_success())
-            .unwrap_or(false)
+        )]
     }
 
     fn infer_model_name_from_repo(repo_id: &str) -> String {
@@ -134,30 +97,12 @@ impl DownloadModelUseCase {
                 resolved.total_size_bytes = (resolved.size_gb * 1_000_000_000.0) as u64;
             }
 
-            // An embedding GGUF downloads with the tokenizer its passages are
-            // cut with, so it takes the multi-file path.
+            // An embedding GGUF downloads as its one file on the file-list path.
             if resolved.category
                 == lattice_core::domain::models::selection::ModelCategory::Embedding
                 && filename.to_ascii_lowercase().ends_with(".gguf")
             {
-                // A gated repo answers the tokenizer probe only with the
-                // user's token.
-                let auth_token: Option<String> = if resolved.requires_auth {
-                    self.credentials
-                        .get_api_key(CredentialKey::HuggingFaceToken.as_str())
-                        .await
-                        .ok()
-                        .flatten()
-                } else {
-                    None
-                };
-
-                resolved.files = Self::build_gguf_embedding_file_list(
-                    &repo_id,
-                    &filename,
-                    auth_token.as_deref(),
-                )
-                .await;
+                resolved.files = Self::build_gguf_embedding_file_list(&repo_id, &filename);
                 resolved.default_filename = None;
             }
 

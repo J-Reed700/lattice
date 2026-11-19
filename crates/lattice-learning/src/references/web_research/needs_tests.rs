@@ -3,7 +3,7 @@
 use super::*;
 use crate::lessons::structured_call::task_messages;
 use futures::future::BoxFuture;
-use lattice_core::application::ports::llm_port::CompletionResponse;
+use lattice_core::application::ports::llm_port::{CompletionInput, CompletionResponse};
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use lattice_core::application::services::model_contract::test_support::{ScriptedModel, Sent};
 use lattice_core::shared::error::{AppError, Result};
@@ -137,6 +137,91 @@ fn the_kinds_the_planner_may_write_are_the_kinds_a_search_may_ask_for() {
     for (word, kind) in PlannedKind::WORDS {
         assert_eq!(*word, kind.0.as_str());
     }
+}
+
+#[tokio::test]
+async fn a_package_search_reads_its_registry_and_any_other_search_reads_none() -> Result<()> {
+    let model = ScriptedModel::new().on_request::<ReferenceNeeds>(|_, _| {
+        reply(
+            needs_answer(json!([
+                {"gap": 0, "query": "tide table parser package", "kind": "package", "subject": "tidetable", "ecosystem": "pypi"},
+                {"gap": 0, "query": "tide table revision schedule", "kind": "web", "ecosystem": "none"}
+            ]))
+            .to_string(),
+        )
+    });
+    let planned = plan_needs(&model, "harbour", &gaps(), json!([]), &[]).await?;
+    assert_eq!(planned.len(), 2);
+    assert_eq!(planned[0].need.ecosystem.as_deref(), Some("pypi"));
+    assert_eq!(planned[1].need.ecosystem, None);
+    Ok(())
+}
+
+/// What the planner is asked a second time after its first answer is `refused`.
+async fn correction_after(refused: Value) -> Result<String> {
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let model = ScriptedModel::new().on_request::<ReferenceNeeds>({
+        let seen = seen.clone();
+        move |sent, _| {
+            let last = sent
+                .request
+                .input()
+                .iter()
+                .rev()
+                .find_map(|item| match item {
+                    CompletionInput::Message { content, .. } => Some(content.clone()),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            let mut seen = seen.lock().unwrap();
+            seen.push(last);
+            let search = if seen.len() == 1 {
+                refused.clone()
+            } else {
+                json!({"gap": 1, "query": "tide table revision schedule", "kind": "web"})
+            };
+            reply(needs_answer(json!([search])).to_string())
+        }
+    });
+    plan_needs(&model, "harbour", &gaps(), json!([]), &[]).await?;
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2, "one correction");
+    Ok(seen[1].clone())
+}
+
+#[tokio::test]
+async fn a_refused_search_is_told_the_rule_it_broke_and_no_other() -> Result<()> {
+    let correction = correction_after(
+        json!({"gap": 0, "query": "harbour gate opening times", "kind": "web", "site": "the harbour office pages"}),
+    )
+    .await?;
+    assert!(
+        correction.ends_with(&format!("{} Answer again.", Outside::Site.says())),
+        "{correction}"
+    );
+    for other in [
+        Outside::Query,
+        Outside::Rewording,
+        Outside::Kind,
+        Outside::Registry,
+        Outside::Date,
+        Outside::DatedRead,
+    ] {
+        assert!(!correction.contains(other.says()), "{correction}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_search_breaking_two_rules_is_told_both() -> Result<()> {
+    let correction = correction_after(
+        json!({"gap": 0, "query": "harbour gate opening times", "kind": "web", "site": "the harbour office pages", "after": "last spring"}),
+    )
+    .await?;
+    for rule in [Outside::Site, Outside::Date] {
+        assert_eq!(correction.matches(rule.says()).count(), 1, "{correction}");
+    }
+    Ok(())
 }
 
 #[tokio::test]

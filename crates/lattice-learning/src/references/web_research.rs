@@ -108,14 +108,16 @@ impl PlannedNeed {
 
     /// The searches this planned need stands for, trimmed. `site` is the one
     /// place a search's scope is kept: `site:` operators in a query become one
-    /// search per site named. `None` when the need breaks [`need_schema`], which
-    /// not every model provider enforces.
-    pub(crate) fn searches(self) -> Option<Vec<Self>> {
+    /// search per site named. The rule broken when the need breaks [`need_schema`],
+    /// which not every model provider enforces.
+    pub(crate) fn searches(self) -> Result<Vec<Self>, Vec<Outside>> {
         let (query, named) = lift_sites(&self.query);
-        let sites: Vec<Option<Origin>> = match filled(self.site.clone()) {
-            Some(site) => vec![Some(Origin::parse(&site)?)],
-            None if named.is_empty() => vec![None],
-            None => named.into_iter().map(Some).collect(),
+        let sites: Result<Vec<Option<Origin>>, Outside> = match filled(self.site.clone()) {
+            Some(site) => Origin::parse(&site)
+                .map(|site| vec![Some(site)])
+                .ok_or(Outside::Site),
+            None if named.is_empty() => Ok(vec![None]),
+            None => Ok(named.into_iter().map(Some).collect()),
         };
         let alternatives = self
             .alternatives
@@ -128,16 +130,22 @@ impl PlannedNeed {
             site: None,
             ..self
         }
-        .checked()?;
-        Some(
-            sites
+        .checked();
+        match (need, sites) {
+            (Ok(need), Ok(sites)) => Ok(sites
                 .into_iter()
                 .map(|site| Self {
                     site: site.map(|site| site.to_string()),
                     ..need.clone()
                 })
-                .collect(),
-        )
+                .collect()),
+            (need, sites) => {
+                let mut broken = need.err().unwrap_or_default();
+                broken.extend(sites.err());
+                broken.sort();
+                Err(broken)
+            }
+        }
     }
 
     /// The search as one line, its site written back as an operator: what a
@@ -167,7 +175,7 @@ impl PlannedNeed {
 
     /// The need trimmed, with empty fields dropped, when its fields keep to
     /// the schema; its site is [`Self::searches`]'s to decide.
-    fn checked(self) -> Option<Self> {
+    fn checked(self) -> Result<Self, Vec<Outside>> {
         let query = self.query.trim().to_owned();
         let ecosystem = filled(self.ecosystem);
         let identifier = filled(self.identifier);
@@ -183,16 +191,33 @@ impl PlannedNeed {
             None => true,
             Some(_) => after.is_none() && identifier.as_deref().is_some_and(is_page_address),
         };
-        let valid = !query.is_empty()
-            && alternatives.iter().all(|rewording| !rewording.is_empty())
-            && PLANNED_KINDS.contains(&self.kind)
-            && ecosystem
-                .as_deref()
-                .is_none_or(|registry| Ecosystem::parse(registry).is_some())
-            && after.as_ref().is_none_or(Option::is_some)
-            && as_of.as_ref().is_none_or(Option::is_some)
-            && dated_read_named;
-        valid.then(|| Self {
+        let broken: Vec<Outside> = [
+            (query.is_empty(), Outside::Query),
+            (
+                alternatives.iter().any(|rewording| rewording.is_empty()),
+                Outside::Rewording,
+            ),
+            (!PLANNED_KINDS.contains(&self.kind), Outside::Kind),
+            (
+                ecosystem
+                    .as_deref()
+                    .is_some_and(|registry| Ecosystem::parse(registry).is_none()),
+                Outside::Registry,
+            ),
+            (
+                after.as_ref().is_some_and(Option::is_none)
+                    || as_of.as_ref().is_some_and(Option::is_none),
+                Outside::Date,
+            ),
+            (!dated_read_named, Outside::DatedRead),
+        ]
+        .into_iter()
+        .filter_map(|(is_broken, rule)| is_broken.then_some(rule))
+        .collect();
+        if !broken.is_empty() {
+            return Err(broken);
+        }
+        Ok(Self {
             query,
             kind: self.kind,
             subject: filled(self.subject),
@@ -268,6 +293,29 @@ impl Vocabulary for PlannedKind {
     ];
 }
 
+/// The registry a planned package search names, as the model writes it; `none` for any other search.
+#[derive(Debug, Clone, Copy)]
+struct PlannedRegistry(Option<Ecosystem>);
+
+impl Vocabulary for PlannedRegistry {
+    const WORDS: &'static [(&'static str, Self)] = &REGISTRY_WORDS;
+}
+
+/// `none`, then every registry under the name the schemas give it.
+const REGISTRY_WORDS: [(&str, PlannedRegistry); 8] = {
+    let [a, b, c, d, e, f, g] = Ecosystem::ALL;
+    [
+        ("none", PlannedRegistry(None)),
+        (a.as_str(), PlannedRegistry(Some(a))),
+        (b.as_str(), PlannedRegistry(Some(b))),
+        (c.as_str(), PlannedRegistry(Some(c))),
+        (d.as_str(), PlannedRegistry(Some(d))),
+        (e.as_str(), PlannedRegistry(Some(e))),
+        (f.as_str(), PlannedRegistry(Some(f))),
+        (g.as_str(), PlannedRegistry(Some(g))),
+    ]
+};
+
 /// One rewording of a query.
 struct Rewording(String);
 
@@ -288,7 +336,7 @@ impl Authored for PlannedNeed {
             .word::<PlannedKind>("kind")
             .text("subject")
             .text("identifier")
-            .text("ecosystem")
+            .word::<PlannedRegistry>("ecosystem")
             .text("site")
             .list::<Rewording>("alternatives")
             .text("after")
@@ -300,7 +348,10 @@ impl Authored for PlannedNeed {
         let kind = fields.word::<PlannedKind>("kind")?.0;
         let subject = filled(Some(fields.text("subject")?));
         let identifier = filled(Some(fields.text("identifier")?));
-        let ecosystem = filled(Some(fields.text("ecosystem")?));
+        let ecosystem = fields
+            .word::<PlannedRegistry>("ecosystem")?
+            .0
+            .map(|registry| registry.as_str().to_owned());
         let site = filled(Some(fields.text("site")?));
         let alternatives = fields
             .list::<Rewording>("alternatives")?
@@ -325,14 +376,44 @@ impl Authored for PlannedNeed {
 
 /// What a search planner is told about a field of its answer that does not apply.
 pub(crate) const UNSET_FIELD: &str =
-    "Write every field of every entry; leave a field empty when it does not apply.";
+    "Write every field of every entry; leave a text field empty when it does not apply, and write none as the ecosystem of a search that is not for a software package or whose package is in none of the listed registries.";
 
-/// The refusal of a planned search outside what a search allows.
-pub(crate) fn outside_a_search() -> Refusal {
-    Refusal(
-        "Give a search that keeps to what a search allows: a query and rewordings that are not blank once any site: operators are lifted out, a site that is an address, a listed kind, a listed registry, dates as YYYY-MM-DD, and a dated read that names its page's address."
-            .into(),
-    )
+/// The rule of a search that a planned need breaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Outside {
+    Query,
+    Rewording,
+    Kind,
+    Registry,
+    Site,
+    Date,
+    DatedRead,
+}
+
+impl Outside {
+    /// What the planner is told to write instead.
+    pub(crate) fn says(self) -> &'static str {
+        match self {
+            Self::Query => "A search needs a query that is not blank once any site: operators are lifted out.",
+            Self::Rewording => "A rewording is not blank once any site: operators are lifted out.",
+            Self::Kind => "A search asks for one of the listed kinds.",
+            Self::Registry => "A package search names one of the listed registries as its ecosystem.",
+            Self::Site => "A site is the address of one host, such as docs.example.org; leave site empty to search everywhere.",
+            Self::Date => "A date is written as YYYY-MM-DD; leave after and asOf empty for a search that needs no date.",
+            Self::DatedRead => "A search with asOf gives the page's full address as its identifier and sets no after.",
+        }
+    }
+}
+
+/// The refusal of planned searches for the rules they break, each rule said once.
+pub(crate) fn outside_a_search(broken: &[Outside]) -> Refusal {
+    let mut said: Vec<&str> = Vec::new();
+    for rule in broken {
+        if !said.contains(&rule.says()) {
+            said.push(rule.says());
+        }
+    }
+    Refusal(said.join(" "))
 }
 
 /// One gap of the research, as the model names it.
@@ -416,10 +497,12 @@ impl Answered for ReferenceNeeds {
     }
 
     fn accept(_input: &NeedsInput, served: &GapNeed) -> std::result::Result<(), Refusal> {
-        match served.need.clone().searches() {
-            Some(_) => Ok(()),
-            None => Err(outside_a_search()),
-        }
+        served
+            .need
+            .clone()
+            .searches()
+            .map(|_| ())
+            .map_err(|broken| outside_a_search(&broken))
     }
 }
 
@@ -469,7 +552,7 @@ pub(crate) async fn plan_needs(
     let mut planned = Vec::new();
     for GapNeed { gap, need } in found.items {
         let served = gaps.get(gap);
-        let Some(searches) = need.searches() else {
+        let Ok(searches) = need.searches() else {
             continue;
         };
         for mut need in searches {
@@ -499,16 +582,10 @@ pub(crate) async fn plan_needs(
 #[cfg(test)]
 pub(crate) fn written_need(need: &Value) -> Value {
     let mut need = need.as_object().cloned().unwrap_or_default();
-    for field in [
-        "subject",
-        "identifier",
-        "ecosystem",
-        "site",
-        "after",
-        "asOf",
-    ] {
+    for field in ["subject", "identifier", "site", "after", "asOf"] {
         need.entry(field).or_insert(json!(""));
     }
+    need.entry("ecosystem").or_insert(json!("none"));
     let rewordings = need.remove("alternatives").unwrap_or_else(|| json!([]));
     let rewordings: Vec<Value> = rewordings
         .as_array()

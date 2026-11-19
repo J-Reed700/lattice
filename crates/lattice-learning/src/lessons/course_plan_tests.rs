@@ -124,10 +124,10 @@ fn plan_input(program: &LearningProgramDto) -> PlanInput {
 
 #[test]
 fn the_schema_names_every_lesson_by_its_handle() {
-    use lattice_core::application::services::model_contract::shape::Pointers;
+    use lattice_core::application::services::model_contract::shape::Held;
     use lattice_core::application::services::model_contract::test_support::samples::schema_of;
     let program = crate::tests::fixture();
-    let schema = schema_of::<PlanCourse>(&plan_input(&program), Pointers::Enum).unwrap();
+    let schema = schema_of::<PlanCourse>(&plan_input(&program), Held::Enums).unwrap();
     let item = &schema.as_json()["properties"]["entries"]["items"];
     assert_eq!(item["properties"]["of"]["enum"], json!(HANDLES));
     assert_eq!(item["properties"]["ideas"]["type"], "array");

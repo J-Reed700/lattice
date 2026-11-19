@@ -14,7 +14,9 @@ use lattice_core::application::services::model_contract::ask::{
     self, ask_new, Alone, Answered, Refusal, Says,
 };
 use lattice_core::application::services::model_contract::packed::Packed;
-use lattice_core::application::services::model_contract::shape::{Authored, Fields, Form, New};
+use lattice_core::application::services::model_contract::shape::{
+    Authored, Fields, Form, New, STATEMENTS,
+};
 use lattice_core::application::services::model_contract::shown::{
     Internal, Picked, Scope, Showing, Told,
 };
@@ -183,6 +185,7 @@ impl Answered for RecallDrafts {
     }
 
     fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
+        showing.asks(&STATEMENTS, input.count.0..=input.count.0);
         let texts = texts_of(input);
         let mut excerpts: Vec<Excerpt> = Vec::new();
         let mut lessons: Vec<(usize, String)> = Vec::new();

@@ -305,12 +305,22 @@ fn a_difficulty_that_is_not_a_number_leaves_the_item_unread() {
 struct Queued {
     replies: Mutex<VecDeque<(String, &'static str)>>,
     seen: Mutex<Vec<(Value, String)>>,
+    holds: bool,
 }
 
 fn queued(replies: Vec<(String, &'static str)>) -> Queued {
     Queued {
         replies: Mutex::new(replies.into()),
         seen: Mutex::new(Vec::new()),
+        holds: false,
+    }
+}
+
+/// Like `queued`, for a backend that holds an answer to its schema.
+fn enforcing(replies: Vec<(String, &'static str)>) -> Queued {
+    Queued {
+        holds: true,
+        ..queued(replies)
     }
 }
 
@@ -350,7 +360,7 @@ impl LLMPort for Queued {
         &self,
         _schema: &lattice_core::application::services::model_contract::shape::Schema,
     ) -> bool {
-        false
+        self.holds
     }
 }
 
@@ -486,4 +496,57 @@ async fn a_batch_asks_for_difficulty_but_names_no_index_or_block() -> Result<()>
         assert!(!schema.contains(gone), "{gone} in {schema}");
     }
     Ok(())
+}
+
+/// The `minItems` of every list named `name` in the properties of `schema`.
+fn least_of(schema: &Value, name: &str, found: &mut Vec<Option<u64>>) {
+    match schema {
+        Value::Object(map) => {
+            if let Some(list) = map.get("properties").and_then(|p| p.get(name)) {
+                found.push(list["minItems"].as_u64());
+            }
+            for value in map.values() {
+                least_of(value, name, found);
+            }
+        }
+        Value::Array(values) => values.iter().for_each(|v| least_of(v, name, found)),
+        _ => {}
+    }
+}
+
+/// The schema a batch of `format` items is sent to a backend that holds answers to their schema.
+async fn enforced_item_schema(format: LearningItemFormat) -> Value {
+    let need = kiln_need(format, vec![passage("Firing", FIRING)]);
+    let documents = collection_of(&need);
+    let collection = ReferenceCollection::lexical(&documents).unwrap();
+    let llm = enforcing(vec![("{\"items\":[]}".to_owned(), "stop")]);
+    let batch = Batch {
+        need: &need,
+        count: 1,
+        notes: vec![],
+        repair: None,
+    };
+    batch.author(&llm, &collection).await.unwrap();
+    let seen = llm.seen.lock().unwrap();
+    serde_json::from_str(&seen[0].1).unwrap()
+}
+
+#[tokio::test]
+async fn a_short_answer_asks_for_at_least_one_accepted_answer() {
+    let schema = enforced_item_schema(LearningItemFormat::ShortAnswer).await;
+    let mut found = Vec::new();
+    least_of(&schema, "acceptedAnswers", &mut found);
+
+    assert_eq!(found, vec![Some(1)], "{schema}");
+}
+
+#[tokio::test]
+async fn a_cloze_asks_for_at_least_one_blank_and_one_accepted_answer_in_each() {
+    let schema = enforced_item_schema(LearningItemFormat::Cloze).await;
+    let (mut blanks, mut accepted) = (Vec::new(), Vec::new());
+    least_of(&schema, "blanks", &mut blanks);
+    least_of(&schema, "acceptedAnswers", &mut accepted);
+
+    assert_eq!(blanks, vec![Some(1)], "{schema}");
+    assert_eq!(accepted, vec![Some(1)], "{schema}");
 }

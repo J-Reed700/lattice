@@ -4,7 +4,7 @@ use crate::{
     lessons::course_generation_tests::ScriptedModel, practical_dto::LearningInterviewRoundKind,
 };
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-use lattice_core::application::services::model_contract::shape::Pointers;
+use lattice_core::application::services::model_contract::shape::Held;
 use lattice_core::application::services::model_contract::test_support::samples::schema_of;
 use lattice_core::shared::persistence::Database;
 use std::sync::{
@@ -794,8 +794,8 @@ fn the_author_and_review_schemas_hold_no_text_length_cap() -> Result<()> {
     let guide = interview_answer_review::fields(&answer);
     let input =
         interview_answer_review::input_of(&json!({}), "An outline.", &answer, &guide, &[source()]);
-    let schema = schema_of::<interview_answer_review::GuideReview>(&input, Pointers::Enum)
-        .expect("a schema");
+    let schema =
+        schema_of::<interview_answer_review::GuideReview>(&input, Held::Enums).expect("a schema");
     let rules = text_length_rules(schema.as_json());
     assert!(rules.is_empty(), "{rules:?}");
     Ok(())

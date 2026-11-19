@@ -21,7 +21,7 @@ pub struct Recipe {
     pub corpus: String,
     /// A desktop-path question set (`items`) or a dataset (`queries`).
     pub questions: String,
-    /// The embedding model's GGUF, with its `tokenizer.json` beside it.
+    /// The embedding model's GGUF.
     pub embedding_gguf: String,
     pub embedding_model_id: String,
     /// The reranker's GGUF, served the way the app serves it. Without one the
@@ -71,30 +71,14 @@ pub struct Server {
     pub launch: Option<String>,
     pub expected_ctx: u64,
     pub expected_slots: u64,
-    /// A window for the proxy to report as the server's own: `/props` is
-    /// answered with this `n_ctx`, so the app sizes every request to it, as it
-    /// would for a server started with that window. The probe still checks
-    /// `expected_ctx` against the server itself.
+    /// The window the proxy reports to the desktop in `/props`, as a server
+    /// started with that window would. The server's own when absent.
     #[serde(default)]
-    pub report_ctx: Option<u64>,
+    pub reported_ctx: Option<u64>,
     /// `"off"`: add `chat_template_kwargs.enable_thinking: false` to every
     /// request that does not choose for itself. `"as-sent"`: forward
     /// requests untouched.
     pub thinking: String,
-}
-
-impl Server {
-    /// The window the proxy reports, which must be one the server has.
-    pub fn reported_ctx(&self) -> Res<Option<u64>> {
-        match self.report_ctx {
-            Some(n) if n == 0 || n > self.expected_ctx => Err(format!(
-                "server.report_ctx {n} must be at least 1 and at most expected_ctx {}",
-                self.expected_ctx
-            )
-            .into()),
-            reported => Ok(reported),
-        }
-    }
 }
 
 /// A model on a cloud provider's public API. The key is the one the desktop
@@ -191,6 +175,20 @@ impl Recipe {
             Answerer::Server(server) => server.model.as_str(),
             Answerer::Cloud(cloud) => cloud.model.as_str(),
         })
+    }
+
+    pub fn reported_ctx(&self) -> Res<Option<u64>> {
+        let Answerer::Server(server) = self.answerer()? else {
+            return Ok(None);
+        };
+        match server.reported_ctx {
+            Some(window) if window == 0 || window > server.expected_ctx => Err(format!(
+                "server.reported_ctx {window} must be between 1 and expected_ctx {}",
+                server.expected_ctx
+            )
+            .into()),
+            window => Ok(window),
+        }
     }
 
     pub fn thinking_off(&self) -> Res<bool> {
