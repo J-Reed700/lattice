@@ -17,8 +17,10 @@ under half the speed, because the server drafts no request that has a schema.
 every turn of the fifty questions. Condensing (`research_notes.rs`) has never fired in a chat turn, not in this run and
 not in any recorded one, and by the loop's own arithmetic it cannot on these questions at any window from 16K to 196K.
 The app run at 16K bears that out: no turn condensed, and seven of the eight that searched again ran out of window
-first. Condensing's only eval is the offline replay, now level with the shipped step. On the 27B it kept every planted
-fact with its citation, 304 of 304 and 288 of 288, against 304 and 264 on 2026-10-28, at about twice the time per turn.
+first. Condensing's only eval is the offline replay, level with the shipped step at 616587e48. On the 27B it kept
+every planted fact with its citation, 304 of 304 and 288 of 288, against 304 and 264 on 2026-10-28, at about twice the
+time per turn. Since then #598 has condensing answer in plain lines with no schema; the replay now asks and reads as
+main does, and has not been run that way.
 
 ## What each set exercises
 
@@ -129,6 +131,14 @@ It replaced the 2026-10-28 replay, which asked for free-text notes. A parity tes
 (`scripts/test_replay_condense_rag_eval.py`) checks its wording, request, schema, sampling and reading of the answer
 against the Rust source. The turns, rubrics and scoring are those of 2026-10-27 and 2026-10-28.
 
+**Since these runs (2026-11-19).** #598 (fe0cca7d0) has condensing answer in plain lines, one line for each result that
+keeps something, with no schema, and #596 (59c195557) sends a cut-off answer again with twice its room only when that
+room is larger. The replay now sends and reads as main does after both, and its parity test checks it against main's
+snapshot. The numbers below come from the replay at 38311e48a, which asked under a JSON schema as main at 616587e48
+did. That replay also sent a cut-off answer again with the same room, where main at 616587e48 already doubled it; no
+answer asked alone was cut off in these runs, so no answer was sent again and the difference touches none of their
+numbers.
+
 | Turns | Run | Facts kept | with citation | Notes used | After / before | Requests | Cut off | Median s/turn |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
 | 60 at 16K | 2026-10-28, a message of its own | 304/304 | 304 | 58/60 | 0.18 | | | 14.2 |
@@ -224,7 +234,8 @@ main's nine turns with a call through that arithmetic at five windows:
   reserve.
 - **Recipe.** The 2026-11-06 27B recipe: the reranker (Qwen3 reranker 0.6B, Q8_0) on this PC, the fifty questions of
   `evals/retrieval/desktop-path-v1.json` (67 turns), thinking off. The window run is the same recipe with the app shown
-  16,384 tokens (`server.report_ctx`, and the app's context window setting to match).
+  16,384 tokens (`server.report_ctx` in this branch's binary, `server.reported_ctx` on main since #584, and the app's
+  context window setting to match).
 - **The 27B to itself.** Each run held the heavy-run lock shared with the other agents' 27B work, and started only once
   the server's one slot was idle. CPU load on this PC was 46% at the start of the main run, and another worktree's eval
   binary was building beside it for its first 20 minutes, so its times are not clean.
