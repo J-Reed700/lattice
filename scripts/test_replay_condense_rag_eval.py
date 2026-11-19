@@ -324,7 +324,7 @@ class Asking(unittest.TestCase):
 
         def send(messages, scale=1):
             sent.append(messages)
-            return reply("r1: u1") if len(sent) == 1 else reply("r2: u1\nr3:")
+            return reply("r1: u1\nr9: u1") if len(sent) == 1 else reply("r2: u1\nr3:")
 
         got = replay.ask_each("q", asked, send)
         self.assertEqual(len(sent), 2)
@@ -336,21 +336,20 @@ class Asking(unittest.TestCase):
         self.assertEqual(got["first"], {0})
 
     def test_a_lone_source_cut_off_is_resent_with_twice_the_room_then_corrected_with_it(self):
+        answers = [reply("r1: u", "length"), reply("r1:\n- u", "length"), reply("r1: u1")]
         sent = []
 
         def send(messages, scale=1):
             sent.append((messages, scale))
-            return reply("r1: u1\nr1: u", "length")
+            return answers[len(sent) - 1]
 
         got = replay.ask_each("q", [source(1, "a")], send)
-        self.assertEqual(len(sent), 3)
         self.assertEqual([scale for _, scale in sent], [1, 2, 2])
-        self.assertEqual(sent[0][0], sent[1][0])
-        self.assertEqual([m["role"] for m in sent[2][0]], ["system", "user", "assistant", "user"])
-        self.assertEqual(sent[2][0][:2], sent[0][0])
-        self.assertEqual(sent[2][0][3]["content"], replay.CUT_OFF)
+        self.assertEqual(sent[1][0], sent[0][0])
+        self.assertEqual(sent[2][0], sent[0][0] + [{"role": "assistant", "content": "r1:\n- u"},
+                                                   {"role": "user", "content": replay.CUT_OFF}])
         self.assertEqual((got["resends"], got["corrections"]), (1, 1))
-        self.assertEqual(got["rows"], [("unanswered", "cut_off")])
+        self.assertEqual(got["rows"], [("answered", [1])])
 
     def test_a_lone_source_not_cut_off_is_corrected_at_the_first_room(self):
         sent = []
