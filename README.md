@@ -30,8 +30,10 @@ Screenshots from the running macOS app. Click an image to view it at full size.
 - **Chat with receipts.** Ask questions against your library and get answers
   with footnoted citations you can click through to the source. A retrieval
   trace shows which documents were pulled in and why.
-- **Omni-Composer Dashboard.** A unified, research-focused home dashboard: ask questions, perform searches, or capture quick thoughts instantly from one interface.
-- **Library Hub Navigation.** A persistent navigation bar across Library, Search, Compare, References, and Import views ensures consistent access to all your tools.
+- **A home page that tells the truth.** The dashboard reports what's actually
+  in your library — document counts, storage used, recent files, and the
+  conversations worth picking back up. If a number can't be computed, the
+  tile is left out rather than showing a zero.
 - **Learning Studio.** Build a learning program from your sources: a
   curriculum, practice, hands-on labs that run in a sandbox, assessments, and
   recall. Flashcard decks live here too: turn a document or a conversation
@@ -44,10 +46,11 @@ Screenshots from the running macOS app. Click an image to view it at full size.
   conversation. Whisper transcribes what you say and Kokoro reads answers and
   lessons aloud, both on your computer. Audio files you import become
   searchable transcripts whose citations play from the cited moment.
-- **Explorer & Inspector.** Open a folder from disk beside a chat. Browse the tree, read
-  files in a tabbed code viewer, and ask questions the model answers by reading that
-  folder, pointing at the exact lines. The Inspector panel provides file metadata and quick access to related content.
-- **Documents that know their neighbors.** Open any document and the inspector
+- **Explorer.** Open a folder from disk beside a chat. Browse the tree, read
+  files in a code viewer, and ask questions the model answers by reading that
+  folder, pointing at the exact lines. Each folder gets its own search index,
+  kept apart from your library.
+- **Documents that know their neighbors.** Open any document and the related
   panel shows what links to it, what's similar, and which conversations cite
   it.
 - **A journal and a reference inbox** for the notes and passages you want to
