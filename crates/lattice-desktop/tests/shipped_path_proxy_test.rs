@@ -6,7 +6,7 @@
 #[path = "../examples/shipped_path_eval/proxy.rs"]
 mod proxy;
 
-use proxy::{serve, start, CallRecord, Recorder};
+use proxy::{serve, start, upstream_client, CallRecord, Recorder};
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -212,7 +212,7 @@ async fn recorded_for_an_app_that_hung_up(
     request: &str,
 ) -> Res<CallRecord> {
     let recorder = Recorder::new();
-    let client = lattice_core::shared::http::reqwest_client_builder().build()?;
+    let client = upstream_client()?;
     let app = HungUp(io::Cursor::new(request.as_bytes().to_vec()));
     let served = serve(app, &client, upstream, false, reported, None, &recorder).await;
     match recorder.since(0).as_slice() {

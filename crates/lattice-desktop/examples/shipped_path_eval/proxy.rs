@@ -125,6 +125,14 @@ pub fn server_auth() -> Option<(String, String)> {
     Some((name, value))
 }
 
+/// The client the proxy forwards with, which follows no redirect.
+pub fn upstream_client() -> Res<reqwest::Client> {
+    let client = lattice_core::shared::http::reqwest_client_builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+    Ok(client)
+}
+
 /// Starts the proxy on a free loopback port and returns its base URL. `auth`
 /// is added to every request it forwards.
 pub async fn start(
@@ -136,7 +144,7 @@ pub async fn start(
 ) -> Res<String> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
-    let client = lattice_core::shared::http::reqwest_client_builder().build()?;
+    let client = upstream_client()?;
     let upstream = upstream.trim_end_matches('/').to_owned();
     tokio::spawn(async move {
         loop {
