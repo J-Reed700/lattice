@@ -6,9 +6,13 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import '@/tests/interactionDom';
+
 import { LEARNER_TEXT_MAX_CHARS } from '@/features/learning/model/learnerTextLimit';
 import { PracticeWorkbenchPanel } from '@/features/learning/practice/PracticeWorkbenchPanel';
+import { ReaderPane } from '@/features/reading/components/ReaderPane';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
+import { useReaderStore } from '@/features/reading/stores/readerStore';
 import type { LearningLessonDto, LearningPracticeSessionDto, LearningProgramDto } from '@/lib/bindings';
 
 
@@ -17,6 +21,11 @@ const mocks = vi.hoisted(() => ({
   sourceWorkspace: vi.fn(), sourceVersion: vi.fn(), saveDraft: vi.fn(),
 }));
 
+// The docked reader's body asks the conversations store which chat it sits beside; none here.
+vi.mock('@/shared/conversations/conversationsStore', () => ({
+  useConversationsStore: (selector: (_state: unknown) => unknown) =>
+    selector({ activeConversationId: null, conversations: [], spaces: [], selectedSpaceId: null, messageVerification: new Map(), loadConversationLinkedDocuments: vi.fn() }),
+}));
 vi.mock('@/features/voice/hooks/useVoiceConversation', () => ({ useVoiceConversation: () => ({ phase: 'off', toggle: vi.fn() }) }));
 vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
   getLearningPracticeWorkspace: mocks.getWorkspace,
@@ -65,13 +74,14 @@ const updateRevision = () => { if (currentSession) currentSession.summary.revisi
 const renderWorkbench = (chosenLesson = lesson, embedded = false, attemptId?: string | null) => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } } });
   const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}><MemoryRouter>{children}</MemoryRouter></QueryClientProvider>;
-  return render(<PracticeWorkbenchPanel program={program} lesson={chosenLesson} embedded={embedded} attemptId={attemptId} taskKind={embedded ? 'guided' : 'independent'} />, { wrapper });
+  return render(<><PracticeWorkbenchPanel program={program} lesson={chosenLesson} embedded={embedded} attemptId={attemptId} taskKind={embedded ? 'guided' : 'independent'} /><ReaderPane rowWidth={1728} availableWidth={1468} resetKey="practice" /></>, { wrapper });
 };
 
 describe('Learning Studio grounded practice workbench', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     useCitationDisplayStore.setState({ visible: true });
+    useReaderStore.setState({ session: null, resolvedLocations: new Map() });
     currentSession = baseSession();
     currentWorkspace = { programId: 'program-1', sessions: [{ ...currentSession.summary }] };
     mocks.getWorkspace.mockImplementation(async () => ok(toWorkspace()));
@@ -192,17 +202,22 @@ describe('Learning Studio grounded practice workbench', () => {
     currentWorkspace.sessions = [{ ...currentSession!.summary }];
     renderWorkbench(lesson, true);
 
-    await user.click(await screen.findByRole('button', { name: /Saved source quote · exact version/ }));
-    expect(await screen.findByText(/The full captured source/)).toBeVisible();
+    await user.click(await screen.findByRole('button', { name: /^Citation 1/ }));
+    await user.click(await screen.findByRole('button', { name: 'View source' }));
+    await waitFor(() => expect(mocks.openSource).toHaveBeenCalledWith(expect.objectContaining({ sourceId: 'source-1', versionId: 'version-1' })));
+    const reader = await screen.findByRole('complementary', { name: 'Source reader' });
+    expect(await within(reader).findByText(/The full captured source/)).toBeVisible();
     expect(mocks.sourceVersion).toHaveBeenCalledWith({ programId: 'program-1', sourceId: 'source-1', versionId: 'version-1' });
+    expect(useReaderStore.getState().session).toMatchObject({ ownerKey: 'practice:attempt-1', citing: true });
 
     act(() => useCitationDisplayStore.setState({ visible: false }));
-    expect(screen.queryByRole('button', { name: /Saved source quote · exact version/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Citation 1/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('complementary', { name: 'Source reader' })).not.toBeInTheDocument();
     expect(screen.queryByText(/The full captured source/)).not.toBeInTheDocument();
     expect(screen.getByText('Separate the observation from the inference.')).toBeVisible();
 
     act(() => useCitationDisplayStore.setState({ visible: true }));
-    expect(screen.getByRole('button', { name: /Saved source quote · exact version/ })).toBeVisible();
+    expect(screen.getByRole('button', { name: /^Citation 1/ })).toBeVisible();
   });
 
   it('revises a submitted guided response with its original attempt ID', async () => {
@@ -293,9 +308,14 @@ describe('Learning Studio grounded practice workbench', () => {
   it('enforces No help and opens only frozen versions after submission', async () => {
     const user = userEvent.setup();
     currentSession!.summary.mode = 'demonstrate';
+    currentSession!.tutorTurns = [{ id: 'turn-earlier', prompt: 'Earlier.', response: 'An earlier reply.', requestKind: 'question', hintLevel: null, citations: [{ sourceId: 'source-1', versionId: 'version-1', quote: 'A saved excerpt.' }], proposalIds: [], modelName: 'Study model', createdAt: Date.now() }];
     renderWorkbench();
     expect(await screen.findByRole('textbox', { name: 'Your response' })).toBeVisible();
-    expect(screen.getByRole('button', { name: /Field notes/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^Field notes/ })).toBeDisabled();
+    expect(screen.getAllByText('Sources are closed with No help.')).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: /^Citation 1/ }));
+    expect(await screen.findAllByText('Sources are closed with No help.')).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: 'View source' })).not.toBeInTheDocument();
     const thread = screen.getByRole('region', { name: 'Tutor conversation' });
     expect(within(thread).getByRole('button', { name: 'Send' })).toBeDisabled();
     expect(screen.getByText('The tutor is closed with No help.')).toBeVisible();
@@ -303,8 +323,9 @@ describe('Learning Studio grounded practice workbench', () => {
     await user.type(screen.getByRole('textbox', { name: 'Your response' }), 'My independent response.');
     await user.click(screen.getByRole('button', { name: 'Submit response' }));
     expect(await screen.findByText(/Evidence interpretation is uncertain/)).toBeVisible();
-    await user.click(screen.getByRole('button', { name: /Field notes/ }));
-    expect(await screen.findByText(/The full captured source/)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: /^Field notes/ }));
+    const reader = await screen.findByRole('complementary', { name: 'Source reader' });
+    expect(await within(reader).findByText(/The full captured source/)).toBeVisible();
     expect(mocks.openSource).not.toHaveBeenCalled();
     expect(mocks.sourceVersion).toHaveBeenCalledWith({ programId: 'program-1', sourceId: 'source-1', versionId: 'version-1' });
   });
@@ -322,10 +343,20 @@ describe('Learning Studio grounded practice workbench', () => {
     await user.type(within(thread).getByRole('textbox'), 'Can you explain this source?');
     await user.click(within(thread).getByRole('button', { name: 'Send' }));
     expect(await screen.findByText('Start by separating the observation from your interpretation.')).toBeVisible();
-    const citation = screen.getByRole('button', { name: /Saved source quote · exact version/ });
-    await user.click(citation);
+    let finishOpening!: () => void;
+    const recorded = mocks.openSource.getMockImplementation()!;
+    mocks.openSource.mockImplementationOnce(() => new Promise((resolve) => { finishOpening = () => resolve(recorded()); }));
+    await user.click(within(thread).getByRole('button', { name: /^Citation 1/ }));
+    await user.click(await screen.findByRole('button', { name: 'View source' }));
+    // The opening is recorded on the server before the reader shows anything, and nothing else runs meanwhile.
+    expect(await screen.findByText('Another workbench action is in progress.')).toBeVisible();
+    expect(screen.queryByRole('complementary', { name: 'Source reader' })).not.toBeInTheDocument();
+    await act(async () => finishOpening());
     await waitFor(() => expect(mocks.openSource).toHaveBeenCalledWith(expect.objectContaining({ sourceId: 'source-1', versionId: 'version-1' })));
-    expect(await screen.findByText(/The full captured source/)).toBeVisible();
+    const reader = await screen.findByRole('complementary', { name: 'Source reader' });
+    expect(await within(reader).findByText(/The full captured source/)).toBeVisible();
+    expect(mocks.sourceVersion).toHaveBeenCalledWith({ programId: 'program-1', sourceId: 'source-1', versionId: 'version-1' });
+    expect(useReaderStore.getState().session).toMatchObject({ ownerKey: 'practice:attempt-1', citing: true });
   });
 
   it('renders generated practice content and saved sources as structured rich text', async () => {
@@ -336,20 +367,41 @@ describe('Learning Studio grounded practice workbench', () => {
     mocks.sourceVersion.mockResolvedValue(ok({
       sourceId: 'source-1',
       version: { ...savedVersion, extractionVersion: 'web_reference_v1', wordCount: 12 },
-      fullText: '# Field notes\n\n| Claim | Status\n| Pattern repeats | Supported',
+      fullText: '# Field notes\n\n| Claim | Status\n\n| Pattern repeats | Supported',
       usage: [],
     }));
 
-    const view = renderWorkbench();
+    renderWorkbench();
     expect(await screen.findByRole('heading', { name: 'Compare evidence' })).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Next step' })).toBeVisible();
     const workedSteps = screen.getByRole('heading', { name: 'Worked steps' });
     expect(workedSteps).toBeVisible();
     expect(workedSteps.closest('.tiptap-viewer')?.querySelectorAll('ol li')).toHaveLength(2);
 
-    await user.click(screen.getByRole('button', { name: /Field notes/ }));
-    await screen.findByRole('region', { name: 'Saved source reader' });
-    expect(view.container.querySelector('table')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^Field notes/ }));
+    const reader = await screen.findByRole('complementary', { name: 'Source reader' });
+    expect(await within(reader).findByText(/Pattern repeats/)).toBeVisible();
+    // The docked reader is given the saved version's formatted text, and draws its table as one.
+    expect(useReaderStore.getState().session?.citations[0]?.webSnapshot?.text).toMatch(/Claim[\s\S]*Pattern repeats[\s\S]*Supported/);
+    const table = within(reader).getByRole('table');
+    expect(within(table).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual(['Claim', 'Status']);
+    expect(within(table).getAllByRole('cell').map((cell) => cell.textContent)).toEqual(['Pattern repeats', 'Supported']);
+    expect(within(reader).queryByText(/\|/)).not.toBeInTheDocument();
+  });
+
+  it('records a source opened from the attempt rail and keeps it open when citations are hidden', async () => {
+    const user = userEvent.setup();
+    renderWorkbench();
+    await user.click(await screen.findByRole('button', { name: /^Field notes/ }));
+    await waitFor(() => expect(mocks.openSource).toHaveBeenCalledWith(expect.objectContaining({ sourceId: 'source-1', versionId: 'version-1' })));
+    const reader = await screen.findByRole('complementary', { name: 'Source reader' });
+    expect(await within(reader).findByText(/The full captured source/)).toBeVisible();
+    expect(mocks.sourceVersion).toHaveBeenCalledWith({ programId: 'program-1', sourceId: 'source-1', versionId: 'version-1' });
+    expect(useReaderStore.getState().session).toMatchObject({ ownerKey: 'practice:attempt-1', citing: false });
+
+    act(() => useCitationDisplayStore.setState({ visible: false }));
+    expect(screen.getByRole('complementary', { name: 'Source reader' })).toBeVisible();
+    expect(useReaderStore.getState().session).not.toBeNull();
   });
 
   it('shows rubric evidence and lets the learner accept or reject tutor proposals', async () => {

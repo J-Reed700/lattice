@@ -1,0 +1,87 @@
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { CitationFootnote } from '@/features/reading/components/CitationFootnote';
+import type { SourceWithMetadata } from '@/types/conversation';
+
+
+const source: SourceWithMetadata = {
+  documentId: 'document-1',
+  chunkId: 'chunk-1',
+  fileName: 'Source 1.md',
+  filePath: '/vault/source-1.md',
+  mimeType: 'text/markdown',
+  category: 'note',
+  content: 'Passage one',
+  score: 0.5,
+  fileSizeBytes: 1024,
+  modifiedAt: '2026-09-19T00:00:00.000Z',
+  citationId: 1,
+};
+
+beforeEach(() => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+  );
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+const openPopover = () => fireEvent.click(screen.getByRole('button', { name: /Citation 1/ }));
+
+describe('CitationFootnote', () => {
+  it('shows the reason and no way to open when the source cannot be opened', async () => {
+    render(<CitationFootnote number={1} source={source} onViewFile={vi.fn()} disabledReason="Not available offline" />);
+    openPopover();
+
+    expect(await screen.findByText('Not available offline')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'View source' })).not.toBeInTheDocument();
+  });
+
+  it('opens the source and closes the popover when "View source" is clicked', async () => {
+    const onViewFile = vi.fn();
+    render(<CitationFootnote number={1} source={source} onViewFile={onViewFile} />);
+    openPopover();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'View source' }));
+
+    expect(onViewFile).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'View source' })).not.toBeInTheDocument());
+  });
+
+  it('returns focus to the chip when the popover is closed with Escape', async () => {
+    render(<CitationFootnote number={1} source={source} onViewFile={vi.fn()} />);
+    const chip = screen.getByRole('button', { name: /Citation 1/ });
+    fireEvent.click(chip);
+    const viewSource = await screen.findByRole('button', { name: 'View source' });
+    viewSource.focus();
+    expect(chip).not.toHaveFocus();
+
+    fireEvent.keyDown(viewSource, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'View source' })).not.toBeInTheDocument());
+    await waitFor(() => expect(chip).toHaveFocus());
+  });
+
+  it('returns focus to the chip on Escape after reopening following "View source"', async () => {
+    render(<CitationFootnote number={1} source={source} onViewFile={vi.fn()} />);
+    const chip = screen.getByRole('button', { name: /Citation 1/ });
+    fireEvent.click(chip);
+    fireEvent.click(await screen.findByRole('button', { name: 'View source' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'View source' })).not.toBeInTheDocument());
+
+    fireEvent.click(chip);
+    const reopened = await screen.findByRole('button', { name: 'View source' });
+    reopened.focus();
+    expect(chip).not.toHaveFocus();
+    fireEvent.keyDown(reopened, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'View source' })).not.toBeInTheDocument());
+    await waitFor(() => expect(chip).toHaveFocus());
+  });
+});
