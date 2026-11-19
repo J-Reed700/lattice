@@ -1109,7 +1109,9 @@ async function runCanvasJourney(
     ).__LATTICE_LEARNING_STATE__;
     return state.canvasWorkspace.canvases[0];
   });
-  expect(history.revision).toBe(firstCanvas.revision + 3);
+  // One revision for the title/description edit, one for restoring the
+  // checkpoint (reopening no longer triggers a spurious viewport-only save).
+  expect(history.revision).toBe(firstCanvas.revision + 2);
   expect(history.snapshots).toHaveLength(2);
   expect(
     history.snapshots.find(

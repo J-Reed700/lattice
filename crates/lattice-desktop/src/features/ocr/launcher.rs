@@ -76,8 +76,7 @@ impl LlamaServerLauncher {
         let api_key = new_api_key();
         let log = std::fs::File::create(&self.log_path)
             .map_err(|error| format!("cannot write {}: {error}", self.log_path.display()))?;
-        let mut command = BoundCommand::new(binary);
-        command
+        let child = match BoundCommand::new(binary)
             .args(server_args(model, port, gpu_layers))
             // The key goes in the environment, not argv: argv is readable by
             // every process on the machine.
@@ -86,13 +85,12 @@ impl LlamaServerLauncher {
             .stdout(Stdio::null())
             // A file rather than a pipe: llama-server logs every request, and
             // an undrained pipe would eventually block it mid-page.
-            .stderr(Stdio::from(log));
-        let child = match command.spawn().await {
+            .stderr(Stdio::from(log))
+            .spawn()
+            .await
+        {
             Ok(child) => child,
             Err(error) => {
-                // Close the stderr file handle owned by `command` before unlinking
-                // so Windows does not fail cleanup with ERROR_SHARING_VIOLATION.
-                drop(command);
                 let _ = std::fs::remove_file(&self.log_path);
                 return Err(format!("could not start {}: {error}", binary.display()));
             }
