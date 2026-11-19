@@ -132,7 +132,7 @@ export function QuizResult({ form, sources, programRevision, onBack, onRetake, r
       </header>
       <GradingBanner form={form} grading={grading} onStop={stopGrading} onResume={resumeGrading} stopping={stop.isPending} resuming={resume.isPending} error={errorText(stop.error) ?? errorText(resume.error)} />
       <ol aria-label="Your answers" className="divide-y divide-border">{form.items.map((item, index) => <QuizItemReview key={item.id} item={item} index={index}
-        result={submission?.itemResults.find((result) => result.itemId === item.id) ?? null} grading={grading} practice={practice} sources={sources} actions={actions} />)}</ol>
+        result={submission?.itemResults.find((result) => result.itemId === item.id) ?? null} grading={grading} practice={practice} sources={sources} actions={actions} programId={form.programId} />)}</ol>
     </section>
   </div>;
 }

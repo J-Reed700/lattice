@@ -1233,8 +1233,9 @@ async function runSourceLibraryJourney(
   await initialMatch.click();
   await expect(
     panel
-      .getByRole("article")
-      .getByText("ACTIVE_SOURCE_SENTINEL", { exact: false }),
+      .getByRole("region", { name: "Saved source" })
+      .getByText("ACTIVE_SOURCE_SENTINEL", { exact: false })
+      .first(),
   ).toBeVisible();
   await search.fill("");
 
@@ -1600,8 +1601,9 @@ async function runSourceLibraryJourney(
   await updatedMatch.click();
   await expect(
     panel
-      .getByRole("article")
-      .getByText("UPDATED_SOURCE_SENTINEL", { exact: false }),
+      .getByRole("region", { name: "Saved source" })
+      .getByText("UPDATED_SOURCE_SENTINEL", { exact: false })
+      .first(),
   ).toBeVisible();
 
   // Pending is durable across a page reload and does not silently replace the
@@ -1643,14 +1645,16 @@ async function runSourceLibraryJourney(
   await reopened.getByRole("button", { name: "Review update" }).click();
   await expect(
     reopened
-      .getByRole("article")
-      .getByText("UPDATED_SOURCE_SENTINEL", { exact: false }),
+      .getByRole("region", { name: "Saved source" })
+      .getByText("UPDATED_SOURCE_SENTINEL", { exact: false })
+      .first(),
   ).toBeVisible();
   await reopened.getByRole("button", { name: "Adopt this version" }).click();
   await expect(
     reopened
-      .getByRole("article")
-      .getByText("UPDATED_SOURCE_SENTINEL", { exact: false }),
+      .getByRole("region", { name: "Saved source" })
+      .getByText("UPDATED_SOURCE_SENTINEL", { exact: false })
+      .first(),
   ).toBeVisible();
   const adoptedState = await page.evaluate((sourceId) => {
     const state = (
@@ -1774,8 +1778,9 @@ async function runSourceLibraryJourney(
     .selectOption(oldVersionId!);
   await expect(
     afterPolicyReload
-      .getByRole("article")
-      .getByText("ADDED_SOURCE_SENTINEL", { exact: false }),
+      .getByRole("region", { name: "Saved source" })
+      .getByText("ADDED_SOURCE_SENTINEL", { exact: false })
+      .first(),
   ).toBeVisible();
 
   const otherProgramSources = await page.evaluate(async () => {
@@ -2049,8 +2054,9 @@ async function runPracticeWorkbenchJourney(
   await sourcesPanel.getByRole("button", { name: "Review update" }).click();
   await expect(
     sourcesPanel
-      .getByRole("article")
-      .getByText("UPDATED_SOURCE_SENTINEL", { exact: false }),
+      .getByRole("region", { name: "Saved source" })
+      .getByText("UPDATED_SOURCE_SENTINEL", { exact: false })
+      .first(),
   ).toBeVisible();
   await sourcesPanel.getByRole("button", { name: "Adopt this version" }).click();
   await expect
@@ -2155,8 +2161,16 @@ async function runPracticeWorkbenchJourney(
   await expect(exploreRadio).toHaveAttribute("aria-pressed", "true");
   const frozenSource = workbench.getByRole("button", { name: /Public field notes.*Version 1/ });
   await frozenSource.click();
-  await expect(workbench.getByText("Immutable source version", { exact: true })).toBeVisible();
-  await expect(workbench.getByRole("region", { name: "Public field notes" }).getByText("ACTIVE_SOURCE_SENTINEL", { exact: false })).toBeVisible();
+  // The reader docks beside the workbench when there is room; in a narrow row it is a dialog.
+  const sourceReader = page
+    .getByRole("complementary", { name: "Source reader" })
+    .or(page.getByRole("dialog", { name: "Public field notes" }));
+  await expect(sourceReader.getByRole("heading", { level: 2, name: "Public field notes" })).toBeVisible();
+  await expect(sourceReader.getByText("ACTIVE_SOURCE_SENTINEL", { exact: false })).toBeVisible();
+  // A saved source reads from its saved text only: there is no live page to switch to.
+  await expect(sourceReader.getByRole("button", { name: "Page", exact: true })).toHaveCount(0);
+  await sourceReader.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(sourceReader).toHaveCount(0);
 
   const hintLevels = [
     ["Orienting question", "orienting_question"],
@@ -2182,15 +2196,19 @@ async function runPracticeWorkbenchJourney(
       )
       .toBe(index + 1);
   }
-  const citationButton = workbench.getByRole("button", {
-    name: /Saved source quote · exact version/,
-  }).first();
-  await expect(citationButton).toBeVisible();
-  await citationButton.click();
-  const sourceReader = workbench.getByRole("region", { name: "Public field notes" });
-  await expect(sourceReader.getByText("Immutable source version", { exact: true })).toBeVisible();
-  await expect(sourceReader.getByText("Version 1 · saved", { exact: false })).toBeVisible();
-  await expect(sourceReader.getByText("Record the same measure across the observation period.", { exact: false })).toBeVisible();
+  const citationChip = workbench
+    .getByRole("list", { name: "Saved sources cited" })
+    .first()
+    .getByRole("button", { name: /^Citation 1: Public field notes/ });
+  await expect(citationChip).toBeVisible();
+  await citationChip.click();
+  await page.getByRole("button", { name: "View source" }).click();
+  await expect(sourceReader.getByRole("heading", { level: 2, name: "Public field notes" })).toBeVisible();
+  await expect(sourceReader.getByText("Record the same measure across the observation period.", { exact: false }).first()).toBeVisible();
+  await expect(sourceReader.locator("mark.source-reader-passage").first()).toContainText("Record the same measure across the observation period.");
+  await expect(sourceReader.getByRole("button", { name: "Page", exact: true })).toHaveCount(0);
+  await sourceReader.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(sourceReader).toHaveCount(0);
 
   const tutorPrompt = workbench.getByRole("region", { name: "Tutor conversation" }).getByRole("textbox");
   await tutorPrompt.fill("How should I state a limit on the sample?");
@@ -2292,9 +2310,20 @@ async function runPracticeWorkbenchJourney(
   await expect(reopenedWorkbench.getByRole("textbox", { name: "Your response" })).toHaveValue(submittedText);
   await expect(reopenedWorkbench.getByRole("region", { name: "Saved versions for this attempt" }).getByText("ACTIVE_SOURCE_SENTINEL", { exact: false })).toBeVisible();
   await expect(reopenedWorkbench.getByText("source-version-field-notes-1", { exact: false })).toHaveCount(0);
-  const savedSourceCitation = reopenedWorkbench.getByRole("button", { name: /Saved source quote · exact version/ }).first();
+  const savedSourceCitation = reopenedWorkbench
+    .getByRole("list", { name: "Saved sources cited" })
+    .first()
+    .getByRole("button", { name: /^Citation 1: Public field notes/ });
   await savedSourceCitation.click();
-  await expect(reopenedWorkbench.getByRole("region", { name: "Public field notes" }).getByText("Immutable source version", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "View source" }).click();
+  const reopenedReader = page
+    .getByRole("complementary", { name: "Source reader" })
+    .or(page.getByRole("dialog", { name: "Public field notes" }));
+  await expect(reopenedReader.getByRole("heading", { level: 2, name: "Public field notes" })).toBeVisible();
+  await expect(reopenedReader.locator("mark.source-reader-passage").first()).toBeVisible();
+  await expect(reopenedReader.getByRole("button", { name: "Page", exact: true })).toHaveCount(0);
+  await reopenedReader.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(reopenedReader).toHaveCount(0);
   const postSubmitCalls = await page.evaluate((sessionId) => {
     const state = (
       window as unknown as {

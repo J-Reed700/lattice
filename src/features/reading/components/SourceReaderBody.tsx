@@ -199,10 +199,12 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   /** A web citation rendered from its saved page text or saved excerpt. */
   const showsWebArticle = isWebSourceLike && !isWebArchiveArticle && !deciding;
   // A frozen copy belongs to a conversation, so the Page view needs one.
-  const snapshotConversationId = showsWebArticle && openableUrl
+  // Course material has no Page view: it would capture the live address, not the version cited.
+  const canShowPage = showsWebArticle && !isCourseSource(source);
+  const snapshotConversationId = canShowPage && openableUrl
     ? (source.conversationId ?? activeConversationId ?? '')
     : null;
-  const snapshotUrl = showsWebArticle ? openableUrl : null;
+  const snapshotUrl = canShowPage ? openableUrl : null;
   const webPageMode = useWebPageMode(snapshotConversationId, snapshotUrl);
   // The article view scrolls itself and marks its own passages, so it is left
   // alone like the other embedded viewers: an outer scroller and the block
@@ -216,6 +218,8 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     !isBinaryPreview &&
     !isWebArchiveArticle &&
     !isLocalHtmlFile &&
+    // Course material carries its own text; there is no file behind it to read.
+    !isCourseSource(source) &&
     (hasDocumentId || Boolean(source.filePath && !isHttpUrl(source.filePath)));
   const shouldResolveDocumentPath = hasDocumentId && !isWebSourceLike;
   // Citation metadata can retain the path from when it was indexed. A stable

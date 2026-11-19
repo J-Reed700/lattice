@@ -40,4 +40,24 @@ The cross target lives at target/&lt;triple&gt;/debug/.`);
     expect(formatSourceForReader(markdown, 'web_reference_markdown_v2')).toBe(markdown);
     expect(formatSourceForReader(markdown, 'web_reference_v1')).toBe(markdown);
   });
+
+  it('keeps <...> text as written when the reader draws the Markdown itself', () => {
+    const saved = '# Build cache\n\nThe cross target lives at target/<triple>/debug/.\n\n| Path | Note\n\n| <dir>/x | uses <b>tags</b>\n\nSee <https://example.com/a>.';
+    const kept = formatSourceForReader(saved, 'web_reference_v1', { escapeMarkup: false });
+    expect(kept).toBe(
+      '# Build cache\n\nThe cross target lives at target/<triple>/debug/.\n\n| Path | Note |\n| --- | --- |\n| <dir>/x | uses <b>tags</b> |\n\nSee <https://example.com/a>.',
+    );
+    expect(kept).not.toContain('&lt;');
+    // The default still escapes for TiptapViewer, and leaves addresses alone.
+    const escaped = formatSourceForReader(saved, 'web_reference_v1');
+    expect(escaped).toContain('target/&lt;triple&gt;/debug/');
+    expect(escaped).toContain('| &lt;dir&gt;/x | uses &lt;b&gt;tags&lt;/b&gt; |');
+    expect(escaped).toContain('<https://example.com/a>');
+  });
+
+  it('leaves newer captures unchanged either way', () => {
+    const markdown = 'A <x> here.';
+    expect(formatSourceForReader(markdown, 'web_reference_markdown_v2', { escapeMarkup: false })).toBe(markdown);
+    expect(formatSourceForReader(markdown, 'web_reference_markdown_v2')).toBe(markdown);
+  });
 });

@@ -3,14 +3,24 @@ import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 
 import { SOURCE_PAGE_SIZE_KEY, SourcesPanel } from '@/features/learning/sources/SourcesPanel';
 import { learningSourcesKey, useAddLearningWebSource } from '@/features/learning/sources/useLearningSources';
 import { learningProgramKey, LEARNING_PROGRAMS_KEY } from '@/features/learning/workspace/useLearningStudio';
+import { ReaderPane } from '@/features/reading/components/ReaderPane';
+import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
+import { useReaderStore } from '@/features/reading/stores/readerStore';
 import type { LearningSourceVersionDto, LearningSourceWorkspaceDto } from '@/lib/bindings';
 import type { DocumentMetadata } from '@/types/fileBrowser';
+
+// The docked reader's body asks the conversations store which chat it sits beside; none here.
+vi.mock('@/shared/conversations/conversationsStore', () => ({
+  useConversationsStore: (selector: (_state: unknown) => unknown) =>
+    selector({ activeConversationId: null, conversations: [], spaces: [], selectedSpaceId: null, messageVerification: new Map(), loadConversationLinkedDocuments: vi.fn() }),
+}));
 
 const mocks = vi.hoisted(() => ({
   workspace: vi.fn(), version: vi.fn(), search: vi.fn(), addWeb: vi.fn(), addDocument: vi.fn(), addText: vi.fn(),
@@ -61,12 +71,14 @@ function renderSources(initial = workspace, openedVersion = version, onOpenRevie
   mocks.workspace.mockResolvedValue(ok(initial));
   mocks.version.mockResolvedValue(ok(openedVersion));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } } });
-  return render(<QueryClientProvider client={client}><SourcesPanel programId="program-1" onOpenReview={onOpenReview} /></QueryClientProvider>);
+  return render(<QueryClientProvider client={client}><MemoryRouter><SourcesPanel programId="program-1" onOpenReview={onOpenReview} /><ReaderPane rowWidth={1728} availableWidth={1468} resetKey="sources" /></MemoryRouter></QueryClientProvider>);
 }
 
 describe('Learning Studio Sources workspace', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    useCitationDisplayStore.setState({ visible: true });
+    useReaderStore.setState({ session: null, resolvedLocations: new Map() });
     mocks.documents.mockReturnValue([doc]);
     mocks.search.mockResolvedValue(ok([]));
   });
@@ -107,17 +119,35 @@ describe('Learning Studio Sources workspace', () => {
     const saved = {
       ...version,
       version: { ...version.version, wordCount: 24, extractionVersion: 'web_reference_v1' },
-      fullText: '# Build cache\n\nCargo stores output in the target directory. By default,\nthis is inside the workspace.\n\n | Directory | Description\n\n | target/debug/ | Development output',
+      fullText: '# Build cache\n\nCargo stores output in the target directory. By default,\nthis is inside the workspace.\n\n | Directory | Description\n\n | target/debug/ | Development output\n\nThe cross target lives at target/<triple>/debug/.',
     };
     const { container } = renderSources(workspace, saved);
 
-    expect(await screen.findByRole('heading', { name: 'Build cache', level: 1 })).toBeVisible();
-    expect(screen.getByText('Cargo stores output in the target directory. By default, this is inside the workspace.')).toBeVisible();
-    expect(container.querySelector('table')).toBeInTheDocument();
+    // The library shows the opening of the formatted text, not the raw capture.
+    const preview = await screen.findByRole('region', { name: 'Saved source' });
+    const opening = within(preview).getAllByText(/Cargo stores output in the target directory\. By default, this is inside the workspace\./).find((element) => element.tagName === 'P');
+    expect(opening).toBeVisible();
+    expect(within(preview).getByText(/24 words/)).toBeVisible();
+    expect(container.querySelector('pre')).not.toBeVisible();
 
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Exact capture' }));
-    expect(screen.getByText(/immutable text used for evidence/)).toBeVisible();
+    // The docked reader shows the same formatted text.
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Open in reader' }));
+    const reader = await screen.findByRole('complementary', { name: 'Source reader' });
+    expect(await within(reader).findByText('Cargo stores output in the target directory. By default, this is inside the workspace.')).toBeVisible();
+    expect(useReaderStore.getState().session).toMatchObject({ ownerKey: 'sources:program-1', citing: false });
+    // Markup-like text reads as written (the reader draws Markdown, not HTML), and the repaired table is a table.
+    expect(await within(reader).findByText('The cross target lives at target/<triple>/debug/.')).toBeVisible();
+    expect(reader.textContent).not.toMatch(/&lt;|&gt;/);
+    const table = within(reader).getByRole('table');
+    expect(within(table).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual(['Directory', 'Description']);
+    expect(within(table).getAllByRole('cell').map((cell) => cell.textContent)).toEqual(['target/debug/', 'Development output']);
+
+    // The exact capture is still there, unformatted, for checking what evidence used.
+    await user.click(within(preview).getByText('Exact capture'));
+    expect(within(preview).getByText(/immutable text used for evidence/)).toBeVisible();
     expect(container.querySelector('pre')).toHaveTextContent('By default, this is inside the workspace.');
+    expect(container.querySelector('pre')?.textContent).toContain('By default,\nthis is inside the workspace.');
   });
 
   it('pages through a long library, remembers how many to show, and turns to a search match', async () => {
