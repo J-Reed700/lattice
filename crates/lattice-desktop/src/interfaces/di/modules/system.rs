@@ -33,7 +33,9 @@ use crate::features::stats::use_cases::{GetCorpusShapeUseCase, GetSystemStatsUse
 use crate::infrastructure::observability::metrics::Metrics;
 
 // Application Ports
-use lattice_core::application::ports::{BackupPort, SettingsRepositoryPort, SystemInfoPort};
+use lattice_core::application::ports::{
+    BackupPort, EmbeddingPort, SettingsRepositoryPort, SystemInfoPort,
+};
 
 // Service Traits
 use crate::features::model_management::model_manager::ModelManager;
@@ -68,6 +70,7 @@ impl SystemModule {
         database: Database,
         core: Arc<CoreModule>,
         backend_devices: Arc<crate::features::llm::engine::system::BackendDevices>,
+        embedding: Arc<dyn EmbeddingPort>,
     ) -> lattice_core::shared::error::Result<Self> {
         use crate::infrastructure::adapters::system_info::SystemInfoAdapter;
 
@@ -76,6 +79,7 @@ impl SystemModule {
                 .await?;
 
         let db_path = core.data_dir().join("lattice.db");
+        let initialization_db_path = db_path.to_string_lossy().into_owned();
         let backup = crate::features::backup::di::build(
             database.clone(),
             db_path,
@@ -86,14 +90,15 @@ impl SystemModule {
 
         let models_path = core.data_dir().join("models");
         let model_manager = Arc::new(ModelManager::new(models_path)?) as Arc<dyn ModelManagerTrait>;
-        let initialization = crate::features::initialization::di::build(database.clone());
+        let initialization =
+            crate::features::initialization::di::build(database.clone(), initialization_db_path);
 
         Ok(Self {
             settings,
             backup,
             updates: crate::features::updates::di::build(),
             metrics: crate::features::metrics::di::build(),
-            health: crate::features::health::di::build(database.clone()),
+            health: crate::features::health::di::build(database.clone(), embedding),
             stats: crate::features::stats::di::build(
                 database.clone(),
                 Arc::new(crate::features::tags::repository::TagRepository::new(

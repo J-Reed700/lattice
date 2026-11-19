@@ -55,17 +55,15 @@ function useStore(): ConversationsSnapshot {
   return store;
 }
 
-export function useConversationsStore(): ConversationsState;
-export function useConversationsStore<T>(selector: (_state: ConversationsState) => T): T;
 export function useConversationsStore<T>(
-  selector?: (_state: ConversationsState) => T
-): ConversationsState | T {
+  selector: (_state: ConversationsState) => T
+): T {
   const store = useStore();
   return useSyncExternalStoreWithSelector(
     store.subscribe,
     store.getState,
     store.getState,
-    selector ?? ((state: ConversationsState) => state),
+    selector,
     Object.is
   );
 }
@@ -73,11 +71,9 @@ export function useConversationsStore<T>(
 const NOOP_SUBSCRIBE = () => () => {};
 const GET_NULL = () => null;
 
-export function useOptionalConversationsStore(): ConversationsState | null;
-export function useOptionalConversationsStore<T>(selector: (_state: ConversationsState) => T): T | null;
 export function useOptionalConversationsStore<T>(
-  selector?: (_state: ConversationsState) => T
-): ConversationsState | T | null {
+  selector: (_state: ConversationsState) => T
+): T | null {
   const store = useContext(ConversationsContext);
   const subscribe = store ? store.subscribe : NOOP_SUBSCRIBE;
   const getSnapshot = store ? store.getState : GET_NULL;
@@ -85,7 +81,7 @@ export function useOptionalConversationsStore<T>(
     subscribe,
     getSnapshot,
     getSnapshot,
-    (state) => (state && selector ? selector(state) : state),
+    (state) => (state ? selector(state) : null),
     Object.is
   );
 }

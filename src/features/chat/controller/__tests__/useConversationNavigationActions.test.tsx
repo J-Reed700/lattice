@@ -122,6 +122,25 @@ describe('useConversationNavigationActions', () => {
       expect(ui()).toMatchObject({ activeConversationId: 'c1', selectedSpaceId: 's-hist' });
     });
 
+    it('keeps the selected space untouched when opening an Explorer or Course Tutor bound chat', async () => {
+      conversationUiStore.setState({ selectedSpaceId: 's-hist' } as never);
+      const actions = setup();
+
+      h.api.getConversation.mockResolvedValueOnce(ok({
+        conversation: { id: 'exp-1', spaceId: GENERAL_SPACE_ID, explorerRoot: '/workspace/project' },
+      }));
+      await act(() => actions.selectConversation('exp-1'));
+      expect(ui()).toMatchObject({ activeConversationId: 'exp-1', selectedSpaceId: 's-hist' });
+      expect(h.api.listConversations).not.toHaveBeenCalled();
+
+      h.api.getConversation.mockResolvedValueOnce(ok({
+        conversation: { id: 'tutor-1', spaceId: GENERAL_SPACE_ID, programId: 'prog-1' },
+      }));
+      await act(() => actions.selectConversation('tutor-1'));
+      expect(ui()).toMatchObject({ activeConversationId: 'tutor-1', selectedSpaceId: 's-hist' });
+      expect(h.api.listConversations).not.toHaveBeenCalled();
+    });
+
     it('opens a tangent beside its parent', async () => {
       h.api.getConversation.mockImplementation(async (id: string) => ok({ conversation: id === 't1' ? { id: 't1', tangentParentId: 'p1' } : { id, spaceId: null } }));
       const actions = setup();

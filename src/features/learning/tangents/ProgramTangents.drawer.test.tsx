@@ -23,7 +23,8 @@ vi.mock('./useLearningTangents', () => ({
 vi.mock('react-router', async (importOriginal) => ({ ...(await importOriginal<typeof import('react-router')>()), useNavigate: () => mocks.navigate }));
 vi.mock('@/shared/conversations/conversationsStore', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/shared/conversations/conversationsStore')>()),
-  useOptionalConversationsStore: () => mocks.store,
+  useOptionalConversationsStore: <T,>(selector?: (_s: typeof mocks.store) => T) =>
+    (mocks.store && selector ? selector(mocks.store) : mocks.store),
 }));
 vi.mock('./CourseTangentChat', () => ({
   CourseTangentChat: ({ tangent, onBackToList, onClose, onJumpToLesson }: { tangent: LearningTangentDto; onBackToList: () => void; onClose: () => void; onJumpToLesson: (m: string, l: string) => void }) => (

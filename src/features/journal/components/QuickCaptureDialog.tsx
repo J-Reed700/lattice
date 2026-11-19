@@ -54,33 +54,47 @@ export function QuickCaptureDialog({
     const content = text.trim();
     if (!content || isBusy) return;
     setIsBusy(true);
-    const result = await quickCapture(content);
-    setIsBusy(false);
-    if (result.ok) {
-      const { noteId, noteTitle } = result.data;
-      // The toast names the page and, where we can navigate, opens it.
-      toast.success(
-        `Saved to ${noteTitle}`,
-        onOpenPage ? { action: { label: 'Open', onClick: () => onOpenPage(noteId) } } : undefined,
-      );
-      setText('');
-      onClose();
-      return;
+    try {
+      const result = await quickCapture(content);
+      if (result.ok) {
+        const { noteId, noteTitle } = result.data;
+        // The toast names the page and, where we can navigate, opens it.
+        toast.success(
+          `Saved to ${noteTitle}`,
+          onOpenPage ? { action: { label: 'Open', onClick: () => onOpenPage(noteId) } } : undefined,
+        );
+        setText('');
+        onClose();
+        return;
+      }
+      toast.error("Couldn't save that", { message: result.error });
+    } catch (error) {
+      toast.error("Couldn't save that", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setIsBusy(false);
     }
-    toast.error("Couldn't save that", { message: result.error });
   };
 
   const handleImportUrl = async () => {
     if (!importUrl || isBusy) return;
     setIsBusy(true);
-    const result = await importPage(importUrl.href);
-    setIsBusy(false);
-    if (result.ok) {
-      toast.success(`Importing ${importUrl.host}`);
-      onClose();
-      return;
+    try {
+      const result = await importPage(importUrl.href);
+      if (result.ok) {
+        toast.success(`Importing ${importUrl.host}`);
+        onClose();
+        return;
+      }
+      toast.error(`Couldn't import ${importUrl.host}`, { message: result.error });
+    } catch (error) {
+      toast.error(`Couldn't import ${importUrl.host}`, {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setIsBusy(false);
     }
-    toast.error(`Couldn't import ${importUrl.host}`, { message: result.error });
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {

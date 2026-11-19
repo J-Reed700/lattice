@@ -46,16 +46,16 @@ function writeSidebarCollapsed(value: boolean): void {
 export function ChatView() {
   const api = useApi();
   const queryClient = useQueryClient();
-  const {
-    loadConversations,
-    loadSpaces,
-    selectConversation,
-    createConversation,
-    activeConversationId,
-    conversations,
-    setComposerDraft,
-    loadConversationLinkedDocuments,
-  } = useConversationsStore();
+  const loadConversations = useConversationsStore((state) => state.loadConversations);
+  const loadSpaces = useConversationsStore((state) => state.loadSpaces);
+  const selectConversation = useConversationsStore((state) => state.selectConversation);
+  const createConversation = useConversationsStore((state) => state.createConversation);
+  const activeConversationId = useConversationsStore((state) => state.activeConversationId);
+  const conversations = useConversationsStore((state) => state.conversations);
+  const setComposerDraft = useConversationsStore((state) => state.setComposerDraft);
+  const loadConversationLinkedDocuments = useConversationsStore(
+    (state) => state.loadConversationLinkedDocuments,
+  );
   useStopSpeechOnChange(activeConversationId);
   const { fetchDownloadedModels } = useDownloadedModels();
   const { mutateAsync: linkDocumentToSpace } = useLinkDocumentToSpaceMutation();

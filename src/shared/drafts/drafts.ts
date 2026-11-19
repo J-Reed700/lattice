@@ -11,9 +11,15 @@ import { useCallback, useState } from 'react';
 
 import { create } from 'zustand';
 
+import { registerPendingSave } from '@/lib/pendingSaves';
+
 const STORAGE_KEY = 'lattice.drafts';
+const WRITE_DEBOUNCE_MS = 250;
 
 type Drafts = Readonly<Record<string, string>>;
+
+let writeTimer: ReturnType<typeof setTimeout> | null = null;
+let hasPendingWrite = false;
 
 function readStored(): Drafts {
   try {
@@ -36,6 +42,40 @@ function writeStored(drafts: Drafts): void {
   }
 }
 
+export function flushDrafts(): void {
+  if (writeTimer !== null) {
+    clearTimeout(writeTimer);
+    writeTimer = null;
+  }
+  if (!hasPendingWrite) return;
+  hasPendingWrite = false;
+  writeStored(useDraftStore.getState().drafts);
+}
+
+function scheduleWrite(): void {
+  hasPendingWrite = true;
+  if (writeTimer !== null) clearTimeout(writeTimer);
+  writeTimer = setTimeout(() => {
+    writeTimer = null;
+    if (!hasPendingWrite) return;
+    hasPendingWrite = false;
+    writeStored(useDraftStore.getState().drafts);
+  }, WRITE_DEBOUNCE_MS);
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushDrafts();
+  });
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', flushDrafts);
+}
+registerPendingSave(() => {
+  flushDrafts();
+  return Promise.resolve(true);
+});
+
 export const useDraftStore = create<{ drafts: Drafts }>(() => ({ drafts: readStored() }));
 
 /** Every composer that sends into a conversation shares its draft: chat, Explorer and tangents. */
@@ -47,7 +87,12 @@ export function setDraft(key: string, value: string): void {
   const { [key]: _previous, ...rest } = drafts;
   const next = value === '' ? rest : { ...rest, [key]: value };
   useDraftStore.setState({ drafts: next });
-  writeStored(next);
+  if (value === '') {
+    hasPendingWrite = true;
+    flushDrafts();
+    return;
+  }
+  scheduleWrite();
 }
 
 export function clearDraft(key: string): void {

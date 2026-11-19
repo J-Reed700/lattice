@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { listen } from '@tauri-apps/api/event';
 
 import { useApi } from '@/contexts/ApiContext';
@@ -10,6 +10,7 @@ import type { IndexingActivity } from '@/types/api/files';
 import type { IndexingSnapshot } from '@/types/api/indexing';
 
 import { INDEXED_FOLDERS_QUERY_KEY } from './useIndexedFoldersQuery';
+import { LIBRARY_DOCUMENTS_QUERY_KEY } from './useLibraryDocumentsQuery';
 
 import type { UnlistenFn } from '@tauri-apps/api/event';
 
@@ -33,6 +34,55 @@ export function isIndexingActive(snapshot: IndexingSnapshot | undefined): boolea
   return snapshot ? ACTIVE_STATUSES.has(snapshot.status) : false;
 }
 
+type ProgressSubscriber = (payload: Partial<IndexingSnapshot>) => void;
+
+const progressSubscribers = new Set<ProgressSubscriber>();
+let progressListening: Promise<UnlistenFn> | null = null;
+let resolvedProgressUnlisten: UnlistenFn | null = null;
+
+function onIndexingProgress(subscriber: ProgressSubscriber): () => void {
+  progressSubscribers.add(subscriber);
+  if (!progressListening) {
+    const promise = listen<Partial<IndexingSnapshot>>('indexing://progress', (event) => {
+      for (const notify of [...progressSubscribers]) notify(event.payload);
+    })
+      .then((fn) => {
+        if (progressListening === promise) {
+          resolvedProgressUnlisten = fn;
+        }
+        return fn;
+      })
+      .catch((err: unknown) => {
+        if (progressListening === promise) {
+          progressListening = null;
+          resolvedProgressUnlisten = null;
+        }
+        console.error('[useIndexingStatusQuery] failed to subscribe to indexing progress:', err);
+        return () => undefined;
+      });
+    progressListening = promise;
+  }
+  return () => {
+    progressSubscribers.delete(subscriber);
+    if (progressSubscribers.size > 0 || !progressListening) return;
+    const attached = progressListening;
+    const immediateUnlisten = resolvedProgressUnlisten;
+    progressListening = null;
+    resolvedProgressUnlisten = null;
+    if (immediateUnlisten) {
+      immediateUnlisten();
+    } else {
+      void attached.then((unlisten) => unlisten());
+    }
+  };
+}
+
+function invalidateViewsAfterIndexing(queryClient: QueryClient): void {
+  void queryClient.invalidateQueries({ queryKey: LIBRARY_DOCUMENTS_QUERY_KEY });
+  void queryClient.invalidateQueries({ queryKey: INDEXED_FOLDERS_QUERY_KEY });
+  void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+}
+
 /**
  * The index's live state. The `indexing://progress` event is the mechanism; the
  * poll is a safety net for the case where the app misses an event (the broadcast
@@ -43,43 +93,51 @@ export function useIndexingStatusQuery() {
   const api = useApi();
   const queryClient = useQueryClient();
 
-  useEffect(() => {
-    let unlisten: UnlistenFn | undefined;
-    let mounted = true;
-
-    void listen<Partial<IndexingSnapshot>>('indexing://progress', (event) => {
-      // The event payload is the engine's own progress struct: camelCase, but
-      // without `paused` or `failures`. Merge rather than replace, or the
-      // failure list blinks empty on every progress tick.
-      queryClient.setQueryData<IndexingSnapshot>(INDEXING_STATUS_QUERY_KEY, (prev) => {
-        const base = prev ?? EMPTY_SNAPSHOT;
-        return {
-          ...base,
-          ...event.payload,
-          paused: event.payload.paused ?? base.paused,
-          failures: event.payload.failures ?? base.failures,
-        };
-      });
-    }).then((fn) => {
-      if (mounted) {
-        unlisten = fn;
-      } else {
-        fn();
+  useEffect(() => onIndexingProgress((payload) => {
+    let transitionedToIdle = false;
+    // The event payload is the engine's own progress struct: camelCase, but
+    // without `paused` or `failures`. Merge rather than replace, or the
+    // failure list blinks empty on every progress tick.
+    queryClient.setQueryData<IndexingSnapshot>(INDEXING_STATUS_QUERY_KEY, (prev) => {
+      const base = prev ?? EMPTY_SNAPSHOT;
+      const next: IndexingSnapshot = {
+        ...base,
+        ...payload,
+        paused: payload.paused ?? base.paused,
+        failures: payload.failures ?? base.failures,
+      };
+      if (
+        prev?.totalFiles === next.totalFiles &&
+        prev.processed === next.processed &&
+        prev.failed === next.failed &&
+        prev.currentFile === next.currentFile &&
+        prev.status === next.status &&
+        prev.percentage === next.percentage &&
+        prev.paused === next.paused &&
+        prev.failures === next.failures
+      ) {
+        return prev;
       }
+      if (isIndexingActive(base) && next.status === 'idle') {
+        transitionedToIdle = true;
+      }
+      return next;
     });
-
-    return () => {
-      mounted = false;
-      unlisten?.();
-    };
-  }, [queryClient]);
+    if (transitionedToIdle) {
+      invalidateViewsAfterIndexing(queryClient);
+    }
+  }), [queryClient]);
 
   return useQuery<IndexingSnapshot>({
     queryKey: INDEXING_STATUS_QUERY_KEY,
     queryFn: async () => {
+      const prev = queryClient.getQueryData<IndexingSnapshot>(INDEXING_STATUS_QUERY_KEY);
       const result = await api.getIndexProgress();
       if (!result.ok) {
         throw new Error(result.error);
+      }
+      if (isIndexingActive(prev) && result.data.status === 'idle') {
+        invalidateViewsAfterIndexing(queryClient);
       }
       return result.data;
     },

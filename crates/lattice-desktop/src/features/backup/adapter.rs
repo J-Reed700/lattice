@@ -53,9 +53,23 @@ fn validate_safe_filename(filename: &str) -> Result<()> {
     })
 }
 
+async fn remove_db_wal_sidecars(db_path: &Path) {
+    for suffix in ["-wal", "-shm"] {
+        let mut raw = db_path.as_os_str().to_os_string();
+        raw.push(suffix);
+        let sidecar = PathBuf::from(raw);
+        if let Err(error) = tokio::fs::remove_file(&sidecar).await {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                warn!(path = %sidecar.display(), %error, "failed to remove stale database sidecar");
+            }
+        }
+    }
+}
+
 /// Put the pre-restore safety copy back as the live database. Returns what to
 /// tell the user when that fails, including the path to inspect for recovery.
 pub(crate) async fn roll_back_database(safety: &Path, db_path: &Path) -> Option<String> {
+    remove_db_wal_sidecars(db_path).await;
     // repository-barrier-allow: rolling back the live database file.
     match tokio::fs::rename(safety, db_path).await {
         Ok(()) => {
@@ -401,6 +415,7 @@ impl BackupPort for BackupAdapter {
         };
         match copied {
             Ok(()) => {
+                remove_db_wal_sidecars(&self.db_path).await;
                 // Atomic rename
                 match tokio::fs::rename(&temp_path, &self.db_path).await {
                     Ok(_) => {

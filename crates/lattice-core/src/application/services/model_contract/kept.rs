@@ -1,7 +1,9 @@
 //! One conversation's scope for one turn, and the one place that keeps what
 //! the turn minted.
 
-use super::shown::{Record, Scope};
+#[cfg(any(test, feature = "test-support"))]
+use super::shown::Record;
+use super::shown::Scope;
 use crate::application::ports::conversation_names::ConversationNames;
 #[cfg(any(test, feature = "test-support"))]
 use crate::shared::error::AppError;

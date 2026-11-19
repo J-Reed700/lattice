@@ -88,7 +88,7 @@ impl SearchModule {
         self.search.runtime_index.clone()
     }
 
-    pub fn embedding_identity(&self) -> Option<&str> {
+    pub fn embedding_identity(&self) -> Option<String> {
         self.search.runtime_index.identity()
     }
 
@@ -125,7 +125,7 @@ impl SearchModule {
     /// active. Shutdown uses it so the coalesced saves are not lost.
     pub fn index_persistence(
         &self,
-    ) -> Option<&Arc<crate::features::search::engine::vector_search::IndexPersistence>> {
+    ) -> Option<Arc<crate::features::search::engine::vector_search::IndexPersistence>> {
         self.search.runtime_index.persistence()
     }
 

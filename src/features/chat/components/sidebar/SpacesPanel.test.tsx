@@ -9,7 +9,10 @@ import { SpacesPanel } from './SpacesPanel';
 
 const h = vi.hoisted(() => ({ store: {} as Record<string, unknown>, reducedMotion: false }));
 
-vi.mock('@/shared/conversations/conversationsStore', () => ({ useConversationsStore: () => h.store }));
+vi.mock('@/shared/conversations/conversationsStore', () => ({
+  useConversationsStore: <T,>(selector?: (_s: Record<string, unknown>) => T) =>
+    (selector ? selector(h.store) : h.store),
+}));
 vi.mock('framer-motion', async (importOriginal) => ({
   ...(await importOriginal<typeof import('framer-motion')>()),
   useReducedMotion: () => h.reducedMotion,

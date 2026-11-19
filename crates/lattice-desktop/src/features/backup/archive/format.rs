@@ -73,6 +73,18 @@ pub fn chat_images_root_beside(web_archive_root: &std::path::Path) -> Option<std
         .parent()
         .map(|lattice| lattice.join(CHAT_IMAGES_ENTRY_PREFIX.trim_end_matches('/')))
 }
+
+/// Where `library_owner` looks for the post-restore adoption marker: in
+/// `~/.lattice` beside `files/` or `web-archive/`, not inside `app_data_dir`.
+pub fn owner_restore_marker_beside(
+    files_root: Option<&std::path::Path>,
+    web_archive_root: Option<&std::path::Path>,
+) -> Option<std::path::PathBuf> {
+    files_root
+        .or(web_archive_root)
+        .and_then(std::path::Path::parent)
+        .map(|lattice| lattice.join("owner.restore"))
+}
 /// Tar entry path of `settings.json`.
 pub const SETTINGS_ENTRY: &str = "settings.json";
 

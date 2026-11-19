@@ -78,6 +78,31 @@ async fn changed_rows(connection: &mut SqliteConnection) -> Result<i64, sqlx::Er
     sqlx::query_scalar(CHANGED_ROWS).fetch_one(connection).await
 }
 
+pub(super) async fn is_query_only(connection: &mut SqliteConnection) -> Result<bool, sqlx::Error> {
+    let flag: i32 = sqlx::query_scalar("PRAGMA query_only")
+        .fetch_one(connection)
+        .await?;
+    Ok(flag != 0)
+}
+
+pub(super) async fn disable_query_only(
+    connection: &mut SqliteConnection,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("PRAGMA query_only = OFF")
+        .execute(connection)
+        .await?;
+    Ok(())
+}
+
+pub(super) async fn enable_query_only(
+    connection: &mut SqliteConnection,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("PRAGMA query_only = ON")
+        .execute(connection)
+        .await?;
+    Ok(())
+}
+
 impl Deref for WriteTx {
     type Target = SqliteConnection;
 

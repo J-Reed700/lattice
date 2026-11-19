@@ -13,9 +13,12 @@ type ClientMethod = (...args: unknown[]) => Promise<unknown>;
 
 let loading: Promise<Record<string, ClientMethod>> | undefined;
 function loadClients() {
-  loading ??= import('./apiClients').then(
-    ({ vaultClients }) => vaultClients as unknown as Record<string, ClientMethod>,
-  );
+  loading ??= import('./apiClients')
+    .then(({ vaultClients }) => vaultClients as unknown as Record<string, ClientMethod>)
+    .catch((err: unknown) => {
+      loading = undefined;
+      throw err;
+    });
   return loading;
 }
 
@@ -23,8 +26,16 @@ const methods = new Map<string, ClientMethod>();
 
 export const VaultAPI = new Proxy({} as VaultClients, {
   get(_target, name) {
-    // Not a thenable, and no symbol-keyed members: only named client calls.
-    if (typeof name !== 'string' || name === 'then') return undefined;
+    // Not a thenable, and no symbol-keyed, Object.prototype, or DevTools inspection members.
+    if (
+      typeof name !== 'string' ||
+      name === 'then' ||
+      name === '$$typeof' ||
+      name === 'toJSON' ||
+      name in Object.prototype
+    ) {
+      return undefined;
+    }
     let method = methods.get(name);
     if (!method) {
       method = async (...args) => {

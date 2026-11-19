@@ -28,7 +28,8 @@ pub use payload::{write_payload, ArchiveInputs, ProgressEvent};
 pub use store::{referenced_blob_hashes, validate_snapshot};
 
 /// Tables whose rows are cleared from the snapshot. All are re-derivable
-/// from documents, chunks and conversations after a restore.
+/// from documents, chunks and conversations after a restore (or, for
+/// `library_owner`, machine-local ownership that must be reconciled per host).
 pub const EXCLUDED_TABLES: &[&str] = &[
     "text_embeddings",
     "image_embeddings",
@@ -37,6 +38,8 @@ pub const EXCLUDED_TABLES: &[&str] = &[
     "clusters",
     "cluster_runs",
     "chat_starter_cache",
+    "library_owner",
+    "embedding_generation_vectors",
 ];
 
 /// zstd compression level for the payload. 3 is the zstd default: it keeps

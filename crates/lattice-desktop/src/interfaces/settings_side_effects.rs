@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use crate::features::function_calling::FunctionExecutorTrait;
 use crate::features::llm::instances::LlmInstances;
+use crate::features::vault::watcher::VaultWatcherHandle;
 use crate::features::vault::writeback::VaultWriterHandle;
 use crate::features::web::services::web::WebService;
 use crate::interfaces::di::allowed_roots::AllowedRoots;
@@ -41,6 +42,9 @@ pub(crate) struct ContainerSettingsSideEffects {
     /// Backfill submits through this so it shares the FIFO queue with
     /// per-note writes.
     pub(crate) vault_writer: VaultWriterHandle,
+
+    /// Reconfigures external file watching when vault settings change.
+    pub(crate) vault_watcher: VaultWatcherHandle,
 
     /// Re-registers its finders when the sourcing settings change. Same
     /// `Arc` as `Container::web_service`.
@@ -105,6 +109,10 @@ impl SettingsSideEffectsPort for ContainerSettingsSideEffects {
                     "failed to refresh file-access allowed roots after settings update"
                 );
             }
+        }
+
+        if matches!(category, Some(SettingsCategory::Vault) | None) {
+            self.vault_watcher.reconfigure().await;
         }
 
         // Finder switches, the SearXNG instance, the contact and the archive

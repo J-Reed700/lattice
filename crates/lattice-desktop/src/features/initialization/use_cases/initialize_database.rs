@@ -21,12 +21,23 @@ use lattice_core::shared::persistence::Database;
 pub struct InitializeDatabaseUseCase {
     /// SQLite database pool
     database: Database,
+    /// Configured filesystem path (or `":memory:"` for in-memory test instances)
+    db_path: String,
 }
 
 impl InitializeDatabaseUseCase {
     /// Create a new instance of the use case.
     pub fn new(database: Database) -> Self {
-        Self { database }
+        Self {
+            database,
+            db_path: ":memory:".to_string(),
+        }
+    }
+
+    /// Set the real database file path returned by `get_database_path`.
+    pub fn with_db_path(mut self, db_path: impl Into<String>) -> Self {
+        self.db_path = db_path.into();
+        self
     }
 
     /// Execute the use case.
@@ -40,15 +51,18 @@ impl InitializeDatabaseUseCase {
     pub async fn execute(&self) -> Result<InitializeDatabaseResponseDto> {
         let is_new_database = !self.has_schema_version_table().await?;
 
-        // 1. Run database initialization (idempotent)
-        crate::infrastructure::persistence::database::init::initialize_database(&self.database)
-            .await
-            .map_err(|e| AppError::Database(format!("Failed to initialize database: {}", e)))?;
+        // 1. Run database initialization only when the database is not yet initialized.
+        //    Startup already runs migrations before Tauri commands execute.
+        if is_new_database {
+            crate::infrastructure::persistence::database::init::initialize_database(&self.database)
+                .await
+                .map_err(|e| AppError::Database(format!("Failed to initialize database: {}", e)))?;
+        }
 
         // 2. Get schema version
         let schema_version = self.get_schema_version().await?;
 
-        // 3. Get database path from pool options
+        // 3. Get database path
         let database_path = self.get_database_path();
 
         // 4. Return success response
@@ -70,13 +84,8 @@ impl InitializeDatabaseUseCase {
     }
 
     /// Get database file path.
-    ///
-    /// Extracts path from SQLite connection string.
     fn get_database_path(&self) -> String {
-        // The database path is embedded in the connection string
-        // For SQLite, it's typically "sqlite://path/to/db.sqlite"
-        // We'll return a placeholder for now since SqlitePool doesn't expose the path
-        "lattice.db".to_string()
+        self.db_path.clone()
     }
 }
 
@@ -155,5 +164,21 @@ mod tests {
         let result = use_case.execute().await.unwrap();
 
         assert!(result.is_new_database);
+    }
+
+    #[tokio::test]
+    async fn test_initialize_database_reports_configured_path_and_skips_redundant_migration() {
+        let pool = create_test_pool().await;
+        let use_case = InitializeDatabaseUseCase::new(Database::new(pool))
+            .with_db_path("/var/lib/lattice/lattice.db");
+
+        let first = use_case.execute().await.unwrap();
+        assert!(first.is_new_database);
+        assert_eq!(first.database_path, "/var/lib/lattice/lattice.db");
+
+        let second = use_case.execute().await.unwrap();
+        assert!(!second.is_new_database);
+        assert_eq!(second.database_path, "/var/lib/lattice/lattice.db");
+        assert_eq!(first.schema_version, second.schema_version);
     }
 }

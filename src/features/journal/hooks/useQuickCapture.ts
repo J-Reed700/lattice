@@ -1,8 +1,9 @@
-import { useCallback } from 'react';
+import { useCallback, useContext } from 'react';
+
+import { QueryClientContext } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
-
-
+import { WORKSPACE_NOTES_QUERY_KEY } from '@/lib/queryClient';
 
 /**
  * Append markdown to the journal page written to last. The result names the
@@ -10,5 +11,15 @@ import { useApi } from '@/contexts/ApiContext';
  */
 export function useQuickCapture() {
   const api = useApi();
-  return useCallback((content: string) => api.quickCapture(content), [api]);
+  const queryClient = useContext(QueryClientContext);
+  return useCallback(
+    async (content: string) => {
+      const result = await api.quickCapture(content);
+      if (result.ok && queryClient) {
+        await queryClient.invalidateQueries({ queryKey: WORKSPACE_NOTES_QUERY_KEY });
+      }
+      return result;
+    },
+    [api, queryClient],
+  );
 }

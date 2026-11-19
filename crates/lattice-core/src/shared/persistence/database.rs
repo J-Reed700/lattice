@@ -7,24 +7,42 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 
 use super::error::PersistenceError;
-use super::transactions::{ReadTx, WriteTx};
+use super::transactions::{disable_query_only, enable_query_only, is_query_only, ReadTx, WriteTx};
 use super::write_turns::WriteTurns;
 
 /// One database file. Clones share its write queue.
 #[derive(Clone, Debug)]
 pub struct Database {
-    pool: SqlitePool,
+    reader_pool: SqlitePool,
+    writer_pool: Option<SqlitePool>,
     turns: Arc<WriteTurns>,
 }
 
 impl Database {
-    /// The database over a pool opened on one file. Make one per file: a second
+    /// The database over a single pool (for tests / in-memory pools where
+    /// separate pools would not share `:memory:`). Make one per file: a second
     /// `Database` on the same file would have a write queue of its own.
     pub fn new(pool: SqlitePool) -> Self {
         Self {
-            pool,
+            reader_pool: pool,
+            writer_pool: None,
             turns: Arc::new(WriteTurns::new()),
         }
+    }
+
+    /// The database with a reader pool and a dedicated writer pool. Make one
+    /// per file: a second `Database` on the same file would have a write queue
+    /// of its own.
+    pub fn with_writer_pool(reader_pool: SqlitePool, writer_pool: SqlitePool) -> Self {
+        Self {
+            reader_pool,
+            writer_pool: Some(writer_pool),
+            turns: Arc::new(WriteTurns::new()),
+        }
+    }
+
+    fn writer(&self) -> &SqlitePool {
+        self.writer_pool.as_ref().unwrap_or(&self.reader_pool)
     }
 
     /// Begins a unit of work that writes. It waits behind every unit that asked
@@ -37,24 +55,36 @@ impl Database {
         let at = Location::caller();
         async move {
             let turn = self.turns.take(at).await?;
-            WriteTx::start(&self.pool, turn).await
+            WriteTx::start(self.writer(), turn).await
         }
     }
 
     /// Begins a unit of work that only reads. Readers take no turn and never
     /// wait for writers.
     pub async fn begin_read(&self) -> Result<ReadTx, PersistenceError> {
-        ReadTx::start(&self.pool).await
+        ReadTx::start(&self.reader_pool).await
     }
 
     /// Copies the whole database into a new file (`VACUUM INTO`). It only
     /// reads this database, so writers carry on meanwhile.
     pub async fn vacuum_into(&self, destination: &str) -> Result<(), PersistenceError> {
-        let mut connection = self.pool.acquire().await?;
-        sqlx::query("VACUUM INTO ?")
+        let mut connection = self.reader_pool.acquire().await?;
+        let was_query_only = is_query_only(&mut connection).await?;
+        if was_query_only {
+            disable_query_only(&mut connection).await?;
+        }
+        let result = sqlx::query("VACUUM INTO ?")
             .bind(destination)
             .execute(&mut *connection)
-            .await?;
+            .await;
+        if was_query_only {
+            if let Err(restore_err) = enable_query_only(&mut connection).await {
+                // Never return a reader connection to the pool with query_only = OFF.
+                let _ = sqlx::Connection::close(connection.detach()).await;
+                return Err(result.err().unwrap_or(restore_err).into());
+            }
+        }
+        result?;
         Ok(())
     }
 
@@ -65,7 +95,7 @@ impl Database {
         let at = Location::caller();
         async move {
             let _turn = self.turns.take(at).await?;
-            let mut connection = self.pool.acquire().await?;
+            let mut connection = self.writer().acquire().await?;
             sqlx::query("VACUUM").execute(&mut *connection).await?;
             Ok(())
         }
@@ -73,18 +103,22 @@ impl Database {
 
     /// Whether a connection can be had.
     pub async fn is_reachable(&self) -> bool {
-        self.pool.acquire().await.is_ok()
+        self.reader_pool.acquire().await.is_ok()
     }
 
     /// Ends every writer still waiting for its turn with `Closed`, then waits
-    /// for the connections in use to come back and closes the pool.
+    /// for the connections in use to come back and closes the pool(s).
     pub async fn close(&self) {
         self.turns.close();
-        self.pool.close().await;
+        if let Some(writer_pool) = &self.writer_pool {
+            tokio::join!(self.reader_pool.close(), writer_pool.close());
+        } else {
+            self.reader_pool.close().await;
+        }
     }
 
-    /// Connections the pool holds open, for shutdown diagnostics.
+    /// Connections the pool(s) hold open, for shutdown diagnostics.
     pub fn open_connections(&self) -> u32 {
-        self.pool.size()
+        self.reader_pool.size() + self.writer_pool.as_ref().map_or(0, SqlitePool::size)
     }
 }

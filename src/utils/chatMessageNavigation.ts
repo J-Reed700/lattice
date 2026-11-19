@@ -20,13 +20,13 @@ const FIRST_ATTEMPT_DELAY_MS = 80;
 const RETRY_INTERVAL_MS = 120;
 const MAX_ATTEMPTS = 16;
 
-let requestMessageMount: ((messageId: string) => boolean) | null = null;
+const messageMountRequesters = new Set<(messageId: string) => boolean>();
 
 /** Let the virtual chat list mount an off-screen target before the usual retry loop. */
 export function registerMessageMountRequester(requester: (messageId: string) => boolean): () => void {
-  requestMessageMount = requester;
+  messageMountRequesters.add(requester);
   return () => {
-    if (requestMessageMount === requester) requestMessageMount = null;
+    messageMountRequesters.delete(requester);
   };
 }
 
@@ -202,7 +202,9 @@ export function scrollToMessage(
       return;
     }
 
-    requestMessageMount?.(messageId);
+    for (const requester of messageMountRequesters) {
+      if (requester(messageId)) break;
+    }
 
     attempts += 1;
     if (attempts < MAX_ATTEMPTS) {

@@ -9,6 +9,8 @@ import { create } from 'zustand';
 export type WarmupRole = 'chat' | 'utility' | 'embedding' | 'learning';
 export type WarmupPhase = 'idle' | 'started' | 'ready' | 'skipped' | 'failed';
 
+export const MAX_WARMUP_AGE_MS = 90_000;
+
 export interface RoleWarmupState {
   phase: WarmupPhase;
   startedAt: number | null;
@@ -36,7 +38,22 @@ interface ModelWarmupStore {
    * Boot-time state has no model id, so the current holder adopts it.
    */
   claimRole: (role: WarmupRole, modelId: string) => void;
+  /** Release any role stuck in `started` past `MAX_WARMUP_AGE_MS` if its terminal event was dropped. */
+  expireStaleWarmups: (now?: number) => void;
   reset: () => void;
+}
+
+const WARMUP_ROLES: readonly WarmupRole[] = ['chat', 'utility', 'embedding', 'learning'];
+
+export function isWarmupExpired(
+  roleState: Pick<RoleWarmupState, 'phase' | 'startedAt'>,
+  now = Date.now(),
+): boolean {
+  return (
+    roleState.phase === 'started' &&
+    roleState.startedAt !== null &&
+    now - roleState.startedAt >= MAX_WARMUP_AGE_MS
+  );
 }
 
 const idleState: RoleWarmupState = {
@@ -76,6 +93,23 @@ export const useModelWarmupStore = create<ModelWarmupStore>((set) => ({
       }
       return { [role]: { ...idleState, modelId } } as Pick<ModelWarmupStore, WarmupRole>;
     }),
+  expireStaleWarmups: (now = Date.now()) =>
+    set((state) => {
+      const updates: Partial<Pick<ModelWarmupStore, WarmupRole>> = {};
+      let changed = false;
+      for (const role of WARMUP_ROLES) {
+        const prev = state[role];
+        if (!isWarmupExpired(prev, now)) continue;
+        updates[role] = {
+          ...prev,
+          phase: 'skipped',
+          completedAt: now,
+          error: null,
+        };
+        changed = true;
+      }
+      return changed ? updates : {};
+    }),
   reset: () =>
     set({
       chat: { ...idleState },
@@ -86,7 +120,7 @@ export const useModelWarmupStore = create<ModelWarmupStore>((set) => ({
 }));
 
 export const selectIsChatWarming = (s: ModelWarmupStore): boolean =>
-  s.chat.phase === 'started';
+  s.chat.phase === 'started' && !isWarmupExpired(s.chat);
 
 export const selectIsChatReady = (s: ModelWarmupStore): boolean =>
   s.chat.phase === 'ready' || s.chat.phase === 'skipped';

@@ -15,7 +15,10 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('react-router', () => ({ useNavigate: () => h.navigate }));
-vi.mock('@/shared/conversations/conversationsStore', () => ({ useConversationsStore: () => h.store }));
+vi.mock('@/shared/conversations/conversationsStore', () => ({
+  useConversationsStore: <T,>(selector?: (_s: Record<string, unknown>) => T) =>
+    (selector ? selector(h.store) : h.store),
+}));
 vi.mock('@/features/chat/hooks/workspaceQueries', () => ({
   useJournalsQuery: () => ({ journals: h.journals }),
   useCreateJournalMutation: () => ({ mutateAsync: h.createJournal }),

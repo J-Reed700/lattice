@@ -62,9 +62,13 @@ export function TiptapEditor({
     onStateChange: () => {},
     onKeyDown: () => false,
   });
+  const lastEmittedMarkdownRef = useRef<string>(value);
+  const lastEditorRef = useRef<Editor | null>(null);
 
   const handleUpdate = useCallback(({ editor }: { editor: Editor }) => {
-    onChangeRef.current(getMarkdownFromEditor(editor));
+    const markdown = getMarkdownFromEditor(editor);
+    lastEmittedMarkdownRef.current = markdown;
+    onChangeRef.current(markdown);
   }, []);
 
   const editor = useEditor({
@@ -106,11 +110,15 @@ export function TiptapEditor({
     // useEditor can replace an instance after this render captured it. Wait
     // for the replacement render before syncing the latest external value.
     if (!editor || editor.isDestroyed) return;
+    const isNewEditor = lastEditorRef.current !== editor;
+    lastEditorRef.current = editor;
+    if (!isNewEditor && value === lastEmittedMarkdownRef.current) return;
     const currentMd = getMarkdownFromEditor(editor);
     if (currentMd !== value) {
       // Loading content is not an edit; suppress updates on this transaction.
       editor.commands.setContent(value, { emitUpdate: false });
     }
+    lastEmittedMarkdownRef.current = value;
   }, [editor, value]);
 
   useEffect(() => {

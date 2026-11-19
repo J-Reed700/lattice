@@ -118,4 +118,33 @@ describe('useActivitySnapshot', () => {
     expect(events.stopJobs).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(events.unlisten).toHaveBeenCalledTimes(ACTIVITY_REFRESH_EVENTS.length - 1));
   });
+
+  it('throttles progress events while keeping activity://changed and jobs://status immediate', async () => {
+    const { result } = setup();
+    await waitFor(() => expect(result.current.snapshot).toEqual(snapshot(1)));
+    await waitFor(() => expect(events.handlers.size).toBe(ACTIVITY_REFRESH_EVENTS.length));
+
+    vi.useFakeTimers();
+    try {
+      events.invoke.mockClear();
+      events.invoke.mockResolvedValue(snapshot(2));
+
+      act(() => {
+        events.handlers.get('download:progress')!();
+        events.handlers.get('indexing://progress')!();
+        events.handlers.get('download:progress')!();
+      });
+      expect(events.invoke).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+      });
+      expect(events.invoke).toHaveBeenCalledTimes(1);
+
+      act(() => events.handlers.get('activity://changed')!());
+      expect(events.invoke).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

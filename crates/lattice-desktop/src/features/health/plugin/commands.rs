@@ -11,7 +11,7 @@ pub use super::types::*;
 #[tauri::command]
 #[specta::specta]
 pub async fn health_check(container: State<'_, Container>) -> Result<HealthStatus, ApiError> {
-    let json_str = health_commands::health_check_impl(container.inner())
+    let response = health_commands::health_check_impl(container.inner())
         .await
         .map_err(|e| ApiError {
             code: ErrorCode::InternalError,
@@ -19,17 +19,19 @@ pub async fn health_check(container: State<'_, Container>) -> Result<HealthStatu
             details: None,
         })?;
 
-    serde_json::from_str(&json_str).map_err(|e| ApiError {
-        code: ErrorCode::SerializationError,
-        message: format!("Failed to parse health status: {}", e),
-        details: None,
+    Ok(HealthStatus {
+        status: response.status,
+        database: response.database,
+        embedding_model: response.embedding_model,
+        llm: response.llm,
+        timestamp: response.timestamp,
     })
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn get_system_stats(container: State<'_, Container>) -> Result<SystemStats, ApiError> {
-    let json_str = health_commands::get_system_stats_impl(container.inner())
+    let stats = health_commands::get_system_stats_impl(container.inner())
         .await
         .map_err(|e| ApiError {
             code: ErrorCode::InternalError,
@@ -37,10 +39,11 @@ pub async fn get_system_stats(container: State<'_, Container>) -> Result<SystemS
             details: None,
         })?;
 
-    serde_json::from_str(&json_str).map_err(|e| ApiError {
-        code: ErrorCode::SerializationError,
-        message: format!("Failed to parse system stats: {}", e),
-        details: None,
+    Ok(SystemStats {
+        total_documents: stats.total_documents,
+        total_chunks: stats.total_chunks,
+        total_tags: stats.total_tags,
+        storage_size_bytes: stats.storage_size_bytes,
     })
 }
 

@@ -71,3 +71,4 @@ export const queryClient = new QueryClient({
 
 export const INDEXED_FOLDERS_QUERY_KEY = ['indexed-folders'] as const;
 export const SETTINGS_QUERY_KEY = ['settings'] as const;
+export const WORKSPACE_NOTES_QUERY_KEY = ['workspace-notes'] as const;

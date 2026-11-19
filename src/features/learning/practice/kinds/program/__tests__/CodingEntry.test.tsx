@@ -4,10 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { JobDto } from '@/lib/bindings';
 
+import { sessionApi } from '../../../session/sessionApi';
 import { CodingEntry, type CodingBuildChoice } from '../CodingEntry';
 import { programApi } from '../programApi';
 import { programSession } from './fixtures';
-import { sessionApi } from '../../../session/sessionApi';
 
 vi.mock('@/lib/api', () => {
   let count = 0;

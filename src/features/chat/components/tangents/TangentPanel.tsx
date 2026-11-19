@@ -23,12 +23,13 @@ export function TangentPanel({ tangent, chat: Chat, onPromoted }: {
   onPromoted: () => void;
 }) {
   const id = tangent.conversationId;
-  const base = useConversationsStore();
+  const isSending = useConversationsStore((state) => state.inFlightGenerations.has(id));
+  const selectConversation = useConversationsStore((state) => state.selectConversation);
+  const deleteConversation = useConversationsStore((state) => state.deleteConversation);
   const queryClient = useQueryClient();
   const { mutateAsync: promoteTangent } = usePromoteTangentMutation();
   const [mutating, setMutating] = useState(false);
   const mutationPending = useRef(false);
-  const isSending = base.inFlightGenerations.has(id);
   const refreshTangents = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: conversationKeys.tangents(tangent.parentConversationId) });
   }, [queryClient, tangent.parentConversationId]);
@@ -41,10 +42,10 @@ export function TangentPanel({ tangent, chat: Chat, onPromoted }: {
     try {
       if (action === 'promote') {
         await promoteTangent(tangent);
-        toast.success('Tangent is now a conversation', { action: { label: 'Open conversation', onClick: () => { void base.selectConversation(id); } } });
+        toast.success('Tangent is now a conversation', { action: { label: 'Open conversation', onClick: () => { void selectConversation(id); } } });
       } else {
         // The shared delete action also cancels listeners and evicts caches.
-        if (!await base.deleteConversation(id)) throw new Error(conversationUiStore.getState().error ?? 'Please try again.');
+        if (!await deleteConversation(id)) throw new Error(conversationUiStore.getState().error ?? 'Please try again.');
       }
       queryClient.setQueryData<ConversationTangentDto[]>(conversationKeys.tangents(tangent.parentConversationId), current => current?.filter(item => item.conversationId !== id));
       onPromoted();

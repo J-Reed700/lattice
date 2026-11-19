@@ -100,14 +100,39 @@ describe('CanvasSurface', () => {
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
-  it('reports each drawing change with its outline and live element count', async () => {
+  it('debounces drawing changes and reports outline and live element count', async () => {
     const { props } = await openEditor();
-    act(() => editor.props.onChange([rect, label, { id: 'gone', type: 'ellipse', isDeleted: true }], { viewBackgroundColor: '#fff' }, {}));
-    expect(props.onSceneChange).toHaveBeenCalledWith({
-      sceneJson: expect.stringContaining('Mitochondria'),
-      outline: ['Rectangle', 'Mitochondria'],
-      elementCount: 2,
-    });
+    vi.useFakeTimers();
+    try {
+      act(() => editor.props.onChange([rect, label, { id: 'gone', type: 'ellipse', isDeleted: true }], { viewBackgroundColor: '#fff' }, {}));
+      expect(props.onSceneChange).not.toHaveBeenCalled();
+      act(() => { vi.advanceTimersByTime(250); });
+      expect(props.onSceneChange).toHaveBeenCalledWith({
+        sceneJson: expect.stringContaining('Mitochondria'),
+        outline: ['Rectangle', 'Mitochondria'],
+        elementCount: 2,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores pure viewport pan/zoom changes and flushes pending edits imperatively', async () => {
+    const versionedRect = { id: 'r1', type: 'rectangle', version: 1, versionNonce: 42 };
+    const { props, ref } = await openEditor({ sceneJson: scene([versionedRect]) });
+    vi.useFakeTimers();
+    try {
+      act(() => editor.props.onChange([versionedRect], { viewBackgroundColor: '#fff', scrollX: 120, scrollY: -40, zoom: { value: 1.5 } }, {}));
+      act(() => { vi.advanceTimersByTime(500); });
+      expect(props.onSceneChange).not.toHaveBeenCalled();
+
+      act(() => editor.props.onChange([versionedRect, label], { viewBackgroundColor: '#fff' }, {}));
+      expect(props.onSceneChange).not.toHaveBeenCalled();
+      act(() => { ref.current?.flush?.(); });
+      expect(props.onSceneChange).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('removes a dropped-in image element and says images are blocked', async () => {
@@ -120,11 +145,17 @@ describe('CanvasSurface', () => {
 
   it('refuses attached files and scenes that cannot be saved', async () => {
     const { props } = await openEditor();
-    act(() => editor.props.onChange([rect], {}, { f1: {} }));
-    expect(props.onSceneError).toHaveBeenLastCalledWith('Image attachments aren’t available on Canvas yet. You can still draw shapes, lines, and text.');
-    act(() => editor.props.onChange([{ id: 'e1', type: 'embeddable' }], {}, {}));
-    expect(props.onSceneError).toHaveBeenLastCalledWith(expect.stringContaining('External embeds'));
-    expect(props.onSceneChange).not.toHaveBeenCalled();
+    vi.useFakeTimers();
+    try {
+      act(() => editor.props.onChange([rect], {}, { f1: {} }));
+      expect(props.onSceneError).toHaveBeenLastCalledWith('Image attachments aren’t available on Canvas yet. You can still draw shapes, lines, and text.');
+      act(() => editor.props.onChange([{ id: 'e1', type: 'embeddable' }], {}, {}));
+      act(() => { vi.advanceTimersByTime(250); });
+      expect(props.onSceneError).toHaveBeenLastCalledWith(expect.stringContaining('External embeds'));
+      expect(props.onSceneChange).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('blocks pasted images but lets other pastes through', async () => {

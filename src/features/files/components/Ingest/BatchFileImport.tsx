@@ -211,6 +211,10 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
         }
       }))
       .then((unlistenFn) => {
+        if (!mounted) {
+          unlistenFn();
+          return;
+        }
         unlisten = unlistenFn;
       })
       .catch((error) => {

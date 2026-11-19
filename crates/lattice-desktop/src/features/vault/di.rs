@@ -50,13 +50,15 @@ impl Container {
                     .to_string(),
             )
         })?;
+        let app_handle_cell = std::sync::Arc::new(std::sync::RwLock::new(Some(app_handle)));
         crate::features::vault::watcher::rescan_vault(
             self.core.database().clone(),
             vault_root,
             self.vault_write_suppression.clone(),
             &self.vault_rescan_lock,
-            app_handle,
+            app_handle_cell,
             std::sync::Arc::clone(self.core.background()),
+            Some(&self.vault_writer),
         )
         .await
     }

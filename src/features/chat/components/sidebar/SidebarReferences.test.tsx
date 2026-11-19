@@ -18,7 +18,10 @@ const h = vi.hoisted(() => ({
 
 vi.mock('react-router', () => ({ useNavigate: () => h.navigate }));
 vi.mock('@/shared/conversations/conversationsStore', () => ({
-  useConversationsStore: () => ({ selectedSpaceId: 's1', selectConversation: h.selectConversation }),
+  useConversationsStore: <T,>(selector?: (_s: { selectedSpaceId: string; selectConversation: typeof h.selectConversation }) => T) => {
+    const state = { selectedSpaceId: 's1', selectConversation: h.selectConversation };
+    return selector ? selector(state) : state;
+  },
 }));
 vi.mock('@/features/chat/hooks/workspaceQueries', () => ({
   useSidebarBookmarksQuery: (...args: unknown[]) => { h.bookmarkArgs = args; return h.bookmarks; },

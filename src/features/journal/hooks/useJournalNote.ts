@@ -8,6 +8,7 @@ import {
   WORKSPACE_NOTES_QUERY_KEY,
   workspaceNotesQueryOptions,
 } from '@/features/journal/api/queries';
+import { isConflict } from '@/lib/apiResult';
 import { registerPendingSave } from '@/lib/pendingSaves';
 import type { WorkspaceNote } from '@/types/api/dailyNotes';
 import { unwrapApiResult } from '@/types/api/result';
@@ -201,9 +202,11 @@ export function useJournalNote(options: {
         .then(write, write)
         .catch((error: unknown) => {
           setSaveError(
-            error instanceof Error
-              ? error.message
-              : 'Could not save this page.',
+            isConflict(error)
+              ? 'This page changed outside this editor. Your unsaved draft is preserved — copy or reload before saving.'
+              : error instanceof Error
+                ? error.message
+                : 'Could not save this page.',
           );
           return false;
         });

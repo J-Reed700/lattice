@@ -41,10 +41,12 @@ export function CourseTangentChat({
 }: CourseTangentChatProps) {
   const id = tangent.conversationId;
   const navigate = useAppNavigate();
-  const base = useConversationsStore();
+  const isSending = useConversationsStore((state) => state.inFlightGenerations.has(id));
+  const setSelectedSpace = useConversationsStore((state) => state.setSelectedSpace);
+  const selectConversation = useConversationsStore((state) => state.selectConversation);
+  const deleteConversation = useConversationsStore((state) => state.deleteConversation);
   const queryClient = useQueryClient();
   const [mutating, setMutating] = useState(false);
-  const isSending = base.inFlightGenerations.has(id);
 
   const refreshTangents = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: learningTangentsKey(tangent.programId) });
@@ -52,8 +54,8 @@ export function CourseTangentChat({
 
   const handleOpenInChat = async () => {
     try {
-      base.setSelectedSpace(tangent.spaceId);
-      await base.selectConversation(tangent.conversationId);
+      setSelectedSpace(tangent.spaceId);
+      await selectConversation(tangent.conversationId);
       navigate(`/chat?conversationId=${encodeURIComponent(tangent.conversationId)}`);
     } catch (error) {
       toast.error("Couldn't open in chat", {
@@ -67,7 +69,7 @@ export function CourseTangentChat({
     if (!window.confirm('Delete this tangent and its messages?')) return;
     setMutating(true);
     try {
-      const deleted = await base.deleteConversation(id);
+      const deleted = await deleteConversation(id);
       if (!deleted) throw new Error(conversationUiStore.getState().error ?? 'Please try again.');
       void queryClient.invalidateQueries({
         queryKey: learningTangentsKey(tangent.programId),

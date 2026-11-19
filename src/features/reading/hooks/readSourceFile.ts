@@ -1,12 +1,29 @@
 import { queryOptions } from '@tanstack/react-query';
 
 import VaultAPI, { type ApiClient } from '@/lib/api';
+import { assetUrl } from '@/utils/assetUrl';
+
+function isTauriRuntime(): boolean {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+}
 
 /** A source file's text, for the readers that render text, code and saved pages. */
 export const readSourceText = (path: string, api: ApiClient = VaultAPI) => api.readFileContent(path);
 
 /** A source file's bytes, for the readers that parse a binary format (PDF, DOCX). */
-export const readSourceBytes = (path: string, api: ApiClient = VaultAPI) => api.readFileBytes(path);
+export const readSourceBytes = async (path: string, api: ApiClient = VaultAPI) => {
+  if (isTauriRuntime() && api === VaultAPI && path) {
+    try {
+      const response = await fetch(assetUrl(path));
+      if (response.ok) {
+        return { ok: true as const, data: new Uint8Array(await response.arrayBuffer()) };
+      }
+    } catch {
+      // Fall back to IPC when the asset protocol is unavailable or rejects the path.
+    }
+  }
+  return api.readFileBytes(path);
+};
 
 /** The saved web article the archive holds for a file, or null when it holds none. */
 export const readSavedWebArticle = (path: string, api: ApiClient = VaultAPI) => api.savedWebArticle(path);

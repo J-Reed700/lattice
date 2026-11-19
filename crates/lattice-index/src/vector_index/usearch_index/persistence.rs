@@ -1,17 +1,24 @@
 //! Opening, saving and reloading the index file and its key map.
-use super::{
-    temp_path_for, write_file_atomically, DirtyState, KeyState, USearchVectorIndex, VectorMeta,
-};
+use super::{temp_path_for, DirtyState, KeyState, USearchVectorIndex, VectorMeta};
 use crate::vector_index::compression::VectorIndexCompression;
 use lattice_core::shared::error::{AppError, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
+
+/// Borrowed view of the key map for zero-clone streaming serialization.
+#[derive(serde::Serialize)]
+struct KeyMapBorrow<'a> {
+    id_to_key: &'a HashMap<String, u64>,
+    next_key: u64,
+    metadata: &'a HashMap<String, VectorMeta>,
+}
 
 /// Serializable key map for persistence beside the USearch index file. Kept
 /// as JSON: an entry is a handful of short strings, and a readable format is
 /// worth more than a binary one's milliseconds.
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Deserialize)]
 struct KeyMapData {
     id_to_key: HashMap<String, u64>,
     next_key: u64,
@@ -20,7 +27,7 @@ struct KeyMapData {
 
 /// The persisted half of [`VectorMeta`]. Chunk text is deliberately absent:
 /// SQLite already holds it.
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Deserialize)]
 struct SerializableMeta {
     chunk_id: String,
     document_id: String,
@@ -170,29 +177,43 @@ impl USearchVectorIndex {
         }
     }
 
-    /// Save the key map to a JSON file (atomic via temp file + rename).
+    /// Save the key map to a JSON file (streamed through a buffered temp file + fsync + rename).
     fn save_keymap(&self, path: &Path, state: &KeyState) -> Result<()> {
-        let data = KeyMapData {
-            id_to_key: state.id_to_key.clone(),
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                AppError::FileStorage(format!(
+                    "Failed to create directory for {}: {e}",
+                    path.display()
+                ))
+            })?;
+        }
+        let data = KeyMapBorrow {
+            id_to_key: &state.id_to_key,
             next_key: self.next_key.load(Ordering::SeqCst),
-            metadata: state
-                .metadata
-                .iter()
-                .map(|(id, m)| {
-                    (
-                        id.clone(),
-                        SerializableMeta {
-                            chunk_id: m.chunk_id.clone(),
-                            document_id: m.document_id.clone(),
-                        },
-                    )
-                })
-                .collect(),
+            metadata: &state.metadata,
         };
-
-        let bytes = serde_json::to_vec(&data)
-            .map_err(|e| AppError::Serialization(format!("Failed to serialize key map: {}", e)))?;
-        write_file_atomically(path, &bytes)
+        let temp = temp_path_for(path);
+        let file = std::fs::File::create(&temp).map_err(|e| {
+            AppError::FileStorage(format!("Failed to write {}: {e}", temp.display()))
+        })?;
+        let mut writer = std::io::BufWriter::new(file);
+        serde_json::to_writer(&mut writer, &data).map_err(|e| {
+            let _ = std::fs::remove_file(&temp);
+            AppError::Serialization(format!("Failed to serialize key map: {e}"))
+        })?;
+        let file = writer.into_inner().map_err(|e| {
+            let _ = std::fs::remove_file(&temp);
+            AppError::FileStorage(format!("Failed to flush {}: {}", temp.display(), e.error()))
+        })?;
+        file.sync_all().map_err(|e| {
+            let _ = std::fs::remove_file(&temp);
+            AppError::FileStorage(format!("Failed to sync {}: {e}", temp.display()))
+        })?;
+        drop(file);
+        std::fs::rename(&temp, path).map_err(|e| {
+            let _ = std::fs::remove_file(&temp);
+            AppError::FileStorage(format!("Failed to replace {}: {e}", path.display()))
+        })
     }
 
     /// Check membership for a bounded page of authoritative chunk IDs. The
@@ -227,10 +248,11 @@ impl USearchVectorIndex {
             .collect();
 
         for (id, m) in data.metadata {
+            let doc_id = state.intern_document_id(&m.document_id);
             if let Some(&key) = state.id_to_key.get(&id) {
                 state
                     .document_to_keys
-                    .entry(m.document_id.clone())
+                    .entry(Arc::clone(&doc_id))
                     .or_default()
                     .insert(key);
             }
@@ -238,7 +260,7 @@ impl USearchVectorIndex {
                 id,
                 VectorMeta {
                     chunk_id: m.chunk_id,
-                    document_id: m.document_id,
+                    document_id: doc_id,
                 },
             );
         }
@@ -250,7 +272,11 @@ impl USearchVectorIndex {
         } = &mut *state;
         for (id, key) in id_to_key.iter() {
             if !metadata.contains_key(id) {
-                document_to_keys.entry(id.clone()).or_default().insert(*key);
+                let doc_id = document_to_keys
+                    .get_key_value(id.as_str())
+                    .map(|(existing, _)| Arc::clone(existing))
+                    .unwrap_or_else(|| Arc::from(id.as_str()));
+                document_to_keys.entry(doc_id).or_default().insert(*key);
             }
         }
 

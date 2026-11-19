@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/IconButton';
 import { ChatPanel } from '@/features/chat/components/ChatPanel';
 import { DeleteConversationDialog } from '@/features/chat/components/DeleteConversationDialog';
+import { ScopedConversationProvider } from '@/features/chat/components/tangents/TangentConversation';
 import { learningMemoryKey, learningRecallKey } from '@/features/learning/api/learningQueryKeys';
 import type { LearningLessonDto, LearningProgramDto } from '@/lib/bindings';
 import { cn } from '@/lib/utils';
@@ -74,7 +75,9 @@ export function TutorPanel({ program, lesson, onCourseChanged }: {
       </aside>
       <div className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border">
         {chats.activeId ? (
-          <ChatPanel starters={[`Teach me ${lesson?.title ?? program.summary.title}`, 'Quiz me on what is due', 'What should I work on next?']} />
+          <ScopedConversationProvider conversationId={chats.activeId}>
+            <ChatPanel starters={[`Teach me ${lesson?.title ?? program.summary.title}`, 'Quiz me on what is due', 'What should I work on next?']} />
+          </ScopedConversationProvider>
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
             {chats.error

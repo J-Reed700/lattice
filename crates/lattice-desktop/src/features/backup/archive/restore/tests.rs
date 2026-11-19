@@ -143,3 +143,142 @@ fn move_dir_falls_back_to_a_recursive_copy() {
         "deep"
     );
 }
+
+#[tokio::test]
+async fn restore_places_owner_restore_marker_beside_files_root_so_may_sweep_adopts_host_owner() {
+    use super::super::config::ArchiveConfig;
+    use super::super::crypto::{self, Argon2Params, MasterKey, RecoveryCode};
+    use super::super::writer::ArchiveWriter;
+    use crate::features::indexing::library_owner::{may_sweep, LibraryFiles};
+    use lattice_core::application::ports::settings_port::MockSettingsRepository;
+    use lattice_core::application::ports::SettingsRepositoryPort;
+    use lattice_core::shared::persistence::Database;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+
+    let source = tempfile::tempdir().unwrap();
+    let source_app_data = source.path().join("app-data");
+    let source_lattice_home = source.path().join("lattice-home");
+    let source_files_root = source_lattice_home.join("files");
+    std::fs::create_dir_all(&source_app_data).unwrap();
+    std::fs::create_dir_all(&source_files_root).unwrap();
+
+    let source_db_path = source_app_data.join("lattice.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&source_db_path)
+        .await
+        .unwrap();
+    let source_pool = SqlitePoolOptions::new()
+        .connect_with(SqliteConnectOptions::new().filename(&source_db_path))
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO library_owner (id, owner_id) VALUES (1, 'source-owner-id')")
+        .execute(&source_pool)
+        .await
+        .unwrap();
+    let source_db = Database::new(source_pool);
+
+    let destination = tempfile::tempdir().unwrap();
+    let master = MasterKey::generate();
+    let recovery = RecoveryCode::generate().unwrap();
+    let envelope =
+        crypto::build_envelope(&master, None, &recovery, Argon2Params::for_tests()).unwrap();
+    let source_key_store = Arc::new(MasterKeyStore::with_service(
+        "tech.lattice.test.restore-owner-marker".to_string(),
+        source_app_data.clone(),
+        false,
+    ));
+    source_key_store.store(&master).unwrap();
+    ArchiveConfig {
+        envelope,
+        destination: Some(destination.path().to_path_buf()),
+        ..ArchiveConfig::default()
+    }
+    .save(&source_app_data)
+    .await
+    .unwrap();
+
+    let settings: Arc<dyn SettingsRepositoryPort> = Arc::new(MockSettingsRepository::new());
+    let writer = ArchiveWriter::new(
+        source_db.clone(),
+        source_app_data.clone(),
+        settings,
+        source_key_store,
+        Some(source_files_root),
+        None,
+    );
+    let archive = writer.create().await.unwrap();
+    source_db.close().await;
+
+    let target = tempfile::tempdir().unwrap();
+    let target_app_data = target.path().join("app-data");
+    let target_lattice_home = target.path().join("lattice-home");
+    let target_files_root = target_lattice_home.join("files");
+    std::fs::create_dir_all(&target_app_data).unwrap();
+    std::fs::create_dir_all(&target_files_root).unwrap();
+    let owner_file = target_lattice_home.join("owner");
+    std::fs::write(&owner_file, "existing-host-owner-id\n").unwrap();
+
+    let target_db_path = target_app_data.join("lattice.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&target_db_path)
+        .await
+        .unwrap();
+    let target_pool = SqlitePoolOptions::new()
+        .connect_with(SqliteConnectOptions::new().filename(&target_db_path))
+        .await
+        .unwrap();
+    let target_key_store = Arc::new(MasterKeyStore::with_service(
+        "tech.lattice.test.restore-owner-marker".to_string(),
+        target_app_data.clone(),
+        false,
+    ));
+    let restorer = ArchiveRestorer::new(
+        Database::new(target_pool),
+        target_db_path.clone(),
+        target_app_data.clone(),
+        Arc::new(MockSettingsRepository::new()),
+        target_key_store,
+        Some(target_files_root.clone()),
+        None,
+    );
+
+    let phrase = recovery.phrase();
+    let outcome = restorer
+        .restore(&archive.path, Some(&phrase))
+        .await
+        .unwrap();
+    assert!(matches!(outcome, RestoreOutcome::Restored { .. }));
+
+    let expected_marker = target_lattice_home.join("owner.restore");
+    assert!(
+        expected_marker.exists(),
+        "owner.restore must be written beside files_root in <lattice_home>"
+    );
+    assert!(
+        !target_app_data.join("owner.restore").exists(),
+        "owner.restore must not be written inside app_data_dir"
+    );
+
+    let reopened_pool = SqlitePoolOptions::new()
+        .connect_with(SqliteConnectOptions::new().filename(&target_db_path))
+        .await
+        .unwrap();
+    let reopened_db = Database::new(reopened_pool.clone());
+    let files = LibraryFiles {
+        owner_file,
+        roots: vec![target_files_root],
+    };
+    assert!(
+        may_sweep(&reopened_db, &files).await,
+        "may_sweep must adopt the existing host owner file after backup restore"
+    );
+    assert!(
+        !expected_marker.exists(),
+        "may_sweep should consume owner.restore after adopting the host owner"
+    );
+    let adopted_id: Option<String> =
+        sqlx::query_scalar("SELECT owner_id FROM library_owner WHERE id = 1")
+            .fetch_optional(&reopened_pool)
+            .await
+            .unwrap();
+    assert_eq!(adopted_id.as_deref(), Some("existing-host-owner-id"));
+    reopened_pool.close().await;
+}

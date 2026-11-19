@@ -3,6 +3,159 @@
   <head>
     <meta charset="UTF-8" />
     <script src="/theme-bootstrap.js"></script>
+    <style id="lattice-boot-styles">
+      :root {
+        --boot-bg: hsl(40 26% 96.5%);
+        --boot-surface: hsl(42 45% 98.6%);
+        --boot-surface-raised: hsl(38 16% 92.5%);
+        --boot-border: hsl(30 18% 18% / 0.15);
+        --boot-border-subtle: hsl(30 18% 18% / 0.09);
+        --boot-text-primary: hsl(30 12% 10%);
+        --boot-text-secondary: hsl(30 8% 26%);
+        --boot-text-muted: hsl(30 5% 41%);
+        --boot-ring: hsl(12 52% 40% / 0.9);
+        --boot-shadow-control: 0 1px 1px rgb(40 28 16 / 0.05), inset 0 1px 0 rgb(255 255 255 / 0.6);
+      }
+      html[data-theme='dark'],
+      html.dark {
+        --boot-bg: hsl(30 5% 10.5%);
+        --boot-surface: hsl(30 5% 13%);
+        --boot-surface-raised: hsl(30 5% 16.5%);
+        --boot-border: hsl(36 30% 92% / 0.12);
+        --boot-border-subtle: hsl(36 30% 92% / 0.07);
+        --boot-text-primary: hsl(36 18% 91%);
+        --boot-text-secondary: hsl(35 9% 74%);
+        --boot-text-muted: hsl(32 5% 57%);
+        --boot-ring: hsl(22 58% 72% / 0.9);
+        --boot-shadow-control: inset 0 1px 0 rgb(255 245 230 / 0.05), 0 1px 2px rgb(0 0 0 / 0.3);
+      }
+      @layer base {
+        html,
+        body {
+          margin: 0;
+          background-color: var(--boot-bg);
+        }
+      }
+      [data-boot-recovery='true'] {
+        position: relative;
+        display: flex;
+        min-height: 100vh;
+        align-items: center;
+        justify-content: center;
+        padding: 48px 24px 24px;
+        box-sizing: border-box;
+        background-color: var(--boot-bg);
+        color: var(--boot-text-primary);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      [data-boot-recovery='true'] .lattice-boot-drag {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 38px;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      [data-boot-recovery='true'] .lattice-boot-card {
+        width: 100%;
+        max-width: 448px;
+      }
+      [data-boot-recovery='true'] .lattice-boot-heading {
+        margin: 0;
+        font-family: 'Charter', 'Iowan Old Style', 'Apple Garamond', Georgia, serif;
+        font-size: 20px;
+        font-weight: 600;
+        line-height: 1.4;
+        letter-spacing: -0.01em;
+        color: var(--boot-text-primary);
+      }
+      [data-boot-recovery='true'] .lattice-boot-body {
+        margin: 8px 0 0;
+        font-size: 14px;
+        line-height: 1.55;
+        color: var(--boot-text-secondary);
+      }
+      [data-boot-recovery='true'] .lattice-boot-actions {
+        margin-top: 24px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      [data-boot-recovery='true'] .lattice-boot-btn,
+      [data-boot-recovery='true'] .lattice-boot-btn-ghost {
+        display: inline-flex;
+        height: 32px;
+        align-items: center;
+        border-radius: 8px;
+        font-family: inherit;
+        font-size: 14px;
+        cursor: pointer;
+        -webkit-user-select: none;
+        user-select: none;
+        transition: background-color 120ms cubic-bezier(0.23, 1, 0.32, 1),
+          color 120ms cubic-bezier(0.23, 1, 0.32, 1);
+      }
+      [data-boot-recovery='true'] .lattice-boot-btn {
+        padding: 0 12px;
+        border: 1px solid var(--boot-border);
+        background-color: var(--boot-surface);
+        box-shadow: var(--boot-shadow-control);
+        color: var(--boot-text-primary);
+        font-weight: 500;
+      }
+      [data-boot-recovery='true'] .lattice-boot-btn:hover {
+        background-color: var(--boot-surface-raised);
+      }
+      [data-boot-recovery='true'] .lattice-boot-btn-ghost {
+        padding: 0 8px;
+        border: 1px solid transparent;
+        background-color: transparent;
+        color: var(--boot-text-secondary);
+        font-weight: 400;
+      }
+      [data-boot-recovery='true'] .lattice-boot-btn-ghost:hover {
+        background-color: var(--boot-surface-raised);
+        color: var(--boot-text-primary);
+      }
+      [data-boot-recovery='true'] button:focus-visible,
+      [data-boot-recovery='true'] summary:focus-visible {
+        outline: 2px solid var(--boot-ring);
+        outline-offset: 2px;
+      }
+      [data-boot-recovery='true'] .lattice-boot-details {
+        margin-top: 32px;
+        padding-top: 16px;
+        border-top: 1px solid var(--boot-border-subtle);
+      }
+      [data-boot-recovery='true'] .lattice-boot-summary {
+        font-size: 12px;
+        color: var(--boot-text-muted);
+        cursor: pointer;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      [data-boot-recovery='true'] .lattice-boot-summary:hover {
+        color: var(--boot-text-primary);
+      }
+      [data-boot-recovery='true'] .lattice-boot-trace {
+        margin: 12px 0 0;
+        padding: 12px;
+        max-height: 240px;
+        overflow: auto;
+        border-radius: 5px;
+        border: 1px solid var(--boot-border-subtle);
+        background-color: var(--boot-surface);
+        color: var(--boot-text-secondary);
+        font-family: ui-monospace, Menlo, Monaco, Consolas, monospace;
+        font-size: 11px;
+        line-height: 1.45;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+    </style>
+    <script src="/boot-guard.js" data-dev="%DEV%"></script>
     <script src="/excalidraw-bootstrap.js"></script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />

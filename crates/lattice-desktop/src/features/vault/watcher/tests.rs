@@ -126,3 +126,105 @@ async fn suppression_marking_prunes_expired_entries() {
 fn filename_key_extracts_basename() {
     assert_eq!(filename_key(Path::new("/a/b/c.md")).unwrap(), "c.md");
 }
+
+#[tokio::test]
+async fn import_one_allows_rapid_consecutive_external_edits_without_echo_loop() {
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+        .await
+        .unwrap();
+    let db = Database::new(pool.clone());
+    let dir = tempfile::tempdir().unwrap();
+    let note_path = dir.path().join("notes/rapid-note.md");
+    std::fs::create_dir_all(note_path.parent().unwrap()).unwrap();
+    let app_handle: AppHandleCell = Arc::new(std::sync::RwLock::new(None));
+
+    let v1 = "---\nid: rapid-note\ntitle: \"Title\"\ncreated_at: 2026-11-19T00:00:00Z\nupdated_at: 2026-11-19T00:00:01Z\ntags: [\"tag1\"]\n---\n\nfirst draft";
+    std::fs::write(&note_path, v1).unwrap();
+    assert_eq!(
+        import_one(&note_path, &db, &app_handle, None)
+            .await
+            .as_deref(),
+        Some("rapid-note")
+    );
+
+    let v2 = "---\nid: rapid-note\ntitle: \"Title\"\ncreated_at: 2026-11-19T00:00:00Z\nupdated_at: 2026-11-19T00:00:02Z\ntags: [\"tag1\"]\n---\n\nsecond draft";
+    std::fs::write(&note_path, v2).unwrap();
+    assert_eq!(
+        import_one(&note_path, &db, &app_handle, None)
+            .await
+            .as_deref(),
+        Some("rapid-note")
+    );
+
+    let saved_body: String =
+        sqlx::query_scalar("SELECT content FROM daily_notes_workspace WHERE id = 'rapid-note'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(saved_body, "second draft");
+}
+
+#[tokio::test]
+async fn vault_watcher_handle_reconfigures_and_stops_cleanly() {
+    use lattice_core::application::contracts::settings::SettingsDto;
+
+    struct MutableSettings(parking_lot::Mutex<SettingsDto>);
+
+    #[async_trait::async_trait]
+    impl SettingsReaderPort for MutableSettings {
+        async fn current_settings(&self) -> lattice_core::shared::error::Result<SettingsDto> {
+            Ok(self.0.lock().clone())
+        }
+    }
+
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+        .await
+        .unwrap();
+    let db = Database::new(pool);
+    let vault_dir = tempfile::tempdir().unwrap();
+
+    let mut initial = SettingsDto::default();
+    initial.vault.enabled = false;
+    initial.vault.watch_external_changes = true;
+    initial.vault.vault_path = vault_dir.path().to_string_lossy().to_string();
+
+    let settings = Arc::new(MutableSettings(parking_lot::Mutex::new(initial)));
+    let background = Arc::new(BackgroundTasks::default());
+    let suppression = WriteSuppressionRegistry::new();
+    let writer = super::super::writeback::start_vault_writer(
+        Arc::clone(&settings),
+        suppression.clone(),
+        db.clone(),
+        &background,
+    );
+    let watcher = VaultWatcherHandle::new(
+        Arc::clone(&settings),
+        db,
+        suppression,
+        Arc::clone(&background),
+        RescanLock::default(),
+        writer,
+    );
+
+    watcher.reconfigure().await;
+    assert!(!watcher.is_active().await);
+
+    {
+        let mut guard = settings.0.lock();
+        guard.vault.enabled = true;
+    }
+    watcher.reconfigure().await;
+    assert!(watcher.is_active().await);
+
+    {
+        let mut guard = settings.0.lock();
+        guard.vault.watch_external_changes = false;
+    }
+    watcher.reconfigure().await;
+    assert!(!watcher.is_active().await);
+
+    background.close();
+    tokio::time::timeout(Duration::from_secs(2), background.wait())
+        .await
+        .unwrap();
+}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { motion, useReducedMotion } from 'framer-motion';
 
@@ -35,7 +35,9 @@ import { useOpenSpaces } from '@/features/spaces/components/SpacePickerPopover';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 import type { ChatModelChoice } from '@/lib/bindings';
 import { useConversationsStore, useThreadStartsAfter } from '@/shared/conversations/conversationsStore';
+import type { ConversationsState } from '@/shared/conversations/conversationsStore.types';
 import { toast } from '@/stores/toastStore';
+import type { OptimisticMessage } from '@/types/conversation';
 import {
   buildChatModelOptions,
   isUnavailableChatModel,
@@ -63,6 +65,7 @@ export interface ChatPanelProps {
 
 const DEFAULT_CHOICE: ChatModelChoice = { kind: 'default' };
 const NO_COMMANDS: PaletteCommand[] = [];
+const EMPTY_OPTIMISTIC: readonly OptimisticMessage[] = [];
 
 export function ChatPanel({ composerNotice, composerChips, starters, startersNote, embedded = false, autoFocus = false }: ChatPanelProps = {}) {
   const { downloadedModels } = useDownloadedModels();
@@ -73,9 +76,44 @@ export function ChatPanel({ composerNotice, composerChips, starters, startersNot
   const conversations = useConversationsStore((state) => state.conversations);
   const spaces = useConversationsStore((state) => state.spaces);
   const selectedSpaceId = useConversationsStore((state) => state.selectedSpaceId);
-  const inFlightGenerations = useConversationsStore((state) => state.inFlightGenerations);
-  const optimisticMessages = useConversationsStore((state) => state.optimisticMessages);
-  const liveModel = useConversationsStore((state) => state.liveModel);
+  const isSending = useConversationsStore((state) =>
+    Boolean(state.activeConversationId && state.inFlightGenerations.has(state.activeConversationId)),
+  );
+  const scopedOptimisticRef = useRef<readonly OptimisticMessage[]>(EMPTY_OPTIMISTIC);
+  const selectScopedOptimistic = useCallback(
+    (state: ConversationsState): readonly OptimisticMessage[] => {
+      const targetId = state.activeConversationId;
+      const prev = scopedOptimisticRef.current;
+      if (!targetId || !state.optimisticMessages) {
+        if (prev.length === 0) return prev;
+        scopedOptimisticRef.current = EMPTY_OPTIMISTIC;
+        return EMPTY_OPTIMISTIC;
+      }
+      const next: OptimisticMessage[] = [];
+      for (const message of state.optimisticMessages.values()) {
+        if (message.conversationId === targetId || message.conversationId === 'temp') {
+          next.push(message);
+        }
+      }
+      if (next.length === 0) {
+        if (prev.length === 0) return prev;
+        scopedOptimisticRef.current = EMPTY_OPTIMISTIC;
+        return EMPTY_OPTIMISTIC;
+      }
+      if (next.length === prev.length && next.every((item, index) => item === prev[index])) {
+        return prev;
+      }
+      scopedOptimisticRef.current = next;
+      return next;
+    },
+    [],
+  );
+  const optimisticMessages = useConversationsStore(selectScopedOptimistic);
+  const pinnedModel = useConversationsStore((state) =>
+    state.activeConversationId && state.inFlightGenerations.has(state.activeConversationId)
+      ? state.liveModel?.get(state.activeConversationId)
+      : undefined,
+  );
   const messageRetrieval = useConversationsStore((state) => state.messageRetrieval);
   const cancelGeneration = useConversationsStore((state) => state.cancelGeneration);
   const createConversation = useConversationsStore((state) => state.createConversation);
@@ -84,10 +122,6 @@ export function ChatPanel({ composerNotice, composerChips, starters, startersNot
   const selectConversation = useConversationsStore((state) => state.selectConversation);
   const settings = useSettingsQuery().data;
   const threadStartsAfter = useThreadStartsAfter();
-
-  const isSending = activeConversationId
-    ? inFlightGenerations.has(activeConversationId)
-    : false;
 
   const [isCreatingConversation, setIsCreatingConversation] = useState(false);
   // The memory reader is an overlay off the palette, like the source reader:
@@ -174,7 +208,6 @@ export function ChatPanel({ composerNotice, composerChips, starters, startersNot
   // While a turn runs, the model it is pinned to says whether it fell back to
   // the CPU; otherwise the loaded models do. A choice changed mid-turn is not
   // the pinned model, so only a match counts.
-  const pinnedModel = activeConversationId && isSending ? liveModel.get(activeConversationId) : undefined;
   const degradedReason = pinnedModel && sameModelRef(pinnedModel.model, effectiveRef)
     ? pinnedModel.degraded ?? null
     : degradedReasonFor(effectiveRef, loadedModels);

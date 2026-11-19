@@ -125,8 +125,9 @@ impl CourseIndexes {
         progress: &mut dyn CourseProgress,
     ) -> Result<IndexMode> {
         let index = self.live.acquire(&self.dir_of(program)?).await?;
+        let lease = self.live.lease(Arc::clone(&index));
         let outcome = self.bring_current(&index, program, cancel, progress).await;
-        self.live.release(&index).await;
+        lease.release().await;
         outcome.map(|view| view.mode)
     }
 
@@ -225,8 +226,9 @@ impl CourseIndexes {
         *self.holders.lock().entry(program.to_string()).or_default() += 1;
     }
 
-    /// A reader let `program` go: its count drops now, and its hold on the
-    /// open directory as soon as the runtime takes the release.
+    /// A reader let `program` go: its count drops now, its `LiveIndexes`
+    /// lease drops synchronously, and the last user's store close runs on the
+    /// background runtime when one is available.
     pub(super) fn let_go(self: &Arc<Self>, program: &str, index: &Arc<LiveIndex>) {
         {
             let mut holders = self.holders.lock();
@@ -237,15 +239,21 @@ impl CourseIndexes {
                 }
             }
         }
-        // Outside a runtime there is nothing to release into; the store's
-        // pool closes when its last holder drops.
+        // Always decrement the LiveIndexes lease synchronously so dropping a
+        // reader outside a Tokio runtime or during shutdown never leaks a lease.
+        let Some((closing, reg)) = self.live.release_for_close(index) else {
+            return;
+        };
         if tokio::runtime::Handle::try_current().is_err() {
+            drop(closing);
+            drop(reg);
             return;
         }
-        let courses = Arc::clone(self);
-        let index = Arc::clone(index);
-        self.background
-            .spawn(async move { courses.live.release(&index).await });
+        self.background.spawn(async move {
+            let _reg = reg;
+            closing.store.close().await;
+            drop(closing);
+        });
     }
 
     fn held(&self, program: &str) -> bool {
@@ -388,6 +396,7 @@ impl CourseIndexes {
             }
             Err(error) => warn!(%error, program, "Could not list a course's index builds"),
         }
+        self.live.evict_and_close(&dir).await;
         remove_dir(&dir).await;
     }
 
@@ -395,6 +404,7 @@ impl CourseIndexes {
     /// finds its course gone, which must not wait for itself to stop.
     pub(super) async fn remove_index(&self, program: &str) {
         if let Ok(dir) = self.dir_of(program) {
+            self.live.evict_and_close(&dir).await;
             remove_dir(&dir).await;
         }
     }
@@ -415,10 +425,18 @@ impl CourseIndexes {
             let is_index = entry.file_type().is_ok_and(|kind| kind.is_dir())
                 && uuid::Uuid::parse_str(&name).is_ok();
             if is_index && !programs.contains(&name) {
-                remove_dir(&entry.path()).await;
+                let path = entry.path();
+                self.live.evict_and_close(&path).await;
+                remove_dir(&path).await;
             }
         }
         Ok(())
+    }
+
+    /// Drops any open workspace claim and closes all live course index pools.
+    pub async fn close_all(&self) {
+        *self.open.lock() = None;
+        self.live.close_all().await;
     }
 
     /// Whether `program` still exists.

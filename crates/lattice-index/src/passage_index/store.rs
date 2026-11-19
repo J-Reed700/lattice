@@ -282,13 +282,25 @@ async fn connect_pool(dir: &Path) -> Result<Database> {
         .busy_timeout(Duration::from_secs(5))
         .pragma("journal_mode", "WAL")
         .pragma("synchronous", "NORMAL");
-    let pool = SqlitePoolOptions::new()
-        .max_connections(2)
+    // Open the single-connection writer pool first so `journal_mode = WAL` is
+    // established without racing concurrent reader connections.
+    let writer_pool = SqlitePoolOptions::new()
+        .max_connections(1)
         .acquire_timeout(Duration::from_secs(5))
-        .connect_with(options)
+        .connect_with(options.clone())
         .await
         .map_err(db_error("open passages.db"))?;
-    Ok(Database::new(pool))
+    let reader_options = options.pragma("query_only", "ON");
+    let reader_pool = SqlitePoolOptions::new()
+        .max_connections(4)
+        .acquire_timeout(Duration::from_secs(5))
+        .connect_lazy_with(reader_options);
+    if let Err(error) = reader_pool.acquire().await {
+        reader_pool.close().await;
+        writer_pool.close().await;
+        return Err(db_error("open passages.db")(error));
+    }
+    Ok(Database::with_writer_pool(reader_pool, writer_pool))
 }
 
 /// Whether the store in `db` holds tables of another shape than this one.

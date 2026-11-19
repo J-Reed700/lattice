@@ -7,7 +7,7 @@ use crate::features::explorer::index::dto::{FolderIndexState, FolderIndexStatusD
 use crate::features::explorer::index::run::{Indexer, Limits, Outcome, StatusCell};
 use crate::features::explorer::index::search::FolderSearch;
 use crate::features::explorer::index::store;
-use crate::features::explorer::index::watcher::{self, Change, FolderWatcher};
+use crate::features::explorer::index::watcher::{self, Change, ChangeReceiver, FolderWatcher};
 use crate::features::explorer::scope::Scope;
 use crate::infrastructure::passage_index::{EmbedTurns, LiveIndex, PassageTextSearch, Priority};
 use lattice_core::shared::Result;
@@ -16,7 +16,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 #[cfg(test)]
 use std::time::Duration;
-use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -75,10 +74,14 @@ impl FolderIndexManager {
         let indexes = store::list_indexes(&self.config.base_dir).await;
         let (index_root, dir) = self.choose_index(&root, &indexes);
         let prefix = relative_below(&index_root, &root).unwrap_or_default();
+        // Validate the scope before acquiring a live lease so an error cannot
+        // leak an entry in `self.live`.
+        let index_scope = Scope::open(&root_string(&index_root))?;
         if rebuild && prefix.is_empty() {
             self.forget_index(&index_root, &dir).await?;
         }
         let index = self.acquire(&index_root, &dir).await?;
+        let lease = self.live.lease(Arc::clone(&index));
         let opened = async {
             // The folders list orders by this.
             index
@@ -94,7 +97,7 @@ impl FolderIndexManager {
         let counts = match opened {
             Ok(counts) => counts,
             Err(error) => {
-                self.release(&index).await;
+                lease.release().await;
                 return Err(error);
             }
         };
@@ -117,7 +120,7 @@ impl FolderIndexManager {
                 let task = WatchTask {
                     manager: Weak::clone(&self.me),
                     index: Arc::clone(&index),
-                    scope: Scope::open(&root_string(&index_root))?,
+                    scope: index_scope,
                     walk_root: root.clone(),
                     prefix: prefix.clone(),
                     status: Arc::clone(&status),
@@ -132,6 +135,7 @@ impl FolderIndexManager {
                 None
             }
         };
+        lease.disarm();
         let folder = OpenFolder {
             root: root.clone(),
             index_root: index_root.clone(),
@@ -186,6 +190,13 @@ impl FolderIndexManager {
         if let Some(previous) = self.open.lock().await.take() {
             self.close_folder(previous).await;
         }
+    }
+
+    /// Closes the open folder and drains all live folder index pools for
+    /// application shutdown.
+    pub async fn shutdown(&self) {
+        self.close().await;
+        self.live.close_all().await;
     }
 
     /// Wipes `root`'s index and builds it again. A sub-folder that reuses a
@@ -314,7 +325,7 @@ struct WatchTask {
 }
 
 impl WatchTask {
-    async fn run(self, _watcher: FolderWatcher, mut changes: mpsc::UnboundedReceiver<Change>) {
+    async fn run(self, _watcher: FolderWatcher, mut changes: ChangeReceiver) {
         loop {
             let first = tokio::select! {
                 biased;
@@ -327,11 +338,12 @@ impl WatchTask {
             let mut paths = HashSet::new();
             let mut rescan = false;
             let mut take = |change: Change| match change {
-                Change::Paths(found) => paths.extend(found),
+                Change::Paths(found) if !rescan => paths.extend(found),
+                Change::Paths(_) => {}
                 Change::Rescan => rescan = true,
             };
             take(first);
-            while let Ok(change) = changes.try_recv() {
+            while let Some(change) = changes.try_recv() {
                 take(change);
             }
             if rescan || paths.len() > RESCAN_PATHS {

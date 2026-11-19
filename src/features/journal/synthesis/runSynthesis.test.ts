@@ -145,4 +145,35 @@ describe('synthesis workflow', () => {
     unregister();
     expect(await applySynthesis(synthesis(), client())).toBe(true);
   });
+
+  it('does not append synthesis twice when retrying after markSynthesisApplied fails', async () => {
+    const job = synthesis({}, { id: 'synthesis-retry-mark' });
+    backend([job]);
+    let failMark = true;
+    apiCallMock.mockImplementation(async (command: string) => {
+      if (command === 'get_journal_synthesis_result') return { ok: true, data: result };
+      if (command === 'mark_journal_synthesis_applied') {
+        if (failMark) return { ok: false, error: 'sqlite busy' };
+        return { ok: true, data: true };
+      }
+      return { ok: true, data: true };
+    });
+    const queries = client();
+    const invalidateSpy = vi.spyOn(queries, 'invalidateQueries');
+    queries.setQueryData(synthesisKeys.list, [job]);
+
+    expect(await applySynthesis(job, queries)).toBe(false);
+    expect(VaultAPI.quickCapture).toHaveBeenCalledTimes(1);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['workspace-notes'] });
+    expect(useSynthesisPanel.getState().saving).toEqual({
+      'synthesis-retry-mark': { error: 'sqlite busy' },
+    });
+
+    failMark = false;
+    expect(await applySynthesis(job, queries)).toBe(true);
+    // Must only retry mark_journal_synthesis_applied, never re-append to the note.
+    expect(VaultAPI.quickCapture).toHaveBeenCalledTimes(1);
+    expect(calls('mark_journal_synthesis_applied')).toHaveLength(2);
+    expect(queries.getQueryData(synthesisKeys.list)).toEqual([]);
+  });
 });

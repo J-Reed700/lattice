@@ -4,6 +4,7 @@ import { useApi } from '@/contexts/ApiContext';
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { spacesQueryOptions } from '@/features/spaces/api/queries';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
+import { isBoundChat } from '@/shared/conversations/boundChats';
 import { conversationKeys, type ConversationListParams } from '@/shared/conversations/conversationKeys';
 import type { ConversationsState, LoadConversationsOverrides, LoadMessageBookmarksOverrides } from '@/shared/conversations/conversationsStore.types';
 import type { Conversation } from '@/types/conversation';
@@ -120,7 +121,12 @@ export function useConversationNavigationActions({
         return;
       }
       const spaceId = detail?.spaceId;
-      if (spaceId && current.activeConversationId === id && current.selectedSpaceId !== spaceId) {
+      if (
+        spaceId &&
+        !isBoundChat(detail) &&
+        current.activeConversationId === id &&
+        current.selectedSpaceId !== spaceId
+      ) {
         await loadConversations({ spaceId });
       }
     } catch (error) {

@@ -8,6 +8,7 @@ import {
 
 import { useApi } from '@/contexts/ApiContext';
 import { VaultAPI, type ApiClient } from '@/lib/api';
+import { WORKSPACE_NOTES_QUERY_KEY } from '@/lib/queryClient';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import type { ApiResult } from '@/types';
 import type { ConversationJournalDto } from '@/types/api/conversation';
@@ -15,7 +16,7 @@ import { unwrapApiResult } from '@/types/api/result';
 import { buildCapturedChatReferenceIndex } from '@/utils/chatReferenceIndex';
 
 export const JOURNALS_QUERY_KEY = ['journals'] as const;
-export const WORKSPACE_NOTES_QUERY_KEY = ['workspace-notes'] as const;
+export { WORKSPACE_NOTES_QUERY_KEY };
 export const journalsQueryOptions = (api: ApiClient = VaultAPI) =>
   queryOptions({
     queryKey: JOURNALS_QUERY_KEY,

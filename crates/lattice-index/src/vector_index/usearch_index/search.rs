@@ -62,7 +62,7 @@ impl USearchVectorIndex {
                     let doc_id = state
                         .metadata
                         .get(id)
-                        .map_or(id.as_str(), |m| m.document_id.as_str());
+                        .map_or(id.as_str(), |m| &*m.document_id);
                     scope.contains(doc_id)
                 })
                 .unwrap_or(false)
@@ -73,7 +73,7 @@ impl USearchVectorIndex {
         if let Some(scope) = scope {
             let eligible = scope
                 .iter()
-                .filter_map(|document_id| state.document_to_keys.get(document_id))
+                .filter_map(|document_id| state.document_to_keys.get(document_id.as_str()))
                 .map(HashSet::len)
                 .sum::<usize>();
             if eligible <= self.exact_search_max {
@@ -119,7 +119,7 @@ impl USearchVectorIndex {
         let mut full_vector = vec![0.0f32; full_query.len()];
         let mut full_vector_bytes = vec![0u8; full_query.len().saturating_mul(4)];
         for document_id in scope {
-            let Some(keys) = state.document_to_keys.get(document_id) else {
+            let Some(keys) = state.document_to_keys.get(document_id.as_str()) else {
                 continue;
             };
             for &key in keys {

@@ -27,14 +27,21 @@ use lattice_core::shared::runtime::background::BackgroundTasks;
 pub const OCR_IDLE_TTL: Duration = Duration::from_secs(60);
 
 /// The OS process behind a server.
+#[async_trait]
 pub trait ServerProcess: Send {
     /// Whether the process has exited (crashed, or was killed).
     fn has_exited(&mut self) -> bool;
-    /// Kill the process now. Must be idempotent.
+    /// Synchronous kill fallback (used by `Drop` when an async shutdown did
+    /// not run). Must be idempotent.
     fn kill(&mut self);
+    /// Kill the process and reap it asynchronously without blocking a worker
+    /// thread. Defaults to [`Self::kill`] for test fakes.
+    async fn kill_and_wait(&mut self) {
+        self.kill();
+    }
 }
 
-type SharedProcess = Arc<SyncMutex<Box<dyn ServerProcess>>>;
+type SharedProcess = Arc<tokio::sync::Mutex<Box<dyn ServerProcess>>>;
 
 /// A started, ready server.
 pub struct RunningServer {
@@ -46,12 +53,16 @@ impl RunningServer {
     pub fn new(endpoint: String, api_key: String, process: Box<dyn ServerProcess>) -> Self {
         Self {
             address: ServerAddress { endpoint, api_key },
-            process: Arc::new(SyncMutex::new(process)),
+            process: Arc::new(tokio::sync::Mutex::new(process)),
         }
     }
 
-    fn has_exited(&self) -> bool {
-        self.process.lock().has_exited()
+    async fn has_exited(&self) -> bool {
+        self.process.lock().await.has_exited()
+    }
+
+    async fn shutdown(self) {
+        self.process.lock().await.kill_and_wait().await;
     }
 }
 
@@ -59,7 +70,9 @@ impl Drop for RunningServer {
     /// Whoever lets go of the server — idle reaper, restart, shutdown — kills
     /// it; nothing may leave a 2 GB process behind.
     fn drop(&mut self) {
-        self.process.lock().kill();
+        if let Ok(mut process) = self.process.try_lock() {
+            process.kill();
+        }
     }
 }
 
@@ -85,6 +98,12 @@ pub trait ServerLauncher: Send + Sync {
 struct Slot {
     server: RunningServer,
     model: OcrModel,
+}
+
+impl Slot {
+    async fn shutdown(self) {
+        self.server.shutdown().await;
+    }
 }
 
 struct Inner {
@@ -134,12 +153,15 @@ impl OcrServer {
         Fut: Future<Output = Result<T, OcrError>>,
     {
         let mut slot = self.inner.slot.lock().await;
-        if slot
-            .as_ref()
-            .is_some_and(|running| running.model != *model || running.server.has_exited())
-        {
+        let stale = match slot.as_ref() {
+            Some(running) => running.model != *model || running.server.has_exited().await,
+            None => false,
+        };
+        if stale {
             warn!("OCR server exited or serves another model; starting a new one");
-            *slot = None;
+            if let Some(old) = slot.take() {
+                old.shutdown().await;
+            }
         }
         let address = match slot.as_ref() {
             Some(running) => running.server.address.clone(),
@@ -164,20 +186,26 @@ impl OcrServer {
         *self.inner.last_used.lock() = Instant::now();
         let result = page(address).await;
         *self.inner.last_used.lock() = Instant::now();
-        if slot
-            .as_ref()
-            .is_some_and(|running| running.server.has_exited())
-        {
+        let exited = match slot.as_ref() {
+            Some(running) => running.server.has_exited().await,
+            None => false,
+        };
+        if exited {
             // Replaced on the next page rather than failing every one after it.
             warn!("OCR server exited while reading a page");
-            *slot = None;
+            if let Some(old) = slot.take() {
+                old.shutdown().await;
+            }
         }
         result
     }
 
     /// Stop the server now, if one is running.
     pub async fn stop(&self) {
-        self.inner.slot.lock().await.take();
+        let old = self.inner.slot.lock().await.take();
+        if let Some(server) = old {
+            server.shutdown().await;
+        }
     }
 
     /// Whether a server is running.
@@ -215,7 +243,7 @@ fn idle_expired(last_used: Instant, now: Instant, idle_ttl: Duration) -> bool {
 async fn reap(server: Weak<Inner>, process: SharedProcess, shutdown: CancellationToken) {
     loop {
         let Some(inner) = server.upgrade() else {
-            process.lock().kill();
+            process.lock().await.kill_and_wait().await;
             return;
         };
         let deadline = *inner.last_used.lock() + inner.idle_ttl;
@@ -225,19 +253,19 @@ async fn reap(server: Weak<Inner>, process: SharedProcess, shutdown: Cancellatio
             _ = shutdown.cancelled() => {
                 // Kill first, without the slot: a page in flight would hold
                 // it past the app's shutdown budget.
-                process.lock().kill();
+                process.lock().await.kill_and_wait().await;
                 return;
             }
             _ = tokio::time::sleep_until(deadline.into()) => {}
         }
         let Some(inner) = server.upgrade() else {
-            process.lock().kill();
+            process.lock().await.kill_and_wait().await;
             return;
         };
         let mut slot = tokio::select! {
             biased;
             _ = shutdown.cancelled() => {
-                process.lock().kill();
+                process.lock().await.kill_and_wait().await;
                 return;
             }
             slot = inner.slot.lock() => slot,
@@ -249,7 +277,12 @@ async fn reap(server: Weak<Inner>, process: SharedProcess, shutdown: Cancellatio
             return;
         }
         if idle_expired(*inner.last_used.lock(), Instant::now(), inner.idle_ttl) {
-            *slot = None;
+            let old = slot.take();
+            drop(slot);
+            drop(inner);
+            if let Some(server) = old {
+                server.shutdown().await;
+            }
             info!("OCR server stopped after being idle");
             return;
         }

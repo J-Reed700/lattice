@@ -31,7 +31,10 @@ interface SpacesPanelProps {
 }
 export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPanelProps) {
   const prefersReducedMotion = useReducedMotion();
-  const { spaces, selectedSpaceId, setSelectedSpace, loadConversations } = useConversationsStore();
+  const spaces = useConversationsStore((state) => state.spaces);
+  const selectedSpaceId = useConversationsStore((state) => state.selectedSpaceId);
+  const setSelectedSpace = useConversationsStore((state) => state.setSelectedSpace);
+  const loadConversations = useConversationsStore((state) => state.loadConversations);
   const selectedSpace = spaces.find(space => space.id === selectedSpaceId) ?? null;
   const activeSpacesOrdered = spaces.filter(space => !space.isArchived);
   const standardSpaces = activeSpacesOrdered;

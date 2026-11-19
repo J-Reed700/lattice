@@ -2,6 +2,44 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { isConflict, newId, unwrap } from './apiResult';
 
+describe('VaultAPI proxy', () => {
+  afterEach(() => {
+    vi.doUnmock('./apiClients');
+    vi.resetModules();
+  });
+
+  it('recovers from a transient chunk load failure and ignores prototype/inspection keys', async () => {
+    vi.resetModules();
+    const ping = vi.fn().mockResolvedValue({ ok: true, data: 'pong' });
+    let shouldFail = true;
+    vi.doMock('./apiClients', () => ({
+      get vaultClients() {
+        if (shouldFail) {
+          throw new Error('chunk load failed');
+        }
+        return { ping };
+      },
+    }));
+
+    const { VaultAPI } = await vi.importActual<typeof import('./api')>('./api');
+    const proxy = VaultAPI as unknown as Record<PropertyKey, unknown>;
+
+    expect(proxy.then).toBeUndefined();
+    expect(proxy.$$typeof).toBeUndefined();
+    expect(proxy.toJSON).toBeUndefined();
+    expect(proxy.toString).toBeUndefined();
+    expect(proxy.constructor).toBeUndefined();
+    expect(proxy[Symbol.toStringTag]).toBeUndefined();
+
+    const callPing = proxy.ping as () => Promise<unknown>;
+    await expect(callPing()).rejects.toThrow('chunk load failed');
+
+    shouldFail = false;
+    await expect(callPing()).resolves.toEqual({ ok: true, data: 'pong' });
+    expect(ping).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('unwrap', () => {
   it('returns the data of a successful result', () => {
     const data = { id: 'item-1' };

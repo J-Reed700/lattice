@@ -193,7 +193,7 @@ export function EntryEditor({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key === '@/features/journal') {
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key === '.') {
         event.preventDefault();
         toggleRail();
       }

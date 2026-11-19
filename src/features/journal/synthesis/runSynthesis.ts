@@ -69,6 +69,21 @@ async function saveTo(destination: SynthesisDestinationDto, block: string, resul
 }
 
 const applying = new Set<string>();
+const MAX_SAVED_DESTINATIONS = 64;
+const savedDestinations = new Map<string, { noteId: string; noteTitle: string; entryCount: number }>();
+
+function rememberSavedDestination(
+  jobId: string,
+  record: { noteId: string; noteTitle: string; entryCount: number },
+): void {
+  if (!savedDestinations.has(jobId) && savedDestinations.size >= MAX_SAVED_DESTINATIONS) {
+    const oldestKey = savedDestinations.keys().next().value;
+    if (oldestKey !== undefined) {
+      savedDestinations.delete(oldestKey);
+    }
+  }
+  savedDestinations.set(jobId, record);
+}
 
 /**
  * Saves a finished synthesis to the destination it was started with, after
@@ -80,24 +95,34 @@ export async function applySynthesis(synthesis: JournalSynthesisDto, client: Que
   applying.add(jobId);
   setSaving(jobId, {});
   try {
-    // Flush open editors before appending to a page they may own. Revision
-    // checks on the write protect edits made while the request is in flight.
-    if (!(await flushPendingSaves())) {
-      throw new Error('Some edits could not be saved. Save them, then retry saving this synthesis.');
-    }
-    const result = await synthesisResult(jobId);
-    const block = buildSynthesisBlock({
-      heading: synthesis.heading, entryCount: result.entryCount,
-      synthesis: result.synthesis, citations: result.citations,
-    });
-    const { noteId, noteTitle } = await saveTo(synthesis.destination, block, result, api);
+    const alreadySaved = savedDestinations.get(jobId);
+    const { noteId, noteTitle, entryCount } = alreadySaved ?? await (async () => {
+      // Flush open editors before appending to a page they may own. Revision
+      // checks on the write protect edits made while the request is in flight.
+      if (!(await flushPendingSaves())) {
+        throw new Error('Some edits could not be saved. Save them, then retry saving this synthesis.');
+      }
+      const result = await synthesisResult(jobId);
+      const block = buildSynthesisBlock({
+        heading: synthesis.heading, entryCount: result.entryCount,
+        synthesis: result.synthesis, citations: result.citations,
+      });
+      const target = await saveTo(synthesis.destination, block, result, api);
+      const savedRecord = { ...target, entryCount: result.entryCount };
+      rememberSavedDestination(jobId, savedRecord);
+      // Invalidate notes immediately once appended so clean open editors pick up the
+      // new revision even if `markSynthesisApplied` fails and needs a retry.
+      void client.invalidateQueries({ queryKey: WORKSPACE_NOTES_QUERY_KEY });
+      return savedRecord;
+    })();
     await markSynthesisApplied(jobId);
+    savedDestinations.delete(jobId);
     // Saving succeeded. Cache refresh failures must never offer to save again.
     client.setQueryData<JournalSynthesisDto[]>(synthesisKeys.list, (list) => list?.filter(item => item.job.id !== jobId));
     useSynthesisPanel.setState((panel) => ({
       autoSave: panel.autoSave.filter(id => id !== jobId),
       saved: {
-        jobId, title: synthesis.title, noteId, noteTitle, entryCount: result.entryCount,
+        jobId, title: synthesis.title, noteId, noteTitle, entryCount,
         startedAt: synthesis.job.startedAt ?? synthesis.job.createdAt,
         finishedAt: synthesis.job.finishedAt ?? Date.now(),
       },

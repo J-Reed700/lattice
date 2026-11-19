@@ -49,6 +49,8 @@ export function useCourseIndexStatusEvents(programId: string | null | undefined)
   useJobStatus(refresh);
 }
 
+let desiredProgramId: string | null = null;
+
 /**
  * Tells the app the course's workspace is open, so its index goes first:
  * folder builds and other courses' builds hold while it embeds. Leaving the
@@ -58,9 +60,29 @@ export function useCourseIndexOpen(programId: string | null | undefined): void {
   const api = useApi();
   useEffect(() => {
     if (!programId) return undefined;
-    void api.courseIndexOpen(programId);
+    desiredProgramId = programId;
+    let disposed = false;
+
+    void Promise.resolve(api.courseIndexOpen(programId)).then(
+      () => {
+        if (!disposed) return;
+        // `open(programId)` finished after this workspace already closed or switched:
+        // reconcile so a late `open(A)` can never outlive `close(A)` or clobber `open(B)`.
+        if (desiredProgramId === null) {
+          void Promise.resolve(api.courseIndexClose(programId)).catch(() => {});
+        } else if (desiredProgramId !== programId) {
+          void Promise.resolve(api.courseIndexOpen(desiredProgramId)).catch(() => {});
+        }
+      },
+      () => {},
+    );
+
     return () => {
-      void api.courseIndexClose(programId);
+      disposed = true;
+      if (desiredProgramId === programId) {
+        desiredProgramId = null;
+      }
+      void Promise.resolve(api.courseIndexClose(programId)).catch(() => {});
     };
   }, [api, programId]);
 }

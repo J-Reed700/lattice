@@ -17,14 +17,42 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         .setup(|app, _api| {
             let container = app.state::<crate::interfaces::di::Container>();
             let indexing_state = container.indexing.indexing_state().clone();
+            let shutdown_token = app
+                .try_state::<tokio_util::sync::CancellationToken>()
+                .map(|token| token.inner().clone())
+                .unwrap_or_else(|| container.core.background().token());
             let app_handle = app.clone();
+            let mut rx = indexing_state.subscribe();
 
-            // raw-spawn: plugin setup has no tokio context; ends when the indexing state drops
+            // raw-spawn: plugin setup has no tokio context; ends on shutdown or when indexing state drops
             tauri::async_runtime::spawn(async move {
-                let mut rx = indexing_state.subscribe();
-                while let Ok(progress) = rx.recv().await {
-                    if let Err(e) = app_handle.emit("indexing://progress", progress) {
-                        tracing::error!("Failed to emit indexing progress: {}", e);
+                loop {
+                    let received = tokio::select! {
+                        biased;
+                        () = shutdown_token.cancelled() => break,
+                        received = rx.recv() => received,
+                    };
+                    match received {
+                        Ok(progress) => {
+                            if let Err(e) = app_handle.emit("indexing://progress", progress) {
+                                tracing::error!("Failed to emit indexing progress: {}", e);
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                            tracing::warn!(
+                                skipped,
+                                "Indexing progress listener lagged; emitting current snapshot"
+                            );
+                            let snapshot = indexing_state.get_snapshot();
+                            if let Err(e) = app_handle.emit("indexing://progress", snapshot) {
+                                tracing::error!(
+                                    "Failed to emit indexing progress snapshot: {}",
+                                    e
+                                );
+                            }
+                            continue;
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
                 }
             });

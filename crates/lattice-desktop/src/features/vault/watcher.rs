@@ -1,5 +1,5 @@
-//! Re-imports external `.md` edits into SQLite. Reads settings once at
-//! start; toggling `watch_external_changes` requires an app restart.
+//! Re-imports external `.md` edits into SQLite and dynamically reconfigures
+//! when vault settings change.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -10,6 +10,7 @@ use notify::{RecursiveMode, Watcher};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 use lattice_core::application::contracts::notes::VaultNoteUpsert;
 use lattice_core::application::ports::{SettingsReaderPort, WorkspaceNotesPort};
@@ -22,6 +23,8 @@ pub use rescan::{rescan_vault, RescanSummary};
 
 const SUPPRESSION_TTL: Duration = Duration::from_secs(5);
 const DEBOUNCE_WINDOW: Duration = Duration::from_millis(800);
+
+pub type AppHandleCell = Arc<std::sync::RwLock<Option<tauri::AppHandle>>>;
 
 /// Serialises full vault rescans. The watcher's overflow rescan and the focus
 /// rescan share one, so two passes never mark and sweep the same notes at once.
@@ -69,35 +72,89 @@ fn filename_key(path: &Path) -> Option<String> {
     path.file_name().map(|n| n.to_string_lossy().to_string())
 }
 
-pub fn start_vault_watcher(
-    settings_uc: Arc<impl SettingsReaderPort + 'static>,
+#[derive(Clone)]
+pub struct VaultWatcherHandle {
+    inner: Arc<VaultWatcherInner>,
+}
+
+struct VaultWatcherInner {
+    settings_uc: Arc<dyn SettingsReaderPort>,
     database: Database,
-    app_handle: tauri::AppHandle,
     suppression: WriteSuppressionRegistry,
     background: Arc<BackgroundTasks>,
     rescan_lock: RescanLock,
-) {
-    let scope = Arc::clone(&background);
-    scope.spawn(async move {
-        let settings = match settings_uc.current_settings().await {
+    vault_writer: super::writeback::VaultWriterHandle,
+    app_handle: AppHandleCell,
+    active_cancel: Mutex<Option<CancellationToken>>,
+}
+
+impl VaultWatcherHandle {
+    pub fn new(
+        settings_uc: Arc<impl SettingsReaderPort + 'static>,
+        database: Database,
+        suppression: WriteSuppressionRegistry,
+        background: Arc<BackgroundTasks>,
+        rescan_lock: RescanLock,
+        vault_writer: super::writeback::VaultWriterHandle,
+    ) -> Self {
+        Self {
+            inner: Arc::new(VaultWatcherInner {
+                settings_uc: settings_uc as Arc<dyn SettingsReaderPort>,
+                database,
+                suppression,
+                background,
+                rescan_lock,
+                vault_writer,
+                app_handle: Arc::new(std::sync::RwLock::new(None)),
+                active_cancel: Mutex::new(None),
+            }),
+        }
+    }
+
+    pub fn set_app_handle(&self, handle: tauri::AppHandle) {
+        match self.inner.app_handle.write() {
+            Ok(mut guard) => *guard = Some(handle),
+            Err(poisoned) => *poisoned.into_inner() = Some(handle),
+        }
+    }
+
+    /// Spawn a background reconfigure from synchronous setup hooks such as
+    /// `Container::with_app_handle`.
+    pub fn trigger_reconfigure(&self) {
+        let handle = self.clone();
+        self.inner.background.spawn(async move {
+            handle.reconfigure().await;
+        });
+    }
+
+    /// Cancel any active watcher loop, re-read settings, and start watching
+    /// the configured vault root if `enabled && watch_external_changes`.
+    pub async fn reconfigure(&self) {
+        let mut guard = self.inner.active_cancel.lock().await;
+        if let Some(prev) = guard.take() {
+            prev.cancel();
+            tracing::info!("vault watcher: stopped previous watcher for reconfigure");
+        }
+
+        let settings = match self.inner.settings_uc.current_settings().await {
             Ok(s) => s,
             Err(e) => {
-                tracing::warn!(error = %e, "vault watcher: settings read failed — not starting");
+                tracing::warn!(error = %e, "vault watcher: settings read failed — stopped");
                 return;
             }
         };
         if !settings.vault.enabled || !settings.vault.watch_external_changes {
-            tracing::info!("vault watcher: disabled in settings — not starting");
+            tracing::info!("vault watcher: disabled in settings — stopped");
             return;
         }
-        let configured_root = match lattice_core::shared::fs::roots::resolve_vault_root(&settings.vault.vault_path)
-        {
-            Some(p) => p,
-            None => {
-                tracing::warn!("vault watcher: vault root could not be resolved — not starting");
-                return;
-            }
-        };
+        let configured_root =
+            match lattice_core::shared::fs::roots::resolve_vault_root(&settings.vault.vault_path) {
+                Some(p) => p,
+                None => {
+                    tracing::warn!("vault watcher: vault root could not be resolved — stopped");
+                    return;
+                }
+            };
 
         if let Err(e) = tokio::fs::create_dir_all(&configured_root).await {
             tracing::warn!(
@@ -106,7 +163,7 @@ pub fn start_vault_watcher(
                 "vault watcher: vault folder doesn't exist and couldn't be created"
             );
             emit_watcher_error(
-                &app_handle,
+                &self.inner.app_handle,
                 &format!(
                     "Vault folder '{}' could not be created: {}",
                     configured_root.display(),
@@ -130,25 +187,47 @@ pub fn start_vault_watcher(
             }
         };
 
-        run_watcher(
-            vault_root,
-            database,
-            app_handle,
-            suppression,
-            background,
-            rescan_lock,
-        )
-        .await;
-    });
+        let cancel = self.inner.background.token().child_token();
+        *guard = Some(cancel.clone());
+
+        let database = self.inner.database.clone();
+        let app_handle = Arc::clone(&self.inner.app_handle);
+        let suppression = self.inner.suppression.clone();
+        let background = Arc::clone(&self.inner.background);
+        let rescan_lock = self.inner.rescan_lock.clone();
+        let vault_writer = self.inner.vault_writer.clone();
+
+        self.inner.background.spawn(async move {
+            run_watcher(
+                vault_root,
+                database,
+                app_handle,
+                suppression,
+                background,
+                rescan_lock,
+                vault_writer,
+                cancel,
+            )
+            .await;
+        });
+    }
+
+    #[cfg(test)]
+    async fn is_active(&self) -> bool {
+        let guard = self.inner.active_cancel.lock().await;
+        guard.as_ref().is_some_and(|token| !token.is_cancelled())
+    }
 }
 
 async fn run_watcher(
     vault_root: PathBuf,
     database: Database,
-    app_handle: tauri::AppHandle,
+    app_handle: AppHandleCell,
     suppression: WriteSuppressionRegistry,
     background: Arc<BackgroundTasks>,
     rescan_lock: RescanLock,
+    vault_writer: super::writeback::VaultWriterHandle,
+    cancel: CancellationToken,
 ) {
     // Queue paths, never arbitrarily large callback batches. Overflow is a
     // request to reconcile the directory; it cannot silently lose an edit.
@@ -211,7 +290,6 @@ async fn run_watcher(
         "vault watcher started"
     );
 
-    let cancel = background.token();
     loop {
         tokio::select! {
             biased;
@@ -242,6 +320,7 @@ async fn run_watcher(
                 &rescan_lock,
                 app_handle.clone(),
                 Arc::clone(&background),
+                Some(&vault_writer),
             )
             .await
             {
@@ -253,7 +332,7 @@ async fn run_watcher(
                 break;
             }
             if !suppression.was_just_written(&path).await {
-                import_one(&path, &database, &app_handle).await;
+                import_one(&path, &database, &app_handle, Some(&vault_writer)).await;
             }
         }
     }
@@ -262,19 +341,29 @@ async fn run_watcher(
 
 const MAX_NOTE_BYTES: u64 = 4 * 1024 * 1024;
 
-async fn read_note(path: &Path) -> std::io::Result<String> {
+async fn read_note_with_sha256(path: &Path) -> std::io::Result<(String, String)> {
     let file = tokio::fs::File::open(path).await?;
-    let mut contents = String::new();
+    let mut bytes = Vec::new();
     file.take(MAX_NOTE_BYTES + 1)
-        .read_to_string(&mut contents)
+        .read_to_end(&mut bytes)
         .await?;
-    if contents.len() as u64 > MAX_NOTE_BYTES {
+    if bytes.len() as u64 > MAX_NOTE_BYTES {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "Vault note exceeds 4 MiB",
         ));
     }
-    Ok(contents)
+    let sha256 = lattice_core::shared::hash::sha256_hex(&bytes);
+    let contents = String::from_utf8(bytes)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    Ok((contents, sha256))
+}
+
+#[cfg(test)]
+async fn read_note(path: &Path) -> std::io::Result<String> {
+    read_note_with_sha256(path)
+        .await
+        .map(|(contents, _)| contents)
 }
 
 /// Pub(crate) so focus-rescan reuses the same parse/UPSERT/emit path.
@@ -284,10 +373,11 @@ async fn read_note(path: &Path) -> std::io::Result<String> {
 pub(crate) async fn import_one(
     path: &Path,
     database: &Database,
-    app_handle: &tauri::AppHandle,
+    app_handle: &AppHandleCell,
+    vault_writer: Option<&super::writeback::VaultWriterHandle>,
 ) -> Option<String> {
-    let contents = match read_note(path).await {
-        Ok(s) => s,
+    let (contents, sha256) = match read_note_with_sha256(path).await {
+        Ok(pair) => pair,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             // Atomic-save gap: editor renamed old file away and hasn't
             // written the replacement yet. Sleep briefly and re-check
@@ -311,10 +401,11 @@ pub(crate) async fn import_one(
                         to = %renamed.display(),
                         "vault watcher: note renamed on disk — keeping it"
                     );
-                    return Box::pin(import_one(&renamed, database, app_handle)).await;
+                    return Box::pin(import_one(&renamed, database, app_handle, vault_writer))
+                        .await;
                 }
             }
-            handle_external_delete(path, database, app_handle).await;
+            handle_external_delete(path, database, app_handle, vault_writer).await;
             return None;
         }
         Err(e) => {
@@ -368,17 +459,21 @@ pub(crate) async fn import_one(
 
     // ON CONFLICT: only the fields that round-trip through markdown.
     // Lattice-only JSON columns (linked_document_ids, highlights_json,
-    // etc.) are preserved.
-    let repository = super::repository::workspace_notes(database);
-    let result = repository
-        .upsert_from_vault_if_unqueued(VaultNoteUpsert {
+    // etc.) are preserved, and the trigger-created outbox row is cleared
+    // to `mirror_complete = 1` in the same transaction so subsequent external
+    // edits are not blocked and the writer indexes without echoing to disk.
+    let result = super::repository::upsert_from_vault_if_unqueued(
+        database,
+        VaultNoteUpsert {
             id: &parsed.id,
             title: &parsed.title,
             content: &parsed.body,
             created_at: &parsed.created_at,
             updated_at: &parsed.updated_at,
-        })
-        .await;
+        },
+        &sha256,
+    )
+    .await;
 
     match result {
         Ok(true) => {
@@ -388,6 +483,9 @@ pub(crate) async fn import_one(
                 "vault watcher: imported external edit"
             );
             emit_note_imported(app_handle, &parsed.id);
+            if let Some(writer) = vault_writer {
+                super::writeback::spawn_sync_workspace_note(writer);
+            }
             Some(parsed.id)
         }
         Ok(false) => Some(parsed.id),
@@ -432,7 +530,7 @@ async fn find_renamed_note(removed: &Path, id: &str) -> Option<PathBuf> {
             continue;
         }
         // repository-barrier-allow: watcher reads a candidate note in the watched vault folder.
-        let Ok(contents) = read_note(&candidate).await else {
+        let Ok((contents, _)) = read_note_with_sha256(&candidate).await else {
             continue;
         };
         if super::parse::parse_note(&contents).is_ok_and(|note| note.id == id) {
@@ -443,7 +541,12 @@ async fn find_renamed_note(removed: &Path, id: &str) -> Option<PathBuf> {
 }
 
 /// Trusts the writer's `<id>.md` naming invariant — id is the file stem.
-async fn handle_external_delete(path: &Path, database: &Database, app_handle: &tauri::AppHandle) {
+async fn handle_external_delete(
+    path: &Path,
+    database: &Database,
+    app_handle: &AppHandleCell,
+    vault_writer: Option<&super::writeback::VaultWriterHandle>,
+) {
     let Some(id) = path.file_stem().and_then(|s| s.to_str()) else {
         tracing::debug!(
             path = %path.display(),
@@ -470,6 +573,9 @@ async fn handle_external_delete(path: &Path, database: &Database, app_handle: &t
                 "vault watcher: deleted note (external rm)"
             );
             emit_note_imported(app_handle, id);
+            if let Some(writer) = vault_writer {
+                super::writeback::spawn_delete_workspace_note(writer);
+            }
         }
         Ok(false) => {
             tracing::debug!(
@@ -486,18 +592,32 @@ async fn handle_external_delete(path: &Path, database: &Database, app_handle: &t
     }
 }
 
-fn emit_note_imported(app_handle: &tauri::AppHandle, note_id: &str) {
+fn emit_note_imported(app_handle: &AppHandleCell, note_id: &str) {
     use tauri::Emitter;
+    let guard = match app_handle.read() {
+        Ok(g) => g,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let Some(handle) = guard.as_ref() else {
+        return;
+    };
     let payload = serde_json::json!({ "noteId": note_id });
-    if let Err(e) = app_handle.emit("vault:note-imported", payload) {
+    if let Err(e) = handle.emit("vault:note-imported", payload) {
         tracing::warn!(error = %e, "failed to emit vault:note-imported event");
     }
 }
 
-fn emit_watcher_error(app_handle: &tauri::AppHandle, error: &str) {
+fn emit_watcher_error(app_handle: &AppHandleCell, error: &str) {
     use tauri::Emitter;
+    let guard = match app_handle.read() {
+        Ok(g) => g,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let Some(handle) = guard.as_ref() else {
+        return;
+    };
     let payload = serde_json::json!({ "error": error });
-    if let Err(e) = app_handle.emit("vault:watcher-error", payload) {
+    if let Err(e) = handle.emit("vault:watcher-error", payload) {
         tracing::warn!(error = %e, "failed to emit vault:watcher-error event");
     }
 }

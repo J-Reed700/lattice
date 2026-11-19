@@ -874,3 +874,28 @@ async fn test_sql_injection_null_byte() {
 
     pool.close().await;
 }
+
+#[tokio::test]
+async fn restore_backup_removes_stale_wal_and_shm_sidecars() {
+    let (source_pool, source_db_path, _source_dir) = create_test_pool().await;
+    let source_adapter = BackupAdapter::new(Database::new(source_pool.clone()), source_db_path);
+    let backup_path = PathBuf::from(source_adapter.create_backup(None).await.unwrap());
+    source_pool.close().await;
+
+    let target_dir = tempdir().unwrap();
+    let target_db_path = target_dir.path().join("restored.db");
+    let dummy_pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+        .await
+        .unwrap();
+    let wal_path = target_dir.path().join("restored.db-wal");
+    let shm_path = target_dir.path().join("restored.db-shm");
+    fs::write(&wal_path, b"stale wal frames").unwrap();
+    fs::write(&shm_path, b"stale shm index").unwrap();
+
+    let target_adapter = BackupAdapter::new(Database::new(dummy_pool), target_db_path.clone());
+    target_adapter.restore_backup(backup_path).await.unwrap();
+
+    assert!(target_db_path.exists());
+    assert!(!wal_path.exists(), "stale -wal sidecar must be removed");
+    assert!(!shm_path.exists(), "stale -shm sidecar must be removed");
+}

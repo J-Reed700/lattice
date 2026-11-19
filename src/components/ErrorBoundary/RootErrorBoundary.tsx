@@ -7,6 +7,8 @@
 
 import React from 'react';
 
+import { queryClient } from '@/lib/queryClient';
+
 import { ErrorBoundary, type ErrorBoundaryProps } from './ErrorBoundary';
 import { FullPageError } from './FullPageError';
 
@@ -39,10 +41,7 @@ export function RootErrorBoundary({
   const handleReset = () => {
     // Clear any cached state
     try {
-      // Clear React Query cache if present
-      if ('queryClient' in window && typeof (window as { queryClient?: { clear: () => void } }).queryClient?.clear === 'function') {
-        (window as { queryClient: { clear: () => void } }).queryClient.clear();
-      }
+      queryClient.clear();
 
       // Clear any application state
       sessionStorage.removeItem('app-state');

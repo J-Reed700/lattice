@@ -323,6 +323,7 @@ const ORIGIN_LABELS: Record<NonNullable<TurnModel['origin']>, string> = {
   chat_override: 'chosen for this chat',
   request_override: 'one-off',
   learning_role: 'Learning model',
+  verifier_role: 'Verifier model',
 };
 
 /** "4 of 5 claims backed", or nothing when nothing was checked. */

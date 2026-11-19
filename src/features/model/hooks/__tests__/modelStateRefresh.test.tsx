@@ -1,13 +1,14 @@
 import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { VaultAPI } from '@/lib/api';
 import type { LearningWindowShortfallDto, LoadedModelDto } from '@/lib/bindings';
 import { listenValidated } from '@/types/events';
 
+import { MAX_WARMUP_AGE_MS, selectIsChatWarming, useModelWarmupStore } from '../../stores/modelWarmupStore';
 import { LEARNING_WINDOW_SHORTFALL_QUERY_KEY, SHORTFALL_RECHECK_MS, useLearningWindowShortfall } from '../useLearningWindowShortfall';
 import { DEGRADED_RECHECK_MS, LOADED_MODELS_QUERY_KEY, degradedReasonFor, useLoadedModels } from '../useLoadedModels';
 import { useModelWarmupListener } from '../useModelWarmupListener';
@@ -96,5 +97,56 @@ describe('a finished warm-up', () => {
     invalidate.mockClear();
     deliver?.({ payload: { role: 'learning', phase: 'failed', error: 'no memory' } });
     expect(invalidated()).toEqual([LOADED_MODELS_QUERY_KEY, LEARNING_WINDOW_SHORTFALL_QUERY_KEY]);
+  });
+
+  it('unblocks chat warmup when loaded models already show the chat model or after the safety timeout', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      useModelWarmupStore.getState().reset();
+      vi.mocked(listenValidated).mockResolvedValue(() => undefined);
+      const queryClient = newClient();
+      renderHook(() => useModelWarmupListener(), { wrapper: wrapperFor(queryClient) });
+
+      act(() => {
+        useModelWarmupStore.getState().setRolePhase('chat', 'started', null, 'ornith-1.5-9b');
+      });
+      expect(selectIsChatWarming(useModelWarmupStore.getState())).toBe(true);
+
+      // Reconcile via LOADED_MODELS_QUERY_KEY update (even if terminal Tauri event was dropped)
+      act(() => {
+        queryClient.setQueryData<LoadedModelDto[]>(LOADED_MODELS_QUERY_KEY, [
+          {
+            model: ornith,
+            provider: 'local',
+            context_tokens: 8192,
+            in_flight: 0,
+            pinned_by: ['chat'],
+            loaded_at: new Date().toISOString(),
+            last_used_at: new Date().toISOString(),
+            gpu_bytes: null,
+            degraded: null,
+          } as LoadedModelDto,
+        ]);
+      });
+      expect(useModelWarmupStore.getState().chat.phase).toBe('ready');
+      expect(selectIsChatWarming(useModelWarmupStore.getState())).toBe(false);
+
+      // Advance clock past the prior loaded_at timestamp before starting a new warmup
+      // where neither event nor fresh loaded-model arrives within MAX_WARMUP_AGE_MS.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10);
+        useModelWarmupStore.getState().setRolePhase('chat', 'started', null, 'other-model');
+      });
+      expect(selectIsChatWarming(useModelWarmupStore.getState())).toBe(true);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(MAX_WARMUP_AGE_MS);
+      });
+      expect(useModelWarmupStore.getState().chat.phase).toBe('skipped');
+      expect(selectIsChatWarming(useModelWarmupStore.getState())).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      useModelWarmupStore.getState().reset();
+    }
   });
 });

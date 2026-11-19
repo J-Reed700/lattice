@@ -1,7 +1,7 @@
 //! Subject owner resolution (Wikidata, package registries, GitHub code forge)
 //! and caching (memory and SQLite). Design 2026-10-18 §3.4, §3.7.
 
-use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -11,6 +11,7 @@ use lattice_core::domain::sourcing::{
     Identifier, Origin, OwnerResolution, OwnerSource, SourcingPolicy, SubjectHint,
 };
 use lattice_core::shared::persistence::Database;
+use lru::LruCache;
 use url::Url;
 
 use super::owner_cache_repository;
@@ -18,12 +19,14 @@ use super::runner::Clock;
 use crate::features::web::services::finders::wikidata::Wikidata;
 use crate::features::web::services::finders::wikipedia::Wikipedia;
 
+const OWNER_CACHE_CAPACITY: usize = 512;
+
 type CachedOwnerEntry = (DateTime<Utc>, Vec<Origin>, Option<OwnerSource>);
 
 pub(crate) struct OwnerResolver {
     wikidata: Arc<Wikidata>,
     _wikipedia: Arc<Wikipedia>,
-    cache: parking_lot::Mutex<HashMap<String, CachedOwnerEntry>>,
+    cache: parking_lot::Mutex<LruCache<String, CachedOwnerEntry>>,
     database: Option<Database>,
     policy: SourcingPolicy,
     clock: Arc<dyn Clock>,
@@ -40,7 +43,9 @@ impl OwnerResolver {
         Self {
             wikidata,
             _wikipedia: wikipedia,
-            cache: parking_lot::Mutex::new(HashMap::new()),
+            cache: parking_lot::Mutex::new(LruCache::new(
+                NonZeroUsize::new(OWNER_CACHE_CAPACITY).unwrap_or(NonZeroUsize::MIN),
+            )),
             database,
             policy,
             clock,
@@ -92,7 +97,7 @@ impl OwnerResolver {
 
         // 2. In-memory cache check
         {
-            let cache = self.cache.lock();
+            let mut cache = self.cache.lock();
             if let Some((stored_at, origins, source)) = cache.get(&key) {
                 if cache_policy::is_fresh(*stored_at, now, self.policy.owner_ttl) {
                     return OwnerResolution {
@@ -125,7 +130,7 @@ impl OwnerResolver {
                             };
                             self.cache
                                 .lock()
-                                .insert(key.clone(), (stored_at, origins.clone(), source));
+                                .put(key.clone(), (stored_at, origins.clone(), source));
                             return OwnerResolution {
                                 origins,
                                 resolved_by: source,
@@ -148,7 +153,7 @@ impl OwnerResolver {
         if let Some(source) = source {
             self.cache
                 .lock()
-                .insert(key.clone(), (now, origins.clone(), Some(source)));
+                .put(key.clone(), (now, origins.clone(), Some(source)));
             if let Some(ref database) = self.database {
                 let origin_strs: Vec<String> = origins.iter().map(|o| o.to_string()).collect();
                 if let Ok(json) = serde_json::to_string(&origin_strs) {

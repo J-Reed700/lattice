@@ -99,24 +99,108 @@ struct LiveEntry {
     users: usize,
 }
 
+type ClosingSlot = tokio::sync::watch::Receiver<bool>;
+
+/// Keeps a directory marked as closing until its store and vectors drop.
+///
+/// Dropping this registration clears the directory from the closing map and
+/// wakes any [`LiveIndexes::acquire`] or [`LiveIndexes::evict_and_close`] waiting
+/// on it.
+pub struct CloseRegistration {
+    dir: PathBuf,
+    closing: Arc<parking_lot::Mutex<HashMap<PathBuf, ClosingSlot>>>,
+    tx: Option<tokio::sync::watch::Sender<bool>>,
+}
+
+impl Drop for CloseRegistration {
+    fn drop(&mut self) {
+        {
+            let mut map = self.closing.lock();
+            if let Some(current) = map.get(&self.dir) {
+                if self
+                    .tx
+                    .as_ref()
+                    .is_some_and(|tx| current.same_channel(&tx.subscribe()))
+                {
+                    map.remove(&self.dir);
+                }
+            }
+        }
+        if let Some(tx) = self.tx.take() {
+            let _ = tx.send(true);
+        }
+    }
+}
+
+/// An RAII hold on a [`LiveIndex`] obtained from [`LiveIndexes`].
+///
+/// Calling [`Self::release`] awaits closing the store's pool when this was the
+/// last user. Dropping without calling `release` (for example on an early `?`
+/// or a cancelled future) still decrements the refcount and evicts the entry
+/// synchronously from [`LiveIndexes`].
+pub struct LiveLease<'a> {
+    live: &'a LiveIndexes,
+    index: Option<Arc<LiveIndex>>,
+}
+
+impl<'a> LiveLease<'a> {
+    pub fn new(live: &'a LiveIndexes, index: Arc<LiveIndex>) -> Self {
+        Self {
+            live,
+            index: Some(index),
+        }
+    }
+
+    pub async fn release(mut self) {
+        if let Some(index) = self.index.take() {
+            self.live.release(&index).await;
+        }
+    }
+
+    pub fn disarm(mut self) {
+        self.index = None;
+    }
+}
+
+impl Drop for LiveLease<'_> {
+    fn drop(&mut self) {
+        if let Some(index) = self.index.take() {
+            let _ = self.live.release_sync(&index);
+        }
+    }
+}
+
 /// The directories in use, each opened once however many use it.
 #[derive(Default)]
 pub struct LiveIndexes {
-    live: tokio::sync::Mutex<HashMap<PathBuf, LiveEntry>>,
+    live: parking_lot::Mutex<HashMap<PathBuf, LiveEntry>>,
+    closing: Arc<parking_lot::Mutex<HashMap<PathBuf, ClosingSlot>>>,
+    opening: tokio::sync::Mutex<()>,
 }
 
 impl LiveIndexes {
     /// Opens the index in `dir` for one more user, sharing it with any that
     /// already has it.
     pub async fn acquire(&self, dir: &Path) -> Result<Arc<LiveIndex>> {
-        let mut live = self.live.lock().await;
-        if let Some(entry) = live.get_mut(dir) {
-            entry.users += 1;
-            return Ok(Arc::clone(&entry.index));
+        {
+            let mut live = self.live.lock();
+            if let Some(entry) = live.get_mut(dir) {
+                entry.users += 1;
+                return Ok(Arc::clone(&entry.index));
+            }
         }
+        let _opening = self.opening.lock().await;
+        {
+            let mut live = self.live.lock();
+            if let Some(entry) = live.get_mut(dir) {
+                entry.users += 1;
+                return Ok(Arc::clone(&entry.index));
+            }
+        }
+        self.wait_closing(dir).await;
         let store = Arc::new(PassageStore::open(dir).await?);
         let index = Arc::new(LiveIndex::new(dir.to_path_buf(), store));
-        live.insert(
+        self.live.lock().insert(
             dir.to_path_buf(),
             LiveEntry {
                 index: Arc::clone(&index),
@@ -126,21 +210,176 @@ impl LiveIndexes {
         Ok(index)
     }
 
+    /// Wraps an acquired [`LiveIndex`] in an RAII lease guard.
+    pub fn lease(&self, index: Arc<LiveIndex>) -> LiveLease<'_> {
+        LiveLease::new(self, index)
+    }
+
+    /// Gives back one user's hold synchronously; when `users` hits zero, evicts
+    /// the entry from the live map and returns its [`Arc<LiveIndex>`].
+    pub fn release_sync(&self, index: &LiveIndex) -> Option<Arc<LiveIndex>> {
+        let mut live = self.live.lock();
+        match live.get_mut(&index.dir) {
+            Some(entry) if entry.users > 1 => {
+                entry.users -= 1;
+                None
+            }
+            Some(_) => live.remove(&index.dir).map(|entry| entry.index),
+            None => None,
+        }
+    }
+
+    /// Gives back one user's hold synchronously, registering any final close so
+    /// [`Self::evict_and_close`] and [`Self::acquire`] wait until the store
+    /// finishes closing.
+    pub fn release_for_close(
+        &self,
+        index: &LiveIndex,
+    ) -> Option<(Arc<LiveIndex>, CloseRegistration)> {
+        let mut live = self.live.lock();
+        let evicted = match live.get_mut(&index.dir) {
+            Some(entry) if entry.users > 1 => {
+                entry.users -= 1;
+                return None;
+            }
+            Some(_) => live.remove(&index.dir).map(|entry| entry.index)?,
+            None => return None,
+        };
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        self.closing.lock().insert(index.dir.clone(), rx);
+        Some((
+            evicted,
+            CloseRegistration {
+                dir: index.dir.clone(),
+                closing: Arc::clone(&self.closing),
+                tx: Some(tx),
+            },
+        ))
+    }
+
     /// Gives back one user's hold; the last closes the store's pool.
     pub async fn release(&self, index: &LiveIndex) {
-        let closing = {
-            let mut live = self.live.lock().await;
-            match live.get_mut(&index.dir) {
-                Some(entry) if entry.users > 1 => {
-                    entry.users -= 1;
-                    None
-                }
-                Some(_) => live.remove(&index.dir),
-                None => None,
-            }
-        };
-        if let Some(entry) = closing {
-            entry.index.store.close().await;
+        if let Some((closing, _reg)) = self.release_for_close(index) {
+            closing.store.close().await;
+            drop(closing);
         }
+    }
+
+    /// Evicts `dir` from the live map (closing its store if present) and waits
+    /// for any in-flight background close of `dir` to finish.
+    pub async fn evict_and_close(&self, dir: &Path) {
+        let evicted = self.live.lock().remove(dir).map(|entry| entry.index);
+        if let Some(index) = evicted {
+            index.store.close().await;
+            drop(index);
+        }
+        self.wait_closing(dir).await;
+    }
+
+    /// Drains all open index stores, closes their pools, and waits for any
+    /// in-flight background closes to complete.
+    pub async fn close_all(&self) {
+        let entries: Vec<Arc<LiveIndex>> = self
+            .live
+            .lock()
+            .drain()
+            .map(|(_, entry)| entry.index)
+            .collect();
+        for index in entries {
+            index.store.close().await;
+            drop(index);
+        }
+        let closing_dirs: Vec<PathBuf> = self.closing.lock().keys().cloned().collect();
+        for dir in closing_dirs {
+            self.wait_closing(&dir).await;
+        }
+    }
+
+    async fn wait_closing(&self, dir: &Path) {
+        loop {
+            let rx = self.closing.lock().get(dir).cloned();
+            let Some(mut rx) = rx else {
+                return;
+            };
+            if *rx.borrow() {
+                return;
+            }
+            if rx.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn release_sync_evicts_entry_when_last_user_releases() {
+        let temp = tempfile::tempdir().unwrap();
+        let live = LiveIndexes::default();
+        let first = live.acquire(temp.path()).await.unwrap();
+        let second = live.acquire(temp.path()).await.unwrap();
+
+        assert!(live.release_sync(&first).is_none());
+        assert!(live.live.lock().contains_key(temp.path()));
+
+        let closing = live
+            .release_sync(&second)
+            .expect("last user must evict entry synchronously");
+        assert!(!live.live.lock().contains_key(temp.path()));
+        closing.store.close().await;
+    }
+
+    #[tokio::test]
+    async fn lease_drop_releases_entry_without_leaking() {
+        let temp = tempfile::tempdir().unwrap();
+        let live = LiveIndexes::default();
+        {
+            let index = live.acquire(temp.path()).await.unwrap();
+            let _lease = live.lease(index);
+            assert!(live.live.lock().contains_key(temp.path()));
+        }
+        assert!(!live.live.lock().contains_key(temp.path()));
+    }
+
+    #[tokio::test]
+    async fn evict_and_close_closes_pool_and_waits_for_in_flight_close() {
+        let temp = tempfile::tempdir().unwrap();
+        let live = Arc::new(LiveIndexes::default());
+        let index = live.acquire(temp.path()).await.unwrap();
+        let (closing, reg) = live.release_for_close(&index).unwrap();
+
+        let waiter = tokio::spawn({
+            let live = Arc::clone(&live);
+            let dir = temp.path().to_path_buf();
+            async move {
+                live.evict_and_close(&dir).await;
+            }
+        });
+        tokio::task::yield_now().await;
+        assert!(!waiter.is_finished());
+
+        closing.store.close().await;
+        drop(closing);
+        drop(reg);
+        waiter.await.unwrap();
+        assert!(index.store.meta("anything").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn close_all_closes_multiple_open_stores() {
+        let first_dir = tempfile::tempdir().unwrap();
+        let second_dir = tempfile::tempdir().unwrap();
+        let live = LiveIndexes::default();
+        let first = live.acquire(first_dir.path()).await.unwrap();
+        let second = live.acquire(second_dir.path()).await.unwrap();
+
+        live.close_all().await;
+
+        assert!(live.live.lock().is_empty());
+        assert!(first.store.meta("anything").await.is_err());
+        assert!(second.store.meta("anything").await.is_err());
     }
 }

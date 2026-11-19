@@ -3,6 +3,15 @@ use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::embedding_encoding;
 use lattice_core::shared::persistence::Database;
+use sqlx::{QueryBuilder, Sqlite};
+use std::collections::HashMap;
+
+pub struct PreparedChunk<'a> {
+    pub chunk_id: &'a str,
+    pub text: &'a str,
+    pub content_hash: &'a str,
+    pub vector: &'a [f32],
+}
 
 pub async fn chunk_page_after(db: &Database, cursor: &str) -> Result<Vec<(String, String)>> {
     let mut read = db.begin_read().await?;
@@ -12,6 +21,34 @@ pub async fn chunk_page_after(db: &Database, cursor: &str) -> Result<Vec<(String
     Ok(page)
 }
 
+pub async fn prepared_hashes(
+    db: &Database,
+    identity: &str,
+    chunk_ids: &[&str],
+    dimension: usize,
+) -> Result<HashMap<String, String>> {
+    if chunk_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut query = QueryBuilder::<Sqlite>::new(
+        "SELECT chunk_id, content_hash FROM embedding_generation_vectors WHERE model_identity = ",
+    );
+    query.push_bind(identity);
+    query.push(" AND dimension = ");
+    query.push_bind(dimension as i64);
+    query.push(" AND chunk_id IN (");
+    let mut separated = query.separated(", ");
+    for chunk_id in chunk_ids {
+        separated.push_bind(*chunk_id);
+    }
+    separated.push_unseparated(")");
+
+    let mut read = db.begin_read().await?;
+    let rows: Vec<(String, String)> = query.build_query_as().fetch_all(&mut *read).await?;
+    read.commit().await?;
+    Ok(rows.into_iter().collect())
+}
+
 pub async fn is_prepared(
     db: &Database,
     identity: &str,
@@ -19,15 +56,38 @@ pub async fn is_prepared(
     hash: &str,
     dimension: usize,
 ) -> Result<bool> {
-    let mut read = db.begin_read().await?;
-    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM embedding_generation_vectors WHERE model_identity = ? AND chunk_id = ? AND content_hash = ? AND dimension = ?")
-        .bind(identity).bind(chunk_id).bind(hash).bind(dimension as i64).fetch_one(&mut *read).await?;
-    read.commit().await?;
-    Ok(exists > 0)
+    let hashes = prepared_hashes(db, identity, &[chunk_id], dimension).await?;
+    Ok(hashes
+        .get(chunk_id)
+        .is_some_and(|existing| existing == hash))
 }
 
-/// The statement rechecks the chunk's text, so a chunk deleted or edited while
+/// The statement rechecks each chunk's text, so a chunk deleted or edited while
 /// inference ran stores nothing.
+pub async fn store_prepared_batch(
+    db: &Database,
+    identity: &str,
+    chunks: &[PreparedChunk<'_>],
+) -> Result<()> {
+    if chunks.is_empty() {
+        return Ok(());
+    }
+    let mut tx = db.begin_write().await?;
+    for chunk in chunks {
+        sqlx::query("INSERT OR REPLACE INTO embedding_generation_vectors (model_identity, chunk_id, content_hash, embedding, dimension) SELECT ?, id, ?, ?, ? FROM text_chunks WHERE id = ? AND COALESCE(NULLIF(contextualized_content, ''), content) = ?")
+            .bind(identity)
+            .bind(chunk.content_hash)
+            .bind(embedding_encoding::encode_embedding(chunk.vector))
+            .bind(chunk.vector.len() as i64)
+            .bind(chunk.chunk_id)
+            .bind(chunk.text)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
 pub async fn store_prepared(
     db: &Database,
     identity: &str,
@@ -36,11 +96,17 @@ pub async fn store_prepared(
     chunk_id: &str,
     text: &str,
 ) -> Result<()> {
-    let mut tx = db.begin_write().await?;
-    sqlx::query("INSERT OR REPLACE INTO embedding_generation_vectors (model_identity, chunk_id, content_hash, embedding, dimension) SELECT ?, id, ?, ?, ? FROM text_chunks WHERE id = ? AND COALESCE(NULLIF(contextualized_content, ''), content) = ?")
-        .bind(identity).bind(hash).bind(embedding_encoding::encode_embedding(vector)).bind(vector.len() as i64).bind(chunk_id).bind(text).execute(&mut *tx).await?;
-    tx.commit().await?;
-    Ok(())
+    store_prepared_batch(
+        db,
+        identity,
+        &[PreparedChunk {
+            chunk_id,
+            text,
+            content_hash: hash,
+            vector,
+        }],
+    )
+    .await
 }
 
 pub async fn count_chunks_with_content(db: &Database) -> Result<i64> {

@@ -37,14 +37,14 @@ pub struct DownloadManagerService {
     pub(super) repository: Arc<dyn DownloadRepository>,
     pub(super) engine: Arc<dyn DownloadEngine>,
     pub(super) active_downloads: Arc<RwLock<HashMap<String, ActiveDownload>>>,
-    pub(super) download_queue: Arc<RwLock<VecDeque<String>>>,
+    pub(in crate::features::download) download_queue: Arc<RwLock<VecDeque<String>>>,
     /// Serializes registration with queue promotion so a batch cannot become
     /// observable until every one of its sessions exists.
     pub(super) queue_gate: Arc<Mutex<()>>,
     pub(super) max_concurrent_downloads: usize,
     pub(super) event_tx: mpsc::Sender<DownloadEvent>,
     pub(super) event_rx: Arc<RwLock<Option<mpsc::Receiver<DownloadEvent>>>>,
-    pub(super) auth_tokens: Arc<RwLock<HashMap<String, String>>>,
+    pub(in crate::features::download) auth_tokens: Arc<RwLock<HashMap<String, String>>>,
     pub(super) file_cleanup: Arc<FileCleanupService>,
     pub(super) allowed_root: PathBuf,
     /// Where transfers run, so shutdown joins them.
