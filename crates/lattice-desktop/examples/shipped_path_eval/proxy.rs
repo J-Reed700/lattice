@@ -488,6 +488,9 @@ fn relayed_head(response: &reqwest::Response) -> Vec<u8> {
             head.extend_from_slice(b"\r\n");
         }
     }
+    if !headers.contains_key(reqwest::header::CONTENT_TYPE) {
+        head.extend_from_slice(b"content-type: application/octet-stream\r\n");
+    }
     head
 }
 
@@ -510,7 +513,7 @@ fn hop_by_hop(name: &str, named: &[&[u8]]) -> bool {
     ]
     .iter()
     .any(|hop| name.eq_ignore_ascii_case(hop.as_bytes()))
-        || named.iter().filter(|hop| hop.is_empty()).any(|hop| name.eq_ignore_ascii_case(hop))
+        || named.iter().any(|hop| name.eq_ignore_ascii_case(hop))
 }
 
 /// The header names that `Connection` values list, read from their bytes.
