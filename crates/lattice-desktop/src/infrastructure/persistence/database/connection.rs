@@ -154,9 +154,8 @@ impl DatabaseConnection {
             .pragma("cache_size", "-20000") // 20MB cache
             .pragma("temp_store", "MEMORY") // Use memory for temp tables
             .pragma("mmap_size", "268435456") // 256MB mapped database cache
-            .pragma("optimize", "0x10002") // Initial planner-statistics check on open
             .analysis_limit(ANALYSIS_LIMIT)
-            .optimize_on_close(true, Some(ANALYSIS_LIMIT)); // Bounded maintenance as each connection closes
+            .optimize_on_close(false, None);
 
         match Self::open_pools_once(&connect_options).await {
             Ok((reader_pool, writer_pool)) => Ok((reader_pool, writer_pool, None)),
@@ -219,11 +218,19 @@ impl DatabaseConnection {
         connect_options: &SqliteConnectOptions,
     ) -> std::result::Result<(SqlitePool, SqlitePool), sqlx::Error> {
         // Open the single-connection writer pool first so `journal_mode = WAL`
-        // is established without racing concurrent reader connections.
-        let writer_pool = writer_pool_options()
-            .connect_with(connect_options.clone())
-            .await?;
-        let reader_options = connect_options.clone().pragma("query_only", "ON");
+        // is established without racing concurrent reader connections. Only the
+        // writer runs `PRAGMA optimize` on open/close; reader connections have
+        // `query_only = ON`, where `PRAGMA optimize` fails with SQLITE_READONLY
+        // and would abort `SqliteConnection::close()` before worker shutdown.
+        let writer_options = connect_options
+            .clone()
+            .pragma("optimize", "0x10002")
+            .optimize_on_close(true, Some(ANALYSIS_LIMIT));
+        let writer_pool = writer_pool_options().connect_with(writer_options).await?;
+        let reader_options = connect_options
+            .clone()
+            .pragma("query_only", "ON")
+            .optimize_on_close(false, None);
         let reader_pool = reader_pool_options().connect_lazy_with(reader_options);
         if let Err(error) = reader_pool.acquire().await {
             reader_pool.close().await;
@@ -518,5 +525,53 @@ mod tests {
             "the database at the original path is a new, empty one"
         );
         connection.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn populated_database_closes_readers_and_releases_file_for_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("populated.db");
+        let connection = DatabaseConnection::new(db.clone()).await.unwrap();
+
+        let mut tx = connection.database().begin_write().await.unwrap();
+        sqlx::query(
+            "CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT NOT NULL); \
+             CREATE INDEX idx_items_label ON items(label);",
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        for i in 0..32 {
+            sqlx::query("INSERT INTO items (id, label) VALUES (?, ?)")
+                .bind(i)
+                .bind(format!("item-{i}"))
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+        }
+        tx.commit().await.unwrap();
+
+        // Exercise indexed reads across reader connections so SQLite records
+        // planner-stat candidates that `PRAGMA optimize` on close would try to
+        // write into `sqlite_stat1` if readers erroneously enabled optimize_on_close.
+        let mut r1 = connection.database().begin_read().await.unwrap();
+        let mut r2 = connection.database().begin_read().await.unwrap();
+        let c1: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM items WHERE label = 'item-1'")
+            .fetch_one(&mut *r1)
+            .await
+            .unwrap();
+        let c2: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM items WHERE label = 'item-2'")
+            .fetch_one(&mut *r2)
+            .await
+            .unwrap();
+        assert_eq!((c1, c2), (1, 1));
+        r1.commit().await.unwrap();
+        r2.commit().await.unwrap();
+
+        connection.close().await.unwrap();
+
+        let moved = dir.path().join("populated-moved.db");
+        rename_after_sqlite_close(&db, &moved).await.unwrap();
+        assert!(moved.exists());
     }
 }

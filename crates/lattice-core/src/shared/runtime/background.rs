@@ -32,6 +32,25 @@ impl BackgroundTasks {
         Some(self.tracker.spawn(future))
     }
 
+    /// Spawns `future` onto `handle` so callers on synchronous OS threads
+    /// (such as Tauri setup, window, or native dialog callbacks) can register
+    /// tracked background work without requiring an active ambient Tokio reactor.
+    pub fn spawn_on<F>(
+        &self,
+        handle: &tokio::runtime::Handle,
+        future: F,
+    ) -> Option<JoinHandle<F::Output>>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        let closed = self.admission.lock().unwrap_or_else(|e| e.into_inner());
+        if *closed {
+            return None;
+        }
+        Some(self.tracker.spawn_on(future, handle))
+    }
+
     pub fn close(&self) {
         *self.admission.lock().unwrap_or_else(|e| e.into_inner()) = true;
         self.tracker.close();
@@ -74,5 +93,24 @@ mod tests {
         tasks.wait().await;
         tasks.close();
         tasks.wait().await;
+    }
+
+    #[test]
+    fn spawn_on_works_from_a_thread_without_an_active_tokio_reactor() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let tasks = BackgroundTasks::default();
+        let handle = runtime.handle().clone();
+
+        // Main test thread is NOT entered into `runtime`.
+        let join = tasks
+            .spawn_on(&handle, async { 42u32 })
+            .expect("admission is open");
+        assert_eq!(runtime.block_on(join).unwrap(), 42);
+        tasks.close();
+        runtime.block_on(tasks.wait());
+        assert!(tasks.spawn_on(&handle, async {}).is_none());
     }
 }

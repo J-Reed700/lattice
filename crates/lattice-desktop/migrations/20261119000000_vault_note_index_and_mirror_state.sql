@@ -8,5 +8,10 @@ CREATE TABLE IF NOT EXISTS vault_note_documents (
 
 -- Tracks the SHA-256 hex digest of the markdown file last observed/written by
 -- Lattice so writeback does not overwrite newer external edits and watcher
--- imports do not loop back through the outbox.
-ALTER TABLE vault_write_outbox ADD COLUMN last_mirrored_sha256 TEXT;
+-- imports do not loop back through the outbox. Stored outside
+-- `vault_write_outbox` so settling/acknowledging an outbox entry does not erase
+-- the baseline digest for subsequent edits.
+CREATE TABLE IF NOT EXISTS vault_mirror_state (
+    note_id TEXT PRIMARY KEY NOT NULL,
+    last_mirrored_sha256 TEXT NOT NULL
+);

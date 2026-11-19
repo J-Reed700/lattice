@@ -53,17 +53,21 @@ function areElementsUnchanged(
   for (let i = 0; i < next.length; i += 1) {
     const a = prev[i];
     const b = next[i];
-    if (a.ref === b) continue;
-    if (
-      a.version !== undefined &&
-      b.version !== undefined &&
-      a.id === b.id &&
-      a.version === b.version &&
-      a.versionNonce === b.versionNonce &&
-      a.isDeleted === b.isDeleted
-    ) {
-      continue;
+    // Excalidraw's mutateElement() updates elements in place (same object ref,
+    // new version/versionNonce/isDeleted), so version metadata must be checked
+    // before falling back to reference equality.
+    if (a.version !== undefined && b.version !== undefined) {
+      if (
+        a.id === b.id &&
+        a.version === b.version &&
+        a.versionNonce === b.versionNonce &&
+        a.isDeleted === b.isDeleted
+      ) {
+        continue;
+      }
+      return false;
     }
+    if (a.ref === b) continue;
     return false;
   }
   return true;
@@ -176,9 +180,16 @@ const CanvasSurface = forwardRef<CanvasSurfaceHandle, Props>(({ sceneJson, theme
     }
   }, []);
 
+  // Cancel any pending debounce on unmount without invoking onSceneChange:
+  // CanvasPanel.drain() calls ref.flush() explicitly before save/switch/checkpoint,
+  // whereas reload/restore/template resets bump surfaceVersion to discard local edits.
   useEffect(() => () => {
-    flushPending();
-  }, [flushPending]);
+    if (debounceTimerRef.current !== null) {
+      window.clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+    pendingSnapshotRef.current = null;
+  }, []);
 
   const uiOptions = useMemo(() => ({ tools: { image: false }, canvasActions: { clearCanvas: false, export: false, loadScene: false, saveToActiveFile: false, saveAsImage: false, toggleTheme: false } as const }), []);
   const setExcalidrawApi = useCallback((api: ExcalidrawImperativeAPI) => { apiRef.current = api; }, []);

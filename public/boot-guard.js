@@ -263,7 +263,8 @@
       return value;
     }
     try {
-      return JSON.stringify(value);
+      const serialized = JSON.stringify(value);
+      return serialized !== undefined ? serialized : String(value);
     } catch {
       return String(value);
     }
@@ -301,7 +302,8 @@
 
   function onRejection(event) {
     if (mounted || failed) return;
-    const detail = formatError(event ? event.reason : 'Unhandled startup rejection');
+    const reason = event && event.reason !== undefined ? event.reason : 'Unhandled startup rejection';
+    const detail = formatError(reason);
     handleBootFailure('unhandled-rejection', detail, MODULE_ERROR_PATTERN.test(detail));
   }
 
@@ -336,10 +338,14 @@
       if (loaded || mounted) return;
       loaded = true;
       detachListeners();
-      if (retryTimerId !== null) {
-        // The entry ran, so the pending reload is moot; the deadline guards the render.
-        clearTimeout(retryTimerId);
-        retryTimerId = null;
+      if (retryTimerId !== null || pendingFailure !== null) {
+        // The entry ran, so any earlier pre-DOM reload or queued failure is superseded;
+        // re-arm the render deadline so a failed React mount still surfaces recovery UI.
+        if (retryTimerId !== null) {
+          clearTimeout(retryTimerId);
+          retryTimerId = null;
+        }
+        pendingFailure = null;
         failed = false;
         armDeadline();
       }

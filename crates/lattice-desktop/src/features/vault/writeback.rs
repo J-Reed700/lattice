@@ -839,11 +839,13 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query("UPDATE vault_write_outbox SET last_mirrored_sha256 = ? WHERE note_id = 'n1'")
-            .bind(&initial_sha)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO vault_mirror_state (note_id, last_mirrored_sha256) VALUES ('n1', ?)",
+        )
+        .bind(&initial_sha)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let write = super::super::repository::pending(&db)
             .await
@@ -864,6 +866,14 @@ mod tests {
         let on_disk = tokio::fs::read_to_string(&target).await.unwrap();
         assert!(on_disk.contains("tags: [\"research\", \"ai\"]"));
         assert!(on_disk.contains("new body from app"));
+
+        // Settle the first write (deleting the outbox row) to match production
+        // flow: the persisted SHA-256 baseline must survive acknowledge().
+        settle_write(&db, &write, Ok(())).await.unwrap();
+        assert!(super::super::repository::pending(&db)
+            .await
+            .unwrap()
+            .is_empty());
 
         // Now simulate external edit on disk while a new outbox write is queued with stale expected sha.
         let external_disk = "---\nid: n1\ntitle: \"T1\"\ncreated_at: 2026-11-19T00:00:00Z\nupdated_at: 2026-11-19T00:05:00Z\ntags: [\"research\", \"ai\"]\n---\n\nobsidian edit v2";

@@ -382,6 +382,18 @@ pub fn on_web_content_process_terminate(webview: &tauri::Webview) {
     execute_action(app, action, "WKWebView WebContent process terminated");
 }
 
+fn spawn_tracked<F>(tasks: &BackgroundTasks, future: F)
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    if tokio::runtime::Handle::try_current().is_ok() {
+        tasks.spawn(future);
+    } else {
+        let runtime = tauri::async_runtime::handle();
+        tasks.spawn_on(runtime.inner(), future);
+    }
+}
+
 fn arm_boot_watchdog(app: &tauri::AppHandle, generation: u64) {
     let Some(deadline) = boot_deadline() else {
         return;
@@ -391,7 +403,7 @@ fn arm_boot_watchdog(app: &tauri::AppHandle, generation: u64) {
     };
     let cancel = tasks.token();
     let handle = app.clone();
-    tasks.spawn(async move {
+    spawn_tracked(&tasks, async move {
         tokio::select! {
             biased;
             () = cancel.cancelled() => return,
@@ -445,7 +457,7 @@ fn schedule_reload(app: &tauri::AppHandle, delay: Duration, generation: u64, rea
     };
     let cancel = tasks.token();
     let handle = app.clone();
-    tasks.spawn(async move {
+    spawn_tracked(&tasks, async move {
         if !delay.is_zero() {
             tokio::select! {
                 biased;
@@ -465,7 +477,8 @@ fn schedule_reload(app: &tauri::AppHandle, delay: Duration, generation: u64, rea
         };
         if let Err(error) = window.reload() {
             tracing::error!(%error, reason, "Failed to reload main webview");
-            return;
+            // Still arm the deadline so `Phase::Loading` does not stay stranded
+            // if the reload call itself errored before navigation started.
         }
         // Arm a deadline for `generation` as well: if the target server refuses
         // or hangs before `didCommitNavigation`, `PageLoadEvent::Started` will

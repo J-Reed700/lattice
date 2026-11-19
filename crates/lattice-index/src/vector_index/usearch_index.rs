@@ -213,10 +213,22 @@ pub fn write_file_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
     let temp = temp_path_for(path);
     let mut file = std::fs::File::create(&temp)
         .map_err(|e| AppError::FileStorage(format!("Failed to write {}: {e}", temp.display())))?;
-    file.write_all(bytes)
-        .map_err(|e| AppError::FileStorage(format!("Failed to write {}: {e}", temp.display())))?;
-    file.sync_all()
-        .map_err(|e| AppError::FileStorage(format!("Failed to sync {}: {e}", temp.display())))?;
+    if let Err(e) = file.write_all(bytes) {
+        drop(file);
+        let _ = std::fs::remove_file(&temp);
+        return Err(AppError::FileStorage(format!(
+            "Failed to write {}: {e}",
+            temp.display()
+        )));
+    }
+    if let Err(e) = file.sync_all() {
+        drop(file);
+        let _ = std::fs::remove_file(&temp);
+        return Err(AppError::FileStorage(format!(
+            "Failed to sync {}: {e}",
+            temp.display()
+        )));
+    }
     drop(file);
     std::fs::rename(&temp, path).map_err(|e| {
         let _ = std::fs::remove_file(&temp);

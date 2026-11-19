@@ -94,15 +94,6 @@ pub(super) async fn disable_query_only(
     Ok(())
 }
 
-pub(super) async fn enable_query_only(
-    connection: &mut SqliteConnection,
-) -> Result<(), sqlx::Error> {
-    sqlx::query("PRAGMA query_only = ON")
-        .execute(connection)
-        .await?;
-    Ok(())
-}
-
 impl Deref for WriteTx {
     type Target = SqliteConnection;
 

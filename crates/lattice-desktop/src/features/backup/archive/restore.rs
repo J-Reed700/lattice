@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use tracing::{debug, info, warn};
 
-use crate::features::backup::adapter::roll_back_database;
+use crate::features::backup::adapter::{remove_db_wal_sidecars, roll_back_database};
 use crate::features::backup::database_repository;
 use lattice_core::application::ports::SettingsRepositoryPort;
 use lattice_core::shared::persistence::Database;
@@ -341,9 +341,12 @@ impl ArchiveRestorer {
             return Err(ArchiveError::Io(e));
         }
 
-        remove_db_wal_sidecars(&self.db_path).await;
+        let swapped = match remove_db_wal_sidecars(&self.db_path).await {
+            Ok(()) => tokio::fs::rename(&temp_path, &self.db_path).await,
+            Err(e) => Err(e),
+        };
 
-        match tokio::fs::rename(&temp_path, &self.db_path).await {
+        match swapped {
             Ok(()) => {
                 info!("database restored; a restart is required to reconnect");
                 Ok(())
@@ -648,19 +651,6 @@ async fn wait_for_hydration_off_thread(source: &Path) -> Result<(), ArchiveError
     })
     .await
     .map_err(|e| ArchiveError::Other(format!("hydration wait task failed: {e}")))?
-}
-
-async fn remove_db_wal_sidecars(db_path: &Path) {
-    for suffix in ["-wal", "-shm"] {
-        let mut raw = db_path.as_os_str().to_os_string();
-        raw.push(suffix);
-        let sidecar = PathBuf::from(raw);
-        if let Err(error) = tokio::fs::remove_file(&sidecar).await {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                warn!(path = %sidecar.display(), %error, "failed to remove stale database sidecar");
-            }
-        }
-    }
 }
 
 fn read_header_from(source: &Path) -> Result<(format::ArchiveHeader, Vec<u8>), ArchiveError> {

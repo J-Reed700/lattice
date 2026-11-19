@@ -197,18 +197,30 @@ impl USearchVectorIndex {
             AppError::FileStorage(format!("Failed to write {}: {e}", temp.display()))
         })?;
         let mut writer = std::io::BufWriter::new(file);
-        serde_json::to_writer(&mut writer, &data).map_err(|e| {
+        if let Err(e) = serde_json::to_writer(&mut writer, &data) {
+            drop(writer);
             let _ = std::fs::remove_file(&temp);
-            AppError::Serialization(format!("Failed to serialize key map: {e}"))
-        })?;
-        let file = writer.into_inner().map_err(|e| {
+            return Err(AppError::Serialization(format!(
+                "Failed to serialize key map: {e}"
+            )));
+        }
+        let file = match writer.into_inner() {
+            Ok(file) => file,
+            Err(e) => {
+                let msg = format!("Failed to flush {}: {}", temp.display(), e.error());
+                drop(e);
+                let _ = std::fs::remove_file(&temp);
+                return Err(AppError::FileStorage(msg));
+            }
+        };
+        if let Err(e) = file.sync_all() {
+            drop(file);
             let _ = std::fs::remove_file(&temp);
-            AppError::FileStorage(format!("Failed to flush {}: {}", temp.display(), e.error()))
-        })?;
-        file.sync_all().map_err(|e| {
-            let _ = std::fs::remove_file(&temp);
-            AppError::FileStorage(format!("Failed to sync {}: {e}", temp.display()))
-        })?;
+            return Err(AppError::FileStorage(format!(
+                "Failed to sync {}: {e}",
+                temp.display()
+            )));
+        }
         drop(file);
         std::fs::rename(&temp, path).map_err(|e| {
             let _ = std::fs::remove_file(&temp);

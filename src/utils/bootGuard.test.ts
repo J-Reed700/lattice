@@ -326,4 +326,38 @@ describe('public/boot-guard.js', () => {
     expect(reloadSpy).not.toHaveBeenCalled();
     expect(document.querySelector('[data-boot-recovery="true"]')).not.toBeNull();
   });
+
+  it('markLoaded clears a deferred pre-DOM failure and re-arms the boot deadline', () => {
+    Object.defineProperty(document, 'readyState', {
+      configurable: true,
+      get: () => 'loading',
+    });
+    try {
+      installBootGuard(reloadSpy);
+      dispatchWindowError(new Error('Early pre-DOM failure'));
+      expect(document.querySelector('[data-boot-recovery="true"]')).toBeNull();
+
+      window.__LATTICE_BOOT__?.markLoaded();
+      document.dispatchEvent(new Event('DOMContentLoaded'));
+      expect(document.querySelector('[data-boot-recovery="true"]')).toBeNull();
+
+      vi.advanceTimersByTime(10_000);
+      vi.advanceTimersByTime(350);
+      expect(reloadSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      delete (document as unknown as Record<string, unknown>).readyState;
+    }
+  });
+
+  it('formats undefined rejection reasons cleanly instead of rendering "undefined"', () => {
+    installBootGuard(reloadSpy);
+    const rejection = new Event('unhandledrejection');
+    Object.defineProperty(rejection, 'reason', { value: undefined });
+    window.dispatchEvent(rejection);
+
+    const recovery = document.querySelector('[data-boot-recovery="true"]');
+    expect(recovery).not.toBeNull();
+    expect(recovery?.textContent).toContain('Unhandled startup rejection');
+    expect(recovery?.textContent).not.toContain('undefined');
+  });
 });

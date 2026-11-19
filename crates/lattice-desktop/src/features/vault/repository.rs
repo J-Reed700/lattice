@@ -23,8 +23,10 @@ pub(super) struct PendingWrite {
 pub(super) async fn pending(db: &Database) -> Result<Vec<PendingWrite>> {
     let mut read = db.begin_read().await?;
     let writes = sqlx::query_as(
-        "SELECT note_id, revision, mirror_complete, last_mirrored_sha256 \
-         FROM vault_write_outbox WHERE retry_at <= unixepoch() ORDER BY rowid LIMIT 64",
+        "SELECT o.note_id, o.revision, o.mirror_complete, m.last_mirrored_sha256 \
+         FROM vault_write_outbox o \
+         LEFT JOIN vault_mirror_state m ON m.note_id = o.note_id \
+         WHERE o.retry_at <= unixepoch() ORDER BY o.rowid LIMIT 64",
     )
     .fetch_all(&mut *read)
     .await?;
@@ -57,15 +59,34 @@ pub(super) async fn mark_mirrored(
     sha256_hex: Option<&str>,
 ) -> Result<()> {
     let mut tx = db.begin_write().await?;
-    sqlx::query(
-        "UPDATE vault_write_outbox SET mirror_complete = 1, last_mirrored_sha256 = ? \
+    let result = sqlx::query(
+        "UPDATE vault_write_outbox SET mirror_complete = 1 \
          WHERE note_id = ? AND revision = ?",
     )
-    .bind(sha256_hex)
     .bind(&write.note_id)
     .bind(&write.revision)
     .execute(&mut *tx)
     .await?;
+    if result.rows_affected() > 0 {
+        match sha256_hex {
+            Some(sha) => {
+                sqlx::query(
+                    "INSERT INTO vault_mirror_state (note_id, last_mirrored_sha256) VALUES (?, ?) \
+                     ON CONFLICT(note_id) DO UPDATE SET last_mirrored_sha256 = excluded.last_mirrored_sha256",
+                )
+                .bind(&write.note_id)
+                .bind(sha)
+                .execute(&mut *tx)
+                .await?;
+            }
+            None => {
+                sqlx::query("DELETE FROM vault_mirror_state WHERE note_id = ?")
+                    .bind(&write.note_id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
+    }
     tx.commit().await?;
     Ok(())
 }
@@ -108,11 +129,18 @@ pub(super) async fn upsert_from_vault_if_unqueued(
     if imported {
         sqlx::query(
             "UPDATE vault_write_outbox \
-             SET mirror_complete = 1, last_mirrored_sha256 = ?, retry_at = 0 \
+             SET mirror_complete = 1, retry_at = 0 \
              WHERE note_id = ?",
         )
-        .bind(sha256_hex)
         .bind(note.id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO vault_mirror_state (note_id, last_mirrored_sha256) VALUES (?, ?) \
+             ON CONFLICT(note_id) DO UPDATE SET last_mirrored_sha256 = excluded.last_mirrored_sha256",
+        )
+        .bind(note.id)
+        .bind(sha256_hex)
         .execute(&mut *tx)
         .await?;
     }
@@ -164,12 +192,19 @@ pub(super) async fn reconcile_external_note_and_mark_mirrored(
     if reconciled {
         sqlx::query(
             "UPDATE vault_write_outbox \
-             SET mirror_complete = 1, last_mirrored_sha256 = ?, revision = ?, retry_at = 0 \
+             SET mirror_complete = 1, revision = ?, retry_at = 0 \
              WHERE note_id = ?",
         )
-        .bind(sha256_hex)
         .bind(&write.revision)
         .bind(note.id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO vault_mirror_state (note_id, last_mirrored_sha256) VALUES (?, ?) \
+             ON CONFLICT(note_id) DO UPDATE SET last_mirrored_sha256 = excluded.last_mirrored_sha256",
+        )
+        .bind(note.id)
+        .bind(sha256_hex)
         .execute(&mut *tx)
         .await?;
     }

@@ -4,7 +4,11 @@ import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut , Loader2, AlertCircle } fro
 import { Document, Page, pdfjs } from 'react-pdf';
 
 import { useApi } from '@/contexts/ApiContext';
-import { readSourceBytes } from '@/features/reading/hooks/readSourceFile';
+import {
+  hasTauriAssetProtocol,
+  isScopedAssetPath,
+  readSourceBytes,
+} from '@/features/reading/hooks/readSourceFile';
 import {
   buildItemTextRenderer,
   findPassagePage,
@@ -26,15 +30,6 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
 type DestroyablePdfProxy = Parameters<typeof findPassagePage>[0] & {
   destroy?: () => Promise<void> | void;
 };
-
-/** Paths inside `~/.lattice/files` match `assetProtocol.scope` in `tauri.conf.json`. */
-function isScopedAssetPath(path: string): boolean {
-  return /(?:^|[\\/])\.lattice[\\/]files[\\/]/i.test(path);
-}
-
-function isTauriRuntime(): boolean {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
-}
 
 export interface PDFViewerProps {
   filePath: string;
@@ -82,13 +77,15 @@ export function PDFViewer({
     const proxy = pdfProxyRef.current;
     pdfProxyRef.current = null;
     if (proxy) {
-      void proxy.destroy?.();
+      void Promise.resolve(proxy.destroy?.()).catch(() => {});
     }
   }, []);
 
-  const loadPdfBytes = useCallback(async (resolvedPath: string, loadId: number) => {
+  const loadPdfBytes = useCallback(async (resolvedPath: string, loadId: number, preferIpc = false) => {
     try {
-      const fileResult = await readSourceBytes(resolvedPath, api);
+      const fileResult = preferIpc
+        ? await api.readFileBytes(resolvedPath)
+        : await readSourceBytes(resolvedPath, api);
       if (!fileResult.ok) {
         throw new Error(fileResult.error || 'Failed to read PDF bytes');
       }
@@ -124,7 +121,7 @@ export function PDFViewer({
     }
 
     const resolvedPath = resolveLocalPathFromViewerSource(filePath);
-    if (isTauriRuntime() && isScopedAssetPath(resolvedPath)) {
+    if (hasTauriAssetProtocol() && isScopedAssetPath(resolvedPath)) {
       setAssetSrc(assetUrl(resolvedPath));
     } else {
       void loadPdfBytes(resolvedPath, loadId);
@@ -139,7 +136,7 @@ export function PDFViewer({
   const onDocumentLoadSuccess = useCallback((proxy: { numPages: number }) => {
     const nextProxy = proxy as DestroyablePdfProxy;
     if (pdfProxyRef.current && pdfProxyRef.current !== nextProxy) {
-      void pdfProxyRef.current.destroy?.();
+      void Promise.resolve(pdfProxyRef.current.destroy?.()).catch(() => {});
     }
     // Keep the proxy: passage resolution needs `getPage`/`getTextContent`,
     // which only this object exposes.
@@ -200,7 +197,7 @@ export function PDFViewer({
     if (assetSrc) {
       setAssetSrc(null);
       setIsLoading(true);
-      void loadPdfBytes(resolveLocalPathFromViewerSource(filePath), loadIdRef.current);
+      void loadPdfBytes(resolveLocalPathFromViewerSource(filePath), loadIdRef.current, true);
       return;
     }
     console.error('PDF load error:', loadError);

@@ -164,8 +164,19 @@ impl<'a> LiveLease<'a> {
 
 impl Drop for LiveLease<'_> {
     fn drop(&mut self) {
-        if let Some(index) = self.index.take() {
+        let Some(index) = self.index.take() else {
+            return;
+        };
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
             let _ = self.live.release_sync(&index);
+            return;
+        };
+        if let Some((closing, reg)) = self.live.release_for_close(&index) {
+            handle.spawn(async move {
+                let _reg = reg;
+                closing.store.close().await;
+                drop(closing);
+            });
         }
     }
 }
@@ -220,6 +231,7 @@ impl LiveIndexes {
     pub fn release_sync(&self, index: &LiveIndex) -> Option<Arc<LiveIndex>> {
         let mut live = self.live.lock();
         match live.get_mut(&index.dir) {
+            Some(entry) if !std::ptr::eq(entry.index.as_ref(), index) => None,
             Some(entry) if entry.users > 1 => {
                 entry.users -= 1;
                 None
@@ -238,6 +250,7 @@ impl LiveIndexes {
     ) -> Option<(Arc<LiveIndex>, CloseRegistration)> {
         let mut live = self.live.lock();
         let evicted = match live.get_mut(&index.dir) {
+            Some(entry) if !std::ptr::eq(entry.index.as_ref(), index) => return None,
             Some(entry) if entry.users > 1 => {
                 entry.users -= 1;
                 return None;
@@ -381,5 +394,24 @@ mod tests {
         assert!(live.live.lock().is_empty());
         assert!(first.store.meta("anything").await.is_err());
         assert!(second.store.meta("anything").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn stale_release_after_evict_and_reacquire_does_not_evict_replacement() {
+        let temp = tempfile::tempdir().unwrap();
+        let live = LiveIndexes::default();
+        let old = live.acquire(temp.path()).await.unwrap();
+        live.evict_and_close(temp.path()).await;
+
+        let replacement = live.acquire(temp.path()).await.unwrap();
+        assert!(!Arc::ptr_eq(&old, &replacement));
+
+        assert!(live.release_sync(&old).is_none());
+        assert!(live.release_for_close(&old).is_none());
+        live.release(&old).await;
+
+        assert!(live.live.lock().contains_key(temp.path()));
+        assert!(replacement.store.meta("anything").await.is_ok());
+        live.release(&replacement).await;
     }
 }

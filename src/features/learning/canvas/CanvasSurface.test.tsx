@@ -135,6 +135,42 @@ describe('CanvasSurface', () => {
     }
   });
 
+  it('detects in-place mutations on versioned elements and drops pending edits on unmount', async () => {
+    const mutableRect: Record<string, unknown> = { id: 'r1', type: 'rectangle', version: 1, versionNonce: 100, isDeleted: false };
+    const { props, unmount } = await openEditor({ sceneJson: scene([mutableRect]) });
+    vi.useFakeTimers();
+    try {
+      // Seed snapshot with the live element reference.
+      act(() => editor.props.onChange([mutableRect], { viewBackgroundColor: '#fff' }, {}));
+      act(() => { vi.advanceTimersByTime(300); });
+      expect(props.onSceneChange).not.toHaveBeenCalled();
+
+      // Excalidraw can mutate an element object in place while bumping version/versionNonce.
+      mutableRect.version = 2;
+      mutableRect.versionNonce = 200;
+      act(() => editor.props.onChange([mutableRect], { viewBackgroundColor: '#fff' }, {}));
+      act(() => { vi.advanceTimersByTime(250); });
+      expect(props.onSceneChange).toHaveBeenCalledTimes(1);
+
+      // In-place soft deletion must also be detected.
+      mutableRect.isDeleted = true;
+      mutableRect.version = 3;
+      mutableRect.versionNonce = 300;
+      act(() => editor.props.onChange([mutableRect], { viewBackgroundColor: '#fff' }, {}));
+      act(() => { vi.advanceTimersByTime(250); });
+      expect(props.onSceneChange).toHaveBeenCalledTimes(2);
+      expect(props.onSceneChange).toHaveBeenLastCalledWith(expect.objectContaining({ elementCount: 0 }));
+
+      // Pending debounced edits must be cancelled on unmount rather than emitted into a dead/switched target.
+      act(() => editor.props.onChange([label], { viewBackgroundColor: '#fff' }, {}));
+      unmount();
+      act(() => { vi.advanceTimersByTime(500); });
+      expect(props.onSceneChange).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('removes a dropped-in image element and says images are blocked', async () => {
     const { props } = await openEditor();
     act(() => editor.props.onChange([rect, { id: 'img', type: 'image' }], {}, {}));

@@ -3,8 +3,16 @@ import { queryOptions } from '@tanstack/react-query';
 import VaultAPI, { type ApiClient } from '@/lib/api';
 import { assetUrl } from '@/utils/assetUrl';
 
-function isTauriRuntime(): boolean {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+/** Paths inside `~/.lattice/files` match `assetProtocol.scope` in `tauri.conf.json`. */
+export function isScopedAssetPath(path: string): boolean {
+  return /(?:^|[\\/])\.lattice[\\/]files[\\/]/i.test(path);
+}
+
+/** True only when Tauri's real asset protocol bridge (`convertFileSrc`) is available. */
+export function hasTauriAssetProtocol(): boolean {
+  if (typeof window === 'undefined') return false;
+  const internals = (window as { __TAURI_INTERNALS__?: { convertFileSrc?: unknown } }).__TAURI_INTERNALS__;
+  return typeof internals?.convertFileSrc === 'function';
 }
 
 /** A source file's text, for the readers that render text, code and saved pages. */
@@ -12,7 +20,7 @@ export const readSourceText = (path: string, api: ApiClient = VaultAPI) => api.r
 
 /** A source file's bytes, for the readers that parse a binary format (PDF, DOCX). */
 export const readSourceBytes = async (path: string, api: ApiClient = VaultAPI) => {
-  if (isTauriRuntime() && api === VaultAPI && path) {
+  if (hasTauriAssetProtocol() && api === VaultAPI && path && isScopedAssetPath(path)) {
     try {
       const response = await fetch(assetUrl(path));
       if (response.ok) {

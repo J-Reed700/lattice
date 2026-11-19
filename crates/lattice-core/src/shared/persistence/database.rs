@@ -7,7 +7,7 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 
 use super::error::PersistenceError;
-use super::transactions::{disable_query_only, enable_query_only, is_query_only, ReadTx, WriteTx};
+use super::transactions::{disable_query_only, is_query_only, ReadTx, WriteTx};
 use super::write_turns::WriteTurns;
 
 /// One database file. Clones share its write queue.
@@ -69,22 +69,23 @@ impl Database {
     /// reads this database, so writers carry on meanwhile.
     pub async fn vacuum_into(&self, destination: &str) -> Result<(), PersistenceError> {
         let mut connection = self.reader_pool.acquire().await?;
-        let was_query_only = is_query_only(&mut connection).await?;
-        if was_query_only {
-            disable_query_only(&mut connection).await?;
+        if is_query_only(&mut connection).await? {
+            // Detach before disabling query_only so task cancellation mid-VACUUM
+            // can never return a writable connection to the read-only pool.
+            let mut detached = connection.detach();
+            disable_query_only(&mut detached).await?;
+            let result = sqlx::query("VACUUM INTO ?")
+                .bind(destination)
+                .execute(&mut detached)
+                .await;
+            let _ = sqlx::Connection::close(detached).await;
+            result?;
+            return Ok(());
         }
-        let result = sqlx::query("VACUUM INTO ?")
+        sqlx::query("VACUUM INTO ?")
             .bind(destination)
             .execute(&mut *connection)
-            .await;
-        if was_query_only {
-            if let Err(restore_err) = enable_query_only(&mut connection).await {
-                // Never return a reader connection to the pool with query_only = OFF.
-                let _ = sqlx::Connection::close(connection.detach()).await;
-                return Err(result.err().unwrap_or(restore_err).into());
-            }
-        }
-        result?;
+            .await?;
         Ok(())
     }
 

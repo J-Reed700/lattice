@@ -244,16 +244,33 @@ impl CourseIndexes {
         let Some((closing, reg)) = self.live.release_for_close(index) else {
             return;
         };
-        if tokio::runtime::Handle::try_current().is_err() {
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
             drop(closing);
             drop(reg);
             return;
+        };
+        let close_state = Arc::new(parking_lot::Mutex::new(Some((closing, reg))));
+        let task_state = Arc::clone(&close_state);
+        if self
+            .background
+            .spawn(async move {
+                if let Some((closing, reg)) = task_state.lock().take() {
+                    let _reg = reg;
+                    closing.store.close().await;
+                    drop(closing);
+                }
+            })
+            .is_some()
+        {
+            return;
         }
-        self.background.spawn(async move {
-            let _reg = reg;
-            closing.store.close().await;
-            drop(closing);
-        });
+        if let Some((closing, reg)) = close_state.lock().take() {
+            handle.spawn(async move {
+                let _reg = reg;
+                closing.store.close().await;
+                drop(closing);
+            });
+        }
     }
 
     fn held(&self, program: &str) -> bool {

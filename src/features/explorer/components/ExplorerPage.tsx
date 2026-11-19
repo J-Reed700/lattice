@@ -5,7 +5,6 @@ import { open } from '@tauri-apps/plugin-dialog';
 
 import { SplitHandle } from '@/components/ui/SplitHandle';
 import { useApi } from '@/contexts/ApiContext';
-import { ScopedConversationProvider } from '@/features/chat/components/tangents/TangentConversation';
 import {
   explorerFoldersQueryOptions,
   resolveExplorerRoot,
@@ -282,13 +281,7 @@ export function ExplorerPage() {
             onReset={() => setChatWidth(CHAT_DEFAULT)}
           />
           <section aria-label="Chat about this folder" className="h-full shrink-0 border-l border-border-subtle" style={{ width: chat }}>
-            {threads.activeId ? (
-              <ScopedConversationProvider conversationId={threads.activeId}>
-                <ExplorerChat threads={threads} />
-              </ScopedConversationProvider>
-            ) : (
-              <ExplorerChat threads={threads} />
-            )}
+            <ExplorerChat threads={threads} />
           </section>
           {settingsFor && (
             <FolderSettingsDialog

@@ -21,7 +21,7 @@ vi.mock('@/lib/api', () => {
 function setTauriRuntime(enabled: boolean): void {
   const tauriWindow = window as Window & { __TAURI_INTERNALS__?: unknown };
   if (enabled) {
-    tauriWindow.__TAURI_INTERNALS__ = {};
+    tauriWindow.__TAURI_INTERNALS__ = { convertFileSrc: vi.fn() };
   } else {
     delete tauriWindow.__TAURI_INTERNALS__;
   }
@@ -50,10 +50,12 @@ describe('readSourceBytes', () => {
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await readSourceBytes('/vault/paper.pdf');
+    const result = await readSourceBytes('/home/user/.lattice/files/abc/paper.pdf');
 
-    expect(mocks.assetUrl).toHaveBeenCalledWith('/vault/paper.pdf');
-    expect(fetchMock).toHaveBeenCalledWith('asset://localhost/%2Fvault%2Fpaper.pdf');
+    expect(mocks.assetUrl).toHaveBeenCalledWith('/home/user/.lattice/files/abc/paper.pdf');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'asset://localhost/%2Fhome%2Fuser%2F.lattice%2Ffiles%2Fabc%2Fpaper.pdf',
+    );
     expect(mocks.readFileBytes).not.toHaveBeenCalled();
     expect(result).toEqual({ ok: true, data: bytes });
   });
@@ -63,10 +65,10 @@ describe('readSourceBytes', () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 403 });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await readSourceBytes('/vault/paper.pdf');
+    const result = await readSourceBytes('/home/user/.lattice/files/abc/paper.pdf');
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(mocks.readFileBytes).toHaveBeenCalledWith('/vault/paper.pdf');
+    expect(mocks.readFileBytes).toHaveBeenCalledWith('/home/user/.lattice/files/abc/paper.pdf');
     expect(result).toEqual({ ok: true, data: new Uint8Array([9, 8]) });
   });
 
@@ -75,10 +77,10 @@ describe('readSourceBytes', () => {
     const fetchMock = vi.fn().mockRejectedValue(new TypeError('network error'));
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await readSourceBytes('/vault/paper.pdf');
+    const result = await readSourceBytes('/home/user/.lattice/files/abc/paper.pdf');
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(mocks.readFileBytes).toHaveBeenCalledWith('/vault/paper.pdf');
+    expect(mocks.readFileBytes).toHaveBeenCalledWith('/home/user/.lattice/files/abc/paper.pdf');
     expect(result).toEqual({ ok: true, data: new Uint8Array([9, 8]) });
   });
 
@@ -86,18 +88,35 @@ describe('readSourceBytes', () => {
     const fetchMock = vi.fn();
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    await readSourceBytes('/vault/paper.pdf');
+    await readSourceBytes('/home/user/.lattice/files/abc/paper.pdf');
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(mocks.readFileBytes).toHaveBeenCalledWith('/vault/paper.pdf');
+    expect(mocks.readFileBytes).toHaveBeenCalledWith('/home/user/.lattice/files/abc/paper.pdf');
 
     setTauriRuntime(true);
     const customApi = {
       readFileBytes: vi.fn().mockResolvedValue({ ok: true, data: new Uint8Array([7]) }),
     } as unknown as ApiClient;
 
-    const customResult = await readSourceBytes('/vault/custom.docx', customApi);
+    const customResult = await readSourceBytes('/home/user/.lattice/files/abc/custom.docx', customApi);
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(customApi.readFileBytes).toHaveBeenCalledWith('/vault/custom.docx');
+    expect(customApi.readFileBytes).toHaveBeenCalledWith('/home/user/.lattice/files/abc/custom.docx');
     expect(customResult).toEqual({ ok: true, data: new Uint8Array([7]) });
+  });
+
+  it('uses api.readFileBytes when __TAURI_INTERNALS__ lacks convertFileSrc or path is outside asset scope', async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    await readSourceBytes('/home/user/.lattice/files/abc/paper.pdf');
+    expect(mocks.assetUrl).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.readFileBytes).toHaveBeenCalledWith('/home/user/.lattice/files/abc/paper.pdf');
+
+    setTauriRuntime(true);
+    await readSourceBytes('/vault/paper.pdf');
+    expect(mocks.assetUrl).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.readFileBytes).toHaveBeenCalledWith('/vault/paper.pdf');
   });
 });
