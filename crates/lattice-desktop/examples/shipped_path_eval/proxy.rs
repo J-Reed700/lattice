@@ -410,7 +410,7 @@ pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
             }
             // A refused request says why in its body; without it the run only
             // knows the status.
-            if is_chat && !status.is_success() && sent.is_ok() {
+            if !status.is_success() && record.error.is_none() && sent.is_ok() {
                 record.error = Some(String::from_utf8_lossy(&copy).into_owned());
             }
             if is_chat {
