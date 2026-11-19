@@ -305,6 +305,16 @@ class Keeps(unittest.TestCase):
         spaces = {chr(code) for code in range(0x110000) if chr(code).isspace()}
         self.assertEqual(set(replay.WHITE_SPACE), spaces - set("\x1c\x1d\x1e\x1f"))
 
+    def test_a_handle_or_range_end_too_long_for_u32_reads_as_rust_parses_it(self):
+        self.assertIsNone(replay.pointed("u" + "1" * 4301))
+        self.assertIsNone(replay.pointed("u4294967296"))
+        self.assertEqual(replay.pointed("u4294967295"), ("u", 4294967295))
+        self.assertEqual(read_keeps("r1: u1 u" + "1" * 4301, COMPLETE, 2, 2), [answered(1), answered()])
+        for end in ["4294967296", "9" * 4301]:
+            self.assertEqual(read_keeps(f"r1: u1-{end}\nr2: u1", COMPLETE, 3, 4),
+                             [unanswered("unplaced"), answered(1), answered()], f"{len(end)} digits")
+        self.assertEqual(read_keeps("r1: u1-" + "0" * 5000 + "3", COMPLETE, 2, 4), [answered(1, 2, 3), answered()])
+
 
 class Finish(unittest.TestCase):
     def test_finish_reasons_end_as_the_contract_reads_them(self):

@@ -219,6 +219,7 @@ def sender(window):
 RANGE_SEPARATORS = ("-", "--", "–", "—", "..", "...", "…")
 ITEM, OWN = "r", "u"
 U32_MAX = 4_294_967_295
+U32_DIGITS = len(str(U32_MAX))
 # Unicode's White_Space, which Rust's trim and char::is_whitespace use; Python's isspace adds U+001C to U+001F.
 WHITE_SPACE = "".join(map(chr, [*range(0x09, 0x0E), 0x20, 0x85, 0xA0, 0x1680, *range(0x2000, 0x200B), 0x2028, 0x2029,
                                 0x202F, 0x205F, 0x3000]))
@@ -230,7 +231,7 @@ def pointed(written):
     if len(written) >= 2 and written.startswith("[") and written.endswith("]"):
         written = written[1:-1].strip(WHITE_SPACE)
     m = re.fullmatch(r"([a-z]+)([1-9][0-9]*)", written)
-    if not m or int(m.group(2)) > U32_MAX:
+    if not m or len(m.group(2)) > U32_DIGITS or int(m.group(2)) > U32_MAX:
         return None
     return m.group(1), int(m.group(2))
 
@@ -256,6 +257,13 @@ def range_follows(line, tokens, at):
 
 def all_digits(token):
     return re.fullmatch(r"[0-9]+", token) is not None
+
+
+def u32_or_max(digits):
+    """shapes.rs `n.parse().unwrap_or(u32::MAX)` on a run of ASCII digits: leading zeros count for nothing, and a
+    number past u32::MAX reads as u32::MAX."""
+    significant = digits.lstrip("0")
+    return U32_MAX if len(significant) > U32_DIGITS else min(int(significant or "0"), U32_MAX)
 
 
 class Entry:
@@ -352,7 +360,7 @@ class KeepsReader:
             elif prefix == OWN:
                 first = pointed(word)[1]
                 to_own = pointed(following)[1] if prefix_of(following) == OWN else None
-                to_number = min(int(following), U32_MAX) if following is not None and all_digits(following) else None
+                to_number = u32_or_max(following) if following is not None and all_digits(following) else None
                 last = (to_own if to_own is not None else to_number) if ranged else None
                 if current is None:
                     self.stray = True
