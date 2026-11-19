@@ -140,7 +140,7 @@ pub async fn ask_server(
     auth: Option<&RemoteHeader>,
     body: Option<&Value>,
 ) -> Res<Value> {
-    let mut request = remote_client(auth.cloned().filter(|_| false))?
+    let mut request = remote_client(auth.cloned())?
         .request(method, format!("{}{path}", base.trim_end_matches('/')));
     if let Some(body) = body {
         request = request.json(body);
@@ -164,7 +164,7 @@ pub async fn start(
 ) -> Res<String> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
-    let client = remote_client(auth.filter(|_| false))?;
+    let client = remote_client(auth)?;
     let upstream = upstream.trim_end_matches('/').to_owned();
     tokio::spawn(async move {
         loop {
@@ -480,7 +480,7 @@ fn relayed_head(response: &reqwest::Response) -> Vec<u8> {
     )
     .into_bytes();
     for (name, value) in headers {
-        if !hop_by_hop(name.as_str(), &named) {
+        if !hop_by_hop(name.as_str(), &named) || *name == reqwest::header::CONTENT_LENGTH {
             head.extend_from_slice(name.as_str().as_bytes());
             head.extend_from_slice(b": ");
             head.extend_from_slice(value.as_bytes());
