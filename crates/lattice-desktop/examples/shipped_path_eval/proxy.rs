@@ -480,7 +480,7 @@ fn relayed_head(response: &reqwest::Response) -> Vec<u8> {
     )
     .into_bytes();
     for (name, value) in headers {
-        if !hop_by_hop(name.as_str(), &named) {
+        if !hop_by_hop(name.as_str(), &named) || *name == reqwest::header::CONNECTION {
             head.extend_from_slice(name.as_str().as_bytes());
             head.extend_from_slice(b": ");
             head.extend_from_slice(value.as_bytes());
@@ -507,7 +507,7 @@ fn hop_by_hop(name: &str, named: &[&str]) -> bool {
         "content-length",
     ]
     .iter()
-    .chain(named.iter().filter(|hop| hop.is_empty()))
+    .chain(named)
     .any(|hop| name.eq_ignore_ascii_case(hop))
 }
 
