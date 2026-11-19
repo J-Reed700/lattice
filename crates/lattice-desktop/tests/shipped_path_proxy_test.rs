@@ -679,6 +679,25 @@ async fn a_chunked_answer_reaches_the_app_whole_without_its_chunking() -> Res<()
 }
 
 #[tokio::test]
+async fn a_connection_header_with_a_byte_beyond_ascii_still_keeps_back_the_headers_it_names(
+) -> Res<()> {
+    let reason = r#"{"error":"busy"}"#;
+    let mut busy = b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nX-Hop: 1\r\nConnection: close, X-Hop, caf\xe9\r\n".to_vec();
+    busy.extend_from_slice(format!("Content-Length: {}\r\n\r\n{reason}", reason.len()).as_bytes());
+    let recorder = Recorder::new();
+    let upstream = server(vec![Answer::Once(busy)]).await?;
+    let base = start(upstream, false, None, None, Arc::clone(&recorder)).await?;
+    let (status, head, body) = exchange(&base, &chat(r#"{"model":"m","messages":[]}"#)).await?;
+    assert_eq!((status, body.as_slice()), (503, reason.as_bytes()));
+    assert_eq!(
+        lines_of(&head, "content-type"),
+        ["content-type: application/json"]
+    );
+    assert_eq!(lines_of(&head, "x-hop"), Vec::<String>::new());
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_reported_window_keeps_the_server_s_headers_but_not_its_connection_s() -> Res<()> {
     let window = serde_json::json!({"default_generation_settings": {"n_ctx": SERVED}}).to_string();
     let served = format!(
