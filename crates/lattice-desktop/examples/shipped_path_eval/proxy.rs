@@ -130,9 +130,9 @@ pub fn server_auth() -> Option<RemoteHeader> {
 
 /// Sends one of the eval's own requests, not the app's, to `base` and reads
 /// its JSON answer: a request to the run's server, such as which model it
-/// serves, or the proxy's check of the window it reports. It uses the client
-/// the proxy forwards with, and fails naming the status of an answer that is
-/// not a success.
+/// serves, or the proxy's check of the window it reports. It builds its client
+/// with `remote_client`, as the proxy does, and fails naming the status of an
+/// answer that is not a success.
 pub async fn ask_server(
     base: &str,
     method: reqwest::Method,
@@ -154,7 +154,8 @@ pub async fn ask_server(
 }
 
 /// Starts the proxy on a free loopback port and returns its base URL. `auth`
-/// goes with every request it forwards.
+/// goes with every request it forwards, except one to which it passes on a
+/// header of that name from the app: that header goes instead.
 pub async fn start(
     upstream: String,
     thinking_off: bool,
@@ -334,10 +335,10 @@ pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
         head.headers
             .iter()
             .filter(|(name, _)| name.eq_ignore_ascii_case("connection"))
-            .map(|(_, value)| value.as_str()),
+            .map(|(_, value)| value.as_bytes()),
     );
     for (name, value) in &head.headers {
-        let skip = hop_by_hop(name, &named)
+        let skip = (hop_by_hop(name, &named) && !name.eq_ignore_ascii_case("connection"))
             || ["host", "accept-encoding"]
                 .iter()
                 .any(|own| name.eq_ignore_ascii_case(own));
@@ -471,7 +472,7 @@ fn relayed_head(response: &reqwest::Response) -> Vec<u8> {
         headers
             .get_all(reqwest::header::CONNECTION)
             .iter()
-            .filter_map(|value| value.to_str().ok()),
+            .map(reqwest::header::HeaderValue::as_bytes),
     );
     let mut head = format!(
         "HTTP/1.1 {} {}\r\n",
@@ -495,27 +496,22 @@ fn relayed_head(response: &reqwest::Response) -> Vec<u8> {
 /// passes it on neither way: the hop-by-hop headers of RFC 9110, those the
 /// message's `Connection` header names (`named`), `Trailer` and
 /// `Content-Length`.
-fn hop_by_hop(name: &str, named: &[&str]) -> bool {
+fn hop_by_hop(name: &str, named: &[&[u8]]) -> bool {
+    let name = name.as_bytes();
     [
         "connection",
-        "keep-alive",
-        "proxy-connection",
-        "te",
-        "transfer-encoding",
-        "upgrade",
-        "trailer",
         "content-length",
     ]
     .iter()
-    .chain(named)
-    .any(|hop| name.eq_ignore_ascii_case(hop))
+    .any(|hop| name.eq_ignore_ascii_case(hop.as_bytes()))
+        || named.iter().any(|hop| name.eq_ignore_ascii_case(hop))
 }
 
-/// The header names that `Connection` values list.
-fn named_by_connection<'a>(values: impl Iterator<Item = &'a str>) -> Vec<&'a str> {
+/// The header names that `Connection` values list, read from their bytes.
+fn named_by_connection<'a>(values: impl Iterator<Item = &'a [u8]>) -> Vec<&'a [u8]> {
     values
-        .flat_map(|value| value.split(','))
-        .map(str::trim)
+        .flat_map(|value| value.split(|byte| *byte == b','))
+        .map(<[u8]>::trim_ascii)
         .filter(|name| !name.is_empty())
         .collect()
 }
