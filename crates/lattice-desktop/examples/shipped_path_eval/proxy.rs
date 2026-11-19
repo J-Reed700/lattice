@@ -20,8 +20,8 @@ use serde_json::{json, Map, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::net::TcpListener;
 
 /// One request that crossed the proxy.
 #[derive(Debug, Clone, Serialize)]
@@ -198,7 +198,7 @@ struct Head {
     body: Vec<u8>,
 }
 
-async fn read_request(stream: &mut BufReader<TcpStream>) -> Res<Head> {
+async fn read_request<S: AsyncRead + Unpin>(stream: &mut BufReader<S>) -> Res<Head> {
     let mut line = String::new();
     stream.read_line(&mut line).await?;
     let mut parts = line.split_whitespace();
@@ -266,8 +266,9 @@ pub fn report_window(props: &mut Value, window: u64) {
     }
 }
 
-async fn serve(
-    stream: TcpStream,
+/// Answers one request from the app on `stream` and records the call.
+pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
+    stream: S,
     client: &reqwest::Client,
     upstream: &str,
     thinking_off: bool,
