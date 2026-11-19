@@ -83,7 +83,8 @@ export function usePracticeSession({
   const [hydratedFor, setHydratedFor] = useState<string | null>(null);
 
   const [solutionConfirm, setSolutionConfirm] = useState(false);
-  const [selectedSource, setSelectedSource] = useState<{ sourceId: string; versionId: string } | null>(null);
+  /** The source the attempt last opened, and the words it was opened on; the docked reader follows it. */
+  const [selectedSource, setSelectedSource] = useState<{ sourceId: string; versionId: string; quote?: string } | null>(null);
   const [hintUsed, setHintUsed] = useState<LearningPracticeHintLevel[]>([]);
 
   const revisionRef = useRef(0);
@@ -270,10 +271,11 @@ export function usePracticeSession({
     });
   };
 
-  const doOpenSource = async (source: LearningSourceLibraryItemDto, versionId: string, preSave?: () => Promise<boolean>) => {
+  const doOpenSource = async (source: LearningSourceLibraryItemDto, versionId: string, preSave?: () => Promise<boolean>, quote?: string) => {
     if (!summary || busyState !== 'idle') return;
+    const opened = quote ? { sourceId: source.id, versionId, quote } : { sourceId: source.id, versionId };
     if (!active) {
-      setSelectedSource({ sourceId: source.id, versionId });
+      setSelectedSource(opened);
       return;
     }
     if (mode === 'demonstrate') return;
@@ -289,7 +291,7 @@ export function usePracticeSession({
     };
     await runAction('opening_source', async () => {
       await openSource.mutateAsync(request);
-      setSelectedSource({ sourceId: source.id, versionId });
+      setSelectedSource(opened);
     });
   };
 

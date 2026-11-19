@@ -1,9 +1,12 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { ChevronDown, ChevronUp } from 'lucide-react';
 
 import { IconButton } from '@/components/ui';
+import { ArticleText, type ArticlePassage } from '@/features/reading/components/ArticleText';
 import { sentencesByOccurrence, sentencesCiting } from '@/features/reading/model/answerSentences';
+import { articleBlocks } from '@/features/reading/model/articleBlocks';
+import { visibleText } from '@/features/reading/model/inlineMarkdown';
 import { noteSentencesByOccurrence, noteSentencesCiting } from '@/features/reading/model/noteSentences';
 import {
   findQuoteSpan,
@@ -15,6 +18,7 @@ import { useConversationsStore } from '@/shared/conversations/conversationsStore
 import type { PassageLocator, SourceWithMetadata } from '@/types/conversation';
 import { formatRelativeTime } from '@/utils/formatters';
 import { replyOf, type ReplyPiece } from '@/utils/replyPieces';
+import { isCourseSource } from '@/utils/sourcePreview';
 
 
 /**
@@ -137,32 +141,6 @@ function useCitedSentences(
   }, [ownerKey, citationNumber, occurrence, citationContent, messageVerification, conversations]);
 }
 
-interface Span {
-  start: number;
-  end: number;
-}
-
-/** Paragraphs, as the page cache separates them: a blank line apart. */
-function paragraphSpans(text: string): Span[] {
-  const spans: Span[] = [];
-  const push = (from: number, to: number) => {
-    let start = from;
-    let end = to;
-    while (start < end && /\s/.test(text[start]!)) start += 1;
-    while (end > start && /\s/.test(text[end - 1]!)) end -= 1;
-    if (end > start) spans.push({ start, end });
-  };
-
-  let cursor = 0;
-  for (const match of text.matchAll(/\n\s*\n/g)) {
-    const at = match.index ?? 0;
-    push(cursor, at);
-    cursor = at + match[0].length;
-  }
-  push(cursor, text.length);
-  return spans;
-}
-
 function hostOf(url: string): string {
   try {
     return new URL(url).hostname.replace(/^www\./, '');
@@ -270,7 +248,16 @@ export function WebArticleView({
     return passages.findIndex((passage) => passage.start <= span.start && span.start < passage.end);
   }, [focus, quotes, sentences, pageText, passages]);
 
-  const paragraphs = useMemo(() => paragraphSpans(pageText), [pageText]);
+  const blocks = useMemo(() => articleBlocks(pageText), [pageText]);
+  const articlePassages = useMemo<ArticlePassage[]>(
+    () =>
+      passages.map((passage) => ({
+        start: passage.start,
+        end: passage.end,
+        title: `Matches: ${effectiveSentences[passage.sentenceIndex] ?? ''}`,
+      })),
+    [passages, effectiveSentences],
+  );
   const [activeIndex, setActiveIndex] = useState(openingIndex);
   const markRefs = useRef(new Map<number, HTMLElement>());
   const articleRef = useRef<HTMLDivElement>(null);
@@ -293,7 +280,10 @@ export function WebArticleView({
   }, [activeIndex, passages, occurrence]);
 
   const activePassage = passages[activeIndex];
-  const activeText = activePassage ? pageText.slice(activePassage.start, activePassage.end) : null;
+  const activeText = useMemo(
+    () => (activePassage ? visibleText(pageText, activePassage.start, activePassage.end) : null),
+    [activePassage, pageText],
+  );
   useEffect(() => {
     onActivePassageChange?.(activeText);
     return () => onActivePassageChange?.(null);
@@ -304,54 +294,17 @@ export function WebArticleView({
     else markRefs.current.delete(index);
   }, []);
 
+  const wordCount = useMemo(() => {
+    const words = visibleText(pageText).trim();
+    return words.split(/\s+/).filter((token) => /[\p{L}\p{N}]/u.test(token)).length;
+  }, [pageText]);
   const title = snapshot?.title?.trim() || source.fileName;
   const meta = [
     snapshot
       ? `Saved snapshot${snapshot.fetchedAt ? ` · captured ${formatRelativeTime(snapshot.fetchedAt).toLowerCase()}` : ' · capture date unavailable'}`
       : 'Saved source text · full page snapshot unavailable',
-    snapshot ? `${pageText.trim() ? pageText.trim().split(/\s+/).length.toLocaleString() : '0'} words` : null,
+    snapshot ? `${wordCount.toLocaleString()} words` : null,
   ].filter((entry): entry is string => Boolean(entry));
-
-  const renderParagraph = (paragraph: Span): ReactNode => {
-    const marked = passages
-      .map((passage, index) => ({ passage, index }))
-      .filter(({ passage }) => passage.end > paragraph.start && passage.start < paragraph.end);
-    if (marked.length === 0) return pageText.slice(paragraph.start, paragraph.end);
-
-    const nodes: ReactNode[] = [];
-    let cursor = paragraph.start;
-    for (const { passage, index } of marked) {
-      const start = Math.max(passage.start, paragraph.start);
-      const end = Math.min(passage.end, paragraph.end);
-      if (start > cursor) {
-        nodes.push(<Fragment key={`text-${cursor}`}>{pageText.slice(cursor, start)}</Fragment>);
-      }
-      // A passage that runs over a paragraph break is drawn once per paragraph,
-      // and only the first of those is where it begins. Registering them all
-      // would leave the last one as the scroll target and open the reader at
-      // the passage's end, several paragraphs past the sentence it matched.
-      const opensHere = passage.start >= paragraph.start;
-      nodes.push(
-        <mark
-          key={`mark-${index}`}
-          ref={opensHere ? (element) => registerMark(index, element) : undefined}
-          className={
-            index === activeIndex
-              ? 'source-reader-passage is-lit'
-              : 'source-reader-passage'
-          }
-          title={`Matches: ${effectiveSentences[passage.sentenceIndex] ?? ''}`}
-        >
-          {pageText.slice(start, end)}
-        </mark>
-      );
-      cursor = end;
-    }
-    if (cursor < paragraph.end) {
-      nodes.push(<Fragment key={`text-${cursor}`}>{pageText.slice(cursor, paragraph.end)}</Fragment>);
-    }
-    return nodes;
-  };
 
   const renderBody = (): ReactNode => (
       <div className="mx-auto max-w-[68ch] py-5">
@@ -368,14 +321,13 @@ export function WebArticleView({
           </p>
         )}
         {!pageText && <p className="text-sm text-[hsl(var(--text-muted))]">No saved source text is available.</p>}
-        {paragraphs.map((paragraph) => (
-          <p
-            key={paragraph.start}
-            className="mb-4 font-serif text-[15px] leading-7 text-[hsl(var(--text-primary))]"
-          >
-            {renderParagraph(paragraph)}
-          </p>
-        ))}
+        <ArticleText
+          text={pageText}
+          blocks={blocks}
+          passages={articlePassages}
+          activeIndex={activeIndex}
+          onMarkElement={registerMark}
+        />
       </div>
   );
 
@@ -394,7 +346,7 @@ export function WebArticleView({
       <div className="flex shrink-0 items-start justify-between gap-4 border-b border-subtle pb-4">
         <div className="min-w-0">
           <p className="truncate text-xs text-[hsl(var(--text-muted))]">
-            {url ? hostOf(url) : 'Web source'}
+            {url ? hostOf(url) : isCourseSource(source) ? 'Saved source' : 'Web source'}
           </p>
           <h3 className="mt-1 wrap-break-word font-serif text-lg font-semibold leading-snug text-[hsl(var(--text-primary))]">
             {title}

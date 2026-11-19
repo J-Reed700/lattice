@@ -1,11 +1,13 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 
-import { BookOpen, ChevronRight, X } from 'lucide-react';
+import { BookOpen, ChevronRight } from 'lucide-react';
 
 import { StatusLine } from '@/features/learning/practice/shared/StatusLine';
-import { SourceReader } from '@/features/learning/sources/SourceReader';
-import { useLearningSourceVersion, useLearningSourceWorkspace } from '@/features/learning/sources/useLearningSources';
-import type { LearningSourceLibraryItemDto } from '@/lib/bindings';
+import { SavedSourceCitations } from '@/features/learning/sources/SavedSourceCitations';
+import { useLearningSourceWorkspace } from '@/features/learning/sources/useLearningSources';
+import { useSavedSourceReader } from '@/features/learning/sources/useSavedSourceReader';
+import { useReaderClosesWithOwner } from '@/features/reading/hooks/useReaderClosesWithOwner';
+import type { LearningPracticeCitationDto, LearningSourceLibraryItemDto } from '@/lib/bindings';
 
 function dateLabel(value: number) {
   const date = new Date(value);
@@ -94,75 +96,64 @@ export function FrozenSourceRail({
   );
 }
 
-export function CitationCards({
+/**
+ * The saved sources a tutor turn, hint or worked solution cites: numbered chips
+ * with their quotes, as chat answers and lessons draw theirs. Opening one goes
+ * through `onOpen`, which records the opening on the attempt before the docked
+ * reader shows the source. Like any citation, they hide in reading mode.
+ */
+export function PracticeCitations({
+  programId,
   citations,
   onOpen,
-  disabled = false,
+  disabledReason,
 }: {
-  citations: { sourceId: string; versionId: string; quote: string }[];
-  onOpen: (citation: { sourceId: string; versionId: string; quote: string }) => void;
-  disabled?: boolean;
+  programId: string;
+  citations: LearningPracticeCitationDto[];
+  onOpen: (citation: LearningPracticeCitationDto) => void;
+  /** Why sources cannot be opened right now; the chips still show what is cited. */
+  disabledReason?: string;
 }) {
   return (
-    <div className="mt-3 grid gap-2">
-      {citations.map((citation, index) => (
-        <button
-          key={`${citation.sourceId}-${citation.versionId}-${index}`}
-          type="button"
-          disabled={disabled}
-          onClick={() => onOpen(citation)}
-          className="rounded-lg border border-accent bg-accent-muted p-3 text-left focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-55"
-        >
-          <span className="text-xs font-semibold uppercase tracking-wider text-accent">
-            Saved source quote · exact version
-          </span>
-          <span className="mt-1 block text-xs leading-5 text-text-secondary">“{citation.quote}”</span>
-          <span className="mt-2 block text-xs text-text-muted">
-            {disabled ? 'Unavailable during this action' : 'Open frozen source'}
-          </span>
-        </button>
-      ))}
-    </div>
+    <SavedSourceCitations
+      programId={programId}
+      citations={citations}
+      quotes
+      label="Saved sources cited"
+      disabledReason={disabledReason}
+      onOpen={(_citation, index) => onOpen(citations[index]!)}
+    />
   );
 }
 
-export function ExactSourceReader({
-  query,
-  onClose,
-}: {
-  query: ReturnType<typeof useLearningSourceVersion>;
-  onClose: () => void;
-}) {
-  return (
-    <section aria-labelledby="exact-source-title" className="rounded-2xl border border-accent bg-surface p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-xs font-semibold uppercase tracking-[.15em] text-accent">Immutable source version</div>
-          <h4 id="exact-source-title" className="mt-1 font-serif text-lg text-text-primary">
-            {query.data?.version.title ?? 'Saved source'}
-          </h4>
-        </div>
-        <button type="button" onClick={onClose} aria-label="Close saved source reader" className="rounded-full p-1.5 text-text-muted hover:bg-surface-sunken">
-          <X size={15} />
-        </button>
-      </div>
-      {query.isLoading ? (
-        <p role="status" className="mt-3 text-xs text-text-muted">Opening exact saved version…</p>
-      ) : query.isError ? (
-        <div className="mt-3">
-          <StatusLine state={{ kind: 'error', message: query.error.message, retry: () => void query.refetch() }} />
-        </div>
-      ) : query.data && (
-        <>
-          <p className="mt-1 text-xs text-text-muted">
-            Version {query.data.version.versionNumber} · saved {dateLabel(query.data.version.acquiredAt)}
-          </p>
-          <SourceReader fullText={query.data.fullText} extractionVersion={query.data.version.extractionVersion} wordCount={query.data.version.wordCount} />
-          <p className="mt-2 text-xs leading-4 text-text-muted">
-            This reader displays the locally saved version. It does not fetch the reference URL.
-          </p>
-        </>
-      )}
-    </section>
-  );
+/** Why an attempt's sources cannot be opened now, or nothing when they can. */
+export function sourceClosedReason(sourceOpeningAllowed: boolean, busy: boolean): string | undefined {
+  if (!sourceOpeningAllowed) return 'Sources are closed with No help.';
+  return busy ? 'Another workbench action is in progress.' : undefined;
+}
+
+/**
+ * Shows the source an attempt opened in the docked source reader: the same
+ * reader, with the same marked passage, that chat and lessons open sources in.
+ * The attempt records each opening first, so this follows what it opened. It
+ * opens only when the selection itself changes, so a source the person closed
+ * stays closed when the owner key changes (a new attempt, say).
+ */
+export function usePracticeSourceReader(
+  programId: string,
+  ownerKey: string,
+  selected: { sourceId: string; versionId: string; quote?: string | null } | null,
+) {
+  const reader = useSavedSourceReader(programId);
+  useReaderClosesWithOwner(ownerKey);
+  const openRef = useRef(reader.open);
+  openRef.current = reader.open;
+  const ownerRef = useRef(ownerKey);
+  ownerRef.current = ownerKey;
+  useEffect(() => {
+    // A source opened from a citation carries its quoted words and is a citation
+    // like any other: reading mode closes it, as in chat and lessons. One opened
+    // from the source rail has no quote and is read for itself, so it stays open.
+    if (selected) void openRef.current(ownerRef.current, [selected], { citing: Boolean(selected.quote) });
+  }, [selected]);
 }

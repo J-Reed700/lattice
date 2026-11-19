@@ -5,10 +5,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Wire from '@/lib/bindings';
 
 import { programKind } from '..';
-import { programApi } from '../programApi';
 import { caseView, programDebrief, programRun, programSession } from './fixtures';
 import { PracticeSession } from '../../../session/PracticeSession';
 import { sessionApi } from '../../../session/sessionApi';
+import { programApi } from '../programApi';
 
 vi.mock('@/lib/api', () => {
   let count = 0;

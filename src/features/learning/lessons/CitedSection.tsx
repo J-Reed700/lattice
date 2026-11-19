@@ -3,8 +3,8 @@ import { useMemo, type ReactNode } from 'react';
 import { TiptapViewer } from '@/components/TiptapEditor';
 import { LessonClaimHoverCard } from '@/features/learning/lessons/LessonClaimHoverCard';
 import { citationsByNumber, claimMarkVerdict } from '@/features/learning/model/evidencePresentation';
-import { CitationFootnote } from '@/features/reading/components/CitationFootnote';
 import { CitationHoverCard } from '@/features/reading/components/CitationHoverCard';
+import { CitationSourcesRow } from '@/features/reading/components/CitationSourcesRow';
 import { useCitationInteractions } from '@/features/reading/hooks/useCitationInteractions';
 import { useReaderClosesWithOwner } from '@/features/reading/hooks/useReaderClosesWithOwner';
 import { useReaderStore } from '@/features/reading/stores/readerStore';
@@ -79,18 +79,14 @@ export function CitedSection({ lessonId, sectionIndex, body, report, sources, sh
           />,
         )}
         {showCitations && cited.length > 0 && (
-          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-xxs text-text-muted">Sources</span>
-            {cited.map(({ number, source }) => (
-              <CitationFootnote
-                key={`cite-${number}`}
-                number={number}
-                source={source}
-                resolvedLocation={resolvedLocations.get(source.chunkId)}
-                onViewFile={() => openSource(source)}
-              />
-            ))}
-          </div>
+          <CitationSourcesRow
+            entries={cited.map(({ number, source }) => ({
+              number,
+              source,
+              resolvedLocation: resolvedLocations.get(source.chunkId),
+              onView: () => openSource(source),
+            }))}
+          />
         )}
       </section>
       <CitationHoverCard

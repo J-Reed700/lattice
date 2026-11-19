@@ -9,10 +9,10 @@ import { learningPracticalWorkspaceKey } from '@/features/learning/api/learningQ
 import { LEARNER_TEXT_MAX_CHARS } from '@/features/learning/model/learnerTextLimit';
 import { AnswerTimer } from '@/features/learning/practice/practical/AnswerTimer';
 import { questionLabel } from '@/features/learning/practice/practical/practicalWorkbenchHelpers';
-import { PracticeCitation } from '@/features/learning/practice/PracticeCitation';
 import { PracticeThread, type ThreadMessage } from '@/features/learning/practice/shared/PracticeThread';
 import { StatusLine, type StatusState } from '@/features/learning/practice/shared/StatusLine';
 import { useRetry } from '@/features/learning/practice/shared/useRetry';
+import { SavedSourceCitations } from '@/features/learning/sources/SavedSourceCitations';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import { newId, unwrap } from '@/lib/api';
 import type {
@@ -211,16 +211,15 @@ export function SimulationPanel({
           </div>
         )}
         {showCitations && item.citations && item.citations.length > 0 && (
-          <div className="mt-2 space-y-1">
-            {item.citations.map((citation, index) => (
-              <PracticeCitation
-                key={`${citation.sourceId}:${index}`}
-                programId={programId}
-                citation={citation}
-                canOpen={canOpenCitations(current)}
-              />
-            ))}
-          </div>
+          <SavedSourceCitations
+            programId={programId}
+            ownerKey={`simulation:${current.id}:${item.id}`}
+            citations={item.citations}
+            quotes
+            label="Saved sources cited"
+            className="mt-2"
+            disabledReason={canOpenCitations(current) ? undefined : 'Sources open once this attempt is submitted.'}
+          />
         )}
       </>
     );

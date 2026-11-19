@@ -72,6 +72,24 @@ describe('the chat reader session', () => {
     expect(useReaderStore.getState().session).toBeNull();
   });
 
+  it('is a citing session by default, and not when opened to read a source for itself', () => {
+    useReaderStore.getState().open('message-1', citations, 0);
+    expect(useReaderStore.getState().session?.citing).toBe(true);
+
+    useReaderStore.getState().open('saved-source', citations, 0, null, { citing: false });
+    expect(useReaderStore.getState().session?.citing).toBe(false);
+  });
+
+  it('releases the session only for the owner that opened it', () => {
+    useReaderStore.getState().open('message-1', citations, 0);
+
+    useReaderStore.getState().release('message-2');
+    expect(useReaderStore.getState().session?.ownerKey).toBe('message-1');
+
+    useReaderStore.getState().release('message-1');
+    expect(useReaderStore.getState().session).toBeNull();
+  });
+
   it('forgets the session when it closes, so the next answer starts clean', () => {
     useReaderStore.getState().open('message-1', citations, 1);
     useReaderStore.getState().close();

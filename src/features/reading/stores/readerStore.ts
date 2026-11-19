@@ -44,6 +44,17 @@ export interface ReaderSession {
    * whole — from the source list, or by stepping to it.
    */
   occurrence: number | null;
+  /**
+   * Whether the reader is showing what a text cites. Reading mode hides
+   * citations, and with them a reader opened from one; a source opened to be
+   * read for itself (a saved source, a practice attempt's material) stays.
+   */
+  citing: boolean;
+}
+
+export interface ReaderOpenOptions {
+  /** False for a source opened to be read for itself, not from a citation. Default true. */
+  citing?: boolean;
 }
 
 export interface ReaderState {
@@ -59,7 +70,8 @@ export interface ReaderState {
     _ownerKey: string,
     _citations: SourceWithMetadata[],
     _index: number,
-    _occurrence?: number | null
+    _occurrence?: number | null,
+    _options?: ReaderOpenOptions
   ) => void;
   setIndex: (_index: number) => void;
   close: () => void;
@@ -93,7 +105,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   width: readStoredWidth(),
   resolvedLocations: new Map(),
 
-  open: (ownerKey, citations, index, occurrence = null) => {
+  open: (ownerKey, citations, index, occurrence = null, options = {}) => {
     if (citations.length === 0) return;
     set({
       session: {
@@ -101,6 +113,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
         citations,
         index: Math.min(citations.length - 1, Math.max(0, index)),
         occurrence,
+        citing: options.citing ?? true,
       },
     });
   },
