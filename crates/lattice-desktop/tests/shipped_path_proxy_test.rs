@@ -425,3 +425,40 @@ async fn a_server_that_cannot_be_reached_for_an_app_that_hung_up_keeps_the_conne
     drop(held);
     Ok(())
 }
+
+#[tokio::test]
+async fn a_refused_chat_reaches_the_app_and_records_the_server_s_reason() -> Res<()> {
+    let reason = r#"{"error":"too long"}"#;
+    let recorder = Recorder::new();
+    let upstream = server(vec![answer("400 Bad Request", "application/json", reason)]).await?;
+    let base = start(upstream, false, None, None, Arc::clone(&recorder)).await?;
+    let (status, _, body) = exchange(&base, &chat(r#"{"model":"m","messages":[]}"#)).await?;
+    let calls = recorded(&recorder, 1).await?;
+    let call = calls.first().ok_or("no call was recorded")?;
+    assert_eq!((status, body.as_slice()), (400, reason.as_bytes()));
+    assert_eq!(
+        (call.status, call.error.as_deref()),
+        (Some(400), Some(reason))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_chat_answered_in_full_records_its_reply_and_no_error() -> Res<()> {
+    let completion = r#"{"choices":[{"message":{"content":"hi"},"finish_reason":"stop"}]}"#;
+    let recorder = Recorder::new();
+    let upstream = server(vec![ok("application/json", completion)]).await?;
+    let base = start(upstream, false, None, None, Arc::clone(&recorder)).await?;
+    let (status, _, body) = exchange(&base, &chat(r#"{"model":"m","messages":[]}"#)).await?;
+    let calls = recorded(&recorder, 1).await?;
+    let call = calls.first().ok_or("no call was recorded")?;
+    assert_eq!((status, body.as_slice()), (200, completion.as_bytes()));
+    assert_eq!((call.status, call.error.as_deref()), (Some(200), None));
+    assert_eq!(
+        call.reply
+            .as_ref()
+            .map(|reply| (reply.content.as_str(), reply.finish_reason.as_deref())),
+        Some(("hi", Some("stop")))
+    );
+    Ok(())
+}
