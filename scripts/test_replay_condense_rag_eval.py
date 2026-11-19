@@ -224,10 +224,10 @@ class Keeps(unittest.TestCase):
                          [answered(1, 2), answered(3), answered()])
 
     def test_an_answer_naming_no_item_is_not_read_unless_it_says_none(self):
-        for text in ["None", "none.", "**NONE**"]:
+        for text in ["None", "none.", "**NONE**", chr(0xE9) + "none", "none" + chr(0xB2)]:
             self.assertEqual(read_keeps(text, COMPLETE, 3, 2), [answered(), answered(), answered()], repr(text))
-        self.assertEqual(read_keeps("I found nothing that bears on it.", COMPLETE, 3, 2),
-                         [unanswered("not_read")] * 3)
+        for text in ["I found nothing that bears on it.", "1none", "none 2"]:
+            self.assertEqual(read_keeps(text, COMPLETE, 3, 2), [unanswered("not_read")] * 3, repr(text))
 
     def test_an_own_handle_before_any_item_leaves_the_unnamed_items_unplaced(self):
         self.assertEqual(read_keeps("u1\nr2: u1", COMPLETE, 3, 2),
