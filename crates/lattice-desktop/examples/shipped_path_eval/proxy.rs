@@ -34,6 +34,7 @@ pub struct CallRecord {
     pub duration_ms: u64,
     /// Until the first body byte came back: prompt processing plus queueing.
     pub first_byte_ms: Option<u64>,
+    /// The status the server answered with, or `None` if it never answered.
     pub status: Option<u16>,
     /// The chat request exactly as forwarded (after any thinking switch).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -266,7 +267,8 @@ pub fn report_window(props: &mut Value, window: u64) {
     }
 }
 
-/// Answers one request from the app on `stream` and records the call.
+/// Answers one request from the app on `stream`, and records the call unless
+/// the request could not be read or parsed.
 pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
     stream: S,
     client: &reqwest::Client,
