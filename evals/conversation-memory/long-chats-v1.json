@@ -1,0 +1,818 @@
+{
+  "name": "long-chats-v1",
+  "description": "Long realistic conversations whose late turns depend on facts from early turns; user turns are scripted and the assistant turns are written live by the app's model. Turn numbers (in source_turns, and T1, T2 and so on in notes) count from 1.",
+  "items": [
+    {
+      "id": "lc-trip-lisbon",
+      "tags": [
+        "long-chat"
+      ],
+      "turns": [
+        {
+          "ask": "I'm planning a city break to Lisbon with my partner. We land on Thursday 14 May and fly home on Monday 18 May. The flights are already paid for, and our budget for everything else is about 1,800 euros for the two of us. Where should I start?"
+        },
+        {
+          "ask": "My partner Tomás is allergic to shellfish, properly allergic, so anything with prawns or clams is out. Can you give me a first idea of food areas worth exploring?"
+        },
+        {
+          "ask": "Which neighbourhood would you stay in for a first visit?"
+        },
+        {
+          "ask": "Could you sketch a rough day-by-day outline for the trip?"
+        },
+        {
+          "ask": "Bad news, the airline moved our return flight, so we now fly home on Tuesday 19 May, which gives us one extra night. Can you adjust the outline?"
+        },
+        {
+          "ask": "Can you plan out a Sintra day trip in detail, including how to get there and which palaces are worth the queue?"
+        },
+        {
+          "ask": "How does public transport work in Lisbon, and what's the deal with the rechargeable card?"
+        },
+        {
+          "ask": "Give me ten useful Portuguese phrases for a tourist, with a rough pronunciation for each."
+        },
+        {
+          "ask": "Put together a packing list for us in case it rains a lot."
+        },
+        {
+          "ask": "Where are the best viewpoints for sunset photos, and what time should we turn up to get a good spot?"
+        },
+        {
+          "ask": "What are the tipping customs in Portugal for restaurants, cafés and taxis?"
+        },
+        {
+          "ask": "Tell me about the history of pastéis de nata and how they differ from other custard tarts."
+        },
+        {
+          "ask": "Remind me, which day are we flying home now?",
+          "probe": {
+            "kind": "corrected_fact",
+            "source_turns": [
+              5
+            ],
+            "must_mention": [
+              [
+                "19 May",
+                "May 19",
+                "19th"
+              ]
+            ],
+            "must_not_claim": [],
+            "abstain": false,
+            "by_hand": false,
+            "notes": "Return flight moved from Monday 18 May (T1) to Tuesday 19 May (T5); a correct answer gives 19 May, not 18 May."
+          }
+        },
+        {
+          "ask": "Can you recommend a restaurant in Alfama for our last night, somewhere Tomás can enjoy too?",
+          "probe": {
+            "kind": "constraint",
+            "source_turns": [
+              2
+            ],
+            "must_mention": [
+              [
+                "shellfish",
+                "allerg"
+              ]
+            ],
+            "must_not_claim": [],
+            "abstain": false,
+            "by_hand": false,
+            "notes": "A correct answer accounts for Tomás's shellfish allergy stated at T2 (avoids shellfish dishes or mentions the allergy)."
+          }
+        },
+        {
+          "ask": "How many nights is the trip in total now?",
+          "probe": {
+            "kind": "corrected_fact",
+            "source_turns": [
+              1,
+              5
+            ],
+            "must_mention": [],
+            "must_not_claim": [],
+            "abstain": false,
+            "by_hand": true,
+            "notes": "Correct is five nights (14 to 19 May, T1 and T5); four nights is the superseded count."
+          }
+        },
+        {
+          "ask": "What budget did I say we had for the trip?",
+          "probe": {
+            "kind": "early_fact",
+            "source_turns": [
+              1
+            ],
+            "must_mention": [
+              [
+                "1,800",
+                "1800",
+                "1 800"
+              ]
+            ],
+            "must_not_claim": [],
+            "abstain": false,
+            "by_hand": false,
+            "notes": "About 1,800 euros for the two of us, for everything except the flights (T1)."
+          }
+        },
+        {
+          "ask": "What was the name of the hotel we booked again?",
+          "probe": {
+            "kind": "absent",
+            "source_turns": [],
+            "must_mention": [],
+            "must_not_claim": [],
+            "abstain": true,
+            "by_hand": false,
+            "notes": "The user never said they booked a hotel; a correct answer says so and does not invent a name."
+          }
+        },
+        {
+          "ask": "Thanks, that's been really helpful. One last thing: any quick advice for the flight home?"
+        }
+      ]
+    },
+    {
+      "id": "lc-config-debug",
+      "tags": [
+        "long-chat"
+      ],
+      "turns": [
+        {
+          "ask": "I run a small Go service called ledger-sync behind nginx on a Debian 12 server. I'll paste my config in a moment and need help with a couple of problems."
+        },
+        {
+          "ask": "Here's my server block:\n\n```nginx\nserver {\n    listen 8443 ssl;\n    server_name sync.example.net;\n\n    ssl_certificate     /etc/letsencrypt/live/sync.example.net/fullchain.pem;\n    ssl_certificate_key /etc/letsencrypt/live/sync.example.net/privkey.pem;\n    ssl_protocols       TLSv1.2 TLSv1.3;\n    ssl_session_cache   shared:SSL:10m;\n\n    access_log /var/log/nginx/sync.access.log;\n    error_log  /var/log/nginx/sync.error.log warn;\n\n    client_max_body_size 12m;\n    client_body_timeout  20s;\n\n    gzip on;\n    gzip_types application/json text/plain;\n\n    location /healthz {\n        access_log off;\n        return 200 \"ok\\n\";\n    }\n\n    location / {\n        proxy_pass http://127.0.0.1:9107;\n        proxy_http_version 1.1;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_connect_timeout 5s;\n        proxy_send_timeout 30s;\n        proxy_read_timeout 30s;\n    }\n}\n```\n\nLarger uploads are failing with a 413 error. Why?"
+        },
+        {
+          "ask": "Where exactly in that file should the fix go?"
+        },
+        {
+          "ask": "I changed proxy_read_timeout to 45s because long syncs were timing out. Does anything else need to change along with it?"
+        },
+        {
+          "ask": "Can you write me a systemd unit file for ledger-sync, with sensible restart behaviour and some hardening options?"
+        },
+        {
+          "ask": "How should I set up log rotation with journald so the logs don't fill the disk?"
+        },
+        {
+          "ask": "Please write a health-check endpoint in Go for the service, including a check that the database connection is alive."
+        },
+        {
+          "ask": "Walk me through certificate renewal with certbot, including how to confirm that renewals will keep working unattended."
+        },
+        {
+          "ask": "Explain Go context cancellation for long-running requests, with a code example that handles a client disconnecting mid-sync."
+        },
+        {
+          "ask": "What ufw rules should I set up for a server like this? Give me the commands in order."
+        },
+        {
+          "ask": "Write me a nightly backup script for the service's data directory, keeping a couple of weeks of history."
+        },
+        {
+          "ask": "Which port does nginx forward to on localhost again?",
+          "probe": {
+            "kind": "pasted_detail",
+            "source_turns": [
+              2
+            ],
+            "must_mention": [
+              [
+                "9107"
+              ]
+            ],
+            "must_not_claim": [],
+            "abstain": false,
+            "by_hand": false,
+            "notes": "nginx proxies to http://127.0.0.1:9107, from the pasted server block (T2)."
+          }
+        },
+        {
+          "ask": "And what's the proxy read timeout set to now?",
+          "probe": {
+            "kind": "corrected_fact",
+            "source_turns": [
+              4
+            ],
+            "must_mention": [
+              [
+                "45s",
+                "45 s",
+                "45 seconds"
+              ]
+            ],
+            "must_not_claim": [],
+            "abstain": false,
+            "by_hand": false,
+            "notes": "proxy_read_timeout was 30s in the paste (T2) and the user changed it to 45s at T4."
+          }
+        },
+        {
+          "ask": "What was the command you told me to run to check the nginx config before reloading?",
+          "probe": {
+            "kind": "assistant_detail",
+            "source_turns": [
+              2,
+              3,
+              4
+            ],
+            "must_mention": [],
+            "must_not_claim": [],
+            "abstain": false,
+            "by_hand": true,
+            "notes": "Grade against the run's own earlier assistant replies: correct if it names the command the assistant actually gave (usually `nginx -t`); if no earlier reply gave one, correct only if it says so."
+          }
+        },
+        {
+          "ask": "Which Debian version did I say the server runs?",
+          "probe": {
+            "kind": "early_fact",
+            "source_turns": [
+              1
+            ],
+            "must_mention": [
+              [
+                "Debian 12",
+                "bookworm"
+              ]
+            ],
+            "must_not_claim": [],
+            "abstain": false,
+            "by_hand": false,
+            "notes": "Debian 12 (T1)."
+          }
+        },
+        {
+          "ask": "What was client_max_body_size in my original config?",
+          "probe": {
+            "kind": "pasted_detail",
+            "source_turns": [
+              2
+            ],
+            "must_mention": [
+              [
+                "12m",
+                "12 MB",
+                "12M"
+              ]
+            ],
+            "must_not_claim": [],
+            "abstain": false,
+            "by_hand": false,
+            "notes": "client_max_body_size 12m; in the pasted server block (T2); it was never changed by the user."
+          }
+        },
+        {
+          "ask": "What's the database password in my config?",
+          "probe": {
+            "kind": "absent",
+            "source_turns": [],
+            "must_mention": [],
+            "must_not_claim": [],
+            "abstain": true,
+            "by_hand": false,
+            "notes": "The pasted config contains no database password and the user never gave one; a correct answer says so and does not invent one."
+          }
+        },
+        {
+          "ask": "Thanks, that covers everything I needed."
+        }
+      ]
+    },
+    {
+      "id": "lc-shopping-list",
+      "tags": [
+        "long-chat"
+      ],
+      "turns": [
+        {
+          "ask": "I'm hosting a dinner for six on Saturday. Could you keep a running shopping list for me as we go?"
+        },
+        {
+          "ask": "Add 2 kg of potatoes, a bunch of thyme and a litre of whole milk."
+        },
+        {
+          "ask": "Can you give me a recipe for a potato gratin?"
+        },
+        {
+          "ask": "Add about 300 g of Gruyère and a whole nutmeg."
+        },
+        {
+          "ask": "One of the guests is vegetarian, so the main can't be meat. What could I do instead of a roast?"
+        },
+        {
+          "ask": "Take the milk off the list, I already have plenty."
+        },
+        {
+          "ask": "Let's go with a mushroom wellington. Can you give me a recipe with steps?"
+        },
+        {
+          "ask": "Add two sheets of puff pastry, 800 g of chestnut mushrooms and a jar of Dijon mustard."
+        },
+        {
+          "ask": "What wine would you pour with all of this?"
+        },
+        {
+          "ask": "Can you make me a timing plan for the evening, from the afternoon prep through to serving?"
+        },
+        {
+          "ask": "I need a dessert idea, and then the technique for making a tarte tatin."
+        },
+        {
+          "ask": "How do I keep the wellington from going soggy?"
+        },
+        {
+          "ask": "Add 6 Braeburn apples and a lemon for the tart."
+        },
+        {
+          "ask": "Can you read me back the whole shopping list as it stands?",
+          "probe": {
+            "kind": "list_state",
+            "source_turns": [
+              2,
+              4,
+              6,
+              8,
+              13
+            ],
+            "must_mention": [
+              [
+                "potato"
+              ],
+              [
+                "thyme"
+              ],
+              [
+                "Gruy"
+              ],
+              [
+                "nutmeg"
+              ],
+              [
+                "puff pastry"
+              ],
+              [
+                "mushroom"
+              ],
+              [
+                "Dijon"
+              ],
+              [
+                "Braeburn",
+                "apples"
+              ],
+              [
+                "lemon"
+              ]
+            ],
+            "must_not_claim": [],
+            "abstain": false,
+            "by_hand": false,
+            "notes": "Items added at T2, T4, T8 and T13. Milk was added at T2 and removed at T6, so it must not be on the list. Milk is checked by hand: the scorer's forbidden claims are plain substrings, and an answer may say the milk was removed."
+          }
+        },
+        {
+          "ask": "Remind me how many people I'm cooking for and what I have to plan around?",
+          "probe": {
+            "kind": "early_fact",
+            "source_turns": [
+              1,
+              5
+            ],
+            "must_mention": [
+              [
+                "six",
+                "6 people",
+                "6 guests"
+              ],
+              [
+                "vegetarian"
+              ]
+            ],
+            "must_not_claim": [],
+            "abstain": false,
+            "by_hand": false,
+            "notes": "Dinner for six (T1) with one vegetarian guest, so the main can't be meat (T5)."
+          }
+        },
+        {
+          "ask": "What time did I say the guests are arriving?",
+          "probe": {
+            "kind": "absent",
+            "source_turns": [],
+            "must_mention": [],
+            "must_not_claim": [],
+            "abstain": true,
+            "by_hand": false,
+            "notes": "The user never gave an arrival time; a correct answer says so and does not invent one."
+          }
+        }
+      ]
+    },
+    {
+      "id": "lc-team-handover",
+      "tags": [
+        "long-chat"
+      ],
+      "turns": [
+        {
+          "ask": "I'm taking over the Harbor migration project from a colleague who's moving to another team. I'll describe the team in a second."
+        },
+        {
+          "ask": "Priya Raman owns QA and the release notes. Daniel Osei is the backend lead. Mei Lin handles the data migration scripts. The cutover deadline is 9 March. Can you suggest a plan for my first week?"
+        },
+        {
+          "ask": "What questions should I ask the outgoing colleague before they leave?"
+        },
+        {
+          "ask": "Update: Priya no longer handles QA, that moves to Daniel's team, but she still writes the release notes. Can you factor that in?"
+        },
+        {
+          "ask": "Also the cutover has slipped two weeks, to 23 March. What does that change in the plan?"
+        },
+        {
+          "ask": "Please draft a risk register for the project with at least five risks, each with likelihood, impact and a mitigation."
+        },
+        {
+          "ask": "Write an agenda for my first team meeting."
+        },
+        {
+          "ask": "How should I run a rollback rehearsal before the cutover?"
+        },
+        {
+          "ask": "Draft a stakeholder email explaining the new date and what it means for them."
+        },
+        {
+          "ask": "Explain blue-green versus in-place database migration, with an example of when I'd pick each."
+        },
+        {
+          "ask": "How would I estimate the remaining effort on a migration like this when I'm new to the codebase?"
+        },
+        {
+          "ask": "Suggest a format for a retrospective once the migration is done."
+        },
+        {
+          "ask": "Who's responsible for QA now?",
+          "probe": {
+            "kind": "corrected_fact",
+            "source_turns": [
+              4
+            ],
+            "must_mention": [
+              [
+                "Daniel"
+              ]
+            ],
+            "must_not_claim": [],
+            "abstain": false,
+            "by_hand": false,
+            "notes": "QA moved from Priya to Daniel's team at T4."
+          }
+        },
+        {
+          "ask": "And who writes the release notes?",
+          "probe": {
+            "kind": "corrected_fact",
+            "source_turns": [
+              2,
+              4
+            ],
+            "must_mention": [
+              [
+                "Priya"
+              ]
+            ],
+            "must_not_claim": [],
+            "abstain": false,
+            "by_hand": false,
+            "notes": "Priya Raman owned the release notes (T2) and kept them when QA moved away from her at T4."
+          }
+        },
+        {
+          "ask": "What's the cutover date?",
+          "probe": {
+            "kind": "corrected_fact",
+            "source_turns": [
+              5
+            ],
+            "must_mention": [
+              [
+                "23 March",
+                "March 23",
+                "23rd"
+              ]
+            ],
+            "must_not_claim": [],
+            "abstain": false,
+            "by_hand": false,
+            "notes": "The deadline was 9 March (T2) and slipped two weeks to 23 March (T5)."
+          }
+        },
+        {
+          "ask": "Who handles the data migration scripts?",
+          "probe": {
+            "kind": "early_fact",
+            "source_turns": [
+              2
+            ],
+            "must_mention": [
+              [
+                "Mei"
+              ]
+            ],
+            "must_not_claim": [],
+            "abstain": false,
+            "by_hand": false,
+            "notes": "Mei Lin handles the data migration scripts (T2)."
+          }
+        },
+        {
+          "ask": "What did I say the project budget is?",
+          "probe": {
+            "kind": "absent",
+            "source_turns": [],
+            "must_mention": [],
+            "must_not_claim": [],
+            "abstain": true,
+            "by_hand": false,
+            "notes": "The user never mentioned a budget; a correct answer says so and does not invent a figure."
+          }
+        },
+        {
+          "ask": "In the risk register you drafted, what was the first risk?",
+          "probe": {
+            "kind": "assistant_detail",
+            "source_turns": [
+              6
+            ],
+            "must_mention": [],
+            "must_not_claim": [],
+            "abstain": false,
+            "by_hand": true,
+            "notes": "Correct if it matches the first risk in the run's own T6 reply, or says it cannot see it; a different invented risk is wrong."
+          }
+        }
+      ]
+    },
+    {
+      "id": "lc-meeting-notes",
+      "tags": [
+        "long-chat"
+      ],
+      "turns": [
+        {
+          "ask": "Here are the minutes from our last community garden committee meeting. Can you pull out the action items for me?\n\nBrook Lane Community Garden - Committee Meeting Minutes\n\nDate: Tuesday 12 May, 7.00 pm, in the garden clubhouse\nPresent: Margaret Doyle (chair), Alan Pryce, Rosa Delgado, Joan Whitcombe, Sunil Patel, Tom Hargreaves\nApologies: Beth Okafor, Colin Ward\n\n1. Welcome and apologies\nMargaret welcomed everyone and noted apologies from Beth and Colin. The meeting was quorate.\n\n2. Minutes of the last meeting\nThe minutes of the March meeting were approved as a true record. Proposed by Joan, seconded by Sunil.\n\n3. Treasurer's report\nJoan reported a bank balance of £1,310 and thanked everyone who paid their fees promptly. Joan is stepping down after six years and handed the cash book and bank details to Rosa. The committee agreed that Rosa is the new treasurer, and thanked Joan warmly for her years of careful work. Rosa will arrange for the bank mandate to be updated.\n\n4. Fees and membership\nThe annual plot fee is £35. Members who have not yet paid will be reminded by email. Membership stays capped at 40 plots. There are currently several people on the waiting list, and Tom will write to them once the work day is over so they know where they stand. Sunil asked whether half plots could be offered in future; the committee agreed to revisit this after the summer.\n\n5. Water supply\nThe committee discussed the dry spell last summer and agreed to buy 4 water butts from Greenleaf Supplies at £48 each. Two will be fitted to the clubhouse gutters and two to the tool shed. The cost will be met from the equipment fund. Tom offered to help with fitting on the next work day.\n\n6. Site and maintenance\nThe compost bays move to the north fence, which will free up space near the entrance for two new beds and make it easier for the council to collect the green waste. Alan to fix the shed lock, which has been sticking since the winter. Margaret reminded members that tools must be returned and the shed locked after every session. A volunteer is still needed to repaint the clubhouse noticeboard.\n\n7. Work day\nThe next work day is Saturday 6 June, from 10 am to 1 pm. Jobs will include moving the compost bays, clearing the path edges, and fitting the water butts if they have arrived. Please bring gloves; tea and biscuits will be provided by Joan and Sunil.\n\n8. Annual General Meeting\nThe AGM is on 15 July at the church hall, starting at 7.30 pm. Notices will go out to all members four weeks beforehand, along with the draft accounts. Margaret will present the chair's report and Rosa the first treasurer's report in her new role. Two committee places will be up for election.\n\n9. Any other business\nBeth had asked by email whether the garden could hold an open afternoon in the autumn. The committee liked the idea and will discuss dates at the next meeting. There was no other business, and the meeting closed at 8.40 pm.\n\nActions\n- Alan: fix the shed lock\n- Rosa: update the bank mandate and place the order for the water butts\n- Tom: write to the waiting list after the work day\n- Sunil: send out the AGM notices and draft accounts\n- Margaret: confirm the hall booking in writing"
+        },
+        {
+          "ask": "Could you write a short email to members about the work day?"
+        },
+        {
+          "ask": "When is the best time to plant leeks?"
+        },
+        {
+          "ask": "What are some good organic ways to deal with slugs?"
+        },
+        {
+          "ask": "Explain how to build a raised bed, with the materials and the steps."
+        },
+        {
+          "ask": "Can you give me a template for a watering rota?"
+        },
+        {
+          "ask": "How do I run an AGM well, especially for a small volunteer group?"
+        },
+        {
+          "ask": "Please write a paragraph for a small grant application explaining what our garden does for the neighbourhood."
+        },
+        {
+          "ask": "What are good composting ratios, and how do I know when a heap is finished?"
+        },
+        {
+          "ask": "Can you plan a planting layout for a shady plot?"
+        },
+        {
+          "ask": "How do we welcome new members so they actually stick around?"
+        },
+        {
+          "ask": "How much were the water butts each?",
+          "probe": {
+            "kind": "pasted_detail",
+            "source_turns": [
+              1
+            ],
+            "must_mention": [
+              [
+                "48"
+              ]
+            ],
+            "must_not_claim": [],
+            "abstain": false,
+            "by_hand": false,
+            "notes": "£48 each, for 4 water butts from Greenleaf Supplies (minutes, T1)."
+          }
+        },
+        {
+          "ask": "Who's the new treasurer?",
+          "probe": {
+            "kind": "pasted_detail",
+            "source_turns": [
+              1
+            ],
+            "must_mention": [
+              [
+                "Rosa"
+              ]
+            ],
+            "must_not_claim": [],
+            "abstain": false,
+            "by_hand": false,
+            "notes": "Rosa (Rosa Delgado) is the new treasurer (minutes, T1)."
+          }
+        },
+        {
+          "ask": "When and where is the AGM?",
+          "probe": {
+            "kind": "pasted_detail",
+            "source_turns": [
+              1
+            ],
+            "must_mention": [
+              [
+                "15 July",
+                "July 15",
+                "15th"
+              ],
+              [
+                "church hall"
+              ]
+            ],
+            "must_not_claim": [],
+            "abstain": false,
+            "by_hand": false,
+            "notes": "The AGM is on 15 July at the church hall (minutes, T1)."
+          }
+        },
+        {
+          "ask": "Who did the minutes say will take minutes at the AGM?",
+          "probe": {
+            "kind": "absent",
+            "source_turns": [],
+            "must_mention": [],
+            "must_not_claim": [],
+            "abstain": true,
+            "by_hand": false,
+            "notes": "The minutes never say who will take minutes at the AGM; a correct answer says so and does not name anyone."
+          }
+        },
+        {
+          "ask": "Where are the compost bays moving to?",
+          "probe": {
+            "kind": "pasted_detail",
+            "source_turns": [
+              1
+            ],
+            "must_mention": [
+              [
+                "north fence"
+              ]
+            ],
+            "must_not_claim": [],
+            "abstain": false,
+            "by_hand": false,
+            "notes": "The compost bays move to the north fence (minutes, T1)."
+          }
+        }
+      ]
+    },
+    {
+      "id": "lc-learning-preferences",
+      "tags": [
+        "long-chat"
+      ],
+      "turns": [
+        {
+          "ask": "I'm learning statistics for a marketing job. I never did calculus, so please explain things without derivatives or integrals, and use marketing examples where you can."
+        },
+        {
+          "ask": "What is a p-value?"
+        },
+        {
+          "ask": "Can you explain confidence intervals?"
+        },
+        {
+          "ask": "My boss wants an A/B test on our newsletter subject lines, with about 20,000 subscribers in each arm. How should I set it up?"
+        },
+        {
+          "ask": "Can you give me some intuition for how sample size affects the results?"
+        },
+        {
+          "ask": "What is Simpson's paradox, and how would I spot it in real data?"
+        },
+        {
+          "ask": "Explain regression to the mean, with an example."
+        },
+        {
+          "ask": "Write me a five-question quiz on what we've covered so far."
+        },
+        {
+          "ask": "What's the difference between correlation and causation, and how do I make the case for one over the other?"
+        },
+        {
+          "ask": "How do Bayesian and frequentist thinking differ in practice?"
+        },
+        {
+          "ask": "How should I present results to colleagues who aren't technical?"
+        },
+        {
+          "ask": "Can you explain how logistic regression works?",
+          "probe": {
+            "kind": "preference",
+            "source_turns": [
+              1
+            ],
+            "must_mention": [],
+            "must_not_claim": [],
+            "abstain": false,
+            "by_hand": true,
+            "notes": "Correct if it explains logistic regression without derivatives or integrals and uses a marketing example, as asked at T1."
+          }
+        },
+        {
+          "ask": "How many subscribers per arm did I say we'd have?",
+          "probe": {
+            "kind": "early_fact",
+            "source_turns": [
+              4
+            ],
+            "must_mention": [
+              [
+                "20,000",
+                "20000",
+                "20 000"
+              ]
+            ],
+            "must_not_claim": [],
+            "abstain": false,
+            "by_hand": false,
+            "notes": "About 20,000 subscribers in each arm (T4)."
+          }
+        },
+        {
+          "ask": "What did I say my job is?",
+          "probe": {
+            "kind": "early_fact",
+            "source_turns": [
+              1
+            ],
+            "must_mention": [
+              [
+                "marketing"
+              ]
+            ],
+            "must_not_claim": [],
+            "abstain": false,
+            "by_hand": false,
+            "notes": "They are learning statistics for a marketing job (T1)."
+          }
+        },
+        {
+          "ask": "Which statistics software did I say my company uses?",
+          "probe": {
+            "kind": "absent",
+            "source_turns": [],
+            "must_mention": [],
+            "must_not_claim": [],
+            "abstain": true,
+            "by_hand": false,
+            "notes": "The user never mentioned statistics software; a correct answer says so and does not invent one."
+          }
+        },
+        {
+          "ask": "What did I ask you to avoid when you explain things?",
+          "probe": {
+            "kind": "preference",
+            "source_turns": [
+              1
+            ],
+            "must_mention": [
+              [
+                "calculus",
+                "derivative",
+                "integral"
+              ]
+            ],
+            "must_not_claim": [],
+            "abstain": false,
+            "by_hand": false,
+            "notes": "Avoid calculus: no derivatives or integrals (T1); they also wanted marketing examples."
+          }
+        }
+      ]
+    }
+  ]
+}

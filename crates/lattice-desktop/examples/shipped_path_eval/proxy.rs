@@ -129,6 +129,7 @@ pub fn server_auth() -> Option<(String, String)> {
 pub async fn start(
     upstream: String,
     thinking_off: bool,
+    reported_ctx: Option<u64>,
     auth: Option<(String, String)>,
     recorder: Arc<Recorder>,
 ) -> Res<String> {
@@ -153,6 +154,7 @@ pub async fn start(
                     &client,
                     &upstream,
                     thinking_off,
+                    reported_ctx,
                     auth.as_ref(),
                     &recorder,
                 )
@@ -233,11 +235,22 @@ pub fn switch_thinking_off(body: &mut Value) -> bool {
     }
 }
 
+/// Puts `window` wherever `/props` reports the server's `n_ctx`.
+pub fn report_window(props: &mut Value, window: u64) {
+    if let Some(n_ctx) = props.pointer_mut("/default_generation_settings/n_ctx") {
+        *n_ctx = json!(window);
+    }
+    if let Some(n_ctx) = props.get_mut("n_ctx") {
+        *n_ctx = json!(window);
+    }
+}
+
 async fn serve(
     stream: TcpStream,
     client: &reqwest::Client,
     upstream: &str,
     thinking_off: bool,
+    reported_ctx: Option<u64>,
     auth: Option<&(String, String)>,
     recorder: &Recorder,
 ) -> Res<()> {
@@ -245,6 +258,13 @@ async fn serve(
     let head = read_request(&mut stream).await?;
     let started_ms = recorder.elapsed_ms();
     let started = Instant::now();
+    let is_props = head.method == "GET"
+        && head
+            .path
+            .split('?')
+            .next()
+            .is_some_and(|path| path.trim_end_matches('/').ends_with("/props"));
+    let reported_ctx = reported_ctx.filter(|_| is_props);
     let is_completions = head.path.ends_with("/chat/completions");
     // Anthropic's Messages API, for a run whose answering model is Claude.
     let is_messages = head.path.ends_with("/v1/messages");
@@ -288,8 +308,23 @@ async fn serve(
         error: None,
     };
     let client_stream = stream.get_mut();
-    match forward.body(body).send().await {
-        Ok(response) => {
+    match (forward.body(body).send().await, reported_ctx) {
+        (Ok(response), Some(window)) if response.status().is_success() => {
+            let status = response.status();
+            record.status = Some(status.as_u16());
+            let mut props: Value = serde_json::from_slice(&response.bytes().await?)?;
+            report_window(&mut props, window);
+            let props = serde_json::to_vec(&props)?;
+            let head = format!(
+                "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                status.as_u16(),
+                status.canonical_reason().unwrap_or(""),
+                props.len()
+            );
+            client_stream.write_all(head.as_bytes()).await?;
+            client_stream.write_all(&props).await?;
+        }
+        (Ok(response), _) => {
             let status = response.status();
             record.status = Some(status.as_u16());
             let content_type = response
@@ -341,7 +376,7 @@ async fn serve(
                 });
             }
         }
-        Err(error) => {
+        (Err(error), _) => {
             record.error = Some(WithCauses(&error).to_string());
             let reply =
                 "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";

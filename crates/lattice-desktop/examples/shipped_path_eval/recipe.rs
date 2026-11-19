@@ -71,6 +71,10 @@ pub struct Server {
     pub launch: Option<String>,
     pub expected_ctx: u64,
     pub expected_slots: u64,
+    /// The window the proxy reports to the desktop in `/props`, as a server
+    /// started with that window would. The server's own when absent.
+    #[serde(default)]
+    pub reported_ctx: Option<u64>,
     /// `"off"`: add `chat_template_kwargs.enable_thinking: false` to every
     /// request that does not choose for itself. `"as-sent"`: forward
     /// requests untouched.
@@ -171,6 +175,20 @@ impl Recipe {
             Answerer::Server(server) => server.model.as_str(),
             Answerer::Cloud(cloud) => cloud.model.as_str(),
         })
+    }
+
+    pub fn reported_ctx(&self) -> Res<Option<u64>> {
+        let Answerer::Server(server) = self.answerer()? else {
+            return Ok(None);
+        };
+        match server.reported_ctx {
+            Some(window) if window == 0 || window > server.expected_ctx => Err(format!(
+                "server.reported_ctx {window} must be between 1 and expected_ctx {}",
+                server.expected_ctx
+            )
+            .into()),
+            window => Ok(window),
+        }
     }
 
     pub fn thinking_off(&self) -> Res<bool> {
