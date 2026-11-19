@@ -6,7 +6,7 @@
 #[path = "../examples/shipped_path_eval/proxy.rs"]
 mod proxy;
 
-use proxy::{serve, start, upstream_client, CallRecord, Recorder};
+use proxy::{ask_server, serve, start, upstream_client, CallRecord, Recorder};
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -517,5 +517,21 @@ async fn a_refused_request_other_than_a_chat_records_its_status_and_no_error() -
     let call = calls.first().ok_or("no call was recorded")?;
     assert_eq!((status, body.as_slice()), (503, reason.as_bytes()));
     assert_eq!((call.status, call.error.as_deref()), (Some(503), None));
+    Ok(())
+}
+
+#[tokio::test]
+async fn asking_the_server_follows_no_redirect_and_names_the_status() -> Res<()> {
+    let (held, nobody) = refusing_address()?;
+    let moved = format!(
+        "HTTP/1.1 302 Found\r\nLocation: http://{nobody}/props\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+    let upstream = server(vec![Answer::Once(moved.into_bytes())]).await?;
+    let asked = ask_server(&upstream, reqwest::Method::GET, "/props", None, None).await;
+    assert_eq!(
+        asked.map_err(|error| error.to_string()),
+        Err("/props answered 302 Found".to_owned())
+    );
+    drop(held);
     Ok(())
 }
