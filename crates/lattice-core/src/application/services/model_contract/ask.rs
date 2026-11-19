@@ -704,7 +704,7 @@ fn schema_for<C: Answered>(llm: &dyn LLMPort, showing: &Showing<'_>) -> Option<S
 }
 
 /// What `input` shows on a fresh request of `scope`, and the request that says it.
-fn render<'s, C: Answered>(
+pub(crate) fn render<'s, C: Answered>(
     llm: &dyn LLMPort,
     scope: &'s mut Scope,
     input: &C::Input,

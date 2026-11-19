@@ -19,8 +19,87 @@ use lattice_core::application::services::model_contract::shown::{
 use lattice_core::application::services::model_contract::units::Quoted;
 use lattice_core::application::services::model_contract::{Contract, ContractId};
 use lattice_core::shared::error::{AppError, Result};
+use futures::{stream, Stream, StreamExt};
+use lattice_core::application::services::model_contract::ask::{render, Settled};
+use lattice_core::application::services::model_contract::shown::Scope;
+use lattice_core::application::services::grounded_generation::Streaming;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
+use std::sync::Arc;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) enum DraftUpdate {
+    Progress { request_id: String, text: String },
+    Complete { request_id: String, text: String },
+    Error { request_id: String, error: String },
+}
+
+pub(crate) async fn write_streaming(
+    llm: &dyn LLMPort,
+    input: &Input,
+    brief: &str,
+    request_id: String,
+) -> impl Stream<Item = DraftUpdate> {
+    let mut scope = Scope::for_question();
+    let (showing, request) = match render::<LessonWriter>(llm, &mut scope, input, &crate::model_call::answer_options()) {
+        Ok(res) => res,
+        Err(e) => return stream::once(futures::future::ready(DraftUpdate::Error {
+            request_id: request_id.clone(),
+            error: e.to_string(),
+        })).boxed(),
+    };
+
+    let (tx, rx) = futures::channel::mpsc::unbounded();
+
+    let on_text = {
+        let tx = tx.clone();
+        let request_id = request_id.clone();
+        move |text: String| {
+            if let Err(e) = tx.unbounded_send(DraftUpdate::Progress {
+                request_id: request_id.clone(),
+                text,
+            }) {
+                return Err(AppError::InternalError(format!("Channel closed: {}", e)));
+            }
+            Ok(())
+        }
+    };
+
+    let streaming = Streaming {
+        on_text: &on_text,
+        on_retry: None,
+    };
+
+    tokio::spawn(async move {
+        let result = crate::model_call::send_tagged(
+            llm,
+            request,
+            Some(&streaming),
+            "Failed to generate lesson draft",
+        ).await;
+
+        match result {
+            Ok(output) => {
+                if let Err(e) = tx.unbounded_send(DraftUpdate::Complete {
+                    request_id: request_id.clone(),
+                    text: output.text,
+                }) {
+                    tracing::error!("Failed to send Complete update: {}", e);
+                }
+            }
+            Err(e) => {
+                if let Err(send_err) = tx.unbounded_send(DraftUpdate::Error {
+                    request_id: request_id.clone(),
+                    error: e.to_string(),
+                }) {
+                    tracing::error!("Failed to send Error update: {}", send_err);
+                }
+            }
+        }
+    });
+
+    rx
+}
 
 /// Said after the lesson's own instructions: the answer's fields, in words.
 const FORM: &str = " Write the answer as one object. ideas lists the lesson's core ideas in teaching order, each with its sections in teaching order: every section has a kind (explanation, worked_example, contrast or check), a title, a body, cites and citations. guidedPractice, independentPractice, reflection and recap are one section each, written in their own fields; the two practice sections also have a rubric of criteria, each with a title, a description and a dimension. questions lists the questions, each with a kind, a prompt, the wrong choices in wrong (each with its option and its reason), then the right choice in right, an explanation, cites and citations. cites names, by their handles, the sentences of the excerpts shown in sources that the section or question rests on: at least one whenever sources are shown, whatever its kind. Each entry of citations has the sentence it cites and, in cites, the handles of the excerpt sentences that state it.";
