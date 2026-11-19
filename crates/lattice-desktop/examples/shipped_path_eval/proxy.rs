@@ -358,11 +358,13 @@ pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
                     )
                     .into_bytes();
                     reply.extend_from_slice(&body);
-                    client_stream.write_all(&reply).await
+                    client_stream.write_all(&reply).await?;
+                    Ok(())
                 }
                 Err(error) => {
                     record.error = Some(WithCauses(&error).to_string());
-                    client_stream.write_all(BAD_GATEWAY.as_bytes()).await
+                    client_stream.write_all(BAD_GATEWAY.as_bytes()).await?;
+                    Ok(())
                 }
             }
         }
@@ -375,7 +377,8 @@ pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
                 status.as_u16(),
                 status.canonical_reason().unwrap_or("")
             );
-            let mut sent = client_stream.write_all(head.as_bytes()).await;
+            client_stream.write_all(head.as_bytes()).await?;
+            let mut sent = Ok(());
             let mut copy = Vec::new();
             let mut chunks = response.bytes_stream();
             while sent.is_ok() {
@@ -415,7 +418,8 @@ pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
         }
         (Err(error), _) => {
             record.error = Some(WithCauses(&error).to_string());
-            client_stream.write_all(BAD_GATEWAY.as_bytes()).await
+            client_stream.write_all(BAD_GATEWAY.as_bytes()).await?;
+            Ok(())
         }
     };
     // A client that gave up still gets its call recorded.
