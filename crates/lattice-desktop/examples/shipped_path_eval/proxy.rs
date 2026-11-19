@@ -358,13 +358,11 @@ pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
                     )
                     .into_bytes();
                     reply.extend_from_slice(&body);
-                    client_stream.write_all(&reply).await?;
-                    Ok(())
+                    client_stream.write_all(&reply).await
                 }
                 Err(error) => {
                     record.error = Some(WithCauses(&error).to_string());
-                    client_stream.write_all(BAD_GATEWAY.as_bytes()).await?;
-                    Ok(())
+                    client_stream.write_all(BAD_GATEWAY.as_bytes()).await
                 }
             }
         }
@@ -377,8 +375,7 @@ pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
                 status.as_u16(),
                 status.canonical_reason().unwrap_or("")
             );
-            client_stream.write_all(head.as_bytes()).await?;
-            let mut sent = Ok(());
+            let mut sent = client_stream.write_all(head.as_bytes()).await;
             let mut copy = Vec::new();
             let mut chunks = response.bytes_stream();
             while sent.is_ok() {
@@ -403,7 +400,7 @@ pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
             }
             // A refused request says why in its body; without it the run only
             // knows the status.
-            if is_chat && !status.is_success() && record.error.is_none() && sent.is_ok() {
+            if is_chat && !status.is_success() && record.error.is_none() {
                 record.error = Some(String::from_utf8_lossy(&copy).into_owned());
             }
             if is_chat {
@@ -418,8 +415,7 @@ pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
         }
         (Err(error), _) => {
             record.error = Some(WithCauses(&error).to_string());
-            client_stream.write_all(BAD_GATEWAY.as_bytes()).await?;
-            Ok(())
+            client_stream.write_all(BAD_GATEWAY.as_bytes()).await
         }
     };
     // A client that gave up still gets its call recorded.
