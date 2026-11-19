@@ -290,12 +290,12 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
                 (None, None) => None,
                 _ => return Err("a recipe gives a server's gguf and gguf_sha256 together".into()),
             };
-            (
-                gguf_sha256,
-                probe_server(server).await?,
-                server.url.clone(),
-                None,
-            )
+            let reported = recipe.reported_ctx()?;
+            let mut probe = probe_server(server).await?;
+            if let Some(object) = probe.as_object_mut() {
+                object.insert("reported_n_ctx".into(), json!(reported));
+            }
+            (gguf_sha256, probe, server.url.clone(), None)
         }
         recipe::Answerer::Cloud(cloud) => {
             let (upstream, variable) = cloud.upstream()?;
@@ -308,14 +308,21 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
     // A cloud provider's key is the desktop's own; only a llama-server's
     // header is the proxy's to add.
     let auth = recipe.server.as_ref().and_then(|_| proxy::server_auth());
+    let reported_ctx = recipe.reported_ctx()?;
     let proxy_url = proxy::start(
         upstream,
         recipe.thinking_off()?,
-        recipe.reported_ctx()?,
+        reported_ctx,
         auth,
         Arc::clone(&recorder),
     )
     .await?;
+    if let (Some(n), Some(server)) = (reported_ctx, &recipe.server) {
+        eprintln!(
+            "the app is shown a window of {n} tokens; the server has {}",
+            server.expected_ctx
+        );
+    }
     if let Some(variable) = base_url_variable {
         // Read when the desktop builds its cloud client, so every request of
         // the run crosses the proxy and is recorded.
