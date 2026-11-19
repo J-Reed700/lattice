@@ -48,3 +48,12 @@ fn the_driver_error_comes_back_for_a_data_function() {
     let error: sqlx::Error = PersistenceError::from(sqlx::Error::PoolClosed).into();
     assert!(matches!(error, sqlx::Error::PoolClosed));
 }
+
+#[test]
+fn a_busy_driver_is_a_busy_database_with_the_drivers_message() {
+    let expected = sqlx::Error::PoolTimedOut.to_string();
+    assert!(matches!(
+        AppError::from(sqlx::Error::PoolTimedOut),
+        AppError::DatabaseBusy(message) if message == expected
+    ));
+}

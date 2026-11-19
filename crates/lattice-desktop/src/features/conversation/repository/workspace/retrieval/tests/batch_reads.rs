@@ -1,7 +1,12 @@
 use super::*;
 use crate::tests::common::query_counts::count_reads;
+use lattice_core::shared::persistence::Database;
 
 async fn fixture() -> ConversationRepository {
+    fixture_with_pool().await.1
+}
+
+async fn fixture_with_pool() -> (sqlx::SqlitePool, ConversationRepository) {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -34,7 +39,8 @@ async fn fixture() -> ConversationRepository {
                 .unwrap();
         }
     }
-    ConversationRepository::new(pool)
+    let db = Database::new(pool.clone());
+    (pool, ConversationRepository::new(db))
 }
 
 #[tokio::test]
@@ -95,11 +101,11 @@ async fn openings_batch_without_losing_selection_order_scope_or_sparse_indices()
 
 #[tokio::test]
 async fn section_lookup_accepts_large_scopes_without_widening_them() {
-    let repo = fixture().await;
+    let (pool, repo) = fixture_with_pool().await;
     sqlx::query(
         "UPDATE text_chunks SET section='Section 1.2' WHERE id='first-1' OR document_id='foreign'",
     )
-    .execute(&repo.pool)
+    .execute(&pool)
     .await
     .unwrap();
     let mut allowed: HashSet<String> = (0..33_000).map(|id| format!("missing-{id}")).collect();

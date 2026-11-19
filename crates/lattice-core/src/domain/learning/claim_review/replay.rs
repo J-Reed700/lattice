@@ -2,8 +2,8 @@
 //! the transitions the ledger applies once it has validated the event.
 
 use super::{
-    Actor, Check, CheckBasis, CheckResult, Checker, ClaimState, Class, ClassifiedBy, GateVerdict,
-    ReopenCause, TrustAssessment, TrustCause, VerdictKind,
+    Actor, AuditedState, Check, CheckBasis, CheckResult, Checker, ClaimState, Class, ClassifiedBy,
+    GateVerdict, ReopenCause, TrustAssessment, TrustCause, VerdictKind,
 };
 use crate::domain::learning::acceptance::{End, Outcome, Step, Then};
 
@@ -45,6 +45,8 @@ pub(super) struct Cursor {
     /// answer has read what it found: that check answers the hint (acceptance
     /// design §2.10, a user's hint).
     pub(super) hinted: bool,
+    /// The run of a code example the claim stands for.
+    pub(super) code_example: Option<String>,
 }
 
 pub(super) fn queued(kind: VerdictKind, reason: String) -> ClaimState {
@@ -158,14 +160,7 @@ pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool, at
     // no attempt is charged and a rewrite keeps waiting for its check. A
     // claim that passed on text since changed has no check now.
     if local && check.result.is_unjudged() {
-        if !observation
-            && matches!(
-                cursor.state,
-                ClaimState::ResolvedByEvidence { .. }
-                    | ClaimState::Consistent { .. }
-                    | ClaimState::GeneralKnowledge { .. }
-            )
-        {
+        if !observation && cursor.state.is_verified() {
             cursor.state = ClaimState::Unchecked;
             cursor.basis = None;
             cursor.trust = None;
@@ -240,32 +235,22 @@ fn apply_verifier(state: &mut ClaimState, result: &CheckResult, reason: &str) {
     let CheckResult::Failed { kind } = result else {
         return;
     };
-    let disputes = match state {
-        ClaimState::ResolvedByEvidence { .. } => matches!(
-            kind,
-            VerdictKind::Unsupported
-                | VerdictKind::Contradicted
-                | VerdictKind::NoSource
-                | VerdictKind::CouldNotJudge
-        ),
-        ClaimState::Confirmed { .. } => matches!(
-            kind,
-            VerdictKind::Unsupported | VerdictKind::Contradicted | VerdictKind::NoSource
-        ),
-        ClaimState::GeneralKnowledge { .. } => *kind == VerdictKind::Contradicted,
-        _ => false,
-    };
-    if !disputes {
+    let Some(audited) = state
+        .audited_state()
+        .filter(|audited| audited.disputed_by(kind))
+    else {
         return;
-    }
-    *state = match &*state {
-        ClaimState::ResolvedByEvidence { .. } => queued(
+    };
+    *state = match audited {
+        AuditedState::Verified => queued(
             VerdictKind::Disputed {
                 verifier: Box::new(kind.clone()),
             },
             reason.to_string(),
         ),
-        closed => reopened(ReopenCause::VerifierDispute, closed.clone()),
+        AuditedState::Confirmed | AuditedState::GeneralKnowledge => {
+            reopened(ReopenCause::VerifierDispute, state.clone())
+        }
     };
 }
 
@@ -365,6 +350,9 @@ pub(super) fn stepped(
         // machine's pass, as a Reasoning statement's is.
         Then::End(End::Consistent | End::NotAClaim) => Some(ClaimState::Consistent { at }),
         Then::End(End::GeneralKnowledge) => Some(ClaimState::GeneralKnowledge { at }),
+        // The ledger publishes it not verified with the reason of its last
+        // reading, which this decision does not carry.
+        Then::End(End::Unverified) => None,
         Then::End(End::Removed { .. }) => Some(ClaimState::Removed {
             at,
             by: Actor::Machine,

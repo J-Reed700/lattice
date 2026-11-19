@@ -13,6 +13,7 @@ use syn::{
 
 mod data_access;
 mod feature_graph;
+mod model_calls;
 mod ratchet;
 
 /// The core crate's feature that lends its test doubles to the app's tests.

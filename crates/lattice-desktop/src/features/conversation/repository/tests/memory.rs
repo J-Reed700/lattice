@@ -13,6 +13,7 @@ use lattice_core::domain::conversation::memory::{
     compute_digest, EvidencePurpose, EvidenceSpan, MemoryCommit, MemoryId, MemoryItem, MemoryKind,
     MemoryReview, MemoryState, MemoryValidity, SourceRole,
 };
+use lattice_core::shared::persistence::Database;
 
 async fn write_test_vector(
     repository: &ConversationRepository,
@@ -74,7 +75,8 @@ async fn memory_vector_write_skips_deleted_moved_or_edited_sources() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let other = ConversationRepository::new(pool.clone())
+    let db = Database::new(pool.clone());
+    let other = ConversationRepository::new(db.clone())
         .create_conversation("Other", None)
         .await
         .unwrap();
@@ -88,7 +90,7 @@ async fn memory_vector_write_skips_deleted_moved_or_edited_sources() {
         "2026-09-01T10:00:00Z",
     )
     .await;
-    let repository = ConversationRepository::new(pool.clone());
+    let repository = ConversationRepository::new(db.clone());
 
     assert_eq!(
         write_test_vector(
@@ -183,7 +185,8 @@ async fn memory_vector_write_propagates_unrelated_database_errors() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repository = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repository = ConversationRepository::new(db.clone());
     sqlx::query(
         "CREATE TRIGGER reject_memory_vector BEFORE INSERT ON conversation_memory_vectors BEGIN SELECT RAISE(ABORT, 'sentinel'); END",
     )
@@ -293,7 +296,8 @@ async fn a_commit_retires_a_shared_item_in_the_chat_it_came_from() {
         "2026-09-02T10:00:00Z",
     )
     .await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let old = MemoryId::new();
     let new = MemoryId::new();
     let old_span = whole_message_span(&pool, "mm1", EvidencePurpose::Assertion).await;
@@ -373,7 +377,8 @@ async fn a_commit_makes_ledger_summary_watermark_and_revision_durable_together()
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     let before = repo.load_memory_snapshot(&conversation_id).await.unwrap();
     assert_eq!(before.state.memory_revision, 0);
@@ -451,7 +456,8 @@ async fn an_established_fact_round_trips_through_the_schema() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     let before = repo.load_memory_snapshot(&conversation_id).await.unwrap();
     let id = MemoryId::new();
@@ -496,7 +502,8 @@ async fn recompacting_updates_the_one_summary_row_in_place() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     // The memory commit is the only writer of `conversation_summaries`, so this
     // is where the one-row-per-conversation invariant has to hold.
@@ -556,7 +563,8 @@ async fn the_snapshot_reports_where_the_summary_ends_and_a_commit_without_one_ke
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let first_answer: i64 =
         sqlx::query_scalar("SELECT sequence FROM conversation_messages WHERE id = 'mm2'")
             .fetch_one(&pool)
@@ -637,7 +645,8 @@ async fn evidence_resolves_to_exact_source_text_and_stops_when_the_source_moves(
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     let spans = [SourceSpanRef {
         message_id: "mm1".into(),
@@ -692,7 +701,8 @@ async fn a_foreign_span_cannot_be_read_or_committed_through_another_conversation
         "2026-09-01T10:00:00Z",
     )
     .await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     // Reading it through the wrong conversation yields no text at all.
     let resolved = repo
@@ -748,7 +758,8 @@ async fn a_concurrent_append_makes_the_commit_conflict_rather_than_publish_stale
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     let snapshot = repo.load_memory_snapshot(&conversation_id).await.unwrap();
 
@@ -803,7 +814,8 @@ async fn two_compactions_race_and_only_one_publishes() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let snapshot = repo.load_memory_snapshot(&conversation_id).await.unwrap();
 
     let span = whole_message_span(&pool, "mm1", EvidencePurpose::Assertion).await;
@@ -872,7 +884,8 @@ async fn retrying_the_same_operation_id_returns_one_committed_result() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let snapshot = repo.load_memory_snapshot(&conversation_id).await.unwrap();
 
     let id = MemoryId::new();
@@ -917,16 +930,19 @@ async fn concurrent_retries_of_one_memory_operation_serialize_idempotently() {
     // in-memory/single-connection fixture would accidentally serialize these
     // calls before SQLite's read-to-write upgrade race is exercised.
     let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("memory-concurrency.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path)
+        .await
+        .unwrap();
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(5)
-        .connect_with(crate::tests::sqlite::file_options(
-            temp.path().join("memory-concurrency.db"),
-        ))
+        .connect_with(lattice_core::shared::testing::sqlite::file_options(&path))
         .await
         .unwrap();
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let snapshot = repo.load_memory_snapshot(&conversation_id).await.unwrap();
     let id = MemoryId::new();
     let span = whole_message_span(&pool, "mm1", EvidencePurpose::Assertion).await;
@@ -978,7 +994,8 @@ async fn deleting_a_source_message_takes_its_quotation_and_the_summary_with_it()
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let snapshot = repo.load_memory_snapshot(&conversation_id).await.unwrap();
 
     let id = MemoryId::new();
@@ -1038,7 +1055,8 @@ async fn editing_a_source_message_invalidates_memory_without_deleting_the_transc
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let snapshot = repo.load_memory_snapshot(&conversation_id).await.unwrap();
 
     let id = MemoryId::new();
@@ -1084,7 +1102,8 @@ async fn equal_timestamps_keep_a_deterministic_order_through_reload_and_vacuum()
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     let expected: Vec<String> = vec!["mm1".into(), "mm2".into(), "mm3".into(), "mm4".into()];
     let ids: Vec<String> = repo
@@ -1126,7 +1145,8 @@ async fn a_fork_gets_its_own_sequence_run_and_no_inherited_memory() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let snapshot = repo.load_memory_snapshot(&conversation_id).await.unwrap();
 
     let id = MemoryId::new();
@@ -1216,7 +1236,8 @@ async fn an_old_summary_without_a_ledger_does_not_claim_extraction_coverage() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     // Exactly the state an existing conversation is in before this feature: a
     // prose summary written by the old compaction path, and no ledger.
@@ -1249,7 +1270,8 @@ async fn a_supersession_keeps_the_old_item_readable_as_history() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let snapshot = repo.load_memory_snapshot(&conversation_id).await.unwrap();
 
     let original = MemoryId::new();
@@ -1358,7 +1380,8 @@ async fn paging_is_bounded_by_bytes_as_well_as_message_count() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     // One pasted log file is larger than several ordinary turns put together.
     seed_message(
@@ -1448,7 +1471,8 @@ async fn recall_is_scoped_to_one_conversation_and_ignores_titles_and_bookmarks()
     .await
     .unwrap();
 
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let found = repo
         .search_memory_source_messages(&conversation_id, "deploy approve", &[], 24)
         .await
@@ -1482,7 +1506,8 @@ async fn exact_identifiers_are_case_sensitive_and_survive_a_truncated_lexical_qu
         "2026-09-01T10:00:00Z",
     )
     .await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     let found = repo
         .search_memory_source_messages(
@@ -1511,7 +1536,8 @@ async fn an_unsupported_stored_schema_blocks_use_until_rebuilt() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let snapshot = repo.load_memory_snapshot(&conversation_id).await.unwrap();
 
     // A future build wrote this row.
@@ -1570,7 +1596,8 @@ async fn a_recorded_error_leaves_the_last_good_ledger_exactly_as_it_was() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let snapshot = repo.load_memory_snapshot(&conversation_id).await.unwrap();
 
     let id = MemoryId::new();
@@ -1625,7 +1652,8 @@ async fn event_retention_is_bounded_and_never_removes_item_evidence() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     let id = MemoryId::new();
     let span = whole_message_span(&pool, "mm1", EvidencePurpose::Assertion).await;
@@ -1745,7 +1773,8 @@ async fn regenerating_a_turn_no_memory_cites_keeps_the_ledger_and_clamps_the_wat
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     seed_extracted_and_user_items(&pool, &repo, &conversation_id, "mm1", "mm2").await;
 
     // Regenerate takes back mm3 and mm4; nothing in the ledger cites either.
@@ -1776,7 +1805,8 @@ async fn regenerating_a_cited_turn_rebuilds_extraction_but_keeps_what_the_user_e
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let (_, user_edited) =
         seed_extracted_and_user_items(&pool, &repo, &conversation_id, "mm3", "mm1").await;
 
@@ -1843,7 +1873,8 @@ async fn deleting_the_summary_boundary_leaves_a_usable_ledger_with_no_summary() 
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     commit_summary_through_mm4(&repo, &conversation_id).await;
 
     repo.delete_messages(&conversation_id, &["mm4".to_string()])
@@ -1870,7 +1901,8 @@ async fn deleting_an_early_message_drops_the_summary_but_not_the_watermark() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     commit_summary_through_mm4(&repo, &conversation_id).await;
 
     repo.delete_messages(&conversation_id, &["mm1".to_string()])
@@ -1896,7 +1928,8 @@ async fn a_forget_writes_the_suppression_the_summary_fold_redacts_with() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_memory_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let snapshot = repo.load_memory_snapshot(&conversation_id).await.unwrap();
 
     let id = MemoryId::new();
@@ -1981,4 +2014,158 @@ async fn a_forget_writes_the_suppression_the_summary_fold_redacts_with() {
             .is_empty(),
         "another conversation's forgotten facts stay its own"
     );
+}
+
+#[tokio::test]
+async fn a_busy_store_makes_a_memory_commit_a_busy_error() {
+    use crate::features::conversation::memory::CompactionError;
+    use lattice_core::shared::error::AppError;
+
+    let options =
+        <sqlx::sqlite::SqliteConnectOptions as std::str::FromStr>::from_str("sqlite::memory:")
+            .unwrap();
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(std::time::Duration::from_millis(100))
+        .connect_lazy_with(options);
+    let repo = ConversationRepository::new(Database::new(pool.clone()));
+    let _held = pool.acquire().await.unwrap();
+
+    let error = repo
+        .commit_memory(
+            &MemoryCommitPreconditions {
+                conversation_id: "conv-busy".into(),
+                operation_id: "busy".into(),
+                expected_memory_revision: 0,
+                expected_transcript_revision: 0,
+            },
+            &candidate(MemoryCommit::default(), 0, None),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(
+            AppError::from(CompactionError::Commit(error)),
+            AppError::DatabaseBusy(_)
+        ),
+        "a pool admission timeout must stay a busy error"
+    );
+}
+
+/// An answer saved with two references: memory reads it, cuts spans on it and
+/// commits evidence over it without the handles, while the stored text keeps them.
+async fn seed_answer_with_references(pool: &SqlitePool) -> (String, String) {
+    let content = "Deploys need approval [s1] from the lead [s2].";
+    seed_message(
+        pool,
+        "conv-mem",
+        "mm5",
+        "assistant",
+        content,
+        10,
+        "2026-09-01T10:00:00Z",
+    )
+    .await;
+    let first = content.find("[s1]").unwrap();
+    let second = content.find("[s2]").unwrap();
+    let metadata = serde_json::json!({"references": [
+        {"start": first, "end": first + 4, "prefix": "s", "number": 1},
+        {"start": second, "end": second + 4, "prefix": "s", "number": 2},
+    ]});
+    sqlx::query("UPDATE conversation_messages SET metadata = ? WHERE id = 'mm5'")
+        .bind(metadata.to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+    (
+        content.to_string(),
+        "Deploys need approval from the lead.".to_string(),
+    )
+}
+
+#[tokio::test]
+async fn memory_reads_an_answer_without_its_references_and_a_legacy_message_as_saved() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let conversation_id = seed_memory_thread(&pool).await;
+    let (stored, clean) = seed_answer_with_references(&pool).await;
+    let repo = ConversationRepository::new(Database::new(pool.clone()));
+
+    let page = repo
+        .page_memory_source_messages(&conversation_id, 0, 100, SourceReadLimits::DEFAULT)
+        .await
+        .unwrap();
+    let answer = page.messages.iter().find(|m| m.id == "mm5").unwrap();
+    assert_eq!(answer.content, clean);
+    assert_eq!(answer.content_digest, compute_digest(&clean));
+    let legacy = page.messages.iter().find(|m| m.id == "mm2").unwrap();
+    assert_eq!(legacy.content, "Understood, I will wait.");
+    assert_eq!(
+        legacy.content_digest,
+        compute_digest("Understood, I will wait.")
+    );
+
+    let ids = vec!["mm5".to_string()];
+    let raw = repo
+        .read_memory_messages(&conversation_id, &ids, SourceReadLimits::DEFAULT)
+        .await
+        .unwrap();
+    assert_eq!(
+        raw[0].content, stored,
+        "the turn's own readers keep the handles"
+    );
+    assert_eq!(raw[0].references.len(), 2);
+
+    let spans = [SourceSpanRef {
+        message_id: "mm5".into(),
+        start_byte: 0,
+        end_byte: "Deploys need approval from".len() as u32,
+    }];
+    let resolved = repo
+        .read_memory_source_spans(&conversation_id, &spans, SourceReadLimits::DEFAULT)
+        .await
+        .unwrap();
+    assert_eq!(
+        resolved[0].text.as_deref(),
+        Some("Deploys need approval from")
+    );
+}
+
+#[tokio::test]
+async fn a_commit_accepts_evidence_cut_on_an_answer_without_its_references() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let conversation_id = seed_memory_thread(&pool).await;
+    let (_, clean) = seed_answer_with_references(&pool).await;
+    let repo = ConversationRepository::new(Database::new(pool.clone()));
+    let before = repo.load_memory_snapshot(&conversation_id).await.unwrap();
+
+    let span = EvidenceSpan {
+        message_id: "mm5".into(),
+        sequence: 5,
+        role: SourceRole::Assistant,
+        start_byte: 0,
+        end_byte: clean.len() as u32,
+        content_digest: compute_digest(&clean),
+        purpose: EvidencePurpose::Assertion,
+    };
+    let id = MemoryId::new();
+    let commit = MemoryCommit {
+        inserts: vec![item(&id, &conversation_id, MemoryKind::Constraint, span)],
+        updates: Vec::new(),
+        summary: None,
+        processed_through_sequence: 5,
+    };
+    repo.commit_memory(
+        &MemoryCommitPreconditions {
+            conversation_id: conversation_id.clone(),
+            expected_transcript_revision: before.transcript_revision,
+            expected_memory_revision: 0,
+            operation_id: "op-clean".into(),
+        },
+        &candidate(commit, before.transcript_revision, None),
+    )
+    .await
+    .expect("evidence on the text memory reads commits");
 }

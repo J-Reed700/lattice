@@ -26,10 +26,6 @@ pub enum ApplicationError {
     #[error("Service '{service}' not available: {reason}")]
     ServiceNotAvailable { service: String, reason: String },
 
-    /// Processing queue is full (backpressure).
-    #[error("Queue '{queue_name}' is full")]
-    QueueFull { queue_name: String },
-
     /// Serialization failed.
     #[error("Serialization failed for {context}: {reason}")]
     SerializationFailed { context: String, reason: String },
@@ -73,20 +69,6 @@ impl ApplicationError {
         }
     }
 
-    /// Returns true if this error is potentially recoverable by retrying.
-    ///
-    /// Recoverable errors include:
-    /// - Queue full (backpressure)
-    /// - Service not available (transient)
-    /// - Domain errors marked as retryable (e.g., concurrent modification)
-    pub fn is_recoverable(&self) -> bool {
-        match self {
-            Self::QueueFull { .. } | Self::ServiceNotAvailable { .. } => true,
-            Self::Domain(err) => err.is_retryable(),
-            _ => false,
-        }
-    }
-
     /// Returns true if this is a configuration error.
     pub fn is_config_error(&self) -> bool {
         matches!(self, Self::InvalidConfig { .. })
@@ -122,7 +104,6 @@ mod tests {
 
         assert!(!error.is_domain_error());
         assert!(error.is_config_error());
-        assert!(!error.is_recoverable());
 
         let msg = error.to_string();
         assert!(msg.contains("Invalid configuration"));
@@ -138,25 +119,10 @@ mod tests {
 
         assert!(!error.is_domain_error());
         assert!(!error.is_config_error());
-        assert!(error.is_recoverable());
 
         let msg = error.to_string();
         assert!(msg.contains("EmbeddingService"));
         assert!(msg.contains("not loaded"));
-    }
-
-    #[test]
-    fn test_queue_full() {
-        let error = ApplicationError::QueueFull {
-            queue_name: "indexing_queue".to_string(),
-        };
-
-        assert!(!error.is_domain_error());
-        assert!(error.is_recoverable());
-
-        let msg = error.to_string();
-        assert!(msg.contains("indexing_queue"));
-        assert!(msg.contains("full"));
     }
 
     #[test]
@@ -167,7 +133,6 @@ mod tests {
         };
 
         assert!(!error.is_domain_error());
-        assert!(!error.is_recoverable());
 
         let msg = error.to_string();
         assert!(msg.contains("DocumentDTO"));
@@ -182,7 +147,6 @@ mod tests {
         };
 
         assert!(!error.is_domain_error());
-        assert!(!error.is_recoverable());
 
         let msg = error.to_string();
         assert!(msg.contains("SearchRequest"));
@@ -198,7 +162,6 @@ mod tests {
         };
 
         assert!(!error.is_domain_error());
-        assert!(!error.is_recoverable());
 
         let msg = error.to_string();
         assert!(msg.contains("line 42"));
@@ -214,7 +177,6 @@ mod tests {
         };
 
         assert!(!error.is_domain_error());
-        assert!(!error.is_recoverable());
 
         let msg = error.to_string();
         assert!(msg.contains("CSV file"));
@@ -229,7 +191,6 @@ mod tests {
         };
 
         assert!(!error.is_domain_error());
-        assert!(!error.is_recoverable());
 
         let msg = error.to_string();
         assert!(msg.contains("IndexDocumentUseCase"));
@@ -244,7 +205,6 @@ mod tests {
         };
 
         assert!(!error.is_domain_error());
-        assert!(!error.is_recoverable());
 
         let msg = error.to_string();
         assert!(msg.contains("Document -> DTO"));
@@ -252,35 +212,10 @@ mod tests {
     }
 
     #[test]
-    fn test_recoverable_domain_error() {
-        let concurrent = DomainError::ConcurrentModification {
-            resource: "Document".to_string(),
-            details: "Version conflict".to_string(),
-        };
-
-        let app_err = ApplicationError::from(concurrent);
-        assert!(app_err.is_recoverable());
-    }
-
-    #[test]
-    fn test_non_recoverable_domain_error() {
-        let validation = DomainError::ValidationFailed {
-            field: "email".to_string(),
-            reason: "Invalid format".to_string(),
-        };
-
-        let app_err = ApplicationError::from(validation);
-        assert!(!app_err.is_recoverable());
-    }
-
-    #[test]
     fn test_serialization_roundtrip() {
         let errors = vec![
             ApplicationError::InvalidConfig {
                 details: "Test".to_string(),
-            },
-            ApplicationError::QueueFull {
-                queue_name: "test_queue".to_string(),
             },
             ApplicationError::from(DomainError::EntityNotFound {
                 entity_type: "Test".to_string(),
@@ -295,7 +230,6 @@ mod tests {
 
             assert_eq!(error.to_string(), deserialized.to_string());
             assert_eq!(error.is_domain_error(), deserialized.is_domain_error());
-            assert_eq!(error.is_recoverable(), deserialized.is_recoverable());
         }
     }
 
@@ -328,34 +262,27 @@ mod tests {
                 ApplicationError::InvalidConfig {
                     details: "Test".to_string(),
                 },
-                (false, true, false), // (is_domain, is_config, is_recoverable)
+                (false, true),
             ),
             (
                 ApplicationError::ServiceNotAvailable {
                     service: "Test".to_string(),
                     reason: "Down".to_string(),
                 },
-                (false, false, true),
-            ),
-            (
-                ApplicationError::QueueFull {
-                    queue_name: "test".to_string(),
-                },
-                (false, false, true),
+                (false, false),
             ),
             (
                 ApplicationError::from(DomainError::EntityNotFound {
                     entity_type: "Test".to_string(),
                     identifier: "123".to_string(),
                 }),
-                (true, false, false),
+                (true, false),
             ),
         ];
 
-        for (error, (expected_domain, expected_config, expected_recoverable)) in test_cases {
+        for (error, (expected_domain, expected_config)) in test_cases {
             assert_eq!(error.is_domain_error(), expected_domain);
             assert_eq!(error.is_config_error(), expected_config);
-            assert_eq!(error.is_recoverable(), expected_recoverable);
         }
     }
 }

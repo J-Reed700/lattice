@@ -1,106 +1,422 @@
 //! Bind review findings to app-owned passages, not model-transcribed quotations.
-use crate::lessons::structured_call::{CallKind, ReasonFirst};
-use crate::lessons::writer_excerpts::{self, WriterExcerpts};
-use crate::review_findings::{FindingKind, FindingSite, ReviewFinding};
-use crate::{generation, outline_progress::OutlineProgress};
+use crate::dto::LearningBlockKind;
+use crate::lessons::structured_call::{Asking, CallKind, ReasonFirst};
+use crate::lessons::trace::{self, Stage};
+use crate::lessons::writer_excerpts::WriterExcerpts;
+use crate::reference_collection::item_tokens;
+use crate::review_findings::{FindingId, FindingSite, ReviewFinding};
 use lattice_core::{
     application::ports::LLMPort,
+    application::services::model_contract::{
+        ask::{ask_new, Alone, Answered, Says},
+        packed::Packed,
+        shape::{Authored, Fields, Form, New, Union},
+        shown::{self, Drawn, Kind, Picked, Showing, Told},
+        Contract, ContractId,
+    },
+    protocol,
     shared::error::{AppError, Result},
     shared::hash::sha256_hex,
+    shared::protocol::Protocol,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashSet};
+use serde_json::{json, Map, Value};
+use std::marker::PhantomData;
 
-pub(super) const POLICY: &str = "section-review-v3";
+pub(crate) use concerns::LessonConcern;
+use concerns::{CheckConcern, IssueConcern};
+
+pub(super) const POLICY: Protocol = protocol!("section-review", 8);
+
+/// The saved answers of the section review, by what it was given.
+const FINDINGS_KEYS: Protocol = protocol!("teaching-review-findings", 8);
 
 /// The room the review's answer is given.
 const REVIEW_ANSWER_TOKENS: usize = 6000;
 
-/// What the review does with a blank finding after the response correction.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum LengthRule {
-    /// The review fails.
-    Fail,
-    /// A blank finding is dropped: no teaching-review finding fails a lesson
-    /// job.
-    DropBlank,
-}
-
 /// What the reviewer works through in prose before its findings are written
 /// to the response schema, where each section's verdict would otherwise be
 /// chosen as it is written.
-const REVIEW_DRAFT_BRIEF: &str = "Go through the candidate part by part: for a lesson, every section listed in sectionIndicesToReview and every question; for an outline, every module. Solve each exercise and question yourself and check each worked example against its stated premises and result. For each part say what you checked, what you found and whether it has a material defect.";
+const REVIEW_DRAFT_BRIEF: &str = "Go through the candidate part by part: for a lesson, every section whose inReview is true and every question; for an outline, every module. Solve each exercise and question yourself and check each worked example against its stated premises and result. For each part say what you checked, what you found and whether it has a material defect.";
 
-#[cfg(test)]
-pub(super) fn fixture_checks(checks: Vec<Value>) -> Value {
-    Value::Array(
-        checks
-            .into_iter()
-            .map(|mut check| {
-                if let Some(fields) = check.as_object_mut() {
-                    let index = fields.remove("index").unwrap_or(Value::Null);
-                    fields.insert("sectionId".into(), json!(format!("section-{index}")));
+/// The sentence the prose step is given when open findings are asked about.
+const OPEN_FINDINGS_BRIEF: &str = " For each entry of openFindings, read the part it names as the candidate now has it, whether or not that part is in review. Find the words of that part that still show the defect, or, for something left out, the words it should follow. When no words of the part show it any more, the finding is resolved. An open finding's id is never used for a different defect: report that as a new issue.";
+
+/// How the entries of an answer are written, in every review.
+const ANSWER_FORM: &str = "Answer with items. Each item holds one entry, and the entry's kind says what it is. An entry of kind issue is a defect of the whole material, as the issues described above: its note says what is wrong, and continues is the id of the open finding it continues, or none. An entry of kind sectionDefect is a defect in a section in review, as the sectionDefects described above: passageId is the passage where it shows, finding says what is wrong, and continues is as for an issue. An entry of kind resolved gives in openFinding the id of an open finding whose defect is no longer in the candidate; an open finding that no entry names stays open.";
+
+/// What a lesson's review adds to how its entries are written.
+const CONCERN_FORM: &str = " An issue's concern is the one concern it fails. A sectionDefect's concerns is a list of objects, each with a concern: one for every concern the section fails.";
+
+/// A part of a section the reviewer may point at: a passage of a section in review.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct Passage {
+    id: String,
+    section: usize,
+    number: usize,
+}
+
+impl Kind for Passage {
+    const PREFIX: &'static str = "p";
+    const DRAWN: Drawn = Drawn::Itself;
+    type Ref = String;
+
+    fn reference(&self) -> String {
+        self.id.clone()
+    }
+}
+
+/// A finding an earlier review recorded, still open.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct OpenFinding {
+    id: FindingId,
+    part: Told<String>,
+    /// The passage it is about now, when the reviewer may point at it.
+    passage: Option<String>,
+    note: Told<String>,
+}
+
+impl Kind for OpenFinding {
+    const PREFIX: &'static str = "f";
+    const DRAWN: Drawn = Drawn::Itself;
+    type Ref = FindingId;
+
+    fn reference(&self) -> FindingId {
+        self.id.clone()
+    }
+}
+
+/// What one review request says.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct Input {
+    system: Told<String>,
+    /// The caller's task, without its candidate and with its excerpts taken out.
+    prompt: Told<Value>,
+    /// The reviewed candidate: bodies as passages without names, `inReview` and `label` on each section.
+    candidate: Told<Value>,
+    passages: Vec<Passage>,
+    /// The writer's excerpts, the ones the lesson cites first.
+    sources: Packed<Told<Value>>,
+    open: Vec<OpenFinding>,
+    /// What an earlier part of a cut-off answer already holds.
+    reported: Told<Vec<String>>,
+}
+
+/// One entry of a review's answer.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Entry {
+    /// A defect that belongs to no section.
+    Issue {
+        note: String,
+        continues: Option<Picked<OpenFinding>>,
+    },
+    /// A defect in a passage of a section in review.
+    Defect {
+        at: Picked<Passage>,
+        finding: String,
+        concerns: Vec<LessonConcern>,
+        continues: Option<Picked<OpenFinding>>,
+    },
+    /// An open finding whose defect is gone.
+    Resolved(Picked<OpenFinding>),
+}
+
+/// The kind of review: which defects it reports.
+pub(crate) trait Lens: Send + Sync + 'static {
+    const ID: ContractId;
+    const REMIT: Remit;
+}
+
+/// A review of any material: any material defect.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Anything;
+
+/// A lesson's review: only the concerns it owns.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Concerns;
+
+impl Lens for Anything {
+    const ID: ContractId = ContractId::new("teaching-review");
+    const REMIT: Remit = Remit::Open;
+}
+
+impl Lens for Concerns {
+    const ID: ContractId = ContractId::new("lesson-teaching-review");
+    const REMIT: Remit = Remit::Lesson;
+}
+
+/// The call that reviews a lesson's sections or an outline.
+pub(crate) struct TeachingReview<L>(PhantomData<L>);
+
+impl<L: Lens> Contract for TeachingReview<L> {
+    const ID: ContractId = L::ID;
+    type Input = Input;
+}
+
+/// One concern of a section's defect, as a list entry.
+struct ConcernEntry(LessonConcern);
+
+impl Authored for ConcernEntry {
+    fn form() -> Form {
+        Form::new().word::<CheckConcern>("concern")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(Self(fields.word::<CheckConcern>("concern")?.0))
+    }
+}
+
+/// The kinds of entry, told apart by `kind`.
+pub(crate) struct Kinds<L>(Entry, PhantomData<L>);
+
+impl<L: Lens> Union for Kinds<L> {
+    fn forms() -> Vec<(&'static str, Form)> {
+        let lesson = L::REMIT == Remit::Lesson;
+        let mut issue = Form::new().text("note");
+        if lesson {
+            issue = issue.word::<IssueConcern>("concern");
+        }
+        let issue = issue.point_or_none::<OpenFinding>("continues");
+        let mut defect = Form::new().point::<Passage>("passageId").text("finding");
+        if lesson {
+            defect = defect.list::<ConcernEntry>("concerns");
+        }
+        let defect = defect.point_or_none::<OpenFinding>("continues");
+        vec![
+            ("issue", issue),
+            ("sectionDefect", defect),
+            ("resolved", Form::new().point::<OpenFinding>("openFinding")),
+        ]
+    }
+
+    fn read(kind: &str, fields: &mut Fields<'_, '_>) -> Option<Self> {
+        let lesson = L::REMIT == Remit::Lesson;
+        let entry = match kind {
+            "issue" => {
+                let note = fields.text("note")?;
+                if lesson {
+                    fields.word::<IssueConcern>("concern")?;
                 }
-                check
-            })
-            .collect(),
-    )
+                Entry::Issue {
+                    note,
+                    continues: fields.point_or_none::<OpenFinding>("continues")?,
+                }
+            }
+            "sectionDefect" => {
+                let at = fields.point::<Passage>("passageId")?;
+                let finding = fields.text("finding")?;
+                let concerns = if lesson {
+                    fields
+                        .list::<ConcernEntry>("concerns")?
+                        .into_iter()
+                        .map(|entry| entry.0)
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                Entry::Defect {
+                    at,
+                    finding,
+                    concerns,
+                    continues: fields.point_or_none::<OpenFinding>("continues")?,
+                }
+            }
+            "resolved" => Entry::Resolved(fields.point::<OpenFinding>("openFinding")?),
+            _ => return None,
+        };
+        Some(Self(entry, PhantomData))
+    }
 }
 
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct BlockCheck {
-    index: usize,
-    passage_id: String,
-    finding: String,
-    has_defect: bool,
+/// One item of a review's answer.
+pub(crate) struct Item<L>(Entry, PhantomData<L>);
+
+impl<L: Lens> Authored for Item<L> {
+    fn form() -> Form {
+        Form::new().one_of::<Kinds<L>>("entry")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        let Kinds(entry, _) = fields.one_of::<Kinds<L>>("entry")?;
+        Some(Self(entry, PhantomData))
+    }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Review {
-    issues: Vec<String>,
-    #[serde(default, rename = "blockChecks")]
-    block_checks: Vec<Value>,
+impl<L: Lens> Answered for TeachingReview<L> {
+    type Answer = New<Item<L>>;
+    const ALONE: Alone = Alone::Fails;
+
+    fn within(input: &Input, room: usize) -> Option<Input> {
+        Some(Input {
+            sources: input.sources.within(room),
+            ..input.clone()
+        })
+    }
+
+    fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
+        let passages = showing.show(&input.passages)?;
+        let open = showing.show(&input.open)?;
+        let mut candidate = input.candidate.0.clone();
+        for (handle, passage) in passages.iter() {
+            let place = format!(
+                "/blocks/{}/bodyPassages/{}",
+                passage.section, passage.number
+            );
+            if let Some(entry) = candidate.pointer_mut(&place).and_then(Value::as_object_mut) {
+                entry.insert("id".into(), json!(handle.written()));
+            }
+        }
+        let mut task = input.prompt.0.as_object().cloned().unwrap_or_default();
+        task.insert("candidate".into(), candidate);
+        if !input.sources.is_empty() {
+            if let Some(Value::Object(context)) = task.get_mut("authoringContext") {
+                let sources: Vec<&Value> = input.sources.iter().map(|source| &source.0).collect();
+                context.insert("sources".into(), json!(sources));
+            }
+        }
+        if !input.open.is_empty() {
+            let entries: Vec<Value> = open
+                .iter()
+                .map(|(handle, finding)| {
+                    let mut entry = Map::new();
+                    entry.insert("id".into(), json!(handle.written()));
+                    entry.insert("part".into(), json!(finding.part));
+                    let passage = finding.passage.as_ref().and_then(|id| {
+                        passages
+                            .iter()
+                            .find(|(_, passage)| &passage.id == id)
+                            .map(|(handle, _)| handle.written())
+                    });
+                    if let Some(passage) = passage {
+                        entry.insert("passageId".into(), json!(passage));
+                    }
+                    entry.insert("note".into(), json!(finding.note));
+                    Value::Object(entry)
+                })
+                .collect();
+            task.insert("openFindings".into(), json!(entries));
+        }
+        if !input.reported.0.is_empty() {
+            task.insert("alreadyReported".into(), json!(input.reported));
+        }
+        let mut instructions = format!("{}\n{ANSWER_FORM}", input.system.0);
+        if L::REMIT == Remit::Lesson {
+            instructions.push_str(CONCERN_FORM);
+        }
+        let mut says = Says::new(instructions, Value::Object(task).to_string());
+        says.output_tokens = REVIEW_ANSWER_TOKENS;
+        Ok(says)
+    }
 }
 
-// Preserve every byte, including code indentation, newlines and Unicode. IDs
-// belong only to this candidate; nothing is normalized or fuzzy-matched.
-fn review_candidate(candidate: &Value) -> (Value, Vec<Vec<String>>) {
-    let mut candidate = candidate.clone();
-    let mut ids = Vec::new();
-    if let Some(blocks) = candidate.get_mut("blocks").and_then(Value::as_array_mut) {
-        for (index, block) in blocks.iter_mut().enumerate() {
+/// An open finding shown to the reviewer.
+#[derive(Clone, Debug)]
+pub struct Asked {
+    pub id: FindingId,
+    pub site: FindingSite,
+    /// The passage it is about now, when one still holds its words.
+    pub passage_id: Option<String>,
+    pub note: String,
+}
+
+/// Which defects a review reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Remit {
+    /// Any material defect.
+    Open,
+    /// Only the concerns a lesson's reviewer owns, each in a section whose kind takes it.
+    Lesson,
+}
+
+/// What one review covers. The default is a first review of everything.
+#[derive(Clone, Copy, Default)]
+pub struct Scope<'a> {
+    /// The sections to check; none is every section.
+    pub sections: Option<&'a [usize]>,
+    /// The open findings to judge again; none on a first review.
+    pub asked: Option<&'a [Asked]>,
+}
+
+/// The reviewer's judgement of one finding it was asked about.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Verdict {
+    pub id: FindingId,
+    pub present: bool,
+}
+
+/// A defect the reviewer reported, before it has a number.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Reported {
+    pub site: Option<FindingSite>,
+    pub note: String,
+    pub summary: String,
+    pub passage: Option<String>,
+    /// The app-owned id of the passage a section defect names.
+    pub passage_id: Option<String>,
+    /// The open finding the reviewer says this defect is.
+    #[serde(default)]
+    pub continues: Option<FindingId>,
+}
+
+impl Reported {
+    pub fn finding(self, number: u32) -> ReviewFinding {
+        let mut finding =
+            ReviewFinding::reviewer(number, self.site, self.note).with_summary(self.summary);
+        finding.passage = self.passage;
+        finding
+    }
+}
+
+/// What a review found: a verdict on each finding it was asked about, and
+/// the defects it reports beyond those.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct Judged {
+    pub verdicts: Vec<Verdict>,
+    pub reported: Vec<Reported>,
+}
+
+/// Each section's passages as `(id, text)`: the ids are the application's.
+pub(crate) fn passages_of(candidate: &Value) -> Vec<Vec<(String, String)>> {
+    candidate
+        .get("blocks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .map(|(index, block)| {
             let body = block
                 .get("body")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            let mut passages = Vec::new();
-            let mut start = 0;
-            let mut length = 0;
-            for (offset, character) in body.char_indices() {
-                length += 1;
-                if (length >= 240 && character == '\n') || length >= 480 {
-                    let end = offset + character.len_utf8();
-                    passages.push(json!({"id":format!("section-{index}-passage-{}", passages.len()),"text":body.get(start..end).unwrap_or_default()}));
-                    start = end;
-                    length = 0;
-                }
-            }
-            if start < body.len() {
-                passages.push(json!({"id":format!("section-{index}-passage-{}", passages.len()),"text":body.get(start..).unwrap_or_default()}));
-            }
-            ids.push(
-                passages
-                    .iter()
-                    .filter_map(|p| p.get("id").and_then(Value::as_str).map(str::to_owned))
-                    .collect(),
-            );
+            passages::split(body)
+                .into_iter()
+                .enumerate()
+                .map(|(n, text)| {
+                    let id = format!("{}-passage-{n}", FindingSite::Section(index).id_text());
+                    (id, text.to_owned())
+                })
+                .collect()
+        })
+        .collect()
+}
+
+// Preserve every byte, including code indentation, newlines and Unicode. IDs
+// belong only to this candidate; nothing is normalized or fuzzy-matched.
+fn review_candidate(candidate: &Value, sections: &[usize]) -> (Value, Vec<Passage>) {
+    let all = passages_of(candidate);
+    let mut candidate = candidate.clone();
+    if let Some(blocks) = candidate.get_mut("blocks").and_then(Value::as_array_mut) {
+        for (index, block) in blocks.iter_mut().enumerate() {
+            let passages: Vec<Value> = all
+                .get(index)
+                .into_iter()
+                .flatten()
+                .map(|(_, text)| json!({"text":text}))
+                .collect();
             if let Some(block) = block.as_object_mut() {
                 block.remove("body");
-                block.insert("index".into(), json!(index));
-                block.insert("label".into(), json!(format!("Section {}", index + 1)));
+                block.insert("inReview".into(), json!(sections.contains(&index)));
+                block.insert("label".into(), json!(FindingSite::Section(index).label()));
                 block.insert("bodyPassages".into(), json!(passages));
             }
         }
@@ -108,718 +424,366 @@ fn review_candidate(candidate: &Value) -> (Value, Vec<Vec<String>>) {
     if let Some(questions) = candidate.get_mut("questions").and_then(Value::as_array_mut) {
         for (index, question) in questions.iter_mut().enumerate() {
             if let Some(question) = question.as_object_mut() {
-                question.insert("label".into(), json!(format!("Question {}", index + 1)));
+                question.insert("label".into(), json!(FindingSite::Question(index).label()));
             }
         }
     }
-    (candidate, ids)
+    let pointable = all
+        .into_iter()
+        .enumerate()
+        .filter(|(section, _)| sections.contains(section))
+        .flat_map(|(section, passages)| {
+            passages
+                .into_iter()
+                .enumerate()
+                .map(move |(number, (id, _))| Passage {
+                    id,
+                    section,
+                    number,
+                })
+        })
+        .collect();
+    (candidate, pointable)
 }
 
-/// The text of passage `id` in section `index` of the reviewed candidate.
-fn passage_text(reviewed: &Value, index: usize, id: &str) -> Option<String> {
-    reviewed
-        .pointer(&format!("/blocks/{index}/bodyPassages"))?
-        .as_array()?
-        .iter()
-        .find(|passage| passage.get("id").and_then(Value::as_str) == Some(id))?
-        .get("text")
-        .and_then(Value::as_str)
-        .map(str::to_owned)
+/// What a review's verdicts stand under, besides its text: the policy, the
+/// model and its window.
+fn run_inputs(llm: &dyn LLMPort) -> Map<String, Value> {
+    let mut inputs = Map::new();
+    inputs.insert("policy".into(), json!(POLICY));
+    inputs.insert("model".into(), json!(llm.model_name()));
+    inputs.insert("context".into(), json!(llm.max_context_tokens()));
+    inputs
 }
 
-fn schema(indices: &[usize], passages: &[Vec<String>]) -> Value {
-    let mut required = vec!["issues"];
-    let mut properties = serde_json::Map::from_iter([(
-        "issues".into(),
-        json!({"type":"array","items":{"type":"string","minLength":1}}),
-    )]);
-    if !passages.is_empty() {
-        required.push("blockChecks");
-        // Each check names an app-owned section ID and one of those
-        // sections' passages; the review holds the passage to its section.
-        let sections: Vec<String> = indices.iter().map(|i| format!("section-{i}")).collect();
-        let cited: Vec<&str> = indices
-            .iter()
-            .filter_map(|index| passages.get(*index))
-            .flatten()
-            .map(String::as_str)
-            .collect();
-        let section_id = json!({"type":"string","enum":sections});
-        let passage_id = if cited.is_empty() {
-            json!({"type":"string"})
-        } else {
-            json!({"type":"string","enum":cited})
-        };
-        let checks = if sections.is_empty() {
-            json!({"type":"array","maxItems":0,"items":{"type":"string"}})
-        } else {
-            json!({"type":"array","items":{"type":"object","additionalProperties":false,"required":["sectionId","passageId","finding","hasDefect"],"properties":{"sectionId":section_id,"passageId":passage_id,"finding":{"type":"string","minLength":1},"hasDefect":{"type":"boolean"}}}})
-        };
-        properties.insert("blockChecks".into(), checks);
+/// The digest of what a review's reviewer is given besides the material:
+/// `run_inputs`, the subject's first-review `system` and evidence `scope`, and
+/// the review's `inputs`.
+pub(crate) fn basis(llm: &dyn LLMPort, system: &str, scope: &str, inputs: &Value) -> String {
+    let mut given = run_inputs(llm);
+    for (name, value) in [
+        ("system", json!(system)),
+        ("scope", json!(scope)),
+        ("inputs", inputs.clone()),
+    ] {
+        given.insert(name.into(), value);
     }
-    json!({"type":"object","additionalProperties":false,"required":required,"properties":properties})
+    sha256_hex(Value::Object(given).to_string())
 }
 
-/// Correct malformed reviewer output once, retaining valid checks and defects.
-/// This does not spend the author's content-repair pass or rerun answer keys.
-/// An unavailable provider propagates immediately; this is not a network retry.
-/// A section's finding is placed in that section; a reviewer's issue is
-/// placed later, by the evidence check.
+/// The kind of section `index` of the candidate, when it can be read.
+fn section_kind(candidate: &Value, index: usize) -> Option<LearningBlockKind> {
+    candidate
+        .get("blocks")?
+        .get(index)?
+        .get("kind")?
+        .as_str()
+        .and_then(LearningBlockKind::parse)
+}
+
+/// Whether a lesson's defect in section `index` names a concern its kind
+/// takes; what it names beyond that, or does not name, is traced.
+fn names_a_concern_taken(named: &[LessonConcern], index: usize, candidate: &Value) -> bool {
+    let site = FindingSite::Section(index).label();
+    let kind = section_kind(candidate, index);
+    let takes: Vec<LessonConcern> = LessonConcern::ALL
+        .into_iter()
+        .filter(|concern| concern.takes(kind.as_ref()))
+        .collect();
+    let what = match &kind {
+        Some(kind) => format!("of kind {}", kind.as_str()),
+        None => "of unknown kind".to_owned(),
+    };
+    let mut once: Vec<LessonConcern> = Vec::new();
+    for concern in named {
+        if !once.contains(concern) {
+            once.push(*concern);
+        }
+    }
+    let mut messages = Vec::new();
+    if once.is_empty() {
+        messages.push(format!(
+            "{site}: a defect needs the concerns the section fails, from those its kind takes: {}.",
+            LessonConcern::list(takes.iter().copied())
+        ));
+    }
+    let mut kept = 0;
+    for concern in once {
+        if takes.contains(&concern) {
+            kept += 1;
+        } else {
+            messages.push(format!(
+                "{site} is {what}, which takes only {}; {} does not apply to it.",
+                LessonConcern::list(takes.iter().copied()),
+                concern.id()
+            ));
+        }
+    }
+    for message in &messages {
+        trace::refused(
+            Stage::TeachingReview,
+            &format!("{site} defect"),
+            message,
+            None,
+        );
+    }
+    kept > 0
+}
+
+/// What the answer's entries make of the review: the defects they report and
+/// a verdict on each open finding. An open finding no entry resolves is
+/// present only when the answer was read to its end.
+fn judged(
+    input: &Input,
+    candidate: &Value,
+    remit: Remit,
+    entries: Vec<Entry>,
+    complete: bool,
+) -> Judged {
+    let all = passages_of(candidate);
+    let mut reported: Vec<Reported> = Vec::new();
+    let mut resolved: Vec<FindingId> = Vec::new();
+    for entry in entries {
+        let found = match entry {
+            Entry::Resolved(finding) => {
+                if !resolved.contains(&finding.reference) {
+                    resolved.push(finding.reference);
+                }
+                continue;
+            }
+            Entry::Issue { note, continues } => {
+                if note.trim().is_empty() {
+                    trace::refused(
+                        Stage::TeachingReview,
+                        "an issue",
+                        "An issue must not be blank.",
+                        None,
+                    );
+                    continue;
+                }
+                let summary = note.trim().to_owned();
+                Reported {
+                    site: None,
+                    note,
+                    summary,
+                    passage: None,
+                    passage_id: None,
+                    continues: continues.map(|picked| picked.reference),
+                }
+            }
+            Entry::Defect {
+                at,
+                finding,
+                concerns,
+                continues,
+            } => {
+                let Some(placed) = input
+                    .passages
+                    .iter()
+                    .find(|passage| passage.id == at.reference)
+                else {
+                    continue;
+                };
+                let site = FindingSite::Section(placed.section);
+                if finding.trim().is_empty() {
+                    trace::refused(
+                        Stage::TeachingReview,
+                        &format!("{} defect", site.label()),
+                        &format!("{}: finding must not be blank.", site.label()),
+                        None,
+                    );
+                    continue;
+                }
+                if remit == Remit::Lesson
+                    && !names_a_concern_taken(&concerns, placed.section, candidate)
+                {
+                    continue;
+                }
+                Reported {
+                    site: Some(site),
+                    note: format!("{}: {}", site.note_label(), finding),
+                    summary: finding.trim().to_owned(),
+                    passage: all
+                        .get(placed.section)
+                        .and_then(|passages| passages.get(placed.number))
+                        .map(|(_, text)| text.clone()),
+                    passage_id: Some(placed.id.clone()),
+                    continues: continues.map(|picked| picked.reference),
+                }
+            }
+        };
+        if !reported.iter().any(|known| known.note == found.note) {
+            reported.push(found);
+        }
+    }
+    let verdicts = input
+        .open
+        .iter()
+        .filter_map(|finding| {
+            let present = if resolved.contains(&finding.id) {
+                Some(false)
+            } else {
+                complete.then_some(true)
+            };
+            present.map(|present| Verdict {
+                id: finding.id.clone(),
+                present,
+            })
+        })
+        .collect();
+    Judged { verdicts, reported }
+}
+
+/// What a cut-off answer's standing entries already hold, in words.
+fn already_reported<L: Lens>(standing: &[Item<L>]) -> Vec<String> {
+    standing
+        .iter()
+        .filter_map(|item| match &item.0 {
+            Entry::Issue { note, .. } => Some(note.clone()),
+            Entry::Defect { finding, .. } => Some(finding.clone()),
+            Entry::Resolved(_) => None,
+        })
+        .collect()
+}
+
+/// The entries the reviewer wrote, and whether its answer was read to its end.
+async fn ask_entries<L: Lens>(llm: &dyn LLMPort, input: &Input) -> Result<(Vec<Entry>, bool)> {
+    let brief = if input.open.is_empty() {
+        REVIEW_DRAFT_BRIEF.to_owned()
+    } else {
+        format!("{REVIEW_DRAFT_BRIEF}{OPEN_FINDINGS_BRIEF}")
+    };
+    let found = ask_new::<TeachingReview<L>>(
+        llm,
+        &Asking {
+            progress: None,
+            reasoning: Some(ReasonFirst {
+                kind: CallKind::Authoring,
+                subject: "the teaching review",
+                brief: &brief,
+            }),
+        },
+        &mut shown::Scope::for_question(),
+        input.clone(),
+        |standing: &[Item<L>]| {
+            let mut next = input.clone();
+            next.reported.0.extend(already_reported(standing));
+            Some(next)
+        },
+        &crate::model_call::answer_options(),
+    )
+    .await?;
+    let complete = found.rest.is_none();
+    Ok((
+        found.items.into_iter().map(|item| item.0).collect(),
+        complete,
+    ))
+}
+
+/// What the reviewer found: its verdict on each finding in `scope.asked`,
+/// and the defects it reports beyond those. A section defect is placed in
+/// the section its passage is in, and a section with no entry has none; a
+/// reviewer's issue is placed later, by the evidence check. An open finding
+/// the reviewer does not resolve stays open, and is judged present only in
+/// an answer read to its end; an answer that cannot be read at all fails
+/// the review.
 pub async fn review(
     llm: &dyn LLMPort,
     system: &str,
     prompt: Value,
     candidate: &Value,
-    progress: Option<&OutlineProgress>,
-    lengths: LengthRule,
-) -> Result<Vec<ReviewFinding>> {
-    // Save findings, including defects, before the later grounding/repair step.
-    // Reusing a completed review never approves the lesson or skips grounding.
-    let key = format!("teaching-review-findings-v2:{}", sha256_hex(
-        json!({"policy":POLICY,"model":llm.model_name(),"context":llm.max_context_tokens(),"system":system,"prompt":prompt,"candidate":candidate}).to_string()
-    ));
-    if let Some(saved) = crate::lesson_drafts::checkpoint(&key)
-        .await?
-        .and_then(|v| serde_json::from_value::<Vec<ReviewFinding>>(v).ok())
-    {
-        crate::lesson_progress::stage(
-            "Reusing completed teaching review; continuing evidence checks",
-        );
-        return Ok(saved);
-    }
-    let issues = review_sections(llm, system, prompt, candidate, progress, lengths).await?;
-    crate::lesson_drafts::record_checkpoint(&key, json!(issues)).await?;
-    Ok(issues)
-}
-
-async fn review_sections(
-    llm: &dyn LLMPort,
-    system: &str,
-    prompt: Value,
-    candidate: &Value,
-    progress: Option<&OutlineProgress>,
-    lengths: LengthRule,
-) -> Result<Vec<ReviewFinding>> {
-    let (reviewed, passages) = review_candidate(candidate);
-    let shown = reviewed.clone();
+    scope: Scope<'_>,
+    remit: Remit,
+) -> Result<Judged> {
     let Value::Object(mut prompt) = prompt else {
         return Err(AppError::InternalError(
             "Teaching review requires an object context.".into(),
         ));
     };
-    prompt.insert("candidate".into(), reviewed);
+    prompt.shift_remove("candidate");
+    let count = candidate
+        .get("blocks")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let sections: Vec<usize> = scope.sections.map_or_else(
+        || (0..count).collect(),
+        |sections| {
+            sections
+                .iter()
+                .copied()
+                .filter(|index| *index < count)
+                .collect()
+        },
+    );
+    let (reviewed, passages) = review_candidate(candidate, &sections);
     let excerpts = prompt
         .get_mut("authoringContext")
         .and_then(|context| WriterExcerpts::take(llm, context, candidate));
-    let mut accepted = BTreeMap::<usize, BlockCheck>::new();
-    let mut issues: Vec<ReviewFinding> = Vec::new();
-    let mut problems = Vec::new();
-    // The first correction is always asked for; later ones while each answer
-    // validates another section.
-    for attempt in 0usize.. {
-        // After the correction, a blank finding no longer fails a lesson's review.
-        let settle = lengths == LengthRule::DropBlank && attempt > 0;
-        let checked = accepted.len();
-        let indices: Vec<_> = (0..passages.len())
-            .filter(|i| !accepted.contains_key(i))
-            .collect();
-        prompt.insert("sectionIndicesToReview".into(), json!(indices));
-        if attempt > 0 {
-            crate::lesson_progress::stage(if indices.is_empty() {
-                "Correcting the review's findings".into()
-            } else {
-                format!(
-                    "Correcting the review response ({} sections need checks)",
-                    indices.len()
-                )
-            });
-            prompt.insert("reviewResponseProblems".into(), json!(problems));
-            prompt.insert("retainedIssues".into(), json!(issues));
-            prompt.insert(
-                "acceptedBlockChecks".into(),
-                json!(accepted.values().collect::<Vec<_>>()),
-            );
-            prompt.insert("responseCorrection".into(), json!("Correct the review response, not the lesson. Return checks only for sectionIndicesToReview. Read all passages in each requested section; select a passageId from that same section. Keep every established defect. Do not regenerate the lesson or treat a response-format error as a content defect."));
-        }
-        let request = writer_excerpts::Request {
-            subject: "the teaching review",
-            system,
-            prompt: &prompt,
-            context: "authoringContext",
-            schema: schema(&indices, &passages),
-            output_tokens: REVIEW_ANSWER_TOKENS,
-        };
-        // A correction repairs the response, not the judgement, so only the
-        // first review reasons in prose before answering.
-        let reasoning = (attempt == 0).then_some(ReasonFirst {
-            kind: CallKind::Authoring,
-            subject: "the teaching review",
-            brief: REVIEW_DRAFT_BRIEF,
-        });
-        let raw = writer_excerpts::complete(
-            llm,
-            &request,
-            excerpts.as_ref(),
-            progress,
-            reasoning,
-            |text| Ok(text.to_owned()),
-        )
-        .await?;
-        problems.clear();
-        match generation::parse_json::<Review>(&raw) {
-            Err(_) => problems.push("The previous review was incomplete. Give the issues and a check for every requested section.".into()),
-            Ok(review) => {
-                for issue in review.issues {
-                    let blank = issue.trim().is_empty();
-                    if blank && !settle {
-                        problems.push("An issue must not be blank.".into());
-                    } else if !blank && !issues.iter().any(|known| known.note == issue) {
-                        let summary = issue.trim().to_owned();
-                        issues.push(
-                            ReviewFinding::new(FindingKind::Teaching, None, issue)
-                                .with_summary(summary),
-                        );
-                    }
-                }
-                let mut named = Vec::new();
-                for mut value in review.block_checks {
-                    let section = value
-                        .as_object_mut()
-                        .and_then(|fields| fields.remove("sectionId"))
-                        .and_then(|id| id.as_str().map(str::to_owned));
-                    match section {
-                        Some(section) => named.push((section, value)),
-                        None => problems.push("A block check needs the sectionId of the section it checks.".into()),
-                    }
-                }
-                let mut seen = HashSet::new();
-                let repeated: HashSet<String> = named
-                    .iter()
-                    .filter(|(section, _)| !seen.insert(section.clone()))
-                    .map(|(section, _)| section.clone())
-                    .collect();
-                for (section, mut value) in named {
-                    let Some(index) = indices.iter().copied().find(|index| section == format!("section-{index}")) else {
-                        problems.push(format!("Section ID {section} was not requested."));
-                        continue;
-                    };
-                    if repeated.contains(&section) {
-                        let message = format!("{section} was checked more than once; give each section one check.");
-                        if !problems.contains(&message) {
-                            problems.push(message);
-                        }
-                        continue;
-                    }
-                    // Preserve actionable defects even when another field is
-                    // missing and the complete check cannot deserialize.
-                    if let (Some(finding), Some(true)) = (
-                        value.get("finding").and_then(Value::as_str), value.get("hasDefect").and_then(Value::as_bool),
-                    ) {
-                        if indices.contains(&index) && !finding.trim().is_empty() {
-                            let note = format!("Section {} (candidate blocks-{index}): {}", index + 1, finding);
-                            if !issues.iter().any(|known| known.note == note) {
-                                let mut issue = ReviewFinding::new(FindingKind::Teaching, Some(FindingSite::Section(index)), note)
-                                    .with_summary(finding.trim());
-                                issue.passage = value.get("passageId").and_then(Value::as_str).and_then(|id| passage_text(&shown, index, id));
-                                issues.push(issue);
-                            }
-                        }
-                    }
-                    let Some(fields) = value.as_object_mut() else {
-                        problems.push(format!("Section {index} needs an object check."));
-                        continue;
-                    };
-                    if fields.insert("index".into(), json!(index)).is_some() {
-                        problems.push(format!("Section {index}: the sectionId names the section; do not supply an index field."));
-                        continue;
-                    }
-                    let check: BlockCheck = match serde_json::from_value(value) {
-                        Ok(check) => check,
-                        Err(_) => { problems.push("A block check has missing, unexpected or incorrectly typed fields.".into()); continue; }
-                    };
-                    if !indices.contains(&check.index) {
-                        problems.push(format!("Section index {} was not requested. Use the explicit zero-based index from the candidate.", check.index));
-                        continue;
-                    }
-                    if passages.get(check.index).is_none_or(|ids| !ids.contains(&check.passage_id)) {
-                        problems.push(format!("Section {}: passageId must be one of that section's bodyPassages IDs.", check.index));
-                    } else if check.finding.trim().is_empty() && !settle {
-                        problems.push(format!("Section {}: finding must not be blank.", check.index));
-                    } else {
-                        accepted.insert(check.index, check);
-                    }
-                }
-                for index in indices {
-                    if !accepted.contains_key(&index) {
-                        problems.push(format!("Section {index} still needs a valid check."));
-                    }
-                }
-            }
-        }
-        if problems.is_empty() {
-            return Ok(issues);
-        }
-        tracing::warn!(attempt = attempt + 1, accepted_sections = accepted.len(), total_sections = passages.len(), problems = ?problems, "Teaching reviewer response failed validation");
-        if attempt > 0 && accepted.len() == checked {
-            break;
-        }
-    }
-    let recovery = if crate::lesson_drafts::active() {
-        "The lesson draft is saved. Retry will reuse it and run the checks again."
-    } else {
-        "Retry the review."
+    let sources = Packed::new(
+        excerpts
+            .map(|excerpts| excerpts.ranked())
+            .unwrap_or_default()
+            .into_iter()
+            .map(Told)
+            .collect(),
+        |source: &Told<Value>| item_tokens(llm, &source.0),
+    );
+    let open: Vec<OpenFinding> = scope
+        .asked
+        .into_iter()
+        .flatten()
+        .map(|asked| OpenFinding {
+            id: asked.id.clone(),
+            part: Told(asked.site.label()),
+            passage: asked
+                .passage_id
+                .clone()
+                .filter(|id| passages.iter().any(|passage| &passage.id == id)),
+            note: Told(asked.note.clone()),
+        })
+        .collect();
+    let input = Input {
+        system: Told(system.to_owned()),
+        prompt: Told(Value::Object(prompt)),
+        candidate: Told(reviewed),
+        passages,
+        sources,
+        open,
+        reported: Told(Vec::new()),
     };
-    Err(AppError::ServiceNotAvailable(format!("The model could not return a complete teaching review after response correction: {} {recovery} Nothing was published.", problems.join(" "))))
+    // Save findings, including defects, before the later grounding/repair step.
+    // Reusing a completed review never approves the lesson or skips grounding.
+    let mut inputs = run_inputs(llm);
+    inputs.insert("input".into(), json!(input));
+    let key = FINDINGS_KEYS.key(sha256_hex(Value::Object(inputs).to_string()));
+    if let Some(saved) = crate::lesson_drafts::saved::<Judged>(&key).await? {
+        crate::lesson_progress::stage(
+            "Reusing completed teaching review; continuing evidence checks",
+        );
+        return Ok(saved);
+    }
+    let (entries, complete) = match remit {
+        Remit::Open => ask_entries::<Anything>(llm, &input).await?,
+        Remit::Lesson => ask_entries::<Concerns>(llm, &input).await?,
+    };
+    let found = judged(&input, candidate, remit, entries, complete);
+    if complete {
+        crate::lesson_drafts::record_checkpoint(&key, json!(found)).await?;
+    }
+    Ok(found)
 }
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 
 #[cfg(test)]
-mod section_list_tests;
+mod concern_tests;
+mod concerns;
+#[cfg(test)]
+mod passage_tests;
+mod passages;
 
 #[cfg(test)]
-mod tests {
-    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-    use super::test_support::candidate;
-    use super::*;
-    use crate::lessons::course_generation_tests::{ScriptedModel, Windowed};
-
-    fn check(index: usize) -> Value {
-        json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"The explanation correctly distinguishes the stated inputs and resulting behavior.","hasDefect":false})
-    }
-    fn model(replies: Vec<Value>) -> ScriptedModel {
-        ScriptedModel {
-            outputs: std::sync::Mutex::new(replies.into_iter().map(|v| v.to_string()).collect()),
-            prompts: Default::default(),
-        }
-    }
-
-    #[tokio::test]
-    async fn retains_more_than_six_findings_without_rejecting_a_complete_review() -> Result<()> {
-        let findings: Vec<_> = (0..12)
-            .map(|i| format!("Finding {i}: this assessment has multiple valid answers."))
-            .collect();
-        let response = json!({"issues":findings,"blockChecks":fixture_checks(vec![check(0),check(1),check(2)])});
-        let (_, passages) = review_candidate(&candidate());
-        assert!(
-            jsonschema::JSONSchema::compile(&schema(&[0, 1, 2], &passages))
-                .unwrap()
-                .is_valid(&response)
-        );
-        let model = model(vec![response]);
-        let actual = review(
-            &model,
-            "Review instructional quality.",
-            json!({}),
-            &candidate(),
-            None,
-            LengthRule::Fail,
-        )
-        .await?;
-        assert_eq!(
-            actual.iter().map(|f| f.note.clone()).collect::<Vec<_>>(),
-            findings
-        );
-        assert!(actual
-            .iter()
-            .all(|f| f.kind == FindingKind::Teaching && f.site.is_none()));
-        // The reviewer's own statement of the problem is what the user reads.
-        assert_eq!(
-            actual.iter().map(|f| f.summary.clone()).collect::<Vec<_>>(),
-            findings
-        );
-        assert_eq!(model.prompts.lock().unwrap().len(), 1);
-        Ok(())
-    }
-
-    #[test]
-    fn response_slots_cannot_renumber_sections_or_cite_unknown_passages() {
-        let (_, passages) = review_candidate(&candidate());
-        let compiled = jsonschema::JSONSchema::compile(&schema(&[0, 1, 2], &passages)).unwrap();
-        let mut response =
-            json!({"issues":[],"blockChecks":fixture_checks(vec![check(0),check(1),check(2)])});
-        assert!(compiled.is_valid(&response));
-        response["blockChecks"][0]["passageId"] = json!("invented-passage");
-        assert!(!compiled.is_valid(&response));
-        response["blockChecks"][0]["passageId"] = json!("section-0-passage-0");
-        response["blockChecks"][0]["index"] = json!(1);
-        assert!(!compiled.is_valid(&response));
-        response["blockChecks"][0]
-            .as_object_mut()
-            .unwrap()
-            .remove("index");
-        response["blockChecks"][0]["sectionId"] = json!("section-7");
-        assert!(!compiled.is_valid(&response));
-    }
-
-    #[test]
-    fn each_reviewed_part_carries_the_label_the_user_sees_beside_its_key() {
-        let original = json!({
-            "blocks":[{"body":"one","title":"First"},{"body":"two","title":"Second"}],
-            "questions":[{"prompt":"ask"},{"prompt":"again"}]
-        });
-        let (reviewed, ids) = review_candidate(&original);
-        assert_eq!(reviewed["blocks"][0]["label"], "Section 1");
-        assert_eq!(reviewed["blocks"][1]["label"], "Section 2");
-        assert_eq!(reviewed["questions"][0]["label"], "Question 1");
-        assert_eq!(reviewed["questions"][1]["label"], "Question 2");
-        assert_eq!(reviewed["blocks"][1]["index"], 1);
-        assert_eq!(ids[1], ["section-1-passage-0"]);
-        assert_eq!(reviewed["blocks"][1]["title"], "Second");
-        assert_eq!(original["blocks"][1].get("label"), None);
-    }
-
-    #[test]
-    fn passages_preserve_every_byte_and_ids_are_scoped_to_the_section() {
-        let body = "🦀 Rust’s ‘book’\n```rust\n    println!(\"a  b\");\n```\r\n".repeat(40);
-        let original = json!({"blocks":[{"body":body,"title":"Unicode and code"}]});
-        let (reviewed, ids) = review_candidate(&original);
-        let rejoined: String = reviewed["blocks"][0]["bodyPassages"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|p| p["text"].as_str().unwrap())
-            .collect();
-        assert_eq!(rejoined, body);
-        assert!(ids[0].len() > 1);
-        assert_eq!(original["blocks"][0]["body"], body);
-        assert_eq!(reviewed["blocks"][0]["title"], "Unicode and code");
-        for indices in [vec![0], vec![]] {
-            jsonschema::JSONSchema::compile(&schema(&indices, &ids)).unwrap();
-        }
-    }
-
-    #[tokio::test]
-    async fn malformed_section_recovers_without_rewriting_content_or_rechecking_valid_sections(
-    ) -> Result<()> {
-        let mut wrong_source = check(1);
-        wrong_source["passageId"] = json!("section-0-passage-0");
-        wrong_source["hasDefect"] = json!(true);
-        wrong_source["finding"] =
-            json!("The claimed membrane behavior contradicts the stated boundary condition.");
-        let model = model(vec![
-            json!({"issues":["An assessment has two defensible correct choices."],"blockChecks":crate::teaching_review::fixture_checks(vec![check(0),wrong_source,check(2)])}),
-            json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![check(1)])}),
-        ]);
-        let issues = review(
-            &model,
-            "Review instructional quality.",
-            json!({}),
-            &candidate(),
-            None,
-            LengthRule::Fail,
-        )
-        .await?;
-        assert_eq!(issues.len(), 2);
-        let defect = issues
-            .iter()
-            .find(|i| i.note.contains("membrane behavior"))
-            .unwrap();
-        assert_eq!(defect.site, Some(FindingSite::Section(1)));
-        assert_eq!(
-            defect.summary,
-            "The claimed membrane behavior contradicts the stated boundary condition."
-        );
-        let prompts = model.prompts.lock().unwrap();
-        assert_eq!(prompts.len(), 2);
-        let retry: Value = serde_json::from_str(prompts[1].rsplit("\n\n").next().unwrap())?;
-        assert_eq!(retry["sectionIndicesToReview"], json!([1]));
-        assert_eq!(retry["acceptedBlockChecks"].as_array().unwrap().len(), 2);
-        assert!(retry["responseCorrection"]
-            .as_str()
-            .unwrap()
-            .contains("not the lesson"));
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn the_review_is_corrected_while_each_answer_checks_another_section() -> Result<()> {
-        let only = |index| json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![check(index)])});
-        let model = model(vec![only(0), only(1), only(2)]);
-        review(
-            &model,
-            "Review instructional quality.",
-            json!({}),
-            &candidate(),
-            None,
-            LengthRule::Fail,
-        )
-        .await?;
-        assert_eq!(model.prompts.lock().unwrap().len(), 3);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn missing_duplicate_unknown_and_invented_checks_never_approve_unchecked_content() {
-        for checks in [
-            vec![],
-            vec![check(0), check(0), check(2)],
-            vec![check(1), check(2), check(3)],
-            vec![
-                json!({"index":0,"passageId":"invented","finding":"An invented passage cannot establish a complete review.","hasDefect":false}),
-                check(1),
-                check(2),
-            ],
-        ] {
-            let bad =
-                json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)});
-            let model = model(vec![bad.clone(), bad]);
-            let error = review(
-                &model,
-                "Review instructional quality.",
-                json!({}),
-                &candidate(),
-                None,
-                LengthRule::Fail,
-            )
-            .await
-            .unwrap_err();
-            assert!(matches!(error, AppError::ServiceNotAvailable(_)));
-            assert!(error.to_string().contains("Nothing was published"));
-            assert_eq!(model.prompts.lock().unwrap().len(), 2);
-        }
-    }
-
-    #[tokio::test]
-    async fn invalid_global_findings_can_be_corrected_without_losing_section_checks() -> Result<()>
-    {
-        let model = model(vec![
-            json!({"issues":["  "],"blockChecks":crate::teaching_review::fixture_checks(vec![check(0),check(1),check(2)])}),
-            json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![])}),
-        ]);
-        assert!(review(
-            &model,
-            "Review instructional quality.",
-            json!({}),
-            &candidate(),
-            None,
-            LengthRule::Fail
-        )
-        .await?
-        .is_empty());
-        assert!(model.prompts.lock().unwrap()[1].contains("\"sectionIndicesToReview\":[]"));
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn a_lesson_s_corrected_review_drops_blank_findings_and_keeps_the_rest() -> Result<()> {
-        let long = format!(
-            "The worked example's stated result is wrong: {}",
-            "x".repeat(720)
-        );
-        let mut blank = check(1);
-        blank["hasDefect"] = json!(true);
-        blank["finding"] = json!("  ");
-        let first = json!({"issues":["  "],"blockChecks":fixture_checks(vec![check(0),blank.clone(),check(2)])});
-        let second = json!({"issues":[" ",long],"blockChecks":fixture_checks(vec![blank])});
-        let lesson = model(vec![first.clone(), second.clone()]);
-        let issues = review(
-            &lesson,
-            "Review instructional quality.",
-            json!({}),
-            &candidate(),
-            None,
-            LengthRule::DropBlank,
-        )
-        .await?;
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].note, long);
-        let strict = model(vec![first, second]);
-        assert!(review(
-            &strict,
-            "Review instructional quality.",
-            json!({}),
-            &candidate(),
-            None,
-            LengthRule::Fail,
-        )
-        .await
-        .is_err());
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn a_section_finding_carries_the_passage_the_reviewer_chose() -> Result<()> {
-        let mut defect = check(2);
-        defect["hasDefect"] = json!(true);
-        defect["finding"] = json!("The rest is placed after rolling, contradicting the recipe.");
-        let model = model(vec![
-            json!({"issues":[],"blockChecks":fixture_checks(vec![check(0),check(1),defect])}),
-        ]);
-        let issues = review(
-            &model,
-            "Review instructional quality.",
-            json!({}),
-            &candidate(),
-            None,
-            LengthRule::DropBlank,
-        )
-        .await?;
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].site, Some(FindingSite::Section(2)));
-        assert_eq!(
-            issues[0].passage.as_deref(),
-            candidate()["blocks"][2]["body"].as_str()
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn malformed_json_is_corrected_as_a_review_not_as_lesson_content() -> Result<()> {
-        let model = ScriptedModel {
-            outputs: std::sync::Mutex::new(
-                vec![
-                    "not json".into(),
-                    json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![check(0),check(1),check(2)])}).to_string(),
-                ]
-                .into(),
-            ),
-            prompts: Default::default(),
-        };
-        assert!(review(
-            &model,
-            "Review instructional quality.",
-            json!({}),
-            &candidate(),
-            None,
-            LengthRule::Fail
-        )
-        .await?
-        .is_empty());
-        assert_eq!(model.prompts.lock().unwrap().len(), 2);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn missing_evidence_field_cannot_erase_a_reported_defect() -> Result<()> {
-        let mut incomplete = check(1);
-        incomplete.as_object_mut().unwrap().remove("passageId");
-        incomplete["hasDefect"] = json!(true);
-        let model = model(vec![
-            json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![check(0),incomplete,check(2)])}),
-            json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![check(1)])}),
-        ]);
-        let issues = review(
-            &model,
-            "Review instructional quality.",
-            json!({}),
-            &candidate(),
-            None,
-            LengthRule::Fail,
-        )
-        .await?;
-        assert_eq!(issues.len(), 1);
-        assert!(issues[0]
-            .note
-            .starts_with("Section 2 (candidate blocks-1):"));
-        assert_eq!(issues[0].site, Some(FindingSite::Section(1)));
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn a_long_issue_from_the_teaching_review_is_read_not_refused() -> Result<()> {
-        let long = format!(
-            "The worked example's stated result is wrong: {}",
-            "it contradicts the premise it was given. ".repeat(25)
-        );
-        assert!(long.chars().count() > 700);
-        let response =
-            json!({"issues":[long],"blockChecks":fixture_checks(vec![check(0),check(1),check(2)])});
-        for lengths in [LengthRule::Fail, LengthRule::DropBlank] {
-            let model = model(vec![response.clone()]);
-            let issues = review(
-                &model,
-                "Review instructional quality.",
-                json!({}),
-                &candidate(),
-                None,
-                lengths,
-            )
-            .await?;
-            assert_eq!(issues.len(), 1);
-            assert_eq!(issues[0].note, long);
-            assert_eq!(model.prompts.lock().unwrap().len(), 1);
-        }
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn a_section_finding_of_any_length_is_read_not_refused() -> Result<()> {
-        let long = format!(
-            "The stated boundary condition is contradicted: {}",
-            "the membrane passes what it should hold back. ".repeat(20)
-        );
-        assert!(long.chars().count() > 700);
-        let mut terse = check(1);
-        terse["hasDefect"] = json!(true);
-        terse["finding"] = json!("Wrong.");
-        let mut lengthy = check(2);
-        lengthy["hasDefect"] = json!(true);
-        lengthy["finding"] = json!(long);
-        let model = model(vec![
-            json!({"issues":[],"blockChecks":fixture_checks(vec![check(0),terse,lengthy])}),
-        ]);
-        let issues = review(
-            &model,
-            "Review instructional quality.",
-            json!({}),
-            &candidate(),
-            None,
-            LengthRule::Fail,
-        )
-        .await?;
-        let notes: Vec<_> = issues.iter().map(|issue| issue.note.clone()).collect();
-        assert_eq!(
-            notes,
-            vec![
-                "Section 2 (candidate blocks-1): Wrong.".to_owned(),
-                format!("Section 3 (candidate blocks-2): {long}"),
-            ]
-        );
-        assert_eq!(model.prompts.lock().unwrap().len(), 1);
-        Ok(())
-    }
-
-    /// The review carries the lesson beside the writer's prompt, whose
-    /// excerpts filled the room the writer had: on a 9B's 32k window the
-    /// review of a PostgreSQL lesson did not fit, and the lesson failed after
-    /// an hour of checked work (2026-11-06). Six excerpts of 2,000 tokens
-    /// here, the lesson citing the fifth, in a window that holds some.
-    #[tokio::test]
-    async fn a_review_too_big_for_its_window_keeps_the_excerpts_that_fit_the_cited_first(
-    ) -> Result<()> {
-        let sources: Vec<_> = (0..6)
-            .map(|index| json!({"sourceIndex":index,"title":format!("Source {index}"),"url":null,"excerpt":"x ".repeat(4000)}))
-            .collect();
-        let mut lesson = candidate();
-        lesson["blocks"][1]["sourceIndex"] = json!(4);
-        let scripted = model(vec![
-            json!({"issues":[],"blockChecks":fixture_checks(vec![check(0),check(1),check(2)])}),
-        ]);
-        let window = Windowed(&scripted, 13_000);
-
-        review(
-            &window,
-            "Review instructional quality.",
-            json!({"authoringContext":{"goal":"Read query plans.","sources":sources}}),
-            &lesson,
-            None,
-            LengthRule::Fail,
-        )
-        .await?;
-
-        let sent = scripted.prompts.lock().unwrap()[0].clone();
-        assert!(sent.contains("Source 4"));
-        assert!(!sent.contains("Source 5"));
-        Ok(())
-    }
-
-    #[test]
-    fn the_review_schema_bounds_no_text_but_a_blank() {
-        let (_, passages) = review_candidate(&candidate());
-        let bounds =
-            crate::lessons::course_generation_tests::length_bounds(&schema(&[0, 1, 2], &passages));
-        assert!(bounds.is_empty(), "{bounds:?}");
-    }
-}
+pub(crate) mod scripted;
+#[cfg(test)]
+mod tests;

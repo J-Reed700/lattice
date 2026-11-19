@@ -230,20 +230,14 @@ mod tests {
         DownloadedModel as StoredModel, MockModelStoragePort,
     };
     use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
-    use sqlx::sqlite::SqlitePoolOptions;
+    use lattice_core::shared::persistence::Database;
     use std::path::PathBuf;
 
     async fn setup_repo() -> ConcreteRepo {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
-            .await
-            .expect("create in-memory pool");
-        sqlx::migrate!("./migrations")
-            .run(&pool)
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
             .expect("run migrations");
-        ConcreteRepo::new(pool)
+        ConcreteRepo::new(Database::new(pool))
     }
 
     fn make_local_model(model_id: &str, size_bytes: i64) -> DownloadedModel {

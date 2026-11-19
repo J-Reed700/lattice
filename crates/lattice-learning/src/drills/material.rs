@@ -41,6 +41,24 @@ pub struct PlantWording {
     pub asks_verification: bool,
     /// The most lesson issues the planter may plant: 0 when it is told of none.
     pub lesson_issues: usize,
+    /// How the planter is shown the material, as rows of labelled lines.
+    pub frame: PlantFrame,
+}
+
+/// How the material of a drill is written around its labelled lines in the planter's request.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PlantFrame {
+    /// What comes before the lesson's brief and the files.
+    pub before: String,
+    /// What heads the files.
+    pub heading: String,
+    /// What opens a file, with `{path}` for its path, and what closes it.
+    pub open: String,
+    pub close: String,
+    /// What separates two files.
+    pub gap: String,
+    /// What follows the files: the suite and the test files.
+    pub after: String,
 }
 
 /// What the blind reviewer and the describer of a problem it found are told.
@@ -57,10 +75,13 @@ pub struct ReviewerWording {
 
 /// What the judge of a review is told, and how it names the material.
 pub(crate) struct JudgeWording {
-    /// The judge's instructions.
+    /// The instructions of the call that grades the issues.
     pub system: &'static str,
-    /// What the prose step of the two-step call works through.
+    /// What the prose step of the call that grades the issues works through.
     pub brief: &'static str,
+    /// The instructions of the call that grades the findings about no issue, and what its prose step works through.
+    pub extras: &'static str,
+    pub extras_brief: &'static str,
     /// What the task's first line puts in brackets after the drill's title.
     pub kind: String,
     /// The heading of the material as the reviewer saw it.

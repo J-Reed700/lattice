@@ -17,20 +17,25 @@
 //!
 //! Design: docs/design/2026-10-16-lesson-claim-review.md §3, §5, §6, §14, §15.
 
+mod events;
 mod ledger;
 mod replay;
 mod rules;
+mod state;
 #[cfg(test)]
 mod tests;
 mod trust;
 
+pub use events::{ClaimEvent, FaultStage};
 pub use ledger::{
-    CheckBasis, ClaimActionKind, ClaimLedgerEntry, EventProvenance, LedgerError, RecordedEvent,
+    CheckBasis, ClaimActionKind, ClaimLedgerEntry, EventProvenance, LedgerError, MachineRepair,
+    RecordedEvent,
 };
 pub use rules::{
     cited_source_versions, end_state, identities, new_information, relitigate, reopen_cause,
     ClaimCounts, ExtractedClaim, Identities, NewInformation, Observation, SourceChange,
 };
+pub use state::{AuditedState, ClaimState, UnverifiedReason};
 pub use trust::{
     trust_outcomes, CalibrationOutcome, GateVerdict, SupportedBy, TrustAssessment, TrustCause,
     TrustVerdict,
@@ -89,6 +94,19 @@ impl UnitKind {
             .into_iter()
             .find(|kind| kind.as_str() == value)
     }
+
+    /// The kind of unit that field `field` of a section (`section`) or of a
+    /// question belongs to: a question's explanation and choice reasons are
+    /// its answer key.
+    pub fn of(section: bool, field: &str) -> Self {
+        if section {
+            Self::Block
+        } else if field == "explanation" || field.starts_with("rationales/") {
+            Self::AnswerKey
+        } else {
+            Self::Question
+        }
+    }
 }
 
 /// Where a claim is in the lesson.
@@ -102,12 +120,11 @@ pub struct ClaimLocation {
     pub field: String,
     /// The exact lesson text the claim was extracted from.
     pub quote: String,
-    /// Byte span of `quote` in the field. A claim located to its sentence
-    /// (`lattice_core::shared::text::claim_sentence`) keeps the span the
-    /// locator found, so a short sentence that recurs elsewhere in the field
-    /// still has its one place; otherwise the span of the quote's only
-    /// occurrence, and `None` when it occurs more than once (or not at all),
-    /// so no single place can be named.
+    /// Byte span of `quote` in the field. A claim a pass extracted has the
+    /// earliest place its quote stands, so a short sentence that recurs in
+    /// the field still has one place. A location made by [`Self::locate`]
+    /// has the span of the quote's only occurrence, and `None` when it
+    /// occurs more than once (or not at all).
     pub span: Option<(usize, usize)>,
 }
 
@@ -271,6 +288,25 @@ pub struct EvidenceSeen {
     pub text_sha256: String,
 }
 
+impl EvidenceSeen {
+    /// The record of a passage: its version, span and the digest of its text.
+    pub fn of(source_version_id: &str, start_byte: usize, end_byte: usize, text: &str) -> Self {
+        Self {
+            source_version_id: source_version_id.to_owned(),
+            start_byte,
+            end_byte,
+            text_sha256: text_sha256(text),
+        }
+    }
+
+    /// The recorded passage's text in `version_text`; `None` when the span or
+    /// its digest no longer match.
+    pub fn text_in<'t>(&self, version_text: &'t str) -> Option<&'t str> {
+        let text = version_text.get(self.start_byte..self.end_byte)?;
+        (text_sha256(text) == self.text_sha256).then_some(text)
+    }
+}
+
 /// What a check depended on: the policy, the checker model and the passages
 /// compared, in any order. Equal fingerprints mean nothing new to judge.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -295,122 +331,6 @@ impl EvidenceFingerprint {
             digest.update(passage.text_sha256.as_bytes());
         }
         Self(hex::encode(digest.finalize()))
-    }
-}
-
-/// Where a claim stands. Replayed from its events ([`ClaimLedgerEntry`]),
-/// never written directly.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum ClaimState {
-    /// Extracted and not yet checked; the machine owns it.
-    Unchecked,
-    /// The machine may still act.
-    Open {
-        kind: VerdictKind,
-        reason: String,
-        machine_attempts_left: u8,
-    },
-    /// Waiting for the user; the machine acts again only on new information.
-    Queued { kind: VerdictKind, reason: String },
-    /// Machine-verified against a saved source (or an execution).
-    ResolvedByEvidence {
-        source_version_id: String,
-        supporting_quote: String,
-    },
-    /// A Reasoning statement its section's passages do not contradict and
-    /// that asserts no specific they lack (claim classes design §3.11), or a
-    /// statement the model sorted Internal that the falsity veto passed. Like
-    /// a verification it is the machine's, and the lesson may publish with it.
-    Consistent { at: i64 },
-    /// The user's verdict.
-    Confirmed {
-        at: i64,
-        note: Option<String>,
-        bound: HumanBinding,
-    },
-    /// The sentence or claim was deleted.
-    Removed { at: i64, by: Actor },
-    /// The text changed; the successor claim owns the state. `None` is the
-    /// user's edit that left no successor, "removed by the edit": the
-    /// machine's change with none is [`ClaimState::Removed`]. `by`: who
-    /// changed the text, the user's edit or the machine's repair (claim
-    /// sources design §11).
-    Edited {
-        at: i64,
-        successor: Option<ClaimId>,
-        #[serde(default)]
-        by: Actor,
-    },
-    /// A Common statement the knowledge judge passed: standard knowledge,
-    /// checked against no source (claim classes design §3.11).
-    GeneralKnowledge { at: i64 },
-    /// A closed claim reopened; it waits for the user like `Queued`.
-    Reopened {
-        cause: ReopenCause,
-        previous: Box<ClaimState>,
-    },
-    /// The machine did all it will do and could not settle the statement: the
-    /// lesson publishes with it, marked not verified. It is the machine's
-    /// word, never a verification and never the user's decision.
-    Unverified { at: i64, reason: UnverifiedReason },
-}
-
-/// Why a statement was published without being verified.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum UnverifiedReason {
-    /// The check could not be completed.
-    Unchecked,
-    /// The lesson's sources do not state it.
-    Unsupported,
-    /// A source appears to disagree with it.
-    Contradicted,
-}
-
-impl ClaimState {
-    /// Unchecked or Open: the machine has work left on this claim.
-    pub fn is_machine_owned(&self) -> bool {
-        matches!(self, Self::Unchecked | Self::Open { .. })
-    }
-
-    /// Queued or Reopened: only the user (or new information) moves it.
-    pub fn awaits_user(&self) -> bool {
-        matches!(self, Self::Queued { .. } | Self::Reopened { .. })
-    }
-
-    /// Closed in one of the ways a lesson may publish with (§2.1): verified,
-    /// found consistent, passed as common knowledge, confirmed, removed,
-    /// edited (the successor answers for it) or published not verified.
-    pub fn is_resolved(&self) -> bool {
-        !self.is_machine_owned() && !self.awaits_user()
-    }
-
-    /// A verdict no machine check changes: the user's, or a sentence that is
-    /// gone. Only [`ClaimEvent::Reopened`], a Verifier dispute or the user
-    /// moves it.
-    pub fn is_settled(&self) -> bool {
-        matches!(
-            self,
-            Self::Confirmed { .. } | Self::Removed { .. } | Self::Edited { .. }
-        )
-    }
-
-    /// Holds a decision of the user's: settled, or reopened from one. A queued
-    /// claim, or a machine's check reopened, only waits for them.
-    pub fn is_the_users_decision(&self) -> bool {
-        match self {
-            Self::Reopened { previous, .. } => previous.is_the_users_decision(),
-            state => state.is_settled(),
-        }
-    }
-
-    /// The failure an Open or Queued claim carries.
-    pub fn verdict(&self) -> Option<&VerdictKind> {
-        match self {
-            Self::Open { kind, .. } | Self::Queued { kind, .. } => Some(kind),
-            _ => None,
-        }
     }
 }
 
@@ -531,6 +451,19 @@ pub enum CheckResult {
 }
 
 impl CheckResult {
+    /// The check passed: any result but `Failed`.
+    pub fn passed(&self) -> bool {
+        !matches!(self, Self::Failed { .. })
+    }
+
+    /// The failure a failed check records.
+    pub fn failure(&self) -> Option<&VerdictKind> {
+        match self {
+            Self::Failed { kind } => Some(kind),
+            _ => None,
+        }
+    }
+
     /// The checker gave no answer: its reply could not be read, or the claim
     /// and its passage did not fit its window. Nothing is learned about the
     /// claim, which keeps its text and its attempts (claim classes design
@@ -697,11 +630,94 @@ impl SourceAddedBy {
 /// `stop_reason_json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StopReason {
-    pub code: String,
+    pub code: StopCode,
     pub message: String,
     pub fix: String,
     pub at: i64,
     pub request: Option<RequestFacts>,
+}
+
+/// Why a lesson's preparation stopped: `StopReason::code`, saved as its string.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
+pub enum StopCode {
+    ClaimLeftOut,
+    PolicyChanged,
+    PolicyRecordFault,
+    EndedClaimStands,
+    CheckerUnreadable,
+    NoProgress,
+    SourcesDoNotSupport,
+    VerifierTurnedOff,
+    VerifierUnset,
+    VerifierUnavailable,
+    VerifierConsentMissing,
+    VerifierConsentChanged,
+    /// A code this version no longer writes, kept as it was saved.
+    Retired(String),
+}
+
+impl StopCode {
+    /// Every code this version writes.
+    const KNOWN: [Self; 12] = [
+        Self::ClaimLeftOut,
+        Self::PolicyChanged,
+        Self::PolicyRecordFault,
+        Self::EndedClaimStands,
+        Self::CheckerUnreadable,
+        Self::NoProgress,
+        Self::SourcesDoNotSupport,
+        Self::VerifierTurnedOff,
+        Self::VerifierUnset,
+        Self::VerifierUnavailable,
+        Self::VerifierConsentMissing,
+        Self::VerifierConsentChanged,
+    ];
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::ClaimLeftOut => "claim_left_out",
+            Self::PolicyChanged => "policy_changed",
+            Self::PolicyRecordFault => "policy_record_fault",
+            Self::EndedClaimStands => "ended_claim_stands",
+            Self::CheckerUnreadable => "checker_unreadable",
+            Self::NoProgress => "no_progress",
+            Self::SourcesDoNotSupport => "sources_do_not_support",
+            Self::VerifierTurnedOff => "verifier_turned_off",
+            Self::VerifierUnset => "verifier_unset",
+            Self::VerifierUnavailable => "verifier_unavailable",
+            Self::VerifierConsentMissing => "verifier_consent_missing",
+            Self::VerifierConsentChanged => "verifier_consent_changed",
+            Self::Retired(code) => code,
+        }
+    }
+
+    /// A stop of the Verifier audit, which holds a lesson its checks passed.
+    pub fn is_audit(&self) -> bool {
+        matches!(
+            self,
+            Self::VerifierTurnedOff
+                | Self::VerifierUnset
+                | Self::VerifierUnavailable
+                | Self::VerifierConsentMissing
+                | Self::VerifierConsentChanged
+        )
+    }
+}
+
+impl From<String> for StopCode {
+    fn from(code: String) -> Self {
+        Self::KNOWN
+            .into_iter()
+            .find(|known| known.as_str() == code)
+            .unwrap_or(Self::Retired(code))
+    }
+}
+
+impl From<StopCode> for String {
+    fn from(code: StopCode) -> Self {
+        code.as_str().to_owned()
+    }
 }
 
 /// The numbers that explain a refused or rejected model request.
@@ -716,187 +732,6 @@ pub struct RequestFacts {
     pub attempts: u32,
     /// The preparation phase and stage text when it stopped.
     pub step: String,
-}
-
-/// One entry of a claim's append-only audit trail.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ClaimEvent {
-    Extracted {
-        location: ClaimLocation,
-        statement: String,
-    },
-    Checked(Check),
-    Researched {
-        queries: Vec<String>,
-        /// Source version ids the research saved.
-        sources_added: Vec<String>,
-        passages_found: usize,
-        /// What the round cost per claim it researched, in milliseconds:
-        /// its time from start to result over its claims: the cost of
-        /// researching one claim on the web (course evidence index D5).
-        /// `None` when no round ran, and on events written before rounds were
-        /// timed.
-        #[serde(default)]
-        round_ms_per_claim: Option<u64>,
-    },
-    RepairAttempted {
-        attempt: u8,
-        escalated: bool,
-        before: String,
-        after: Option<String>,
-        outcome: RepairOutcome,
-        /// What the repair was asked to achieve (acceptance design §2.9);
-        /// `None` on repairs recorded before the policy named a goal.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        goal: Option<Goal>,
-    },
-    Executed {
-        observation_id: String,
-        passed: bool,
-        evidence: String,
-    },
-    /// The machine moved the claim's section citation to the passage that
-    /// supports the claim, found elsewhere in the course (course evidence
-    /// index §5.1). The claim's words are unchanged, so no repair attempt is
-    /// charged; the next check reads the new citation as the section's own.
-    CitationRepaired {
-        /// The source versions the section cited, none of which supported it.
-        cited: Vec<String>,
-        /// The source version it cites now, and the quotation it carries.
-        source_version_id: String,
-        quote: String,
-        /// The lesson did not number the source before: it was added to the
-        /// lesson's sources to be cited.
-        added_source: bool,
-    },
-    /// The machine dropped the sentence's citation: the claim's parts are all
-    /// common and the passages it cited state none (acceptance design §2.1).
-    /// The claim's words are unchanged, so no repair attempt is charged; the
-    /// next check reads it without the citation.
-    CitationDropped {
-        /// The source versions the sentence cited.
-        cited: Vec<String>,
-    },
-    UserAction {
-        action: UserAction,
-        note: Option<String>,
-    },
-    EvidenceAttached {
-        source_version_id: String,
-        provenance: Provenance,
-        result: AttachOutcome,
-    },
-    /// Re-extraction found the claim's successor (`None`: no successor, the
-    /// sentence went with the change). `by`: whose change, the user's edit
-    /// or the machine's repair; the machine's with no successor removes the
-    /// claim, as it does a claim on a sentence cut for another's failure.
-    Superseded {
-        successor: Option<ClaimId>,
-        #[serde(default)]
-        by: Actor,
-    },
-    /// The claim was born of a repair of `parent` (claim sources design
-    /// §9.1): a sentence the rewrite added beside the parent's successor. It
-    /// starts with the parent's remaining attempts, so a split sentence adds
-    /// no budget.
-    BornOfRepair {
-        parent: ClaimId,
-        attempts_left: u8,
-    },
-    Reopened {
-        cause: ReopenCause,
-    },
-    /// The statement's class and who decided it (claim classes design §3.1).
-    Classified {
-        class: Class,
-        by: ClassifiedBy,
-    },
-    Undone {
-        event_ordinal: u32,
-    },
-    Stopped {
-        reason: StopReason,
-    },
-    /// What the provenance gate weighed for the claim. With no `cause` it
-    /// follows the local check the gate decided; with one it is the gate's
-    /// re-decision after a trust change, made without a model call.
-    /// `reason` is the gate's explanation, the claim's reason when it fails.
-    StandingAssessed {
-        trust: Box<TrustAssessment>,
-        reason: String,
-        cause: Option<TrustCause>,
-    },
-    /// What the acceptance policy made of one machine step, recorded beside
-    /// the step's own event (acceptance design §2.9). A machine-owned claim's
-    /// state is read from its latest decision.
-    Stepped {
-        /// The policy's version, [`acceptance::STANDARD_POLICY`] for the
-        /// standard one. A claim is never continued under another.
-        policy: String,
-        step: Step,
-        outcome: acceptance::Outcome,
-        /// Where the policy sent the statement.
-        then: Then,
-        /// The step's own reason, which the claim shows while it is open.
-        reason: String,
-        /// A rewrite is reachable from `then`: the Open state's attempt left.
-        rewrite_ahead: bool,
-    },
-    /// The machine has done all it will do for the claim and the lesson
-    /// publishes with it, not verified.
-    PublishedUnverified {
-        reason: UnverifiedReason,
-    },
-    /// What the machine's cut took out of the lesson for this claim, and the
-    /// sentences it stood between, so the user can put it back where it was.
-    SentenceCut {
-        cut: CutPlace,
-    },
-    /// What the user's removal took out of a published section: the exact
-    /// text (the sentence with the whitespace beside it) and the shortest
-    /// texts that occur once in what was left and end (`follows`) or start
-    /// (`precedes`) where it was taken from, `None` at the start or the end
-    /// of the section, so an undo can write it back only where they still
-    /// meet.
-    TextRemoved {
-        text: String,
-        follows: Option<String>,
-        precedes: Option<String>,
-    },
-    /// The user's edit of the claim's whole section ended it with the user
-    /// event that follows: editing the section again takes that back, an
-    /// undo of the claim alone does not.
-    SectionEdited {},
-}
-
-impl ClaimEvent {
-    /// The events table's `kind` column: the serde tag.
-    pub fn kind_name(&self) -> &'static str {
-        match self {
-            Self::Extracted { .. } => "extracted",
-            Self::Checked(_) => "checked",
-            Self::Researched { .. } => "researched",
-            Self::RepairAttempted { .. } => "repair_attempted",
-            Self::Executed { .. } => "executed",
-            Self::CitationRepaired { .. } => "citation_repaired",
-            Self::CitationDropped { .. } => "citation_dropped",
-            Self::UserAction { .. } => "user_action",
-            Self::EvidenceAttached { .. } => "evidence_attached",
-            Self::Superseded { .. } => "superseded",
-            Self::BornOfRepair { .. } => "born_of_repair",
-            Self::Reopened { .. } => "reopened",
-            Self::Classified { .. } => "classified",
-            Self::Undone { .. } => "undone",
-            Self::Stopped { .. } => "stopped",
-            Self::StandingAssessed { .. } => "standing_assessed",
-            Self::Stepped { .. } => "stepped",
-            Self::PublishedUnverified { .. } => "published_unverified",
-            Self::SentenceCut { .. } => "sentence_cut",
-            Self::TextRemoved { .. } => "text_removed",
-            Self::SectionEdited { .. } => "section_edited",
-        }
-    }
 }
 
 /// A lesson's review state: the `learning_lesson_reviews.state` column.

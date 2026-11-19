@@ -176,11 +176,11 @@ impl DocumentRepositoryPort for SingleDocumentRepository {
     async fn count_chunks(&self) -> Result<i64> {
         Ok(self.document.chunks().len() as i64)
     }
-    async fn find_all_paginated(&self, limit: usize) -> Result<Vec<Document>> {
-        Ok(vec![self.document.clone()]
-            .into_iter()
-            .take(limit)
-            .collect())
+    async fn find_all_paginated(
+        &self,
+        _page: lattice_core::shared::persistence::Page,
+    ) -> Result<Vec<Document>> {
+        Ok(vec![self.document.clone()])
     }
 }
 impl lattice_core::application::ports::DocumentRepository for SingleDocumentRepository {}
@@ -260,6 +260,73 @@ async fn test_validate_arguments() {
         .is_err());
 }
 
+#[tokio::test]
+async fn an_argument_past_a_declared_range_is_not_refused() {
+    use lattice_core::application::contracts::tools::ToolDefinition;
+    use serde_json::json;
+
+    let registry = Arc::new(MockFunctionRegistry::new());
+    let tool = ToolDefinition::new(
+        "ranged",
+        "Ranged",
+        json!({
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                "threshold": {"type": "number", "minimum": 0.0, "maximum": 1.0}
+            }
+        }),
+    )
+    .unwrap();
+    registry.register(tool).unwrap();
+    let executor = FunctionExecutor::new(test_executor_services(
+        registry as Arc<dyn FunctionRegistryTrait>,
+        Arc::new(MockWebService::new()) as Arc<dyn WebServiceTrait>,
+    ));
+
+    assert!(executor
+        .validate_arguments("ranged", &json!({"limit": 500, "threshold": 1.5}))
+        .is_ok());
+    assert!(executor
+        .validate_arguments("ranged", &json!({"limit": 0, "threshold": -1.0}))
+        .is_ok());
+    assert!(executor
+        .validate_arguments("ranged", &json!({"limit": "many"}))
+        .is_err());
+}
+
+#[tokio::test]
+async fn a_count_past_the_declared_maximum_is_clamped_to_it() {
+    let registry: Arc<dyn FunctionRegistryTrait> = Arc::new(
+        crate::features::function_calling::registry::init_function_registry()
+            .expect("the shipped registry builds"),
+    );
+    let executor = FunctionExecutor::new(test_executor_services(
+        registry,
+        Arc::new(MockWebService::new()),
+    ));
+
+    let result = executor
+        .execute(FunctionCall::new(
+            "call_big",
+            "list_documents",
+            serde_json::json!({"limit": 100000}),
+        ))
+        .await
+        .expect("execution should succeed");
+
+    assert!(result.success, "{result:?}");
+    assert_eq!(result.data.expect("data")["limit"], 500);
+}
+
+#[test]
+fn a_custom_endpoint_count_over_a_hundred_is_not_refused() {
+    assert!(FunctionExecutor::validate_custom_query_arguments(
+        &serde_json::json!({"query": "tokio", "max_results": 500})
+    )
+    .is_ok());
+}
+
 #[test]
 fn test_normalize_tool_arguments_date_only_filters() {
     use chrono::Timelike;
@@ -326,9 +393,11 @@ async fn list_documents_uses_migrated_schema_for_inventory_favorites_and_recent(
     use crate::infrastructure::persistence::repositories::DocumentRepository as SqliteDocuments;
     use serde_json::json;
 
-    let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    let documents = Arc::new(SqliteDocuments::new(pool.clone()));
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+        .await
+        .unwrap();
+    let db = Database::new(pool);
+    let documents = Arc::new(SqliteDocuments::new(db.clone()));
     for name in ["mpep-0100.pdf", "mpep-0200.pdf"] {
         let document = Document::new(
             lattice_core::shared::types::ValidatedFilePath::new(PathBuf::from(format!(
@@ -342,8 +411,8 @@ async fn list_documents_uses_migrated_schema_for_inventory_favorites_and_recent(
         );
         documents.save(&document).await.unwrap();
     }
-    let favorites = Arc::new(FavoritesRepository::new(pool.clone()));
-    let recent = Arc::new(RecentDocumentsRepository::new(pool.clone()));
+    let favorites = Arc::new(FavoritesRepository::new(db.clone()));
+    let recent = Arc::new(RecentDocumentsRepository::new(db.clone()));
     let mut services = test_executor_services(
         Arc::new(crate::features::function_calling::registry::init_function_registry().unwrap()),
         Arc::new(MockWebService::new()),
@@ -351,9 +420,7 @@ async fn list_documents_uses_migrated_schema_for_inventory_favorites_and_recent(
     services.document_repository = documents;
     services.favorites_repository = favorites.clone();
     services.recent_documents_repository = recent.clone();
-    services.tag_service = Arc::new(crate::features::tags::service::TagService::new(
-        Database::from(pool),
-    ));
+    services.tag_service = Arc::new(crate::features::tags::service::TagService::new(db.clone()));
     let executor = FunctionExecutor::new(services);
     let list = |args| {
         let executor = &executor;
@@ -380,6 +447,8 @@ async fn list_documents_uses_migrated_schema_for_inventory_favorites_and_recent(
         assert_eq!(filtered.documents[0].document_id, *id);
         assert!(filtered.documents[0].is_favorite);
     }
+    let none_asked = list(json!({"filter_mode": "recent", "limit": 0})).await;
+    assert_eq!(none_asked.total, 1);
     let second =
         list(json!({"limit": 1, "offset": 1, "sort_by": "name", "sort_order": "asc"})).await;
     assert_eq!(second.total, 2);
@@ -498,9 +567,11 @@ async fn hybrid_semantic_search_runs_the_library_orchestrator_and_names_hits_by_
     use crate::infrastructure::vector_index::USearchVectorIndex;
     use lattice_core::application::contracts::tools::SemanticSearchOutput;
 
-    let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    let documents = Arc::new(SqliteDocuments::new(pool.clone()));
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+        .await
+        .unwrap();
+    let db = Database::new(pool.clone());
+    let documents = Arc::new(SqliteDocuments::new(db.clone()));
     let document = Document::new(
         lattice_core::shared::types::ValidatedFilePath::new(PathBuf::from("/tmp/quotas.md"))
             .unwrap(),
@@ -523,9 +594,9 @@ async fn hybrid_semantic_search_runs_the_library_orchestrator_and_names_hits_by_
         HybridSearchUseCase::new(
             Arc::new(lattice_core::application::ports::UnavailableEmbedding::not_installed()),
             Arc::new(USearchVectorIndex::new(4, None).unwrap()),
-            Arc::new(SqliteTextSearch::new(Database::from(pool.clone()))),
+            Arc::new(SqliteTextSearch::new(db.clone())),
         )
-        .with_chunk_repository(Arc::new(ChunkRepository::new(pool.clone()))),
+        .with_chunk_repository(Arc::new(ChunkRepository::new(db.clone()))),
     );
     let mut services = test_executor_services(
         Arc::new(crate::features::function_calling::registry::init_function_registry().unwrap()),
@@ -583,6 +654,30 @@ fn test_build_document_evidence_groups_by_document() {
     assert!((grouped[0].max_score - 0.91).abs() < f32::EPSILON);
     assert_eq!(grouped[1].document_id, "doc-b");
     assert_eq!(grouped[1].match_count, 1);
+}
+
+#[test]
+fn test_build_document_evidence_reports_every_match_of_a_document() {
+    let now = Utc::now();
+    let results: Vec<DocumentResult> = (0..11)
+        .map(|idx| DocumentResult {
+            document_id: "doc-a".to_string(),
+            filename: "doc-a.pdf".to_string(),
+            file_path: "/tmp/doc-a.pdf".to_string(),
+            mime_type: "application/pdf".to_string(),
+            score: 0.9 - idx as f32 * 0.01,
+            snippet: "excerpt".to_string(),
+            chunk_index: Some(idx),
+            chunk_id: None,
+            modified_at: now,
+            size_bytes: 100,
+        })
+        .collect();
+
+    let grouped = FunctionExecutor::build_document_evidence(&results);
+    assert_eq!(grouped.len(), 1);
+    assert_eq!(grouped[0].match_count, 11);
+    assert_eq!(grouped[0].matches.len(), 11);
 }
 
 #[tokio::test]

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 
 import { ArrowRight, Check, ChevronDown, Clock3, Layers3 } from 'lucide-react';
 
@@ -17,7 +17,10 @@ export function CourseSyllabus({
   onSelectModule,
   evidence,
   compact = false,
+  renderTopics,
 }: {
+  /** What to show under a lesson's objective, e.g. its planned topics. */
+  renderTopics?: (lessonId: string) => ReactNode;
   compact?: boolean;
   program: LearningProgramDto;
   moduleId: string;
@@ -152,6 +155,7 @@ export function CourseSyllabus({
                       </button>
                       <p className="ml-10 text-[11px] leading-5 text-text-muted">{lesson.objective}</p>
                       <OutlineCitation citation={findOutlineCitation(evidence, 'lesson_objective', module.id, lesson.objective, lessonIndex, lesson.id)} evidence={evidence} className="ml-10" />
+                      {renderTopics && <div className="ml-10">{renderTopics(lesson.id)}</div>}
                     </li>
                   ))}
                 </ol>

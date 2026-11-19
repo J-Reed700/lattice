@@ -5,8 +5,13 @@ import type { DocumentMetadata } from '@/types/fileBrowser';
 
 import { useCorpusIdentity } from './useCorpusIdentity';
 
-const doc = (fileType: string, filePath = `/notes/x.${fileType}`) =>
-  ({ id: filePath, fileName: 'x', filePath, fileType, category: 'document' }) as DocumentMetadata;
+const BUCKETS: Record<string, string> = { pdf: 'PDF', md: 'Markdown', html: 'HTML' };
+
+const doc = (fileType: string, filePath = `/notes/x.${fileType}`, web = filePath.startsWith('https://')) =>
+  ({
+    id: filePath, fileName: 'x', filePath, fileType, category: 'document', web,
+    typeBucket: web ? 'Web' : BUCKETS[fileType] ?? fileType.toUpperCase(),
+  }) as DocumentMetadata;
 
 describe('useCorpusIdentity', () => {
   it('counts documents per type, largest first, ties by name', () => {
@@ -17,6 +22,20 @@ describe('useCorpusIdentity', () => {
     const rest = result.current.buckets.slice(1).map((bucket) => bucket.label);
     expect(rest).toEqual([...rest].sort((a, b) => a.localeCompare(b)));
     expect(rest).toContain('Web');
+  });
+
+  it('counts each document in the bucket the backend assigned it', () => {
+    const documents = [
+      doc('md', 'C:/data/articles/x/article.md', true),
+      doc('md', '/notes/a.md', false),
+      { ...doc('pdf', 'https://example.org/a.pdf', false), typeBucket: 'PDF' },
+    ];
+    const { result } = renderHook(() => useCorpusIdentity(documents));
+    expect(result.current.buckets).toEqual([
+      { label: 'Markdown', count: 1 },
+      { label: 'PDF', count: 1 },
+      { label: 'Web', count: 1 },
+    ]);
   });
 
   it('is empty for an empty library', () => {

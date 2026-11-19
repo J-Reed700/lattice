@@ -34,7 +34,7 @@ pub async fn prepare(database: &Database, model: &dyn EmbeddingPort) -> Result<u
             // Not `split_text`: that sizes to the chunk target, and a stored
             // chunk already fills the target *plus* its context prefix, so it
             // would cut nearly every full chunk in two and store an average.
-            let parts = model.window_parts(&text)?;
+            let parts = model.window_parts(&text).await?;
             if parts.is_empty() {
                 continue;
             }
@@ -122,14 +122,14 @@ mod tests {
         }
         /// A chunk-target split that always halves, as the real one does for a
         /// stored chunk that carries its context prefix.
-        fn split_text(&self, text: &str, _: &str) -> Result<Vec<EmbeddingTextChunk>> {
+        async fn split_text(&self, text: &str, _: &str) -> Result<Vec<EmbeddingTextChunk>> {
             let mid = text.len() / 2;
             Ok(vec![part(&text[..mid], 0), part(&text[mid..], mid)])
         }
         /// A window of eight bytes.
-        fn window_parts(&self, text: &str) -> Result<Vec<EmbeddingTextChunk>> {
+        async fn window_parts(&self, text: &str) -> Result<Vec<EmbeddingTextChunk>> {
             if text.len() > 8 {
-                self.split_text(text, "")
+                self.split_text(text, "").await
             } else {
                 Ok(vec![part(text, 0)])
             }
@@ -160,24 +160,18 @@ mod tests {
     #[tokio::test]
     async fn interrupted_generation_resumes_and_never_restores_another_vector_space() {
         let pool = database().await;
+        let db = Database::new(pool.clone());
         let first = Model::new("new", 1);
-        assert!(prepare(&Database::from(pool.clone()), &first)
-            .await
-            .is_err());
+        assert!(prepare(&db, &first).await.is_err());
         let resumed = Model::new("new", usize::MAX);
-        assert_eq!(
-            prepare(&Database::from(pool.clone()), &resumed)
-                .await
-                .unwrap(),
-            2
-        );
+        assert_eq!(prepare(&db, &resumed).await.unwrap(), 2);
         assert_eq!(
             resumed.calls.load(Ordering::SeqCst),
             1,
             "completed source must not be recomputed"
         );
-        assert_eq!(restore(&pool, "new", 2).await.unwrap().len(), 2);
-        assert!(restore(&pool, "old-same-dimension", 2)
+        assert_eq!(restore(&db, "new", 2).await.unwrap().len(), 2);
+        assert!(restore(&db, "old-same-dimension", 2)
             .await
             .unwrap()
             .is_empty());
@@ -186,20 +180,19 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            restore(&pool, "new", 2).await.unwrap().len(),
+            restore(&db, "new", 2).await.unwrap().len(),
             1,
             "stale source must not reuse its old vector"
         );
-        prepare(&Database::from(pool.clone()), &resumed)
-            .await
-            .unwrap();
+        prepare(&db, &resumed).await.unwrap();
         assert_eq!(resumed.calls.load(Ordering::SeqCst), 2);
-        assert_eq!(restore(&pool, "new", 2).await.unwrap().len(), 2);
+        assert_eq!(restore(&db, "new", 2).await.unwrap().len(), 2);
     }
 
     #[tokio::test]
     async fn a_stored_chunk_that_fits_the_window_is_embedded_whole() {
         let pool = database().await;
+        let db = Database::new(pool.clone());
         sqlx::query(
             "INSERT INTO text_chunks VALUES ('c', 'a much longer stored chunk', NULL, 'doc')",
         )
@@ -207,12 +200,7 @@ mod tests {
         .await
         .unwrap();
         let model = Model::new("new", usize::MAX);
-        assert_eq!(
-            prepare(&Database::from(pool.clone()), &model)
-                .await
-                .unwrap(),
-            3
-        );
+        assert_eq!(prepare(&db, &model).await.unwrap(), 3);
         // 'alpha' and 'beta' fit the window and go in one piece; only the
         // chunk past the window is split.
         assert_eq!(model.calls.load(Ordering::SeqCst), 3);

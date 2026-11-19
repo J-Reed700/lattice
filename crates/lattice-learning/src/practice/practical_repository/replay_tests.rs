@@ -6,16 +6,17 @@ use crate::{
     repository::LearningRepository,
     tests,
 };
+use lattice_core::shared::persistence::Database;
 
 fn id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-async fn program(pool: &SqlitePool) -> Result<(String, String)> {
+async fn program(database: &Database) -> Result<(String, String)> {
     let program = tests::fixture();
     let program_id = program.summary.id.clone();
     let lesson_id = program.modules[0].lessons[0].id.clone();
-    let programs = LearningRepository::new(pool.clone());
+    let programs = LearningRepository::new(database.clone());
     programs.create(&program).await?;
     programs
         .accept(&AcceptLearningProgramRequestDto {
@@ -70,14 +71,14 @@ fn request(
 
 #[tokio::test]
 async fn activity_and_simulation_operations_replay_only_the_identical_request() -> Result<()> {
-    let pool = tests::pool().await?;
-    let (program_id, lesson_id) = program(&pool).await?;
-    let revision = LearningRepository::new(pool.clone())
+    let database = Database::new(tests::pool().await?);
+    let (program_id, lesson_id) = program(&database).await?;
+    let revision = LearningRepository::new(database.clone())
         .get(&program_id)
         .await?
         .summary
         .revision;
-    let repository = LearningPracticalRepository::new(pool.clone());
+    let repository = LearningPracticalRepository::new(database.clone());
     let generate = request(&program_id, &lesson_id, revision);
     tests::assert_conflict(
         repository
@@ -181,14 +182,14 @@ async fn activity_and_simulation_operations_replay_only_the_identical_request() 
 
 #[tokio::test]
 async fn simulation_context_reads_the_saved_activity_and_rejects_unknown_ones() -> Result<()> {
-    let pool = tests::pool().await?;
-    let (program_id, lesson_id) = program(&pool).await?;
-    let revision = LearningRepository::new(pool.clone())
+    let database = Database::new(tests::pool().await?);
+    let (program_id, lesson_id) = program(&database).await?;
+    let revision = LearningRepository::new(database.clone())
         .get(&program_id)
         .await?
         .summary
         .revision;
-    let repository = LearningPracticalRepository::new(pool.clone());
+    let repository = LearningPracticalRepository::new(database.clone());
     let generate = request(&program_id, &lesson_id, revision);
     let activity = generated();
     repository
@@ -208,7 +209,7 @@ async fn simulation_context_reads_the_saved_activity_and_rejects_unknown_ones() 
         .simulation_generation_context(&program_id, &id())
         .await;
     assert!(matches!(unknown, Err(AppError::NotFound(_))));
-    let (other_program, _) = program(&pool).await?;
+    let (other_program, _) = program(&database).await?;
     let foreign = repository
         .simulation_generation_context(&other_program, &generate.activity_id)
         .await;

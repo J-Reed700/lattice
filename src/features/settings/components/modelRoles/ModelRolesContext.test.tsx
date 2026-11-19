@@ -57,7 +57,7 @@ it('clears the embedding role through the model client and shows why it failed',
 it('tells the user when a model downloaded but its warm-up failed', () => {
   useToastStore.setState({ toasts: [] });
   reportWarmupFailure({ ok: false, error: 'out of memory' }, 'Qwen 3.5 4B', 'chat');
-  reportWarmupFailure({ ok: true, data: undefined }, 'Qwen 3.5 4B', 'utility');
+  reportWarmupFailure({ ok: true, data: null }, 'Qwen 3.5 4B', 'utility');
   expect(useToastStore.getState().toasts).toEqual([
     expect.objectContaining({ type: 'error', title: "Qwen 3.5 4B downloaded but couldn't start" }),
   ]);

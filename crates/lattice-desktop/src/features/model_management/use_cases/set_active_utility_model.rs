@@ -57,19 +57,13 @@ impl SetActiveUtilityModelUseCase {
 mod tests {
     use super::*;
     use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
-    use sqlx::sqlite::SqlitePoolOptions;
+    use lattice_core::shared::persistence::Database;
 
     async fn setup_repo() -> Arc<DownloadedModelRepository> {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
-            .await
-            .expect("create in-memory pool");
-        sqlx::migrate!("./migrations")
-            .run(&pool)
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
             .expect("run migrations");
-        Arc::new(DownloadedModelRepository::new(pool))
+        Arc::new(DownloadedModelRepository::new(Database::new(pool)))
     }
 
     #[tokio::test]

@@ -367,22 +367,21 @@ async fn live_research_rejects_or_corrects_the_retained_rust_counterexample() ->
         fetches: Mutex::new(vec![]),
     };
     let directory = tempfile::tempdir()?;
+    let path = directory.path().join("references.sqlite");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(
             sqlx::sqlite::SqliteConnectOptions::new()
-                .filename(directory.path().join("references.sqlite"))
+                .filename(&path)
                 .create_if_missing(true)
                 .foreign_keys(true),
         )
         .await
         .map_err(|error| AppError::Database(error.to_string()))?;
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .map_err(|error| AppError::Database(error.to_string()))?;
+    let db = Database::new(pool.clone());
     let program_id = uuid::Uuid::new_v4().to_string();
-    LearningRepository::new(pool.clone())
+    LearningRepository::new(db.clone())
         .create(&LearningProgramDto {
             outline_review: None,
             summary: LearningProgramSummaryDto {
@@ -404,14 +403,14 @@ async fn live_research_rejects_or_corrects_the_retained_rust_counterexample() ->
             sources: vec![],
         })
         .await?;
-    LearningRepository::new(pool.clone())
+    LearningRepository::new(db.clone())
         .accept(&AcceptLearningProgramRequestDto {
             program_id: program_id.clone(),
             expected_revision: 0,
             title: "Rust reference control".into(),
         })
         .await?;
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let library = LearningSourceLibraryRepository::new(db.clone());
     let versions = research_interview_answers(
         model.as_ref(),
         &web,

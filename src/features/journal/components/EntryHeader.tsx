@@ -139,7 +139,6 @@ export function EntryHeader({
               cancellingRename.current = false;
             }
           }}
-          maxLength={160}
           placeholder="Untitled page"
           aria-label="Page title"
           spellCheck={false}

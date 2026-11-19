@@ -94,29 +94,23 @@ fn a_build_that_is_stopped_midway_is_requeued() {
 
 #[tokio::test]
 async fn queueing_a_build_twice_with_one_operation_id_is_one_job() {
-    let (pool, program_id, _, _) = fixture().await.unwrap();
+    let (_, db, program_id, _, _) = fixture().await.unwrap();
     let operation = Uuid::new_v4().to_string();
-    let first = queue_coding_build(
-        &Database::from(pool.clone()),
-        &build_request(&operation, &program_id),
-    )
-    .await
-    .unwrap();
-    let again = queue_coding_build(
-        &Database::from(pool.clone()),
-        &build_request(&operation, &program_id),
-    )
-    .await
-    .unwrap();
+    let first = queue_coding_build(&db, &build_request(&operation, &program_id))
+        .await
+        .unwrap();
+    let again = queue_coding_build(&db, &build_request(&operation, &program_id))
+        .await
+        .unwrap();
     assert_eq!(first, again);
 
-    let job = JobStore::new(pool.clone()).get(&first).await.unwrap();
+    let job = JobStore::new(db.clone()).get(&first).await.unwrap();
     assert_eq!(job.kind, PRACTICE_BUILD);
     assert_eq!(job.subject_id.as_deref(), Some(program_id.as_str()));
     assert_eq!(job.progress_total, PRACTICE_BUILD_STEPS);
 
     let other = queue_coding_build(
-        &Database::from(pool.clone()),
+        &db,
         &build_request(&Uuid::new_v4().to_string(), &program_id),
     )
     .await
@@ -152,14 +146,14 @@ fn a_bug_fix_is_a_repair_and_keeps_its_focus() {
 
 #[tokio::test]
 async fn the_queued_job_carries_the_kind_in_its_payload() {
-    let (pool, program_id, _, _) = fixture().await.unwrap();
+    let (_, db, program_id, _, _) = fixture().await.unwrap();
     let id = queue_coding_build(
-        &Database::from(pool.clone()),
+        &db,
         &build_request(&Uuid::new_v4().to_string(), &program_id),
     )
     .await
     .unwrap();
-    let job = JobStore::new(pool.clone()).get(&id).await.unwrap();
+    let job = JobStore::new(db.clone()).get(&id).await.unwrap();
     assert_eq!(job.requested["kind"], json!("program"));
     assert_eq!(job.requested["form"], json!("build"));
     assert_eq!(job.requested["programId"], json!(program_id));
@@ -168,29 +162,22 @@ async fn the_queued_job_carries_the_kind_in_its_payload() {
 
 #[tokio::test]
 async fn an_operation_id_reused_for_another_request_is_refused() {
-    let (pool, program_id, _, _) = fixture().await.unwrap();
+    let (_, db, program_id, _, _) = fixture().await.unwrap();
     let operation = Uuid::new_v4().to_string();
-    queue_coding_build(
-        &Database::from(pool.clone()),
-        &build_request(&operation, &program_id),
-    )
-    .await
-    .unwrap();
+    queue_coding_build(&db, &build_request(&operation, &program_id))
+        .await
+        .unwrap();
     let mut different = build_request(&operation, &program_id);
     different.focus = Some("hashing".into());
-    assert!(
-        queue_coding_build(&Database::from(pool.clone()), &different)
-            .await
-            .is_err()
-    );
+    assert!(queue_coding_build(&db, &different).await.is_err());
 }
 
 #[tokio::test]
 async fn the_build_saves_a_coding_problem_activity_with_a_private_problem_file() {
-    let (pool, program_id, lesson_id, outcome_id) = fixture().await.unwrap();
+    let (_, db, program_id, lesson_id, outcome_id) = fixture().await.unwrap();
     let job_id = Uuid::new_v4().to_string();
     let activity_id = save_problem(
-        &Database::from(pool.clone()),
+        &db,
         &save_of(&job_id, &program_id, &lesson_id),
         &sample_problem(),
         &FakeHarness,
@@ -198,7 +185,7 @@ async fn the_build_saves_a_coding_problem_activity_with_a_private_problem_file()
     .await
     .unwrap();
 
-    let repository = LearningPracticalRepository::new(pool.clone());
+    let repository = LearningPracticalRepository::new(db.clone());
     let stored = repository
         .stored_problem(&program_id, &activity_id)
         .await
@@ -237,28 +224,18 @@ async fn the_build_saves_a_coding_problem_activity_with_a_private_problem_file()
 
 #[tokio::test]
 async fn a_build_that_runs_again_after_saving_finds_its_own_activity() {
-    let (pool, program_id, lesson_id, _) = fixture().await.unwrap();
+    let (_, db, program_id, lesson_id, _) = fixture().await.unwrap();
     let job_id = Uuid::new_v4().to_string();
     let save = save_of(&job_id, &program_id, &lesson_id);
-    let first = save_problem(
-        &Database::from(pool.clone()),
-        &save,
-        &sample_problem(),
-        &FakeHarness,
-    )
-    .await
-    .unwrap();
-    let again = save_problem(
-        &Database::from(pool.clone()),
-        &save,
-        &sample_problem(),
-        &FakeHarness,
-    )
-    .await
-    .unwrap();
+    let first = save_problem(&db, &save, &sample_problem(), &FakeHarness)
+        .await
+        .unwrap();
+    let again = save_problem(&db, &save, &sample_problem(), &FakeHarness)
+        .await
+        .unwrap();
     assert_eq!(first, again);
 
-    let workspace = LearningPracticalRepository::new(pool)
+    let workspace = LearningPracticalRepository::new(db.clone())
         .workspace(&program_id)
         .await
         .unwrap()
@@ -273,8 +250,8 @@ async fn a_build_that_runs_again_after_saving_finds_its_own_activity() {
 
 #[tokio::test]
 async fn the_lesson_of_a_build_is_the_one_asked_for_then_the_current_one() {
-    let (pool, program_id, lesson_id, _) = fixture().await.unwrap();
-    let repository = LearningPracticalRepository::new(pool);
+    let (_, db, program_id, lesson_id, _) = fixture().await.unwrap();
+    let repository = LearningPracticalRepository::new(db.clone());
     let asked = repository
         .build_lesson(&program_id, Some(&lesson_id))
         .await
@@ -290,8 +267,8 @@ async fn the_lesson_of_a_build_is_the_one_asked_for_then_the_current_one() {
 
 #[tokio::test]
 async fn a_problem_file_is_refused_unless_it_is_a_private_read_only_check_of_a_coding_problem() {
-    let (pool, program_id, lesson_id, _) = fixture().await.unwrap();
-    let repository = LearningPracticalRepository::new(pool);
+    let (_, db, program_id, lesson_id, _) = fixture().await.unwrap();
+    let repository = LearningPracticalRepository::new(db.clone());
     let evaluator = file("checks.py", PracticalFileRole::Check, false, "# evaluator");
     let starter = file(SOLUTION_PATH, PracticalFileRole::Starter, true, "pass");
 

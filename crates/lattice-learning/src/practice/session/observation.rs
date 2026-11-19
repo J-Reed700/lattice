@@ -91,20 +91,6 @@ fn push_line(out: &mut String, text: &str) {
 }
 
 impl Observation {
-    /// The ids of this session the counterpart must never repeat: the session, its turns, its checks and the cases
-    /// the learner has seen results for.
-    pub fn internal_ids(&self) -> Vec<String> {
-        let mut ids = vec![self.session_id.clone()];
-        ids.extend(self.turns.iter().map(|turn| turn.id.clone()));
-        ids.extend(self.hints.iter().filter_map(|hint| hint.check_id.clone()));
-        if let Some(check) = &self.last_check {
-            ids.push(check.id.clone());
-            ids.extend(check.cases.iter().map(|view| view.case.id.clone()));
-        }
-        ids.extend(self.shown.iter().map(|case| case.id.clone()));
-        ids
-    }
-
     /// The observation as the model reads it: text, with the blocks in a fixed order.
     pub fn render(&self, kind: &Kind) -> Result<String> {
         let wording = &kind.wording;

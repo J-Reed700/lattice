@@ -134,7 +134,7 @@ export const clamp = (value: number, min: number, max: number) =>
 
 export const normalizeCustomTool = (tool: ApiCustomToolSettings): ApiCustomToolSettings => {
   const maxResults = Number.isFinite(tool.defaultMaxResults)
-    ? Math.max(1, Math.min(100, Math.round(tool.defaultMaxResults)))
+    ? Math.max(1, Math.round(tool.defaultMaxResults))
     : 5;
   const maxResultsParam = (tool.maxResultsParam || '').trim();
 

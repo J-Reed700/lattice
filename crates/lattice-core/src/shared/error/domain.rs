@@ -56,26 +56,6 @@ impl DomainError {
     pub fn is_not_found(&self) -> bool {
         matches!(self, Self::EntityNotFound { .. })
     }
-
-    /// Returns true if this error represents a business rule violation.
-    ///
-    /// Business rule violations include validation failures, constraint violations,
-    /// and invalid state transitions.
-    pub fn is_business_rule_violation(&self) -> bool {
-        matches!(
-            self,
-            Self::ValidationFailed { .. }
-                | Self::ConstraintViolation { .. }
-                | Self::InvalidState { .. }
-        )
-    }
-
-    /// Returns true if this error condition might be resolved by retrying.
-    ///
-    /// Currently, only concurrent modification errors are considered retryable.
-    pub fn is_retryable(&self) -> bool {
-        matches!(self, Self::ConcurrentModification { .. })
-    }
 }
 
 #[cfg(test)]
@@ -90,8 +70,6 @@ mod tests {
         };
 
         assert!(error.is_not_found());
-        assert!(!error.is_business_rule_violation());
-        assert!(!error.is_retryable());
 
         let msg = error.to_string();
         assert!(msg.contains("Document"));
@@ -105,8 +83,6 @@ mod tests {
         };
 
         assert!(!error.is_not_found());
-        assert!(error.is_business_rule_violation());
-        assert!(!error.is_retryable());
 
         let msg = error.to_string();
         assert!(msg.contains("Invalid state"));
@@ -121,8 +97,6 @@ mod tests {
         };
 
         assert!(!error.is_not_found());
-        assert!(error.is_business_rule_violation());
-        assert!(!error.is_retryable());
 
         let msg = error.to_string();
         assert!(msg.contains("email"));
@@ -137,8 +111,6 @@ mod tests {
         };
 
         assert!(!error.is_not_found());
-        assert!(!error.is_business_rule_violation());
-        assert!(!error.is_retryable());
 
         let msg = error.to_string();
         assert!(msg.contains("file.xyz"));
@@ -153,8 +125,6 @@ mod tests {
         };
 
         assert!(!error.is_not_found());
-        assert!(!error.is_business_rule_violation());
-        assert!(!error.is_retryable());
 
         let msg = error.to_string();
         assert!(msg.contains("100000000"));
@@ -169,8 +139,6 @@ mod tests {
         };
 
         assert!(!error.is_not_found());
-        assert!(!error.is_business_rule_violation());
-        assert!(error.is_retryable());
 
         let msg = error.to_string();
         assert!(msg.contains("doc-123"));
@@ -184,8 +152,6 @@ mod tests {
         };
 
         assert!(!error.is_not_found());
-        assert!(error.is_business_rule_violation());
-        assert!(!error.is_retryable());
 
         let msg = error.to_string();
         assert!(msg.contains("at least one chunk"));
@@ -248,27 +214,27 @@ mod tests {
                     entity_type: "Document".to_string(),
                     identifier: "doc-123".to_string(),
                 },
-                (true, false, false), // (is_not_found, is_business_rule, is_retryable)
+                true,
             ),
             (
                 DomainError::InvalidState {
                     details: "Archived".to_string(),
                 },
-                (false, true, false),
+                false,
             ),
             (
                 DomainError::ValidationFailed {
                     field: "email".to_string(),
                     reason: "Invalid".to_string(),
                 },
-                (false, true, false),
+                false,
             ),
             (
                 DomainError::UnsupportedFileType {
                     path: PathBuf::from("/test.xyz"),
                     detected_type: None,
                 },
-                (false, false, false),
+                false,
             ),
             (
                 DomainError::FileTooLarge {
@@ -276,27 +242,25 @@ mod tests {
                     size_bytes: 1000,
                     max_size_bytes: 500,
                 },
-                (false, false, false),
+                false,
             ),
             (
                 DomainError::ConcurrentModification {
                     resource: "Doc".to_string(),
                     details: "Conflict".to_string(),
                 },
-                (false, false, true),
+                false,
             ),
             (
                 DomainError::ConstraintViolation {
                     constraint: "Unique".to_string(),
                 },
-                (false, true, false),
+                false,
             ),
         ];
 
-        for (error, (expected_not_found, expected_business, expected_retryable)) in test_cases {
+        for (error, expected_not_found) in test_cases {
             assert_eq!(error.is_not_found(), expected_not_found);
-            assert_eq!(error.is_business_rule_violation(), expected_business);
-            assert_eq!(error.is_retryable(), expected_retryable);
         }
     }
 }

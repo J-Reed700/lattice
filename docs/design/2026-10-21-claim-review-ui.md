@@ -158,7 +158,7 @@ Top to bottom, nothing else:
 ### 3.4 The evidence view
 
 - Source line: `support.source.title` · `support.site` · `support.kind` word (§4.3): "online book", "documentation", "peer-reviewed paper", "reference work", "article", "forum", "your file", "pasted text".
-- Excerpt: the supporting sentence (`support.quote`) highlighted, with up to one sentence of context on each side taken from the passage (`support.quote_span` inside `support.passage.text`, sentence bounds found client-side with the same sentence rule as the backend, §5.1), rendered as plain text.
+- Excerpt: the supporting sentence highlighted, with up to one sentence of prose on each side taken from the passage, never code (`support.excerpt`, cut by the backend with `lattice_core::shared::text::sentences` and `code_fences`), rendered as plain text.
 - **Counts as**: one line from the deck (§4.3): what this source is for this claim and whether it is enough: "an unidentified author's work · not enough on its own for this claim", "the course's strongest source on this subject · enough", "the owner's own documentation · enough".
 - **Full passage ▸**: the whole passage rendered through `TiptapViewer` with `formatSourceForReader` (`sources/sourceReaderFormat.ts`), which already repairs flattened markdown, code fences and tables for the Sources tab reader; the highlight is kept by wrapping the quote in a `<mark>` before rendering.
 - **Open the source ↗**: `FilePreviewModal` with `fromLearningEvidencePassage(passage, 0, fullText)` (`src/features/reading/model/sourceAdapter.ts:446`) and `locator.text` = the supporting sentence, so `PassageHighlighter` (`src/features/reading/components/PassageHighlighter.tsx:98`) scrolls to and marks it; `fullText` comes from the source detail query the Sources tab already uses (`sources/useLearningSources.ts`, `SourcesPanel.tsx:327`). A web source also offers the frozen page (`WebPageSnapshotView`) as today.
@@ -354,7 +354,7 @@ pub struct ClaimSupportDto {
     pub standing: Option<LearningTrustLevel>,  // the level for this claim's subject, when weighed
     pub counts: ClaimSupportCountsDto,         // enough | not_enough | not_counted { reason: String }
     pub quote: String,                         // the supporting (or contradicting) sentence(s), as the judge cited
-    pub quote_span: Option<(usize, usize)>,    // byte span of `quote` inside `passage.text`
+    pub excerpt: ClaimExcerptDto,             // `quote` in its passage, with a sentence of prose each side
     pub passage: LearningEvidencePassageDto,   // exists
 }
 /// Research, summed up.
@@ -369,7 +369,7 @@ pub struct ResearchSummaryDto {
 
 New fields on `ClaimReviewItemDto`: `presentation: ClaimPresentationDto`, `support: Option<ClaimSupportDto>` (the strongest counted support, else the contradicting passage), `also_supported: Vec<ClaimSupportDto>`, `tried: ResearchSummaryDto`. The existing `evidence`, `research`, `repairs`, `history`, `localCheck`, `verifierCheck` stay (History and the Verifier columns read them).
 
-How `view.rs` fills them: `presentation` from `location.quote` and the unit's field text (`claim_ledger/observe.rs::field_text`, made reachable through the review's repository) with a new pure `lattice_core::shared::text::plain_sentence_context(field_text, quote) -> (before, sentence, after)` that strips emphasis, inline code fences, link syntax and `[n]` markers (`crates/lattice-core/src/shared/text/mod.rs`, beside `normalize_whitespace`) and finds the sentence with the rule `content_verification/repair/citation.rs::sentences` uses (moved to `lattice_core::shared::text::sentences` so both crates share it). `support` from the latest check's support and the stored `TrustAssessment` (`entry.trust()`: the support's `trust.level`, its `counted` outcome in `decision.have`/`met_by`), `quote_span` by locating the supporting quote in the shown passage's text. `kind` from the source's v2 standing (`nature`, `publisher_kind`) and library `kind` via one mapping function `source_kind()` in `claim_reviews/dto/trust.rs`. `tried` from the `Researched` events and the checks' `evidence` source ids.
+How `view.rs` fills them: `presentation` from `location.quote` and the unit's field text (`claim_ledger/observe.rs::field_text`, made reachable through the review's repository) with a new pure `lattice_core::shared::text::plain_sentence_context(field_text, quote) -> (before, sentence, after)` that strips emphasis, inline code fences, link syntax and `[n]` markers (`crates/lattice-core/src/shared/text/mod.rs`, beside `normalize_whitespace`) and finds the sentence with the rule `content_verification/repair/citation.rs::sentences` uses (moved to `lattice_core::shared::text::sentences` so both crates share it). `support` from the latest check's support and the stored `TrustAssessment` (`entry.trust()`: the support's `trust.level`, its `counted` outcome in `decision.have`/`met_by`), `excerpt` by locating the supporting quote in the shown passage's text and cutting a sentence of prose on each side. `kind` from the source's v2 standing (`nature`, `publisher_kind`) and library `kind` via one mapping function `source_kind()` in `claim_reviews/dto/trust.rs`. `tried` from the `Researched` events and the checks' `evidence` source ids.
 
 ### 5.2 Other DTO changes
 

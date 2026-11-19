@@ -5,6 +5,7 @@ from pathlib import Path
 
 import replay_session_talk as talk
 import tutor_eval
+from test_shipped_path_rag_eval import said, source_piece, text_piece
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -30,9 +31,12 @@ def card(question, review_count=0, stability=None, due_now=True, ratings=(), key
 
 
 def turn(index, answer, cards=(), tools=(), citations=None, verdicts=None, notes=()):
+    parts = answer if isinstance(answer, tuple) else (answer,) if answer else ()
+    text, pieces = said(*parts)
     return {
         "index": index,
-        "answer": answer,
+        "answer": text if answer is not None else None,
+        "reply": pieces,
         "citation_map": citations or {},
         "tool_calls": list(tools),
         "verification": {"verdictCounts": verdicts or {}},
@@ -97,9 +101,29 @@ class ModelTests(unittest.TestCase):
 
 class ScoreTests(unittest.TestCase):
     def test_a_citation_the_turn_does_not_hold_is_invalid(self):
-        rows = [row([turn(0, "Leases last 45 seconds [1], renewals 15 minutes [2].", citations={"1": "x"})])]
+        answer = ("Leases last 45 seconds ", 1, ", renewals 15 minutes ", 2, ".")
+        rows = [row([turn(0, answer, citations={"1": "x"})])]
         summary = tutor_eval.summarize(rows, load_course())
         self.assertEqual(summary["citations"]["invalid"], {"s": [2]})
+
+    def test_a_source_the_app_resolved_is_a_citation(self):
+        cited = turn(0, "Leases last 45 seconds [s1], renewals 15 minutes [s2].", citations={"1": "x"})
+        cited["reply"] = [text_piece("Leases last 45 seconds "), source_piece(1),
+                          text_piece(", renewals 15 minutes "), source_piece(2), text_piece(".")]
+        summary = tutor_eval.summarize([row([cited])], load_course())
+        self.assertEqual(summary["citations"]["invalid"], {"s": [2]})
+
+    def test_brackets_the_app_left_as_text_are_not_citations(self):
+        plain = turn(0, "Leases last 45 seconds [1], renewals 15 minutes [2].", citations={"1": "x"})
+        plain["reply"] = [text_piece("Leases last 45 seconds [1], renewals 15 minutes [2].")]
+        summary = tutor_eval.summarize([row([plain])], load_course())
+        self.assertEqual(summary["citations"]["invalid"], {})
+
+    def test_rows_written_before_turns_kept_their_pieces_are_refused(self):
+        old = row([turn(0, "A lease lasts 45 seconds.")])
+        old["schema"] = "lattice-shipped-path-answers/1"
+        with self.assertRaises(SystemExit):
+            tutor_eval.summarize([old], load_course())
 
     def test_the_supported_share_counts_every_verdict(self):
         verdicts = {"supported": 3, "unsupported": 1}
@@ -149,7 +173,7 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(summary["by_session"][0]["modules_due"], ["Delivery", "Operations"])
 
     def test_a_first_message_that_asks_is_answered_before_the_cards(self):
-        answered = row([turn(0, "A lease lasts 45 seconds [1].")], "answered", ["ask-first"])
+        answered = row([turn(0, ("A lease lasts 45 seconds ", 1, "."))], "answered", ["ask-first"])
         deferred = row([turn(0, "First, your cards.")], "deferred", ["ask-first"])
         summary = tutor_eval.summarize([answered, deferred], load_course())
         self.assertEqual(summary["answered_first"], {"passed": 1, "of": 2})

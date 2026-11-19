@@ -78,10 +78,6 @@ pub enum ThinkingOverrideDto {
 /// (1.55x decode, 1.83x while thinking; N=2, 4 and 6 were slower, track G).
 pub const DEFAULT_MTP_DRAFT_N_MAX: u32 = 3;
 
-/// More drafted tokens than any published MTP head predicts well; past this a
-/// draft is mostly rejected and costs more than it saves.
-pub const MAX_MTP_DRAFT_N_MAX: u32 = 8;
-
 /// Speculative decoding for the bundled llama-server.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "mode", rename_all = "camelCase")]
@@ -100,9 +96,9 @@ impl SpeculativeDecodingDto {
     /// Problems with this choice, each a sentence for the settings check.
     pub fn problem(&self) -> Option<String> {
         match self {
-            Self::MtpDraft { n_max } if !(1..=MAX_MTP_DRAFT_N_MAX).contains(n_max) => Some(
-                format!("speculative_decoding n_max must be between 1 and {MAX_MTP_DRAFT_N_MAX}"),
-            ),
+            Self::MtpDraft { n_max: 0 } => {
+                Some("speculative_decoding n_max must be at least 1".to_string())
+            }
             _ => None,
         }
     }

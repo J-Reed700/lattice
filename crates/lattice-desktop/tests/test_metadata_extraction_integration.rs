@@ -20,13 +20,11 @@
 //! - Token count for chunks
 //! - Access tracking
 use anyhow::Result;
+use lattice_core::shared::persistence::Database;
 use sqlx::{Row, SqlitePool};
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;
-
-#[path = "common/sqlite.rs"]
-mod sqlite_support;
 
 // Simple test context
 struct TestContext {
@@ -39,9 +37,13 @@ impl TestContext {
         let temp_dir = tempfile::tempdir()?;
         let db_path = temp_dir.path().join("test.db");
 
-        let pool = SqlitePool::connect_with(sqlite_support::file_options(&db_path)).await?;
+        let pool = SqlitePool::connect_with(lattice_core::shared::testing::sqlite::file_options(
+            &db_path,
+        ))
+        .await?;
 
-        lattice::infrastructure::persistence::database::init::initialize_database(&pool).await?;
+        let db = Database::new(pool.clone());
+        lattice::infrastructure::persistence::database::init::initialize_database(&db).await?;
 
         Ok(Self { pool, temp_dir })
     }

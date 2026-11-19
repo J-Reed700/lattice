@@ -1,7 +1,6 @@
 use super::*;
 use crate::features::conversation::repository::space_rows::ConversationSpaceMemberRow;
 use lattice_core::shared::persistence::bind_limit::rows_per_statement;
-use lattice_core::shared::persistence::Transactions;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct DocumentSpaceMembershipRow {
@@ -26,6 +25,7 @@ impl ConversationRepository {
         &self,
         space_id: String,
     ) -> Result<Vec<ConversationSpaceMemberDto>, AppError> {
+        let mut read = self.db.begin_read().await?;
         let members = sqlx::query_as::<_, ConversationSpaceMemberRow>(
             r#"
         SELECT
@@ -50,11 +50,12 @@ impl ConversationRepository {
         "#,
         )
         .bind(&space_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| {
             AppError::Database(format!("Failed to list conversation space members: {}", e))
         })?;
+        read.commit().await?;
 
         Ok(members.into_iter().map(Into::into).collect())
     }
@@ -65,7 +66,7 @@ impl ConversationRepository {
     ) -> Result<ConversationSpaceMemberDto, AppError> {
         let role = validate_space_role(&request.role)?;
 
-        let mut tx = self.pool.begin_write().await.map_err(|e| {
+        let mut tx = self.db.begin_write().await.map_err(|e| {
             AppError::Database(format!(
                 "Failed to begin transaction while upserting space member: {}",
                 e
@@ -182,7 +183,7 @@ impl ConversationRepository {
         request: RemoveConversationSpaceMemberRequestDto,
     ) -> Result<RenameConversationResponseDto, AppError> {
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -256,6 +257,7 @@ impl ConversationRepository {
         &self,
         document_id: String,
     ) -> Result<Vec<DocumentSpaceMembershipDto>, AppError> {
+        let mut read = self.db.begin_read().await?;
         let memberships = sqlx::query_as::<_, DocumentSpaceMembershipRow>(
             r#"
         SELECT
@@ -270,11 +272,12 @@ impl ConversationRepository {
         "#,
         )
         .bind(&document_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| {
             AppError::Database(format!("Failed to list document space memberships: {}", e))
         })?;
+        read.commit().await?;
 
         Ok(memberships
             .into_iter()
@@ -294,7 +297,7 @@ impl ConversationRepository {
         assigned: bool,
     ) -> Result<RenameConversationResponseDto, AppError> {
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -387,7 +390,7 @@ impl ConversationRepository {
         }
 
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;

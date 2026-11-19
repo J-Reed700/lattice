@@ -319,6 +319,42 @@ fn windows_overlap_by_whole_sentences() {
 }
 
 #[test]
+fn windows_start_at_the_strongest_rung_that_finds_a_break_before_the_step() {
+    let text = "Aa bb. Cc dd ee ff gg hh. Ii jj.";
+    let plan = Plan {
+        max: 30,
+        ladder: &[rung(Strength::Sentence, 0.0), rung(Strength::Word, 0.0)],
+        overflow: Overflow::Cut,
+    };
+    assert_eq!(windows(text, &Prose, &Chars, &plan, 12), vec![0..25, 7..32]);
+}
+
+#[test]
+fn a_shorter_run_inside_a_fence_keeps_its_lines_code() {
+    let text = "Intro.\n\n````md\n```\nC. D.\n```\n````\n";
+    let at = text.find("D.").unwrap();
+    assert!(sentences(text).iter().all(|&(start, _)| start != at));
+}
+
+#[test]
+fn widen_reaches_the_farthest_sentence_break_on_each_side() {
+    let text = "One two. Three four. Five six. Seven eight. Nine ten.";
+    let ladder = [Strength::Sentence, Strength::Word];
+    let at = text.find("Five six").unwrap();
+    let widened = widen(text, &Prose, at..at + 8, 15, &ladder);
+    assert_eq!(&text[widened], "Three four. Five six.");
+}
+
+#[test]
+fn widen_falls_back_to_word_breaks_and_keeps_the_texts_edges() {
+    let text = "alpha beta gamma delta epsilon";
+    let ladder = [Strength::Sentence, Strength::Word];
+    let widened = widen(text, &Prose, 11..16, 7, &ladder);
+    assert_eq!(&text[widened], "beta gamma");
+    assert_eq!(widen(text, &Prose, 6..10, 100, &ladder), 0..text.len());
+}
+
+#[test]
 fn the_next_window_starts_no_later_than_the_end_of_a_cut_made_by_a_stronger_rung() {
     let text = "aaa\n\nbbb ccc ddd eee fff ggg";
     let plan = Plan {
@@ -343,6 +379,68 @@ fn a_sentence_goes_on_after_a_closing_emphasis_mark_too() {
     assert_eq!(
         pieces("**Stop!** she said. Then left."),
         ["**Stop!** she said.", "Then left."]
+    );
+}
+
+#[test]
+fn a_stop_inside_a_path_ends_no_sentence() {
+    assert_eq!(
+        pieces("The entry ../Name names the place above, and it is one sentence. The next one follows."),
+        [
+            "The entry ../Name names the place above, and it is one sentence.",
+            "The next one follows."
+        ]
+    );
+}
+
+#[test]
+fn a_stop_inside_a_file_name_ends_no_sentence() {
+    assert_eq!(
+        pieces("Open notes.Txt and read it. Then close it."),
+        ["Open notes.Txt and read it.", "Then close it."]
+    );
+}
+
+#[test]
+fn a_question_mark_inside_an_address_ends_no_sentence() {
+    assert_eq!(
+        pieces("Go to page?Mode=Full to switch. Then return."),
+        ["Go to page?Mode=Full to switch.", "Then return."]
+    );
+}
+
+#[test]
+fn a_terminator_with_no_space_after_it_stays_in_one_sentence() {
+    assert_eq!(pieces("Is it ready?Yes"), ["Is it ready?Yes"]);
+    assert_eq!(pieces("Stop!Now"), ["Stop!Now"]);
+}
+
+#[test]
+fn a_stop_and_a_space_still_end_a_sentence() {
+    assert_eq!(
+        pieces("One ends here. Two starts."),
+        ["One ends here.", "Two starts."]
+    );
+    assert_eq!(pieces("One. Two."), ["One.", "Two."]);
+}
+
+#[test]
+fn a_closing_quote_or_emphasis_after_a_stop_and_a_space_still_ends_a_sentence() {
+    assert_eq!(
+        pieces("She said \"stop.\" Then she left."),
+        ["She said \"stop.\"", "Then she left."]
+    );
+    assert_eq!(
+        pieces("It is **done.** Next one."),
+        ["It is **done.**", "Next one."]
+    );
+}
+
+#[test]
+fn a_full_width_stop_ends_a_sentence_without_a_space() {
+    assert_eq!(
+        pieces("これは一つ目です。これは二つ目です。"),
+        ["これは一つ目です。", "これは二つ目です。"]
     );
 }
 
@@ -592,5 +690,26 @@ proptest! {
     #[test]
     fn sentences_ascend_trimmed_and_non_empty(text in texts()) {
         check_sentences(&text)?;
+    }
+}
+
+#[test]
+fn a_list_marker_and_the_whitespace_after_it_end_where_the_line_text_starts() {
+    fn line(text: &str) -> Option<&str> {
+        item_marker_end(text).map(|end| &text[..end])
+    }
+    assert_eq!(line("3. Alpha holds."), Some("3. "));
+    assert_eq!(line("- Alpha holds."), Some("- "));
+    assert_eq!(line("   2) Alpha holds."), Some("   2) "));
+    assert_eq!(line("  * Alpha holds."), Some("  * "));
+    assert_eq!(line("Alpha holds."), None);
+    assert_eq!(line("3 things hold."), None);
+    assert_eq!(line("-Alpha holds."), None);
+    for text in ["3. A.", "- A.", "   2) A.", "A.", "3 things", "-A."] {
+        assert_eq!(
+            prose::is_list_item(text),
+            item_marker_end(text).is_some(),
+            "{text}"
+        );
     }
 }

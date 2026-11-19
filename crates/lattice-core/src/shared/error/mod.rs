@@ -14,12 +14,16 @@
 //! ```
 
 mod application;
+mod causes;
+mod class;
 mod domain;
 pub use application::ApplicationError;
+pub use causes::WithCauses;
+pub use class::{smaller_parts_may_succeed, ErrorClass};
 pub use domain::DomainError;
 
 // Main error definitions
 mod types;
-pub use types::{server_cannot_start, AppError, ErrorResponse, Result};
+pub use types::{server_cannot_start, AppError, Result};
 mod context;
 pub use context::ResultExt;

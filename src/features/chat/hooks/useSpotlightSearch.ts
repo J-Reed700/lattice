@@ -16,13 +16,19 @@ const NO_BOOKMARKS: ConversationMessageBookmarkDto[] = [];
 async function searchSpotlight(q: string, api: ApiClient = VaultAPI) {
   const [conversationsResult, bookmarksResult] = await Promise.all([
     api.listConversationsExplorer({
-      query: q || undefined,
+      spaceId: null,
+      query: q || null,
+      savedOnly: null,
+      bookmarkedOnly: null,
+      pinnedOnly: null,
+      hasMessageBookmarks: null,
       includeArchived: true,
       limit: 20,
       offset: 0,
     }),
     api.listMessageBookmarks({
-      query: q || undefined,
+      conversationId: null,
+      query: q || null,
       limit: 20,
       offset: 0,
     }),

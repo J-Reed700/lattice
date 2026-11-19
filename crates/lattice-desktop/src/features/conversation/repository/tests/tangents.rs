@@ -2,6 +2,7 @@ use super::*;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::conversation::space_dto::ListConversationsExplorerQueryDto;
 use crate::features::conversation::tangent_dto::CreateTangentRequestDto;
+use lattice_core::shared::persistence::Database;
 
 fn request(conversation_id: &str, message_id: &str) -> CreateTangentRequestDto {
     CreateTangentRequestDto {
@@ -16,7 +17,8 @@ async fn tangent_captures_context_without_changing_parent_or_entering_lists() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let parent = seed_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let before = repo.find_by_id(&parent).await.unwrap().unwrap();
     let tangent = repo.create_tangent(request(&parent, "m2")).await.unwrap();
     assert_eq!(tangent.parent_conversation_id, parent);
@@ -47,7 +49,7 @@ async fn tangent_captures_context_without_changing_parent_or_entering_lists() {
         .await
         .unwrap();
     assert_eq!(listed.conversations.len(), 1);
-    let reopened = ConversationRepository::new(pool);
+    let reopened = ConversationRepository::new(db.clone());
     assert_eq!(
         reopened.list_tangents(&parent).await.unwrap()[0].selected_text,
         "first answer"
@@ -59,7 +61,8 @@ async fn tangent_promotion_keeps_transcript_and_survives_parent_deletion() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let parent = seed_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let promoted = repo.create_tangent(request(&parent, "m2")).await.unwrap();
     let child = repo.create_tangent(request(&parent, "m4")).await.unwrap();
     seed_message(
@@ -101,7 +104,8 @@ async fn tangent_anchor_deletion_retains_quote_and_nested_tangents_share_parent(
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let parent = seed_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let tangent = repo.create_tangent(request(&parent, "m2")).await.unwrap();
     seed_message(
         &pool,
@@ -138,7 +142,8 @@ async fn a_tangent_can_start_from_a_passage_of_any_length() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let parent = seed_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let passage = "A long passage of the reply, quoted whole. ".repeat(300);
     let passage = passage.trim().to_string();
 
@@ -160,7 +165,8 @@ async fn invalid_tangent_requests_cannot_create_orphan_conversations() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let parent = seed_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let other = repo.create_conversation("Other", None).await.unwrap();
     let cases = [
         request(&parent, "unknown"),
@@ -232,7 +238,8 @@ async fn a_tutor_chat_s_branches_stay_on_its_course() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let parent = seed_tutor_chat(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let bound = (Some("course".to_string()), Some("lesson".to_string()));
     assert_eq!(projected_binding(&repo, &parent).await, bound);
 
@@ -261,7 +268,8 @@ async fn the_conversation_list_narrows_to_one_course() {
         .execute(&pool)
         .await
         .unwrap();
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let list = |program_id: Option<&str>| {
         let repo = repo.clone();
         let program_id = program_id.map(str::to_string);
@@ -300,7 +308,8 @@ async fn explorer_tangent_preserves_folder_prompt_and_sources() {
     let parent = seed_thread(&pool).await;
     sqlx::query("UPDATE conversations SET explorer_root = '/project', system_prompt = 'Keep answers concise' WHERE id = ?").bind(&parent).execute(&pool).await.unwrap();
     seed_documents(&pool, &["source"]).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     repo.add_document_reference(&parent, "source", None, Some(0.9))
         .await
         .unwrap();
@@ -327,12 +336,12 @@ async fn explorer_tangent_preserves_folder_prompt_and_sources() {
             .len(),
         1
     );
-    let counts = crate::features::explorer::repository::thread_counts(&pool)
+    let counts = crate::features::explorer::repository::thread_counts(&db)
         .await
         .unwrap();
     assert_eq!(counts.get("/project"), Some(&1));
     assert_eq!(
-        crate::features::explorer::repository::folder_threads(&pool, "/project")
+        crate::features::explorer::repository::folder_threads(&db, "/project")
             .await
             .unwrap(),
         vec![parent]
@@ -340,7 +349,7 @@ async fn explorer_tangent_preserves_folder_prompt_and_sources() {
     repo.promote_tangent(&tangent.conversation_id)
         .await
         .unwrap();
-    let counts = crate::features::explorer::repository::thread_counts(&pool)
+    let counts = crate::features::explorer::repository::thread_counts(&db)
         .await
         .unwrap();
     assert_eq!(counts.get("/project"), Some(&2));

@@ -160,7 +160,7 @@ impl ConfiguredModel {
 fn replay_cap(request: &CompletionRequest, output: u32) -> Option<u32> {
     Some(
         request
-            .max_output_tokens
+            .max_output_tokens()
             .filter(|cap| *cap > 0)
             .map_or(output, |cap| cap.min(output)),
     )
@@ -170,7 +170,7 @@ fn replay_cap(request: &CompletionRequest, output: u32) -> Option<u32> {
 impl LLMPort for ConfiguredModel {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let messages: Vec<_> = request
-            .input
+            .input()
             .iter()
             .filter_map(|i| match i {
                 CompletionInput::Message { role, content } => {
@@ -240,6 +240,12 @@ impl LLMPort for ConfiguredModel {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 
 #[tokio::test]
@@ -261,7 +267,8 @@ async fn live_complete_python_course() -> Result<()> {
         .run(&pool)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let drafts = lattice::features::learning::outline_draft::DraftRunRegistry::new();
     let mut program = if std::env::var("LATTICE_TEACHING_RESUME").as_deref() == Ok("1")
         && model.directory.join("outline.json").exists()
@@ -307,9 +314,11 @@ async fn live_complete_python_course() -> Result<()> {
         }
         println!("Preparing lesson {}/{}", index + 1, lesson_ids.len());
         program = service::prepare(
+            &db,
             &repo,
             &model,
             &runtimes,
+            &Default::default(),
             PrepareLearningLessonRequestDto {
                 program_id: program.summary.id.clone(),
                 lesson_id: lesson_id.clone(),
@@ -321,11 +330,11 @@ async fn live_complete_python_course() -> Result<()> {
     }
     let outcomes =
         lattice::features::learning::assessment_repository::LearningAssessmentRepository::new(
-            pool.clone(),
+            db.clone(),
         )
         .module_outcomes(&program.summary.id)
         .await?;
-    let sources = lattice::features::learning::repository::LearningRepository::new(pool.clone())
+    let sources = lattice::features::learning::repository::LearningRepository::new(db.clone())
         .verification_sources(&program.summary.id)
         .await?;
     let tasks = lattice::features::learning::diagnostic_generation::author(
@@ -426,7 +435,8 @@ async fn live_saved_course_checkpoint() -> Result<()> {
         )
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
-    let program = LearningRepository::new(pool.clone())
+    let db = Database::new(pool.clone());
+    let program = LearningRepository::new(db.clone())
         .get(&saved.summary.id)
         .await?;
     assert!(program
@@ -438,16 +448,10 @@ async fn live_saved_course_checkpoint() -> Result<()> {
         kind: LearningQuizScopeKind::Module,
         id: Some(program.modules[0].id.clone()),
     };
-    let report = quiz_bank_jobs::prepare_bank_now(
-        &Database::from(pool.clone()),
-        &model,
-        &program.summary.id,
-        &scope,
-        false,
-    )
-    .await?;
+    let report =
+        quiz_bank_jobs::prepare_bank_now(&db, &model, &program.summary.id, &scope, false).await?;
     model.save("checkpoint-bank-report.json", &report.dropped);
-    let form = LearningAssessmentRepository::new(pool.clone())
+    let form = LearningAssessmentRepository::new(db.clone())
         .start_quiz(
             &StartLearningQuizRequestDto {
                 operation_id: uuid::Uuid::new_v4().to_string(),
@@ -485,7 +489,6 @@ async fn live_retained_lesson_review() -> Result<()> {
         .filter_map(|item| item["sourceIndex"].as_u64())
         .max()
         .map_or(0, |index| index as usize + 1);
-    let schema = lattice::features::learning::generation::lesson_schema(source_count);
     let raw_context = retained["input"][1]["content"]
         .as_str()
         .expect("Original context");
@@ -494,11 +497,11 @@ async fn live_retained_lesson_review() -> Result<()> {
         .get("originalRequirements")
         .unwrap_or(&context)
         .to_string();
-    let repaired = lattice::features::learning::teaching::review_and_repair(
+    let repaired = lattice::features::learning::teaching::review_and_repair_lesson(
         &model,
         "Teach a rigorous lesson. Return only the corrected lesson JSON, preserving the original block and question fields.",
         &context,
-        &schema,
+        source_count,
         candidate.into(),
         8192,
     ).await?;

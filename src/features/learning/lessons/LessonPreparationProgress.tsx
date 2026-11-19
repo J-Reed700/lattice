@@ -6,7 +6,7 @@ import { ChevronDown, CirclePause, ClipboardCheck, LoaderCircle, Save } from 'lu
 import { PlainError } from '@/components/PlainError';
 import { WaitingNotice } from '@/components/WaitingNotice';
 import { useCancelLearningGenerationJob, useRetryLearningGenerationJob } from '@/features/learning/curriculum/useLearningPlan';
-import { PREPARATION_PHASES, callsLine, preparationDuration, preparationState, statementsLine } from '@/features/learning/lessons/lessonPreparationActivity';
+import { PREPARATION_PHASES, callsLine, preparationDuration, preparationState, stageText, statementsLine } from '@/features/learning/lessons/lessonPreparationActivity';
 import { LessonPreparationCurrentStep } from '@/features/learning/lessons/LessonPreparationCurrentStep';
 import { claimsNeedYou, jobTallyLine } from '@/features/learning/lessons/review/claimReviewCopy';
 import { isWaitingForYou, reviewHold, type ReviewHold } from '@/features/learning/lessons/review/claimReviewPresentation';
@@ -147,7 +147,7 @@ export function LessonPreparationStatus({ job, queuedMore = 0, pending, programI
         <h4 className="text-base font-semibold text-text-primary">{paused ? phase ? `Paused at: ${phase.title}` : 'Saved work is available' : reconnecting ? 'Preparation interrupted' : queued ? 'Waiting for a preparation slot' : phase?.title ?? (active ? 'Starting lesson preparation' : 'Saved work is available')}</h4>
         <p className="mt-2 text-sm leading-6 text-text-secondary">{paused ? 'Preparation stays paused until you choose Resume, even after reopening the app. Your draft and completed checkpoints are saved.' : reconnecting ? null : queued ? 'Your request is saved. Preparation continues automatically when a worker is available.' : phase?.detail ?? 'Preparation includes writing, reviewing the teaching and answer keys, and checking factual statements against saved references.'}</p>
         {reconnecting && phase && <p className="mt-2 text-xs leading-5 text-text-secondary">Last step: {phase.title}. When preparation resumes, it reuses completed checks and repeats unfinished work.</p>}
-        {!paused && <p className="mt-2 wrap-break-word text-xs leading-5 text-text-muted" aria-live="polite">{job?.progressMessage || 'Saving the preparation request…'}</p>}
+        {!paused && <p className="mt-2 wrap-break-word text-xs leading-5 text-text-muted" aria-live="polite">{job?.progressMessage ? stageText(job.activity, job.progressMessage) : 'Saving the preparation request…'}</p>}
         {paused && <p className="mt-2 text-xs leading-5 text-text-secondary">Lesson writing and fact-checking use the main model in Settings. Changing only the utility model does not change these checks. Switching the main model currently starts drafting and verification again.</p>}
       </div>}
       {job && job.progressTotal > 1 && <p className="text-xs text-text-muted">{job.progressCompleted}/{job.progressTotal} lessons staged · Publication follows verification.</p>}

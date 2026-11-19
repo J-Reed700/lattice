@@ -63,6 +63,16 @@ pub struct LearningBlueprintRequirement {
     pub difficulty_max: u8,
 }
 
+/// Forms' worth of items a quiz's bank holds for each requirement, so a retake draws items the learner has not seen.
+pub const BANK_FORMS: usize = 3;
+
+impl LearningBlueprintRequirement {
+    /// What the bank holds for this requirement: three forms' worth, so a retake draws items the learner has not seen.
+    pub fn bank_target(&self) -> usize {
+        BANK_FORMS * self.count
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LearningAssessmentBlueprint {
     pub id: String,
@@ -245,26 +255,24 @@ pub fn validate_blueprint(blueprint: &LearningAssessmentBlueprint) -> Result<()>
     if blueprint.expected_minutes == 0 {
         return Err(invalid("Assessment time must be at least one minute."));
     }
-    if blueprint.allowed_aids.len() > 24
-        || blueprint
-            .allowed_aids
-            .iter()
-            .any(|aid| aid.trim().is_empty() || aid.chars().count() > 160)
+    if blueprint
+        .allowed_aids
+        .iter()
+        .any(|aid| aid.trim().is_empty())
     {
-        return Err(invalid("Assessment aid descriptions must be bounded."));
+        return Err(invalid("Assessment aid descriptions cannot be blank."));
     }
-    if blueprint.requirements.is_empty() || blueprint.requirements.len() > 256 {
+    if blueprint.requirements.is_empty() {
         return Err(invalid(
-            "An assessment blueprint needs 1–256 coverage requirements.",
+            "An assessment blueprint needs coverage requirements.",
         ));
     }
-    let mut total = 0usize;
     let mut seen = HashSet::new();
     for requirement in &blueprint.requirements {
         id(&requirement.outcome_id, "outcome")?;
-        if requirement.count == 0 || requirement.count > 12 {
+        if requirement.count == 0 {
             return Err(invalid(
-                "Each assessment coverage requirement needs 1–12 items.",
+                "Each assessment coverage requirement needs at least one item.",
             ));
         }
         if requirement.difficulty_min > requirement.difficulty_max
@@ -280,19 +288,9 @@ pub fn validate_blueprint(blueprint: &LearningAssessmentBlueprint) -> Result<()>
                 "Assessment coverage requirements must be unique by outcome and format.",
             ));
         }
-        total += requirement.count;
-    }
-    if total > MAX_FORM_ITEMS {
-        return Err(invalid(
-            "An assessment form cannot require more than 200 items.",
-        ));
     }
     Ok(())
 }
-
-/// The most items one form may hold (a course exam covers every prepared
-/// lesson and module).
-pub const MAX_FORM_ITEMS: usize = 200;
 
 /// Whether a format shuffles its options per form.
 fn shuffles(format: LearningItemFormat) -> bool {
@@ -380,55 +378,35 @@ pub fn build_assessment_form(
             return Err(invalid("Assessment item-bank IDs must be unique."));
         }
     }
-    let mut selected = Vec::new();
-    let mut used = HashSet::new();
-    for requirement in &blueprint.requirements {
-        let center =
-            (u16::from(requirement.difficulty_min) + u16::from(requirement.difficulty_max)) / 2;
-        let mut eligible = candidates
-            .iter()
-            .filter(|candidate| {
-                eligible_for(candidate, requirement) && !used.contains(candidate.id.as_str())
-            })
-            .collect::<Vec<_>>();
-        eligible.sort_by_key(|candidate| {
-            (
-                exposed_item_ids.contains(&candidate.id),
-                (i32::from(candidate.difficulty) - i32::from(center)).unsigned_abs(),
-                candidate.id.as_str(),
-            )
-        });
-        if eligible.len() < requirement.count {
-            return Err(AppError::InvalidState(
+    let candidate_refs: Vec<&LearningAssessmentCandidate> = candidates.iter().collect();
+    let chosen =
+        form_items(&blueprint.requirements, &candidate_refs, exposed_item_ids).map_err(|_| {
+            AppError::InvalidState(
                 "This quiz's question bank is not ready yet. Prepare its questions first.".into(),
-            ));
-        }
-        for candidate in eligible.into_iter().take(requirement.count) {
-            used.insert(candidate.id.as_str());
-            let order = option_order(
-                candidate.format,
-                candidate.options.len(),
-                &format!("{form_id}:{}", candidate.id),
-            );
-            selected.push(LearningAssessmentFormItem {
-                id: candidate.id.clone(),
-                outcome_ids: candidate.outcome_ids.clone(),
-                format: candidate.format,
-                prompt: candidate.prompt.clone(),
-                options: order
-                    .iter()
-                    .filter_map(|i| candidate.options.get(*i).cloned())
-                    .collect(),
-                left: candidate.left.clone(),
-                option_order: order,
-                source_version_ids: candidate.source_version_ids.clone(),
-                rubric: candidate.rubric.clone(),
-                previously_exposed: exposed_item_ids.contains(&candidate.id),
-            });
-        }
-    }
-    if selected.len() > MAX_FORM_ITEMS {
-        return Err(invalid("Assessment form exceeds the item limit."));
+            )
+        })?;
+    let mut selected = Vec::new();
+    for candidate in chosen {
+        let order = option_order(
+            candidate.format,
+            candidate.options.len(),
+            &format!("{form_id}:{}", candidate.id),
+        );
+        selected.push(LearningAssessmentFormItem {
+            id: candidate.id.clone(),
+            outcome_ids: candidate.outcome_ids.clone(),
+            format: candidate.format,
+            prompt: candidate.prompt.clone(),
+            options: order
+                .iter()
+                .filter_map(|i| candidate.options.get(*i).cloned())
+                .collect(),
+            left: candidate.left.clone(),
+            option_order: order,
+            source_version_ids: candidate.source_version_ids.clone(),
+            rubric: candidate.rubric.clone(),
+            previously_exposed: exposed_item_ids.contains(&candidate.id),
+        });
     }
     Ok(LearningAssessmentForm {
         id: form_id,
@@ -442,6 +420,80 @@ pub fn build_assessment_form(
         items: selected,
         created_at,
     })
+}
+
+/// The first requirement a form cannot fill even from its outcome's other items, and how many items could fill it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Shortfall {
+    pub requirement: LearningBlueprintRequirement,
+    pub eligible: usize,
+}
+
+/// The items a form takes, requirement by requirement. Each requirement first takes the unused candidates
+/// eligible for it; one still short then takes unused candidates of its outcome in any format, after every
+/// requirement has taken its own. Within a pass: unseen first, then nearest the requirement's middle difficulty, then by ID.
+pub fn form_items<'a>(
+    requirements: &[LearningBlueprintRequirement],
+    candidates: &[&'a LearningAssessmentCandidate],
+    exposed: &HashSet<String>,
+) -> std::result::Result<Vec<&'a LearningAssessmentCandidate>, Shortfall> {
+    let ranked = |requirement: &LearningBlueprintRequirement,
+                  used: &HashSet<&str>,
+                  allowed: &dyn Fn(&LearningAssessmentCandidate) -> bool| {
+        let center =
+            (u16::from(requirement.difficulty_min) + u16::from(requirement.difficulty_max)) / 2;
+        let mut found = candidates
+            .iter()
+            .copied()
+            .filter(|candidate| allowed(candidate) && !used.contains(candidate.id.as_str()))
+            .collect::<Vec<_>>();
+        found.sort_by_key(|candidate| {
+            (
+                exposed.contains(&candidate.id),
+                (i32::from(candidate.difficulty) - i32::from(center)).unsigned_abs(),
+                candidate.id.as_str(),
+            )
+        });
+        found
+    };
+    let mut used = HashSet::new();
+    let mut strict_picks = Vec::new();
+    for requirement in requirements {
+        let picks = ranked(requirement, &used, &|candidate| {
+            eligible_for(candidate, requirement)
+        })
+        .into_iter()
+        .take(requirement.count)
+        .collect::<Vec<_>>();
+        used.extend(picks.iter().map(|candidate| candidate.id.as_str()));
+        strict_picks.push(picks);
+    }
+    let mut selected = Vec::new();
+    let mut shortfall = None;
+    for (requirement, strict) in requirements.iter().zip(strict_picks) {
+        let missing = requirement.count.saturating_sub(strict.len());
+        let mut fallback = if missing == 0 {
+            Vec::new()
+        } else {
+            ranked(requirement, &used, &|candidate| {
+                candidate.outcome_ids.contains(&requirement.outcome_id)
+            })
+        };
+        if fallback.len() < missing && shortfall.is_none() {
+            shortfall = Some(Shortfall {
+                requirement: requirement.clone(),
+                eligible: strict.len() + fallback.len(),
+            });
+        }
+        fallback.truncate(missing);
+        used.extend(fallback.iter().map(|candidate| candidate.id.as_str()));
+        selected.extend(strict);
+        selected.extend(fallback);
+    }
+    match shortfall {
+        Some(shortfall) => Err(shortfall),
+        None => Ok(selected),
+    }
 }
 
 /// Whether a bank item can fill a blueprint requirement.
@@ -472,15 +524,15 @@ pub fn to_authored(
 }
 
 mod answers;
-mod checks;
+pub(crate) mod checks;
 mod scoring;
 #[cfg(test)]
 mod tests;
 
 pub use answers::{normalize_answer, parse_number, show_number, text_matches};
 pub use checks::{
-    cloze_blanks, key_leaks, length_biased, near_duplicate, validate_candidate,
-    SINGLE_CHOICE_OPTIONS, TRUE_FALSE,
+    cloze_blanks, distinct_options, length_biased, longest_allowed_key, repeated_option,
+    validate_candidate, SINGLE_CHOICE_OPTIONS, TRUE_FALSE,
 };
 pub use scoring::{
     answer_hint, grade_keyed, key_reveal, part_results, KeyReveal, KeyedGrade, KeyedOutcome,

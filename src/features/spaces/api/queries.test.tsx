@@ -74,7 +74,7 @@ describe('space mutations', () => {
     await act(async () => {
       await result.current.update.mutateAsync({
         spaceId: 'space_movies', name: 'Films', description: null, icon: null, accentColor: null,
-        spacePrompt: null, toolPreferencesJson: null,
+        spacePrompt: null, toolPreferencesJson: null, isArchived: null, sortOrder: null,
       });
     });
     expect(client.getQueryState(spaceKeys.list)?.isInvalidated).toBe(true);

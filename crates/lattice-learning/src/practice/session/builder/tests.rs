@@ -473,5 +473,5 @@ async fn a_cancelled_build_stops_before_proving() {
         cancel,
     )
     .await;
-    assert!(matches!(built, Err(AppError::InvalidState(_))), "{built:?}");
+    assert!(matches!(built, Err(AppError::Cancelled(_))), "{built:?}");
 }

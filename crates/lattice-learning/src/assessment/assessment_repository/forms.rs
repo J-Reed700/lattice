@@ -6,11 +6,10 @@ use super::{
 };
 use crate::assessment_engine as engine;
 use crate::dto::*;
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use crate::quiz_blueprints;
 use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqliteConnection};
 use std::collections::HashMap;
 
@@ -20,6 +19,7 @@ fn validate_response(
     format: engine::LearningItemFormat,
     options: usize,
     left: usize,
+    blanks: usize,
 ) -> Result<()> {
     use engine::LearningItemFormat as F;
     let total_text = response.text.as_deref().map_or(0, |t| t.chars().count())
@@ -29,10 +29,6 @@ fn validate_response(
             .map(|b| b.chars().count())
             .sum::<usize>();
     if total_text > MAX_CHAT_MESSAGE_CHARS
-        || response.ordered_values.len() > 32
-        || response.blank_responses.len() > 8
-        || response.matches.len() > 8
-        || response.selected_indices.len() > 12
         || response
             .artifact_json
             .as_ref()
@@ -57,7 +53,9 @@ fn validate_response(
         F::ShortAnswer | F::Explanation => {
             response.selected_indices.is_empty() && response.ordered_values.is_empty()
         }
-        F::Cloze => response.selected_indices.is_empty(),
+        F::Cloze => {
+            response.selected_indices.is_empty() && response.blank_responses.len() <= blanks
+        }
         F::Matching => {
             response.matches.len() <= left && response.matches.iter().flatten().all(in_range)
         }
@@ -85,8 +83,7 @@ impl LearningAssessmentRepository {
         uuid(&req.form_id, "form")?;
         uuid(&req.operation_id, "operation")?;
         quiz_blueprints::validate_scope(&req.scope)?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &req.program_id).await?;
+        let mut tx = self.db.begin_write().await?;
         let operation = assessment_operation(
             &req.operation_id,
             &req.program_id,
@@ -97,7 +94,7 @@ impl LearningAssessmentRepository {
         );
         if operation.seen(&mut tx).await? {
             let form = Self::form_in(&mut tx, &req.form_id).await?;
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok(form);
         }
         Self::active_program(&mut tx, &req.program_id).await?;
@@ -107,8 +104,7 @@ impl LearningAssessmentRepository {
                 sqlx::query_scalar("SELECT program_id FROM learning_assessment_forms WHERE id=?")
                     .bind(parent)
                     .fetch_optional(&mut *tx)
-                    .await
-                    .map_err(db)?;
+                    .await?;
             if belongs.as_deref() != Some(req.program_id.as_str()) {
                 return Err(AppError::NotFound(
                     "The quiz being retaken was not found.".into(),
@@ -152,8 +148,7 @@ impl LearningAssessmentRepository {
             sqlx::query_scalar("SELECT model_name FROM learning_programs WHERE id=?")
                 .bind(&req.program_id)
                 .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
         let mut frozen_sources = desired.source_version_ids.clone();
         for item in &form.items {
             frozen_sources.extend(item.source_version_ids.clone());
@@ -179,8 +174,7 @@ impl LearningAssessmentRepository {
             .bind(scope_kind_name(req.scope.kind))
             .bind(&req.scope.id)
             .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         for (ordinal, item) in form.items.iter().enumerate() {
             let stored = bank
                 .iter()
@@ -217,22 +211,21 @@ impl LearningAssessmentRepository {
                 .bind(&stored.candidate.explanation)
                 .bind(json(&stored.candidate.distractor_rationales)?)
                 .execute(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
             for outcome in &item.outcome_ids {
-                sqlx::query("INSERT INTO learning_assessment_form_item_outcomes(form_id,item_ordinal,outcome_id) VALUES(?,?,?)").bind(&req.form_id).bind(ordinal as i64).bind(outcome).execute(&mut *tx).await.map_err(db)?;
+                sqlx::query("INSERT INTO learning_assessment_form_item_outcomes(form_id,item_ordinal,outcome_id) VALUES(?,?,?)").bind(&req.form_id).bind(ordinal as i64).bind(outcome).execute(&mut *tx).await?;
             }
         }
         operation.record(&mut tx, &req.form_id).await?;
         let form = Self::form_in(&mut tx, &req.form_id).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(form)
     }
 
     pub async fn get_form(&self, form_id: &str) -> Result<LearningAssessmentFormDto> {
-        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let form = Self::form_in(&mut read, form_id).await?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         Ok(form)
     }
 
@@ -244,8 +237,7 @@ impl LearningAssessmentRepository {
         let h = sqlx::query("SELECT * FROM learning_assessment_forms WHERE id=?")
             .bind(form_id)
             .fetch_optional(&mut *connection)
-            .await
-            .map_err(db)?
+            .await?
             .ok_or_else(|| AppError::NotFound("Quiz not found".into()))?;
         let status = parse_form_status(h.get("status"))?;
         let mode = parse_mode(h.get("mode"))?;
@@ -253,8 +245,7 @@ impl LearningAssessmentRepository {
         let rows = sqlx::query("SELECT i.*,rr.revision response_revision,rr.selected_indices_json,rr.text_response,rr.blank_responses_json,rr.matches_json,rr.ordered_values_json,rr.artifact_json FROM learning_assessment_form_items i LEFT JOIN learning_assessment_response_revisions rr ON rr.form_id=i.form_id AND rr.item_ordinal=i.ordinal AND rr.revision=(SELECT max(r2.revision) FROM learning_assessment_response_revisions r2 WHERE r2.form_id=i.form_id AND r2.item_ordinal=i.ordinal) WHERE i.form_id=? ORDER BY i.ordinal")
             .bind(form_id)
             .fetch_all(&mut *connection)
-            .await
-            .map_err(db)?;
+            .await?;
         let mut items = Vec::with_capacity(rows.len());
         let mut graded_parts = Vec::with_capacity(rows.len());
         let outcome_rows: Vec<(i64, String)> = sqlx::query_as(
@@ -262,8 +253,7 @@ impl LearningAssessmentRepository {
         )
         .bind(form_id)
         .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?;
+        .await?;
         let mut outcomes: HashMap<i64, Vec<String>> = HashMap::new();
         for (ordinal, outcome) in outcome_rows {
             outcomes.entry(ordinal).or_default().push(outcome);
@@ -413,16 +403,14 @@ impl LearningAssessmentRepository {
         let Some(r) = sqlx::query("SELECT * FROM learning_assessment_submissions WHERE form_id=?")
             .bind(form_id)
             .fetch_optional(&mut *connection)
-            .await
-            .map_err(db)?
+            .await?
         else {
             return Ok(None);
         };
         let rows = sqlx::query("SELECT r.*,i.candidate_id FROM learning_assessment_item_results r JOIN learning_assessment_form_items i ON i.form_id=r.form_id AND i.ordinal=r.item_ordinal WHERE r.form_id=? ORDER BY r.item_ordinal")
             .bind(form_id)
             .fetch_all(&mut *connection)
-            .await
-            .map_err(db)?;
+            .await?;
         let mut results = Vec::with_capacity(rows.len());
         let mut contests = Self::contests_in(connection, form_id).await?;
         for row in rows {
@@ -456,8 +444,7 @@ impl LearningAssessmentRepository {
             .bind(crate::quiz_bank_jobs::QUIZ_GRADING)
             .bind(form_id)
             .fetch_optional(&mut *connection)
-            .await
-            .map_err(db)?;
+            .await?;
         let live = job.as_ref().is_some_and(|j| {
             matches!(j.get::<String, _>("status").as_str(), "pending" | "running")
         });
@@ -509,18 +496,10 @@ impl LearningAssessmentRepository {
         uuid(&req.operation_id, "operation")?;
         uuid(&req.program_id, "program")?;
         uuid(&req.form_id, "form")?;
-        if req.assistance.len() > 24
-            || req
-                .assistance
-                .iter()
-                .any(|a| a.trim().is_empty() || a.chars().count() > 160)
-        {
-            return Err(invalid(
-                "Assistance notes are outside their allowed bounds.",
-            ));
+        if req.assistance.iter().any(|a| a.trim().is_empty()) {
+            return Err(invalid("Assistance notes cannot be blank."));
         }
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &req.program_id).await?;
+        let mut tx = self.db.begin_write().await?;
         let operation = assessment_operation(
             &req.operation_id,
             &req.program_id,
@@ -531,7 +510,7 @@ impl LearningAssessmentRepository {
         );
         if operation.seen(&mut tx).await? {
             let form = Self::form_in(&mut tx, &req.form_id).await?;
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok(form);
         }
         Self::active_program(&mut tx, &req.program_id).await?;
@@ -541,8 +520,7 @@ impl LearningAssessmentRepository {
         .bind(&req.form_id)
         .bind(&req.program_id)
         .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?
+        .await?
         .ok_or_else(|| AppError::NotFound("Quiz not found".into()))?;
         // Answering a paused quiz resumes it.
         if h.get::<String, _>("status") == "submitted" {
@@ -553,29 +531,28 @@ impl LearningAssessmentRepository {
                 "This quiz changed; reload and retry.".into(),
             ));
         }
-        let item = sqlx::query("SELECT ordinal,format,options_json,left_items_json FROM learning_assessment_form_items WHERE form_id=? AND candidate_id=?")
+        let item = sqlx::query("SELECT ordinal,format,options_json,left_items_json,prompt FROM learning_assessment_form_items WHERE form_id=? AND candidate_id=?")
             .bind(&req.form_id)
             .bind(&req.response.item_id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?
+            .await?
             .ok_or_else(|| invalid("That question is not part of this quiz."))?;
         validate_response(
             &req.response,
             parse_format(item.get("format"))?,
             decode::<Vec<String>>(item.get("options_json"))?.len(),
             decode::<Vec<String>>(item.get("left_items_json"))?.len(),
+            engine::cloze_blanks(&item.get::<String, _>("prompt")).len(),
         )?;
         let ordinal: i64 = item.get("ordinal");
         let last: Option<i64> = sqlx::query_scalar("SELECT max(revision) FROM learning_assessment_response_revisions WHERE form_id=? AND item_ordinal=?")
             .bind(&req.form_id)
             .bind(ordinal)
             .fetch_one(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         let next = last.unwrap_or(0) + 1;
         let t = now();
-        let updated = sqlx::query("UPDATE learning_assessment_forms SET status='active',revision=revision+1,updated_at=? WHERE id=? AND program_id=? AND revision=? AND status IN ('active','interrupted')").bind(t).bind(&req.form_id).bind(&req.program_id).bind(req.expected_revision).execute(&mut *tx).await.map_err(db)?;
+        let updated = sqlx::query("UPDATE learning_assessment_forms SET status='active',revision=revision+1,updated_at=? WHERE id=? AND program_id=? AND revision=? AND status IN ('active','interrupted')").bind(t).bind(&req.form_id).bind(&req.program_id).bind(req.expected_revision).execute(&mut *tx).await?;
         if updated.rows_affected() != 1 {
             return Err(AppError::Conflict(
                 "This quiz changed; reload and retry.".into(),
@@ -596,11 +573,10 @@ impl LearningAssessmentRepository {
             .bind(json(&req.assistance)?)
             .bind(t)
             .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         operation.record(&mut tx, &req.response.item_id).await?;
         let form = Self::form_in(&mut tx, &req.form_id).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(form)
     }
 
@@ -612,8 +588,7 @@ impl LearningAssessmentRepository {
         uuid(&req.operation_id, "operation")?;
         uuid(&req.program_id, "program")?;
         uuid(&req.form_id, "form")?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &req.program_id).await?;
+        let mut tx = self.db.begin_write().await?;
         let operation = assessment_operation(
             &req.operation_id,
             &req.program_id,
@@ -624,12 +599,12 @@ impl LearningAssessmentRepository {
         );
         if operation.seen(&mut tx).await? {
             let form = Self::form_in(&mut tx, &req.form_id).await?;
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok(form);
         }
         Self::active_program(&mut tx, &req.program_id).await?;
         let t = now();
-        let updated = sqlx::query("UPDATE learning_assessment_forms SET status='interrupted',revision=revision+1,updated_at=? WHERE id=? AND program_id=? AND revision=? AND status='active'").bind(t).bind(&req.form_id).bind(&req.program_id).bind(req.expected_revision).execute(&mut *tx).await.map_err(db)?;
+        let updated = sqlx::query("UPDATE learning_assessment_forms SET status='interrupted',revision=revision+1,updated_at=? WHERE id=? AND program_id=? AND revision=? AND status='active'").bind(t).bind(&req.form_id).bind(&req.program_id).bind(req.expected_revision).execute(&mut *tx).await?;
         if updated.rows_affected() != 1 {
             return Err(AppError::Conflict(
                 "This quiz changed or is not open; reload and retry.".into(),
@@ -637,7 +612,7 @@ impl LearningAssessmentRepository {
         }
         operation.record(&mut tx, &()).await?;
         let form = Self::form_in(&mut tx, &req.form_id).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(form)
     }
 }
@@ -662,11 +637,11 @@ mod tests {
             ("an essay", essay),
             ("the chat limit", "x".repeat(MAX_CHAT_MESSAGE_CHARS)),
         ] {
-            let checked = validate_response(&answer(text), Format::Explanation, 0, 0);
+            let checked = validate_response(&answer(text), Format::Explanation, 0, 0, 0);
             assert!(checked.is_ok(), "{what}: {:?}", checked.err());
         }
         let over = answer("x".repeat(MAX_CHAT_MESSAGE_CHARS + 1));
-        assert!(validate_response(&over, Format::Explanation, 0, 0).is_err());
+        assert!(validate_response(&over, Format::Explanation, 0, 0, 0).is_err());
     }
 
     #[test]
@@ -676,8 +651,8 @@ mod tests {
             response.blank_responses = vec!["x".repeat(MAX_CHAT_MESSAGE_CHARS / 4); count];
             response
         };
-        assert!(validate_response(&blanks(4), Format::Cloze, 0, 0).is_ok());
-        assert!(validate_response(&blanks(5), Format::Cloze, 0, 0).is_err());
+        assert!(validate_response(&blanks(4), Format::Cloze, 0, 0, 5).is_ok());
+        assert!(validate_response(&blanks(5), Format::Cloze, 0, 0, 5).is_err());
     }
 
     #[test]
@@ -688,18 +663,23 @@ mod tests {
             response
         };
         let half = MAX_CHAT_MESSAGE_CHARS / 2;
-        assert!(validate_response(&artifact(half), Format::Artifact, 0, 0).is_ok());
+        assert!(validate_response(&artifact(half), Format::Artifact, 0, 0, 0).is_ok());
         assert!(
-            validate_response(&artifact(MAX_CHAT_MESSAGE_CHARS), Format::Artifact, 0, 0).is_err()
+            validate_response(&artifact(MAX_CHAT_MESSAGE_CHARS), Format::Artifact, 0, 0, 0)
+                .is_err()
         );
     }
 
     #[test]
-    fn the_counts_a_quiz_answer_may_hold_are_unchanged() {
+    fn a_quiz_answer_holds_at_most_what_its_question_offers() {
         let mut response = engine::LearningAssessmentResponse::empty("item");
-        response.ordered_values = vec!["step".to_string(); 33];
-        assert!(validate_response(&response, Format::Ordering, 40, 0).is_err());
-        response.ordered_values = vec!["step".to_string(); 32];
-        assert!(validate_response(&response, Format::Ordering, 40, 0).is_ok());
+        response.ordered_values = vec!["step".to_string(); 41];
+        assert!(validate_response(&response, Format::Ordering, 40, 0, 0).is_err());
+        response.ordered_values = vec!["step".to_string(); 40];
+        assert!(validate_response(&response, Format::Ordering, 40, 0, 0).is_ok());
+        let mut cloze = engine::LearningAssessmentResponse::empty("item");
+        cloze.blank_responses = vec!["x".to_string(); 9];
+        assert!(validate_response(&cloze, Format::Cloze, 0, 0, 9).is_ok());
+        assert!(validate_response(&cloze, Format::Cloze, 0, 0, 8).is_err());
     }
 }

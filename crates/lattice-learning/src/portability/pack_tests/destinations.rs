@@ -9,19 +9,18 @@ use crate::{
     tests::{fixture, pool},
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::testing::links;
 use std::path::Path;
 
-async fn course(pool: &sqlx::SqlitePool) -> Result<String> {
-    titled_course(pool, &fixture().summary.title).await
+async fn course(db: &Database) -> Result<String> {
+    titled_course(db, &fixture().summary.title).await
 }
 
-async fn titled_course(pool: &sqlx::SqlitePool, title: &str) -> Result<String> {
+async fn titled_course(db: &Database, title: &str) -> Result<String> {
     let mut program = fixture();
     program.summary.title = title.into();
-    LearningRepository::new(pool.clone())
-        .create(&program)
-        .await?;
+    LearningRepository::new(db.clone()).create(&program).await?;
     Ok(program.summary.id)
 }
 
@@ -99,9 +98,10 @@ fn pack_file_names_drop_separators_and_cap_their_length() {
 #[tokio::test]
 async fn managed_exports_are_named_after_the_course_and_take_the_next_free_suffix() -> Result<()> {
     let pool = pool().await?;
-    let program_id = titled_course(&pool, "Shared name").await?;
+    let db = Database::new(pool.clone());
+    let program_id = titled_course(&db, "Shared name").await?;
     let app_data = tempfile::tempdir()?;
-    let packs = packs(&pool, app_data.path());
+    let packs = packs(&db, app_data.path());
     for _ in 0..3 {
         packs.export(&move_request(&program_id)).await?;
     }
@@ -121,10 +121,11 @@ async fn managed_exports_are_named_after_the_course_and_take_the_next_free_suffi
 #[tokio::test]
 async fn save_as_writes_and_records_the_chosen_file_and_a_retry_asks_nothing() -> Result<()> {
     let pool = pool().await?;
-    let program_id = course(&pool).await?;
+    let db = Database::new(pool.clone());
+    let program_id = course(&db).await?;
     let app_data = tempfile::tempdir()?;
     let elsewhere = tempfile::tempdir()?;
-    let packs = packs(&pool, app_data.path());
+    let packs = packs(&db, app_data.path());
     let target = elsewhere.path().join("course.lattice-learning");
     let request = move_request(&program_id);
     let export = saved(packs.save_as(&request, &picks(&target)).await?)?;
@@ -143,9 +144,10 @@ async fn save_as_writes_and_records_the_chosen_file_and_a_retry_asks_nothing() -
 #[tokio::test]
 async fn a_dismissed_save_dialog_writes_and_records_nothing() -> Result<()> {
     let pool = pool().await?;
-    let program_id = course(&pool).await?;
+    let db = Database::new(pool.clone());
+    let program_id = course(&db).await?;
     let app_data = tempfile::tempdir()?;
-    let packs = packs(&pool, app_data.path());
+    let packs = packs(&db, app_data.path());
     let result = packs
         .save_as(&move_request(&program_id), &Picks(None))
         .await?;
@@ -157,10 +159,11 @@ async fn a_dismissed_save_dialog_writes_and_records_nothing() -> Result<()> {
 #[tokio::test]
 async fn a_replayed_export_whose_file_was_deleted_is_written_again() -> Result<()> {
     let pool = pool().await?;
-    let program_id = course(&pool).await?;
+    let db = Database::new(pool.clone());
+    let program_id = course(&db).await?;
     let app_data = tempfile::tempdir()?;
     let elsewhere = tempfile::tempdir()?;
-    let packs = packs(&pool, app_data.path());
+    let packs = packs(&db, app_data.path());
 
     let request = move_request(&program_id);
     let target = elsewhere.path().join("course.lattice-learning");
@@ -196,10 +199,11 @@ async fn a_replayed_export_whose_file_was_deleted_is_written_again() -> Result<(
 #[tokio::test]
 async fn save_as_refuses_app_data_links_and_non_pack_files() -> Result<()> {
     let pool = pool().await?;
-    let program_id = course(&pool).await?;
+    let db = Database::new(pool.clone());
+    let program_id = course(&db).await?;
     let app_data = tempfile::tempdir()?;
     let elsewhere = tempfile::tempdir()?;
-    let packs = packs(&pool, app_data.path());
+    let packs = packs(&db, app_data.path());
 
     for inside in [
         app_data.path().join("course.lattice-learning"),
@@ -270,10 +274,11 @@ async fn save_as_refuses_app_data_links_and_non_pack_files() -> Result<()> {
 #[tokio::test]
 async fn save_as_adds_the_extension_and_replaces_an_existing_pack_atomically() -> Result<()> {
     let pool = pool().await?;
-    let program_id = course(&pool).await?;
+    let db = Database::new(pool.clone());
+    let program_id = course(&db).await?;
     let app_data = tempfile::tempdir()?;
     let elsewhere = tempfile::tempdir()?;
-    let packs = packs(&pool, app_data.path());
+    let packs = packs(&db, app_data.path());
     let first = saved(
         packs
             .save_as(
@@ -305,10 +310,11 @@ async fn save_as_adds_the_extension_and_replaces_an_existing_pack_atomically() -
 #[tokio::test]
 async fn save_as_never_replaces_a_pack_the_dialog_did_not_name() -> Result<()> {
     let pool = pool().await?;
-    let program_id = course(&pool).await?;
+    let db = Database::new(pool.clone());
+    let program_id = course(&db).await?;
     let app_data = tempfile::tempdir()?;
     let elsewhere = tempfile::tempdir()?;
-    let packs = packs(&pool, app_data.path());
+    let packs = packs(&db, app_data.path());
     let existing = saved(
         packs
             .save_as(

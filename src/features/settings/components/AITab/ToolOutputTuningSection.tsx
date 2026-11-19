@@ -3,7 +3,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import { SettingsRow, SettingsSection } from '@/components/ui';
 import type { LLMSettings as ApiLLMSettings } from '@/types/api/settings';
 
-import { NUMBER_FIELD_CLASS, TEXTAREA_CLASS, toFinite, clamp } from './shared';
+import { NUMBER_FIELD_CLASS, TEXTAREA_CLASS, toFinite } from './shared';
 
 /**
  * How tool results are templated, and how long a source card's excerpt is. How
@@ -57,8 +57,7 @@ export function ToolOutputTuningSection({
         <input
           id="tool-excerpt-chars"
           type="number"
-          min={100}
-          max={4000}
+          min={1}
           step={50}
           value={toolOutputDraft.excerptChars}
           onChange={(event) =>
@@ -76,7 +75,7 @@ export function ToolOutputTuningSection({
           onBlur={() =>
             void saveToolOutputField(
               'excerptChars',
-              Math.round(clamp(toolOutputDraft.excerptChars, 100, 4000))
+              Math.max(1, Math.round(toolOutputDraft.excerptChars))
             )
           }
           className={NUMBER_FIELD_CLASS}
@@ -88,7 +87,6 @@ export function ToolOutputTuningSection({
           id="tool-highlight-terms"
           type="number"
           min={1}
-          max={32}
           step={1}
           value={toolOutputDraft.highlightTermsMax}
           onChange={(event) =>
@@ -106,7 +104,7 @@ export function ToolOutputTuningSection({
           onBlur={() =>
             void saveToolOutputField(
               'highlightTermsMax',
-              Math.round(clamp(toolOutputDraft.highlightTermsMax, 1, 32))
+              Math.max(1, Math.round(toolOutputDraft.highlightTermsMax))
             )
           }
           className={NUMBER_FIELD_CLASS}

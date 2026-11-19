@@ -17,7 +17,9 @@ use crate::{
     repository::LearningRepository,
     tests::{fixture, pool, prepared, prepared_with_questions},
 };
+use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 use sqlx::SqlitePool;
 
 /// Bank rows of one course: candidates, keys, blueprints, settings.
@@ -27,7 +29,7 @@ async fn bank_counts(pool: &SqlitePool, program_id: &str) -> Result<(i64, i64, i
             .bind(program_id)
             .fetch_one(pool)
             .await
-            .map_err(crate::persistence::db)
+            .map_err(AppError::from)
     };
     Ok((
         count("SELECT count(*) FROM learning_assessment_candidates WHERE program_id=?").await?,
@@ -75,12 +77,10 @@ async fn import(
 }
 
 /// Start the course's first lesson quiz: it must need no new questions.
-async fn start_first_lesson_quiz(pool: &SqlitePool, program_id: &str) -> Result<usize> {
-    let program = LearningRepository::new(pool.clone())
-        .get(program_id)
-        .await?;
+async fn start_first_lesson_quiz(db: &Database, program_id: &str) -> Result<usize> {
+    let program = LearningRepository::new(db.clone()).get(program_id).await?;
     let lesson_id = program.modules[0].lessons[0].id.clone();
-    let repo = LearningAssessmentRepository::new(pool.clone());
+    let repo = LearningAssessmentRepository::new(db.clone());
     let overview = repo.overview(program_id).await?;
     assert_eq!(
         overview.modules[0].lessons[0].quiz.bank_status,
@@ -108,8 +108,9 @@ async fn start_first_lesson_quiz(pool: &SqlitePool, program_id: &str) -> Result<
 #[tokio::test]
 async fn a_course_exported_without_evidence_keeps_its_quiz_banks() -> Result<()> {
     let pool = pool().await?;
+    let db = Database::new(pool.clone());
     let program = fixture();
-    let programs = LearningRepository::new(pool.clone());
+    let programs = LearningRepository::new(db.clone());
     programs.create(&program).await?;
     programs
         .accept(&AcceptLearningProgramRequestDto {
@@ -124,7 +125,7 @@ async fn a_course_exported_without_evidence_keeps_its_quiz_banks() -> Result<()>
         .prepare(&program_id, &lesson_id, 1, &prepared(&lesson_id))
         .await?;
     let asked = fill_bank(
-        &pool,
+        &db,
         &program_id,
         &LearningQuizScopeDto {
             kind: LearningQuizScopeKind::Lesson,
@@ -135,20 +136,19 @@ async fn a_course_exported_without_evidence_keeps_its_quiz_banks() -> Result<()>
     sqlx::query("INSERT INTO learning_quiz_settings(program_id,quiz_pass,test_pass,exam_pass,written_answers,updated_at) VALUES(?,0.8,0.75,0.75,1,1)")
         .bind(&program_id)
         .execute(&pool)
-        .await
-        .map_err(crate::persistence::db)?;
+        .await?;
     let before = bank_counts(&pool, &program_id).await?;
     assert!(before.0 > 0 && before.0 == before.1 && before.2 > 0 && before.3 == 1);
 
     let workspace = tempfile::tempdir().expect("pack workspace");
-    let packs = packs(&pool, workspace.path());
+    let packs = packs(&db, workspace.path());
     let path = export_without_evidence(&packs, &program_id).await?;
 
     // A copy arrives with every bank row and starts its quiz at once.
     let copy = import(&packs, &path, LearningPackConflictPolicy::CreateCopy).await?;
     assert_ne!(copy, program_id);
     assert_eq!(bank_counts(&pool, &copy).await?, before);
-    assert_eq!(start_first_lesson_quiz(&pool, &copy).await?, asked);
+    assert_eq!(start_first_lesson_quiz(&db, &copy).await?, asked);
 
     // Replacing the course from the same pack keeps its banks too.
     let replaced = import(
@@ -159,15 +159,16 @@ async fn a_course_exported_without_evidence_keeps_its_quiz_banks() -> Result<()>
     .await?;
     assert_eq!(replaced, program_id);
     assert_eq!(bank_counts(&pool, &program_id).await?, before);
-    assert_eq!(start_first_lesson_quiz(&pool, &program_id).await?, asked);
+    assert_eq!(start_first_lesson_quiz(&db, &program_id).await?, asked);
     Ok(())
 }
 
 #[tokio::test]
 async fn a_pack_round_trip_keeps_a_lessons_questions_in_their_order() -> Result<()> {
     let pool = pool().await?;
+    let db = Database::new(pool.clone());
     let program = fixture();
-    let programs = LearningRepository::new(pool.clone());
+    let programs = LearningRepository::new(db.clone());
     programs.create(&program).await?;
     programs
         .accept(&AcceptLearningProgramRequestDto {
@@ -213,8 +214,7 @@ async fn a_pack_round_trip_keeps_a_lessons_questions_in_their_order() -> Result<
     .bind(&lesson_id)
     .bind(prompts[2])
     .execute(&pool)
-    .await
-    .map_err(crate::persistence::db)?;
+    .await?;
     let order = |program: String| {
         let pool = pool.clone();
         async move {
@@ -224,13 +224,13 @@ async fn a_pack_round_trip_keeps_a_lessons_questions_in_their_order() -> Result<
             .bind(program)
             .fetch_all(&pool)
             .await
-            .map_err(crate::persistence::db)
+            .map_err(AppError::from)
         }
     };
     assert_eq!(order(program_id.clone()).await?, prompts);
 
     let workspace = tempfile::tempdir().expect("pack workspace");
-    let packs = packs(&pool, workspace.path());
+    let packs = packs(&db, workspace.path());
     let path = export_without_evidence(&packs, &program_id).await?;
     let copy = import(&packs, &path, LearningPackConflictPolicy::CreateCopy).await?;
     assert_eq!(order(copy).await?, prompts);

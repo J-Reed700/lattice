@@ -284,8 +284,12 @@ async fn a_cancelled_token_ends_in_the_cancelled_error() {
     cancel.cancel();
     let mut build = draft(Form::Build);
     build.starter = Some(piece(&["", "", "", ""]));
-    let message = invalid_state(prove(&kind, build, cancel).await);
-    assert_eq!(message, "The practice build was cancelled.");
+    match prove(&kind, build, cancel).await {
+        Err(AppError::Cancelled(message)) => {
+            assert_eq!(message, "The practice build was cancelled.");
+        }
+        other => panic!("expected a cancelled error, got {other:?}"),
+    }
 }
 
 #[test]

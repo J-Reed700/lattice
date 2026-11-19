@@ -1,20 +1,95 @@
 //! Lesson quotation provenance: check the author's quotations against the
 //! supplied excerpts, restore their typography, and re-anchor a quotation the
 //! author could not match to the nearest real passage.
+use crate::dto::LearningSourceDto;
+use crate::reference_collection::ReferenceCollection;
+use crate::review_findings::FindingSite;
+use lattice_core::shared::text::sentences;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-/// The supplied excerpt `index` names.
-fn excerpt_of(sources: &[Value], index: Option<u64>) -> Option<&str> {
-    let index = index?;
+/// A source quotation that matches no saved reference, at the part that
+/// cites it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuoteCheck {
+    pub path: String,
+    pub source_index: Option<u64>,
+    pub quote: String,
+    pub error: String,
+}
+
+/// The sources a citation may name, each with the index that names it and its text.
+pub(crate) type Table<'a> = Vec<(u64, &'a str)>;
+
+/// The table of the excerpts an authoring context supplies; `None` when it has no sources.
+pub(crate) fn authored(authoring: &Value) -> Option<Table<'_>> {
+    let sources = authoring.get("sources").and_then(Value::as_array)?;
+    Some(
+        sources
+            .iter()
+            .filter_map(|source| {
+                Some((
+                    source.get("sourceIndex")?.as_u64()?,
+                    source.get("excerpt")?.as_str()?,
+                ))
+            })
+            .collect(),
+    )
+}
+
+/// The table of a lesson's numbered sources: `sourceIndex` i names the i-th.
+pub(crate) fn numbered(sources: &[crate::dto::LearningSourceDto]) -> Table<'_> {
     sources
         .iter()
-        .find(|source| source.get("sourceIndex").and_then(Value::as_u64) == Some(index))
-        .and_then(|source| source.get("excerpt"))
-        .and_then(Value::as_str)
+        .enumerate()
+        .map(|(index, source)| (index as u64, source.excerpt.as_str()))
+        .collect()
+}
+
+/// The saved source a numbered one is: its whole text, where the writer was shown passages of it.
+pub(crate) fn saved<'a>(
+    references: &'a ReferenceCollection<'_>,
+    source: &'a LearningSourceDto,
+) -> &'a LearningSourceDto {
+    references
+        .sources
+        .iter()
+        .find(|saved| saved.id == source.id)
+        .unwrap_or(source)
+}
+
+/// What a lesson's quotations are checked against: `sourceIndex` i names the
+/// whole saved text of the i-th numbered source, so a citation may quote any
+/// part of the source it names, not only the passages the writer was shown.
+pub(crate) fn checked<'a>(
+    numbered: &'a [LearningSourceDto],
+    references: &'a ReferenceCollection<'_>,
+) -> Table<'a> {
+    numbered
+        .iter()
+        .enumerate()
+        .map(|(index, source)| (index as u64, saved(references, source).excerpt.as_str()))
+        .collect()
+}
+
+/// Whether `quote` is a quotation of the text `index` names.
+fn holds(table: &Table, index: Option<u64>, quote: &str) -> bool {
+    excerpt_of(table, index)
+        .is_some_and(|excerpt| crate::generation::validate_excerpt_quote(quote, excerpt).is_ok())
+}
+
+/// The text `index` names.
+fn excerpt_of<'a>(table: &Table<'a>, index: Option<u64>) -> Option<&'a str> {
+    let index = index?;
+    table
+        .iter()
+        .find(|(named, _)| *named == index)
+        .map(|(_, text)| *text)
 }
 
 /// Why a quotation fails against the supplied excerpts; `None` when it holds.
-fn quote_error(sources: &[Value], index: Option<u64>, quote: &str) -> Option<String> {
+fn quote_error(sources: &Table, index: Option<u64>, quote: &str) -> Option<String> {
     if sources.is_empty() {
         return (index.is_some() || !quote.trim().is_empty())
             .then(|| "Topic-based material must not invent source citations.".to_owned());
@@ -27,12 +102,20 @@ fn quote_error(sources: &[Value], index: Option<u64>, quote: &str) -> Option<Str
     }
 }
 
-pub(super) fn lesson_quote_checks(candidate: &Value, authoring: &Value) -> Vec<Value> {
-    let Some(sources) = authoring.get("sources").and_then(Value::as_array) else {
-        return Vec::new();
-    };
+/// The failures of a candidate cited against what `authoring` supplies.
+pub(super) fn lesson_quote_checks(candidate: &Value, authoring: &Value) -> Vec<QuoteCheck> {
+    authored(authoring).map_or_else(Vec::new, |table| quote_checks_in(candidate, &table))
+}
+
+type SiteOf = fn(usize) -> FindingSite;
+
+pub(crate) fn quote_checks_in(candidate: &Value, sources: &Table) -> Vec<QuoteCheck> {
     let mut failures = Vec::new();
-    for field in ["blocks", "questions"] {
+    let fields: [(&str, SiteOf); 2] = [
+        ("blocks", FindingSite::Section),
+        ("questions", FindingSite::Question),
+    ];
+    for (field, site) in fields {
         for (ordinal, item) in candidate
             .get(field)
             .and_then(Value::as_array)
@@ -40,14 +123,19 @@ pub(super) fn lesson_quote_checks(candidate: &Value, authoring: &Value) -> Vec<V
             .flatten()
             .enumerate()
         {
-            let path = format!("{field}[{ordinal}]");
+            let path = site(ordinal).path().unwrap_or_default();
             let index = item.get("sourceIndex").and_then(Value::as_u64);
             let quote = item
                 .get("quote")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
             if let Some(error) = quote_error(sources, index, quote) {
-                failures.push(json!({"path":path,"sourceIndex":index,"quote":quote,"error":error}));
+                failures.push(QuoteCheck {
+                    path: path.clone(),
+                    source_index: index,
+                    quote: quote.to_owned(),
+                    error,
+                });
             }
             // A sentence the writer cited carries its own source and quote.
             for (position, cited) in item
@@ -63,7 +151,12 @@ pub(super) fn lesson_quote_checks(candidate: &Value, authoring: &Value) -> Vec<V
                     .and_then(Value::as_str)
                     .unwrap_or_default();
                 if let Some(error) = quote_error(sources, index, quote) {
-                    failures.push(json!({"path":path,"sourceIndex":index,"quote":quote,"error":format!("Citation {} of this part: {error}", position + 1)}));
+                    failures.push(QuoteCheck {
+                        path: path.clone(),
+                        source_index: index,
+                        quote: quote.to_owned(),
+                        error: format!("Citation {} of this part: {error}", position + 1),
+                    });
                 }
             }
         }
@@ -72,19 +165,16 @@ pub(super) fn lesson_quote_checks(candidate: &Value, authoring: &Value) -> Vec<V
 }
 
 /// The exact words of the excerpt `index` names that a quotation of it
-/// matches but for typography; `None` when it already holds or matches none.
-fn restored_quote(sources: &[Value], index: Option<u64>, quote: &str) -> Option<String> {
+/// matches but for typography; `None` when it is those words already or
+/// matches none.
+fn restored_quote(sources: &Table, index: Option<u64>, quote: &str) -> Option<String> {
     let excerpt = excerpt_of(sources, index)?;
-    if crate::generation::validate_excerpt_quote(quote, excerpt).is_ok() {
-        return None;
-    }
-    crate::outline_citations::exact_source_quote(excerpt, quote).map(str::to_owned)
+    crate::outline_citations::exact_source_quote(excerpt, quote)
+        .filter(|exact| *exact != quote)
+        .map(str::to_owned)
 }
 
-pub(super) fn restore_lesson_quotes(candidate: &mut Value, authoring: &Value) -> usize {
-    let Some(sources) = authoring.get("sources").and_then(Value::as_array) else {
-        return 0;
-    };
+pub(super) fn restore_quotes_in(candidate: &mut Value, sources: &Table) -> usize {
     let mut restored = 0;
     let mut restore = |part: &mut Value| {
         let exact = restored_quote(
@@ -127,33 +217,6 @@ fn content_terms(text: &str) -> std::collections::HashSet<String> {
         .collect()
 }
 
-/// Whole-sentence byte ranges of `text`; a line break also ends a sentence.
-fn sentence_spans(text: &str) -> Vec<(usize, usize)> {
-    let characters: Vec<(usize, char)> = text.char_indices().collect();
-    let mut spans = Vec::new();
-    let mut start = 0;
-    for (position, (offset, character)) in characters.iter().enumerate() {
-        let ends = match character {
-            '\n' => true,
-            '.' | '!' | '?' => characters
-                .get(position + 1)
-                .is_none_or(|(_, next)| next.is_whitespace()),
-            _ => false,
-        };
-        if ends {
-            let end = offset + character.len_utf8();
-            if !text[start..end].trim().is_empty() {
-                spans.push((start, end));
-            }
-            start = end;
-        }
-    }
-    if !text[start..].trim().is_empty() {
-        spans.push((start, text.len()));
-    }
-    spans
-}
-
 /// The run of one to four whole sentences of `excerpt` that shares the largest
 /// share of `target`'s terms and passes the quote rules. This chooses
 /// provenance text for a citation, never evidence: every factual claim is
@@ -164,7 +227,7 @@ fn nearest_passage_span(excerpt: &str, target: &str) -> Option<(f64, usize, Stri
     if wanted.is_empty() {
         return None;
     }
-    let spans = sentence_spans(excerpt);
+    let spans = sentences(excerpt);
     let mut best: Option<(f64, usize, String)> = None;
     for first in 0..spans.len() {
         for last in first..spans.len().min(first + 4) {
@@ -214,7 +277,7 @@ fn item_text(item: &Value) -> String {
 /// `terms` of its terms and the share `minimum` of them, with the source it is
 /// in; the cited source `index` wins a tie.
 fn nearest(
-    excerpts: &[(u64, &str)],
+    excerpts: &Table,
     index: Option<u64>,
     (target, minimum, terms): (&str, f64, usize),
 ) -> Option<(f64, u64, String)> {
@@ -234,52 +297,36 @@ fn nearest(
 }
 
 /// The source and passage a quotation the author could not match is cited to
-/// instead: the span closest to the quotation (at least 60% of its terms),
-/// otherwise the one that shares the most terms (at least two) with
-/// `own_text`, the sentence or item it supports. `None` when the quotation
-/// holds or nothing is near.
+/// instead: the span of the passages `shown` closest to the quotation (at
+/// least 60% of its terms), otherwise the one that shares the most terms (at
+/// least two) with `own_text`, the sentence or item it supports. `None` when
+/// the quotation holds in `checked`, or nothing near it holds there too.
 fn reanchored(
-    excerpts: &[(u64, &str)],
+    checked: &Table,
+    shown: &Table,
     index: Option<u64>,
     quote: &str,
     own_text: &str,
 ) -> Option<(u64, String)> {
-    let valid = index
-        .and_then(|index| excerpts.iter().find(|(source, _)| *source == index))
-        .is_some_and(|(_, excerpt)| {
-            crate::generation::validate_excerpt_quote(quote, excerpt).is_ok()
-        });
-    if valid {
+    if holds(checked, index, quote) {
         return None;
     }
     let (_, source, text) = (!quote.trim().is_empty())
-        .then(|| nearest(excerpts, index, (quote, 0.6, 1)))
+        .then(|| nearest(shown, index, (quote, 0.6, 1)))
         .flatten()
-        .or_else(|| nearest(excerpts, index, (own_text, 0.0, 2)))?;
-    Some((source, text))
+        .or_else(|| nearest(shown, index, (own_text, 0.0, 2)))?;
+    holds(checked, Some(source), &text).then_some((source, text))
 }
 
 /// After the author has had its chance to correct its quotations, cite the
-/// real passage it meant instead of discarding the lesson: the span closest
-/// to its quotation (at least 60% of its terms) in the cited or another
-/// supplied excerpt, otherwise the span that shares the most terms (at least
-/// two) with the item itself, or with the sentence a citation is for.
+/// real passage it meant instead of discarding the lesson: a quotation that
+/// holds in `checked` is left alone; otherwise the nearest passage among those
+/// `shown` (closest to the quotation, else sharing the most terms with the
+/// item or the sentence a citation is for) is written if it holds there too.
 /// Citations are provenance; the final review below and claim verification
 /// still check every claim before anything is published.
-pub(super) fn reanchor_lesson_quotes(candidate: &mut Value, authoring: &Value) -> usize {
-    let Some(sources) = authoring.get("sources").and_then(Value::as_array) else {
-        return 0;
-    };
-    let excerpts: Vec<(u64, &str)> = sources
-        .iter()
-        .filter_map(|source| {
-            Some((
-                source.get("sourceIndex")?.as_u64()?,
-                source.get("excerpt")?.as_str()?,
-            ))
-        })
-        .collect();
-    if excerpts.is_empty() {
+pub(super) fn reanchor_quotes_in(candidate: &mut Value, checked: &Table, shown: &Table) -> usize {
+    if shown.is_empty() {
         return 0;
     }
     let mut changed = 0;
@@ -290,7 +337,7 @@ pub(super) fn reanchor_lesson_quotes(candidate: &mut Value, authoring: &Value) -
             .unwrap_or_default()
             .to_owned();
         let index = part.get("sourceIndex").and_then(Value::as_u64);
-        let Some((source, text)) = reanchored(&excerpts, index, &quote, own_text) else {
+        let Some((source, text)) = reanchored(checked, shown, index, &quote, own_text) else {
             return;
         };
         if let Some(object) = part.as_object_mut() {

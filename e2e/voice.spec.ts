@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { expect, type Page } from '@playwright/test';
 
-import { ANSWER_CHUNKS, CONVERSATION } from './fixtures/chat';
+import { ANSWER_CHUNKS, streamAnswer } from './fixtures/chat';
 import { argsOf, journeyTest } from './fixtures/shell';
 import { serveCommands } from './fixtures/tauri';
 import { endVoice, installVoiceFixture, openChat, SAID, startVoice } from './fixtures/voice';
@@ -45,12 +45,6 @@ test.skip(({ browserName }) => browserName !== 'chromium', 'Only Chromium has a 
 
 const status = (page: Page, text: string) => page.getByRole('status').filter({ hasText: text });
 
-async function stream(page: Page, requestId: string, content: string) {
-  await page.evaluate(({ conversationId, requestId, content }) => {
-    window.__LATTICE_IPC__.emit('llm-stream', { conversationId, requestId, content, done: false });
-  }, { conversationId: CONVERSATION.id!, requestId, content });
-}
-
 test('a spoken question goes out as a turn, and its answer is spoken as it is written', async ({ page, backend }) => {
   await openChat(page);
   await startVoice(page).click();
@@ -67,8 +61,8 @@ test('a spoken question goes out as a turn, and its answer is spoken as it is wr
   await expect(page.getByText(SAID, { exact: true })).toBeVisible();
 
   // The first sentence is spoken before the turn is done.
-  await stream(page, turn.requestId, ANSWER_CHUNKS[0]);
-  await stream(page, turn.requestId, ANSWER_CHUNKS[1]);
+  await streamAnswer(page, turn.requestId, ANSWER_CHUNKS[0]);
+  await streamAnswer(page, turn.requestId, ANSWER_CHUNKS[1]);
   await expect.poll(() => argsOf(backend, 'synthesize_speech').map((call) => call.text)).toContain('It comes down to silica.');
   await expect(status(page, 'Speaking')).toBeVisible();
 
@@ -91,7 +85,7 @@ test('talking over a reply stops it, and what was said goes out instead', async 
   await openChat(page);
   await startVoice(page).click();
   await expect.poll(() => turns().length, { timeout: 20_000 }).toBe(1);
-  await stream(page, String(turns()[0].requestId), ANSWER_CHUNKS.join(''));
+  await streamAnswer(page, String(turns()[0].requestId), ANSWER_CHUNKS.flat());
   await expect(status(page, 'Speaking')).toBeVisible();
 
   await expect.poll(() => stops().length, { timeout: 20_000 }).toBe(1);

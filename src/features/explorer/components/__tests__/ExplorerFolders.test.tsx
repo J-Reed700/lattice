@@ -158,7 +158,7 @@ describe('Your folders', () => {
     mocks.apiCall.mockResolvedValue({ ok: true, data: [] });
     localStorage.clear();
     mocks.list.mockResolvedValue(listed(FOLDERS));
-    for (const action of [mocks.rename, mocks.setPinned, mocks.deleteIndex]) action.mockResolvedValue({ ok: true, data: undefined });
+    for (const action of [mocks.rename, mocks.setPinned, mocks.deleteIndex]) action.mockResolvedValue({ ok: true, data: null });
     mocks.remove.mockResolvedValue({ ok: true, data: 0 });
     mocks.spaces.mockResolvedValue({ ok: true, data: [] });
   });
@@ -214,7 +214,7 @@ describe('Your folders', () => {
     expect(within(rows()[1]).getByRole('button', { name: 'Unpin MusicVST' })).toBeInTheDocument();
 
     mocks.list.mockResolvedValue(listed([CANOPY, { ...MUSIC, pinned: true }, PLUGINS, GONE]));
-    await act(async () => reply({ ok: true, data: undefined }));
+    await act(async () => reply({ ok: true, data: null }));
     await waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(2));
   });
 

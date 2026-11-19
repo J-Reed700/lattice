@@ -165,7 +165,7 @@ describe('index status in the query cache', () => {
   });
 
   it('closing the folder forgets its live status', async () => {
-    mocks.api.explorerIndexClose.mockResolvedValue({ ok: true, data: undefined });
+    mocks.api.explorerIndexClose.mockResolvedValue({ ok: true, data: null });
     client.setQueryData(explorerKeys.indexStatus(ROOT), status());
     const commands = renderHook(() => useExplorerIndexCommands(), { wrapper });
     await act(() => commands.result.current.close(ROOT));
@@ -176,7 +176,7 @@ describe('index status in the query cache', () => {
 describe('a folder\'s last thread', () => {
   it('is written to the folder\'s row and shown in the cached list at once', async () => {
     client.setQueryData(explorerKeys.folders, { home: '/Users/me', folders: [folder(ROOT, 'thread-a')] });
-    mocks.api.explorerFolderSetLastThread.mockResolvedValue({ ok: true, data: undefined });
+    mocks.api.explorerFolderSetLastThread.mockResolvedValue({ ok: true, data: null });
     const { result } = renderHook(() => useExplorerFolderMutations(), { wrapper });
     await act(() => result.current.setLastThread.mutateAsync({ root: ROOT, conversationId: 'thread-b' }));
     expect(mocks.api.explorerFolderSetLastThread).toHaveBeenCalledWith(ROOT, 'thread-b');
@@ -186,7 +186,7 @@ describe('a folder\'s last thread', () => {
 
   it('refreshes the list when the folder was not listed yet', async () => {
     client.setQueryData(explorerKeys.folders, { home: '/Users/me', folders: [] });
-    mocks.api.explorerFolderSetLastThread.mockResolvedValue({ ok: true, data: undefined });
+    mocks.api.explorerFolderSetLastThread.mockResolvedValue({ ok: true, data: null });
     mocks.api.explorerFoldersList.mockResolvedValue({ ok: true, data: { home: '/Users/me', folders: [folder(ROOT, 'thread-a')] } });
     const { result } = renderHook(() => useExplorerFolderMutations(), { wrapper });
     await act(() => result.current.setLastThread.mutateAsync({ root: ROOT, conversationId: 'thread-a' }));

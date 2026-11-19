@@ -403,7 +403,7 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        Database::from(pool)
+        Database::new(pool)
     }
 
     fn long_tag(suffix: &str) -> String {
@@ -468,7 +468,7 @@ mod tests {
         let pool = SqlitePool::connect(":memory:")
             .await
             .expect("Failed to create in-memory pool");
-        let service = TagService::new(Database::from(pool));
+        let service = TagService::new(Database::new(pool));
         let document_id = "test-doc";
 
         let guard1 = service.acquire_lock_with_timeout(document_id).await;

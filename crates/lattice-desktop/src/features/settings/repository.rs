@@ -16,7 +16,7 @@
 
 use crate::features::settings::dto::{
     LLMProvider, SettingsCategory, SettingsDto, DEFAULT_LLM_STALL_TIMEOUT_SECONDS,
-    MAX_LLM_STALL_TIMEOUT_SECONDS, MIN_LLM_STALL_TIMEOUT_SECONDS,
+    MIN_LLM_STALL_TIMEOUT_SECONDS,
 };
 use async_trait::async_trait;
 use lattice_core::application::ports::credentials_port::CredentialsPort;
@@ -25,6 +25,7 @@ use lattice_core::application::ports::settings_port::SettingsImportOutcome;
 use lattice_core::application::ports::{merge_json_update, SettingsRepositoryPort};
 use lattice_core::application::services::credentials::CredentialKey;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::ErrorCode;
 use serde_json;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -63,13 +64,10 @@ impl Default for SettingsFile {
 }
 
 /// Brings a stored document inside the ranges the validator enforces.
-/// `llm.timeout_seconds` is a stall timeout, so values saved under its former
-/// total-timeout meaning fall back to the default rather than failing an
-/// unrelated save or disabling stall detection.
+/// A stored `llm.timeout_seconds` of zero falls back to the default rather
+/// than failing an unrelated save or disabling stall detection.
 fn resolve_out_of_range_values(settings: &mut SettingsDto) {
-    if !(MIN_LLM_STALL_TIMEOUT_SECONDS..=MAX_LLM_STALL_TIMEOUT_SECONDS)
-        .contains(&settings.llm.timeout_seconds)
-    {
+    if settings.llm.timeout_seconds < MIN_LLM_STALL_TIMEOUT_SECONDS {
         tracing::info!(
             stored = settings.llm.timeout_seconds,
             resolved = DEFAULT_LLM_STALL_TIMEOUT_SECONDS,
@@ -135,7 +133,7 @@ impl SettingsRepository {
         let repository = Self::open(app_data_dir, Some(credentials)).await?;
         if let Err(error) = repository.migrate_legacy_secrets().await {
             tracing::warn!(
-                error_code = error.error_code(),
+                error_code = %ErrorCode::from(&error),
                 "Could not move auth header values to the keyring; the settings file keeps them and the move is retried at the next start"
             );
         }

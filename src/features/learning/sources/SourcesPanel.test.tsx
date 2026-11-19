@@ -53,7 +53,7 @@ const version: LearningSourceVersionDto = {
   fullText: 'A saved passage about careful observation.\n\nA full second paragraph from the captured text.',
   usage: [{ lessonId: 'lesson-1', lessonTitle: 'Observe closely', referenceKind: 'lesson_block', referenceTitle: 'Evidence' }],
 };
-const doc: DocumentMetadata = { id: 'doc-1', fileName: 'Field guide.pdf', filePath: '/Field guide.pdf', fileType: 'pdf', category: 'document', language: 'en', modifiedAt: '', indexedAt: '', wordCount: 420 };
+const doc: DocumentMetadata = { id: 'doc-1', fileName: 'Field guide.pdf', filePath: '/Field guide.pdf', fileType: 'pdf', category: 'document', language: 'en', modifiedAt: '', indexedAt: '', wordCount: 420, web: false, typeBucket: 'PDF' };
 const ok = <T,>(data: T) => ({ ok: true as const, data });
 const fail = (error: string, code?: string) => ({ ok: false as const, error, ...(code ? { details: { code } } : {}) });
 

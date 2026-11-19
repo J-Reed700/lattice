@@ -4,16 +4,16 @@ use crate::features::file::commands::read_file_bytes_impl;
 use crate::infrastructure::persistence::database::{initialize_database, DatabaseConnection};
 use crate::infrastructure::storage::ContentAddressedStorage;
 use lattice_core::shared::testing::links;
+use std::path::Path;
 use std::sync::Arc;
 
 #[tokio::test]
 async fn library_preview_survives_policy_refresh_without_allowing_siblings() -> anyhow::Result<()> {
     let data = tempfile::tempdir()?;
-    let database = Arc::new(DatabaseConnection::new(data.path().join("app.db")).await?);
+    let database = DatabaseConnection::new(data.path().join("app.db")).await?;
     initialize_database(database.database()).await?;
     let container = Container::new(
         database.database().clone(),
-        database,
         None,
         "http://127.0.0.1:1",
         "test-model",
@@ -58,5 +58,59 @@ async fn library_preview_survives_policy_refresh_without_allowing_siblings() -> 
                 .is_err()
         );
     }
+    Ok(())
+}
+
+async fn readable(container: &Container, path: &Path) -> bool {
+    let allowed = container.file_access_config().validate_path(path).is_ok();
+    let read = read_file_bytes_impl(container, path.to_string_lossy().into_owned()).await;
+    assert_eq!(
+        read.is_ok(),
+        allowed,
+        "the viewer's command reads exactly what the access policy allows: {read:?}"
+    );
+    allowed
+}
+
+#[tokio::test]
+async fn a_saved_web_article_is_readable_through_the_viewers_command() -> anyhow::Result<()> {
+    let data = tempfile::tempdir()?;
+    let database = DatabaseConnection::new(data.path().join("app.db")).await?;
+    initialize_database(database.database()).await?;
+    let container = Container::new(
+        database.database().clone(),
+        None,
+        "http://127.0.0.1:1",
+        "test-model",
+        data.path().to_path_buf(),
+        Arc::default(),
+    )
+    .await?;
+    let archive = lattice_core::shared::fs::roots::web_archive_root()?;
+    tokio::fs::create_dir_all(&archive).await?;
+    let article = tempfile::tempdir_in(&archive)?;
+    let markdown = article.path().join("article.md");
+    let page = article.path().join("page.html");
+    tokio::fs::write(&markdown, "# A saved article").await?;
+    tokio::fs::write(&page, "<html><body>A saved article</body></html>").await?;
+
+    assert!(
+        readable(&container, &markdown).await,
+        "a saved web article is readable from startup"
+    );
+    assert!(
+        readable(&container, &page).await,
+        "a saved web page is readable from startup"
+    );
+
+    container.refresh_allowed_roots().await?;
+    assert!(
+        readable(&container, &markdown).await,
+        "a saved web article stays readable after the readable folders are recomputed"
+    );
+    assert!(
+        readable(&container, &page).await,
+        "a saved web page stays readable after the readable folders are recomputed"
+    );
     Ok(())
 }

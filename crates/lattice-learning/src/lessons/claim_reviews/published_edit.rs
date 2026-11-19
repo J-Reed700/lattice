@@ -9,8 +9,8 @@
 use std::collections::HashSet;
 
 use lattice_core::domain::learning::claim_review::{
-    span_of, Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation, ClaimState,
-    EventProvenance, HumanBinding, UnitKind, UnverifiedReason, UserAction,
+    span_of, Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation, EventProvenance,
+    HumanBinding, UnitKind, UnverifiedReason, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::WriteTx;
@@ -44,11 +44,49 @@ pub(super) fn placed(entry: &ClaimLedgerEntry, body: &str) -> Option<(usize, usi
         .or_else(|| span_of(body, &sentence))
 }
 
-pub(super) fn gone(entry: &ClaimLedgerEntry) -> bool {
-    matches!(
-        entry.state(),
-        ClaimState::Removed { .. } | ClaimState::Edited { .. }
-    )
+/// Records the sentence the user wrote at `location` as claim `claim_id` on
+/// `connection`: extracted and published not verified by the machine, as
+/// nothing has checked it.
+pub(super) async fn user_sentence_in(
+    connection: &mut WriteTx,
+    lesson_id: &str,
+    claim_id: &ClaimId,
+    location: ClaimLocation,
+    user: &EventProvenance,
+) -> Result<()> {
+    let machine = user.as_machine();
+    let statement = location.quote.clone();
+    for event in [
+        ClaimEvent::Extracted {
+            location,
+            statement,
+        },
+        ClaimEvent::PublishedUnverified {
+            reason: UnverifiedReason::Unchecked,
+        },
+    ] {
+        append_in(connection, lesson_id, claim_id, machine.clone(), event).await?;
+    }
+    Ok(())
+}
+
+/// [`user_sentence_in`], then confirmed by the user who wrote it.
+pub(super) async fn confirmed_sentence_in(
+    connection: &mut WriteTx,
+    lesson_id: &str,
+    claim_id: &ClaimId,
+    location: ClaimLocation,
+    user: &EventProvenance,
+) -> Result<()> {
+    let quote = location.quote.clone();
+    user_sentence_in(connection, lesson_id, claim_id, location, user).await?;
+    let confirm = ClaimEvent::UserAction {
+        action: UserAction::Confirm {
+            bound: HumanBinding::new(&quote, Vec::new()),
+        },
+        note: None,
+    };
+    append_in(connection, lesson_id, claim_id, user.clone(), confirm).await
 }
 
 /// The section's text as the lesson holds it now.
@@ -131,7 +169,7 @@ pub(super) async fn apply_in(
             entry.claim_id() == claim_id
                 || (in_section_body(entry)
                     && entry.location().unit_index == unit
-                    && !gone(entry)
+                    && !entry.state().is_gone()
                     && placed(entry, &body)
                         .is_some_and(|(start, end)| start < range.1 && range.0 < end))
         })
@@ -147,39 +185,8 @@ pub(super) async fn apply_in(
         quote: after.into(),
         span: Some((range.0, range.0 + after.len())),
     };
-    let machine = EventProvenance {
-        actor: Actor::Machine,
-        ..user.clone()
-    };
-    for (id, provenance, event) in [
-        (
-            &successor,
-            &machine,
-            ClaimEvent::Extracted {
-                location,
-                statement: after.into(),
-            },
-        ),
-        (
-            &successor,
-            &machine,
-            ClaimEvent::PublishedUnverified {
-                reason: UnverifiedReason::Unchecked,
-            },
-        ),
-        (
-            &successor,
-            &user,
-            ClaimEvent::UserAction {
-                action: UserAction::Confirm {
-                    bound: HumanBinding::new(after, Vec::new()),
-                },
-                note: None,
-            },
-        ),
-    ] {
-        append_in(connection, lesson_id, id, provenance.clone(), event).await?;
-    }
+    confirmed_sentence_in(connection, lesson_id, &successor, location, &user).await?;
+    let machine = user.as_machine();
     for entry in &replaced {
         let edited = ClaimEvent::UserAction {
             action: UserAction::Edit {

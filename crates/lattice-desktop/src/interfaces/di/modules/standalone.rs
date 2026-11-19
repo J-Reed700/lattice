@@ -4,11 +4,12 @@
 //! for the same model, and kills every server it started when it drops.
 
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Stdio;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::process::BoundCommand;
 
 use crate::features::embedding::llama_cpp::{
     EmbeddingHeader, EmbeddingLaunch, EmbeddingServerStarter, LlamaEmbeddingService,
@@ -19,6 +20,7 @@ use crate::features::llm::engine::sidecar_manager::{
 use crate::features::llm::engine::system::backend_devices::parse_list_devices;
 use crate::features::search::engine::llama_reranker::{RerankLaunch, RerankServerStarter};
 use crate::infrastructure::llama_server::RunningLlamaServer;
+use lattice_core::shared::error::WithCauses;
 
 /// How often a starting server's `/health` is asked while it loads.
 const HEALTH_POLL: std::time::Duration = std::time::Duration::from_millis(250);
@@ -27,7 +29,7 @@ const HEALTH_POLL: std::time::Duration = std::time::Duration::from_millis(250);
 /// one: one server per configuration, shared while it runs.
 pub struct StandaloneServers {
     binary: PathBuf,
-    children: parking_lot::Mutex<Vec<Arc<parking_lot::Mutex<Child>>>>,
+    children: parking_lot::Mutex<Vec<Arc<parking_lot::Mutex<tokio::process::Child>>>>,
     /// Running servers by launch flags.
     running: tokio::sync::Mutex<std::collections::HashMap<String, Arc<RunningLlamaServer>>>,
 }
@@ -53,11 +55,11 @@ impl StandaloneServers {
 
     /// What the binary's own `--list-devices` reports, as the app asks it.
     async fn has_accelerator(&self) -> bool {
-        let binary = self.binary.clone();
-        tokio::task::spawn_blocking(move || Command::new(binary).arg("--list-devices").output())
+        BoundCommand::new(&self.binary)
+            .arg("--list-devices")
+            .output()
             .await
             .ok()
-            .and_then(std::result::Result::ok)
             .is_some_and(|output| {
                 let text = format!(
                     "{}{}",
@@ -90,12 +92,13 @@ impl StandaloneServers {
             .port();
         let key = new_api_token();
         let args = build_server_args(config, port);
-        let child = Command::new(&self.binary)
+        let child = BoundCommand::new(&self.binary)
             .args(&args)
             .env("LLAMA_API_KEY", &key)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
+            .await
             .map_err(|e| {
                 AppError::ModelLoadFailed(format!("{} did not spawn: {e}", self.binary.display()))
             })?;
@@ -104,7 +107,9 @@ impl StandaloneServers {
         let endpoint = format!("http://127.0.0.1:{port}");
         let http = lattice_core::shared::http::loopback_client_builder()
             .build()
-            .map_err(|e| AppError::ModelLoadFailed(format!("No HTTP client: {e}")))?;
+            .map_err(|e| {
+                AppError::ModelLoadFailed(format!("No HTTP client: {}", WithCauses(&e)))
+            })?;
         loop {
             if let Ok(Some(status)) = child.lock().try_wait() {
                 return Err(AppError::ModelLoadFailed(format!(
@@ -183,17 +188,14 @@ impl RerankServerStarter for StandaloneServers {
 impl Drop for StandaloneServers {
     fn drop(&mut self) {
         for child in self.children.lock().drain(..) {
-            let mut child = child.lock();
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = child.lock().start_kill();
         }
     }
 }
 
-/// The embedding model in `gguf` (with its `tokenizer.json` beside it) on a
-/// llama-server this process starts from [`StandaloneServers::from_env`]:
-/// what the app's loader does for the active model, from a file. The server
-/// stops when the service drops.
+/// The embedding model in `gguf` on a llama-server this process starts from
+/// [`StandaloneServers::from_env`]: what the app's loader does for the active
+/// model, from a file. The server stops when the service drops.
 pub async fn open_gguf(gguf: &Path) -> Result<LlamaEmbeddingService> {
     let identity =
         crate::infrastructure::ml::artifact_identity::compute_in_background(gguf.to_path_buf())

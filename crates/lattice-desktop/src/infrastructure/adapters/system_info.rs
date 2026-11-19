@@ -24,7 +24,7 @@ use lattice_core::application::ports::{
     AcceleratorProbe, ComputeType, GpuInfo, SystemInfo, SystemInfoPort,
 };
 use lattice_core::shared::error::AppError;
-use std::process::Command;
+use lattice_core::shared::process::BoundCommand;
 use std::sync::Arc;
 use sysinfo::System;
 
@@ -55,7 +55,7 @@ impl SystemInfoAdapter {
     /// guessing. The platform-specific probes below are the
     /// fallback for when that has not run, and they are weaker than they look —
     /// the Windows one cannot see an AMD or Intel card at all.
-    fn detect_gpu_info(&self) -> Option<GpuInfo> {
+    async fn detect_gpu_info(&self) -> Option<GpuInfo> {
         // The Intel macOS build ships CPU inference only. A Metal-capable
         // display adapter must not make onboarding recommend GPU-sized models.
         if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
@@ -64,24 +64,24 @@ impl SystemInfoAdapter {
         if let Some(gpu) = self.accelerator.probed_gpu() {
             return Some(gpu);
         }
-        self.detect_gpu_platform()
+        self.detect_gpu_platform().await
     }
 
     /// Platform-specific fallback, used only when the probe has not run.
-    fn detect_gpu_platform(&self) -> Option<GpuInfo> {
+    async fn detect_gpu_platform(&self) -> Option<GpuInfo> {
         #[cfg(target_os = "macos")]
         {
-            self.detect_gpu_macos()
+            self.detect_gpu_macos().await
         }
 
         #[cfg(target_os = "linux")]
         {
-            self.detect_gpu_linux()
+            self.detect_gpu_linux().await
         }
 
         #[cfg(target_os = "windows")]
         {
-            self.detect_gpu_windows()
+            self.detect_gpu_windows().await
         }
 
         #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -92,10 +92,11 @@ impl SystemInfoAdapter {
 
     /// Detect GPU on macOS using system_profiler.
     #[cfg(target_os = "macos")]
-    fn detect_gpu_macos(&self) -> Option<GpuInfo> {
-        let output = Command::new("system_profiler")
+    async fn detect_gpu_macos(&self) -> Option<GpuInfo> {
+        let output = BoundCommand::new("system_profiler")
             .arg("SPDisplaysDataType")
             .output()
+            .await
             .ok()?;
 
         let output_str = String::from_utf8_lossy(&output.stdout);
@@ -155,14 +156,14 @@ impl SystemInfoAdapter {
 
     /// Detect GPU on Linux.
     #[cfg(target_os = "linux")]
-    fn detect_gpu_linux(&self) -> Option<GpuInfo> {
+    async fn detect_gpu_linux(&self) -> Option<GpuInfo> {
         // Try NVIDIA first
-        if let Some(gpu) = self.detect_nvidia_gpu_linux() {
+        if let Some(gpu) = self.detect_nvidia_gpu_linux().await {
             return Some(gpu);
         }
 
         // Try AMD via lspci
-        if let Some(gpu) = self.detect_amd_gpu_linux() {
+        if let Some(gpu) = self.detect_amd_gpu_linux().await {
             return Some(gpu);
         }
 
@@ -171,16 +172,17 @@ impl SystemInfoAdapter {
 
     /// Detect NVIDIA GPU on Linux.
     #[cfg(target_os = "linux")]
-    fn detect_nvidia_gpu_linux(&self) -> Option<GpuInfo> {
+    async fn detect_nvidia_gpu_linux(&self) -> Option<GpuInfo> {
         if !std::path::Path::new("/proc/driver/nvidia/version").exists() {
             return None;
         }
 
         // Try nvidia-smi
-        let output = Command::new("nvidia-smi")
+        let output = BoundCommand::new("nvidia-smi")
             .arg("--query-gpu=name,memory.total")
             .arg("--format=csv,noheader")
             .output()
+            .await
             .ok()?;
 
         let output_str = String::from_utf8_lossy(&output.stdout);
@@ -202,8 +204,8 @@ impl SystemInfoAdapter {
 
     /// Detect AMD GPU on Linux via lspci.
     #[cfg(target_os = "linux")]
-    fn detect_amd_gpu_linux(&self) -> Option<GpuInfo> {
-        let output = Command::new("lspci").output().ok()?;
+    async fn detect_amd_gpu_linux(&self) -> Option<GpuInfo> {
+        let output = BoundCommand::new("lspci").output().await.ok()?;
 
         let output_str = String::from_utf8_lossy(&output.stdout);
 
@@ -227,9 +229,9 @@ impl SystemInfoAdapter {
 
     /// Detect GPU on Windows via WMI.
     #[cfg(target_os = "windows")]
-    fn detect_gpu_windows(&self) -> Option<GpuInfo> {
+    async fn detect_gpu_windows(&self) -> Option<GpuInfo> {
         // Try nvidia-smi first
-        if let Some(gpu) = self.detect_nvidia_gpu_windows() {
+        if let Some(gpu) = self.detect_nvidia_gpu_windows().await {
             return Some(gpu);
         }
 
@@ -242,11 +244,12 @@ impl SystemInfoAdapter {
 
     /// Detect NVIDIA GPU on Windows via nvidia-smi.
     #[cfg(target_os = "windows")]
-    fn detect_nvidia_gpu_windows(&self) -> Option<GpuInfo> {
-        let output = Command::new("nvidia-smi")
+    async fn detect_nvidia_gpu_windows(&self) -> Option<GpuInfo> {
+        let output = BoundCommand::new("nvidia-smi")
             .arg("--query-gpu=name,memory.total")
             .arg("--format=csv,noheader")
             .output()
+            .await
             .ok()?;
 
         let output_str = String::from_utf8_lossy(&output.stdout);
@@ -271,26 +274,22 @@ impl SystemInfoAdapter {
 #[async_trait]
 impl SystemInfoPort for SystemInfoAdapter {
     async fn get_system_info(&self) -> Result<SystemInfo, AppError> {
-        // Refresh system information
-        {
+        let (total_ram_gb, cpu_cores, cpu_model) = {
             let mut sys = self.system.lock();
             sys.refresh_all();
-        }
+            let cpu_model = sys
+                .cpus()
+                .first()
+                .map(|cpu| cpu.brand().to_string())
+                .unwrap_or_else(|| "Unknown CPU".to_string());
+            (
+                sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0),
+                sys.cpus().len() as u32,
+                cpu_model,
+            )
+        };
 
-        let sys = self.system.lock();
-
-        let total_ram_gb = sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
-
-        let cpu_cores = sys.cpus().len() as u32;
-        let cpu_model = sys
-            .cpus()
-            .first()
-            .map(|cpu| cpu.brand().to_string())
-            .unwrap_or_else(|| "Unknown CPU".to_string());
-
-        drop(sys); // Release lock before GPU detection
-
-        let gpu_info = self.detect_gpu_info();
+        let gpu_info = self.detect_gpu_info().await;
 
         Ok(SystemInfo {
             total_ram_gb,
@@ -307,10 +306,11 @@ mod tests {
     use lattice_core::application::ports::NoAcceleratorProbe;
 
     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-    #[test]
-    fn intel_mac_does_not_advertise_gpu_inference() {
+    #[tokio::test]
+    async fn intel_mac_does_not_advertise_gpu_inference() {
         assert!(SystemInfoAdapter::new(Arc::new(NoAcceleratorProbe))
             .detect_gpu_info()
+            .await
             .is_none());
     }
 

@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 
 use lattice_core::domain::learning::claim_review::{
-    text_sha256, Actor, Check, Checker, ClaimEvent, ClaimId, ClaimState, EventProvenance,
-    EvidenceFingerprint, EvidenceSeen, Ledger, ReopenCause, Revision, VerdictKind,
+    text_sha256, Actor, AuditedState, Check, Checker, ClaimEvent, ClaimId, EventProvenance,
+    EvidenceFingerprint, EvidenceSeen, Ledger, Revision,
 };
 use lattice_core::shared::error::{AppError, Result};
 
@@ -17,11 +17,13 @@ use super::{AuditClaim, AuditDeps, AuditPassage, AuditRequest};
 pub(super) fn evidence(passages: &[AuditPassage]) -> Vec<EvidenceSeen> {
     passages
         .iter()
-        .map(|passage| EvidenceSeen {
-            source_version_id: passage.source_version_id.clone(),
-            start_byte: passage.start_byte,
-            end_byte: passage.end_byte,
-            text_sha256: text_sha256(&passage.text),
+        .map(|passage| {
+            EvidenceSeen::of(
+                &passage.source_version_id,
+                passage.start_byte,
+                passage.end_byte,
+                &passage.text,
+            )
         })
         .collect()
 }
@@ -32,7 +34,7 @@ pub(super) fn evidence(passages: &[AuditPassage]) -> Vec<EvidenceSeen> {
 pub(super) fn receipt(claim: &AuditClaim, model: &str) -> EvidenceFingerprint {
     let wording = text_sha256(&format!("{}\n{}", claim.statement, claim.quote));
     EvidenceFingerprint::of(
-        &format!("{AUDIT_POLICY_ID}:{wording}"),
+        &AUDIT_POLICY_ID.key(wording),
         model,
         &evidence(&claim.passages),
     )
@@ -51,10 +53,9 @@ pub(super) fn due(
         .claims
         .iter()
         .filter_map(|entry| {
-            let general_knowledge = match entry.state() {
-                ClaimState::ResolvedByEvidence { .. } | ClaimState::Confirmed { .. } => false,
-                ClaimState::GeneralKnowledge { .. } => true,
-                _ => return None,
+            let general_knowledge = match entry.state().audited_state()? {
+                AuditedState::GeneralKnowledge => true,
+                AuditedState::Verified | AuditedState::Confirmed => false,
             };
             let claim = AuditClaim {
                 claim_id: entry.claim_id().clone(),
@@ -89,18 +90,7 @@ pub(super) fn disputes(ledger: &Ledger) -> usize {
     ledger
         .claims
         .iter()
-        .filter(|entry| {
-            matches!(
-                entry.state(),
-                ClaimState::Queued {
-                    kind: VerdictKind::Disputed { .. },
-                    ..
-                } | ClaimState::Reopened {
-                    cause: ReopenCause::VerifierDispute,
-                    ..
-                }
-            )
-        })
+        .filter(|entry| entry.state().verifier_disputed())
         .count()
 }
 

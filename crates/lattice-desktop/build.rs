@@ -44,13 +44,13 @@ fn embed_windows_manifest() {
     );
 }
 
-/// Reserve the main thread's stack in the app and `export_bindings`; the test
-/// harnesses run their tests on spawned threads.
+/// Reserve the main thread's stack in the app, `export_bindings` and the
+/// examples; the test harnesses run their tests on spawned threads.
 fn reserve_main_thread_stack() {
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
-    for arg in main_thread_stack::link_args(&target_os, &target_env) {
-        println!("cargo::rustc-link-arg-bins={arg}");
+    for line in main_thread_stack::directives(&target_os, &target_env) {
+        println!("{line}");
     }
 }
 
@@ -368,6 +368,8 @@ fn main() {
                     "get_sources_status",
                     "save_source_key",
                     "remove_source_key",
+                    "saved_web_article",
+                    "check_sourcing_address",
                 ]),
             )
             .plugin(
@@ -524,6 +526,12 @@ fn main() {
                     "accept_learning_program",
                     "prepare_learning_lesson",
                     "prepare_learning_module",
+                    "get_learning_course_plan",
+                    "plan_learning_course",
+                    "edit_learning_course_plan_entry",
+                    "change_learning_course_plan_entries",
+                    "undo_learning_course_plan_entry",
+                    "prepare_learning_ahead",
                     "complete_learning_lesson",
                     "delete_learning_program",
                     "get_learning_memory",

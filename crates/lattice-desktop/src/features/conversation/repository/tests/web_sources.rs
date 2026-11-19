@@ -4,6 +4,7 @@ use super::*;
 use crate::features::conversation::context_repository::SqliteConversationContext;
 use crate::features::conversation::repository::ConversationRepository;
 use lattice_core::application::ports::conversation_context::ConversationContextPort;
+use lattice_core::shared::persistence::Database;
 
 /// The citation archive outlives the page cache and the page itself: the text
 /// a conversation read is stored beside the citation, the first text read is
@@ -14,7 +15,8 @@ async fn a_read_page_is_archived_beside_its_citation_permanently() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let url = "https://example.com/purple-sprouting".to_string();
 
     repo.store_conversation_web_source_snapshot(
@@ -101,7 +103,8 @@ async fn a_turns_citations_are_there_for_the_next_turn() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     for (url, title, excerpt) in [
         (
@@ -126,7 +129,7 @@ async fn a_turns_citations_are_there_for_the_next_turn() {
         .unwrap();
     }
 
-    let carried = SqliteConversationContext::new(pool.clone())
+    let carried = SqliteConversationContext::new(db.clone())
         .linked_sources(&conversation_id, 0, usize::MAX)
         .await
         .unwrap();
@@ -150,7 +153,8 @@ async fn citing_a_page_again_refreshes_it_rather_than_duplicating_it() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_thread(&pool).await;
-    let repo = ConversationRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     for excerpt in ["first reading", "a later, better reading"] {
         repo.add_conversation_web_source(
@@ -164,7 +168,7 @@ async fn citing_a_page_again_refreshes_it_rather_than_duplicating_it() {
         .unwrap();
     }
 
-    let carried = SqliteConversationContext::new(pool.clone())
+    let carried = SqliteConversationContext::new(db.clone())
         .linked_sources(&conversation_id, 0, usize::MAX)
         .await
         .unwrap();
@@ -183,7 +187,8 @@ async fn another_conversation_does_not_inherit_them() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     let conversation_id = seed_thread(&pool).await;
-    ConversationRepository::new(pool.clone())
+    let db = Database::new(pool.clone());
+    ConversationRepository::new(db.clone())
         .add_conversation_web_source(
             conversation_id.clone(),
             "https://example.com/broccolini".to_string(),
@@ -203,7 +208,7 @@ async fn another_conversation_does_not_inherit_them() {
     .await
     .unwrap();
 
-    let carried = SqliteConversationContext::new(pool.clone())
+    let carried = SqliteConversationContext::new(db.clone())
         .linked_sources("conv-2", 0, usize::MAX)
         .await
         .unwrap();

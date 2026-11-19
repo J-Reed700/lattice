@@ -24,7 +24,6 @@
 pub mod commands;
 pub mod di;
 pub mod dto;
-pub mod parser;
 pub mod plugin;
 pub mod prompt;
 pub mod retrieval;

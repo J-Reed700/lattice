@@ -4,6 +4,7 @@ use super::FunctionExecutor;
 use lattice_core::application::contracts::settings::CustomToolSettingsDto;
 use lattice_core::application::contracts::tools::FunctionResult;
 use lattice_core::application::contracts::tools::*;
+use lattice_core::shared::error::WithCauses;
 use lattice_core::shared::error::{AppError, Result};
 use reqwest::header::{ACCEPT, ACCEPT_LANGUAGE};
 use url::Url;
@@ -52,7 +53,11 @@ impl FunctionExecutor {
                 .send()
                 .await
                 .map_err(|e| {
-                    AppError::Network(format!("Custom tool '{}' request failed: {}", tool.name, e))
+                    AppError::Network(format!(
+                        "Custom tool '{}' request failed: {}",
+                        tool.name,
+                        WithCauses(&e)
+                    ))
                 })?;
 
             if !response.status().is_success() {
@@ -69,7 +74,8 @@ impl FunctionExecutor {
             let payload = response.json::<serde_json::Value>().await.map_err(|e| {
                 AppError::Network(format!(
                     "Custom tool '{}' returned non-JSON payload: {}",
-                    tool.name, e
+                    tool.name,
+                    WithCauses(&e)
                 ))
             })?;
 
@@ -120,13 +126,10 @@ impl FunctionExecutor {
                     })
                 });
 
-            match as_u64 {
-                Some(value) if (1..=100).contains(&value) => {}
-                _ => {
-                    return Err(AppError::InvalidInput(
-                        "Field 'max_results' must be an integer between 1 and 100".to_string(),
-                    ));
-                }
+            if as_u64.is_none() {
+                return Err(AppError::InvalidInput(
+                    "Field 'max_results' must be a whole number".to_string(),
+                ));
             }
         }
 

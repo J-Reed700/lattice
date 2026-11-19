@@ -2,8 +2,24 @@ use super::*;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
+use lattice_core::application::services::model_contract::{Contract, ContractId, PromptInput};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+
+struct Probe;
+
+impl Contract for Probe {
+    const ID: ContractId = ContractId::new("model-call-probe");
+    type Input = PromptInput;
+}
+
+fn probe() -> ContractCall {
+    ContractCall::of::<Probe>(&PromptInput {
+        system: String::new(),
+        prompt: String::new(),
+    })
+    .expect("a probe input serializes")
+}
 
 struct Recorder {
     window: usize,
@@ -30,6 +46,12 @@ impl LLMPort for Recorder {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 fn recorder(window: usize) -> Recorder {
@@ -45,13 +67,8 @@ async fn a_structured_call_sends_the_prompt_whole_with_its_schema() -> Result<()
     let schema = serde_json::json!({"type": "object"});
     send(
         &llm,
-        structured(
-            "Return JSON.",
-            "{\"task\":1}".into(),
-            schema.clone(),
-            2000,
-            "low",
-        ),
+        &probe(),
+        structured("Return JSON.", "{\"task\":1}".into(), schema.clone(), 2000),
         None,
         "too large",
     )
@@ -64,9 +81,12 @@ async fn a_structured_call_sends_the_prompt_whole_with_its_schema() -> Result<()
         .first()
         .ok_or_else(|| AppError::InternalError("unsent".into()))?;
     assert_eq!(request.user_text(), "{\"task\":1}");
-    assert_eq!(request.json_schema, Some(schema));
+    assert_eq!(
+        request.schema().map(|schema| schema.as_json()),
+        Some(&schema)
+    );
     assert_eq!(request.reasoning_effort.as_deref(), Some("low"));
-    assert_eq!(request.max_output_tokens, Some(2000));
+    assert_eq!(request.max_output_tokens(), Some(2000));
     // No learning call is killed by a clock.
     assert!(request.no_time_limit);
     assert_eq!(request.wall_clock_budget(), None);
@@ -78,12 +98,12 @@ async fn a_prompt_the_window_cannot_hold_is_refused_in_the_callers_words() {
     let llm = recorder(4096);
     let error = send(
         &llm,
+        &probe(),
         structured(
             "Return JSON.",
             "x".repeat(40_000),
             serde_json::json!({}),
             500,
-            "low",
         ),
         None,
         "Choose fewer sources.",
@@ -101,20 +121,20 @@ async fn material_the_window_cannot_hold_names_the_learning_model_and_the_fix() 
     let llm = recorder(4096);
     let error = send(
         &llm,
+        &probe(),
         structured(
             "Return JSON.",
             "x".repeat(40_000),
             serde_json::json!({}),
             500,
-            "low",
         ),
         None,
         TooLarge::Window("The requested learning material does not fit"),
     )
     .await
     .err();
-    let Some(AppError::InvalidConfig(message)) = error else {
-        panic!("expected a configuration refusal, got {error:?}");
+    let Some(AppError::WindowTooSmall(message)) = error else {
+        panic!("expected a window refusal, got {error:?}");
     };
     assert_eq!(
         message,
@@ -123,6 +143,17 @@ async fn material_the_window_cannot_hold_names_the_learning_model_and_the_fix() 
          a Learning model with a larger window"
     );
     assert!(llm.sent.lock().map(|sent| sent.is_empty()).unwrap_or(false));
+}
+
+#[tokio::test]
+async fn a_window_error_is_typed_apart_from_a_missing_model() {
+    let llm = recorder(4096);
+    let error = window_too_small(&llm, "x");
+    assert_eq!(ErrorClass::of(&error), ErrorClass::DoesNotFit);
+    assert_eq!(
+        ErrorClass::of(&AppError::InvalidConfig("no model".into())),
+        ErrorClass::Fault
+    );
 }
 
 /// A backend whose own window check refuses every request with the
@@ -154,6 +185,12 @@ impl LLMPort for Refusing {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[tokio::test]
@@ -164,13 +201,8 @@ async fn the_backends_numbered_refusal_reaches_the_learner_once_and_unchanged() 
     ] {
         let error = send(
             &Refusing,
-            structured(
-                "Return JSON.",
-                "{}".into(),
-                serde_json::json!({}),
-                500,
-                "low",
-            ),
+            &probe(),
+            structured("Return JSON.", "{}".into(), serde_json::json!({}), 500),
             None,
             too_large,
         )
@@ -186,23 +218,11 @@ async fn the_backends_numbered_refusal_reaches_the_learner_once_and_unchanged() 
 #[tokio::test]
 async fn source_room_is_what_the_planner_leaves_under_the_ceiling() {
     let llm = recorder(32_000);
-    let small = structured("Teach.", "{}".into(), serde_json::json!({}), 4000, "low");
+    let small = structured("Teach.", "{}".into(), serde_json::json!({}), 4000);
     assert_eq!(source_room(&llm, &small, 7000), 7000);
-    let crowded = structured(
-        "Teach.",
-        "x".repeat(100_000),
-        serde_json::json!({}),
-        4000,
-        "low",
-    );
+    let crowded = structured("Teach.", "x".repeat(100_000), serde_json::json!({}), 4000);
     assert!(source_room(&llm, &crowded, 7000) < 7000);
-    let overflowing = structured(
-        "Teach.",
-        "x".repeat(200_000),
-        serde_json::json!({}),
-        4000,
-        "low",
-    );
+    let overflowing = structured("Teach.", "x".repeat(200_000), serde_json::json!({}), 4000);
     assert_eq!(source_room(&llm, &overflowing, 7000), 0);
     assert!(!fits(&llm, &overflowing).await);
 }
@@ -211,7 +231,7 @@ async fn source_room_is_what_the_planner_leaves_under_the_ceiling() {
 /// content, joined by newlines.
 fn rendered(request: &CompletionRequest) -> String {
     request
-        .input
+        .input()
         .iter()
         .flat_map(|item| match item {
             CompletionInput::Message { role, content } => vec![role.clone(), content.clone()],
@@ -274,6 +294,12 @@ impl LLMPort for Dense {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// Cannot count, and refuses, as a server does, any prompt longer than a
@@ -322,6 +348,12 @@ impl LLMPort for Blind {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// A request carrying `room` estimate tokens of material.
@@ -331,7 +363,6 @@ fn packed(room: usize) -> GroundedRequest {
         format!("{{\"material\":\"{}\"}}", "x".repeat(room * 4)),
         serde_json::json!({}),
         500,
-        "low",
     )
 }
 
@@ -364,7 +395,7 @@ async fn dense_material_shrinks_until_its_exact_count_fits() {
     assert!(measured.prompt_tokens <= measured.allowed);
     assert!(fit.fits());
     assert!(fit.room > 0 && fit.room < first);
-    assert_eq!(fit.request.task, packed(fit.room).task);
+    assert_eq!(fit.request.task(), packed(fit.room).task());
     // The skeleton first, then strictly smaller rooms from the first.
     assert_eq!(rooms.first(), Some(&0));
     let tried = rooms.get(1..).unwrap_or_default();
@@ -382,17 +413,17 @@ async fn a_skeleton_the_window_cannot_hold_settles_at_room_zero_unsent() {
             format!("{}{}", "s".repeat(40_000), "x".repeat(room * 4)),
             serde_json::json!({}),
             500,
-            "low",
         )
     };
     let fit = fit_room(&llm, 1_000, crowded).await;
     assert_eq!(fit.room, 0);
     assert!(!fit.fits());
-    assert_eq!(fit.request.task, crowded(0).task);
+    assert_eq!(fit.request.task(), crowded(0).task());
     assert_eq!(llm.counts.load(Ordering::SeqCst), 0);
 
+    let contract = probe();
     let answer = send_fitted(&llm, 1_000, crowded, |request| {
-        send(&llm, request, None, "too large")
+        send(&llm, &contract, request, None, "too large")
     })
     .await;
     assert!(matches!(answer, Ok(None)));
@@ -404,8 +435,9 @@ async fn a_skeleton_the_window_cannot_hold_settles_at_room_zero_unsent() {
 async fn a_fitted_send_on_dense_material_is_never_refused() -> Result<()> {
     let llm = dense(8_192);
     let room = source_room(&llm, &packed(0), usize::MAX);
+    let contract = probe();
     let answer = send_fitted(&llm, room, packed, |request| {
-        send(&llm, request, None, "too large")
+        send(&llm, &contract, request, None, "too large")
     })
     .await?;
     assert!(answer.is_some());
@@ -417,8 +449,9 @@ async fn a_fitted_send_on_dense_material_is_never_refused() -> Result<()> {
 async fn a_servers_estimated_refusal_halves_the_room_until_it_is_accepted() -> Result<()> {
     let llm = blind(6_000);
     let room = source_room(&llm, &packed(0), usize::MAX);
+    let contract = probe();
     let answer = send_fitted(&llm, room, packed, |request| {
-        send(&llm, request, None, "too large")
+        send(&llm, &contract, request, None, "too large")
     })
     .await?;
     assert!(answer.is_some());
@@ -429,8 +462,9 @@ async fn a_servers_estimated_refusal_halves_the_room_until_it_is_accepted() -> R
     assert!(refusals <= usize::BITS as usize - room.leading_zeros() as usize);
 
     let never = blind(0);
+    let contract = probe();
     let answer = send_fitted(&never, room, packed, |request| {
-        send(&never, request, None, "too large")
+        send(&never, &contract, request, None, "too large")
     })
     .await?;
     assert!(answer.is_none());
@@ -461,6 +495,12 @@ impl LLMPort for Windowed {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 
 /// The error an outline for `goal` fails with on a model with `window` tokens.
@@ -474,8 +514,9 @@ async fn outline_error(window: usize, goal: String) -> String {
     let mut asked = request(LearningCourseDepth::Course);
     asked.goal = goal;
     let pool = crate::tests::pool().await.unwrap();
+    let db = lattice_core::shared::persistence::Database::new(pool);
     crate::service::generate(
-        &crate::repository::LearningRepository::new(pool),
+        &crate::repository::LearningRepository::new(db),
         &crate::outline_draft::DraftRunRegistry::new(),
         &llm,
         asked,

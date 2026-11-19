@@ -1,13 +1,10 @@
-use crate::infrastructure::persistence::database::connection::DatabaseConnection;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use lattice_core::domain::download::{
     Checksum, ChecksumAlgorithm, DownloadError, DownloadProgress, DownloadSession, DownloadState,
 };
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::{Transactions, WriteTx};
-use sqlx::{FromRow, SqliteConnection};
-use std::sync::Arc;
+use lattice_core::shared::persistence::{Database, PersistenceError, WriteTx};
+use sqlx::FromRow;
 
 #[derive(Debug, FromRow)]
 struct DownloadSessionRow {
@@ -226,10 +223,7 @@ pub trait DownloadRepository: Send + Sync {
 }
 
 /// Saves `session`, replacing a row with the same id, inside the caller's unit of work.
-async fn create_in(
-    conn: &mut SqliteConnection,
-    session: &DownloadSession,
-) -> Result<(), DownloadError> {
+async fn create_in(tx: &mut WriteTx, session: &DownloadSession) -> Result<(), DownloadError> {
     let state_str = format!("{:?}", session.state()).to_lowercase();
 
     let (checksum_algorithm, checksum_value) = session
@@ -277,43 +271,41 @@ async fn create_in(
     .bind(session.model_name())
     .bind(session.model_id())
     .bind(session.model_file_name())
-    .execute(&mut *conn)
+    .execute(&mut **tx)
     .await
     .map(|_| ())
     .map_err(|e| DownloadError::IoError(format!("Failed to create session: {}", e)))
 }
 
 /// Deletes one session inside the caller's unit of work.
-async fn delete_in(conn: &mut SqliteConnection, id: &str) -> Result<(), DownloadError> {
+async fn delete_in(tx: &mut WriteTx, id: &str) -> Result<(), DownloadError> {
     sqlx::query("DELETE FROM download_sessions WHERE id = ?")
         .bind(id)
-        .execute(&mut *conn)
+        .execute(&mut **tx)
         .await
         .map(|_| ())
         .map_err(|e| DownloadError::IoError(format!("Failed to delete session: {}", e)))
 }
 
+fn begin_failed(e: PersistenceError) -> DownloadError {
+    DownloadError::IoError(format!("Failed to begin transaction: {}", e))
+}
+
+fn commit_failed(e: PersistenceError) -> DownloadError {
+    DownloadError::IoError(format!("Failed to commit transaction: {}", e))
+}
+
 pub struct SqliteDownloadRepository {
-    db_conn: Arc<DatabaseConnection>, // Single source of truth for database access
+    db: Database,
 }
 
 impl SqliteDownloadRepository {
-    pub fn new(db_conn: Arc<DatabaseConnection>) -> Self {
-        Self { db_conn }
-    }
-
-    async fn begin_write(&self) -> Result<WriteTx, DownloadError> {
-        self.db_conn
-            .database()
-            .begin_write()
-            .await
-            .map_err(|e| DownloadError::IoError(format!("Failed to begin transaction: {}", e)))
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 
     async fn commit(tx: WriteTx) -> Result<(), DownloadError> {
-        tx.commit()
-            .await
-            .map_err(|e| DownloadError::IoError(format!("Failed to commit transaction: {}", e)))
+        tx.commit().await.map_err(commit_failed)
     }
 }
 
@@ -324,15 +316,17 @@ impl DownloadRepository for SqliteDownloadRepository {
     }
 
     async fn get(&self, id: &str) -> Result<Option<DownloadSession>, DownloadError> {
+        let mut read = self.db.begin_read().await.map_err(begin_failed)?;
         let row = sqlx::query_as::<_, DownloadSessionRow>(
             r#"
             SELECT * FROM download_sessions WHERE id = ?
             "#,
         )
         .bind(id)
-        .fetch_optional(self.db_conn.database().sqlx_pool())
+        .fetch_optional(&mut *read)
         .await
         .map_err(|e| DownloadError::IoError(format!("Failed to get session: {}", e)))?;
+        read.commit().await.map_err(commit_failed)?;
 
         match row {
             Some(row) => Ok(Some(row.try_into()?)),
@@ -341,10 +335,7 @@ impl DownloadRepository for SqliteDownloadRepository {
     }
 
     async fn update(&self, session: &DownloadSession) -> Result<(), DownloadError> {
-        let mut tx =
-            self.db_conn.database().begin_write().await.map_err(|e| {
-                DownloadError::IoError(format!("Failed to begin transaction: {}", e))
-            })?;
+        let mut tx = self.db.begin_write().await.map_err(begin_failed)?;
 
         let state_str = format!("{:?}", session.state()).to_lowercase();
 
@@ -407,10 +398,7 @@ impl DownloadRepository for SqliteDownloadRepository {
         bytes_downloaded: u64,
         bytes_per_second: f64,
     ) -> Result<(), DownloadError> {
-        let mut tx =
-            self.db_conn.database().begin_write().await.map_err(|e| {
-                DownloadError::IoError(format!("Failed to begin transaction: {}", e))
-            })?;
+        let mut tx = self.db.begin_write().await.map_err(begin_failed)?;
 
         // Touches only the progress columns, and only while the row is still
         // downloading — a tick that races a completion is dropped rather than
@@ -438,7 +426,7 @@ impl DownloadRepository for SqliteDownloadRepository {
     }
 
     async fn delete(&self, id: &str) -> Result<(), DownloadError> {
-        let mut tx = self.begin_write().await?;
+        let mut tx = self.db.begin_write().await.map_err(begin_failed)?;
         delete_in(&mut tx, id).await?;
         Self::commit(tx).await
     }
@@ -448,7 +436,7 @@ impl DownloadRepository for SqliteDownloadRepository {
         superseded: &[String],
         sessions: &[DownloadSession],
     ) -> Result<(), DownloadError> {
-        let mut tx = self.begin_write().await?;
+        let mut tx = self.db.begin_write().await.map_err(begin_failed)?;
         for id in superseded {
             delete_in(&mut tx, id).await?;
         }
@@ -459,14 +447,16 @@ impl DownloadRepository for SqliteDownloadRepository {
     }
 
     async fn list(&self) -> Result<Vec<DownloadSession>, DownloadError> {
+        let mut read = self.db.begin_read().await.map_err(begin_failed)?;
         let rows = sqlx::query_as::<_, DownloadSessionRow>(
             r#"
             SELECT * FROM download_sessions ORDER BY created_at DESC
             "#,
         )
-        .fetch_all(self.db_conn.database().sqlx_pool())
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| DownloadError::IoError(format!("Failed to list sessions: {}", e)))?;
+        read.commit().await.map_err(commit_failed)?;
 
         rows.into_iter().map(|row| row.try_into()).collect()
     }
@@ -477,15 +467,17 @@ impl DownloadRepository for SqliteDownloadRepository {
     ) -> Result<Vec<DownloadSession>, DownloadError> {
         let state_str = format!("{:?}", state).to_lowercase();
 
+        let mut read = self.db.begin_read().await.map_err(begin_failed)?;
         let rows = sqlx::query_as::<_, DownloadSessionRow>(
             r#"
             SELECT * FROM download_sessions WHERE state = ? ORDER BY created_at DESC
             "#,
         )
         .bind(state_str)
-        .fetch_all(self.db_conn.database().sqlx_pool())
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| DownloadError::IoError(format!("Failed to list sessions by state: {}", e)))?;
+        read.commit().await.map_err(commit_failed)?;
 
         rows.into_iter().map(|row| row.try_into()).collect()
     }
@@ -496,11 +488,12 @@ impl DownloadRepository for SqliteDownloadRepository {
         limit: usize,
     ) -> Result<Vec<DownloadSession>, DownloadError> {
         let limit = limit.clamp(1, 64) as i64;
+        let mut read = self.db.begin_read().await.map_err(begin_failed)?;
         let rows = sqlx::query_as::<_, DownloadSessionRow>(TERMINAL_RECONCILIATION_QUERY)
             .bind(after_id)
             .bind(after_id)
             .bind(limit)
-            .fetch_all(self.db_conn.database().sqlx_pool())
+            .fetch_all(&mut *read)
             .await
             .map_err(|e| {
                 DownloadError::IoError(format!(
@@ -508,11 +501,13 @@ impl DownloadRepository for SqliteDownloadRepository {
                     e
                 ))
             })?;
+        read.commit().await.map_err(commit_failed)?;
 
         rows.into_iter().map(|row| row.try_into()).collect()
     }
 
     async fn list_active(&self) -> Result<Vec<DownloadSession>, DownloadError> {
+        let mut read = self.db.begin_read().await.map_err(begin_failed)?;
         let rows = sqlx::query_as::<_, DownloadSessionRow>(
             r#"
             SELECT * FROM download_sessions
@@ -520,18 +515,16 @@ impl DownloadRepository for SqliteDownloadRepository {
             ORDER BY created_at DESC
             "#,
         )
-        .fetch_all(self.db_conn.database().sqlx_pool())
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| DownloadError::IoError(format!("Failed to list active sessions: {}", e)))?;
+        read.commit().await.map_err(commit_failed)?;
 
         rows.into_iter().map(|row| row.try_into()).collect()
     }
 
     async fn delete_pending_by_model(&self, model_id: &str) -> Result<u64, DownloadError> {
-        let mut tx =
-            self.db_conn.database().begin_write().await.map_err(|e| {
-                DownloadError::IoError(format!("Failed to begin transaction: {}", e))
-            })?;
+        let mut tx = self.db.begin_write().await.map_err(begin_failed)?;
 
         let result = sqlx::query(
             r#"

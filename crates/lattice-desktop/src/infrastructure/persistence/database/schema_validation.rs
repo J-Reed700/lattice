@@ -2,14 +2,16 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::infrastructure::persistence::database::schema::initialize_schema;
+    use crate::infrastructure::persistence::database::run_migrations;
+    use lattice_core::shared::persistence::Database;
     use sqlx::SqlitePool;
 
     #[tokio::test]
 
     async fn test_canonical_schema_creates_all_tables() {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
-        initialize_schema(&pool).await.unwrap();
+        let db = Database::new(pool.clone());
+        run_migrations(&db).await.unwrap();
 
         let tables: Vec<String> =
             sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
@@ -50,7 +52,8 @@ mod tests {
     #[tokio::test]
     async fn test_foreign_keys_enabled() {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
-        initialize_schema(&pool).await.unwrap();
+        let db = Database::new(pool.clone());
+        run_migrations(&db).await.unwrap();
 
         let (fk_enabled,): (i32,) = sqlx::query_as("PRAGMA foreign_keys")
             .fetch_one(&pool)
@@ -65,7 +68,8 @@ mod tests {
         // Note: WAL mode is not supported in :memory: databases
         // In production, WAL is enabled via connection string options
         let pool = SqlitePool::connect(":memory:").await.unwrap();
-        initialize_schema(&pool).await.unwrap();
+        let db = Database::new(pool.clone());
+        run_migrations(&db).await.unwrap();
 
         let (journal_mode,): (String,) = sqlx::query_as("PRAGMA journal_mode")
             .fetch_one(&pool)
@@ -84,7 +88,8 @@ mod tests {
     #[tokio::test]
     async fn test_schema_version_table_exists() {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
-        initialize_schema(&pool).await.unwrap();
+        let db = Database::new(pool.clone());
+        run_migrations(&db).await.unwrap();
 
         let (version,): (i32,) =
             sqlx::query_as("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1")
@@ -98,7 +103,8 @@ mod tests {
     #[tokio::test]
     async fn test_documents_table_structure() {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
-        initialize_schema(&pool).await.unwrap();
+        let db = Database::new(pool.clone());
+        run_migrations(&db).await.unwrap();
 
         #[derive(sqlx::FromRow)]
         struct ColumnInfo {
@@ -142,7 +148,8 @@ mod tests {
 
     async fn test_indexes_created() {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
-        initialize_schema(&pool).await.unwrap();
+        let db = Database::new(pool.clone());
+        run_migrations(&db).await.unwrap();
 
         let indexes: Vec<String> = sqlx::query_scalar(
             "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%' ORDER BY name",
@@ -184,7 +191,8 @@ mod tests {
 
     async fn test_fts5_table_exists() {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
-        initialize_schema(&pool).await.unwrap();
+        let db = Database::new(pool.clone());
+        run_migrations(&db).await.unwrap();
 
         let (count,): (i32,) = sqlx::query_as(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='documents_fts'",
@@ -199,7 +207,8 @@ mod tests {
     #[tokio::test]
     async fn chunk_search_stays_current_without_legacy_document_rewrites() {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
-        initialize_schema(&pool).await.unwrap();
+        let db = Database::new(pool.clone());
+        run_migrations(&db).await.unwrap();
         sqlx::query("INSERT INTO documents (id, file_path, file_name, mime_type, size_bytes, modified_at, indexed_at, checksum) VALUES ('pdf', '/pdf', 'pdf', 'application/pdf', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'checksum')")
             .execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO text_chunks (id, document_id, content, chunk_index) VALUES ('c1', 'pdf', 'original term', 0), ('c2', 'pdf', 'second term', 1)")
@@ -242,7 +251,8 @@ mod tests {
 
     async fn test_triggers_created() {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
-        initialize_schema(&pool).await.unwrap();
+        let db = Database::new(pool.clone());
+        run_migrations(&db).await.unwrap();
 
         let triggers: Vec<String> =
             sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name")
@@ -270,7 +280,8 @@ mod tests {
     #[tokio::test]
     async fn test_foreign_key_constraints() {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
-        initialize_schema(&pool).await.unwrap();
+        let db = Database::new(pool.clone());
+        run_migrations(&db).await.unwrap();
 
         #[derive(sqlx::FromRow)]
         struct ForeignKey {

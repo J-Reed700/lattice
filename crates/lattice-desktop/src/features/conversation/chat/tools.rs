@@ -1,11 +1,12 @@
 use super::*;
 use crate::features::conversation::chat::ports::ChatRetrieval;
 
-pub(super) const CORE_TOOL_NAMES: [&str; 4] = [
+pub(super) const CORE_TOOL_NAMES: [&str; 5] = [
     "semantic_search",
     "get_document",
     "list_documents",
     "list_attachments",
+    "read_more",
 ];
 /// The core tools that search or list the library. An Explorer turn reads the
 /// library only when the user turns it on, so only then is it offered these.
@@ -48,7 +49,7 @@ pub(super) fn kept_with_grounded_context(
 ) -> bool {
     matches!(
         tool_name,
-        "semantic_search" | "get_document" | "list_attachments" | "find_image"
+        "semantic_search" | "get_document" | "list_attachments" | "find_image" | "read_more"
     ) || (matches!(tool_name, "fetch_url_content" | "follow_links") && can_open_pages)
         || (deep_research
             && matches!(
@@ -174,8 +175,7 @@ pub(super) fn build_llm_tool_definitions(
                             "type": "integer",
                             "description": "Requested max result count",
                             "default": tool.default_max_results,
-                            "minimum": 1,
-                            "maximum": 100
+                            "minimum": 1
                         }
                     },
                     "required": ["query"]

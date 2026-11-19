@@ -124,7 +124,7 @@ mod tests {
         async fn search_mentions(
             &self,
             _query: &str,
-            _limit: i64,
+            _page: lattice_core::shared::persistence::Page,
         ) -> Result<Vec<MentionData>, AppError> {
             unimplemented!()
         }

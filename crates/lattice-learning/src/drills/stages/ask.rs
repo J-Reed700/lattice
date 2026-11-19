@@ -5,6 +5,9 @@ use crate::drills::runner::{CodeRunner, RunOutcome};
 use crate::lessons::structured_call::{complete_checked_request, reask};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::domain::learning::drills::{DrillFile, Edit, EditFault};
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
@@ -16,14 +19,24 @@ pub(crate) struct Asked<V> {
     pub value: V,
 }
 
+struct DrillStageAsk;
+impl Contract for DrillStageAsk {
+    const ID: ContractId = ContractId::new("drill-stage-ask");
+    type Input = PromptInput;
+}
+
 /// Asks for `request` and reads the answer with `accept`. An answer `accept` refuses is asked for once more in the
 /// same conversation, with the reason; a second refusal fails with the second reason.
 pub(crate) async fn ask_request<V>(
     llm: &dyn LLMPort,
     request: GroundedRequest,
-    accept: impl Fn(&str) -> Result<V>,
+    accept: impl Fn(&str) -> Result<V> + Send + Sync,
 ) -> Result<Asked<V>> {
-    let (raw, value) = complete_checked_request(llm, request, None, None, |raw| {
+    let call = ContractCall::of::<DrillStageAsk>(&PromptInput {
+        system: request.instructions().to_owned(),
+        prompt: request.task().to_owned(),
+    })?;
+    let (raw, value) = complete_checked_request(llm, &call, request, None, None, |raw| {
         accept(raw).map(|value| (raw.to_owned(), value))
     })
     .await?;
@@ -42,7 +55,7 @@ pub(crate) async fn ask_until_suite_passes<V>(
     request: GroundedRequest,
     purpose: &str,
     what_runs: &str,
-    accept: impl Fn(&str) -> Result<V>,
+    accept: impl Fn(&str) -> Result<V> + Send + Sync,
     to_run: impl Fn(&V) -> Option<(Vec<DrillFile>, String)>,
     trail: &mut Trail,
 ) -> Result<V> {
@@ -61,24 +74,30 @@ pub(crate) async fn ask_until_suite_passes<V>(
         };
         let outcome = runner.run(&files, &test, cancel.clone()).await?;
         trail.run(what_runs, &outcome);
-        let why = match outcome {
-            RunOutcome::Passed => return Ok(asked.value),
-            RunOutcome::Failed { output } => {
-                format!("{what_runs} failed. The runner's output follows.\n{output}")
-            }
-            RunOutcome::TimedOut { output } => did_not_finish(what_runs, &output),
-            RunOutcome::Cancelled => return Err(cancelled()),
-            RunOutcome::Unavailable { why } => {
-                return Err(AppError::ServiceNotAvailable(format!(
-                    "{what_runs} could not be run: {why}"
-                )))
-            }
+        let Some(why) = suite_failure(what_runs, outcome)? else {
+            return Ok(asked.value);
         };
         if again {
             return Err(AppError::ModelAnswerUnusable(why));
         }
         request = reask(request, &asked.raw, &why);
         again = true;
+    }
+}
+
+/// What to tell the model about a suite run that did not pass; `None` when it passed. A runtime that is not
+/// there is an unavailable service, never a bad answer, and a cancelled run is a cancelled build.
+pub(crate) fn suite_failure(what_runs: &str, outcome: RunOutcome) -> Result<Option<String>> {
+    match outcome {
+        RunOutcome::Passed => Ok(None),
+        RunOutcome::Failed { output } => Ok(Some(format!(
+            "{what_runs} failed. The runner's output follows.\n{output}"
+        ))),
+        RunOutcome::TimedOut { output } => Ok(Some(did_not_finish(what_runs, &output))),
+        RunOutcome::Cancelled => Err(cancelled()),
+        RunOutcome::Unavailable { why } => Err(AppError::ServiceNotAvailable(format!(
+            "{what_runs} could not be run: {why}"
+        ))),
     }
 }
 
@@ -97,7 +116,7 @@ fn did_not_finish(what_runs: &str, output: &str) -> String {
 /// What a stage fails with when a run was cancelled. The build's own token is cancelled then, and a stage whose
 /// token is cancelled is a stop, as the job runtime treats an error raised while stopping.
 pub(crate) fn cancelled() -> AppError {
-    AppError::InvalidState("The drill build was cancelled.".into())
+    AppError::Cancelled("The drill build was cancelled.".into())
 }
 
 /// A refusal the model is asked again with.
@@ -156,17 +175,6 @@ pub(crate) fn describe_fault(
             label(second)
         ),
     }
-}
-
-/// The schema of a severity.
-pub(crate) fn severity_schema() -> Value {
-    json!({"type": "string", "enum": ["critical", "major", "minor", "nit"]})
-}
-
-/// The schema of an edit's path: one of the files.
-pub(crate) fn path_schema(files: &[DrillFile]) -> Value {
-    let paths: Vec<&str> = files.iter().map(|file| file.path.as_str()).collect();
-    json!({"type": "string", "enum": paths})
 }
 
 /// The schema of a text that must say something.

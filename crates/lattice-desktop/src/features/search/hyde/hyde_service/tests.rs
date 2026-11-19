@@ -44,6 +44,12 @@ impl LLMPort for MockLLM {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 impl MockLLM {
     async fn respond(&self, _prompt: &str) -> Result<String> {
@@ -398,6 +404,12 @@ async fn test_integration_greeting_no_llm_call() {
 
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
+        }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
         }
     }
     impl PanicLLM {

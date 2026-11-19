@@ -2,17 +2,18 @@ import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react'
 
 import { useQueryClient } from '@tanstack/react-query';
 import { MessageSquarePlus, PanelLeft } from 'lucide-react';
-import { useSearchParams } from 'react-router';
+import { useLocation, useSearchParams } from 'react-router';
 
 import { IconButton } from '@/components/ui';
 import { useApi } from '@/contexts/ApiContext';
 import { ChatPanel } from '@/features/chat/components/ChatPanel';
 import { ConversationSidebar } from '@/features/chat/components/ConversationSidebar';
 import { ConversationSpotlight } from '@/features/chat/components/ConversationSpotlight';
-import { ChatReaderPane } from '@/features/chat/components/reader/ChatReaderPane';
 import { fetchDocumentFileName, useLinkDocumentToSpaceMutation } from '@/features/chat/hooks/useDocumentLinkRequest';
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
+import { ReaderPane } from '@/features/reading/components/ReaderPane';
+import { useReaderRoom } from '@/features/reading/hooks/useReaderRoom';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 import { useStopSpeechOnChange } from '@/features/speech/hooks/useSpeech';
 import { isBoundChat } from '@/shared/conversations/boundChats';
@@ -23,9 +24,6 @@ import { toast } from '@/stores/toastStore';
 import type { Conversation } from '@/types/conversation';
 import { scrollToMessage } from '@/utils/chatMessageNavigation';
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
-
-/** Longest quote we will carry through a URL into the composer. */
-const MAX_QUOTE_CHARS = 2000;
 
 const SIDEBAR_COLLAPSED_KEY = 'chat.sidebar.collapsed';
 
@@ -64,17 +62,19 @@ export function ChatView() {
   const [isSpotlightOpen, setIsSpotlightOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
   const selectingConversationRef = useRef<string | null>(null);
   const creatingRef = useRef(false);
   const rowRef = useRef<HTMLDivElement>(null);
   /**
-   * How much room the chat and the docked reader have between them.
-   *
-   * Measured from the row rather than the window because that is what the two
-   * of them actually share: collapsing the sidebar hands the reader 200-odd
-   * pixels the viewport knows nothing about.
+   * How much room the chat and the docked reader have between them: the row
+   * minus the conversation sidebar, which is its first child.
    */
-  const [row, setRow] = useState({ width: 0, available: 0 });
+  const row = useReaderRoom(
+    rowRef,
+    (element) => element.firstElementChild?.getBoundingClientRect().width ?? 0,
+    [sidebarCollapsed],
+  );
   /** A `?documentId=` request waiting for the conversation it belongs to. */
   const [pendingDocumentLink, setPendingDocumentLink] = useState<{
     documentId: string;
@@ -106,30 +106,6 @@ export function ChatView() {
     else conversationUiStore.setState({ activeConversationId: null });
   }, [activeIsBound, conversations, selectConversation]);
 
-  useEffect(() => {
-    const element = rowRef.current;
-    if (!element || typeof ResizeObserver === 'undefined') return;
-
-    const measure = () => {
-      const width = element.clientWidth;
-      // The sidebar is the first child; the rest is the chat plus the reader.
-      const sidebar = element.firstElementChild?.getBoundingClientRect().width ?? 0;
-      const available = Math.max(0, width - sidebar);
-      setRow((current) =>
-        current.width === width && current.available === available
-          ? current
-          : { width, available }
-      );
-    };
-
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    // Collapsing the sidebar does not resize the row, so the effect re-runs on
-    // it and measures again.
-    measure();
-    return () => observer.disconnect();
-  }, [sidebarCollapsed]);
-
   const handleNewConversation = useCallback(async () => {
     if (creatingRef.current) return;
     creatingRef.current = true;
@@ -159,7 +135,7 @@ export function ChatView() {
     void handleNewConversation();
   }, [handleNewConversation, searchParams, setSearchParams]);
 
-  // `?documentId=` / `?quote=` — the contract for "Ask about this" from the
+  // `?documentId=` and the `quote` in router state — the contract for "Ask about this" from the
   // Library and reading surfaces both open conversations here.
   // Reading the params and acting on them are two steps on purpose. `?new=1`
   // starts a conversation asynchronously, so at the moment the params are read
@@ -169,23 +145,25 @@ export function ChatView() {
   // until a conversation that is not the one we started from is open.
   useEffect(() => {
     const requestedDocumentId = searchParams.get('documentId');
-    const requestedQuote = searchParams.get('quote');
+    const state: unknown = location.state;
+    const requestedQuote =
+      state && typeof state === 'object' && 'quote' in state && typeof state.quote === 'string' && state.quote
+        ? state.quote
+        : null;
     if (!requestedDocumentId && !requestedQuote) return;
 
     const startedNewConversation = searchParams.get('new') === '1';
     const next = new URLSearchParams(searchParams);
     next.delete('documentId');
-    next.delete('quote');
     // `new` too: this effect runs after the `?new=1` one in the same commit and
     // its write lands last, so leaving `new` in would put it back in the URL
     // and start a second conversation on the next render.
     next.delete('new');
-    setSearchParams(next, { replace: true });
+    setSearchParams(next, { replace: true, state: null });
 
     if (requestedQuote) {
-      const quote = requestedQuote.slice(0, MAX_QUOTE_CHARS);
-      if (quote.trim()) {
-        const quoted = quote
+      if (requestedQuote.trim()) {
+        const quoted = requestedQuote
           .split('\n')
           .map((line) => `> ${line}`)
           .join('\n');
@@ -199,7 +177,7 @@ export function ChatView() {
       // Non-null only when a fresh conversation is on its way.
       skipConversationId: startedNewConversation ? activeConversationId ?? null : null,
     });
-  }, [activeConversationId, searchParams, setComposerDraft, setSearchParams]);
+  }, [activeConversationId, location.state, searchParams, setComposerDraft, setSearchParams]);
 
   useEffect(() => {
     if (!pendingDocumentLink || !activeConversationId) return;
@@ -324,7 +302,7 @@ export function ChatView() {
         <ConversationSidebar onCollapse={() => setSidebarCollapsed(true)} />
       )}
       <ChatPanel />
-      <ChatReaderPane rowWidth={row.width} availableWidth={row.available} />
+      <ReaderPane rowWidth={row.width} availableWidth={row.available} resetKey={activeConversationId} />
       <ConversationSpotlight isOpen={isSpotlightOpen} onClose={() => setIsSpotlightOpen(false)} />
     </div>
   );

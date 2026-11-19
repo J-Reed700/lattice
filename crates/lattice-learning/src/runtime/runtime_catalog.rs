@@ -215,8 +215,8 @@ async fn run_engine_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
         .spawn()
+        .await
         .map_err(|error| {
             AppError::ServiceNotAvailable(format!(
                 "{} is unavailable. Install Docker or Podman and start its daemon before {action}: {error}",

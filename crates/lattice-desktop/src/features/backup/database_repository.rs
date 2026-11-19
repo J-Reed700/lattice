@@ -1,43 +1,31 @@
 //! Statements run on the live database and on backup snapshots.
-use std::path::Path;
-
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Database;
-use sqlx::sqlite::SqliteConnectOptions;
-use sqlx::{SqliteConnection, SqlitePool};
+use lattice_core::shared::persistence::{Database, WriteTx};
+use sqlx::SqliteConnection;
 
 type Result<T> = std::result::Result<T, sqlx::Error>;
 
-/// Opens an existing backup file read-only, built from `SqliteConnectOptions`
-/// rather than a `sqlite://…?mode=ro` DSN: a canonical Windows path
-/// (`\\?\C:\...`) contains a `?`, where sqlx splits a DSN.
-pub async fn open_read_only(path: &Path) -> Result<Database> {
-    let options = SqliteConnectOptions::new().filename(path).read_only(true);
-    SqlitePool::connect_with(options).await.map(Database::from)
+/// `integrity_check` in a read unit.
+pub async fn database_integrity_check(database: &Database) -> Result<String> {
+    let mut read = database.begin_read().await?;
+    let integrity = integrity_check(&mut read).await?;
+    read.commit().await?;
+    Ok(integrity)
 }
 
-/// `vacuum_into` on a connection of its own.
-pub async fn vacuum_database_into(database: &impl DriverPool, destination: &str) -> Result<()> {
-    let mut connection = database.sqlx_pool().acquire().await?;
-    vacuum_into(&mut connection, destination).await
+/// `document_count` in a read unit.
+pub async fn database_document_count(database: &Database) -> Result<i64> {
+    let mut read = database.begin_read().await?;
+    let count = document_count(&mut read).await?;
+    read.commit().await?;
+    Ok(count)
 }
 
-/// `integrity_check` on a connection of its own.
-pub async fn database_integrity_check(database: &impl DriverPool) -> Result<String> {
-    let mut connection = database.sqlx_pool().acquire().await?;
-    integrity_check(&mut connection).await
-}
-
-/// `document_count` on a connection of its own.
-pub async fn database_document_count(database: &impl DriverPool) -> Result<i64> {
-    let mut connection = database.sqlx_pool().acquire().await?;
-    document_count(&mut connection).await
-}
-
-/// `newest_migration` on a connection of its own.
-pub async fn database_newest_migration(database: &impl DriverPool) -> Result<Option<i64>> {
-    let mut connection = database.sqlx_pool().acquire().await?;
-    newest_migration(&mut connection).await
+/// `newest_migration` in a read unit.
+pub async fn database_newest_migration(database: &Database) -> Result<Option<i64>> {
+    let mut read = database.begin_read().await?;
+    let version = newest_migration(&mut read).await?;
+    read.commit().await?;
+    Ok(version)
 }
 
 /// What a backup's `schema_version` table says.
@@ -55,7 +43,7 @@ pub enum SchemaVersionError {
 /// Whether the backup has a `schema_version` table and its latest row, on one
 /// connection.
 pub async fn backup_schema_version(
-    database: &impl DriverPool,
+    database: &Database,
 ) -> std::result::Result<SchemaVersion, SchemaVersionError> {
     let mut tx = database
         .begin_read()
@@ -74,22 +62,6 @@ pub async fn backup_schema_version(
         .await
         .map_err(|error| SchemaVersionError::Read(error.into()))?;
     Ok(SchemaVersion::Table(version))
-}
-
-/// `VACUUM INTO` takes a string literal, not a bind parameter, so the single
-/// quotes of `destination` are doubled.
-pub async fn vacuum_into(connection: &mut SqliteConnection, destination: &str) -> Result<()> {
-    let escaped = destination.replace('\'', "''");
-    sqlx::query(&format!("VACUUM INTO '{escaped}'"))
-        .execute(connection)
-        .await?;
-    Ok(())
-}
-
-/// Reclaims free pages. SQLite refuses it inside a transaction.
-pub async fn vacuum(connection: &mut SqliteConnection) -> Result<()> {
-    sqlx::query("VACUUM").execute(connection).await?;
-    Ok(())
 }
 
 pub async fn integrity_check(connection: &mut SqliteConnection) -> Result<String> {
@@ -115,10 +87,11 @@ pub async fn column_exists(
     // `pragma_table_info` is a table-valued function, so its argument is a
     // string literal rather than a bind parameter.
     let escaped = table.replace('\'', "''");
-    let names: Vec<String> =
-        sqlx::query_scalar(&format!("SELECT name FROM pragma_table_info('{escaped}')"))
-            .fetch_all(connection)
-            .await?;
+    let names: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT name FROM pragma_table_info('{escaped}')"
+    )))
+    .fetch_all(connection)
+    .await?;
     Ok(names.iter().any(|name| name == column))
 }
 
@@ -130,15 +103,17 @@ pub async fn table_count(connection: &mut SqliteConnection) -> Result<i64> {
 
 pub async fn count_rows(connection: &mut SqliteConnection, table: &str) -> Result<i64> {
     let escaped = table.replace('"', "\"\"");
-    sqlx::query_scalar(&format!("SELECT COUNT(*) FROM \"{escaped}\""))
-        .fetch_one(connection)
-        .await
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT COUNT(*) FROM \"{escaped}\""
+    )))
+    .fetch_one(connection)
+    .await
 }
 
-pub async fn clear_table(connection: &mut SqliteConnection, table: &str) -> Result<()> {
+pub async fn clear_table(tx: &mut WriteTx, table: &str) -> Result<()> {
     let escaped = table.replace('"', "\"\"");
-    sqlx::query(&format!("DELETE FROM \"{escaped}\""))
-        .execute(connection)
+    sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM \"{escaped}\"")))
+        .execute(&mut **tx)
         .await?;
     Ok(())
 }
@@ -155,12 +130,12 @@ pub async fn fts5_tables(
     .await
 }
 
-pub async fn rebuild_fts5_index(connection: &mut SqliteConnection, table: &str) -> Result<()> {
+pub async fn rebuild_fts5_index(tx: &mut WriteTx, table: &str) -> Result<()> {
     let escaped = table.replace('"', "\"\"");
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO \"{escaped}\"(\"{escaped}\") VALUES('rebuild')"
-    ))
-    .execute(connection)
+    )))
+    .execute(&mut **tx)
     .await?;
     Ok(())
 }

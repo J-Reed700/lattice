@@ -79,7 +79,7 @@ export function parseMessageSources(metadata: string | null | undefined): Journa
           filePath: filePath || 'unknown://source',
           category: asString(source.category, filePath.startsWith('http') ? 'Web Source' : 'Document'),
           mimeType: asString(source.mimeType ?? source.mime_type),
-          excerpt: excerpt.slice(0, 600),
+          excerpt,
           score,
         };
       });

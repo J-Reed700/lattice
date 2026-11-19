@@ -43,8 +43,8 @@ describe('useIndexedFoldersQuery', () => {
 
     it('adds or removes the watch and refreshes folders and settings', async () => {
       vi.spyOn(client, 'invalidateQueries');
-      api.addWatchFolder.mockResolvedValueOnce({ ok: true, data: undefined } as never);
-      api.removeWatchFolder.mockResolvedValueOnce({ ok: true, data: undefined } as never);
+      api.addWatchFolder.mockResolvedValueOnce({ ok: true, data: null } as never);
+      api.removeWatchFolder.mockResolvedValueOnce({ ok: true, data: null } as never);
       expect(await run({ path: '/notes/history', enabled: true })).toBeUndefined();
       expect(api.addWatchFolder).toHaveBeenCalledWith('/notes/history');
       expect(await run({ path: '/notes/history', enabled: false })).toBeUndefined();

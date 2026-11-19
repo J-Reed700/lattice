@@ -61,7 +61,7 @@ impl ClaimLedger {
         Ok(match audit {
             LessonAudit::Off => Audited::Off,
             LessonAudit::Refused(stop) => {
-                tracing::info!(lesson_id = %sink.lesson_id, code = stop.code(), "lesson.audit.refused");
+                tracing::info!(lesson_id = %sink.lesson_id, code = stop.code().as_str(), "lesson.audit.refused");
                 Audited::Hold(Some(Box::new(stop.stop_reason(None, now()))))
             }
             LessonAudit::Ran { outcome, web_note } => {
@@ -95,7 +95,6 @@ impl ClaimLedger {
 
     /// Claims waiting for the user or still the machine's.
     pub(crate) fn awaiting_user(&self) -> usize {
-        let counts = ClaimCounts::tally(self.entries.iter());
-        counts.queued + counts.open
+        ClaimCounts::tally(self.entries.iter()).unresolved()
     }
 }

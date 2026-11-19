@@ -5,10 +5,9 @@ use crate::features::tags::persistence_mapper::{TagMapper, TagModel};
 use lattice_core::application::ports::RepositoryPort;
 use lattice_core::domain::entities::Tag as TagEntity;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::types::TagName;
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use sqlx::{Row, SqliteConnection};
 
 mod document_tags;
 mod ports;
@@ -23,7 +22,7 @@ mod ports;
 /// This repository is thread-safe through SQLitePool's internal connection management.
 #[derive(Debug, Clone)]
 pub struct TagRepository {
-    pool: SqlitePool,
+    db: Database,
 }
 
 async fn tag_by_name(connection: &mut SqliteConnection, name: &str) -> Result<Option<TagEntity>> {
@@ -48,9 +47,8 @@ async fn tag_by_name(connection: &mut SqliteConnection, name: &str) -> Result<Op
 
 impl TagRepository {
     /// Create a new tag repository.
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 
     /// Find tag by name (case-insensitive).
@@ -59,12 +57,16 @@ impl TagRepository {
     ///
     /// - `AppError::Database` if query fails
     pub async fn find_by_name(&self, name: &str) -> Result<Option<TagEntity>> {
-        let mut connection = self
-            .pool
-            .acquire()
+        let mut read = self
+            .db
+            .begin_read()
             .await
             .map_err(|e| AppError::Database(format!("Failed to find tag by name: {}", e)))?;
-        tag_by_name(&mut connection, name).await
+        let tag = tag_by_name(&mut read, name).await?;
+        read.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to find tag by name: {}", e)))?;
+        Ok(tag)
     }
 
     /// Get or create a tag by name (case-insensitive).
@@ -98,6 +100,7 @@ impl TagRepository {
     ///
     /// - `AppError::Database` if query fails
     pub async fn get_all_with_counts(&self) -> Result<Vec<(TagEntity, i64)>> {
+        let mut read = self.db.begin_read().await?;
         let rows = sqlx::query(
             r#"
             SELECT
@@ -113,9 +116,10 @@ impl TagRepository {
             ORDER BY t.name ASC
             "#,
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| AppError::Database(format!("Failed to get tags with counts: {}", e)))?;
+        read.commit().await?;
 
         let mut result = Vec::new();
         for row in rows {
@@ -206,7 +210,7 @@ impl TagRepository {
         let name_str = name.as_str();
 
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;

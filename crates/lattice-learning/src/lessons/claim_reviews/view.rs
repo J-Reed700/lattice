@@ -4,6 +4,7 @@
 //! checker's latest verdict (the local checker's and the Verifier's, side by
 //! side, §14.5), and the actions the claim allows now.
 
+mod excerpt;
 mod presentation;
 mod support;
 
@@ -14,8 +15,8 @@ use std::collections::HashMap;
 
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
-    AttachOutcome, Check, CheckResult, Checker, ClaimActionKind, ClaimCounts, ClaimEvent, ClaimId,
-    ClaimLedgerEntry, ClaimLocation, ClaimState, EvidenceSeen, Ledger, LessonReview,
+    Anchor, AttachOutcome, Check, CheckResult, Checker, ClaimActionKind, ClaimCounts, ClaimEvent,
+    ClaimId, ClaimLedgerEntry, ClaimLocation, ClaimState, EvidenceSeen, Ledger, LessonReview,
     LessonReviewState, TrustAssessment,
 };
 use lattice_core::shared::error::{AppError, Result};
@@ -40,11 +41,10 @@ use super::teaching_findings::TeachingFindingsRepository;
 use crate::content_verification::{field_text, located};
 use crate::dto::LearningSourceKind;
 use crate::lesson_evidence::LearningEvidencePassageDto;
-use crate::persistence::db;
+use crate::reference_collection::PassageKind;
 use crate::references::trust::dto_map;
 use crate::repository::LearningRepository;
 use crate::source_library::{workspace_in, LearningSourceLibraryRepository};
-use lattice_core::shared::persistence::Transactions;
 
 /// A stored location's quote and span narrowed to the claim's sentence in
 /// the lesson's current text; as stored when its field is gone.
@@ -93,10 +93,6 @@ struct PassageText {
     text: String,
     retrieval_kind: String,
 }
-
-/// The retrieval kind of a passage a check compared that no card shows any
-/// more, read back from its saved source version.
-const SAVED_VERSION: &str = "source_version";
 
 fn key(seen: &EvidenceSeen) -> PassageKey {
     (
@@ -256,13 +252,13 @@ impl ClaimReviewService {
             let slice = versions
                 .get(&seen.source_version_id)
                 .and_then(Option::as_deref)
-                .and_then(|text| text.get(seen.start_byte..seen.end_byte));
+                .and_then(|text| seen.text_in(text));
             if let Some(text) = slice {
                 texts.insert(
                     key(seen),
                     PassageText {
                         text: text.to_owned(),
-                        retrieval_kind: SAVED_VERSION.into(),
+                        retrieval_kind: PassageKind::SavedVersion.label().into(),
                     },
                 );
             }
@@ -273,9 +269,9 @@ impl ClaimReviewService {
     /// Every version of the course's sources, deleted ones included: a card
     /// still names a source the user removed.
     async fn sources(&self, program_id: &str) -> Result<HashMap<String, SourceFacts>> {
-        let mut read = self.database.begin_read().await.map_err(db)?;
+        let mut read = self.database.begin_read().await?;
         let workspace = workspace_in(&mut read, program_id, true).await?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         Ok(workspace
             .sources
             .into_iter()
@@ -380,6 +376,7 @@ fn evidence_passage(
             }),
         },
         added_by: facts.map(|facts| facts.added_by),
+        opening: excerpt::opening(text),
     }
 }
 
@@ -508,7 +505,12 @@ fn item(
         Some(_) => PutBackPlaceDto::Known,
         None => PutBackPlaceDto::Choose,
     });
-    let put_back_unit = put_place.flatten().map(|found| found.unit_index);
+    let put_back = put_place.flatten();
+    let put_back_unit = put_back.as_ref().map(|found| found.unit_index);
+    let put_back_beside = put_back.and_then(|found| match found.anchor {
+        Anchor::After(sentence) | Anchor::Before(sentence) => Some(sentence),
+        Anchor::End => None,
+    });
     let rewritten = entry
         .rewrite()
         .filter(|_| available.contains(&ClaimActionKind::RestoreOriginal))
@@ -586,6 +588,7 @@ fn item(
         tried: presentation::tried(entry, sources),
         place,
         put_back_unit,
+        put_back_beside,
         rewritten,
     }
 }

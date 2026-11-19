@@ -1,26 +1,27 @@
 //! The debrief of a session, for every kind of work: facts counted from what happened, and a scorecard the model
 //! writes and the app checks against the session's own data.
 
-use crate::lessons::structured_call::reask;
-use crate::model_call;
 use crate::practice::session::kind::Kind;
 use crate::practice::session::record::DebriefSession;
-use answer::{ask, examine, settle};
 use lattice_core::application::ports::LLMPort;
-use lattice_core::domain::learning::practice::work::{Form, PartRef, Rung, Setting, Stage};
+use lattice_core::domain::learning::practice::work::{PartRef, Rung, Setting, Stage};
 use lattice_core::domain::learning::practice::ScoreStatus;
 use lattice_core::shared::error::Result;
-use serde_json::Value;
 
 mod answer;
 mod plan;
+mod statements;
 mod tally;
 mod telling;
+mod things;
 
 pub use tally::facts;
+pub use telling::Names;
+#[cfg(test)]
+pub(crate) use {answer::DebriefAnswer, statements::DebriefStatements};
 
 use plan::Plan;
-use telling::told;
+use telling::render;
 
 #[cfg(test)]
 mod tests;
@@ -82,39 +83,13 @@ pub struct Facts {
     pub settings: Vec<Setting>,
 }
 
-pub fn system(kind: &Kind, form: Form) -> String {
-    Plan::new(kind, form).system()
-}
-
-pub fn schema(kind: &Kind, form: Form) -> Value {
-    Plan::new(kind, form).schema()
-}
-
-pub fn prompt(kind: &Kind, session: &DebriefSession) -> Result<String> {
-    told(&Plan::new(kind, session.form), session)
-}
-
-/// Asks for the debrief, checks every item of evidence, and asks once more with every fault; evidence that is still
-/// wrong after that is dropped, and a row left without any becomes insufficient evidence.
+/// Asks for the scorecard rows and for what the kind has the debrief state beside them.
 pub async fn debrief(llm: &dyn LLMPort, kind: &Kind, session: &DebriefSession) -> Result<Debrief> {
     let plan = Plan::new(kind, session.form);
-    let request = model_call::structured(
-        &plan.system(),
-        told(&plan, session)?,
-        plan.schema(),
-        0,
-        "low",
-    );
-    let (raw, answer) = ask(llm, &plan, request.clone()).await?;
-    let examined = examine(&plan, session, &answer)?;
-    if examined.faults.is_empty() {
-        return settle(&plan, answer, examined);
-    }
-    let reason = format!(
-        "The app checked the evidence against the session and found these faults:\n{}",
-        examined.faults.join("\n")
-    );
-    let (_, answer) = ask(llm, &plan, reask(request, &raw, &reason)).await?;
-    let examined = examine(&plan, session, &answer)?;
-    settle(&plan, answer, examined)
+    let rendered = render(kind, session)?;
+    let (rows, stated) = tokio::try_join!(
+        answer::rows(llm, &plan, &rendered),
+        statements::stated(llm, &plan, session)
+    )?;
+    Ok(Debrief { rows, stated })
 }

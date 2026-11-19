@@ -22,7 +22,6 @@ use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use lattice_core::shared::runtime::jobs::JobRuntime;
 use lattice_core::shared::Result;
-use sqlx::SqlitePool;
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -31,17 +30,16 @@ use tokio_util::sync::CancellationToken;
 /// Every course's index under `base`, embedding with whatever `embedders`
 /// holds, searched through the library's own orchestrator.
 pub(in crate::features::learning) fn indexes(
-    pool: &SqlitePool,
+    db: &Database,
     base: &Path,
     embedders: Arc<FixedEmbedders>,
 ) -> Arc<CourseIndexes> {
-    let database = Database::from(pool.clone());
     CourseIndexes::new(
         base.to_path_buf(),
-        database.clone(),
+        db.clone(),
         embedders,
         Arc::new(HybridSearchUseCaseFactory),
-        JobRuntime::new(database),
+        JobRuntime::new(db.clone()),
         Arc::new(BackgroundTasks::default()),
         Arc::default(),
     )
@@ -49,7 +47,7 @@ pub(in crate::features::learning) fn indexes(
 
 /// A course whose sources are `texts`, captured as web pages; its program id
 /// and the source ids, in order.
-pub(super) async fn course(pool: &SqlitePool, texts: &[String]) -> Result<(String, Vec<String>)> {
+pub(super) async fn course(db: &Database, texts: &[String]) -> Result<(String, Vec<String>)> {
     let mut program = tests::fixture();
     program.sources = texts
         .iter()
@@ -83,7 +81,7 @@ pub(super) async fn course(pool: &SqlitePool, texts: &[String]) -> Result<(Strin
             found: false,
         })
         .collect();
-    let repo = LearningRepository::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     repo.create_with_references(&program, &references).await?;
     // Accepted, so its sources can be deleted and reimported.
     repo.accept(&AcceptLearningProgramRequestDto {
@@ -103,8 +101,8 @@ pub(super) fn pages(count: usize) -> Vec<String> {
         .collect()
 }
 
-async fn active(pool: &SqlitePool, program: &str) -> Vec<LearningSourceDto> {
-    LearningSourceLibraryRepository::new(Database::from(pool.clone()))
+async fn active(db: &Database, program: &str) -> Vec<LearningSourceDto> {
+    LearningSourceLibraryRepository::new(db.clone())
         .verification_sources(program)
         .await
         .unwrap()
@@ -118,21 +116,21 @@ async fn store_of(courses: &CourseIndexes, program: &str) -> PassageStore {
 
 #[tokio::test]
 async fn a_build_indexes_and_embeds_every_active_version_under_its_title() -> Result<()> {
-    let pool = tests::pool().await?;
+    let db = Database::new(tests::pool().await?);
     let temp = tempfile::tempdir().unwrap();
     let model = FakeEmbedder::new("model-a");
     let courses = indexes(
-        &pool,
+        &db,
         temp.path(),
         FixedEmbedders::new(Some(Arc::clone(&model))),
     );
-    let (program, _) = course(&pool, &pages(3)).await?;
+    let (program, _) = course(&db, &pages(3)).await?;
 
     assert_eq!(
         courses.ensure_current_quietly(&program).await?,
         IndexMode::Hybrid
     );
-    let sources = active(&pool, &program).await;
+    let sources = active(&db, &program).await;
     let store = store_of(&courses, &program).await;
     let documents = store.documents("").await?;
     assert_eq!(documents.len(), 3);
@@ -159,17 +157,17 @@ async fn a_build_indexes_and_embeds_every_active_version_under_its_title() -> Re
 
 #[tokio::test]
 async fn a_build_cut_short_resumes_where_it_stopped() -> Result<()> {
-    let pool = tests::pool().await?;
+    let db = Database::new(tests::pool().await?);
     let temp = tempfile::tempdir().unwrap();
     let model = FakeEmbedder::new("model-a");
     let courses = indexes(
-        &pool,
+        &db,
         temp.path(),
         FixedEmbedders::new(Some(Arc::clone(&model))),
     );
     // One passage per page, so the first batch finishes whole pages.
     let total = crate::infrastructure::passage_index::build::BATCH_SIZE + 4;
-    let (program, _) = course(&pool, &pages(total)).await?;
+    let (program, _) = course(&db, &pages(total)).await?;
 
     let cut = CancellationToken::new();
     *model.cancel_after.lock() = Some((1, cut.clone()));
@@ -198,16 +196,16 @@ async fn a_build_cut_short_resumes_where_it_stopped() -> Result<()> {
 
 #[tokio::test]
 async fn a_failing_model_leaves_the_rest_to_words_and_the_next_run_finishes() -> Result<()> {
-    let pool = tests::pool().await?;
+    let db = Database::new(tests::pool().await?);
     let temp = tempfile::tempdir().unwrap();
     let model = FakeEmbedder::new("model-a");
     let courses = indexes(
-        &pool,
+        &db,
         temp.path(),
         FixedEmbedders::new(Some(Arc::clone(&model))),
     );
     let total = crate::infrastructure::passage_index::build::BATCH_SIZE + 4;
-    let (program, _) = course(&pool, &pages(total)).await?;
+    let (program, _) = course(&db, &pages(total)).await?;
 
     model.fail_after.store(1, Ordering::SeqCst);
     let mode = courses.ensure_current_quietly(&program).await?;
@@ -227,12 +225,12 @@ async fn a_failing_model_leaves_the_rest_to_words_and_the_next_run_finishes() ->
 
 #[tokio::test]
 async fn a_new_embedding_model_embeds_every_passage_again_and_keeps_the_passages() -> Result<()> {
-    let pool = tests::pool().await?;
+    let db = Database::new(tests::pool().await?);
     let temp = tempfile::tempdir().unwrap();
     let first = FakeEmbedder::new("model-a");
     let embedders = FixedEmbedders::new(Some(Arc::clone(&first)));
-    let courses = indexes(&pool, temp.path(), Arc::clone(&embedders));
-    let (program, _) = course(&pool, &pages(3)).await?;
+    let courses = indexes(&db, temp.path(), Arc::clone(&embedders));
+    let (program, _) = course(&db, &pages(3)).await?;
     courses.ensure_current_quietly(&program).await?;
     let before = store_of(&courses, &program).await.counts("").await?;
 
@@ -255,15 +253,15 @@ async fn a_new_embedding_model_embeds_every_passage_again_and_keeps_the_passages
 
 #[tokio::test]
 async fn deleting_a_course_removes_its_index_and_the_sweep_removes_orphans() -> Result<()> {
-    let pool = tests::pool().await?;
+    let db = Database::new(tests::pool().await?);
     let temp = tempfile::tempdir().unwrap();
     let courses = indexes(
-        &pool,
+        &db,
         temp.path(),
         FixedEmbedders::new(Some(FakeEmbedder::new("model-a"))),
     );
-    let (kept, _) = course(&pool, &pages(2)).await?;
-    let (deleted, _) = course(&pool, &pages(2)).await?;
+    let (kept, _) = course(&db, &pages(2)).await?;
+    let (deleted, _) = course(&db, &pages(2)).await?;
     courses.ensure_current_quietly(&kept).await?;
     courses.ensure_current_quietly(&deleted).await?;
     assert!(courses.dir_of(&deleted)?.exists());
@@ -296,16 +294,16 @@ async fn deleting_a_course_removes_its_index_and_the_sweep_removes_orphans() -> 
 
 #[tokio::test]
 async fn a_replaced_version_leaves_the_index_and_its_replacement_is_searched() -> Result<()> {
-    let pool = tests::pool().await?;
+    let db = Database::new(tests::pool().await?);
     let temp = tempfile::tempdir().unwrap();
     let courses = indexes(
-        &pool,
+        &db,
         temp.path(),
         FixedEmbedders::new(Some(FakeEmbedder::new("model-a"))),
     );
-    let (program, source_ids) = course(&pool, &pages(2)).await?;
+    let (program, source_ids) = course(&db, &pages(2)).await?;
     courses.ensure_current_quietly(&program).await?;
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let library = LearningSourceLibraryRepository::new(db.clone());
     // The version the replaced source has now; sources created together list
     // in id order, so it is looked up by its source.
     let old_version = library
@@ -338,7 +336,7 @@ async fn a_replaced_version_leaves_the_index_and_its_replacement_is_searched() -
         .await?;
 
     let course_search = courses.search(&program, CancellationToken::new()).await?;
-    let sources = active(&pool, &program).await;
+    let sources = active(&db, &program).await;
     let references = ReferenceCollection::current(Some(&course_search), &sources).await?;
     let store = course_search.view().store;
     let documents = store.documents("").await?;
@@ -356,12 +354,12 @@ async fn a_replaced_version_leaves_the_index_and_its_replacement_is_searched() -
 
 #[tokio::test]
 async fn without_an_embedding_model_the_course_is_searched_by_words_and_says_so() -> Result<()> {
-    let pool = tests::pool().await?;
+    let db = Database::new(tests::pool().await?);
     let temp = tempfile::tempdir().unwrap();
-    let courses = indexes(&pool, temp.path(), FixedEmbedders::new(None));
-    let (program, _) = course(&pool, &pages(3)).await?;
+    let courses = indexes(&db, temp.path(), FixedEmbedders::new(None));
+    let (program, _) = course(&db, &pages(3)).await?;
     let course_search = courses.search(&program, CancellationToken::new()).await?;
-    let sources = active(&pool, &program).await;
+    let sources = active(&db, &program).await;
 
     let references = ReferenceCollection::current(Some(&course_search), &sources).await?;
     assert_eq!(references.mode(), IndexMode::Lexical);
@@ -380,10 +378,10 @@ async fn without_an_embedding_model_the_course_is_searched_by_words_and_says_so(
 
 /// The builds queued for `program`.
 pub(super) async fn builds(
-    pool: &SqlitePool,
+    db: &Database,
     program: &str,
 ) -> Vec<lattice_core::shared::runtime::jobs::JobRecord> {
-    lattice_core::shared::runtime::jobs::JobStore::new(pool.clone())
+    lattice_core::shared::runtime::jobs::JobStore::new(db.clone())
         .list_for_subject(COURSE_INDEX, program)
         .await
         .unwrap()
@@ -392,18 +390,18 @@ pub(super) async fn builds(
 #[tokio::test]
 async fn a_command_on_an_unindexed_course_searches_at_once_and_queues_the_embedding() -> Result<()>
 {
-    let pool = tests::pool().await?;
+    let db = Database::new(tests::pool().await?);
     let temp = tempfile::tempdir().unwrap();
     let model = FakeEmbedder::new("model-a");
     // No build handler is registered, so the queued build stays queued.
     let courses = indexes(
-        &pool,
+        &db,
         temp.path(),
         FixedEmbedders::new(Some(Arc::clone(&model))),
     );
-    let (program, _) = course(&pool, &pages(3)).await?;
+    let (program, _) = course(&db, &pages(3)).await?;
     let course_search = courses.search(&program, CancellationToken::new()).await?;
-    let sources = active(&pool, &program).await;
+    let sources = active(&db, &program).await;
 
     let references = ReferenceCollection::searchable_now(Some(&course_search), &sources).await?;
     assert_eq!(
@@ -418,7 +416,7 @@ async fn a_command_on_an_unindexed_course_searches_at_once_and_queues_the_embedd
     let hits = references.retrieve("widget2 retries", 1).await?;
     assert!(hits[0].text.contains("widget2"));
     assert_eq!(hits[0].retrieval_kind, "partial");
-    let queued = builds(&pool, &program).await;
+    let queued = builds(&db, &program).await;
     assert_eq!(queued.len(), 1);
     assert!(!queued[0].status.is_finished());
     Ok(())
@@ -426,16 +424,16 @@ async fn a_command_on_an_unindexed_course_searches_at_once_and_queues_the_embedd
 
 #[tokio::test]
 async fn startup_queues_builds_for_stale_courses_and_none_for_current_ones() -> Result<()> {
-    let pool = tests::pool().await?;
+    let db = Database::new(tests::pool().await?);
     let temp = tempfile::tempdir().unwrap();
     let courses = indexes(
-        &pool,
+        &db,
         temp.path(),
         FixedEmbedders::new(Some(FakeEmbedder::new("model-a"))),
     );
-    let (current, _) = course(&pool, &pages(2)).await?;
-    let (never_indexed, _) = course(&pool, &pages(2)).await?;
-    let (changed, changed_sources) = course(&pool, &pages(2)).await?;
+    let (current, _) = course(&db, &pages(2)).await?;
+    let (never_indexed, _) = course(&db, &pages(2)).await?;
+    let (changed, changed_sources) = course(&db, &pages(2)).await?;
     assert_eq!(
         courses.ensure_current_quietly(&current).await?,
         IndexMode::Hybrid
@@ -445,7 +443,7 @@ async fn startup_queues_builds_for_stale_courses_and_none_for_current_ones() -> 
         IndexMode::Hybrid
     );
     // A source deleted since the index was last current.
-    LearningSourceLibraryRepository::new(Database::from(pool.clone()))
+    LearningSourceLibraryRepository::new(db.clone())
         .delete_source(&DeleteLearningSourceRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),
             program_id: changed.clone(),
@@ -456,24 +454,24 @@ async fn startup_queues_builds_for_stale_courses_and_none_for_current_ones() -> 
         .await?;
 
     assert_eq!(courses.backfill().await?, 2);
-    assert!(builds(&pool, &current).await.is_empty());
-    assert_eq!(builds(&pool, &never_indexed).await.len(), 1);
-    assert_eq!(builds(&pool, &changed).await.len(), 1);
+    assert!(builds(&db, &current).await.is_empty());
+    assert_eq!(builds(&db, &never_indexed).await.len(), 1);
+    assert_eq!(builds(&db, &changed).await.len(), 1);
     // Asked again, the same revisions are the same builds.
     courses.backfill().await?;
-    assert_eq!(builds(&pool, &never_indexed).await.len(), 1);
-    assert_eq!(builds(&pool, &changed).await.len(), 1);
+    assert_eq!(builds(&db, &never_indexed).await.len(), 1);
+    assert_eq!(builds(&db, &changed).await.len(), 1);
     Ok(())
 }
 
 #[tokio::test]
 async fn without_an_embedding_model_startup_queues_nothing() -> Result<()> {
-    let pool = tests::pool().await?;
+    let db = Database::new(tests::pool().await?);
     let temp = tempfile::tempdir().unwrap();
-    let courses = indexes(&pool, temp.path(), FixedEmbedders::new(None));
-    let (program, _) = course(&pool, &pages(2)).await?;
+    let courses = indexes(&db, temp.path(), FixedEmbedders::new(None));
+    let (program, _) = course(&db, &pages(2)).await?;
     assert_eq!(courses.backfill().await?, 0);
-    assert!(builds(&pool, &program).await.is_empty());
+    assert!(builds(&db, &program).await.is_empty());
     Ok(())
 }
 
@@ -488,17 +486,19 @@ async fn without_an_embedding_model_startup_queues_nothing() -> Result<()> {
 async fn a_first_command_on_a_real_unindexed_course_is_timed() -> Result<()> {
     let path = std::env::var("LATTICE_DB_COPY").unwrap();
     let program = std::env::var("LATTICE_COURSE").unwrap();
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&path))
-        .await
-        .unwrap();
+    let db = Database::new(
+        sqlx::sqlite::SqlitePoolOptions::new()
+            .connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&path))
+            .await
+            .unwrap(),
+    );
     let temp = tempfile::tempdir().unwrap();
     let courses = indexes(
-        &pool,
+        &db,
         temp.path(),
         FixedEmbedders::new(Some(FakeEmbedder::new("model-a"))),
     );
-    let sources = active(&pool, &program).await;
+    let sources = active(&db, &program).await;
     for run in ["first", "again"] {
         let started = std::time::Instant::now();
         let course_search = courses.search(&program, CancellationToken::new()).await?;

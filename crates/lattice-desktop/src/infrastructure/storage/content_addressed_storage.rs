@@ -40,7 +40,7 @@ use lattice_core::application::ports::content_addressed_storage_port::{
     ImportedBlob, RetainReason,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::path_safety::reject_parent_components;
+use lattice_core::shared::fs::owned_folder::OwnedFolder;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -68,6 +68,7 @@ const LOCK_CACHE_HIGH_WATER: usize = 256;
 pub struct ContentAddressedStorage {
     /// Root directory for library storage (~/.lattice/files/)
     library_root: PathBuf,
+    owned: OwnedFolder,
     /// Imports currently in flight, by hash.
     leases: Arc<BlobLeases>,
     /// Per-hash mutual exclusion for copy and remove.
@@ -90,6 +91,7 @@ impl ContentAddressedStorage {
     /// Create storage with custom library root.
     pub fn with_root(library_root: PathBuf) -> Self {
         Self {
+            owned: OwnedFolder::new(&library_root),
             library_root,
             leases: BlobLeases::new(),
             locks: Mutex::new(HashMap::new()),
@@ -318,9 +320,7 @@ impl ContentAddressedStoragePort for ContentAddressedStorage {
     }
 
     fn owns(&self, path: &Path) -> bool {
-        // `starts_with` compares components, but `root/../../etc` also starts
-        // with `root`. A path that climbs out is not ours, whatever it prefixes.
-        reject_parent_components(path).is_ok() && path.starts_with(&self.library_root)
+        self.owned.holds(path)
     }
 
     async fn list_hashes(&self) -> Result<Vec<String>> {
@@ -558,6 +558,7 @@ mod tests {
     async fn owns_only_paths_inside_the_library_root() {
         let temp_dir = TempDir::new().unwrap();
         let library_root = temp_dir.path().join("library");
+        std::fs::create_dir_all(&library_root).unwrap();
         let storage = ContentAddressedStorage::with_root(library_root.clone());
 
         assert!(storage.owns(&library_root.join("a".repeat(64)).join("paper.pdf")));
@@ -571,9 +572,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn owns_a_library_path_however_it_is_spelled() {
+        let temp_dir = TempDir::new().unwrap();
+        let library_root = temp_dir.path().join("library");
+        let blob = library_root.join("a".repeat(64));
+        std::fs::create_dir_all(&blob).unwrap();
+        let path = blob.join("paper.pdf");
+        std::fs::write(&path, "body").unwrap();
+        let canonical = std::fs::canonicalize(&path).unwrap();
+        #[cfg(windows)]
+        assert_ne!(
+            path, canonical,
+            "the raw spelling differs from the canonical one"
+        );
+
+        let raw_root = ContentAddressedStorage::with_root(library_root.clone());
+        assert!(raw_root.owns(&path));
+        assert!(raw_root.owns(&canonical));
+
+        let canonical_root =
+            ContentAddressedStorage::with_root(std::fs::canonicalize(&library_root).unwrap());
+        assert!(canonical_root.owns(&path));
+    }
+
+    #[tokio::test]
     async fn owns_refuses_a_backslash_separated_parent_on_every_platform() {
         let temp_dir = TempDir::new().unwrap();
         let library_root = temp_dir.path().join("library");
+        std::fs::create_dir_all(&library_root).unwrap();
         let storage = ContentAddressedStorage::with_root(library_root.clone());
         assert!(!storage.owns(&library_root.join("a\\..\\..\\x")));
     }
@@ -583,6 +609,7 @@ mod tests {
     async fn owns_refuses_a_dots_only_segment_on_windows() {
         let temp_dir = TempDir::new().unwrap();
         let library_root = temp_dir.path().join("library");
+        std::fs::create_dir_all(&library_root).unwrap();
         let storage = ContentAddressedStorage::with_root(library_root.clone());
         assert!(!storage.owns(&library_root.join("...").join("x")));
     }

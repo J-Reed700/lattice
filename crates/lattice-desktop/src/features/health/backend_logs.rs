@@ -18,33 +18,35 @@ use std::path::Path;
 
 use crate::features::health::plugin::types::{BackendLogEntry, BackendLogLevel};
 use crate::infrastructure::observability::tracing::{daily_log_files, log_directory};
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Page;
 
 /// Bytes read from the end of each file, so a large log costs a bounded read.
 const TAIL_BYTES: u64 = 512 * 1024;
-const DEFAULT_LIMIT: usize = 300;
-const MAX_LIMIT: usize = 1000;
 
-/// The newest backend log lines, oldest first. `limit` defaults to 300 and is
-/// capped at 1000. No log directory or no log files gives an empty list.
-pub(super) fn recent_backend_logs(limit: Option<u32>) -> Vec<BackendLogEntry> {
-    read_recent(&log_directory(), limit)
+/// The newest backend log lines, oldest first. No `limit` returns every line
+/// the log files hold. No log directory or no log files gives an empty list.
+pub(super) fn recent_backend_logs(limit: Option<u32>) -> Result<Vec<BackendLogEntry>> {
+    let limit = Page::new(limit.map(i64::from), None)?
+        .limit()
+        .map(usize::try_from)
+        .transpose()
+        .map_err(|e| AppError::InvalidInput(format!("limit is too large: {e}")))?;
+    Ok(read_recent(&log_directory(), limit))
 }
 
-fn read_recent(log_dir: &Path, limit: Option<u32>) -> Vec<BackendLogEntry> {
-    let limit = limit.map_or(DEFAULT_LIMIT, |limit| {
-        usize::try_from(limit).map_or(MAX_LIMIT, |limit| limit.min(MAX_LIMIT))
-    });
+fn read_recent(log_dir: &Path, limit: Option<usize>) -> Vec<BackendLogEntry> {
     let mut lines = Vec::new();
-    // The newest file, then the one before it when the newest is short.
-    for path in daily_log_files(log_dir).iter().take(2) {
-        if lines.len() >= limit {
+    // The newest file, then older ones until the limit is met.
+    for path in daily_log_files(log_dir).iter() {
+        if limit.is_some_and(|limit| lines.len() >= limit) {
             break;
         }
         let mut older = tail_lines(path, TAIL_BYTES);
         older.append(&mut lines);
         lines = older;
     }
-    let skip = lines.len().saturating_sub(limit);
+    let skip = limit.map_or(0, |limit| lines.len().saturating_sub(limit));
     lines
         .iter()
         .skip(skip)
@@ -197,17 +199,44 @@ mod tests {
     }
 
     #[test]
-    fn the_line_limit_defaults_to_300_and_is_capped_at_1000() {
+    fn a_limit_keeps_the_newest_lines() {
         let dir = tempfile::tempdir().unwrap();
         write_lines(
             &dir.path().join("lattice.log.2026-10-14"),
             (0..1500).map(|n| format!("line {n}")),
         );
 
-        assert_eq!(read_recent(dir.path(), None).len(), 300);
-        let capped = read_recent(dir.path(), Some(5000));
-        assert_eq!(capped.len(), 1000);
-        assert_eq!(capped.last().map(|e| e.message.as_str()), Some("line 1499"));
+        let newest = read_recent(dir.path(), Some(300));
+        assert_eq!(newest.len(), 300);
+        assert_eq!(
+            newest.first().map(|e| e.message.as_str()),
+            Some("line 1200")
+        );
+        assert_eq!(newest.last().map(|e| e.message.as_str()), Some("line 1499"));
+    }
+
+    #[test]
+    fn no_limit_reads_every_line_the_files_hold() {
+        let dir = tempfile::tempdir().unwrap();
+        write_lines(
+            &dir.path().join("lattice.log.2026-10-14"),
+            (0..301).map(|n| format!("line {n}")),
+        );
+
+        let entries = read_recent(dir.path(), None);
+        assert_eq!(entries.len(), 301);
+        assert_eq!(entries.first().map(|e| e.message.as_str()), Some("line 0"));
+    }
+
+    #[test]
+    fn a_limit_above_one_thousand_is_honoured() {
+        let dir = tempfile::tempdir().unwrap();
+        write_lines(
+            &dir.path().join("lattice.log.2026-10-14"),
+            (0..1500).map(|n| format!("line {n}")),
+        );
+
+        assert_eq!(read_recent(dir.path(), Some(1500)).len(), 1500);
     }
 
     #[test]

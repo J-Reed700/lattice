@@ -15,7 +15,7 @@ use lattice_core::shared::types::ValidatedFilePath;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 #[tokio::test]
-#[ignore = "requires LATTICE_EMBED_GGUF (tokenizer.json beside it) and a runnable llama-server"]
+#[ignore = "requires LATTICE_EMBED_GGUF and a runnable llama-server"]
 async fn real_model_import_search_and_disk_restart_preserve_results() {
     let gguf = std::env::var_os("LATTICE_EMBED_GGUF")
         .expect("set LATTICE_EMBED_GGUF to an embedding GGUF");
@@ -23,15 +23,19 @@ async fn real_model_import_search_and_disk_restart_preserve_results() {
     let dimension = model.dimension();
     let identity = model.model_identity();
     let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("library.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path)
+        .await
+        .unwrap();
     let options = SqliteConnectOptions::new()
-        .filename(dir.path().join("library.db"))
+        .filename(&path)
         .create_if_missing(true);
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options.clone())
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let db = Database::new(pool.clone());
 
     // Actual repository prose, rather than seeded vectors or generated facts.
     // This checks component integration, not held-out retrieval accuracy.
@@ -56,7 +60,7 @@ async fn real_model_import_search_and_disk_restart_preserve_results() {
         ChunkingStrategy::FixedSize { size: 512 },
     )
     .unwrap();
-    let doc = prepare_structured(doc, &model, &[]).unwrap();
+    let doc = prepare_structured(doc, &model, &[]).await.unwrap();
     let embeddings = embed_prepared_chunks(&doc, &model).await.unwrap();
     assert_eq!(doc.chunks().len(), embeddings.len());
     assert!(embeddings.len() > 1, "exercise multiple real chunks");
@@ -107,15 +111,9 @@ async fn real_model_import_search_and_disk_restart_preserve_results() {
             .unwrap()
             .with_coalesced_saves(),
         );
-        let outcome = open_or_rebuild(
-            &index,
-            &pool,
-            &path,
-            &identity,
-            &identity,
-            dimension,
-            || generation::restore(&pool, &identity, dimension),
-        )
+        let outcome = open_or_rebuild(&index, &db, &path, &identity, &identity, dimension, || {
+            generation::restore(&db, &identity, dimension)
+        })
         .await
         .unwrap();
         assert!(outcome.rebuilt());
@@ -129,6 +127,7 @@ async fn real_model_import_search_and_disk_restart_preserve_results() {
             .connect_with(options.clone())
             .await
             .unwrap();
+        let reopened_db = Database::new(reopened_pool.clone());
         let index = Arc::new(
             USearchVectorIndex::open_or_create_with_compression(
                 dimension,
@@ -140,7 +139,7 @@ async fn real_model_import_search_and_disk_restart_preserve_results() {
         );
         let outcome = open_or_rebuild(
             &index,
-            &reopened_pool,
+            &reopened_db,
             &path,
             &identity,
             &identity,

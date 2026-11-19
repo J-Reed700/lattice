@@ -16,23 +16,13 @@ use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::{
     self, CallOptions, EvidencePassage, EvidenceSelection, GroundedRequest,
 };
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::domain::conversation::memory::{SuppressedSpan, SuppressionsByMessage};
 use lattice_core::domain::conversation::{ConversationMessage, MessageRole};
 use lattice_core::shared::{error::AppError, ipc::ApiError};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
-
-const TITLE_CHAR_LIMIT: usize = 200;
-
-fn truncate_chars(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-    let mut output: String = text.chars().take(max_chars.saturating_sub(1)).collect();
-    output.push('…');
-    output
-}
 
 /// The transcript as evidence, one passage per message under its id. Failed
 /// and empty turns are left out: they are not part of what the conversation
@@ -54,7 +44,9 @@ fn transcript_passages(messages: &[ConversationMessage]) -> Vec<EvidencePassage>
 
 /// A message as the summary model reads it: pictures as captions.
 fn replayed_text(message: &ConversationMessage) -> String {
-    let text = lattice_core::shared::markdown_media::images_to_captions(&message.content);
+    let text = lattice_core::shared::markdown_media::images_to_captions(
+        &message.text_without_references(),
+    );
     let pictures = if message.role == MessageRole::User {
         lattice_core::shared::markdown_media::attached_picture_names(message.metadata.as_deref())
     } else {
@@ -223,10 +215,20 @@ impl Forgotten {
     fn redact(&self, mut messages: Vec<ConversationMessage>) -> Vec<ConversationMessage> {
         let forgotten = SuppressionsByMessage::new(&self.spans);
         for message in &mut messages {
-            if let std::borrow::Cow::Owned(redacted) =
-                forgotten.redact(&message.id, &message.content)
-            {
-                message.content = redacted;
+            let text = {
+                let clean = message.text_without_references();
+                let redacted = forgotten.redact(&message.id, &clean);
+                (matches!(clean, std::borrow::Cow::Owned(_))
+                    || matches!(redacted, std::borrow::Cow::Owned(_)))
+                .then(|| redacted.into_owned())
+            };
+            if let Some(text) = text {
+                message.content = text;
+                message.metadata =
+                    lattice_core::shared::stored_references::metadata_without_references(
+                        message.metadata.as_deref(),
+                    )
+                    .or(message.metadata.take());
             }
         }
         messages
@@ -258,14 +260,15 @@ fn summary_request(
     evidence: Vec<EvidencePassage>,
     conversation_id: &str,
 ) -> GroundedRequest {
-    let mut request = GroundedRequest::new(SYSTEM, prompt.task);
-    request.closing = match forgotten.rule() {
+    let mut request = legacy::grounded(SYSTEM, prompt.task);
+    let says = legacy::grounded_says(&mut request);
+    *says.closing = match forgotten.rule() {
         Some(rule) => format!("{}\n\n{rule}", prompt.closing),
         None => prompt.closing,
     };
-    request.evidence = evidence;
-    request.selection = EvidenceSelection::All;
-    request.output_tokens = CALL_MAX_OUTPUT_TOKENS;
+    *says.evidence = evidence;
+    *says.selection = EvidenceSelection::All;
+    *says.output_tokens = CALL_MAX_OUTPUT_TOKENS;
     request.call = CallOptions {
         // The user is waiting for the new chat to open, and every part
         // reads the same conversation, so it returns to the slot that holds
@@ -505,7 +508,7 @@ pub async fn continue_in_new_conversation_impl(
     };
 
     let new_id = uuid::Uuid::new_v4().to_string();
-    let new_title = truncate_chars(&format!("{} · continued", source_title), TITLE_CHAR_LIMIT);
+    let new_title = format!("{} · continued", source_title);
     let metadata = serde_json::json!({
         "continuedFrom": { "conversationId": source_id, "title": source_title },
     })
@@ -538,6 +541,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
     use super::*;
+    use lattice_core::domain::conversation::memory::compute_digest;
 
     fn passage(id: &str, label: &str, text: &str) -> EvidencePassage {
         EvidencePassage {
@@ -587,6 +591,44 @@ mod tests {
                 "a part overran its room: {cost}"
             );
         }
+    }
+
+    #[test]
+    fn the_summary_reads_an_answer_without_its_references() {
+        use lattice_core::domain::conversation::MessageRole;
+        use lattice_core::shared::types::ConversationId;
+        let content = "The pass is open [s1] in May.";
+        let start = content.find("[s1]").unwrap();
+        let message = |content: &str, metadata: Option<String>| ConversationMessage {
+            id: "a1".into(),
+            conversation_id: ConversationId::new(),
+            role: MessageRole::Assistant,
+            content: content.into(),
+            tokens: 0,
+            created_at: chrono::Utc::now(),
+            metadata,
+            status: "completed".into(),
+        };
+        let saved = serde_json::json!({"references": [{"start": start, "end": start + 4}]});
+        let cleaned = transcript_passages(&[
+            message(content, Some(saved.to_string())),
+            message("Open in May [1].", None),
+        ]);
+        assert_eq!(cleaned[0].text, "The pass is open in May.");
+        assert_eq!(cleaned[1].text, "Open in May [1].");
+
+        let forgotten = Forgotten {
+            spans: vec![SuppressedSpan {
+                message_id: "a1".into(),
+                start_byte: 12,
+                end_byte: 16,
+                content_digest: compute_digest("The pass is open in May."),
+            }],
+            labels: vec!["The pass is open".into()],
+        };
+        let redacted =
+            transcript_passages(&forgotten.redact(vec![message(content, Some(saved.to_string()))]));
+        assert_eq!(redacted[0].text, "The pass is [forgotten] in May.");
     }
 
     #[test]
@@ -686,7 +728,7 @@ mod tests {
 
         let request = summary_request(prompt, &Forgotten::default(), Vec::new(), "conv-a");
         assert!(request
-            .closing
+            .closing()
             .ends_with("Do not answer it: put it under Open threads."));
     }
 
@@ -734,12 +776,12 @@ mod tests {
         );
 
         let request = summary_request(handoff_task("Lab", false), &forgotten, Vec::new(), "conv-a");
-        assert_eq!(request.task, handoff_task("Lab", false).task);
+        assert_eq!(request.task(), handoff_task("Lab", false).task);
         assert!(request
-            .closing
+            .closing()
             .starts_with(&handoff_task("Lab", false).closing));
-        assert!(request.closing.contains("asked memory to forget"));
-        assert!(request.closing.ends_with("\n- Locker code is 4471"));
+        assert!(request.closing().contains("asked memory to forget"));
+        assert!(request.closing().ends_with("\n- Locker code is 4471"));
 
         let plain = summary_request(
             handoff_task("Lab", false),
@@ -747,6 +789,6 @@ mod tests {
             Vec::new(),
             "conv-a",
         );
-        assert_eq!(plain.closing, handoff_task("Lab", false).closing);
+        assert_eq!(plain.closing(), handoff_task("Lab", false).closing);
     }
 }

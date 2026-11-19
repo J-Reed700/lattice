@@ -38,7 +38,7 @@ use crate::features::web::traits::page_snapshot::PageCapturePort;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::fs::SweepGate;
 use lattice_core::shared::http::normalize_web_source_url;
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use lattice_core::shared::runtime::jobs::{JobKindRegistration, JobRuntime, JobStore, NewJob};
 use repository::{SnapshotRepository, SnapshotRow};

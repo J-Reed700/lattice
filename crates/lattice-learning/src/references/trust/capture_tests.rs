@@ -25,7 +25,6 @@ use lattice_core::domain::provenance::{
     RelationTarget,
 };
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::Transactions;
 use serde_json::json;
 use std::time::{Duration, Instant};
 
@@ -247,7 +246,7 @@ async fn creating_a_course_does_not_hold_the_database_while_comparing_its_source
             found: false,
         })
         .collect();
-    let repository = LearningRepository::new(course.pool.clone());
+    let repository = LearningRepository::new(course.database.clone());
     assert_writes_go_on_during(&course, async move {
         repository
             .create_with_references(&program, &references)
@@ -302,7 +301,7 @@ async fn a_source_saved_after_the_comparison_is_related_and_one_removed_since_is
     )
     .await?;
 
-    let mut tx = course.pool.begin_write().await.unwrap();
+    let mut tx = course.database.begin_write().await.unwrap();
     sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,created_at,updated_at,added_by) VALUES(?,?,'pasted','seed',NULL,'fixed',?,NULL,0,1,1,'user')")
         .bind(&source_id).bind(&course.program_id).bind(&version_id)
         .execute(&mut *tx).await.unwrap();
@@ -348,7 +347,7 @@ async fn sources_saved_together_are_compared_with_each_other() -> Result<()> {
             acquired_at: 1,
         })
         .collect();
-    LearningRepository::new(course.pool.clone())
+    LearningRepository::new(course.database.clone())
         .create(&program)
         .await?;
     let relations = course.store.relations(&program.summary.id).await?;

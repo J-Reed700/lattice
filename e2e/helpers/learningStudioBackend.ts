@@ -31,6 +31,7 @@ import type {
   WorkspaceNoteDto,
 } from "../../src/lib/bindings";
 import { makeAppSettings } from "../../src/tests/fixtures/appSettings";
+import { mockActiveModels } from "../fixtures/activeModels";
 import { installTauriMock, mockCommands, type Fixture, type MockArgs } from "../fixtures/tauri";
 import { installClaimReviewBackend, type ClaimReviewBackend, type TrustOverrideRecord } from "./claimReviewBackend";
 import { installQuizBackend, type QuizBackend } from "./quizBackend";
@@ -237,6 +238,7 @@ type LabDraft = {
 /** Install a stateful Tauri command fixture for Learning Studio route tests. */
 export async function installLearningStudioBackend(page: Page) {
   await installTauriMock(page);
+  await mockActiveModels(page);
   await installClaimReviewBackend(page);
   await installQuizBackend(page);
   await mockCommands(page, (settings, ipc) => {
@@ -407,7 +409,7 @@ export async function installLearningStudioBackend(page: Page) {
     const sourceVersionTexts = new Map<string, string>([
       [
         sourceV1.id,
-        "ACTIVE_SOURCE_SENTINEL: Record the same measure across the observation period. The original edition remains available for exact citation review.",
+        `${source.excerpt}\n\nACTIVE_SOURCE_SENTINEL: Record the same measure across the observation period. The original edition remains available for exact citation review.`,
       ],
     ]);
     const sourceOperations = new Map<
@@ -1045,7 +1047,7 @@ export async function installLearningStudioBackend(page: Page) {
           return job;
         }
         const next: LearningGenerationJob = {
-          ...job, id: crypto.randomUUID(), operationId: request.operationId, retryOfJobId: job.id,
+          ...job, id: crypto.randomUUID(), operationId: request.operationId, retryOfJobId: job.id, heldLessonIds: [],
           status: "pending", createdAt: Date.now(), startedAt: null, finishedAt: null, progressMessage: "Retry queued", error: null,
         };
         state.planWorkspace.jobs.unshift(next);
@@ -1158,6 +1160,12 @@ export async function installLearningStudioBackend(page: Page) {
       list_learning_tangents: (): LearningTangentDto[] => [],
       set_conversation_course: (): null => null,
       get_learning_program: () => program,
+      prepare_learning_ahead: (args) => {
+        const request = getRequest<{ programId: string; lessonId: string }>(args);
+        if (request.programId !== program.summary.id) throw new Error("Learning program not found");
+        findLesson(request.lessonId);
+        return program;
+      },
       get_learning_outline_evidence: () => {
         if (state.outlineEvidenceFailuresRemaining > 0) {
           state.outlineEvidenceFailuresRemaining -= 1;
@@ -1188,6 +1196,7 @@ export async function installLearningStudioBackend(page: Page) {
       // The reader asks for a passage's file by its source version id; a
       // learning source version is not a file, so the read fails as it does
       // in the app and the reader shows the saved passage instead.
+      saved_web_article: () => null,
       read_file_content: (args: MockArgs) => {
         throw new Error(`File not found: ${String((args as { path?: string }).path)}`);
       },
@@ -1243,7 +1252,7 @@ export async function installLearningStudioBackend(page: Page) {
         if (review.claims.some((item) => item.state.state === "queued") && !review.changedSinceStop)
           throw { code: "INVALID_STATE", message: "Nothing changed since the last pass. Resolve a statement or add evidence first." };
         review.state = "verifying";
-        const next: LearningGenerationJob = { ...holding, id: crypto.randomUUID(), operationId: request.operationId, retryOfJobId: holding.id, status: "pending", resultId: null, createdAt: Date.now(), startedAt: null, finishedAt: null, progressMessage: "Resuming verification", error: null };
+        const next: LearningGenerationJob = { ...holding, id: crypto.randomUUID(), operationId: request.operationId, retryOfJobId: holding.id, status: "pending", resultId: null, heldLessonIds: [], createdAt: Date.now(), startedAt: null, finishedAt: null, progressMessage: "Resuming verification", error: null };
         state.planWorkspace.jobs.unshift(next);
         return next;
       },
@@ -1265,7 +1274,12 @@ export async function installLearningStudioBackend(page: Page) {
           claim: "A careful comparison records the chosen measure and observation period.", verdict: "supported",
           reason: "The saved reference supports this teaching claim.", supportingQuote: source.excerpt,
           passages: [{ sourceVersionId: source.id, title: source.title, url: source.url, text: source.excerpt,
-            startByte: 0, endByte: source.excerpt.length, retrievalKind: "hybrid" }], resolution: "verified", note: null }],
+            startByte: 0, endByte: source.excerpt.length, retrievalKind: "hybrid" }], resolution: "verified", note: null, cites: [1] }],
+        citations: [{ number: 1, sourceId: "logical-source-field-notes", passage: { sourceVersionId: source.id, title: source.title, url: source.url,
+          text: source.excerpt, startByte: 0, endByte: source.excerpt.length, retrievalKind: "hybrid" } }],
+        sections: lesson.blocks.map((block, sectionIndex) => ({ sectionIndex, pieces: sectionIndex === 0
+          ? [{ type: "text", text: block.body }, { type: "reference", reference: { written: "[s1]", kind: "source", number: 1 } }]
+          : [{ type: "text", text: block.body }] })),
       }),
       get_learning_memory: () => copyMemory(),
       get_learning_practice_workspace: (args) => {
@@ -2307,6 +2321,16 @@ export async function installLearningStudioBackend(page: Page) {
       skip_learning_diagnostic: () => {
         state.planWorkspace.latestDiagnostic = { id: "diagnostic-skipped", programId: program.summary.id, status: "skipped", revision: 0, prompts: [], responses: [], findings: [], sourceCoverageGaps: [], interpretation: "Skipped", createdAt: Date.now(), submittedAt: null };
         return state.planWorkspace.latestDiagnostic;
+      },
+      get_learning_course_plan: (args) => {
+        const { programId } = args as { programId: string };
+        if (programId !== program.summary.id) throw new Error("Learning program not found");
+        return { programId, outlineRevision: program.summary.revision, state: "none", error: null, entries: [] };
+      },
+      plan_learning_course: (args) => {
+        const { programId } = (args as { request: { programId: string } }).request;
+        if (programId !== program.summary.id) throw new Error("Learning program not found");
+        return { programId, outlineRevision: program.summary.revision, state: "planning", error: null, entries: [] };
       },
       get_learning_plan: () => {
         state.planWorkspace.programRevision = program.summary.revision;

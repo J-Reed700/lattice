@@ -7,7 +7,7 @@ use lattice_core::domain::models::downloaded::DownloadedModel;
 use lattice_core::domain::value_objects::ArtifactIdentity;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::PersistenceError;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::WriteTx;
 
 use super::rows::{build_model_select_query, DownloadedModelRecord};
 use super::{is_downloaded_in, model_by_model_id, DownloadedModelRepository};
@@ -20,7 +20,7 @@ impl DownloadedModelRepository {
     /// - Database trigger ensures only one model has is_active_for_chat=1
     /// - This query should return at most one result
     pub async fn get_active_chat_model(&self) -> Result<Option<DownloadedModel>> {
-        let mut tx = self.pool.begin_read().await.map_err(tx_error)?;
+        let mut tx = self.db.begin_read().await.map_err(tx_error)?;
         let model = active_model_in(&mut tx, CHAT_FILTER, "chat").await?;
         tx.commit().await.map_err(tx_error)?;
         Ok(model)
@@ -33,7 +33,7 @@ impl DownloadedModelRepository {
     /// - Database trigger ensures only one model has is_active_for_embedding=1
     /// - This query should return at most one result
     pub async fn get_active_embedding_model(&self) -> Result<Option<DownloadedModel>> {
-        let mut tx = self.pool.begin_read().await.map_err(tx_error)?;
+        let mut tx = self.db.begin_read().await.map_err(tx_error)?;
         let model = active_model_in(&mut tx, EMBEDDING_FILTER, "embedding").await?;
         tx.commit().await.map_err(tx_error)?;
         Ok(model)
@@ -51,7 +51,7 @@ impl DownloadedModelRepository {
     ///
     /// Returns NotFound error if model_id doesn't exist
     pub async fn set_active_chat_model(&self, model_id: &str) -> Result<()> {
-        let mut tx = self.pool.begin_write().await.map_err(tx_error)?;
+        let mut tx = self.db.begin_write().await.map_err(tx_error)?;
         set_active_chat_model_in(&mut tx, model_id).await?;
         tx.commit().await.map_err(tx_error)
     }
@@ -59,7 +59,7 @@ impl DownloadedModelRepository {
     /// Activates `model_id` for chat only if no chat model is active, in one
     /// unit of work. `false` when the slot was taken.
     pub async fn activate_chat_if_empty(&self, model_id: &str) -> Result<bool> {
-        let mut tx = self.pool.begin_write().await.map_err(tx_error)?;
+        let mut tx = self.db.begin_write().await.map_err(tx_error)?;
         if active_model_in(&mut tx, CHAT_FILTER, "chat")
             .await?
             .is_some()
@@ -88,7 +88,7 @@ impl DownloadedModelRepository {
         model_id: &str,
         identity: Option<&ArtifactIdentity>,
     ) -> Result<()> {
-        let mut tx = self.pool.begin_write().await.map_err(tx_error)?;
+        let mut tx = self.db.begin_write().await.map_err(tx_error)?;
         set_active_embedding_model_in(&mut tx, model_id, identity).await?;
         tx.commit().await.map_err(tx_error)
     }
@@ -100,7 +100,7 @@ impl DownloadedModelRepository {
         model_id: &str,
         identity: Option<&ArtifactIdentity>,
     ) -> Result<bool> {
-        let mut tx = self.pool.begin_write().await.map_err(tx_error)?;
+        let mut tx = self.db.begin_write().await.map_err(tx_error)?;
         if active_model_in(&mut tx, EMBEDDING_FILTER, "embedding")
             .await?
             .is_some()
@@ -115,6 +115,7 @@ impl DownloadedModelRepository {
 
     /// Clear the active chat model (set all to inactive)
     pub async fn clear_active_chat_model(&self) -> Result<()> {
+        let mut tx = self.db.begin_write().await.map_err(tx_error)?;
         sqlx::query!(
             r#"
             UPDATE models
@@ -122,12 +123,13 @@ impl DownloadedModelRepository {
             WHERE is_active_for_chat = 1
             "#
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| {
             error!(error = %e, "Failed to clear active chat model");
             AppError::Database(format!("Failed to clear active chat model: {}", e))
         })?;
+        tx.commit().await.map_err(tx_error)?;
 
         info!("Active chat model cleared");
         Ok(())
@@ -136,6 +138,7 @@ impl DownloadedModelRepository {
     /// Clear the active embedding model (set all to inactive). The artifact
     /// identity stays on the row: it describes the files, not the activation.
     pub async fn clear_active_embedding_model(&self) -> Result<()> {
+        let mut tx = self.db.begin_write().await.map_err(tx_error)?;
         sqlx::query!(
             r#"
             UPDATE models
@@ -143,12 +146,13 @@ impl DownloadedModelRepository {
             WHERE is_active_for_embedding = 1
             "#
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| {
             error!(error = %e, "Failed to clear active embedding model");
             AppError::Database(format!("Failed to clear active embedding model: {}", e))
         })?;
+        tx.commit().await.map_err(tx_error)?;
 
         info!("Active embedding model cleared");
         Ok(())
@@ -163,6 +167,7 @@ impl DownloadedModelRepository {
     ///   sets is_active_for_utility=0 for all other rows
     /// - Fails if model_id doesn't exist
     pub async fn set_active_utility_model(&self, model_id: &str) -> Result<()> {
+        let mut tx = self.db.begin_write().await.map_err(tx_error)?;
         let result = sqlx::query(
             r#"
             UPDATE models
@@ -171,7 +176,7 @@ impl DownloadedModelRepository {
             "#,
         )
         .bind(model_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| {
             error!(error = %e, model_id = %model_id, "Failed to set active utility model");
@@ -181,6 +186,7 @@ impl DownloadedModelRepository {
         if result.rows_affected() == 0 {
             return Err(AppError::NotFound(format!("Model not found: {}", model_id)));
         }
+        tx.commit().await.map_err(tx_error)?;
 
         info!(model_id = %model_id, "Set active utility model");
         Ok(())
@@ -188,6 +194,7 @@ impl DownloadedModelRepository {
 
     /// Clear the active utility model (set all to inactive)
     pub async fn clear_active_utility_model(&self) -> Result<()> {
+        let mut tx = self.db.begin_write().await.map_err(tx_error)?;
         sqlx::query(
             r#"
             UPDATE models
@@ -195,12 +202,13 @@ impl DownloadedModelRepository {
             WHERE is_active_for_utility = 1
             "#,
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| {
             error!(error = %e, "Failed to clear active utility model");
             AppError::Database(format!("Failed to clear active utility model: {}", e))
         })?;
+        tx.commit().await.map_err(tx_error)?;
 
         info!("Active utility model cleared");
         Ok(())
@@ -208,7 +216,7 @@ impl DownloadedModelRepository {
 
     /// Get the currently active utility model
     pub async fn get_active_utility_model(&self) -> Result<Option<DownloadedModel>> {
-        let mut tx = self.pool.begin_read().await.map_err(tx_error)?;
+        let mut tx = self.db.begin_read().await.map_err(tx_error)?;
         let model = active_model_in(&mut tx, UTILITY_FILTER, "utility").await?;
         tx.commit().await.map_err(tx_error)?;
         Ok(model)
@@ -219,6 +227,7 @@ impl DownloadedModelRepository {
     /// Used by first-run setup to decide whether the embedding pipeline can
     /// initialize without prompting the user to pick a model.
     pub async fn has_any_embedding_model(&self) -> Result<bool> {
+        let mut read = self.db.begin_read().await.map_err(tx_error)?;
         let exists: i64 = sqlx::query_scalar(
             r#"
             SELECT EXISTS(
@@ -228,12 +237,13 @@ impl DownloadedModelRepository {
             )
             "#,
         )
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *read)
         .await
         .map_err(|e| {
             error!(error = %e, "Failed to check for any embedding model");
             AppError::Database(format!("Failed to check for embedding models: {}", e))
         })?;
+        read.commit().await.map_err(tx_error)?;
 
         Ok(exists != 0)
     }
@@ -254,7 +264,7 @@ async fn active_model_in(
     slot: &str,
 ) -> Result<Option<DownloadedModel>> {
     let query = build_model_select_query(filter);
-    let record = sqlx::query_as::<_, DownloadedModelRecord>(&query)
+    let record = sqlx::query_as::<_, DownloadedModelRecord>(sqlx::AssertSqlSafe(query.as_str()))
         .fetch_optional(&mut *conn)
         .await
         .map_err(|e| {
@@ -282,7 +292,7 @@ async fn active_model_in(
     }
 }
 
-async fn set_active_chat_model_in(conn: &mut SqliteConnection, model_id: &str) -> Result<()> {
+async fn set_active_chat_model_in(tx: &mut WriteTx, model_id: &str) -> Result<()> {
     let result = sqlx::query!(
         r#"
             UPDATE models
@@ -291,7 +301,7 @@ async fn set_active_chat_model_in(conn: &mut SqliteConnection, model_id: &str) -
             "#,
         model_id
     )
-    .execute(conn)
+    .execute(&mut **tx)
     .await
     .map_err(|e| {
         error!(error = %e, model_id = %model_id, "Failed to set active chat model");
@@ -307,7 +317,7 @@ async fn set_active_chat_model_in(conn: &mut SqliteConnection, model_id: &str) -
 }
 
 async fn set_active_embedding_model_in(
-    conn: &mut SqliteConnection,
+    tx: &mut WriteTx,
     model_id: &str,
     identity: Option<&ArtifactIdentity>,
 ) -> Result<()> {
@@ -324,7 +334,7 @@ async fn set_active_embedding_model_in(
     )
     .bind(model_id)
     .bind(identity.map(ArtifactIdentity::as_str))
-    .execute(&mut *conn)
+    .execute(&mut **tx)
     .await
     .map_err(|e| {
         error!(error = %e, model_id = %model_id, "Failed to set active embedding model");
@@ -332,7 +342,7 @@ async fn set_active_embedding_model_in(
     })?;
 
     if result.rows_affected() == 0 {
-        if model_by_model_id(conn, model_id).await?.is_none() {
+        if model_by_model_id(tx, model_id).await?.is_none() {
             return Err(AppError::NotFound(format!("Model not found: {}", model_id)));
         }
         return Err(AppError::InvalidState(format!(

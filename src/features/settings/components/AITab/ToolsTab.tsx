@@ -496,7 +496,6 @@ export function ToolsTab() {
                       id={`${idPrefix}-max-results`}
                       type="number"
                       min={1}
-                      max={100}
                       value={tool.defaultMaxResults}
                       onChange={(event) =>
                         updateCustomTool(index, 'defaultMaxResults', Number(event.target.value || 0))

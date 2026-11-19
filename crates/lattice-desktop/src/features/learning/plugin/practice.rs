@@ -336,7 +336,12 @@ pub async fn submit_learning_practice_attempt(
             Ok(value) => value,
             // Only invalid feedback goes to a person; any other error leaves
             // the attempt unsaved so the learner can send it again.
-            Err(error) if !matches!(error, AppError::ModelAnswerUnusable(_)) => {
+            Err(error)
+                if !matches!(
+                    error,
+                    AppError::ModelAnswerUnusable(_) | AppError::AnswerCutOff(_)
+                ) =>
+            {
                 return Err(ApiError::from(error))
             }
             Err(_) => {

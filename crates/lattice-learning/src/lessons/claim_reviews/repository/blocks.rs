@@ -1,12 +1,11 @@
 //! A lesson's sections and its stored verification report.
 
+use lattice_core::shared::error::AppError;
 use std::collections::HashMap;
 
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::{Database, WriteTx};
 use sqlx::{Row, SqliteConnection};
-
-use crate::persistence::db;
 
 fn ordinal(unit: usize) -> i64 {
     i64::try_from(unit).unwrap_or(i64::MAX)
@@ -22,7 +21,7 @@ pub(in crate::lessons::claim_reviews) async fn section_body(
         .bind(ordinal(unit))
         .fetch_optional(&mut *connection)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 pub(in crate::lessons::claim_reviews) async fn section_title_body(
@@ -37,7 +36,7 @@ pub(in crate::lessons::claim_reviews) async fn section_title_body(
     .bind(ordinal(unit))
     .fetch_optional(&mut *connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 pub(in crate::lessons::claim_reviews) async fn section_count(
@@ -48,11 +47,11 @@ pub(in crate::lessons::claim_reviews) async fn section_count(
         .bind(lesson_id)
         .fetch_one(&mut *connection)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 pub(in crate::lessons::claim_reviews) async fn write_section_body(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     lesson_id: &str,
     unit: usize,
     body: &str,
@@ -61,14 +60,13 @@ pub(in crate::lessons::claim_reviews) async fn write_section_body(
         .bind(body)
         .bind(lesson_id)
         .bind(ordinal(unit))
-        .execute(&mut *connection)
-        .await
-        .map_err(db)?;
+        .execute(&mut **tx)
+        .await?;
     Ok(())
 }
 
 pub(in crate::lessons::claim_reviews) async fn write_section(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     lesson_id: &str,
     unit: usize,
     title: &str,
@@ -79,23 +77,22 @@ pub(in crate::lessons::claim_reviews) async fn write_section(
         .bind(body)
         .bind(lesson_id)
         .bind(ordinal(unit))
-        .execute(&mut *connection)
-        .await
-        .map_err(db)?;
+        .execute(&mut **tx)
+        .await?;
     Ok(())
 }
 
 /// The published sections' text, by section index.
 pub(in crate::lessons::claim_reviews) async fn section_bodies(
-    pool: &impl DriverPool,
+    database: &Database,
     lesson_id: &str,
 ) -> Result<HashMap<usize, String>> {
-    let pool = pool.sqlx_pool();
+    let mut read = database.begin_read().await?;
     let rows = sqlx::query("SELECT ordinal, body FROM learning_blocks WHERE lesson_id=?")
         .bind(lesson_id)
-        .fetch_all(pool)
-        .await
-        .map_err(db)?;
+        .fetch_all(&mut *read)
+        .await?;
+    read.commit().await?;
     Ok(rows
         .iter()
         .filter_map(|row| {
@@ -108,18 +105,18 @@ pub(in crate::lessons::claim_reviews) async fn section_bodies(
 }
 
 pub(in crate::lessons::claim_reviews) async fn lesson_in_course(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: &str,
     lesson_id: &str,
 ) -> Result<bool> {
-    let pool = pool.sqlx_pool();
+    let mut read = database.begin_read().await?;
     let in_course: Option<i64> =
         sqlx::query_scalar("SELECT 1 FROM learning_lessons WHERE id=? AND program_id=?")
             .bind(lesson_id)
             .bind(program_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(db)?;
+            .fetch_optional(&mut *read)
+            .await?;
+    read.commit().await?;
     Ok(in_course.is_some())
 }
 
@@ -136,11 +133,11 @@ pub(in crate::lessons::claim_reviews) async fn verification_report(
     .bind(lesson_id)
     .fetch_optional(&mut *connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 pub(in crate::lessons::claim_reviews) async fn write_verification_report(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     lesson_id: &str,
     content_sha256: &str,
@@ -153,8 +150,7 @@ pub(in crate::lessons::claim_reviews) async fn write_verification_report(
     .bind(report_json)
     .bind(program_id)
     .bind(lesson_id)
-    .execute(&mut *connection)
-    .await
-    .map_err(db)?;
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }

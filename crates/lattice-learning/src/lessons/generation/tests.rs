@@ -1,6 +1,6 @@
-use super::recall::{parse_recall_drafts, recall_draft_schema};
 use super::*;
-use crate::lessons::course_generation_tests::length_bounds;
+use crate::dto::LearningProgramDto;
+use crate::lessons::course_plan::CoursePlan;
 
 fn source() -> LearningSourceDto {
     LearningSourceDto {
@@ -85,11 +85,6 @@ fn outline_citations_are_optional_but_exact_when_present() {
     assert!(optional_citation(&sources, Some(1), exact).is_err());
     assert!(optional_citation(&[], Some(0), exact).is_err());
     assert!(optional_citation(&[], None, "").unwrap().is_none());
-    let with_sources = outline_schema(None, 1).to_string();
-    assert!(with_sources.contains("\"anyOf\":[{\"type\":\"null\"}"));
-    let without = outline_schema(None, 0).to_string();
-    assert!(!without.contains("anyOf"));
-    assert!(without.contains("\"sourceIndex\":{\"type\":\"null\"}"));
 }
 
 #[test]
@@ -155,13 +150,6 @@ fn decode_outline_names_the_modules_and_lessons_whose_titles_repeat() {
 }
 
 #[test]
-fn generated_ids_are_not_accepted_from_model_schema() {
-    let schema = outline_schema(None, 1);
-    assert!(schema.to_string().contains("additionalProperties"));
-    assert!(!schema.to_string().contains("\"id\""));
-}
-
-#[test]
 fn goal_and_prior_knowledge_have_no_character_limit() {
     let mut request = GenerateLearningProgramRequestDto {
         goal: "Understand the material".into(),
@@ -186,124 +174,10 @@ fn rejects_duplicate_or_empty_program_source_ids() {
     assert!(validate_source_snapshot_ids(&[empty]).is_err());
 }
 
-fn recall_response(cards: serde_json::Value) -> String {
-    json!({"cards":cards}).to_string()
-}
-
-fn valid_recall_card(question: &str) -> serde_json::Value {
-    recall_card(
-        question,
-        "A stable identifier links the observation to its record.",
-        json!(["source-a"]),
-    )
-}
-
-fn recall_card(question: &str, answer: &str, source_ids: serde_json::Value) -> serde_json::Value {
-    json!({
-        "question":question,
-        "answer":answer,
-        "explanation":"The excerpt says that each observation has a stable identifier.",
-        "sourceIds":source_ids,
-        "quote":"A process records each observation with a stable identifier."
-    })
-}
-
-#[test]
-fn recall_drafts_require_exact_count_and_lesson_source_ids() {
-    let allowed = vec![source()];
-    assert!(parse_recall_drafts(
-        &recall_response(json!([valid_recall_card("What links the observation?")])),
-        2,
-        &allowed,
-    )
-    .is_err());
-    assert!(parse_recall_drafts(
-        &recall_response(json!([
-            valid_recall_card("First question?"),
-            recall_card(
-                "What links the observation?",
-                "A stable identifier.",
-                json!(["source-outside-lesson"])
-            )
-        ])),
-        2,
-        &allowed,
-    )
-    .is_err());
-}
-
-#[test]
-fn recall_drafts_reject_duplicate_questions_and_empty_fields() {
-    let allowed = vec![source()];
-    assert!(parse_recall_drafts(
-        &recall_response(json!([
-            valid_recall_card("What links the observation?"),
-            valid_recall_card("  What links the   observation? ")
-        ])),
-        2,
-        &allowed,
-    )
-    .is_err());
-    let unsupported_quote = json!({
-        "question":"Question with unsupported quote?",
-        "answer":"A stable identifier.",
-        "explanation":"The excerpt supports the identifier relationship.",
-        "sourceIds":["source-a"],
-        "quote":"A different observation appears in an unrelated document."
-    });
-    assert!(parse_recall_drafts(
-        &recall_response(json!([
-            valid_recall_card("First question?"),
-            unsupported_quote
-        ])),
-        2,
-        &allowed,
-    )
-    .is_err());
-    assert!(parse_recall_drafts(
-        &recall_response(json!([
-            valid_recall_card("First question?"),
-            recall_card("Which record is linked?", "  ", json!(["source-a"]))
-        ])),
-        2,
-        &allowed,
-    )
-    .is_err());
-}
-
-#[test]
-fn recall_schema_has_only_question_answer_explanation_and_allowed_source_ids() {
-    let allowed = HashSet::from(["source-a".to_owned()]);
-    let schema = recall_draft_schema(2, &allowed).to_string();
-    assert!(schema.contains("question"));
-    assert!(schema.contains("answer"));
-    assert!(schema.contains("explanation"));
-    assert!(schema.contains("quote"));
-    assert!(schema.contains("source-a"));
-    assert!(!schema.contains("options"));
-    assert!(!schema.contains("correctIndex"));
-}
-
-#[test]
-fn recall_parser_rejects_unknown_fields_and_choice_payloads() {
-    let allowed = vec![source()];
-    let with_choices = json!({
-        "question":"A question?",
-        "answer":"A stable identifier.",
-        "explanation":"A supported explanation.",
-        "sourceIds":["source-a"],
-        "quote":"A process records each observation with a stable identifier.",
-        "options":["one","two"]
-    });
-    assert!(parse_recall_drafts(&recall_response(json!([with_choices])), 1, &allowed,).is_err());
-}
-
-#[test]
-fn course_context_carries_whole_objectives_and_every_earlier_recap() {
-    use crate::dto::{LearningBlockDto, LearningBlockKind, LearningPreparation};
+/// A course of eight lessons, the first module holding six, each planned with topics of its own.
+fn planned_course() -> (LearningProgramDto, CoursePlan) {
+    use crate::lessons::course_plan::PlannedLesson;
     let mut program = crate::tests::fixture();
-    let long = "A detailed objective sentence. ".repeat(40);
-    let recap = "Recap of what the lesson established. ".repeat(80);
     let lessons = &mut program.modules[0].lessons;
     let template = lessons[0].clone();
     for index in 0..4 {
@@ -311,32 +185,91 @@ fn course_context_carries_whole_objectives_and_every_earlier_recap() {
         extra.id = format!("extra-lesson-{index}");
         lessons.insert(0, extra);
     }
-    let current = lessons.last().unwrap().id.clone();
+    let long = "A detailed objective sentence. ".repeat(40);
     for lesson in lessons.iter_mut() {
         lesson.objective = long.clone();
-        if lesson.id != current {
-            lesson.preparation = LearningPreparation::Ready;
-            lesson.blocks = vec![LearningBlockDto {
-                kind: LearningBlockKind::Recap,
-                title: "Recap".into(),
-                body: recap.clone(),
-                source_ids: vec![],
-                rubric: vec![],
-            }];
-        }
     }
-    let earlier = program.modules[0].lessons.len() - 1;
-    assert!(earlier > 3, "more than the former three recaps");
-    let context = super::lesson::course_context(&program, &current);
+    let plan = CoursePlan {
+        lessons: program
+            .modules
+            .iter()
+            .flat_map(|module| module.lessons.iter())
+            .map(|lesson| PlannedLesson {
+                lesson_id: lesson.id.clone(),
+                ideas: vec![format!("ideas of {}", lesson.id)],
+                terms: vec![format!("terms of {}", lesson.id)],
+                actions: vec![format!("actions of {}", lesson.id)],
+                contrast: format!("contrast of {}", lesson.id),
+            })
+            .collect(),
+    };
+    (program, plan)
+}
+
+#[test]
+fn the_writers_context_has_whole_objectives_and_the_plan_by_position() {
+    let (program, plan) = planned_course();
+    let ids: Vec<String> = program
+        .modules
+        .iter()
+        .flat_map(|module| module.lessons.iter())
+        .map(|lesson| lesson.id.clone())
+        .collect();
+    let long = "A detailed objective sentence. ".repeat(40);
+
+    let context = super::lesson::course_context(&program, &ids[2], &plan);
+
     assert_eq!(
         context["curriculum"][0]["lessons"][0]["objective"],
         long.as_str()
     );
-    let recaps = context["recentTeaching"].as_array().unwrap();
-    assert_eq!(recaps.len(), earlier);
-    assert!(recaps
+    assert!(context.get("recentTeaching").is_none(), "{context}");
+    let planned = context["coursePlan"].as_array().unwrap();
+    assert_eq!(planned.len(), ids.len(), "every lesson, in course order");
+    let positions: Vec<_> = planned
         .iter()
-        .all(|entry| entry["recap"][0] == recap.as_str()));
+        .map(|entry| entry["position"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        positions,
+        ["earlier", "earlier", "this", "later", "later", "later", "later", "later"]
+    );
+    for (entry, id) in planned.iter().zip(&ids) {
+        assert!(entry.get("lessonId").is_none(), "{entry}");
+        assert_eq!(entry["ideas"][0], format!("ideas of {id}"));
+        assert_eq!(entry["terms"][0], format!("terms of {id}"));
+        assert_eq!(entry["actions"][0], format!("actions of {id}"));
+        assert_eq!(entry["contrast"], format!("contrast of {id}"));
+    }
+    assert_eq!(
+        planned[2]["title"],
+        program.modules[0].lessons[2].title.as_str()
+    );
+}
+
+#[test]
+fn the_writers_context_is_the_same_whether_or_not_earlier_lessons_are_ready() {
+    use crate::dto::{LearningBlockDto, LearningBlockKind, LearningPreparation};
+    let (mut program, plan) = planned_course();
+    let current = program.modules[0].lessons[4].id.clone();
+    let before = super::lesson::course_context(&program, &current, &plan);
+
+    for lesson in &mut program.modules[0].lessons[..4] {
+        lesson.preparation = LearningPreparation::Ready;
+        lesson.blocks = vec![LearningBlockDto::new(
+            LearningBlockKind::Recap,
+            "Recap".into(),
+            "Recap of what the lesson established.".into(),
+            vec![],
+            vec![],
+        )];
+    }
+    let after = super::lesson::course_context(&program, &current, &plan);
+
+    assert_eq!(before, after);
+    assert!(!after
+        .to_string()
+        .contains("Recap of what the lesson established."));
 }
 
 /// A model that is only a window: the refusal comes before any model call.
@@ -359,6 +292,12 @@ impl LLMPort for Window {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[tokio::test]
@@ -368,12 +307,18 @@ async fn a_lesson_whose_prompt_leaves_no_room_for_evidence_is_refused_up_front()
     let lesson = program.modules[0].lessons[0].clone();
     let runtimes = crate::embedded_runtime::BuiltinRuntimes::for_tests();
 
-    let error = super::lesson::prepare_lesson(&Window(24_000), &runtimes, &program, &lesson)
-        .await
-        .unwrap_err();
+    let error = super::lesson::prepare_lesson(
+        &Window(24_000),
+        &runtimes,
+        &program,
+        &lesson,
+        &CoursePlan::blank(&program),
+    )
+    .await
+    .unwrap_err();
 
     assert!(
-        matches!(&error, AppError::InvalidConfig(message)
+        matches!(&error, AppError::WindowTooSmall(message)
             if message.starts_with("This course's goal and the lesson brief leave no room for evidence in Ornith-1.5-9B's 24000-token context window.")),
         "{error:?}"
     );
@@ -389,12 +334,18 @@ async fn a_lesson_outline_of_any_length_is_not_called_incomplete() {
     let lesson = program.modules[0].lessons[0].clone();
     let runtimes = crate::embedded_runtime::BuiltinRuntimes::for_tests();
 
-    let error = super::lesson::prepare_lesson(&Window(24_000), &runtimes, &program, &lesson)
-        .await
-        .unwrap_err();
+    let error = super::lesson::prepare_lesson(
+        &Window(24_000),
+        &runtimes,
+        &program,
+        &lesson,
+        &CoursePlan::blank(&program),
+    )
+    .await
+    .unwrap_err();
 
     assert!(
-        matches!(&error, AppError::InvalidConfig(message)
+        matches!(&error, AppError::WindowTooSmall(message)
             if message.starts_with("This course's goal and the lesson brief leave no room for evidence")),
         "{error:?}"
     );
@@ -478,21 +429,6 @@ fn a_module_or_lesson_text_of_two_letters_is_read_not_refused() {
     assert!(decoded_with("/modules/0/title", "  ").is_err());
 }
 
-#[test]
-fn a_recall_question_answer_or_explanation_of_any_length_is_read_not_refused() {
-    let allowed = [source()];
-    let long = "A stable identifier links the observation to its record. ".repeat(60);
-    for field in ["question", "answer", "explanation"] {
-        let mut card = valid_recall_card("What links the observation?");
-        card[field] = json!(long);
-        let parsed = parse_recall_drafts(&recall_response(json!([card])), 1, &allowed);
-        assert!(parsed.is_ok(), "{field}: {:?}", parsed.as_ref().err());
-    }
-    let short = recall_card("What is six times seven?", "42", json!(["source-a"]));
-    let parsed = parse_recall_drafts(&recall_response(json!([short])), 1, &allowed);
-    assert!(parsed.is_ok(), "{:?}", parsed.as_ref().err());
-}
-
 #[tokio::test]
 async fn a_lesson_block_of_any_length_does_not_stop_recall_drafts() {
     use crate::dto::{
@@ -505,20 +441,20 @@ async fn a_lesson_block_of_any_length_does_not_stop_recall_drafts() {
     let lesson = &mut program.modules[0].lessons[0];
     lesson.preparation = LearningPreparation::Ready;
     lesson.blocks = vec![
-        LearningBlockDto {
-            kind: LearningBlockKind::Explanation,
-            title: "A title that runs on and on. ".repeat(10),
-            body: "A body that runs on and on without a figure in it. ".repeat(150),
-            source_ids: vec![source_id.clone()],
-            rubric: vec![],
-        },
-        LearningBlockDto {
-            kind: LearningBlockKind::Recap,
-            title: "Go".into(),
-            body: "Ok".into(),
-            source_ids: vec![source_id],
-            rubric: vec![],
-        },
+        LearningBlockDto::new(
+            LearningBlockKind::Explanation,
+            "A title that runs on and on. ".repeat(10),
+            "A body that runs on and on without a figure in it. ".repeat(150),
+            vec![source_id.clone()],
+            vec![],
+        ),
+        LearningBlockDto::new(
+            LearningBlockKind::Recap,
+            "Go".into(),
+            "Ok".into(),
+            vec![source_id],
+            vec![],
+        ),
     ];
     let lesson_id = lesson.id.clone();
     let model = ScriptedModel {
@@ -535,30 +471,135 @@ async fn a_lesson_block_of_any_length_does_not_stop_recall_drafts() {
     );
 }
 
-#[test]
-fn the_outline_schema_bounds_no_text_but_a_blank() {
-    for sources in [0, 1] {
-        let bounds = length_bounds(&outline_schema(None, sources));
-        assert!(bounds.is_empty(), "{sources} sources: {bounds:?}");
-    }
+#[tokio::test]
+async fn prompt_snapshot_outline_description() -> Result<()> {
+    use crate::lessons::course_generation_tests::{outline, RequestLog};
+    let inner = outline(2, 2);
+    let llm = RequestLog::new(&inner);
+    let input = outline_request();
+    let sources = [source()];
+
+    draft_outline(
+        &llm,
+        &input,
+        &sources,
+        &["Stable identifiers".to_owned()],
+        &crate::outline_progress::OutlineProgress::default(),
+        |raw| decode_outline(raw, &input, &sources).map(|_| raw.to_owned()),
+    )
+    .await?;
+
+    llm.assert_snapshot::<super::outline::OutlineDescription>();
+    llm.assert_snapshot::<super::outline::OutlinePrerequisites>();
+    Ok(())
 }
 
-#[test]
-fn the_recall_schema_bounds_no_text_but_the_quotes_floor() {
-    let allowed = HashSet::from(["source-a".to_owned()]);
-    let schema = recall_draft_schema(2, &allowed);
-    let floor = "/properties/cards/items/properties/quote/minLength";
-    assert_eq!(schema.pointer(floor), Some(&json!(MIN_QUOTE_CHARS)));
-    let bounds: Vec<_> = length_bounds(&schema)
-        .into_iter()
-        .filter(|bound| !bound.starts_with(floor))
-        .collect();
-    assert!(bounds.is_empty(), "{bounds:?}");
+#[tokio::test]
+async fn prompt_snapshot_recall_drafts() -> Result<()> {
+    use crate::dto::{
+        LearningBlockDto, LearningBlockKind, LearningPreparation, LearningProgramStatus,
+    };
+    use crate::lessons::course_generation_tests::{fixed_ids, RequestLog, ScriptedModel};
+    let mut program = crate::tests::fixture();
+    fixed_ids(&mut program);
+    program.summary.status = LearningProgramStatus::Active;
+    let source_id = program.sources[0].id.clone();
+    let lesson = &mut program.modules[0].lessons[0];
+    lesson.preparation = LearningPreparation::Ready;
+    lesson.blocks = vec![
+        LearningBlockDto::new(
+            LearningBlockKind::Explanation,
+            "Bounded passages".into(),
+            "A bounded passage keeps a course to the material it was given.".into(),
+            vec![source_id.clone()],
+            vec![],
+        ),
+        LearningBlockDto::new(
+            LearningBlockKind::Recap,
+            "Recap".into(),
+            "Takeaway: a bounded passage limits what a course may claim.".into(),
+            vec![source_id.clone()],
+            vec![],
+        ),
+    ];
+    let lesson_id = lesson.id.clone();
+    let card = |question: &str| {
+        json!({
+            "question":question,
+            "answer":"A bounded passage limits what the course may claim.",
+            "explanation":"The excerpt says the passage is bounded.",
+            "cites":["u1"]
+        })
+    };
+    let inner = ScriptedModel {
+        outputs: std::sync::Mutex::new(
+            vec![json!({"items":[
+                card("What does a bounded passage limit?"),
+                card("Why does a course use a bounded passage?")
+            ]})
+            .to_string()]
+            .into(),
+        ),
+        prompts: Default::default(),
+    };
+    let llm = RequestLog::new(&inner);
+
+    generate_recall_drafts(&llm, &program, &lesson_id, 2).await?;
+
+    llm.assert_snapshot::<super::recall::RecallDrafts>();
+    Ok(())
 }
 
 #[test]
 fn the_writer_is_told_never_to_name_a_source_in_the_text() {
     let instructions = citation_instructions(true);
-    assert!(instructions.contains("Never name a source or an excerpt in the lesson's text"));
+    assert!(instructions.contains("Never say in the lesson's text where a statement comes from"));
+    assert!(instructions.contains("never refer to an excerpt, passage or tutorial"));
     assert!(instructions.contains("cite that sentence in the citations list"));
+}
+
+#[test]
+fn the_writer_is_told_quoted_wording_takes_double_quotation_marks() {
+    let text = citation_instructions(true);
+    assert!(text.contains("double quotation marks"), "{text}");
+    assert!(
+        text.contains("never put wording in single quotation marks"),
+        "{text}"
+    );
+}
+
+#[test]
+fn the_writer_is_told_quotation_marks_are_for_quoted_wording() {
+    for has_sources in [true, false] {
+        let instructions = citation_instructions(has_sources);
+        assert!(
+            instructions.contains(if has_sources {
+                "Wording quoted from a source goes in double quotation marks, and only in a cited sentence"
+            } else {
+                "Quotation marks mark wording quoted from a source"
+            }),
+            "{has_sources}"
+        );
+        assert!(
+            instructions.contains("without quotation marks"),
+            "{has_sources}"
+        );
+    }
+}
+
+#[test]
+fn the_writer_is_told_to_name_no_source_by_name_either() {
+    let instructions = citation_instructions(true);
+    assert!(instructions.contains("In the project's tutorial"));
+    assert!(instructions.contains("According to the guide"));
+    assert!(!instructions.contains("an attribution to a source"));
+}
+
+#[test]
+fn the_writer_is_told_what_the_lesson_s_own_figures_are() {
+    let text = citation_instructions(true);
+    assert!(
+        text.contains("The lesson's own figures are the quantities its own example, scenario or exercise sets, and the results calculated from them."),
+        "{text}"
+    );
 }

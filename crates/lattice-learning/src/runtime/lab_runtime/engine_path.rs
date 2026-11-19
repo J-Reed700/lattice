@@ -38,21 +38,21 @@ pub(super) fn unresolved_engine_path(engine: LearningContainerEngine) -> PathBuf
 }
 
 fn is_usable_engine_executable(candidate: &Path) -> bool {
-    if !candidate.is_absolute() || !candidate.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        candidate
-            .metadata()
-            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false)
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
+    candidate.is_absolute() && candidate.is_file() && is_executable(candidate)
+}
+
+#[cfg(unix)]
+fn is_executable(candidate: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    candidate
+        .metadata()
+        .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable(_candidate: &Path) -> bool {
+    true
 }
 
 pub(super) fn resolve_engine_executable(

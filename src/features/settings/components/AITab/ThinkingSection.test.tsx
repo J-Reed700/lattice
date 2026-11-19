@@ -56,6 +56,6 @@ describe('ThinkingSection', () => {
     const tokens = screen.getByLabelText('Draft tokens');
     fireEvent.change(tokens, { target: { value: '12' } });
     fireEvent.blur(tokens);
-    expect(save).toHaveBeenCalledWith({ speculativeDecoding: { mode: 'mtpDraft', nMax: 8 } });
+    expect(save).toHaveBeenCalledWith({ speculativeDecoding: { mode: 'mtpDraft', nMax: 12 } });
   });
 });

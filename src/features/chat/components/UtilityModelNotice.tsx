@@ -2,15 +2,19 @@ import { Link } from 'react-router';
 
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { useModelDownloadedQuery } from '@/features/model/hooks/useModelDownloadedQuery';
+import { isUtilityModel } from '@/features/settings/components/modelRoles/roleConfig';
+import { useSettingsQuery } from '@/features/settings/hooks/useSettingsQuery';
 
 export function UtilityModelNotice() {
   const { downloadedModels, isLoading, error } = useDownloadedModels();
-  const utility = downloadedModels.find(model => model.is_active_for_utility);
+  const settings = useSettingsQuery();
+  const llm = settings.data?.llm;
+  const utility = downloadedModels.find(model => isUtilityModel(model, llm));
   const readiness = useModelDownloadedQuery(utility?.model_id, Boolean(utility && utility.backend !== 'ollama'));
 
-  if (isLoading) return null;
+  if (isLoading || settings.isPending || llm?.utilityModel) return null;
   let message: string;
-  if (error || readiness.error) {
+  if (error || settings.error || readiness.error) {
     message = 'Utility model availability could not be checked.';
   } else if (!utility) {
     message = 'No downloaded utility model is available for use. Document search uses basic query planning. Download or select a utility model to enable AI query planning.';

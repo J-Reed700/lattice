@@ -4,8 +4,8 @@ use tracing::{info, warn};
 use crate::features::conversation::chat::ports::ChatRuntime;
 use lattice_core::application::contracts::search::CorpusDocument;
 
-/// How many documents the summary tier may nominate to open with. Matches the
-/// planner's own `opening_document_ids` cap, which the plan validator enforces.
+/// How many documents the summary tier may nominate to open with: the top-k of
+/// one summary similarity search.
 const SUMMARY_OPENING_DOCUMENTS: usize = 4;
 
 /// The collection-level summary tier for one turn.

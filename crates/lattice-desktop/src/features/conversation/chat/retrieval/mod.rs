@@ -32,8 +32,11 @@ mod overlap;
 pub(in crate::features::conversation::chat) mod page_budget;
 mod pipeline;
 mod policy;
+mod rendered;
+pub(in crate::features::conversation::chat) use self::rendered::{Legend, Passage, Rendered};
 mod rerank;
 mod source_citations;
+pub mod source_names;
 pub use self::source_citations::WEB_SOURCE_PREFIX;
 pub(super) use self::source_citations::{
     drop_unbudgeted_sources, web_context_entries, WebContextItem,
@@ -72,7 +75,6 @@ use self::policy::{
 };
 use self::rerank::apply_rerank_stage as apply_rerank_stage_impl;
 use self::source_citations::{
-    assign_citation_ids as assign_citation_ids_impl,
     build_source_citations as build_source_citations_impl,
     build_web_source_citations as build_web_source_citations_impl,
     citation_ids_by_chunk as citation_ids_by_chunk_impl,
@@ -489,7 +491,6 @@ pub(super) async fn record_tool_document_references(
 
 #[derive(Debug, Clone)]
 pub(super) struct RecentDocumentMetadata {
-    pub(super) document_id: String,
     pub(super) title: String,
 }
 
@@ -621,11 +622,6 @@ pub(super) fn merge_tool_sources(
     merge_tool_sources_impl(sources, incoming)
 }
 
-/// Number the final source list so the prompt can cite the same numbers.
-pub(super) fn assign_citation_ids(sources: &mut [SourceDto]) {
-    assign_citation_ids_impl(sources)
-}
-
 /// Map chunk id -> the citation number the model was given.
 pub(super) fn citation_ids_by_chunk(
     sources: &[SourceDto],
@@ -675,7 +671,8 @@ pub(super) fn format_tool_result(
     page_offset: usize,
     source_text: bool,
     citations: &std::collections::HashMap<String, u32>,
-) -> String {
+    call: &lattice_core::application::services::tool_handles::CallView<'_>,
+) -> Rendered {
     format_tool_result_impl(
         tool_name,
         result,
@@ -684,6 +681,7 @@ pub(super) fn format_tool_result(
         page_offset,
         source_text,
         citations,
+        call,
     )
 }
 

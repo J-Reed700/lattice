@@ -38,10 +38,8 @@ impl TagGenerationService {
 
     /// Suggest up to `max_tags` tags for one document.
     pub async fn generate_tags(&self, document_id: &str, max_tags: usize) -> Result<Vec<String>> {
-        if max_tags == 0 || max_tags > 20 {
-            return Err(AppError::InvalidInput(
-                "Max tags must be between 1 and 20".into(),
-            ));
+        if max_tags == 0 {
+            return Err(AppError::InvalidInput("Max tags must be at least 1".into()));
         }
 
         let document_repo = DocumentRepositoryImpl::new(self.database.clone());
@@ -177,6 +175,12 @@ mod tests {
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
+        }
     }
 
     #[tokio::test]
@@ -190,7 +194,7 @@ mod tests {
         let sent = llm.0.lock().await;
         assert_eq!(sent[0].priority, InferencePriority::Maintenance);
         assert!(matches!(
-            sent[0].input.as_slice(),
+            sent[0].input(),
             [
                 CompletionInput::Message { role: system, content: instructions },
                 CompletionInput::Message { role: user, content: message },
@@ -216,23 +220,17 @@ mod tests {
             .await
             .unwrap();
         TagGenerationService::new(
-            Database::from(pool),
+            Database::new(pool),
             Arc::new(crate::features::tags::mocks::MockTagService::new()),
             Arc::new(NoModel),
         )
     }
 
     #[tokio::test]
-    async fn asking_for_no_tags_or_too_many_is_refused() {
-        let service = service().await;
+    async fn asking_for_no_tags_is_refused() {
+        let refused = service().await.generate_tags("doc-1", 0).await;
 
-        for max_tags in [0, 21] {
-            let refused = service.generate_tags("doc-1", max_tags).await;
-            assert!(
-                matches!(refused, Err(AppError::InvalidInput(_))),
-                "{max_tags}"
-            );
-        }
+        assert!(matches!(refused, Err(AppError::InvalidInput(_))));
     }
 
     #[tokio::test]

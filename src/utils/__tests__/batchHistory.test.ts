@@ -59,7 +59,7 @@ it('preserves successful cancellation counts, deletion and job details', async (
   const status = { jobId: 'job-1', status: 'cancelled' } as Awaited<ReturnType<typeof getBatchJobDetails>>;
   vi.mocked(VaultAPI.getBatchJobStatus).mockResolvedValue({ ok: true, data: status });
   vi.mocked(VaultAPI.cancelBatchJob).mockResolvedValue({ ok: true, data: 0 });
-  vi.mocked(VaultAPI.deleteBatchJob).mockResolvedValue({ ok: true, data: undefined });
+  vi.mocked(VaultAPI.deleteBatchJob).mockResolvedValue({ ok: true, data: null });
   expect(await getBatchJobDetails('job-1')).toBe(status);
   expect(await getBatchJobStatus('job-1')).toBe(status);
   expect(await cancelBatchJob('job-1')).toBe(0);

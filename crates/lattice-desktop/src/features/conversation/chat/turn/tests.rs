@@ -9,6 +9,7 @@ use lattice_core::application::ports::llm_port::{
 };
 use lattice_core::application::ports::turn_source::SourcePassage;
 use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::error::AppError;
 use std::sync::Mutex;
 
 /// A model that never answers, and says when it has been asked.
@@ -30,6 +31,12 @@ impl LLMPort for Unanswering {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -115,7 +122,7 @@ async fn stopping_the_turn_ends_the_generate_stage_while_the_model_is_still_gene
     .expect("a stop press ends the stage, not the time budget");
 
     let error = result.err().expect("a cancelled turn has no answer");
-    assert!(error.to_string().contains("cancelled"), "{error}");
+    assert!(matches!(error, AppError::Cancelled(_)), "{error}");
     // The bubble is never left generating: the stream still closes.
     assert!(
         events.lock().unwrap().iter().any(|event| event.done),
@@ -455,9 +462,9 @@ async fn a_resumed_research_turn_carries_on_after_its_last_saved_round() {
         "one round, to answer: nothing is searched again"
     );
     // The planned request, then the saved rounds' calls and results.
-    assert_eq!(requests[0].input.len(), planned_len + saved.len());
+    assert_eq!(requests[0].input().len(), planned_len + saved.len());
     assert!(matches!(
-        &requests[0].input[planned_len + 3],
+        &requests[0].input()[planned_len + 3],
         CompletionInput::ToolResult { output, .. } if output == "What the web says about second."
     ));
     // Counting goes on from the saved rounds.
@@ -617,6 +624,12 @@ impl LLMPort for ToolCalling {
     }
     fn supports_tool_calling(&self) -> bool {
         true
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -806,7 +819,7 @@ fn a_source_s_passages_join_the_turn_s_numbered_passages() {
     let message = &prompt.enhanced_message;
     assert!(
         message.contains(
-            "[1] Document: Ranking › Fusion › Notes (chunk-1)\nContent: Fusion sums reciprocal ranks."
+            "[s1] Document: Ranking › Fusion › Notes (chunk-1)\nContent: Fusion sums reciprocal ranks."
         ),
         "{message}"
     );

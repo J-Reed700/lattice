@@ -1,6 +1,16 @@
+use super::quotes::{authored, lesson_quote_checks, reanchor_quotes_in, restore_quotes_in};
 use super::*;
-use crate::lessons::course_generation_tests::ScriptedModel;
+use crate::lessons::course_generation_tests::{clean_review, verdict, ScriptedModel};
 use std::sync::Mutex;
+
+fn restore_lesson_quotes(candidate: &mut Value, authoring: &Value) -> usize {
+    restore_quotes_in(candidate, &authored(authoring).unwrap())
+}
+
+fn reanchor_lesson_quotes(candidate: &mut Value, authoring: &Value) -> usize {
+    let table = authored(authoring).unwrap();
+    reanchor_quotes_in(candidate, &table, &table)
+}
 
 const EXCERPT: &str = "This saved reference describes the exact behavior of the example tool.";
 
@@ -12,8 +22,19 @@ fn context() -> Value {
     json!({"sources":[{"sourceIndex":0,"excerpt":EXCERPT}]})
 }
 
+/// A lesson schema whose blocks take citations, which is what lets a repair recite one.
+fn citing_schema() -> Value {
+    json!({"type":"object","properties":{"blocks":{"type":"array","items":{"type":"object","properties":{"citations":{"type":"array","items":{"type":"object"}}}}}}})
+}
+
+/// A repair's answer that gives the quotation of a part the passage of the source it names.
+fn recite(part: usize, quote: &str) -> String {
+    json!({"recites":[{"path":format!("/blocks/{part}"),"sourceIndex":0,"quote":quote}]})
+        .to_string()
+}
+
 fn approval() -> Value {
-    json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![json!({"index":0,"passageId":"section-0-passage-0","finding":"The complete explanation was reviewed and no teaching defect was found.","hasDefect":false})])})
+    json!({"issues":[],"sectionDefects":[]})
 }
 
 #[tokio::test]
@@ -35,12 +56,12 @@ async fn lesson_review_only_rewrites_established_findings() -> Result<()> {
         }
         let mut review = approval();
         if let Some(issues) = review.get_mut("issues") {
-            *issues = json!(["Correct the example's claimed behavior using the reference."]);
+            *issues = json!([{"note":"The lesson promises that the tutor runs the learner's code; correct the promise using the reference.","concern":"promise"}]);
         }
-        let decision = json!({"decisions":[{"issueId":"issue-0","verdict":if actionable {"actionable"} else {"not_established"},"basis":"external_fact","evidenceIds":["reference-0"],"partId":"lesson","requirementId":null,"reason":"The source comparison determines whether this proposed correction is justified."}]});
+        let decision = json!({"entries":[{"of":"i1","verdict":if actionable {"actionable"} else {"not_established"},"basis":"external_fact","candidateIds":[],"referenceIds":["r1"],"partId":"none","leftTo":"none","reason":"The source comparison determines whether this proposed correction is justified."}]});
         let mut outputs = vec![review.to_string(), decision.to_string()];
         if actionable {
-            outputs.extend([json!({"edits":[{"path":"/blocks/0/title","before":"Example","after":"Corrected example"}]}).to_string(), approval().to_string()]);
+            outputs.extend([json!({"edits":[{"path":"/blocks/0/title","before":"Example","after":"Corrected example"}]}).to_string(), clean_review(&[verdict("reviewer/1", "resolved")])]);
         }
         let model = ScriptedModel {
             outputs: Mutex::new(outputs.into()),
@@ -50,10 +71,10 @@ async fn lesson_review_only_rewrites_established_findings() -> Result<()> {
             &model,
             LESSON_REPAIR_SYSTEM,
             &context().to_string(),
-            &json!({"type":"object"}),
+            ReviewSchema::Other(&json!({"type":"object"})),
             original.to_string(),
             4000,
-            &references,
+            (&references, &references.sources),
             &[],
         )
         .await?;
@@ -134,10 +155,7 @@ fn lesson_citations_match_the_published_source_index_and_quote_rules() {
     let checks = lesson_quote_checks(&candidate, &context());
     assert_eq!(checks.len(), 1);
     assert_eq!(
-        checks
-            .first()
-            .and_then(|v| v.get("path"))
-            .and_then(Value::as_str),
+        checks.first().map(|check| check.path.as_str()),
         Some("questions[0]")
     );
 }
@@ -149,7 +167,7 @@ async fn a_model_approval_cannot_skip_repair_of_an_invalid_lesson_quotation() ->
         outputs: Mutex::new(
             vec![
                 approval().to_string(),
-                json!({"edits":[{"path":"/blocks/0/quote","before":"An invented quotation that does not appear in the selected source.","after":EXCERPT}]}).to_string(),
+                recite(0, EXCERPT),
                 approval().to_string(),
             ]
             .into(),
@@ -160,34 +178,12 @@ async fn a_model_approval_cannot_skip_repair_of_an_invalid_lesson_quotation() ->
         &model,
         LESSON_REPAIR_SYSTEM,
         &context().to_string(),
-        &json!({"type":"object"}),
+        &citing_schema(),
         lesson("An invented quotation that does not appear in the selected source.").to_string(),
         4000,
     )
     .await?;
     assert_eq!(serde_json::from_str::<Value>(&result)?, corrected);
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_paraphrased_repaired_quotation_is_cited_as_the_real_passage() -> Result<()> {
-    let model = ScriptedModel {
-        outputs: Mutex::new(vec![approval().to_string(), json!({"edits":[{"path":"/blocks/0/quote","before":"An invented quotation that does not appear in the selected source.","after":"This saved reference describes exactly how the example tool behaves."}]}).to_string(), approval().to_string()].into()),
-        prompts: Mutex::new(Vec::new()),
-    };
-    let result = review_and_repair(
-        &model,
-        LESSON_REPAIR_SYSTEM,
-        &context().to_string(),
-        &json!({"type":"object"}),
-        lesson("An invented quotation that does not appear in the selected source.").to_string(),
-        4000,
-    )
-    .await?;
-    assert_eq!(serde_json::from_str::<Value>(&result)?, lesson(EXCERPT));
-    // The final review saw the real passage, not the paraphrase.
-    let prompts = model.prompts.lock().unwrap();
-    assert!(prompts.last().unwrap().contains(EXCERPT));
     Ok(())
 }
 
@@ -221,24 +217,34 @@ fn reanchoring_prefers_the_quote_then_the_item_and_never_invents_a_relation() {
 }
 
 #[tokio::test]
-async fn an_invalid_repaired_quotation_stops_before_more_model_review() {
-    let invalid = lesson("An invented quotation that does not appear in the selected source.");
+async fn a_repaired_quotation_that_is_still_invalid_is_repaired_again() {
+    const INVENTED: &str = "An invented quotation that does not appear in the selected source.";
+    let retitle =
+        json!({"edits":[{"path":"/blocks/0/title","before":"Example","after":"Example, revised"}]})
+            .to_string();
     let model = ScriptedModel {
-        outputs: Mutex::new(vec![approval().to_string(), json!({"edits":[{"path":"/blocks/0/quote","before":"An invented quotation that does not appear in the selected source.","after":"A different invented quotation that is absent from the selected source."}]}).to_string()].into()),
+        outputs: Mutex::new(
+            vec![
+                approval().to_string(),
+                retitle,
+                approval().to_string(),
+                recite(0, EXCERPT),
+                approval().to_string(),
+            ]
+            .into(),
+        ),
         prompts: Mutex::new(Vec::new()),
     };
     let result = review_and_repair(
         &model,
         LESSON_REPAIR_SYSTEM,
         &context().to_string(),
-        &json!({"type":"object"}),
-        invalid.to_string(),
+        &citing_schema(),
+        lesson(INVENTED).to_string(),
         4000,
     )
     .await;
-    assert!(result.is_err_and(|error| error
-        .to_string()
-        .contains("revised lesson contains 1 source quotation")));
+    assert!(result.is_ok(), "{result:?}");
 }
 
 const REPLICATION: &str =
@@ -254,11 +260,8 @@ fn a_cited_sentences_quote_is_checked_like_the_sections() {
         json!("An invented quotation that does not appear in the selected source.");
     let checks = lesson_quote_checks(&candidate, &context());
     assert_eq!(checks.len(), 1);
-    assert_eq!(checks[0]["path"], "blocks[0]");
-    assert!(checks[0]["error"]
-        .as_str()
-        .unwrap()
-        .starts_with("Citation 1 of this part:"));
+    assert_eq!(checks[0].path, "blocks[0]");
+    assert!(checks[0].error.starts_with("Citation 1 of this part:"));
 
     // A citation of a source the lesson was not given is refused too.
     candidate["blocks"][0]["citations"][0] =
@@ -306,9 +309,10 @@ fn a_citation_the_repair_appends_is_checked_against_its_source_like_any_other() 
     let candidate = lesson(EXCERPT);
     let sentence = "A substantive teaching explanation with practice context.";
     let appended = |quote: &str| {
-        let patch = json!({"edits":[],"citations":[
-            {"path":"/blocks/0","sentence":sentence,"sourceIndex":0,"quote":quote}]});
-        super::super::text_edits::apply(&candidate, &patch.to_string()).unwrap()
+        let mut appended = candidate.clone();
+        appended["blocks"][0]["citations"] =
+            json!([{"sentence":sentence,"sourceIndex":0,"quote":quote}]);
+        appended
     };
 
     // A quote the source holds stands.
@@ -320,15 +324,12 @@ fn a_citation_the_repair_appends_is_checked_against_its_source_like_any_other() 
         &context(),
     );
     assert_eq!(refused.len(), 1);
-    assert_eq!(refused[0]["path"], "blocks[0]");
-    assert!(refused[0]["error"]
-        .as_str()
-        .unwrap()
-        .starts_with("Citation 1 of this part:"));
+    assert_eq!(refused[0].path, "blocks[0]");
+    assert!(refused[0].error.starts_with("Citation 1 of this part:"));
 }
 
 #[tokio::test]
-async fn a_repair_that_goes_wrong_in_one_block_still_applies_the_edits_of_the_others() -> Result<()>
+async fn a_repair_that_goes_wrong_in_one_block_is_asked_again_for_that_finding_alone() -> Result<()>
 {
     let invented = "An invented quotation that does not appear in the selected source.";
     let mut original = lesson(EXCERPT);
@@ -336,23 +337,21 @@ async fn a_repair_that_goes_wrong_in_one_block_still_applies_the_edits_of_the_ot
     original["blocks"] = json!([block.clone(), block.clone(), block]);
     original["blocks"][0]["quote"] = json!(invented);
     original["blocks"][1]["title"] = json!("Example");
-    original["blocks"][2]["citations"] =
-        json!([{"sentence":"The tool behaves as described.","sourceIndex":0,"quote":EXCERPT}]);
-    let approved = || {
-        let check = |index: usize| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"The complete explanation was reviewed and no teaching defect was found.","hasDefect":false});
-        json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks((0..3).map(check).collect())}).to_string()
-    };
-    let chained = "This saved reference describes how the example tool behaves.";
-    let patch = json!({"edits":[
-        {"path":"/blocks/0/quote","before":invented,"after":EXCERPT},
-        {"path":"/blocks/1/title","before":"Example","after":"Corrected example"},
-        {"path":"/blocks/2/citations/0/sourceIndex","before":0,"after":0},
-        {"path":"/blocks/2/citations/0/quote","before":EXCERPT,"after":chained},
-        {"path":"/blocks/2/citations/0/sourceIndex","before":0,"after":0},
-        {"path":"/blocks/2/citations/0/quote","before":chained,"after":EXCERPT}
-    ]});
+    let approved = || json!({"issues":[],"sectionDefects":[]}).to_string();
+    let reaching = json!({
+        "edits":[{"path":"/blocks/1/title","before":"Example","after":"Corrected example"}],
+        "recites":[{"path":"/blocks/0","sourceIndex":0,"quote":EXCERPT}]
+    });
     let model = ScriptedModel {
-        outputs: Mutex::new(vec![approved(), patch.to_string(), approved()].into()),
+        outputs: Mutex::new(
+            vec![
+                approved(),
+                reaching.to_string(),
+                recite(0, EXCERPT),
+                clean_review(&[]),
+            ]
+            .into(),
+        ),
         prompts: Mutex::new(Vec::new()),
     };
 
@@ -360,15 +359,16 @@ async fn a_repair_that_goes_wrong_in_one_block_still_applies_the_edits_of_the_ot
         &model,
         LESSON_REPAIR_SYSTEM,
         &context().to_string(),
-        &json!({"type":"object"}),
+        &citing_schema(),
         original.to_string(),
         4000,
     )
     .await?;
 
+    // Block 1's title is no finding's to change: the entry that reached for it
+    // is refused whole and asked again, and its second answer applies.
     let mut expected = original.clone();
     expected["blocks"][0]["quote"] = json!(EXCERPT);
-    expected["blocks"][1]["title"] = json!("Corrected example");
     assert_eq!(serde_json::from_str::<Value>(&result)?, expected);
     let prompts = model.prompts.lock().unwrap();
     assert_eq!(
@@ -376,8 +376,20 @@ async fn a_repair_that_goes_wrong_in_one_block_still_applies_the_edits_of_the_ot
             .iter()
             .filter(|prompt| prompt.contains("You are editing a rejected draft"))
             .count(),
-        1,
-        "the repair is asked for once"
+        2,
+        "the refused entry is asked again once"
     );
     Ok(())
+}
+
+#[test]
+fn reanchoring_keeps_a_sentence_whole_across_an_abbreviation() {
+    let authoring = json!({"sources":[{"sourceIndex":0,
+        "excerpt":"Most teams pick Rust for their services vs. Go and Python. Both compile fast."}]});
+    let mut candidate = json!({"blocks":[{"body":"Unrelated.","sourceIndex":0,"quote":"Teams choose Rust for their services"}],"questions":[]});
+    assert_eq!(reanchor_lesson_quotes(&mut candidate, &authoring), 1);
+    assert_eq!(
+        candidate["blocks"][0]["quote"],
+        "Most teams pick Rust for their services vs. Go and Python."
+    );
 }

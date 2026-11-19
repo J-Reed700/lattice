@@ -20,7 +20,7 @@ pub(super) const COVERAGE_TOP_N: usize = 5;
 /// and a prefix is a coincidence of spelling rather than a common root.
 const MIN_STEM_CHARS: usize = 4;
 
-/// Planner queries are short by construction (at most three, 24 words each).
+/// Planner queries are short (at most three).
 /// Coverage over more terms than this measures phrasing, not topicality.
 const MAX_PLAN_TERMS: usize = 12;
 

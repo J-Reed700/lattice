@@ -17,10 +17,7 @@ export type { IndexProgress } from '../lib/bindings';
 
 export type IndexStatus = 'idle' | 'scanning' | 'processing' | 'complete' | 'error' | 'cancelled';
 
-export interface IndexingStats {
-  indexedDocuments: number;
-  totalChunks: number;
-}
+export type IndexingStats = import('../lib/bindings').IndexingStatsDto;
 
 export type { IndexedFolder, IndexingActivity, IndexFileResponse } from './api/files';
 

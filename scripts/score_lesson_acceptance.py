@@ -200,6 +200,10 @@ def end_state(db, lesson, claims, failures):
             )
         elif not terminal(claim):
             failures.append(f"claim {claim.id[:8]}: {claim.cls} ended {claim.kind!r}, a pairing outside the five of 3.11")
+    for claim in claims:
+        for event in claim.events:
+            if event.get("kind") == "statement_fault":
+                failures.append(f"claim {claim.id[:8]} recorded a statement fault at stage {event.get('stage')!r}")
     live = [c for c in claims if c.kind != "edited"]
     limit = STATEMENT_LIMIT if lesson["id"].startswith(LESSON) else None
     out["pairs"] = dict(sorted(pairs.items()))

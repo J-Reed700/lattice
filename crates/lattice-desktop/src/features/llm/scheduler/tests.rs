@@ -1,11 +1,13 @@
 use super::*;
 use crate::features::llm::backend::{ModelBackend, Progress};
 use crate::features::llm::fitting::{Fitted, OutputLimits, PortBackend, Sent, Thinking};
+use crate::infrastructure::llama_server::ServerTokenizer;
 use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, InferencePriority, ServedTiming,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::runtime::jobs::{RankScope, RankTicket};
 use parking_lot::Mutex as SyncMutex;
@@ -229,10 +231,7 @@ async fn a_request_cancelled_while_queued_leaves_the_queue_with_an_error() {
         .await
         .unwrap()
         .unwrap();
-    assert!(
-        matches!(result, Err(AppError::InvalidState(_))),
-        "{result:?}"
-    );
+    assert!(matches!(result, Err(AppError::Cancelled(_))), "{result:?}");
     assert_eq!(
         scheduler.queued(),
         0,
@@ -601,6 +600,12 @@ impl LLMPort for TimedModel {
     async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[tokio::test]
@@ -635,50 +640,6 @@ fn props_give_slots_and_the_shared_window() {
         registry::parse_props(&serde_json::json!({"model": "x"})),
         None
     );
-}
-
-#[test]
-fn a_tokenize_reply_counts_ids_or_pieces() {
-    assert_eq!(
-        tokenize::parse_token_count(&serde_json::json!({"tokens": [1, 2, 3]})).unwrap(),
-        3
-    );
-    assert_eq!(
-        tokenize::parse_token_count(
-            &serde_json::json!({"tokens": [{"id": 1, "piece": "a"}, {"id": 2, "piece": "b"}]})
-        )
-        .unwrap(),
-        2
-    );
-    assert!(tokenize::parse_token_count(&serde_json::json!({"error": "x"})).is_err());
-}
-
-#[tokio::test]
-async fn exact_counts_come_from_the_server_once_per_text() {
-    use wiremock::matchers::{body_partial_json, method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/tokenize"))
-        .and(body_partial_json(
-            serde_json::json!({"content": "hello world", "add_special": false}),
-        ))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({"tokens": [9, 8]})),
-        )
-        .expect(1)
-        .mount(&server)
-        .await;
-
-    let tokenizer = ServerTokenizer::new(reqwest::Client::new(), &server.uri());
-    assert_eq!(tokenizer.count("hello world").await.unwrap(), 2);
-    assert_eq!(
-        tokenizer.count("hello world").await.unwrap(),
-        2,
-        "the second count is served from the cache"
-    );
-    assert_eq!(tokenizer.count("").await.unwrap(), 0);
 }
 
 /// A model that records what reached it and waits until released.
@@ -724,6 +685,12 @@ impl ModelBackend for GatedModel {
     fn keeps_read_prompts(&self) -> bool {
         false
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
     fn is_alive(&self) -> bool {
         true
     }
@@ -748,7 +715,7 @@ impl ModelBackend for GatedModel {
 }
 
 fn request(text: &str, cancel: Option<CancellationToken>) -> CompletionRequest {
-    CompletionRequest {
+    legacy::completion(legacy::Completion {
         input: vec![CompletionInput::Message {
             role: "user".into(),
             content: text.into(),
@@ -757,7 +724,7 @@ fn request(text: &str, cancel: Option<CancellationToken>) -> CompletionRequest {
         cancel,
         cache_key: Some("conversation".into()),
         ..Default::default()
-    }
+    })
 }
 
 #[tokio::test]
@@ -782,10 +749,7 @@ async fn a_request_cancelled_in_flight_is_aborted_and_frees_its_slot() {
         .await
         .unwrap()
         .unwrap();
-    assert!(
-        matches!(result, Err(AppError::InvalidState(_))),
-        "{result:?}"
-    );
+    assert!(matches!(result, Err(AppError::Cancelled(_))), "{result:?}");
 
     // The aborted call gave its only slot back.
     model.gate.add_permits(1);
@@ -891,22 +855,16 @@ async fn an_answer_larger_than_the_room_left_is_cut_to_fit_not_refused() {
     // "user" and 31 564 characters: 7 892 tokens by the estimate and 24 of
     // framing, 276 left.
     let prompt = "x".repeat(31_564);
-    llm.complete(&CompletionRequest {
-        max_output_tokens: Some(302),
-        ..request(&prompt, None)
-    })
-    .await
-    .unwrap();
+    let mut capped = request(&prompt, None);
+    *legacy::says(&mut capped).max_output_tokens = Some(302);
+    llm.complete(&capped).await.unwrap();
     // An answer the room holds is sent as asked.
-    llm.complete(&CompletionRequest {
-        max_output_tokens: Some(256),
-        ..request(&prompt, None)
-    })
-    .await
-    .unwrap();
+    let mut capped = request(&prompt, None);
+    *legacy::says(&mut capped).max_output_tokens = Some(256);
+    llm.complete(&capped).await.unwrap();
     let seen = model.seen.lock();
     assert_eq!(
-        seen[0].request.max_output_tokens,
+        seen[0].request.max_output_tokens(),
         Some(302),
         "the caller's cap is not rewritten"
     );
@@ -936,12 +894,9 @@ async fn an_exact_count_sizes_the_room_the_backend_is_told() {
         .with_tokenizer(ServerTokenizer::new(reqwest::Client::new(), &server.uri()));
     // About 10 000 tokens by the estimate; the server counts 3 000, plus the
     // template's framing for one message and the answer's opening.
-    llm.complete(&CompletionRequest {
-        max_output_tokens: Some(6_000),
-        ..request(&"x".repeat(40_000), None)
-    })
-    .await
-    .unwrap();
+    let mut capped = request(&"x".repeat(40_000), None);
+    *legacy::says(&mut capped).max_output_tokens = Some(6_000);
+    llm.complete(&capped).await.unwrap();
     let seen = model.seen.lock();
     assert!(seen[0].size.counted_exactly);
     assert_eq!(seen[0].size.prompt_tokens, 3_000 + 8 + 16);
@@ -968,12 +923,9 @@ async fn a_small_prompt_is_not_counted_by_the_server() {
     model.gate.add_permits(1);
     let llm = scheduled(model.clone())
         .with_tokenizer(ServerTokenizer::new(reqwest::Client::new(), &server.uri()));
-    llm.complete(&CompletionRequest {
-        max_output_tokens: Some(512),
-        ..request("hello", None)
-    })
-    .await
-    .unwrap();
+    let mut capped = request("hello", None);
+    *legacy::says(&mut capped).max_output_tokens = Some(512);
+    llm.complete(&capped).await.unwrap();
     let seen = model.seen.lock();
     assert!(!seen[0].size.counted_exactly);
     assert!(seen[0].room > 512);
@@ -1030,11 +982,9 @@ async fn measured(tokens: Option<usize>, content: &str, asked: Option<u32>) -> R
     model.gate.add_permits(1);
     let llm = scheduled(model.clone())
         .with_tokenizer(ServerTokenizer::new(reqwest::Client::new(), &server.uri()));
-    llm.complete(&CompletionRequest {
-        max_output_tokens: asked,
-        ..request(content, None)
-    })
-    .await?;
+    let mut capped = request(content, None);
+    *legacy::says(&mut capped).max_output_tokens = asked;
+    llm.complete(&capped).await?;
     let sent = model.seen.lock()[0].clone();
     Ok(sent)
 }
@@ -1135,12 +1085,9 @@ async fn a_prompt_not_worth_counting_is_recorded_at_its_estimate_and_framing() {
     ];
     for (llm, model) in &llms {
         // "user" and "hello!!!" are 12 characters: 3 tokens.
-        llm.complete(&CompletionRequest {
-            max_output_tokens: Some(512),
-            ..request("hello!!!", None)
-        })
-        .await
-        .unwrap();
+        let mut capped = request("hello!!!", None);
+        *legacy::says(&mut capped).max_output_tokens = Some(512);
+        llm.complete(&capped).await.unwrap();
         let sent = model.seen.lock()[0].clone();
         assert_eq!(sent.size.prompt_tokens, 3 + 8 + 16);
         assert!(!sent.size.counted_exactly);
@@ -1178,12 +1125,10 @@ async fn a_counted_prompt_reserves_its_counted_size() {
         .map(|key| {
             let llm = Arc::clone(&llm);
             tokio::spawn(async move {
-                llm.complete(&CompletionRequest {
-                    max_output_tokens: Some(512),
-                    cache_key: Some(key.into()),
-                    ..request(&"x".repeat(40_000), None)
-                })
-                .await
+                let mut capped = request(&"x".repeat(40_000), None);
+                *legacy::says(&mut capped).max_output_tokens = Some(512);
+                capped.cache_key = Some(key.into());
+                llm.complete(&capped).await
             })
         })
         .collect();

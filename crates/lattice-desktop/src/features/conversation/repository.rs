@@ -16,6 +16,7 @@ mod memory_recall;
 mod memory_semantic;
 mod memory_vectors;
 mod messages;
+mod names;
 mod port;
 mod pruning;
 pub(crate) mod space_rows;
@@ -27,22 +28,20 @@ mod workspace;
 #[cfg(test)]
 mod write_tests;
 
-use lattice_core::shared::persistence::driver::DriverPool;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 
 /// SQLite implementation of the conversation repository.
 #[derive(Clone)]
 pub struct ConversationRepository {
-    pool: SqlitePool,
+    db: Database,
     memory_embedding: Option<std::sync::Arc<dyn lattice_core::application::ports::EmbeddingPort>>,
 }
 
 impl ConversationRepository {
     /// Creates a conversation repository.
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
+    pub fn new(db: Database) -> Self {
         Self {
-            pool,
+            db,
             memory_embedding: None,
         }
     }

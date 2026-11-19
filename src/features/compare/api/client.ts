@@ -9,5 +9,5 @@ export const compareApi = {
   compareDocuments: async (
     request: CompareDocumentsRequest,
   ): Promise<ApiResult<CompareTableDto>> =>
-    apiCall<CompareTableDto>('compare_documents', { request }),
+    apiCall('compare_documents', { request }),
 };

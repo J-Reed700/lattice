@@ -18,12 +18,13 @@ async fn a_restore_that_stops_at_the_database_swap_has_already_placed_its_files(
     .unwrap();
     let db_path = app_data.join("lattice.db");
     let pool = seeded_pool(&db_path, 3).await;
+    let db = Database::new(pool.clone());
     let destination = tempfile::tempdir().unwrap();
     let settings: Arc<dyn SettingsRepositoryPort> = Arc::new(MockSettingsRepository::new());
     let key_store = isolated_key_store(&app_data);
     let service = ArchiveService::new(
         Arc::new(ArchiveWriter::new(
-            Database::from(pool.clone()),
+            db.clone(),
             app_data.clone(),
             settings.clone(),
             key_store.clone(),
@@ -31,7 +32,7 @@ async fn a_restore_that_stops_at_the_database_swap_has_already_placed_its_files(
             None,
         )),
         Arc::new(ArchiveRestorer::new(
-            Database::from(pool.clone()),
+            db.clone(),
             db_path.clone(),
             app_data.clone(),
             settings.clone(),
@@ -67,7 +68,7 @@ async fn a_restore_that_stops_at_the_database_swap_has_already_placed_its_files(
     let target_pool = seeded_pool(&target_db, 1).await;
     std::fs::create_dir_all(target_app_data.join("lattice.db.restoring")).unwrap();
     let restorer = ArchiveRestorer::new(
-        Database::from(target_pool),
+        Database::new(target_pool),
         target_db.clone(),
         target_app_data.clone(),
         Arc::new(MockSettingsRepository::new()),

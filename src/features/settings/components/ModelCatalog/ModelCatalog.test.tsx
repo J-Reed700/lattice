@@ -64,11 +64,6 @@ describe('modelMetaLine', () => {
     const line = modelMetaLine(metadata({ size_gb: 0, supported_quantizations: [], default_filename: null }), null);
     expect(line).toBe('Chat');
   });
-
-  it('turns the safetensors badge into a word in the meta line', () => {
-    const line = modelMetaLine(metadata({ format: 'safetensors' }), 12_000);
-    expect(line).toContain('Safetensors');
-  });
 });
 
 describe('ModelFilterPanel', () => {

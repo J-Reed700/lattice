@@ -95,6 +95,42 @@ pub struct LearningBlockDto {
     pub source_ids: Vec<String>,
     #[serde(default)]
     pub rubric: Vec<LearningPracticeCriterionDto>,
+    #[serde(default)]
+    pub check: Option<LearningCheckDto>,
+}
+/// A check section's two halves: the case the learner reasons through, and
+/// what is revealed once they commit an answer.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningCheckDto {
+    pub question: String,
+    pub reveal: String,
+}
+impl LearningBlockDto {
+    /// A block; a check block carries its halves as `split_check` reads its body.
+    pub fn new(
+        kind: LearningBlockKind,
+        title: String,
+        body: String,
+        source_ids: Vec<String>,
+        rubric: Vec<LearningPracticeCriterionDto>,
+    ) -> Self {
+        let check = (kind == LearningBlockKind::Check)
+            .then(|| crate::generation::split_check(&body))
+            .flatten()
+            .map(|(question, reveal)| LearningCheckDto {
+                question: question.to_owned(),
+                reveal: reveal.to_owned(),
+            });
+        Self {
+            kind,
+            title,
+            body,
+            source_ids,
+            rubric,
+            check,
+        }
+    }
 }
 /// One of the six questions the lesson's prose step writes and reviews; it
 /// joins the lesson's quiz bank when the lesson is published.
@@ -133,6 +169,7 @@ pub struct LearningModuleDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[cfg_attr(any(test, feature = "test-support"), derive(PartialEq))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LearningProjectMilestoneDto {
     pub title: String,
@@ -217,6 +254,12 @@ pub struct PrepareLearningModuleRequestDto {
     pub program_id: String,
     pub module_id: String,
     pub expected_revision: i64,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PrepareLearningAheadRequestDto {
+    pub program_id: String,
+    pub lesson_id: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]

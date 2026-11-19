@@ -16,9 +16,6 @@ use crate::features::embedding::dto::{
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::error::{AppError, Result};
 
-/// Maximum text length for embedding (10,000 characters)
-const MAX_TEXT_LENGTH: usize = 10_000;
-
 /// Generate single embedding use case.
 ///
 /// Generates a vector embedding for a single text input:
@@ -45,7 +42,6 @@ impl GenerateSingleEmbeddingUseCase {
     ///
     /// Returns error if:
     /// - Text is empty
-    /// - Text exceeds max length (10,000 characters)
     /// - Embedding generation fails
     pub async fn execute(
         &self,
@@ -56,22 +52,13 @@ impl GenerateSingleEmbeddingUseCase {
             return Err(AppError::InvalidInput("Text cannot be empty".to_string()));
         }
 
-        // 2. Validate text length
-        if request.text.len() > MAX_TEXT_LENGTH {
-            return Err(AppError::InvalidInput(format!(
-                "Text exceeds maximum length of {} characters (got {} characters)",
-                MAX_TEXT_LENGTH,
-                request.text.len()
-            )));
-        }
-
-        // 3. Normalize text (trim whitespace)
+        // 2. Normalize text (trim whitespace)
         let normalized_text = request.text.trim();
 
-        // 4. Generate embedding via port
+        // 3. Generate embedding via port
         let embedding = self.embedding_service.embed_single(normalized_text).await?;
 
-        // 5. Get dimension from service
+        // 4. Get dimension from service
         let dimension = self.embedding_service.dimension();
 
         // 6. Validate embedding dimension matches
@@ -218,38 +205,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_generate_embedding_text_too_long() {
+    async fn test_generate_embedding_long_text_is_not_refused_for_its_length() {
         let mock_service = Arc::new(MockEmbeddingService::new(384));
         let use_case = GenerateSingleEmbeddingUseCase::new(mock_service);
 
-        let long_text = "a".repeat(MAX_TEXT_LENGTH + 1);
+        let long_text = "a".repeat(50_000);
 
         let result = use_case
             .execute(GenerateSingleEmbeddingRequestDto { text: long_text })
             .await;
 
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            AppError::InvalidInput(msg) => {
-                assert!(msg.contains("exceeds maximum length"));
-                assert!(msg.contains(&MAX_TEXT_LENGTH.to_string()));
-            }
-            _ => panic!("Expected InvalidInput error"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_generate_embedding_at_max_length() {
-        let mock_service = Arc::new(MockEmbeddingService::new(384));
-        let use_case = GenerateSingleEmbeddingUseCase::new(mock_service);
-
-        let max_text = "a".repeat(MAX_TEXT_LENGTH);
-
-        let result = use_case
-            .execute(GenerateSingleEmbeddingRequestDto { text: max_text })
-            .await;
-
-        assert!(result.is_ok()); // Should succeed at exactly max length
+        assert!(result.is_ok());
     }
 
     #[tokio::test]

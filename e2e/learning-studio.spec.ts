@@ -223,7 +223,7 @@ test("Learning Studio saved draft findings can be repaired at desktop and narrow
   const review = page.getByRole("region", { name: "Outline review" });
   await expect(review.getByText("Saved draft · 1 unresolved finding")).toBeVisible();
   await expect(review.getByText("This unsupported statement is retained for review.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Accept program" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Start this course" })).toBeDisabled();
   await page.screenshot({ path: `e2e-results/learning-draft-${browserName}.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(review.getByRole("button", { name: "Repair remaining issues" })).toBeVisible();
@@ -234,7 +234,7 @@ test("Learning Studio saved draft findings can be repaired at desktop and narrow
   await page.screenshot({ path: `e2e-results/learning-draft-narrow-${browserName}.png`, fullPage: true });
   await review.getByRole("button", { name: "Repair remaining issues" }).click();
   await expect(review.getByText("Outline checks passed", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Accept program" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Start this course" })).toBeEnabled();
   await expectNoUnsupportedIpc(page);
 });
 
@@ -250,27 +250,33 @@ test("Learning Studio citations trace saved evidence and support clean reading a
   await expect(evidence.getByText(/Saved version/)).toBeVisible();
   // The original page opens in the in-app source reader at the saved passage, not in an external browser.
   await evidence.getByRole("button", { name: "Open original page" }).click();
-  const reader = page.getByRole("dialog", { name: "Public field notes" });
+  const reader = page.getByRole("complementary", { name: "Source reader" });
   await expect(reader.locator("mark.source-reader-passage")).toHaveText(excerptSentinel);
   await page.keyboard.press("Escape");
-  await expect(reader).toHaveCount(0);
+  await expect(reader).toBeHidden();
   await page.screenshot({ path: `e2e-results/learning-reference-mvp-${browserName}.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(evidence.getByText(/14 statements verified against sources/)).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
   const section = page.locator('#lesson-lesson-observation-section-0');
-  await section.locator('summary').filter({ hasText: 'Evidence · 1 checked statement' }).click();
-  await expect(section.getByText('A careful comparison records the chosen measure and observation period.')).toBeVisible();
-  await section.locator('summary').filter({ hasText: 'Public field notes' }).click();
-  await expect(section.getByText(excerptSentinel, { exact: true })).toBeVisible();
-  expect(await section.getByText(excerptSentinel, { exact: true }).evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  const chip = section.getByRole('button', { name: 'Citation 1', exact: true });
+  await expect(section.getByRole('button', { name: 'Citation 1: Public field notes' })).toBeVisible();
+  await chip.click();
+  const narrowReader = page.getByRole('dialog', { name: 'Public field notes' });
+  await expect(narrowReader.locator('mark.source-reader-passage')).toHaveText(excerptSentinel);
+  await expect(chip).toHaveClass(/is-lit/);
   await page.screenshot({ path: `e2e-results/learning-citations-narrow-${browserName}.png`, fullPage: true });
+  await page.keyboard.press('Escape');
+  await expect(narrowReader).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
   await page.getByRole('button', { name: 'Hide citations', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Lesson evidence' })).toHaveCount(0);
-  await expect(section.locator('summary')).toHaveCount(0);
-  await expect(section.getByText('A comparison begins by naming the measure and the period under observation.')).toBeVisible();
+  await expect(chip).toHaveCount(0);
+  await expect(section.locator('.citation-hidden')).toHaveCount(1);
+  await expect(section.getByText('Sources', { exact: true })).toHaveCount(0);
+  await expect(section).toContainText('A comparison begins by naming the measure and the period under observation.');
   await expect(page.getByText('View citation', { exact: true })).toHaveCount(0);
   await page.screenshot({ path: `e2e-results/learning-clean-reading-narrow-${browserName}.png`, fullPage: true });
 

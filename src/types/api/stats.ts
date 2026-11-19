@@ -61,37 +61,6 @@ export interface RecordMetricResultDto {
 }
 
 /**
- * Cache hit rate calculation helper.
- */
-export interface CacheStats {
-  /** Total cache accesses */
-  totalAccesses: number;
-  /** Number of hits */
-  hits: number;
-  /** Number of misses */
-  misses: number;
-  /** Hit rate as percentage (0-100) */
-  hitRatePercent: number;
-}
-
-/**
- * Helper to calculate cache stats from metrics snapshot.
- */
-export function calculateCacheStats(metrics: MetricsSnapshotDto): CacheStats {
-  const totalAccesses = metrics.cacheHits + metrics.cacheMisses;
-  const hitRatePercent = totalAccesses > 0
-    ? (metrics.cacheHits / totalAccesses) * 100
-    : 0;
-
-  return {
-    totalAccesses,
-    hits: metrics.cacheHits,
-    misses: metrics.cacheMisses,
-    hitRatePercent,
-  };
-}
-
-/**
  * Uptime formatted as human-readable string.
  */
 export function formatUptime(seconds: number): string {

@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use lattice_core::domain::entities::Embedding as DomainEmbedding;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::bind_limit::rows_per_statement;
+use lattice_core::shared::persistence::WriteTx;
 use sqlx::SqliteConnection;
 
 #[cfg(test)]
@@ -35,11 +36,7 @@ fn validate_persisted_vector(vector: &[f32], dimension: i64) -> Result<()> {
     Ok(())
 }
 
-pub async fn save(
-    conn: &mut SqliteConnection,
-    entity: &DomainEmbedding,
-    vector: Vec<f32>,
-) -> Result<()> {
+pub async fn save(tx: &mut WriteTx, entity: &DomainEmbedding, vector: Vec<f32>) -> Result<()> {
     EmbeddingMapper::validate_dimension(entity, &vector)?;
 
     let dto = EmbeddingMapper::to_dto(entity, vector);
@@ -69,17 +66,14 @@ pub async fn save(
         dimension,
         created_at
     )
-    .execute(conn)
+    .execute(&mut **tx)
     .await
     .map_err(|e| AppError::Database(format!("Failed to save embedding: {}", e)))?;
 
     Ok(())
 }
 
-pub async fn save_batch(
-    conn: &mut SqliteConnection,
-    entries: Vec<(DomainEmbedding, Vec<f32>)>,
-) -> Result<()> {
+pub async fn save_batch(tx: &mut WriteTx, entries: Vec<(DomainEmbedding, Vec<f32>)>) -> Result<()> {
     use sqlx::QueryBuilder;
     use std::time::Instant;
     use tracing::info;
@@ -151,7 +145,7 @@ pub async fn save_batch(
 
         query_builder
             .build()
-            .execute(&mut *conn)
+            .execute(&mut **tx)
             .await
             .map_err(|e| AppError::Database(format!("Failed to insert embedding batch: {}", e)))?;
     }
@@ -293,19 +287,19 @@ pub async fn vectors_by_document_ids(
     Ok(vectors)
 }
 
-pub async fn delete_by_chunk_id(conn: &mut SqliteConnection, chunk_id: &str) -> Result<()> {
+pub async fn delete_by_chunk_id(tx: &mut WriteTx, chunk_id: &str) -> Result<()> {
     sqlx::query!(
         r#"DELETE FROM text_embeddings WHERE chunk_id = ?"#,
         chunk_id
     )
-    .execute(conn)
+    .execute(&mut **tx)
     .await
     .map_err(|e| AppError::Database(format!("Failed to delete embedding: {}", e)))?;
 
     Ok(())
 }
 
-pub async fn delete_by_document_id(conn: &mut SqliteConnection, document_id: &str) -> Result<()> {
+pub async fn delete_by_document_id(tx: &mut WriteTx, document_id: &str) -> Result<()> {
     sqlx::query(
         r#"
         DELETE FROM text_embeddings
@@ -315,7 +309,7 @@ pub async fn delete_by_document_id(conn: &mut SqliteConnection, document_id: &st
         "#,
     )
     .bind(document_id)
-    .execute(conn)
+    .execute(&mut **tx)
     .await
     .map_err(|e| AppError::Database(format!("Failed to delete embeddings: {}", e)))?;
 

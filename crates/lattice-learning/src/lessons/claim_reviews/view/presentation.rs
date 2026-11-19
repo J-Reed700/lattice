@@ -13,6 +13,8 @@ use serde_json::Value;
 use super::super::dto::{ClaimPresentationDto, ResearchSummaryDto};
 use super::SourceFacts;
 use crate::content_verification::{field_text, located_quote};
+use crate::lessons::claim_reviews::count;
+use crate::lessons::review_findings::FindingSite;
 
 /// Whether the machine took the statement's text out of the lesson: what
 /// stands where its location says is another sentence now, or another section.
@@ -60,16 +62,14 @@ pub(in crate::lessons::claim_reviews) fn presentation(
 /// "Section 2 · Defining Tool Schemas", "Question 3", "Question 3 · answer
 /// key": blocks are numbered from one, questions after the blocks.
 fn place(kind: UnitKind, unit_index: usize, units: &Value, title: &str) -> String {
-    let blocks = units
+    let sections = units
         .get("blocks")
         .and_then(Value::as_array)
         .map_or(0, Vec::len);
-    let question = unit_index.saturating_sub(blocks) + 1;
+    let site = FindingSite::of_unit(unit_index, sections);
     match kind {
-        UnitKind::Block if title.trim().is_empty() => format!("Section {}", unit_index + 1),
-        UnitKind::Block => format!("Section {} · {}", unit_index + 1, plain_text(title)),
-        UnitKind::Question => format!("Question {question}"),
-        UnitKind::AnswerKey => format!("Question {question} · answer key"),
+        UnitKind::AnswerKey => format!("{} · answer key", site.label()),
+        _ => site.titled(title),
     }
 }
 
@@ -80,7 +80,6 @@ pub(super) fn tried(
     entry: &ClaimLedgerEntry,
     sources: &HashMap<String, SourceFacts>,
 ) -> ResearchSummaryDto {
-    let count = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
     let mut searches = 0;
     // Each saved version with when research last saved it.
     let mut saved: HashMap<&str, i64> = HashMap::new();

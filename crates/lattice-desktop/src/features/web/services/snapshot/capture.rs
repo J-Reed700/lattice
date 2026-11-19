@@ -25,6 +25,7 @@ use crate::features::web::traits::page_snapshot::{
     ProgressSink,
 };
 use crate::infrastructure::extraction::html_text::html_to_text;
+use lattice_core::shared::error::WithCauses;
 
 /// How far into the document to look for `<meta charset>` (the HTML prescan window).
 const META_SNIFF_BYTES: usize = 1024;
@@ -330,11 +331,7 @@ fn needs_browser_escalation(doc: &Document) -> bool {
         "data-reactroot",
     ];
     let has_spa_root = spa_roots.iter().any(|root| lower_html.contains(root));
-    if has_spa_root && lower_html.contains("<script") && vis_len < 80 {
-        return true;
-    }
-
-    false
+    has_spa_root && lower_html.contains("<script") && vis_len < 80
 }
 
 /// 403, 429 and 503 are `Blocked` (a browser may pass); other non-2xx is refused.
@@ -350,9 +347,9 @@ fn send_error(error: reqwest::Error) -> CaptureError {
     if error.is_timeout() {
         CaptureError::Timeout
     } else if error.is_redirect() {
-        CaptureError::Refused(error.to_string())
+        CaptureError::Refused(WithCauses(&error).to_string())
     } else {
-        CaptureError::Network(error.to_string())
+        CaptureError::Network(WithCauses(&error).to_string())
     }
 }
 

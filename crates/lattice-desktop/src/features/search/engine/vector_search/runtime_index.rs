@@ -280,7 +280,7 @@ mod tests {
             dir.path().join("usearch-unconfigured.usearch"),
             VectorIndexCompression::None,
             None,
-            Database::from(pool.clone()),
+            Database::new(pool.clone()),
             Arc::default(),
         ));
         // These handles exist before the user downloads their first model.
@@ -330,7 +330,7 @@ mod tests {
             dir.path().join("index"),
             VectorIndexCompression::None,
             None,
-            Database::from(pool.clone()),
+            Database::new(pool.clone()),
             Arc::default(),
         );
         sqlx::query("DROP TABLE text_embeddings")
@@ -357,7 +357,7 @@ mod tests {
             dir.path().join("usearch-unconfigured-mrl1f32.usearch"),
             compression.clone(),
             None,
-            Database::from(pool.clone()),
+            Database::new(pool.clone()),
             Arc::default(),
         );
         runtime.bind_first(&Model("sha256:first")).await.unwrap();

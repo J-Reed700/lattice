@@ -3,7 +3,8 @@ use crate::{
     dto::*,
     repository::LearningRepository,
 };
-use lattice_core::shared::error::Result;
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use std::time::Duration;
 
@@ -15,8 +16,8 @@ fn scene(label: &str, count: usize) -> serde_json::Value {
     })
 }
 
-async fn active_program(pool: &SqlitePool) -> Result<LearningProgramDto> {
-    let repo = LearningRepository::new(pool.clone());
+async fn active_program(db: &Database) -> Result<LearningProgramDto> {
+    let repo = LearningRepository::new(db.clone());
     let program = crate::tests::fixture();
     repo.create(&program).await?;
     repo.accept(&AcceptLearningProgramRequestDto {
@@ -33,16 +34,8 @@ async fn persistent_pool(path: std::path::PathBuf) -> Result<SqlitePool> {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options)
-        .await
-        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
-    sqlx::query("PRAGMA foreign_keys=ON")
-        .execute(&pool)
-        .await
-        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+        .await?;
+    sqlx::query("PRAGMA foreign_keys=ON").execute(&pool).await?;
     Ok(pool)
 }
 
@@ -52,7 +45,7 @@ async fn concurrent_pool(path: std::path::PathBuf) -> Result<SqlitePool> {
         .max_connections(4)
         .connect_with(options)
         .await
-        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))
+        .map_err(AppError::from)
 }
 
 fn uuid() -> String {
@@ -62,9 +55,10 @@ fn uuid() -> String {
 #[tokio::test]
 async fn workspaces_batch_snapshots_without_mixing_canvases_or_programs() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let program = active_program(&pool).await?;
-    let other = active_program(&pool).await?;
-    let repo = LearningCanvasRepository::new(pool);
+    let db = Database::new(pool);
+    let program = active_program(&db).await?;
+    let other = active_program(&db).await?;
+    let repo = LearningCanvasRepository::new(db);
     let (empty, reads) = lattice_core::shared::testing::query_counts::count_reads(
         repo.workspace(&program.summary.id),
     )
@@ -127,7 +121,7 @@ async fn workspaces_batch_snapshots_without_mixing_canvases_or_programs() -> Res
 }
 
 #[test]
-fn excalidraw_validation_checks_shape_size_and_disallows_unmanaged_files() {
+fn excalidraw_validation_checks_shape_and_disallows_unmanaged_files() {
     let valid = scene("a", 3);
     assert_eq!(
         validate_scene(&valid)
@@ -176,19 +170,16 @@ fn excalidraw_validation_checks_shape_size_and_disallows_unmanaged_files() {
     let mut invalid_version = scene("version", 0);
     invalid_version["version"] = serde_json::json!(0);
     assert!(validate_scene(&invalid_version).is_err());
-    assert!(validate_scene(&scene("too-many", 5_001)).is_err());
-    let oversized = serde_json::json!({"type":"excalidraw","version":2,"elements":[],"appState":{"large":"x".repeat(5 * 1024 * 1024)},"files":{}});
-    assert!(validate_scene(&oversized).is_err());
+    let large = serde_json::json!({"type":"excalidraw","version":2,"elements":[],"appState":{"large":"x".repeat(5 * 1024 * 1024)},"files":{}});
+    assert!(validate_scene(&large).is_ok());
 }
 
 #[tokio::test]
 async fn canvas_revisions_operations_snapshots_and_restore_are_transactional() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    sqlx::query("PRAGMA foreign_keys=ON")
-        .execute(&pool)
-        .await
-        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
-    let program = active_program(&pool).await?;
+    let db = Database::new(pool.clone());
+    sqlx::query("PRAGMA foreign_keys=ON").execute(&pool).await?;
+    let program = active_program(&db).await?;
     let lesson_id = program
         .modules
         .first()
@@ -197,7 +188,7 @@ async fn canvas_revisions_operations_snapshots_and_restore_are_transactional() -
         .ok_or_else(|| {
             lattice_core::shared::error::AppError::InvalidState("fixture lesson missing".into())
         })?;
-    let repo = LearningCanvasRepository::new(pool.clone());
+    let repo = LearningCanvasRepository::new(db.clone());
     let canvas_id = uuid();
     let create = CreateLearningCanvasRequestDto {
         operation_id: uuid(),
@@ -330,7 +321,7 @@ async fn canvas_revisions_operations_snapshots_and_restore_are_transactional() -
         .any(|s| s.id == restore.pre_restore_snapshot_id && s.title == "Later"));
 
     let mut other_program = crate::tests::fixture();
-    let other_repo = LearningRepository::new(pool.clone());
+    let other_repo = LearningRepository::new(db.clone());
     other_repo.create(&other_program).await?;
     other_repo
         .accept(&AcceptLearningProgramRequestDto {
@@ -352,14 +343,13 @@ async fn canvas_revisions_operations_snapshots_and_restore_are_transactional() -
     };
     assert!(repo.save(&wrong_owner, &expanded).await.is_err());
 
-    let learning_repo = LearningRepository::new(pool.clone());
+    let learning_repo = LearningRepository::new(db.clone());
     learning_repo.delete(&program.summary.id).await?;
     let remaining: i64 =
         sqlx::query_scalar("SELECT count(*) FROM learning_canvases WHERE program_id=?")
             .bind(&program.summary.id)
             .fetch_one(&pool)
-            .await
-            .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+            .await?;
     assert_eq!(remaining, 0);
     Ok(())
 }
@@ -369,8 +359,10 @@ async fn canvas_scene_and_snapshot_survive_a_database_restart() -> Result<()> {
     let directory = tempfile::tempdir()
         .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     let path = directory.path().join("canvas.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
     let first = persistent_pool(path.clone()).await?;
-    let program = active_program(&first).await?;
+    let first_db = Database::new(first.clone());
+    let program = active_program(&first_db).await?;
     let canvas_id = uuid();
     let request = CreateLearningCanvasRequestDto {
         operation_id: uuid(),
@@ -381,7 +373,7 @@ async fn canvas_scene_and_snapshot_survive_a_database_restart() -> Result<()> {
         description: "Restart check".into(),
         scene_json: scene("saved", 4),
     };
-    let repo = LearningCanvasRepository::new(first.clone());
+    let repo = LearningCanvasRepository::new(first_db.clone());
     repo.create(&request, &validate_scene(&request.scene_json)?)
         .await?;
     let snapshot = CreateLearningCanvasSnapshotRequestDto {
@@ -395,7 +387,8 @@ async fn canvas_scene_and_snapshot_survive_a_database_restart() -> Result<()> {
     repo.create_snapshot(&snapshot).await?;
     first.close().await;
     let second = persistent_pool(path).await?;
-    let reopened = LearningCanvasRepository::new(second.clone())
+    let second_db = Database::new(second.clone());
+    let reopened = LearningCanvasRepository::new(second_db.clone())
         .workspace(&program.summary.id)
         .await?;
     assert_eq!(
@@ -418,8 +411,10 @@ async fn concurrent_retry_of_identical_save_commits_one_revision_and_receipt() -
     let directory = tempfile::tempdir()
         .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     let path = directory.path().join("canvas-concurrent.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
     let setup_pool = persistent_pool(path.clone()).await?;
-    let program = active_program(&setup_pool).await?;
+    let setup_db = Database::new(setup_pool.clone());
+    let program = active_program(&setup_db).await?;
     let canvas_id = uuid();
     let create = CreateLearningCanvasRequestDto {
         operation_id: uuid(),
@@ -430,13 +425,14 @@ async fn concurrent_retry_of_identical_save_commits_one_revision_and_receipt() -
         description: String::new(),
         scene_json: scene("before", 1),
     };
-    LearningCanvasRepository::new(setup_pool.clone())
+    LearningCanvasRepository::new(setup_db.clone())
         .create(&create, &validate_scene(&create.scene_json)?)
         .await?;
     setup_pool.close().await;
 
     let pool = concurrent_pool(path).await?;
-    let repository = LearningCanvasRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repository = LearningCanvasRepository::new(db.clone());
     let save = SaveLearningCanvasRequestDto {
         operation_id: uuid(),
         program_id: program.summary.id.clone(),
@@ -466,8 +462,7 @@ async fn concurrent_retry_of_identical_save_commits_one_revision_and_receipt() -
     )
     .bind(&save.operation_id)
     .fetch_one(&pool)
-    .await
-    .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+    .await?;
     assert_eq!(receipts, 1);
     pool.close().await;
     Ok(())

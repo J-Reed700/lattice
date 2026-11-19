@@ -2,35 +2,39 @@
 //! `docs/design/2026-09-19-conversation-memory.md` §6.3). Validation proves a
 //! quote is real, not whose instruction it is or what it is about, so every
 //! new item and proposed transition gets a structured look at the original
-//! passages. When review cannot run, or answers unparseably or without a reason,
-//! the verdict is [`SemanticVerdict::Ambiguous`], never `Supported`.
+//! passages. When review cannot run, or leaves a change unanswered, the
+//! verdict is [`SemanticVerdict::Ambiguous`], never `Supported`.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
-use serde::Deserialize;
 use tracing::warn;
 
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::ask::{
+    ask_each, Alone, Answered, Metered, Plain, Refusal, Says, Settled,
+};
+use lattice_core::application::services::model_contract::shape::{
+    Authored, Each, Fields, Form, Vocabulary,
+};
+use lattice_core::application::services::model_contract::shown::{
+    Drawn, Internal, Kind, Scope, Showing, Told,
+};
+use lattice_core::application::services::model_contract::{Contract, ContractId};
 use lattice_core::domain::conversation::memory::{
     EvidenceSpan, MemoryItem, SemanticVerdict, SourceMessage, ValidatedPatch,
     ValidatedTransitionTarget,
 };
+use lattice_core::shared::error::Result;
 
 use super::prompts::{
-    render_verifier_prompt, verdict_schema, ContextPassage, ReviewPassage, ReviewRequest,
-    VERIFIER_SYSTEM,
+    render_verifier_prompt, ReviewPassage, ReviewRequest, SurroundingPassage, VERIFIER_SYSTEM,
 };
 use super::segment::clip_chars;
-use super::{complete_json, CompactionError, Deadline};
+use super::{CompactionError, Deadline};
 
 /// Proposals per review call. Small batches on purpose: a reviewer asked about
-/// a dozen unrelated changes at once starts dropping ids, and a dropped id is a
-/// silent `Ambiguous`.
+/// a dozen unrelated changes at once starts leaving changes out.
 pub const MAX_REVIEWS_PER_CALL: usize = 6;
-
-/// How often a batch's reviews are asked for. A reply can leave reviews unread
-/// (`gives_a_reason`); what a second ask does not read stays ambiguous.
-const ASKS_PER_BATCH: usize = 2;
 
 /// Verdicts for one patch, keyed the way [`apply_patch`] wants them.
 ///
@@ -153,16 +157,17 @@ pub async fn review_patch(
         .map(|message| (message.id.as_str(), message))
         .collect();
 
-    let mut requests: Vec<OwnedReview> = Vec::new();
+    let mut requests: Vec<Review> = Vec::new();
     for addition in &additions {
-        requests.push(OwnedReview {
-            id: format!("addition:{}", addition.candidate_id),
-            change: "add_mandatory_item",
-            kind: addition.kind.as_str(),
-            label: Some(addition.label.clone()),
-            proposed: addition.evidence.clone(),
+        requests.push(Review {
+            subject: Subject::Addition(addition.candidate_id.clone()),
+            change: Told("add_mandatory_item".to_owned()),
+            kind: Told(addition.kind.as_str().to_owned()),
+            label: Some(Told(addition.label.clone())),
+            proposed: passages(&addition.evidence, evidence),
             existing: Vec::new(),
             existing_label: None,
+            context: surrounding(&addition.evidence, &[], &messages),
         });
     }
     for transition in &patch.transitions {
@@ -186,46 +191,88 @@ pub async fn review_patch(
                     .iter()
                     .find(|addition| addition.candidate_id == id)
             });
-        requests.push(OwnedReview {
-            id: format!("transition:{}", transition.target.as_str()),
-            change: match transition.state {
-                lattice_core::domain::conversation::memory::MemoryState::Resolved => "resolve_item",
-                _ => "supersede_item",
-            },
-            kind: existing
-                .map(|item| item.kind.as_str())
-                .or_else(|| candidate.map(|item| item.kind.as_str()))
-                .unwrap_or("constraint"),
-            label: replacement.map(|addition| addition.label.clone()),
-            proposed: transition.evidence.clone(),
-            existing: existing
-                .map(|item| item.evidence.clone())
-                .or_else(|| candidate.map(|item| item.evidence.clone()))
-                .unwrap_or_default(),
+        let existing_spans = existing
+            .map(|item| item.evidence.clone())
+            .or_else(|| candidate.map(|item| item.evidence.clone()))
+            .unwrap_or_default();
+        requests.push(Review {
+            subject: Subject::Transition(transition.target.as_str().to_string()),
+            change: Told(
+                match transition.state {
+                    lattice_core::domain::conversation::memory::MemoryState::Resolved => {
+                        "resolve_item"
+                    }
+                    _ => "supersede_item",
+                }
+                .to_owned(),
+            ),
+            kind: Told(
+                existing
+                    .map(|item| item.kind.as_str())
+                    .or_else(|| candidate.map(|item| item.kind.as_str()))
+                    .unwrap_or("constraint")
+                    .to_owned(),
+            ),
+            label: replacement.map(|addition| Told(addition.label.clone())),
+            proposed: passages(&transition.evidence, evidence),
+            existing: passages(&existing_spans, evidence),
             existing_label: existing
-                .map(|item| item.label.clone())
-                .or_else(|| candidate.map(|item| item.label.clone())),
+                .map(|item| Told(item.label.clone()))
+                .or_else(|| candidate.map(|item| Told(item.label.clone()))),
+            context: surrounding(&transition.evidence, &existing_spans, &messages),
         });
     }
 
+    let chars_per_token = llm.chars_per_token();
     for batch in requests.chunks(MAX_REVIEWS_PER_CALL) {
-        let mut left: Vec<&OwnedReview> = batch.iter().collect();
-        for _ in 0..ASKS_PER_BATCH {
-            let Some(unread) =
-                ask_for_reviews(llm, deadline, &left, &messages, evidence, &mut outcome).await?
-            else {
-                break;
-            };
-            left = unread;
-            if left.is_empty() {
-                break;
+        let options = deadline.call_options()?;
+        let transport = Metered::new(&Plain);
+        let asked = ask_each::<MemoryReview>(
+            llm,
+            &transport,
+            &mut Scope::for_question(),
+            batch,
+            |open, _| Input::of(open, chars_per_token),
+            &options,
+        )
+        .await;
+        outcome.calls += usize::try_from(transport.used().sends).unwrap_or(usize::MAX);
+        let settled = match asked {
+            Ok(settled) => settled,
+            Err(error) => {
+                // A hard limit stops the job. A provider failure does not: the
+                // reviews keep their `Ambiguous` defaults and the pass continues.
+                deadline.check()?;
+                warn!(
+                    reviews = batch.len(),
+                    code = CompactionError::Model(error.to_string()).code(),
+                    "Memory review call failed — those changes stay ambiguous"
+                );
+                outcome.degraded = true;
+                continue;
+            }
+        };
+        let mut left = 0;
+        for (review, settled) in batch.iter().zip(settled) {
+            match settled {
+                Settled::Answered(reading) => {
+                    let verdict = SemanticVerdict::from(reading.verdict);
+                    match &review.subject {
+                        Subject::Addition(id) => {
+                            outcome.addition_verdicts.insert(id.clone(), verdict);
+                        }
+                        Subject::Transition(id) => {
+                            outcome.transition_verdicts.insert(id.clone(), verdict);
+                        }
+                    }
+                }
+                Settled::Unanswered(_) => left += 1,
             }
         }
-        if !left.is_empty() {
+        if left > 0 {
             warn!(
                 reviews = batch.len(),
-                left = left.len(),
-                "Memory review left changes unread — they stay ambiguous"
+                left, "Memory review left changes unread — they stay ambiguous"
             );
             outcome.degraded = true;
         }
@@ -234,131 +281,238 @@ pub async fn review_patch(
     Ok(outcome)
 }
 
-/// Ask for `reviews` once and record what the reply read in `outcome`. Returns
-/// the reviews it gave no reading of, or `None` when no reply came.
-async fn ask_for_reviews<'r>(
-    llm: &dyn LLMPort,
-    deadline: &Deadline,
-    reviews: &[&'r OwnedReview],
-    messages: &HashMap<&str, &SourceMessage>,
-    evidence: &EvidenceText,
-    outcome: &mut VerificationOutcome,
-) -> std::result::Result<Option<Vec<&'r OwnedReview>>, CompactionError> {
-    let render = |surrounding_chars: Option<usize>| {
-        reviews
-            .iter()
-            .map(|review| ReviewRequest {
-                id: review.id.as_str(),
-                change: review.change,
-                kind: review.kind,
-                label: review.label.as_deref(),
-                proposed_evidence: passages(&review.proposed, evidence),
-                existing_evidence: passages(&review.existing, evidence),
-                existing_label: review.existing_label.as_deref(),
-                surrounding: surrounding_chars.map_or_else(Vec::new, |max_chars| {
-                    surrounding(&review.proposed, &review.existing, messages, max_chars)
-                }),
-            })
-            .collect::<Vec<_>>()
-    };
-    // The surrounding text shares what the review call's window has left
-    // once the reviews themselves are in: each message is shown whole when
-    // that share holds it, and centred on its quotes and flagged when not.
-    let bare = render_verifier_prompt(&render(None));
-    let context_messages: usize = render(Some(usize::MAX))
-        .iter()
-        .map(|review| review.surrounding.len())
-        .sum();
-    let share = super::call_room_chars(llm, VERIFIER_SYSTEM, super::VERIFIER_OUTPUT_TOKENS, &bare)
-        / context_messages.max(1);
-    let rendered = render(Some(share));
+/// The reviewer's call: one verdict for each change.
+pub(super) struct MemoryReview;
 
-    let prompt = render_verifier_prompt(&rendered);
-    outcome.calls += 1;
-    let raw = match complete_json(
-        llm,
-        deadline,
-        VERIFIER_SYSTEM,
-        prompt,
-        Some(verdict_schema()),
-    )
-    .await
-    {
-        Ok(raw) => raw,
-        // A hard limit stops the job. A provider failure does not: the
-        // reviews keep their `Ambiguous` defaults and the pass continues.
-        Err(error @ (CompactionError::DeadlineExceeded(_) | CompactionError::Cancelled)) => {
-            return Err(error)
-        }
-        Err(error) => {
-            warn!(
-                reviews = reviews.len(),
-                code = error.code(),
-                "Memory review call failed — those changes stay ambiguous"
-            );
-            return Ok(None);
-        }
-    };
+impl Contract for MemoryReview {
+    const ID: ContractId = ContractId::new("memory-review");
+    type Input = Input;
+}
 
-    let Some(parsed) = parse_verdicts(&raw) else {
-        warn!(
-            reviews = reviews.len(),
-            "Memory review response was unparseable"
-        );
-        return Ok(Some(reviews.to_vec()));
-    };
-    let mut answered = std::collections::HashSet::new();
-    for verdict in parsed {
-        // Only ids this call asked about are updated. A verdict for anything
-        // else is a reviewer answering a question nobody put, and accepting it
-        // would let the model name its own subject.
-        if !gives_a_reason(&verdict.reason) || !reviews.iter().any(|review| review.id == verdict.id)
-        {
-            continue;
-        }
-        let Some(decision) = parse_verdict(&verdict.verdict) else {
-            continue;
-        };
-        if let Some(id) = verdict.id.strip_prefix("addition:") {
-            if let Some(slot) = outcome.addition_verdicts.get_mut(id) {
-                *slot = decision;
-                answered.insert(verdict.id.clone());
-            }
-        } else if let Some(id) = verdict.id.strip_prefix("transition:") {
-            if let Some(slot) = outcome.transition_verdicts.get_mut(id) {
-                *slot = decision;
-                answered.insert(verdict.id.clone());
-            }
+/// What names a change to the app: the candidate it adds, or the item it retires.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(super) enum Subject {
+    Addition(String),
+    Transition(String),
+}
+
+/// One quoted span offered to the reviewer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct Passage {
+    pub(super) sequence: Told<i64>,
+    pub(super) role: Told<String>,
+    pub(super) text: Option<Told<String>>,
+}
+
+/// An original message beside the quotes of a review; `quoted` is the byte range they cover.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct Excerpt {
+    pub(super) sequence: Told<i64>,
+    pub(super) role: Told<String>,
+    pub(super) text: Told<String>,
+    pub(super) quoted: Internal<Option<(usize, usize)>>,
+}
+
+/// One change the reviewer must judge.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct Review {
+    pub(super) subject: Subject,
+    pub(super) change: Told<String>,
+    pub(super) kind: Told<String>,
+    pub(super) label: Option<Told<String>>,
+    pub(super) proposed: Vec<Passage>,
+    pub(super) existing: Vec<Passage>,
+    pub(super) existing_label: Option<Told<String>>,
+    pub(super) context: Vec<Excerpt>,
+}
+
+impl Kind for Review {
+    const PREFIX: &'static str = "r";
+    const DRAWN: Drawn = Drawn::Itself;
+    type Ref = Subject;
+
+    fn reference(&self) -> Subject {
+        self.subject.clone()
+    }
+}
+
+/// How much of each surrounding message a request shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) enum Share {
+    Whole,
+    Omitted,
+    Chars(usize),
+}
+
+/// The changes one review call judges.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct Input {
+    pub(super) reviews: Vec<Review>,
+    pub(super) share: Internal<Share>,
+    pub(super) chars_per_token: Internal<f64>,
+}
+
+impl Input {
+    pub(super) fn of(open: &[&Review], chars_per_token: f64) -> Self {
+        Self {
+            reviews: open.iter().map(|review| (*review).clone()).collect(),
+            share: Internal::of(Share::Whole),
+            chars_per_token: Internal::of(chars_per_token),
         }
     }
-    Ok(Some(
-        reviews
+
+    /// The input whose surrounding text holds what `room` tokens hold, shared between its messages.
+    fn cut_to(&self, room: usize) -> Self {
+        let share = if room == 0 {
+            Share::Omitted
+        } else {
+            let messages: usize = self.reviews.iter().map(|review| review.context.len()).sum();
+            let chars = lattice_core::application::ports::llm_port::chars_within_tokens(
+                room,
+                *self.chars_per_token.value(),
+            );
+            Share::Chars(chars / messages.max(1))
+        };
+        Self {
+            share: Internal::of(share),
+            ..self.clone()
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Judgement {
+    Supported,
+    Ambiguous,
+    Unsupported,
+}
+
+impl Vocabulary for Judgement {
+    const WORDS: &'static [(&'static str, Self)] = &[
+        ("supported", Judgement::Supported),
+        ("ambiguous", Judgement::Ambiguous),
+        ("unsupported", Judgement::Unsupported),
+    ];
+}
+
+impl From<Judgement> for SemanticVerdict {
+    fn from(judgement: Judgement) -> Self {
+        match judgement {
+            Judgement::Supported => Self::Supported,
+            Judgement::Ambiguous => Self::Ambiguous,
+            Judgement::Unsupported => Self::Unsupported,
+        }
+    }
+}
+
+/// What the reviewer says of one change.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct Reading {
+    pub(super) reason: String,
+    pub(super) verdict: Judgement,
+}
+
+impl Authored for Reading {
+    fn form() -> Form {
+        Form::new().text("reason").word::<Judgement>("verdict")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        let reason = fields.text("reason")?;
+        let verdict = fields.word::<Judgement>("verdict")?;
+        Some(Self { reason, verdict })
+    }
+}
+
+const HOW_TO_ANSWER: &str = "Answer with an entries list holding one entry for each review, naming the review in of by its id, and giving its reason and then its verdict.";
+
+impl Answered for MemoryReview {
+    type Answer = Each<Review, Reading>;
+    const ALONE: Alone = Alone::Pending;
+
+    fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
+        let shown = showing.show(&input.reviews)?;
+        let ids: Vec<String> = shown.iter().map(|(handle, _)| handle.written()).collect();
+        let requests: Vec<ReviewRequest<'_>> = shown
             .iter()
-            .copied()
-            .filter(|review| !answered.contains(&review.id))
-            .collect(),
-    ))
+            .zip(&ids)
+            .map(|((_, review), id)| ReviewRequest {
+                id: id.as_str(),
+                change: review.change.0.as_str(),
+                kind: review.kind.0.as_str(),
+                label: review.label.as_ref().map(|label| label.0.as_str()),
+                proposed_evidence: shown_passages(&review.proposed),
+                existing_evidence: shown_passages(&review.existing),
+                existing_label: review.existing_label.as_ref().map(|label| label.0.as_str()),
+                surrounding: shown_context(&review.context, *input.share.value()),
+            })
+            .collect();
+        let mut says = Says::new(
+            format!("{VERIFIER_SYSTEM} {HOW_TO_ANSWER}"),
+            render_verifier_prompt(&requests),
+        );
+        says.output_tokens = super::VERIFIER_OUTPUT_TOKENS;
+        Ok(says)
+    }
+
+    fn accept(_input: &Input, reading: &Reading) -> std::result::Result<(), Refusal> {
+        if gives_a_reason(&reading.reason) {
+            Ok(())
+        } else {
+            Err(Refusal(
+                "Give this review a reason of one short sentence.".into(),
+            ))
+        }
+    }
+
+    fn within(input: &Input, room: usize) -> Option<Input> {
+        Some(input.cut_to(room))
+    }
 }
 
-/// One review, owned so batches can borrow from it without fighting lifetimes.
-struct OwnedReview {
-    id: String,
-    change: &'static str,
-    kind: &'static str,
-    label: Option<String>,
-    proposed: Vec<EvidenceSpan>,
-    existing: Vec<EvidenceSpan>,
-    existing_label: Option<String>,
-}
-
-fn passages<'a>(spans: &'a [EvidenceSpan], evidence: &'a EvidenceText) -> Vec<ReviewPassage<'a>> {
+fn passages(spans: &[EvidenceSpan], evidence: &EvidenceText) -> Vec<Passage> {
     spans
         .iter()
-        .map(|span| ReviewPassage {
-            message_id: span.message_id.as_str(),
-            sequence: span.sequence,
-            role: span.role.as_str(),
-            text: evidence.text(span),
+        .map(|span| Passage {
+            sequence: Told(span.sequence),
+            role: Told(span.role.as_str().to_owned()),
+            text: evidence.text(span).map(|text| Told(text.to_owned())),
+        })
+        .collect()
+}
+
+fn shown_passages(passages: &[Passage]) -> Vec<ReviewPassage<'_>> {
+    passages
+        .iter()
+        .map(|passage| ReviewPassage {
+            sequence: passage.sequence.0,
+            role: passage.role.0.as_str(),
+            text: passage.text.as_ref().map(|text| text.0.as_str()),
+        })
+        .collect()
+}
+
+/// Each message whole when `share` holds it, centred on its quotes and flagged when not.
+fn shown_context(context: &[Excerpt], share: Share) -> Vec<SurroundingPassage<'_>> {
+    let max_chars = match share {
+        Share::Omitted => return Vec::new(),
+        Share::Whole => usize::MAX,
+        Share::Chars(chars) => chars,
+    };
+    context
+        .iter()
+        .map(|excerpt| {
+            let text = excerpt.text.0.as_str();
+            let (text, truncated) = match excerpt.quoted.value() {
+                Some((start, end)) => clip_around(text, *start, *end, max_chars),
+                None => clip_chars(text, max_chars),
+            };
+            SurroundingPassage {
+                sequence: excerpt.sequence.0,
+                role: excerpt.role.0.as_str(),
+                text,
+                truncated,
+            }
         })
         .collect()
 }
@@ -372,10 +526,9 @@ fn surrounding<'a>(
     proposed: &[EvidenceSpan],
     existing: &[EvidenceSpan],
     messages: &HashMap<&'a str, &'a SourceMessage>,
-    max_chars: usize,
-) -> Vec<ContextPassage<'a>> {
+) -> Vec<Excerpt> {
     let spans: Vec<&EvidenceSpan> = proposed.iter().chain(existing).collect();
-    let mut out: Vec<ContextPassage<'a>> = Vec::new();
+    let mut out: Vec<Excerpt> = Vec::new();
     let mut current_ids: Vec<&str> = Vec::new();
     for span in &spans {
         let Some(message) = messages.get(span.message_id.as_str()) else {
@@ -406,13 +559,11 @@ fn surrounding<'a>(
             .map(|candidate| candidate.end_byte as usize)
             .max()
             .unwrap_or(message.content.len());
-        let (text, truncated) = clip_around(&message.content, start, end, max_chars);
-        out.push(ContextPassage {
-            message_id: message.id.as_str(),
-            sequence: message.sequence,
-            role: message.role.as_str(),
-            text,
-            truncated,
+        out.push(Excerpt {
+            sequence: Told(message.sequence),
+            role: Told(message.role.as_str().to_owned()),
+            text: Told(message.content.clone()),
+            quoted: Internal::of(Some((start, end))),
         });
     }
 
@@ -435,17 +586,15 @@ fn surrounding<'a>(
                 continue;
             }
             adjacent_seen.push(neighbour.id.as_str());
-            let (text, truncated) = clip_chars(&neighbour.content, max_chars);
-            out.push(ContextPassage {
-                message_id: neighbour.id.as_str(),
-                sequence: neighbour.sequence,
-                role: neighbour.role.as_str(),
-                text,
-                truncated,
+            out.push(Excerpt {
+                sequence: Told(neighbour.sequence),
+                role: Told(neighbour.role.as_str().to_owned()),
+                text: Told(neighbour.content.clone()),
+                quoted: Internal::of(None),
             });
         }
     }
-    out.sort_by_key(|passage| passage.sequence);
+    out.sort_by_key(|passage| passage.sequence.0);
     out
 }
 
@@ -472,49 +621,10 @@ fn clip_around(text: &str, start: usize, end: usize, max_chars: usize) -> (&str,
     (&text[clipped_start..clipped_end], true)
 }
 
-#[derive(Debug, Deserialize)]
-struct VerdictResponse {
-    #[serde(default)]
-    verdicts: Vec<RawVerdict>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawVerdict {
-    id: String,
-    verdict: String,
-    #[serde(default)]
-    reason: String,
-}
-
 /// Whether a verdict says why. The reason is the only sign the passages were
 /// read, and a model can answer with an empty one or a single filler word. A
 /// script written without spaces is not held to words.
 fn gives_a_reason(reason: &str) -> bool {
     let reason = reason.trim();
     reason.contains(char::is_whitespace) || (!reason.is_empty() && !reason.is_ascii())
-}
-
-/// Parse the reviewer response, tolerating one markdown fence.
-fn parse_verdicts(raw: &str) -> Option<Vec<RawVerdict>> {
-    let trimmed = raw.trim();
-    let body = match trimmed.strip_prefix("```") {
-        Some(rest) => {
-            let rest = rest.split_once('\n').map_or(rest, |(_, body)| body);
-            rest.trim_end().strip_suffix("```")?
-        }
-        None => trimmed,
-    };
-    serde_json::from_str::<VerdictResponse>(body.trim())
-        .ok()
-        .map(|response| response.verdicts)
-}
-
-/// Map a verdict word. An unrecognised word is not a vote for `Supported`.
-fn parse_verdict(word: &str) -> Option<SemanticVerdict> {
-    match word.trim().to_ascii_lowercase().as_str() {
-        "supported" => Some(SemanticVerdict::Supported),
-        "ambiguous" => Some(SemanticVerdict::Ambiguous),
-        "unsupported" => Some(SemanticVerdict::Unsupported),
-        _ => None,
-    }
 }

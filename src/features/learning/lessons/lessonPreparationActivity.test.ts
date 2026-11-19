@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { callsLine, preparationState, preparationSummary, preparingLine, statementsLine } from '@/features/learning/lessons/lessonPreparationActivity';
+import { callsLine, preparationState, preparationSummary, preparingLine, stageText, statementsLine } from '@/features/learning/lessons/lessonPreparationActivity';
 import type { LearningGenerationJob } from '@/lib/bindings';
 
 const job = (overrides: Partial<LearningGenerationJob> = {}): LearningGenerationJob => ({
@@ -12,7 +12,7 @@ const job = (overrides: Partial<LearningGenerationJob> = {}): LearningGeneration
     checksCompleted: 0, checksTotal: 0, checksReused: 0, newReferences: null, claims: null,
     recentSteps: [],
   },
-  progressTotal: 1, progressMessage: '', resultId: null, error: null, retryOfJobId: null, createdAt: 1, startedAt: 1, finishedAt: null,
+  progressTotal: 1, progressMessage: '', resultId: null, heldLessonIds: [], error: null, retryOfJobId: null, createdAt: 1, startedAt: 1, finishedAt: null,
   ...overrides,
 });
 
@@ -25,7 +25,7 @@ describe('Lesson preparation in one line', () => {
     expect(line(job({ status: 'pending', error: 'The model is unavailable.' }))).toBe('Lesson preparation will resume automatically: Boiling');
     expect(line(job({ status: 'cancelled' }))).toBe('Lesson preparation paused: Boiling');
     expect(line(job({ status: 'failed' }))).toBe('Lesson preparation failed: Boiling');
-    expect(line(job({ status: 'completed', resultId: 'needs_review:lesson-1' }))).toBe('Lesson waiting for your review: Boiling');
+    expect(line(job({ status: 'completed', heldLessonIds: ['lesson-1'] }))).toBe('Lesson waiting for your review: Boiling');
     expect(line(job({ activity: null }))).toBe('Preparing lesson · Starting');
   });
 
@@ -34,6 +34,25 @@ describe('Lesson preparation in one line', () => {
     expect(line(job({ status: 'completed' }))).toBeNull();
     expect(line(undefined, true)).toBe('Preparing lesson · Starting');
     expect(line(undefined, false, 'The request could not be saved.')).toBe('Lesson preparation failed');
+  });
+});
+
+describe('A preparing lesson that waits for the model', () => {
+  const waiting = { ...job().activity!, waitingForModel: true };
+
+  it('shows that instead of its stage, and its stage again without the flag', () => {
+    expect(stageText(waiting, 'Checking claims')).toBe('Waiting for the model');
+    expect(stageText({ ...waiting, waitingForModel: false }, 'Checking claims')).toBe('Checking claims');
+    expect(stageText(job().activity!, 'Checking claims')).toBe('Checking claims');
+    expect(stageText(null, 'Checking claims')).toBe('Checking claims');
+  });
+
+  it('says so in its row and in the one-line summary', () => {
+    expect(preparingLine(waiting)).toBe('Preparing · Waiting for the model');
+    expect(preparingLine({ ...waiting, phase: 'evidence', checksCompleted: 40, checksTotal: 44 })).toBe('Preparing · Waiting for the model');
+    expect(preparingLine({ ...waiting, waitingForModel: false })).toBe('Preparing · Reviewing teaching and assessments');
+    expect(line(job({ activity: waiting }))).toBe('Preparing lesson: Boiling · Waiting for the model');
+    expect(line(job({ activity: { ...waiting, waitingForModel: false } }))).toBe('Preparing lesson: Boiling · Reviewing teaching and assessments');
   });
 });
 

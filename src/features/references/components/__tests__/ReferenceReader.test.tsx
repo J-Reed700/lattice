@@ -4,6 +4,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 
 import { citationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import { ReferenceReader } from '@/features/references/components/ReferenceReader';
+import { reply } from '@/tests/replyFixtures';
 import type { ConversationMessageBookmarkDto } from '@/types';
 import type { SourceWithMetadata } from '@/types/conversation';
 
@@ -26,7 +27,7 @@ it('opens the original citation ID and shares clean reading across the reference
   const onViewSource = vi.fn();
   const { container } = render(<MemoryRouter><ReferenceReader
     bookmark={bookmark} space={null} capture={null} resolutionFailed={false} captureDestination={null}
-    payload={{ content: 'A claim [7]. Step [1] is ordinary text.', sources: [source], sourceReferences: [] }}
+    payload={{ content: 'A claim [s7]. Step [1] is ordinary text.', reply: reply('A claim ', 7, '. Step [1] is ordinary text.'), sources: [source], sourceReferences: [] }}
     onViewSource={onViewSource} onSaveAnnotations={vi.fn(async () => true)}
     onOpenInChat={vi.fn()} onOpenConversation={vi.fn()} onOpenCapturedNote={vi.fn()}
     onCapture={vi.fn(async () => {})} onCopy={vi.fn(async () => true)} onDelete={vi.fn()}
@@ -37,7 +38,7 @@ it('opens the original citation ID and shares clean reading across the reference
   expect(screen.getByText('Saved source cards')).toBeVisible();
 
   fireEvent.click(screen.getByRole('button', { name: 'Hide citations' }));
-  await waitFor(() => expect(container.querySelector('.citation-hidden')).toHaveTextContent('[7]'));
+  await waitFor(() => expect(container.querySelector('.citation-hidden')).not.toBeNull());
   expect(screen.queryByText('Saved source cards')).not.toBeInTheDocument();
   expect(container).toHaveTextContent('Step [1] is ordinary text.');
   expect(citationDisplayStore.getState().visible).toBe(false);

@@ -5,11 +5,9 @@ use super::{QUIZ_BANK, QUIZ_GRADING};
 use crate::assessment_generation::{MaterialPassage, StoredItem};
 use crate::assessment_repository::LearningAssessmentRepository;
 use crate::curriculum_repository::lesson_rank_in;
-use crate::persistence::db;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::hash::sha256_hex;
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, WriteTx};
 use lattice_core::shared::runtime::jobs::{JobStore, NewJob};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -25,19 +23,18 @@ pub(super) struct LessonInputs {
 
 /// The lesson's heading, blocks and reviewed questions, read in one unit of work.
 pub(super) async fn lesson_inputs(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: &str,
     lesson_id: &str,
 ) -> Result<LessonInputs> {
-    let pool = pool.sqlx_pool();
-    let mut tx = pool.begin_read().await.map_err(db)?;
+    let mut tx = database.begin_read().await?;
     let (title, objective) = lesson_title_objective_in(&mut tx, program_id, lesson_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Lesson not found in this course".into()))?;
     let material = LearningAssessmentRepository::lesson_material_in(&mut tx, lesson_id).await?;
     let seeds =
         LearningAssessmentRepository::lesson_seeds_in(&mut tx, program_id, lesson_id).await?;
-    tx.commit().await.map_err(db)?;
+    tx.commit().await?;
     Ok(LessonInputs {
         title,
         objective,
@@ -59,7 +56,7 @@ fn derived_uuid(seed: &str) -> String {
 }
 
 pub(super) async fn queue_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     kind: &str,
     program_id: &str,
     operation_id: String,
@@ -69,7 +66,7 @@ pub(super) async fn queue_in(
     rank: Option<i64>,
 ) -> Result<String> {
     let admitted = JobStore::submit_with_rank_in(
-        connection,
+        tx,
         &NewJob {
             kind: kind.into(),
             subject_id: Some(program_id.into()),
@@ -83,8 +80,8 @@ pub(super) async fn queue_in(
     )
     .await?;
     if admitted.created {
-        let revision = program_revision_in(connection, program_id).await?;
-        insert_learning_job_in(connection, &admitted.id, program_id, revision.max(0)).await?;
+        let revision = program_revision_in(tx, program_id).await?;
+        insert_learning_job_in(tx, &admitted.id, program_id, revision.max(0)).await?;
     }
     Ok(admitted.id)
 }
@@ -92,15 +89,15 @@ pub(super) async fn queue_in(
 /// Queue the grading of a submitted quiz's pending items, or (with a
 /// contest) a blind regrade. The caller tells the runtime once it commits.
 pub(crate) async fn queue_grading_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     form_id: &str,
     contest_id: Option<&str>,
     seed: &str,
 ) -> Result<String> {
-    let pending = pending_item_count_in(connection, form_id).await?;
+    let pending = pending_item_count_in(tx, form_id).await?;
     queue_in(
-        connection,
+        tx,
         QUIZ_GRADING,
         program_id,
         derived_uuid(&format!("{QUIZ_GRADING}:{seed}")),
@@ -123,13 +120,13 @@ pub(crate) async fn queue_grading_in(
 /// Queue writing a published lesson's quiz bank, in the transaction that
 /// publishes the lesson. The caller tells the runtime once it commits.
 pub(crate) async fn queue_lesson_bank_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     lesson_id: &str,
 ) -> Result<String> {
-    let rank = lesson_rank_in(connection, lesson_id).await?;
+    let rank = lesson_rank_in(tx, lesson_id).await?;
     queue_in(
-        connection,
+        tx,
         QUIZ_BANK,
         program_id,
         uuid::Uuid::new_v4().to_string(),
@@ -155,12 +152,12 @@ pub(super) async fn program_revision_in(
         .bind(program_id)
         .fetch_one(&mut *connection)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// Records that a job belongs to the course at `base_revision`.
 pub(super) async fn insert_learning_job_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     job_id: &str,
     program_id: &str,
     base_revision: i64,
@@ -169,10 +166,10 @@ pub(super) async fn insert_learning_job_in(
         .bind(job_id)
         .bind(program_id)
         .bind(base_revision)
-        .execute(&mut *connection)
+        .execute(&mut **tx)
         .await
         .map(drop)
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// How many items of the form wait for their grade.
@@ -184,7 +181,7 @@ pub(super) async fn pending_item_count_in(
         .bind(form_id)
         .fetch_one(&mut *connection)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// The lesson's title and objective, when it is one of the course's.
@@ -198,5 +195,5 @@ pub(super) async fn lesson_title_objective_in(
         .bind(program_id)
         .fetch_optional(&mut *connection)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }

@@ -143,19 +143,13 @@ mod tests {
     use super::*;
     use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
     use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
-    use sqlx::sqlite::SqlitePoolOptions;
+    use lattice_core::shared::persistence::Database;
 
     async fn setup_repo() -> Arc<DownloadedModelRepository> {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
             .expect("create in-memory pool");
-        sqlx::migrate!("./migrations")
-            .run(&pool)
-            .await
-            .expect("run migrations");
-        Arc::new(DownloadedModelRepository::new(pool))
+        Arc::new(DownloadedModelRepository::new(Database::new(pool)))
     }
 
     fn make_local_embedding_model(model_id: &str) -> DownloadedModel {
@@ -243,18 +237,9 @@ mod tests {
     async fn test_first_run_when_embedding_model_present_but_status_not_completed() {
         let repo = setup_repo().await;
 
-        let pool = {
-            let p = SqlitePoolOptions::new()
-                .max_connections(1)
-                .connect(":memory:")
-                .await
-                .expect("create in-memory pool");
-            sqlx::migrate!("./migrations")
-                .run(&p)
-                .await
-                .expect("run migrations");
-            p
-        };
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+            .await
+            .expect("create in-memory pool");
 
         sqlx::query(
             r#"
@@ -274,7 +259,7 @@ mod tests {
         .await
         .expect("insert pending embedding row");
 
-        let pending_repo = Arc::new(DownloadedModelRepository::new(pool));
+        let pending_repo = Arc::new(DownloadedModelRepository::new(Database::new(pool)));
         let use_case = CheckFirstRunStatusUseCase::new(pending_repo, processor_only_probe());
         let response = use_case.execute().await.expect("execute should succeed");
 

@@ -2,20 +2,23 @@ import { Editor } from '@tiptap/core';
 import { Markdown } from 'tiptap-markdown';
 import { describe, expect, it } from 'vitest';
 
+import { reply } from '@/tests/replyFixtures';
+import { drawReply, markFor, type ReplyPiece } from '@/utils/replyPieces';
+
 import { createExtensions } from '../extensions';
 import { ClaimMarks, claimMarksKey, type ClaimMark } from '../extensions/claimMarks';
 
 import type { DecorationSet } from '@tiptap/pm/view';
 
 /** The text each claim was drawn over, keyed by its index, in a rendered answer. */
-function markedText(markdown: string, claims: ClaimMark[]): Map<string, string> {
+function markedText(parts: ReplyPiece[], claims: ClaimMark[]): Map<string, string> {
   const editor = new Editor({
     extensions: [
       ...createExtensions(),
       ClaimMarks.configure({ getClaims: () => claims }),
       Markdown.configure({ html: false }),
     ],
-    content: markdown,
+    content: drawReply(parts).markdown,
     editable: false,
   });
   const plugin = editor.state.plugins.find((candidate) => candidate.spec.key === claimMarksKey);
@@ -35,30 +38,33 @@ function markedText(markdown: string, claims: ClaimMark[]): Map<string, string> 
 describe('ClaimMarks', () => {
   it('finds a sentence the verifier cut from raw markdown in the rendered answer', () => {
     const marked = markedText(
-      '- The relationship is **non-linear**. Below ~30% cover the benefit is about half [2].',
+      reply('- The relationship is **non-linear**. Below ~30% cover the benefit is about half ', 2, '.'),
       [{ sentence: '- The relationship is **non-linear**.', verdict: 'supported' }],
     );
 
     expect(marked.get('0:claim claim-supported')).toBe('The relationship is non-linear');
   });
 
-  it('marks doubt on the words it is about, citation markers and all', () => {
+  it('marks doubt on the words it is about, a reference inside them and all', () => {
     const marked = markedText(
-      'Thermal imagery overstates what residents feel by a factor of three [4], so quote air temperature.',
-      [{ sentence: 'Thermal imagery overstates what residents feel by a factor of three [4], so quote air temperature.', verdict: 'unsupported' }],
+      reply('Thermal imagery overstates what residents feel by a factor of three ', 4, ', so quote air temperature.'),
+      [{
+        sentence: 'Thermal imagery overstates what residents feel by a factor of three, so quote air temperature.',
+        verdict: 'unsupported',
+      }],
     );
 
     expect(marked.get('0:claim claim-unsupported')).toBe(
-      'Thermal imagery overstates what residents feel by a factor of three [4], so quote air temperature',
+      `Thermal imagery overstates what residents feel by a factor of three ${markFor(0)}, so quote air temperature`,
     );
   });
 
   it('gives a sentence said twice to each verdict in reading order', () => {
     const marked = markedText(
-      'Canopy cover lowers air temperature [1].\n\nCanopy cover lowers air temperature [2].',
+      reply('Canopy cover lowers air temperature ', 1, '.\n\nCanopy cover lowers air temperature ', 2, '.'),
       [
-        { sentence: 'Canopy cover lowers air temperature [1].', verdict: 'supported' },
-        { sentence: 'Canopy cover lowers air temperature [2].', verdict: 'contradicted' },
+        { sentence: 'Canopy cover lowers air temperature.', verdict: 'supported' },
+        { sentence: 'Canopy cover lowers air temperature.', verdict: 'contradicted' },
       ],
     );
 
@@ -66,7 +72,7 @@ describe('ClaimMarks', () => {
   });
 
   it('leaves unmarked what it cannot find or cannot tell apart', () => {
-    const marked = markedText('Canopy cover lowers air temperature across the pooled studies.', [
+    const marked = markedText(reply('Canopy cover lowers air temperature across the pooled studies.'), [
       { sentence: 'A sentence the answer never contained at all.', verdict: 'unsupported' },
       // Too short to be sure it is this sentence and not the same words elsewhere.
       { sentence: 'Canopy cover.', verdict: 'unsupported' },

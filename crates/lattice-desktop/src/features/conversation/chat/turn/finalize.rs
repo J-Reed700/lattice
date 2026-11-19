@@ -2,6 +2,7 @@
 use super::generate::GeneratedAnswer;
 use super::prepare::PreparedTurn;
 use super::*;
+use crate::features::conversation::chat::reply_text::{self, ReplyText};
 use crate::features::conversation::chat::source_snapshots::CitationCapture;
 
 pub(super) async fn finalize_turn(
@@ -24,6 +25,7 @@ pub(super) async fn finalize_turn(
         memory_usage,
         summary_refold,
     } = generated;
+    turn.names.save().await?;
     tracing::info!(
         conversation_id = turn.conv_id.as_str(),
         response_length = response.len(),
@@ -42,6 +44,11 @@ pub(super) async fn finalize_turn(
     } else {
         response
     };
+    let reply = ReplyText::read(
+        &turn.names,
+        reply_text::markers(turn.source.as_ref()),
+        &assistant_response,
+    );
     let verification_start = Instant::now();
     // A closed-book turn cites nothing, so there is nothing to ground it
     // against — judging it only reports every sentence unsupported.
@@ -64,7 +71,7 @@ pub(super) async fn finalize_turn(
     // answer the reader is about to see, and so the step list is exactly what
     // was streamed.
     if tokens.completion.is_none() {
-        tokens.completion = Some(turn.llm.count_tokens(&assistant_response) as u64);
+        tokens.completion = Some(turn.llm.count_tokens(&reply.text) as u64);
     }
     let turn_record = TurnRecordDto {
         model: Some(turn.model.clone()),
@@ -81,13 +88,8 @@ pub(super) async fn finalize_turn(
         router,
     };
 
-    let background_verification = verification_enabled.then(|| {
-        (
-            assistant_response.clone(),
-            sources.clone(),
-            turn_record.clone(),
-        )
-    });
+    let background_verification =
+        verification_enabled.then(|| (reply.clone(), sources.clone(), turn_record.clone()));
 
     let finalize_start = Instant::now();
     // Finalization marks the question failed itself when the commit does not
@@ -100,7 +102,7 @@ pub(super) async fn finalize_turn(
         message_tokens,
         turn.history_len,
         FinishedAnswer {
-            response: assistant_response,
+            reply,
             sources,
             verification: verification_metadata,
             memory_usage,
@@ -112,12 +114,12 @@ pub(super) async fn finalize_turn(
     .await?;
     metrics.finalize_persistence_ms = elapsed_ms(finalize_start);
 
-    let verification = background_verification.map(|(response, sources, record)| {
+    let verification = background_verification.map(|(reply, sources, record)| {
         background_verification_for(
             container,
             turn,
             saved.message_id.clone(),
-            response,
+            reply,
             sources,
             record,
             verification_start,
@@ -159,7 +161,7 @@ fn background_verification_for(
     container: &dyn ChatRuntime,
     turn: &PreparedTurn,
     message_id: String,
-    response: String,
+    reply: ReplyText,
     sources: Vec<SourceDto>,
     record: TurnRecordDto,
     started: Instant,
@@ -172,7 +174,7 @@ fn background_verification_for(
         conversation_id: turn.conv_id.clone(),
         request_id: turn.turn_id.clone(),
         message_id,
-        response,
+        reply,
         sources,
         verifies_cited_only: turn
             .source

@@ -3,27 +3,26 @@
 #![cfg(test)]
 
 use super::*;
+use crate::application::services::model_contract::legacy;
 
 #[tokio::test(start_paused = true)]
 async fn interactive_completions_can_opt_out_without_changing_default_limits() {
-    let request = CompletionRequest {
+    let request = legacy::completion(legacy::Completion {
         time_budget: Some(Duration::from_secs(1)),
         ..Default::default()
-    };
+    });
     assert!(request
         .within_time_budget(tokio::time::sleep(Duration::from_secs(2)))
         .await
         .is_err());
-    let request = CompletionRequest {
-        no_time_limit: true,
-        ..request
-    };
+    let mut request = request;
+    request.no_time_limit = true;
     request
         .within_time_budget(tokio::time::sleep(Duration::from_secs(3600)))
         .await
         .unwrap();
     assert_eq!(
-        CompletionRequest::default().wall_clock_budget(),
+        legacy::completion(legacy::Completion::default()).wall_clock_budget(),
         Some(DEFAULT_COMPLETION_TIME_BUDGET)
     );
 }
@@ -34,7 +33,10 @@ fn interactive_work_outranks_verification_maintenance_and_background() {
     assert!(Interactive > Verification);
     assert!(Verification > Maintenance);
     assert!(Maintenance > Background);
-    assert_eq!(CompletionRequest::default().priority, Background);
+    assert_eq!(
+        legacy::completion(legacy::Completion::default()).priority,
+        Background
+    );
 }
 
 #[test]
@@ -59,15 +61,13 @@ fn a_pinned_policy_overrides_the_request_and_per_request_holds_tool_rounds_off()
         description: "Search".into(),
         parameters: serde_json::json!({"type":"object"}),
     };
-    let plain = CompletionRequest::default();
-    let thinking = CompletionRequest {
+    let plain = legacy::completion(legacy::Completion::default());
+    let thinking = legacy::completion(legacy::Completion {
         thinking: ThinkingMode::On,
         ..Default::default()
-    };
-    let tool_round = CompletionRequest {
-        tools: vec![tool],
-        ..thinking.clone()
-    };
+    });
+    let mut tool_round = thinking.clone();
+    *legacy::says(&mut tool_round).tools = vec![tool];
     let per_request = ThinkingPolicy::PerRequest;
     assert_eq!(per_request.mode_for(&plain), ThinkingMode::Off);
     assert_eq!(per_request.mode_for(&thinking), ThinkingMode::On);
@@ -153,7 +153,7 @@ fn a_multimodal_message_round_trips_with_tagged_parts() {
 
 #[test]
 fn pictures_count_by_declared_tokens_and_fall_back_to_captions() {
-    let request = CompletionRequest {
+    let request = legacy::completion(legacy::Completion {
         input: vec![
             CompletionInput::Message {
                 role: "system".into(),
@@ -162,17 +162,17 @@ fn pictures_count_by_declared_tokens_and_fall_back_to_captions() {
             picture_message("user"),
         ],
         ..Default::default()
-    };
+    });
     assert!(request.has_images());
     assert_eq!((request.image_tokens(), request.image_count()), (402, 1));
     assert_eq!(request.user_text(), "Read the axis");
-    assert!(!request.input[0].is_user() && request.input[1].is_user());
+    assert!(!request.input()[0].is_user() && request.input()[1].is_user());
     assert!(matches!(
-        request.input[1].without_images(),
+        request.input()[1].without_images(),
         CompletionInput::Message { content, .. } if content == "Read the axis\n[Picture: plot.png (640×480)]"
     ));
     assert!(matches!(
-        request.input[0].without_images(),
+        request.input()[0].without_images(),
         CompletionInput::Message { content, .. } if content == "Be brief"
     ));
 }
@@ -194,6 +194,33 @@ fn a_model_sees_nothing_unless_declared() {
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+        fn enforces(
+            &self,
+            _schema: &crate::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
+        }
     }
     assert_eq!(Plain.vision(), None);
+}
+
+#[test]
+fn a_finish_reason_names_how_the_reply_ended() {
+    use super::Finish;
+    for reason in [
+        "",
+        "stop",
+        "end_turn",
+        "completed",
+        "STOP",
+        "tool_calls",
+        "eos",
+    ] {
+        assert_eq!(Finish::of(reason), Finish::Complete, "{reason:?}");
+    }
+    assert_eq!(Finish::of("refusal"), Finish::Declined);
+    assert_eq!(Finish::of("content_filter"), Finish::Filtered);
+    for reason in ["length", "MAX_TOKENS", "max_output_tokens", "incomplete"] {
+        assert_eq!(Finish::of(reason), Finish::CutOff, "{reason}");
+    }
 }

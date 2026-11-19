@@ -125,8 +125,8 @@ impl ExternalLookup<'_> {
         // the turn; a failure means one search, not a mined guess.
         let research_followups = match web_query.as_deref() {
             Some(root) if self.search_flags.deep_research_mode => {
-                let count = (self.tuning.deep_research_depth.clamp(1, 4) as usize - 1)
-                    * self.tuning.deep_research_branch_queries.clamp(1, 4) as usize;
+                let count = (self.tuning.deep_research_depth.max(1) as usize - 1)
+                    * self.tuning.deep_research_branch_queries.max(1) as usize;
                 hyde_service
                     .research_followups_with_context(
                         root,

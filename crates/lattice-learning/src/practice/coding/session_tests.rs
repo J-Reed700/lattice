@@ -36,6 +36,7 @@ use lattice_core::domain::learning::practice::work::{
 };
 use lattice_core::domain::learning::practice::{ScoreStatus, PROBLEM_PATTERNS};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use sqlx::SqlitePool;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
@@ -388,6 +389,7 @@ impl Debriefer for FakeDebriefer {
 
 struct Ctx {
     pool: SqlitePool,
+    db: Database,
     repo: LearningPracticalRepository,
     program_id: String,
     activity_id: String,
@@ -400,15 +402,15 @@ struct Ctx {
 
 impl Ctx {
     async fn new() -> Self {
-        let (pool, program_id, lesson_id, _outcome) = fixture().await.unwrap();
-        let repo = LearningPracticalRepository::new(pool.clone());
+        let (pool, db, program_id, lesson_id, _outcome) = fixture().await.unwrap();
+        let repo = LearningPracticalRepository::new(db.clone());
         let activity_id = id();
         let request = GenerateLearningPracticalActivityRequestDto {
             operation_id: id(),
             activity_id: activity_id.clone(),
             program_id: program_id.clone(),
             lesson_id,
-            expected_program_revision: LearningRepository::new(pool.clone())
+            expected_program_revision: LearningRepository::new(db.clone())
                 .get(&program_id)
                 .await
                 .unwrap()
@@ -457,6 +459,7 @@ impl Ctx {
                 failing: Mutex::new(vec![]),
             },
             pool,
+            db,
             repo,
             program_id,
             activity_id,
@@ -1697,7 +1700,7 @@ async fn due_with_fit(ctx: &Ctx) -> PracticeDueDto {
     .execute(&ctx.pool)
     .await
     .unwrap();
-    let practice = crate::practice_repository::LearningPracticeRepository::new(ctx.pool.clone());
+    let practice = crate::practice_repository::LearningPracticeRepository::new(ctx.db.clone());
     let code_fits = crate::practice::practice_fit::fits(&practice, &ctx.kinds, &ctx.program_id)
         .await
         .unwrap()
@@ -1716,7 +1719,7 @@ async fn due_with_fit(ctx: &Ctx) -> PracticeDueDto {
 #[tokio::test]
 async fn due_lists_no_problem_patterns_for_a_course_with_a_no_code_verdict() {
     let ctx = Ctx::new().await;
-    let practice = crate::practice_repository::LearningPracticeRepository::new(ctx.pool.clone());
+    let practice = crate::practice_repository::LearningPracticeRepository::new(ctx.db.clone());
     let state = practice.fit_state(&ctx.program_id).await.unwrap();
     let basis = crate::practice::practice_fit::basis_of(&state.outline, &ctx.kinds).unwrap();
     practice
@@ -1753,7 +1756,7 @@ async fn due_lists_no_problem_patterns_while_the_fit_is_being_checked() {
 #[tokio::test]
 async fn due_lists_problem_patterns_for_a_course_with_a_profile_language() {
     let ctx = Ctx::new().await;
-    crate::practice_repository::LearningPracticeRepository::new(ctx.pool.clone())
+    crate::practice_repository::LearningPracticeRepository::new(ctx.db.clone())
         .save_profile(&crate::dto::SaveLearningPracticeProfileRequestDto {
             program_id: ctx.program_id.clone(),
             details: "Backend interview".into(),

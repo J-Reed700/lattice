@@ -66,7 +66,7 @@ impl<'a> KillingTest<'a> {
             "required": ["killingTest"],
             "properties": {"killingTest": text_schema()}
         });
-        let request = model_call::structured(&system, task, schema, budget::killing_test(), "low");
+        let request = model_call::structured(&system, task, schema, budget::killing_test());
         let why = format!(
             "The test did not separate the code without the change from the code with it. Run on the code without the change, {}. Run on the code with the change, {}.",
             shown(clean),
@@ -85,7 +85,7 @@ impl<'a> KillingTest<'a> {
         trail.call("killing test (asked again)", self.tools.llm.model_name());
         match asked {
             Ok(asked) => Ok(Some(asked.value)),
-            Err(AppError::ModelAnswerUnusable(_)) => Ok(None),
+            Err(AppError::ModelAnswerUnusable(_) | AppError::AnswerCutOff(_)) => Ok(None),
             Err(error) => Err(error),
         }
     }

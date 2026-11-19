@@ -1,5 +1,5 @@
-//! The trust store over the pool (§16): lattice-core's `SourceTrustStore`,
-//! built with the pool the way the other learning repositories are, so no
+//! The trust store over the database (§16): lattice-core's `SourceTrustStore`,
+//! built with the database the way the other learning repositories are, so no
 //! dependency-injection module changes.
 
 use self::rows::{
@@ -7,7 +7,6 @@ use self::rows::{
     tokens_from_column, tokens_to_column, unknown, write_override, write_provenance,
     write_relations, OVERRIDE_COLUMNS, PROVENANCE_COLUMNS, RELATION_COLUMNS,
 };
-use crate::persistence::db;
 use async_trait::async_trait;
 use lattice_core::application::ports::source_trust::{SourceTrustStore, StoredJudgement};
 use lattice_core::domain::provenance::{
@@ -15,10 +14,10 @@ use lattice_core::domain::provenance::{
     OutcomeRecord, OverrideScope, Overrides, ProvenanceRecord, SourceRelation, StandingAssessment,
     SubjectKey, TrackRecord, TrustLevel, TrustOverride,
 };
-use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::{driver::DriverPool, Transactions};
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::{Database, WriteTx};
 use sqlx::sqlite::SqliteRow;
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use sqlx::Row;
 
 pub(crate) mod capture;
 pub(super) mod eval_export;
@@ -37,24 +36,23 @@ pub(crate) fn unix_seconds() -> i64 {
 
 #[derive(Clone)]
 pub struct SqliteSourceTrustStore {
-    pool: SqlitePool,
+    db: Database,
 }
 
 impl SqliteSourceTrustStore {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 
     /// Records the outcomes together: all or none.
     pub(crate) async fn record_outcomes(&self, outcomes: &[OutcomeRecord]) -> Result<()> {
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         outcomes::insert_all_in(&mut tx, outcomes).await?;
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 }
 
-async fn insert_outcome(conn: &mut SqliteConnection, outcome: &OutcomeRecord) -> Result<()> {
+async fn insert_outcome(tx: &mut WriteTx, outcome: &OutcomeRecord) -> Result<()> {
     sqlx::query("INSERT INTO source_trust_outcomes(id,program_id,lesson_id,claim_id,source_version_id,origin_key,level,claim_kind,decision_sufficient,decision_right,label_source,policy,at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
         .bind(&outcome.id)
         .bind(&outcome.program_id)
@@ -69,9 +67,8 @@ async fn insert_outcome(conn: &mut SqliteConnection, outcome: &OutcomeRecord) ->
         .bind(outcome.label_source.as_str())
         .bind(&outcome.policy)
         .bind(outcome.outcome.at)
-        .execute(&mut *conn)
-        .await
-        .map_err(db)?;
+        .execute(&mut **tx)
+        .await?;
     Ok(())
 }
 
@@ -122,14 +119,13 @@ impl SourceTrustStore for SqliteSourceTrustStore {
     async fn provenance(&self, source_version_id: &str) -> Result<Option<ProvenanceRecord>> {
         let sql =
             format!("SELECT {PROVENANCE_COLUMNS} FROM source_provenance WHERE source_version_id=?");
-        sqlx::query(&sql)
+        let mut read = self.db.begin_read().await?;
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(source_version_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(db)?
-            .as_ref()
-            .map(provenance_from_row)
-            .transpose()
+            .fetch_optional(&mut *read)
+            .await?;
+        read.commit().await?;
+        row.as_ref().map(provenance_from_row).transpose()
     }
 
     async fn program_provenance(&self, program_id: &str) -> Result<Vec<ProvenanceRecord>> {
@@ -141,38 +137,40 @@ impl SourceTrustStore for SqliteSourceTrustStore {
                 .collect::<Vec<_>>()
                 .join(",")
         );
-        sqlx::query(&sql)
+        let mut read = self.db.begin_read().await?;
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(program_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db)?
-            .iter()
-            .map(provenance_from_row)
-            .collect()
+            .fetch_all(&mut *read)
+            .await?;
+        read.commit().await?;
+        rows.iter().map(provenance_from_row).collect()
     }
 
     async fn save_provenance(&self, record: &ProvenanceRecord) -> Result<()> {
-        let mut conn = self.pool.acquire().await.map_err(db)?;
-        write_provenance(&mut conn, record).await
+        let mut tx = self.db.begin_write().await?;
+        write_provenance(&mut tx, record).await?;
+        tx.commit().await.map_err(AppError::from)
     }
 
     async fn standing(
         &self,
         key: &JudgementKey,
     ) -> Result<Option<StoredJudgement<StandingAssessment>>> {
-        sqlx::query("SELECT signals_sha256,policy,model,judgement_json,input_tokens,output_tokens,assessed_at FROM source_standing_assessments WHERE signals_sha256=? AND policy=? AND model=?")
+        let mut read = self.db.begin_read().await?;
+        let row = sqlx::query("SELECT signals_sha256,policy,model,judgement_json,input_tokens,output_tokens,assessed_at FROM source_standing_assessments WHERE signals_sha256=? AND policy=? AND model=?")
             .bind(&key.input_sha256)
             .bind(&key.policy)
             .bind(&key.model)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(db)?
-            .as_ref()
+            .fetch_optional(&mut *read)
+            .await?;
+        read.commit().await?;
+        row.as_ref()
             .map(|row| judgement(row, "signals_sha256", "judgement_json"))
             .transpose()
     }
 
     async fn save_standing(&self, judgement: &StoredJudgement<StandingAssessment>) -> Result<()> {
+        let mut tx = self.db.begin_write().await?;
         sqlx::query("INSERT OR REPLACE INTO source_standing_assessments(signals_sha256,policy,model,standing,judgement_json,input_tokens,output_tokens,assessed_at) VALUES(?,?,?,?,?,?,?,?)")
             .bind(&judgement.key.input_sha256)
             .bind(&judgement.key.policy)
@@ -182,10 +180,9 @@ impl SourceTrustStore for SqliteSourceTrustStore {
             .bind(tokens_to_column(judgement.input_tokens)?)
             .bind(tokens_to_column(judgement.output_tokens)?)
             .bind(judgement.assessed_at)
-            .execute(&self.pool)
-            .await
-            .map_err(db)?;
-        Ok(())
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await.map_err(AppError::from)
     }
 
     async fn standings(&self, keys: &[JudgementKey]) -> Result<Vec<StandingAssessment>> {
@@ -196,6 +193,7 @@ impl SourceTrustStore for SqliteSourceTrustStore {
             .iter()
             .map(|key| (&key.input_sha256, &key.policy, &key.model))
             .collect();
+        let mut read = self.db.begin_read().await?;
         let rows: Vec<String> = sqlx::query_scalar(
             "SELECT s.judgement_json FROM json_each(?) requested
              JOIN source_standing_assessments s
@@ -205,9 +203,9 @@ impl SourceTrustStore for SqliteSourceTrustStore {
              ORDER BY CAST(requested.key AS INTEGER)",
         )
         .bind(to_json(&scope)?)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db)?;
+        .fetch_all(&mut *read)
+        .await?;
+        read.commit().await?;
         rows.iter()
             .map(|row| from_json(row, "judgement_json"))
             .collect()
@@ -221,16 +219,17 @@ impl SourceTrustStore for SqliteSourceTrustStore {
         policy: &str,
         model: &str,
     ) -> Result<Option<StoredJudgement<AuthorityAssessment>>> {
-        sqlx::query("SELECT input_sha256,policy,model,judgement_json,input_tokens,output_tokens,assessed_at FROM source_subject_authority WHERE program_id=? AND origin_key=? AND subject_key=? AND policy=? AND model=?")
+        let mut read = self.db.begin_read().await?;
+        let row = sqlx::query("SELECT input_sha256,policy,model,judgement_json,input_tokens,output_tokens,assessed_at FROM source_subject_authority WHERE program_id=? AND origin_key=? AND subject_key=? AND policy=? AND model=?")
             .bind(program_id)
             .bind(&origin_key.0)
             .bind(&subject_key.0)
             .bind(policy)
             .bind(model)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(db)?
-            .as_ref()
+            .fetch_optional(&mut *read)
+            .await?;
+        read.commit().await?;
+        row.as_ref()
             .map(|row| judgement(row, "input_sha256", "judgement_json"))
             .transpose()
     }
@@ -240,6 +239,7 @@ impl SourceTrustStore for SqliteSourceTrustStore {
         program_id: &str,
         judgement: &StoredJudgement<AuthorityAssessment>,
     ) -> Result<()> {
+        let mut tx = self.db.begin_write().await?;
         sqlx::query("INSERT OR REPLACE INTO source_subject_authority(program_id,origin_key,subject_key,policy,model,input_sha256,relation,judgement_json,input_tokens,output_tokens,assessed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
             .bind(program_id)
             .bind(&judgement.value.origin_key.0)
@@ -252,30 +252,30 @@ impl SourceTrustStore for SqliteSourceTrustStore {
             .bind(tokens_to_column(judgement.input_tokens)?)
             .bind(tokens_to_column(judgement.output_tokens)?)
             .bind(judgement.assessed_at)
-            .execute(&self.pool)
-            .await
-            .map_err(db)?;
-        Ok(())
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await.map_err(AppError::from)
     }
 
     async fn claim_profile(
         &self,
         key: &JudgementKey,
     ) -> Result<Option<StoredJudgement<ClaimProfile>>> {
-        sqlx::query("SELECT input_sha256,policy,model,profile_json,input_tokens,output_tokens,assessed_at FROM claim_profiles WHERE input_sha256=? AND policy=? AND model=?")
+        let mut read = self.db.begin_read().await?;
+        let row = sqlx::query("SELECT input_sha256,policy,model,profile_json,input_tokens,output_tokens,assessed_at FROM claim_profiles WHERE input_sha256=? AND policy=? AND model=?")
             .bind(&key.input_sha256)
             .bind(&key.policy)
             .bind(&key.model)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(db)?
-            .as_ref()
+            .fetch_optional(&mut *read)
+            .await?;
+        read.commit().await?;
+        row.as_ref()
             .map(|row| judgement(row, "input_sha256", "profile_json"))
             .transpose()
     }
 
     async fn save_claim_profiles(&self, profiles: &[StoredJudgement<ClaimProfile>]) -> Result<()> {
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         for profile in profiles {
             sqlx::query("INSERT OR REPLACE INTO claim_profiles(input_sha256,policy,model,profile_json,input_tokens,output_tokens,assessed_at) VALUES(?,?,?,?,?,?,?)")
                 .bind(&profile.key.input_sha256)
@@ -286,41 +286,41 @@ impl SourceTrustStore for SqliteSourceTrustStore {
                 .bind(tokens_to_column(profile.output_tokens)?)
                 .bind(profile.assessed_at)
                 .execute(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
         }
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     async fn relations(&self, program_id: &str) -> Result<Vec<SourceRelation>> {
         let sql = format!(
             "SELECT {RELATION_COLUMNS} FROM source_relations WHERE program_id=? ORDER BY from_version_id,kind,COALESCE(to_version_id,to_url)"
         );
-        sqlx::query(&sql)
+        let mut read = self.db.begin_read().await?;
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(program_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db)?
-            .iter()
-            .map(relation_from_row)
-            .collect()
+            .fetch_all(&mut *read)
+            .await?;
+        read.commit().await?;
+        rows.iter().map(relation_from_row).collect()
     }
 
     async fn save_relations(&self, program_id: &str, relations: &[SourceRelation]) -> Result<()> {
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         write_relations(&mut tx, program_id, relations, unix_seconds()).await?;
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     async fn overrides(&self, program_id: &str) -> Result<Overrides> {
         let sql = format!(
             "SELECT {OVERRIDE_COLUMNS} FROM source_trust_overrides WHERE (scope='source' AND program_id=?) OR scope IN ('site','site_subject') ORDER BY scope,registrable_domain,class_key,source_id"
         );
-        let entries = sqlx::query(&sql)
+        let mut read = self.db.begin_read().await?;
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(program_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db)?
+            .fetch_all(&mut *read)
+            .await?;
+        read.commit().await?;
+        let entries = rows
             .iter()
             .map(override_from_row)
             .collect::<Result<Vec<_>>>()?;
@@ -331,24 +331,25 @@ impl SourceTrustStore for SqliteSourceTrustStore {
         let sql = format!(
             "SELECT {OVERRIDE_COLUMNS} FROM source_trust_overrides WHERE scope IN ('site','site_subject') ORDER BY registrable_domain,scope,class_key"
         );
-        sqlx::query(&sql)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db)?
-            .iter()
-            .map(override_from_row)
-            .collect()
+        let mut read = self.db.begin_read().await?;
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+            .fetch_all(&mut *read)
+            .await?;
+        read.commit().await?;
+        rows.iter().map(override_from_row).collect()
     }
 
     async fn set_override(&self, trust_override: &TrustOverride) -> Result<()> {
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         write_override(&mut tx, trust_override).await?;
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     async fn clear_override(&self, scope: &OverrideScope) -> Result<bool> {
-        let mut conn = self.pool.acquire().await.map_err(db)?;
-        delete_override(&mut conn, scope).await
+        let mut tx = self.db.begin_write().await?;
+        let cleared = delete_override(&mut tx, scope).await?;
+        tx.commit().await?;
+        Ok(cleared)
     }
 
     async fn record_outcome(&self, outcome: &OutcomeRecord) -> Result<()> {
@@ -356,22 +357,23 @@ impl SourceTrustStore for SqliteSourceTrustStore {
     }
 
     async fn outcomes(&self) -> Result<Vec<OutcomeRecord>> {
-        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let mut read = self.db.begin_read().await?;
         let outcomes = outcomes::list_in(&mut read).await?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         Ok(outcomes)
     }
     /// `right` counts the claims that held (a sufficient decision that was
     /// right, or an insufficient one that was wrong: `Outcome::held`),
     /// `wrong` the rest.
     async fn track_record(&self, origin_key: &OriginKey) -> Result<TrackRecord> {
+        let mut read = self.db.begin_read().await?;
         let (held, failed): (i64, i64) = sqlx::query_as(
             "SELECT COALESCE(SUM(decision_sufficient=decision_right),0), COALESCE(SUM(decision_sufficient<>decision_right),0) FROM source_trust_outcomes WHERE origin_key=?",
         )
         .bind(&origin_key.0)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(db)?;
+        .fetch_one(&mut *read)
+        .await?;
+        read.commit().await?;
         let count = |value: i64| {
             u32::try_from(value).map_err(|_| {
                 lattice_core::shared::error::AppError::Database(

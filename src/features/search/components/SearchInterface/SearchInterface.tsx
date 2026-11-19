@@ -169,13 +169,7 @@ export function SearchInterface() {
       const byId = await openDocumentFile(targetId, api);
       if (byId.ok) {
         if (byId.data.action === 'render_internal') {
-          setPreviewTarget({
-            ...target,
-            source: {
-              ...target.source,
-              filePath: byId.data.contentPath,
-            },
-          });
+          setPreviewTarget(target);
         }
         return;
       }
@@ -184,13 +178,7 @@ export function SearchInterface() {
         const byPath = await openFilePath(result.path, api);
         if (byPath.ok) {
           if (byPath.data.action === 'render_internal') {
-            setPreviewTarget({
-              ...target,
-              source: {
-                ...target.source,
-                filePath: byPath.data.contentPath,
-              },
-            });
+            setPreviewTarget(target);
           }
           return;
         }

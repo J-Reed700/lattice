@@ -36,7 +36,7 @@ mod scope_tests {
             INSERT INTO chunks_trigram SELECT id,content FROM text_chunks;
             INSERT INTO document_space_memberships VALUES ('other','space'),('selected','space');")
             .execute(&pool).await.unwrap();
-        let search = SqliteTextSearch::new(Database::from(pool));
+        let search = SqliteTextSearch::new(Database::new(pool));
         let allowed = HashSet::from(["selected".into()]);
         for space in [None, Some("space")] {
             let hits = search
@@ -77,7 +77,7 @@ mod scope_tests {
             .execute(&pool).await.unwrap();
         let allowed: HashSet<String> = (0..40_000).map(|n| format!("doc-{n}")).collect();
 
-        let hits = SqliteTextSearch::new(Database::from(pool))
+        let hits = SqliteTextSearch::new(Database::new(pool))
             .search_scoped("patent", 5, None, Some(&allowed))
             .await
             .unwrap();
@@ -103,7 +103,7 @@ mod scope_tests {
             INSERT INTO text_chunks VALUES ('a','silo','a giant underground structure of many levels');
             INSERT INTO chunks_fts SELECT id,content FROM text_chunks;")
             .execute(&pool).await.unwrap();
-        let search = SqliteTextSearch::new(Database::from(pool));
+        let search = SqliteTextSearch::new(Database::new(pool));
 
         let hits = search
             .search_scoped(
@@ -136,7 +136,7 @@ mod scope_tests {
             INSERT INTO chunks_fts SELECT id,content FROM text_chunks;
             INSERT INTO chunks_trigram SELECT id,content FROM text_chunks;")
             .execute(&pool).await.unwrap();
-        let search = SqliteTextSearch::new(Database::from(pool));
+        let search = SqliteTextSearch::new(Database::new(pool));
 
         let vault_wide = search.search_scoped("patent", 1, None, None).await.unwrap();
         assert_eq!(vault_wide.len(), 1);
@@ -281,7 +281,7 @@ mod tests {
     }
 
     async fn top(query: &str) -> Option<String> {
-        let search = SqliteTextSearch::new(Database::from(corpus().await));
+        let search = SqliteTextSearch::new(Database::new(corpus().await));
         search
             .search_scoped(query, 5, None, None)
             .await
@@ -306,7 +306,7 @@ mod tests {
 
     #[tokio::test]
     async fn hostile_and_empty_queries_do_not_error() {
-        let search = SqliteTextSearch::new(Database::from(corpus().await));
+        let search = SqliteTextSearch::new(Database::new(corpus().await));
         for query in [
             "",
             "  ",
@@ -360,6 +360,7 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        let db = Database::new(pool.clone());
         let first = |search: SqliteTextSearch| async move {
             search
                 .search_scoped("retention", 5, None, None)
@@ -368,13 +369,9 @@ mod tests {
                 .doc_id
                 .clone()
         };
+        assert_eq!(first(SqliteTextSearch::new(db.clone())).await, "doc-titled");
         assert_eq!(
-            first(SqliteTextSearch::new(Database::from(pool.clone()))).await,
-            "doc-titled"
-        );
-        assert_eq!(
-            first(SqliteTextSearch::new(Database::from(pool.clone())).with_header_weight(0.25))
-                .await,
+            first(SqliteTextSearch::new(db.clone()).with_header_weight(0.25)).await,
             "doc-body"
         );
     }
@@ -382,7 +379,7 @@ mod tests {
     #[tokio::test]
     async fn clearing_empties_both_indexes() {
         let pool = corpus().await;
-        let search = SqliteTextSearch::new(Database::from(pool.clone()));
+        let search = SqliteTextSearch::new(Database::new(pool.clone()));
         search.clear().await.unwrap();
         assert!(search
             .search_scoped("incident", 5, None, None)
@@ -411,7 +408,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(SqliteTextSearch::new(Database::from(pool.clone()))
+        assert!(SqliteTextSearch::new(Database::new(pool.clone()))
             .clear()
             .await
             .is_err());

@@ -83,16 +83,18 @@ pub(super) fn bound_combined_output(
 }
 
 async fn force_remove(engine: LearningContainerEngine, name: &str) {
-    let _ = tokio::time::timeout(
-        Duration::from_secs(5),
-        engine
+    let _ = tokio::time::timeout(Duration::from_secs(5), async {
+        let spawned = engine
             .command()
             .args(["rm", "--force", name])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .status(),
-    )
+            .spawn()
+            .await;
+        if let Ok(mut child) = spawned {
+            let _ = child.wait().await;
+        }
+    })
     .await;
 }
 
@@ -132,9 +134,6 @@ pub async fn detect_container_engine(
         engine
             .command()
             .args(["version", "--format", "{{.Server.Version}}"])
-            .stdin(Stdio::null())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
             .output(),
     )
     .await;
@@ -186,8 +185,8 @@ pub async fn execute_container_lab(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
         .spawn()
+        .await
         .map_err(|error| {
             AppError::ServiceNotAvailable(format!(
                 "{} is unavailable: {error}",

@@ -1,6 +1,7 @@
 //! The review protocol: a verdict per open finding, new findings only where
 //! allowed, stable ids, dedupe, the skip rule, and the kind backstops.
 use super::outline_reference_tests::*;
+use crate::lessons::content_verification::tests::fixture_task;
 use crate::{
     dto::*,
     lessons::course_generation_tests::{repair_answer, request},
@@ -13,6 +14,7 @@ use crate::{
     service,
 };
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 use serde_json::{json, Value};
 
 fn changed_module(candidate: &Value, index: usize, objective: &str) -> Value {
@@ -37,7 +39,7 @@ async fn generate(
 
 #[tokio::test]
 async fn an_open_finding_without_a_verdict_stays_open_and_is_asked_about_again() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let initial = candidate();
     // The second review omits finding-1's verdict. That never stops the
     // outline: the finding stays open, gets its second attempt, and the third
@@ -70,13 +72,16 @@ async fn an_open_finding_without_a_verdict_stays_open_and_is_asked_about_again()
     let prompts = llm.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 6);
     // The third review still asked about finding-1.
-    assert_eq!(payload(&prompts[5])["openFindings"][0]["id"], "finding-1");
+    assert_eq!(
+        fixture_task(&prompts[5]).unwrap()["openFindings"][0]["id"],
+        "f1"
+    );
     Ok(())
 }
 
 #[tokio::test]
 async fn new_findings_outside_the_reviewed_modules_are_dropped() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let initial = candidate();
     // Module 0 changed; the incremental pass may report on module 0 only,
     // never on an unchanged module.
@@ -111,7 +116,7 @@ async fn new_findings_outside_the_reviewed_modules_are_dropped() -> Result<()> {
     let schema_paths = |prompt: &str| -> Vec<String> {
         // The reviewer's allowed paths are the enum in the response schema; the
         // fixture records only the prompt, so check the scope instead.
-        payload(prompt)["reviewScope"]["moduleIndices"]
+        fixture_task(prompt).unwrap()["reviewScope"]["moduleIndices"]
             .as_array()
             .unwrap()
             .iter()
@@ -124,7 +129,7 @@ async fn new_findings_outside_the_reviewed_modules_are_dropped() -> Result<()> {
 
 #[tokio::test]
 async fn verdicts_close_or_refresh_findings_and_the_reviewer_sees_current_text() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let initial = candidate();
     let first = "Measure the effect of random assignment on the comparison.";
     let second = "Measure the effect of random assignment on a stated, observable outcome.";
@@ -149,15 +154,15 @@ async fn verdicts_close_or_refresh_findings_and_the_reviewer_sees_current_text()
     assert_eq!(prompts.len(), 6);
     // The first review's claim is the item text; the unresolved verdict
     // refreshed it to the rewritten text and replaced the reason.
-    let opened = payload(&prompts[1]);
+    let opened = fixture_task(&prompts[1]).unwrap();
     assert_eq!(opened["openFindings"], json!([]));
     assert!(opened.get("verifiedAssertions").is_none());
     // Open findings are refreshed to the current text before the reviewer
     // sees them, so a verdict is never asked about stale wording.
-    let second_review = payload(&prompts[3]);
+    let second_review = fixture_task(&prompts[3]).unwrap();
     assert_eq!(second_review["openFindings"][0]["claim"], first);
-    let third_review = payload(&prompts[5]);
-    assert_eq!(third_review["openFindings"][0]["id"], "finding-1");
+    let third_review = fixture_task(&prompts[5]).unwrap();
+    assert_eq!(third_review["openFindings"][0]["id"], "f1");
     assert_eq!(third_review["openFindings"][0]["claim"], second);
     assert_eq!(
         third_review["openFindings"][0]["reason"],
@@ -171,7 +176,7 @@ async fn verdicts_close_or_refresh_findings_and_the_reviewer_sees_current_text()
 
 #[tokio::test]
 async fn a_repeated_finding_at_the_same_path_merges_into_the_open_one() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let initial = candidate();
     // Two findings on one lesson objective, worded differently, are one finding
     // with the later reason. The repair call then fails for want of a reply,
@@ -213,7 +218,7 @@ async fn a_repeated_finding_at_the_same_path_merges_into_the_open_one() -> Resul
 
 #[tokio::test]
 async fn a_passed_draft_is_repaired_without_a_review_call() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let llm = model(vec![candidate(), clean()]);
     let program = generate(&repo, &llm).await?;
     let review = program.outline_review.as_ref().unwrap();
@@ -242,7 +247,7 @@ async fn a_passed_draft_is_repaired_without_a_review_call() -> Result<()> {
 
 #[tokio::test]
 async fn factual_findings_on_plan_items_are_recorded_as_plan_findings() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let initial = candidate();
     // A "factual" finding on a lesson objective is a plan finding: never
     // researched, never narrowed to fit a passage. The first repair call has
@@ -271,10 +276,11 @@ async fn factual_findings_on_plan_items_are_recorded_as_plan_findings() -> Resul
 
 #[tokio::test]
 async fn the_reviewer_cannot_raise_a_course_wide_finding() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     // The empty path is not an allowed path on any pass: the schema enum
-    // excludes it and a finding that uses it anyway is dropped, so nothing is
-    // saved from it and no module is rewritten for it.
+    // excludes it and a finding that uses it anyway is refused, so the
+    // reviewer is asked once more; nothing is saved from it and no module is
+    // rewritten for it.
     let llm = model(vec![
         candidate(),
         findings(vec![plan_finding(
@@ -282,6 +288,7 @@ async fn the_reviewer_cannot_raise_a_course_wide_finding() -> Result<()> {
             "The course claims to cover experimental design in four modules.",
             "Four modules cannot cover the stated scope.",
         )]),
+        findings(vec![]),
     ]);
     let program = generate(&repo, &llm).await?;
     let review = program.outline_review.as_ref().unwrap();
@@ -292,14 +299,14 @@ async fn the_reviewer_cannot_raise_a_course_wide_finding() -> Result<()> {
         review.note
     );
     assert!(review.issues.is_empty());
-    assert_eq!(llm.prompts.lock().unwrap().len(), 2);
+    assert_eq!(llm.prompts.lock().unwrap().len(), 3);
     Ok(())
 }
 
 #[tokio::test]
 async fn a_verified_assertion_is_listed_to_the_reviewer_and_a_repeat_is_dropped_by_code(
 ) -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let mut initial = candidate();
     initial["modules"][0]["summary"]["text"] = json!(ADDITIONAL);
     let mut source = original_source();
@@ -358,13 +365,47 @@ async fn a_verified_assertion_is_listed_to_the_reviewer_and_a_repeat_is_dropped_
     // The strict judgment is the only check: no challenge call follows it.
     assert_eq!(prompts.len(), 5);
     assert!(prompts[3].starts_with("Repair a saved curriculum module"));
-    let recheck = payload(&prompts[4]);
+    let recheck = fixture_task(&prompts[4]).unwrap();
     assert_eq!(recheck["verifiedAssertions"], json!([ADDITIONAL]));
     assert_eq!(recheck["openFindings"].as_array().unwrap().len(), 1);
-    assert_eq!(recheck["openFindings"][0]["id"], "finding-2");
+    assert_eq!(recheck["openFindings"][0]["id"], "f1");
     assert!(prompts[4].contains("do not raise them again"));
     // Two findings were raised by the first review; the repeat got no id.
     let saved = repo.outline_draft(&program.summary.id).await?.unwrap();
     assert_eq!(saved.findings_raised, 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_snapshot_outline_review() -> Result<()> {
+    use lattice_core::application::services::model_contract::{test_support::snapshot, ContractId};
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
+    let initial = candidate();
+    let llm = model(vec![
+        initial.clone(),
+        issue(0),
+        changed_module(
+            &initial,
+            0,
+            "Compare the groups with an observable measurement.",
+        ),
+        verdicts(&[("finding-1", "resolved")], vec![]),
+    ]);
+    let capture = Capture::named(&llm, ContractId::new("outline-review"));
+
+    service::generate(
+        &repo,
+        &DraftRunRegistry::new(),
+        &capture,
+        request(LearningCourseDepth::Course),
+        vec![],
+    )
+    .await?;
+
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "outline-review",
+        &capture.requests(),
+    );
     Ok(())
 }

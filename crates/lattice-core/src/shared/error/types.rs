@@ -3,7 +3,6 @@
 //! This module provides a unified error type that can be used throughout
 //! the application to handle errors gracefully without panicking.
 
-use std::collections::HashMap;
 use std::fmt;
 use std::io;
 
@@ -32,8 +31,21 @@ pub enum AppError {
     /// Database errors
     Database(String),
 
+    /// Another connection kept the work out of the database; a later attempt
+    /// gets the lock.
+    DatabaseBusy(String),
+
     /// Configuration file errors
     InvalidConfig(String),
+
+    /// The configured context window cannot hold what the work needs.
+    WindowTooSmall(String),
+
+    /// The work was stopped on request.
+    Cancelled(String),
+
+    /// A lesson was held back for review; the text says why.
+    LessonHeld(String),
 
     /// No Learning model is set; the text says where to choose one
     LearningModelNotSet(String),
@@ -78,9 +90,6 @@ pub enum AppError {
     /// Embedding generation failed
     EmbeddingFailed { reason: String },
 
-    /// Queue is full
-    QueueFull,
-
     /// Unsupported file type
     UnsupportedFileType { path: String, detected_type: String },
 
@@ -121,6 +130,10 @@ pub enum AppError {
     /// asked for once more: it did not parse, or broke a rule the caller
     /// checks. The text says what was wrong with the answer.
     ModelAnswerUnusable(String),
+
+    /// A model's answer ended before it was complete and was not asked for again;
+    /// the same work may succeed in smaller parts.
+    AnswerCutOff(String),
 
     /// A request whose prompt alone fills the configured context window, so
     /// it leaves no room for an answer and was never sent. The numbers let a
@@ -267,88 +280,9 @@ impl AppError {
         AppError::Other(format!("{}. Suggestion: {}", base_message, suggestion))
     }
 
-    /// Get the error code for this error type
-    pub fn error_code(&self) -> &'static str {
-        match self {
-            AppError::Io { .. } => "IO_ERROR",
-            AppError::Json { .. } => "JSON_ERROR",
-            AppError::Database(_) => "DATABASE_ERROR",
-            AppError::InvalidConfig(_) => "INVALID_CONFIG",
-            AppError::LearningModelNotSet(_) => "LEARNING_MODEL_NOT_SET",
-            AppError::ModelServerCannotStart(_) => "MODEL_SERVER_CANNOT_START",
-            AppError::NotFound(_) => "NOT_FOUND",
-            AppError::PermissionDenied(_) => "PERMISSION_DENIED",
-            AppError::InvalidInput(_) => "INVALID_INPUT",
-            AppError::Network(_) => "NETWORK_ERROR",
-            AppError::HttpStatus { .. } => "HTTP_STATUS",
-            AppError::FileTooLarge { .. } => "FILE_TOO_LARGE",
-            AppError::FileStorage(_) => "FILE_STORAGE_ERROR",
-            AppError::FileNotFound { .. } => "FILE_NOT_FOUND",
-            AppError::FileRead { .. } => "FILE_READ_ERROR",
-            AppError::EmbeddingFailed { .. } => "EMBEDDING_FAILED",
-            AppError::QueueFull => "QUEUE_FULL",
-            AppError::UnsupportedFileType { .. } => "UNSUPPORTED_FILE_TYPE",
-            AppError::ContentExtraction { .. } => "CONTENT_EXTRACTION_FAILED",
-            AppError::TokenizationError { .. } => "TOKENIZATION_ERROR",
-            AppError::RateLimitExceeded(_) => "RATE_LIMIT_EXCEEDED",
-            AppError::InvalidData(_) => "INVALID_DATA",
-            AppError::FileSystem(_) => "FILE_SYSTEM_ERROR",
-            AppError::InvalidUrl(_) => "INVALID_URL",
-            AppError::InvalidState(_) => "INVALID_STATE",
-            AppError::Storage(_) => "STORAGE_ERROR",
-            AppError::ServiceNotAvailable(_) => "SERVICE_UNAVAILABLE",
-            AppError::ModelRejected(_) => "MODEL_REJECTED",
-            AppError::ModelAnswerUnusable(_) => "MODEL_ANSWER_UNUSABLE",
-            AppError::PromptExceedsWindow { .. } => "PROMPT_EXCEEDS_WINDOW",
-            AppError::Serialization(_) => "SERIALIZATION_ERROR",
-            AppError::Security(_) => "SECURITY_ERROR",
-            AppError::KeyringError(_) => "KEYRING_ERROR",
-            AppError::ValidationFailed(_) => "VALIDATION_FAILED",
-            AppError::InternalError(_) => "INTERNAL_ERROR",
-            AppError::Parsing(_) => "PARSING_ERROR",
-            AppError::Deserialization(_) => "DESERIALIZATION_ERROR",
-            AppError::BackupCreationFailed(_) => "BACKUP_CREATION_FAILED",
-            AppError::BackupRestoreFailed(_) => "BACKUP_RESTORE_FAILED",
-            AppError::BackupCorrupted(_) => "BACKUP_CORRUPTED",
-            AppError::Migration(_) => "MIGRATION_ERROR",
-            AppError::AiModelsNotInstalled(_) => "AI_MODELS_NOT_INSTALLED",
-            AppError::ModelLoadFailed(_) => "MODEL_LOAD_FAILED",
-            AppError::ConcurrentModification { .. } => "CONCURRENT_MODIFICATION",
-            AppError::Conflict(_) => "CONFLICT",
-            AppError::Domain(_) => "DOMAIN_ERROR",
-            AppError::Application(_) => "APPLICATION_ERROR",
-            AppError::Other(_) => "UNKNOWN_ERROR",
-        }
-    }
-
-    /// Get the HTTP status code for this error (for API responses)
-    pub fn http_status_code(&self) -> u16 {
-        match self {
-            AppError::NotFound(_) | AppError::FileNotFound { .. } => 404,
-            AppError::PermissionDenied(_) | AppError::Security(_) => 403,
-            AppError::InvalidInput(_)
-            | AppError::PromptExceedsWindow { .. }
-            | AppError::ValidationFailed(_)
-            | AppError::InvalidUrl(_)
-            | AppError::UnsupportedFileType { .. } => 400,
-            AppError::RateLimitExceeded(_) => 429,
-            AppError::ServiceNotAvailable(_) | AppError::AiModelsNotInstalled(_) => 503,
-            AppError::ModelRejected(_) | AppError::ModelAnswerUnusable(_) => 502,
-            AppError::FileTooLarge { .. } => 413,
-            AppError::ConcurrentModification { .. } | AppError::Conflict(_) => 409,
-            AppError::Domain(err) if err.is_not_found() => 404,
-            AppError::Domain(err) if err.is_business_rule_violation() => 400,
-            AppError::Application(err) if err.is_config_error() => 400,
-            _ => 500,
-        }
-    }
-
     /// Get a user-friendly error message
     pub fn to_user_friendly_message(&self) -> String {
         match self {
-            AppError::QueueFull => {
-                "The system is currently busy. Please try again in a moment.".to_string()
-            }
             AppError::FileTooLarge { .. } => {
                 "This file is too large to process. Try a smaller file.".to_string()
             }
@@ -363,180 +297,12 @@ impl AppError {
         }
     }
 
-    /// Whether another connection kept this attempt out of the database:
-    /// SQLite's busy and locked errors, or a connection pool that timed out.
-    pub fn is_database_busy(&self) -> bool {
-        match self {
-            AppError::Database(message) => {
-                message.contains("database is locked")
-                    || message.contains("database table is locked")
-            }
-            AppError::ServiceNotAvailable(message) => {
-                message.contains("database is temporarily busy")
-                    || message.contains("Passage index: busy")
-            }
-            _ => false,
-        }
-    }
-
-    /// Whether a web server's error status says to try again later: too many
-    /// requests, or a gateway or service that is down or busy. Any other
-    /// status is the server's settled answer.
-    pub fn is_retry_later_status(status: u16) -> bool {
-        matches!(status, 429 | 502 | 503 | 504)
-    }
-
-    /// Check if the error is recoverable (user can retry)
-    pub fn is_recoverable(&self) -> bool {
-        match self {
-            AppError::QueueFull
-            | AppError::Network(_)
-            | AppError::Io { .. }
-            | AppError::RateLimitExceeded(_)
-            | AppError::ConcurrentModification { .. }
-            | AppError::Conflict(_) => true,
-            AppError::HttpStatus { status, .. } => Self::is_retry_later_status(*status),
-            AppError::Domain(err) => err.is_retryable(),
-            AppError::Application(err) => err.is_recoverable(),
-            _ => false,
-        }
-    }
-
-    /// Check if the error is user-fixable (user action can resolve it)
-    pub fn is_user_fixable(&self) -> bool {
-        match self {
-            AppError::InvalidInput(_)
-            | AppError::PromptExceedsWindow { .. }
-            | AppError::InvalidConfig(_)
-            | AppError::LearningModelNotSet(_)
-            | AppError::ModelServerCannotStart(_)
-            | AppError::PermissionDenied(_)
-            | AppError::FileTooLarge { .. }
-            | AppError::UnsupportedFileType { .. }
-            | AppError::ValidationFailed(_) => true,
-            AppError::Domain(err) => err.is_business_rule_violation(),
-            _ => false,
-        }
-    }
-
     /// Check if the error is fatal (requires restart or intervention)
     pub fn is_fatal(&self) -> bool {
         matches!(
             self,
             AppError::Database(_) | AppError::Migration(_) | AppError::BackupCorrupted(_)
         )
-    }
-
-    /// Get structured context for the error
-    pub fn get_context(&self) -> HashMap<String, serde_json::Value> {
-        use serde_json::json;
-        let mut context = HashMap::new();
-
-        match self {
-            AppError::Io { message, kind } => {
-                context.insert("message".to_string(), json!(message));
-                context.insert("kind".to_string(), json!(kind));
-            }
-            AppError::Json {
-                message,
-                line,
-                column,
-            } => {
-                context.insert("message".to_string(), json!(message));
-                context.insert("line".to_string(), json!(line));
-                context.insert("column".to_string(), json!(column));
-            }
-            AppError::FileTooLarge {
-                path,
-                size_bytes,
-                max_size_bytes,
-            } => {
-                context.insert("path".to_string(), json!(path));
-                context.insert("size_bytes".to_string(), json!(size_bytes));
-                context.insert("max_size_bytes".to_string(), json!(max_size_bytes));
-                context.insert("size_mb".to_string(), json!(size_bytes / 1024 / 1024));
-                context.insert(
-                    "max_size_mb".to_string(),
-                    json!(max_size_bytes / 1024 / 1024),
-                );
-            }
-            AppError::FileNotFound { path } => {
-                context.insert("path".to_string(), json!(path));
-            }
-            AppError::FileRead { path, reason } => {
-                context.insert("path".to_string(), json!(path));
-                context.insert("reason".to_string(), json!(reason));
-            }
-            AppError::UnsupportedFileType {
-                path,
-                detected_type,
-            } => {
-                context.insert("path".to_string(), json!(path));
-                context.insert("detected_type".to_string(), json!(detected_type));
-            }
-            AppError::ContentExtraction { path, reason } => {
-                context.insert("path".to_string(), json!(path));
-                context.insert("reason".to_string(), json!(reason));
-            }
-            AppError::ConcurrentModification { resource, details } => {
-                context.insert("resource".to_string(), json!(resource));
-                context.insert("details".to_string(), json!(details));
-            }
-            AppError::PromptExceedsWindow {
-                prompt_tokens,
-                window,
-                counted_exactly,
-                ..
-            } => {
-                context.insert("prompt_tokens".to_string(), json!(prompt_tokens));
-                context.insert("window".to_string(), json!(window));
-                context.insert("counted_exactly".to_string(), json!(counted_exactly));
-            }
-            _ => {}
-        }
-
-        context
-    }
-
-    /// Get recovery suggestions for the error
-    pub fn get_suggestions(&self) -> Vec<String> {
-        match self {
-            AppError::QueueFull => vec![
-                "Wait a few seconds and try again".to_string(),
-                "Process fewer items at once".to_string(),
-            ],
-            AppError::FileTooLarge { max_size_bytes, .. } => vec![
-                format!(
-                    "Split the file into chunks smaller than {} MB",
-                    max_size_bytes / 1024 / 1024
-                ),
-                "Compress the file before processing".to_string(),
-            ],
-            AppError::Network(_) => vec![
-                "Check your internet connection".to_string(),
-                "Try again in a few moments".to_string(),
-                "Check if a firewall or proxy is blocking the connection".to_string(),
-            ],
-            AppError::PermissionDenied(_) => vec![
-                "Check file permissions".to_string(),
-                "Run the application with appropriate privileges".to_string(),
-                "Ensure the file is not locked by another process".to_string(),
-            ],
-            AppError::AiModelsNotInstalled(_) => vec![
-                "Download the required models from Settings → Models".to_string(),
-                "Check your internet connection for model downloads".to_string(),
-            ],
-            AppError::RateLimitExceeded(_) => vec![
-                "Wait before making more requests".to_string(),
-                "Reduce the frequency of operations".to_string(),
-            ],
-            AppError::ServiceNotAvailable(_) => vec![
-                "Wait for the service to become available".to_string(),
-                "Restart the application".to_string(),
-                "Check system resources (CPU, memory)".to_string(),
-            ],
-            _ => vec![],
-        }
     }
 }
 
@@ -558,13 +324,15 @@ impl fmt::Display for AppError {
                 "Database error: {}. Try restarting the application.",
                 e
             ),
-            AppError::InvalidConfig(e) => write!(
+            AppError::InvalidConfig(e) | AppError::WindowTooSmall(e) => write!(
                 f,
                 "Configuration error: {}. Please check your settings.",
                 e
             ),
+            AppError::Cancelled(e) | AppError::LessonHeld(e) => write!(f, "{}", e),
             AppError::LearningModelNotSet(e) => write!(f, "{}", e),
             AppError::ModelServerCannotStart(e) => write!(f, "{}", e),
+            AppError::DatabaseBusy(e) => write!(f, "Database busy: {}", e),
             AppError::NotFound(e) => write!(f, "Not found: {}", e),
             AppError::PermissionDenied(e) => write!(
                 f,
@@ -601,10 +369,6 @@ impl fmt::Display for AppError {
                 "Embedding generation failed: {}",
                 reason
             ),
-            AppError::QueueFull => write!(
-                f,
-                "Processing queue is full. Please wait and try again."
-            ),
             AppError::UnsupportedFileType { path, detected_type } => write!(
                 f,
                 "Unsupported file type for '{}': {}. Please convert to a supported format.",
@@ -633,6 +397,9 @@ impl fmt::Display for AppError {
             AppError::ServiceNotAvailable(e) => write!(f, "Service not available: {}", e),
             AppError::ModelRejected(e) => write!(f, "{}", e),
             AppError::ModelAnswerUnusable(e) => {
+                write!(f, "The model's answer could not be used: {}", e)
+            }
+            AppError::AnswerCutOff(e) => {
                 write!(f, "The model's answer could not be used: {}", e)
             }
             AppError::PromptExceedsWindow { message, .. } => write!(f, "{}", message),
@@ -683,54 +450,6 @@ impl fmt::Display for AppError {
 }
 
 impl std::error::Error for AppError {}
-
-/// Serializable error response for Tauri IPC and API responses.
-///
-/// This type allows structured error information to be sent to the frontend
-/// instead of plain strings. It includes error type discrimination, human-readable
-/// messages, optional context, and recoverability information.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ErrorResponse {
-    /// Error code for programmatic handling (e.g., "NOT_FOUND", "DATABASE_ERROR")
-    pub code: String,
-
-    /// Human-readable error message
-    pub message: String,
-
-    /// Optional structured context
-    #[serde(skip_serializing_if = "HashMap::is_empty", default)]
-    pub context: HashMap<String, serde_json::Value>,
-
-    /// Recovery suggestions
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub suggestions: Vec<String>,
-
-    /// Whether this error is recoverable
-    #[serde(default)]
-    pub recoverable: bool,
-
-    /// HTTP status code (for API responses)
-    pub status_code: u16,
-
-    /// Error type discriminator (legacy field for backwards compatibility)
-    #[serde(rename = "type")]
-    pub error_type: String,
-}
-
-/// Convert AppError to ErrorResponse for Tauri IPC and APIs.
-impl From<AppError> for ErrorResponse {
-    fn from(error: AppError) -> Self {
-        ErrorResponse {
-            code: error.error_code().to_string(),
-            message: error.to_user_friendly_message(),
-            context: error.get_context(),
-            suggestions: error.get_suggestions(),
-            recoverable: error.is_recoverable(),
-            status_code: error.http_status_code(),
-            error_type: error.error_code().to_string(), // For backwards compatibility
-        }
-    }
-}
 
 /// Convert AppError to String for Tauri command return types.
 ///

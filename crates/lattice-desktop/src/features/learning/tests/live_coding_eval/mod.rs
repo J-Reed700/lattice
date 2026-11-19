@@ -14,6 +14,7 @@ use lattice_core::application::ports::llm_port::{
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use lattice_learning::drills::runner::{runner_for, CodeRunner};
 use lattice_learning::embedded_runtime::BuiltinRuntimes;
@@ -26,7 +27,6 @@ use lattice_learning::practice::coding::problem::Problem;
 use lattice_learning::practice::coding::session::CodingRuns;
 use lattice_learning::practice::test_support::fixture;
 use serde::Serialize;
-use sqlx::SqlitePool;
 
 use crate::features::learning::tests::grading::live_grading_eval::model;
 
@@ -289,6 +289,12 @@ impl LLMPort for Recording {
     fn keeps_read_prompts(&self) -> bool {
         self.inner.keeps_read_prompts()
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 
 /// The app's runs: `CodingRuns::start` is `start_coding_run` with the lab's repository, its own run registry and
@@ -322,7 +328,7 @@ impl CodingRuns for EvalRuns {
 /// A program in a test database, with the configured model, the embedded Python runtime, and the app's own session
 /// service.
 pub(super) struct EvalLab {
-    pub pool: SqlitePool,
+    pub database: Database,
     pub repo: LearningPracticalRepository,
     pub program_id: String,
     pub lesson_id: String,
@@ -338,8 +344,8 @@ impl EvalLab {
     pub(super) async fn new() -> Result<Self> {
         let llm = Recording::new(model().await?);
         let runtimes = super::runtimes();
-        let (pool, program_id, lesson_id, _) = fixture().await?;
-        let repo = LearningPracticalRepository::new(pool.clone());
+        let (_, database, program_id, lesson_id, _) = fixture().await?;
+        let repo = LearningPracticalRepository::new(database.clone());
         let runner = runner_for("python", &runtimes).ok_or_else(|| {
             AppError::ServiceNotAvailable("No built-in runtime is available to run python.".into())
         })?;
@@ -359,7 +365,7 @@ impl EvalLab {
             runtimes,
         };
         Ok(Self {
-            pool,
+            database,
             repo,
             program_id,
             lesson_id,
@@ -375,7 +381,7 @@ impl EvalLab {
     pub(super) async fn activity(&self, problem: &Problem) -> Result<String> {
         let job_id = uuid::Uuid::new_v4().to_string();
         save_problem(
-            &lattice_core::shared::persistence::Database::from(self.pool.clone()),
+            &self.database,
             &ProblemSave {
                 job_id: &job_id,
                 program_id: &self.program_id,

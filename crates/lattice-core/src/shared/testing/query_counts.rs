@@ -4,13 +4,16 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use crate::shared::persistence::transactions::CHANGED_ROWS;
 use std::future::Future;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Arc, OnceLock,
+    Arc,
 };
-use tracing::{field::Visit, Instrument, Subscriber};
-use tracing_subscriber::{layer::Context, prelude::*, registry::LookupSpan, Layer, Registry};
+use tracing::{field::Visit, subscriber::Interest, Instrument, Subscriber};
+use tracing_subscriber::{
+    filter::dynamic_filter_fn, layer::Context, registry::LookupSpan, Layer, Registry,
+};
 
 #[derive(Clone, Default)]
 struct QueryCount {
@@ -18,6 +21,24 @@ struct QueryCount {
     writes: Arc<AtomicUsize>,
 }
 struct Reads;
+
+pub(super) fn layer<S>() -> impl Layer<S>
+where
+    S: Subscriber + for<'lookup> LookupSpan<'lookup>,
+{
+    Reads.with_filter(
+        dynamic_filter_fn(|metadata, cx| {
+            (metadata.is_span() && metadata.name() == "count_reads") || current_count(cx).is_some()
+        })
+        .with_callsite_filter(|metadata| {
+            if metadata.is_span() || metadata.target() == "sqlx::query" {
+                Interest::sometimes()
+            } else {
+                Interest::never()
+            }
+        }),
+    )
+}
 
 fn current_count<S: Subscriber + for<'lookup> LookupSpan<'lookup>>(
     ctx: &Context<'_, S>,
@@ -48,19 +69,6 @@ impl Visit for Statement {
 }
 
 impl<S: Subscriber + for<'lookup> LookupSpan<'lookup>> Layer<S> for Reads {
-    fn register_callsite(
-        &self,
-        metadata: &'static tracing::Metadata<'static>,
-    ) -> tracing::subscriber::Interest {
-        if metadata.is_span() || metadata.target() == "sqlx::query" {
-            tracing::subscriber::Interest::sometimes()
-        } else {
-            tracing::subscriber::Interest::never()
-        }
-    }
-    fn enabled(&self, metadata: &tracing::Metadata<'_>, ctx: Context<'_, S>) -> bool {
-        (metadata.is_span() && metadata.name() == "count_reads") || current_count(&ctx).is_some()
-    }
     fn on_new_span(
         &self,
         attrs: &tracing::span::Attributes<'_>,
@@ -88,6 +96,9 @@ impl<S: Subscriber + for<'lookup> LookupSpan<'lookup>> Layer<S> for Reads {
         } else {
             statement.sql
         };
+        if sql == CHANGED_ROWS {
+            return;
+        }
         if sql.starts_with("SELECT") || sql.starts_with("WITH") {
             count.reads.fetch_add(1, Ordering::Relaxed);
         } else if ["INSERT", "UPDATE", "DELETE", "REPLACE"]
@@ -99,6 +110,7 @@ impl<S: Subscriber + for<'lookup> LookupSpan<'lookup>> Layer<S> for Reads {
     }
 }
 
+/// Counts SELECT/WITH statements, excluding a read unit's check of its own changes.
 pub async fn count_reads<F: Future>(operation: F) -> (F::Output, usize) {
     let (result, count) = count_queries(operation).await;
     (result, count.reads.load(Ordering::Relaxed))
@@ -111,11 +123,7 @@ pub async fn count_writes<F: Future>(operation: F) -> (F::Output, usize) {
 }
 
 async fn count_queries<F: Future>(operation: F) -> (F::Output, QueryCount) {
-    static INSTALLED: OnceLock<()> = OnceLock::new();
-    INSTALLED.get_or_init(|| {
-        tracing::subscriber::set_global_default(tracing_subscriber::registry().with(Reads))
-            .expect("query budgets install the library test subscriber once");
-    });
+    super::subscriber::install();
     let span = tracing::info_span!(parent: None, "count_reads");
     let count = span
         .with_subscriber(|(id, dispatch)| {
@@ -176,4 +184,21 @@ async fn counter_observes_worker_reads_and_excludes_writes() {
     })
     .await;
     assert_eq!(writes, 3);
+}
+
+#[tokio::test]
+async fn a_read_units_check_of_its_own_changes_is_not_counted() {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    let database = crate::shared::persistence::Database::new(pool);
+    let (_, count) = count_reads(async {
+        let mut read = database.begin_read().await.unwrap();
+        sqlx::query("SELECT 1").fetch_one(&mut *read).await.unwrap();
+        read.commit().await.unwrap();
+    })
+    .await;
+    assert_eq!(count, 1);
 }

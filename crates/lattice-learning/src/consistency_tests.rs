@@ -9,12 +9,13 @@ use super::{
     tests::{fixture, pool},
 };
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 
 #[tokio::test]
 async fn completed_lesson_does_not_prevent_editing_and_accepting_the_curriculum() -> Result<()> {
-    let pool = pool().await?;
-    let repo = LearningRepository::new(pool.clone());
-    let curriculum = LearningCurriculumRepository::new(pool);
+    let db = Database::new(pool().await?);
+    let repo = LearningRepository::new(db.clone());
+    let curriculum = LearningCurriculumRepository::new(db);
     let mut program = fixture();
     program.summary.status = LearningProgramStatus::Active;
     program.summary.revision = 1;
@@ -67,7 +68,8 @@ async fn completed_lesson_does_not_prevent_editing_and_accepting_the_curriculum(
 #[tokio::test]
 async fn program_read_keeps_header_and_children_in_the_same_snapshot() -> Result<()> {
     let pool = pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let program = fixture();
     repo.create(&program).await?;
     // Queue the reader, then a writer: the writer must not commit between the

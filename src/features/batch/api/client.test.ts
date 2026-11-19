@@ -52,7 +52,7 @@ describe('batchApi', () => {
     mockIPC.mockResolvedValueOnce({ success: false });
     await expect(batchApi.deleteBatchJob('j1')).resolves.toEqual({ ok: false, error: 'Failed to delete batch job' });
     mockIPC.mockResolvedValueOnce({ success: true });
-    await expect(batchApi.deleteBatchJob('j1')).resolves.toEqual({ ok: true, data: undefined });
+    await expect(batchApi.deleteBatchJob('j1')).resolves.toEqual({ ok: true, data: null });
     expect(lastCall()).toEqual(['plugin:batch|delete_batch_job', { jobId: 'j1' }]);
   });
 

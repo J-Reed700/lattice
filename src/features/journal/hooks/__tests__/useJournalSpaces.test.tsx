@@ -144,7 +144,10 @@ describe('journal actions', () => {
     const note = { id: 'p1', title: 'Journal · Garden' } as WorkspaceNote;
     const s = setup({ requestedJournalSpaceId: 'garden', journalSpace: journal('garden', 'Garden'), activeNote: note });
     await act(() => s.result.current.handleRenameJournal('Allotment'));
-    expect(api.updateJournal).toHaveBeenCalledWith({ journalId: 'garden', name: 'Allotment' });
+    expect(api.updateJournal).toHaveBeenCalledWith({
+      journalId: 'garden', name: 'Allotment', description: null, icon: null, accentColor: null, spacePrompt: null,
+      toolPreferencesJson: null, isArchived: null, sortOrder: null,
+    });
     expect(s.notify).toHaveBeenCalledWith('success', 'Renamed journal to "Allotment".');
     const update = vi.mocked(s.updateNote).mock.calls[0][0];
     expect(update(note).title).toBe('Journal · Allotment');

@@ -12,7 +12,7 @@ export const transcriptionApi = {
    * @returns Transcript with segments and rendered text
    */
   transcribeFile: async (path: string): Promise<ApiResult<Transcript>> =>
-    apiCall<Wire.TranscriptDto>('transcribe_file', { path }),
+    apiCall('transcribe_file', { path }),
 
   /**
    * Hears a recording made in the app, on this computer.
@@ -21,7 +21,7 @@ export const transcriptionApi = {
    * @returns What was said; empty when it was not speech
    */
   transcribeSpeech: async (pcm: string): Promise<ApiResult<Wire.TranscribedSpeechDto>> =>
-    apiCall<Wire.TranscribedSpeechDto>('transcribe_speech', { pcm }),
+    apiCall('transcribe_speech', { pcm }),
 
   /**
    * Reports whether a transcription model is downloaded.
@@ -29,5 +29,5 @@ export const transcriptionApi = {
    * @returns TranscriptionStatus with the model name when ready
    */
   getTranscriptionStatus: async (): Promise<ApiResult<TranscriptionStatus>> =>
-    apiCall<Wire.TranscriptionStatusDto>('get_transcription_status'),
+    apiCall('get_transcription_status'),
 };

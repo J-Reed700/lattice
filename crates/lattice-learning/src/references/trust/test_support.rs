@@ -33,11 +33,11 @@ pub(super) struct Course {
 
 pub(super) async fn course() -> Result<Course> {
     let pool = pool().await?;
-    let program_id = course_on(&pool).await?;
-    let database = Database::from(pool.clone());
+    let database = Database::new(pool.clone());
+    let program_id = course_on(&database).await?;
     Ok(Course {
         library: LearningSourceLibraryRepository::new(database.clone()),
-        store: SqliteSourceTrustStore::new(pool.clone()),
+        store: SqliteSourceTrustStore::new(database.clone()),
         program_id,
         pool,
         database,
@@ -48,22 +48,19 @@ pub(super) async fn course() -> Result<Course> {
 /// connection, so a write can wait on another. The file goes with the guard.
 pub(super) async fn course_on_file() -> Result<(Course, tempfile::TempDir)> {
     let directory = tempfile::tempdir().expect("a temporary directory");
-    let options = crate::test_support::file_options(directory.path().join("course.db"))
-        .busy_timeout(Duration::from_secs(30));
+    let path = directory.path().join("course.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
+    let options = crate::test_support::file_options(path).busy_timeout(Duration::from_secs(30));
     let pool = SqlitePoolOptions::new()
         .max_connections(3)
         .connect_with(options)
         .await
         .expect("a pool on the database file");
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .expect("migrations");
-    let program_id = course_on(&pool).await?;
-    let database = Database::from(pool.clone());
+    let database = Database::new(pool.clone());
+    let program_id = course_on(&database).await?;
     let course = Course {
         library: LearningSourceLibraryRepository::new(database.clone()),
-        store: SqliteSourceTrustStore::new(pool.clone()),
+        store: SqliteSourceTrustStore::new(database.clone()),
         program_id,
         pool,
         database,
@@ -73,10 +70,10 @@ pub(super) async fn course_on_file() -> Result<(Course, tempfile::TempDir)> {
 
 /// Another active course on the same database: its seeded fixture source
 /// is saved through `insert_source`, the initial-reference capture path.
-pub(super) async fn course_on(pool: &SqlitePool) -> Result<String> {
+pub(super) async fn course_on(database: &Database) -> Result<String> {
     let mut program = fixture();
     program.summary.status = LearningProgramStatus::Active;
-    LearningRepository::new(pool.clone())
+    LearningRepository::new(database.clone())
         .create(&program)
         .await?;
     Ok(program.summary.id)

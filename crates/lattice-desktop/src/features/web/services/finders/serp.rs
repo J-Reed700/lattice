@@ -102,10 +102,7 @@ fn is_result_candidate(url: &Url) -> bool {
         return false;
     };
     let host = host.to_ascii_lowercase();
-    if host.contains("duckduckgo.com") {
-        return false;
-    }
-    true
+    !host.contains("duckduckgo.com")
 }
 
 fn collapsed_text(element: ElementRef<'_>) -> String {

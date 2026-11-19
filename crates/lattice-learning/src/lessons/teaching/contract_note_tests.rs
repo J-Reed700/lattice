@@ -1,0 +1,95 @@
+//! What the notes of the check's findings say.
+#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+use super::confirm::{Settled, Unmet};
+use super::*;
+
+fn part(index: usize) -> Part {
+    Part {
+        id: format!("section-{index}"),
+        site: FindingSite::Section(index),
+        fields: vec!["body".to_owned()],
+        texts: vec!["Alpha holds the line.".to_owned()],
+        shown: json!({"body": "Alpha holds the line."}),
+    }
+}
+
+fn missing_note(belongs: Option<&Part>) -> String {
+    let item = Item {
+        id: "action-1".to_owned(),
+        kind: "action",
+        text: "Hold the line".to_owned(),
+    };
+    let settled = Settled {
+        taught: Vec::new(),
+        missing: vec![(&item, belongs)],
+        uses: Vec::new(),
+        clashes: Vec::new(),
+    };
+    let found = findings(&[], &settled, &Value::Null, &[]);
+    assert_eq!(found.len(), 1);
+    found[0].note.clone()
+}
+
+#[test]
+fn a_missing_item_is_told_the_part_it_fits_best_in() {
+    let placed = part(1);
+    let note = missing_note(Some(&placed));
+    assert!(note.ends_with(" It fits best in section 2."), "{note}");
+}
+
+#[test]
+fn a_missing_item_with_no_part_is_not_told_one() {
+    let note = missing_note(None);
+    assert!(!note.contains("fits best"), "{note}");
+}
+
+fn used_note(protected: &[Protected]) -> String {
+    let parts = [part(0)];
+    let texts = Lesson::of(&parts, 1, |_| false).texts();
+    let unit = texts
+        .iter()
+        .next()
+        .and_then(|(_, units)| units.spans().first().map(|(unit, _)| *unit))
+        .unwrap();
+    let hit = hit_at(&parts, &texts, unit).unwrap();
+    let settled = Settled {
+        taught: Vec::new(),
+        missing: Vec::new(),
+        uses: vec![Unmet {
+            hit,
+            what: "the line",
+            elsewhere: Vec::new(),
+            later: None,
+        }],
+        clashes: Vec::new(),
+    };
+    let candidate = json!({"blocks":[{"body":"Alpha holds the line."}],"questions":[]});
+    let found = findings(&[], &settled, &candidate, protected);
+    assert_eq!(found.len(), 1);
+    found[0].note.clone()
+}
+
+#[test]
+fn a_use_in_a_protected_passage_is_told_to_teach_beside_the_quoted_words() {
+    let protected = [Protected {
+        unit: 0,
+        field: "body".into(),
+        quote: "Alpha holds the line.".into(),
+        released: false,
+    }];
+    let note = used_note(&protected);
+    assert!(
+        note.ends_with(concat!("Teach it in this step, where it is first used (", each_shown!(), "), in sentences added before or after the quoted words; the quoted words stay exactly as they are.")),
+        "{note}"
+    );
+    assert!(!note.contains("change the step"), "{note}");
+}
+
+#[test]
+fn a_use_in_a_passage_nothing_protects_keeps_its_note() {
+    let note = used_note(&[]);
+    assert!(
+        note.ends_with(concat!("Teach it in this step, where it is first used (", each_shown!(), "), or change the step to use only what the lesson has taught (a record asked for in the learner's own notes needs nothing taught).")),
+        "{note}"
+    );
+}

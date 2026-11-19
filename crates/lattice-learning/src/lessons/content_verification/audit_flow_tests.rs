@@ -16,10 +16,9 @@ use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{ModelOrigin, PinnedModel, ResolvedModel};
 use lattice_core::application::ports::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
-    Checker, ClaimEvent, ClaimState, LessonReviewState, ReopenCause, VerdictKind,
+    Checker, ClaimEvent, ClaimState, LessonReviewState, ReopenCause, StopCode, VerdictKind,
 };
 use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
-use lattice_core::shared::persistence::Database;
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -27,9 +26,9 @@ use std::sync::Arc;
 const VERIFIER_WINDOW: usize = 200_000;
 const NO_PASSAGE: &str = "No passage states this.";
 
-/// A Verifier that gives every claim `verdict`: `supported` quotes the first
+/// A Verifier that gives every claim `verdict`: `supported` cites the first
 /// sentence of the claim's first passage (could not verify without one),
-/// anything else quotes nothing. Counts its requests.
+/// anything else cites nothing. Counts its requests.
 pub(super) struct AuditingModel {
     verdict: &'static str,
     calls: AtomicUsize,
@@ -49,25 +48,20 @@ impl AuditingModel {
 
     fn answer(&self, task: &str) -> String {
         let lines: Vec<&str> = task.lines().collect();
-        let passage = |label: &str| {
-            lines
+        let first_sentence = |passage: &str| {
+            let at = lines
                 .iter()
-                .position(|line| line.starts_with(&format!("[{label}] ")))
-                .and_then(|index| lines.get(index + 1))
-                .map(|text| {
-                    text.split_inclusive('.')
-                        .next()
-                        .unwrap_or_default()
-                        .trim()
-                        .to_owned()
-                })
+                .position(|line| line.starts_with(&format!("{passage} ")))?;
+            let row = lines.get(at + 1)?;
+            let (handle, _) = row.strip_prefix('[')?.split_once("] ")?;
+            Some(handle.to_owned())
         };
-        let mut verdicts = Vec::new();
+        let mut entries = Vec::new();
         for (index, line) in lines.iter().enumerate() {
-            let Some(label) = line
-                .strip_prefix("[C")
+            let Some(handle) = line
+                .strip_prefix("[c")
                 .and_then(|rest| rest.split_once("] "))
-                .map(|(number, _)| format!("C{number}"))
+                .map(|(number, _)| format!("c{number}"))
             else {
                 continue;
             };
@@ -75,30 +69,30 @@ impl AuditingModel {
                 .iter()
                 .find_map(|line| line.strip_prefix("Passages: "))
                 .and_then(|cited| cited.split(", ").next())
-                .filter(|first| first.starts_with('P') || first.starts_with('W'))
-                .and_then(|first| passage(first).map(|quote| (first.to_owned(), quote)));
-            verdicts.push(match (self.verdict, cited) {
-                ("supported", Some((passage, quote))) => json!({
-                    "claim": label,
-                    "passagesUsed": [{"passage": passage, "quote": quote}],
+                .filter(|first| first.starts_with("[p"))
+                .and_then(first_sentence);
+            entries.push(match (self.verdict, cited) {
+                ("supported", Some(sentence)) => json!({
+                    "of": handle,
+                    "sentencesUsed": [sentence],
                     "verdict": "supported",
                     "reason": "The passage states this.",
                 }),
                 ("supported", None) => json!({
-                    "claim": label,
-                    "passagesUsed": [],
+                    "of": handle,
+                    "sentencesUsed": [],
                     "verdict": "could_not_verify",
                     "reason": "No passage was supplied.",
                 }),
                 (verdict, _) => json!({
-                    "claim": label,
-                    "passagesUsed": [],
+                    "of": handle,
+                    "sentencesUsed": [],
                     "verdict": verdict,
                     "reason": NO_PASSAGE,
                 }),
             });
         }
-        json!({ "verdicts": verdicts }).to_string()
+        json!({ "entries": entries }).to_string()
     }
 }
 
@@ -122,6 +116,12 @@ impl LLMPort for AuditingModel {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -188,16 +188,12 @@ pub(super) async fn opt_in(course: &Waiting, on: bool) -> Result<()> {
 
 /// Completes a held attempt as the worker does (§6.1).
 async fn complete_held(course: &Waiting, job_id: &str) -> Result<()> {
-    let held = held_for_review(
-        &Database::from(course.pool.clone()),
-        &course.lesson_id,
-        job_id,
-    )
-    .await?
-    .expect("the lesson is held for review");
+    let held = held_for_review(&course.db, &course.lesson_id, job_id)
+        .await?
+        .expect("the lesson is held for review");
     let (result_ref, message) = review_outcome(&[held]);
     assert!(
-        JobStore::new(course.pool.clone())
+        JobStore::new(course.db.clone())
             .complete(job_id, &result_ref, &message)
             .await?
     );
@@ -230,7 +226,7 @@ async fn the_audit_runs_once_every_claim_is_resolved_and_an_agreeing_verifier_le
     let (_, report) = lesson::scope(
         Some(FakeVerifier::local(&verifier)),
         prepare(
-            &Database::from(course.pool.clone()),
+            &course.db,
             &course.jobs,
             &course.job_id,
             &course.lesson_id,
@@ -243,17 +239,15 @@ async fn the_audit_runs_once_every_claim_is_resolved_and_an_agreeing_verifier_le
 
     assert!(verifier.calls() > 0, "the resolved lesson is audited");
     assert!(report.issues.is_empty(), "{:?}", report.issues);
-    let ledger = ClaimReviewRepository::new(course.pool.clone())
+    let ledger = ClaimReviewRepository::new(course.db.clone())
         .load(&course.lesson_id)
         .await?;
     assert!(verifier_checks(&ledger) > 0);
-    assert!(held_for_review(
-        &Database::from(course.pool.clone()),
-        &course.lesson_id,
-        &course.job_id
-    )
-    .await?
-    .is_none());
+    assert!(
+        held_for_review(&course.db, &course.lesson_id, &course.job_id)
+            .await?
+            .is_none()
+    );
     Ok(())
 }
 
@@ -261,7 +255,7 @@ async fn the_audit_runs_once_every_claim_is_resolved_and_an_agreeing_verifier_le
 async fn a_dispute_holds_the_lesson_with_both_checkers_on_the_card() -> Result<()> {
     // The Verifier, opted into, disputes the claim the local checker verified.
     let course = Waiting::new(&Supporting::new()).await?;
-    let ledger = ClaimReviewRepository::new(course.pool.clone())
+    let ledger = ClaimReviewRepository::new(course.db.clone())
         .load(&course.lesson_id)
         .await?;
     let review = ledger.review.clone().unwrap();
@@ -312,7 +306,7 @@ async fn without_consent_nothing_is_sent_and_resume_needs_no_claim_change() -> R
     let prepared = lesson::scope(
         Some(FakeVerifier::cloud(&verifier)),
         prepare(
-            &Database::from(course.pool.clone()),
+            &course.db,
             &course.jobs,
             &course.job_id,
             &course.lesson_id,
@@ -322,28 +316,24 @@ async fn without_consent_nothing_is_sent_and_resume_needs_no_claim_change() -> R
         ),
     )
     .await;
-    let held = held_for_review(
-        &Database::from(course.pool.clone()),
-        &course.lesson_id,
-        &course.job_id,
-    )
-    .await?
-    .is_some();
+    let held = held_for_review(&course.db, &course.lesson_id, &course.job_id)
+        .await?
+        .is_some();
     assert!(
         prepared.is_err() && held,
         "the audit is on and cannot run: {:?}",
         prepared.as_ref().err()
     );
     assert_eq!(verifier.calls(), 0, "no consent, no call");
-    let review = ClaimReviewRepository::new(course.pool.clone())
+    let review = ClaimReviewRepository::new(course.db.clone())
         .load(&course.lesson_id)
         .await?
         .review
         .unwrap();
     assert_eq!(review.state, LessonReviewState::NeedsReview);
     assert_eq!(
-        review.stop_reason.map(|stop| stop.code).as_deref(),
-        Some("verifier_consent_missing")
+        review.stop_reason.map(|stop| stop.code),
+        Some(StopCode::VerifierConsentMissing)
     );
 
     // The fix is the course's switch, not a claim: Resume is not refused.

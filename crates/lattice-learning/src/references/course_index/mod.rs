@@ -23,6 +23,11 @@ pub use search::{CourseSearch, IndexView};
 pub(crate) use sync::write_version;
 pub use sync::CourseProgress;
 
+use lattice_core::shared::text::segmentation::{
+    windows, Chars, Overflow, Plan, Prose, Rung, Strength,
+};
+use lattice_index::passage_index::chunking::NewPassage;
+
 /// The job kind of a course index build; its subject is the program.
 pub const COURSE_INDEX: &str = "learning.course_index";
 
@@ -34,6 +39,39 @@ pub(crate) const CHUNK_CHARS: usize = 1200;
 /// About how far the next passage starts after the last: the reference
 /// collection's step, so neighbouring passages overlap (design §3.3).
 pub(crate) const STEP_CHARS: usize = 900;
+
+/// The passages a course stores for a version's text: overlapping windows of whole sentences, cut between words only when one sentence outruns a window.
+pub(crate) fn chunks(text: &str) -> Vec<NewPassage> {
+    let plan = Plan {
+        max: CHUNK_CHARS,
+        ladder: &[
+            Rung {
+                at_least: Strength::Sentence,
+                floor: 0.0,
+            },
+            Rung {
+                at_least: Strength::Word,
+                floor: 0.0,
+            },
+        ],
+        overflow: Overflow::Cut,
+    };
+    windows(text, &Prose, &Chars, &plan, STEP_CHARS)
+        .into_iter()
+        .filter_map(|span| {
+            Some(NewPassage {
+                start: span.start,
+                end: span.end,
+                text: text.get(span)?.to_owned(),
+            })
+        })
+        .collect()
+}
+
+/// The rule that cut a stored version's passages; a version cut by another is cut again.
+pub(crate) fn chunking() -> String {
+    format!("sentence-windows:{CHUNK_CHARS}:{STEP_CHARS}")
+}
 
 /// How a course's evidence is searched right now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

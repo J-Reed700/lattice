@@ -2,18 +2,18 @@
 
 use super::{family_name, material_of, plural, problem_material, Standing};
 use crate::drills::schedules;
-use crate::persistence::db;
 use crate::practice::coding::records::StoredRating;
 use crate::practice::session::dto::{DueItemDto, DueKind, PracticeDueDto};
 use lattice_core::domain::learning::drills::{Material, PatternRating};
 use lattice_core::domain::learning::practice::{problem_pattern, ProblemPattern, PROBLEM_PATTERNS};
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::WriteTx;
 use sqlx::SqliteConnection;
 
 /// Moves the schedule of each of `pattern_ids` on by one review rated `rating` at `now`, landing before `target`
 /// (the interview) while it is ahead. Ids the catalogue no longer holds are left out.
 pub async fn record_ratings_in(
-    connection: &mut SqliteConnection,
+    connection: &mut WriteTx,
     _program_id: &str,
     language: &str,
     pattern_ids: &[String],
@@ -56,8 +56,7 @@ pub async fn targets_in(
     )
     .bind(problem_material(language))
     .fetch_all(&mut *connection)
-    .await
-    .map_err(db)?;
+    .await?;
     let mut ranked: Vec<(Standing, Option<i64>, usize, &'static ProblemPattern)> = PROBLEM_PATTERNS
         .iter()
         .enumerate()
@@ -118,8 +117,7 @@ pub async fn practice_due_in(
     )
     .bind(now)
     .fetch_one(&mut *connection)
-    .await
-    .map_err(db)?;
+    .await?;
     if let (true, Ok(count @ 1..), Some(due_at)) =
         (code_fits, u32::try_from(problem_due), problem_first)
     {
@@ -147,8 +145,7 @@ pub async fn practice_due_in(
                 .bind(program_id)
                 .bind(&standing.lesson_id)
                 .fetch_optional(&mut *connection)
-                .await
-                .map_err(db)?;
+                .await?;
         let Some(title) = title else {
             continue;
         };
@@ -166,8 +163,7 @@ pub async fn practice_due_in(
         "SELECT DISTINCT material FROM learning_drill_pattern_schedules WHERE material NOT LIKE 'problem:%' ORDER BY material",
     )
     .fetch_all(&mut *connection)
-    .await
-    .map_err(db)?;
+    .await?;
     for name in names {
         let Some(material) = material_of(&name) else {
             continue;

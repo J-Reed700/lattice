@@ -22,9 +22,8 @@ pub const CONFIG_FILE_NAME: &str = "archive-config.json";
 pub const CONFIG_VERSION: u8 = 1;
 /// How many archives to keep in the destination folder by default.
 pub const DEFAULT_KEEP_COUNT: u32 = 5;
-/// Inclusive bounds accepted by `plugin_set_archive_keep_count`.
+/// Fewest archives `plugin_set_archive_keep_count` accepts.
 pub const MIN_KEEP_COUNT: u32 = 1;
-pub const MAX_KEEP_COUNT: u32 = 50;
 
 /// A successful archive run, as recorded in the config file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -165,9 +164,9 @@ impl ArchiveConfig {
 
 /// Clamp-free validation of a requested retention count.
 pub fn validate_keep_count(keep_count: u32) -> Result<u32, ArchiveError> {
-    if !(MIN_KEEP_COUNT..=MAX_KEEP_COUNT).contains(&keep_count) {
+    if keep_count < MIN_KEEP_COUNT {
         return Err(ArchiveError::Other(format!(
-            "keep count must be between {MIN_KEEP_COUNT} and {MAX_KEEP_COUNT}"
+            "keep count must be at least {MIN_KEEP_COUNT}"
         )));
     }
     Ok(keep_count)
@@ -283,11 +282,12 @@ mod tests {
     }
 
     #[test]
-    fn keep_count_bounds() {
+    fn keep_count_refuses_only_zero() {
         assert!(validate_keep_count(0).is_err());
         assert_eq!(validate_keep_count(1).unwrap(), 1);
         assert_eq!(validate_keep_count(50).unwrap(), 50);
-        assert!(validate_keep_count(51).is_err());
+        assert_eq!(validate_keep_count(51).unwrap(), 51);
+        assert_eq!(validate_keep_count(100_000).unwrap(), 100_000);
     }
 
     #[test]

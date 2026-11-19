@@ -31,9 +31,9 @@ async fn the_schemas_of_a_build_hold_no_text_length_cap() -> Result<()> {
     assert_eq!(requests.len(), 7);
     for request in &requests {
         let schema = request
-            .json_schema
-            .as_ref()
-            .expect("every call is structured");
+            .schema()
+            .expect("every call is structured")
+            .as_json();
         assert!(text_length_rules(schema).is_empty(), "{schema}");
         assert_eq!(schema["additionalProperties"], false);
     }

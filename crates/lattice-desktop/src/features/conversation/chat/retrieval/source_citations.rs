@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use tracing::warn;
 
+use super::source_names::marker;
 use crate::features::conversation::chat::ports::ChatStorage;
 use lattice_core::application::contracts::search::SearchResultDto;
 use lattice_core::application::contracts::sources::SourceDto;
@@ -16,28 +17,10 @@ use lattice_core::shared::text::build_excerpt;
 /// Anything that counts, scopes or filters vault documents must check it.
 pub const WEB_SOURCE_PREFIX: &str = "web:";
 
-/// Numbers the sources the user will see, so the prompt can cite the same
-/// numbers. This must be the only place citation numbers are assigned, and it
-/// must run after every step that reorders or filters the list.
-pub(super) fn assign_citation_ids(sources: &mut [SourceDto]) {
-    let mut next = sources
-        .iter()
-        .filter_map(|s| s.citation_id)
-        .max()
-        .unwrap_or(0)
-        + 1;
-    for source in sources {
-        if source.citation_id.is_none() {
-            source.citation_id = Some(next);
-            next += 1;
-        }
-    }
-}
-
 /// One web or Wikipedia result as the prompt will show it, less its number.
 ///
 /// Kept structured until the source list is final: the number in front of it
-/// has to be the one [`assign_citation_ids`] gives the matching source, and
+/// has to be the one [`name_sources`] gives the matching source, and
 /// that is only known once attachments, KB passages and the rest are merged.
 #[derive(Debug, Clone)]
 pub struct WebContextItem {
@@ -49,7 +32,7 @@ pub struct WebContextItem {
 
 impl WebContextItem {
     pub(in crate::features::conversation::chat) fn render(&self, label: u32) -> String {
-        format!("[{label}] {}\n{}", self.title, self.detail)
+        format!("{} {}\n{}", marker(label), self.title, self.detail)
     }
 }
 
@@ -633,7 +616,9 @@ mod merge_tool_sources_tests {
 
 #[cfg(test)]
 mod web_context_label_tests {
+    use super::super::source_names::name_sources;
     use super::*;
+    use lattice_core::application::services::model_contract::kept::TurnNames;
 
     fn kb_source(chunk_id: &str) -> SourceDto {
         SourceDto {
@@ -687,16 +672,16 @@ mod web_context_label_tests {
         let urls = ["https://a.test/one", "https://b.test/two"];
         let mut sources = vec![kb_source("c1"), kb_source("c2")];
         sources.extend(build_web_source_citations(&urls.map(web_result), &[], 200));
-        assign_citation_ids(&mut sources);
+        name_sources(&TurnNames::unstored(), &mut sources);
 
         let rendered = render_web_context(&urls.map(item), &sources).unwrap_or_default();
 
         assert!(
-            rendered.starts_with("[3] Title of https://a.test/one\n"),
+            rendered.starts_with("[s3] Title of https://a.test/one\n"),
             "{rendered}"
         );
         assert!(
-            rendered.contains("\n\n[4] Title of https://b.test/two\n"),
+            rendered.contains("\n\n[s4] Title of https://b.test/two\n"),
             "{rendered}"
         );
         assert_eq!(sources[2].citation_id, Some(3));
@@ -747,7 +732,7 @@ mod web_context_label_tests {
     #[test]
     fn a_result_without_a_source_is_left_out() {
         let mut sources = build_web_source_citations(&[web_result("https://a.test")], &[], 200);
-        assign_citation_ids(&mut sources);
+        name_sources(&TurnNames::unstored(), &mut sources);
 
         let rendered = render_web_context(
             &[
@@ -760,7 +745,7 @@ mod web_context_label_tests {
 
         assert_eq!(
             rendered.as_deref(),
-            Some("[1] Title of https://a.test\nURL: https://a.test")
+            Some("[s1] Title of https://a.test\nURL: https://a.test")
         );
     }
 
@@ -769,7 +754,7 @@ mod web_context_label_tests {
     #[test]
     fn the_item_carrying_the_page_text_wins_over_an_earlier_snippet() {
         let mut sources = build_web_source_citations(&[web_result("https://a.test")], &[], 200);
-        assign_citation_ids(&mut sources);
+        name_sources(&TurnNames::unstored(), &mut sources);
         let page = WebContextItem {
             detail: "URL: https://a.test\nPage text: the whole fetched article.".to_string(),
             ..item("https://a.test")
@@ -780,7 +765,7 @@ mod web_context_label_tests {
         assert_eq!(
             rendered.as_deref(),
             Some(
-                "[1] Title of https://a.test\nURL: https://a.test\nPage text: the whole fetched article."
+                "[s1] Title of https://a.test\nURL: https://a.test\nPage text: the whole fetched article."
             )
         );
     }

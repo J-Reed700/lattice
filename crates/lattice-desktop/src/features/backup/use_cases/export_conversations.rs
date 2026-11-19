@@ -495,6 +495,7 @@ async fn write_json(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lattice_core::shared::persistence::Database;
     use sqlx::sqlite::SqlitePoolOptions;
     use sqlx::SqlitePool;
     use tempfile::tempdir;
@@ -579,7 +580,9 @@ mod tests {
     }
 
     async fn use_case(seed: bool) -> ExportConversationsUseCase {
-        ExportConversationsUseCase::new(Arc::new(ExportRepository::new(seeded_pool(seed).await)))
+        ExportConversationsUseCase::new(Arc::new(ExportRepository::new(Database::new(
+            seeded_pool(seed).await,
+        ))))
     }
 
     #[tokio::test]
@@ -641,10 +644,11 @@ mod tests {
         .await
         .expect("insert note");
 
-        let summary = ExportConversationsUseCase::new(Arc::new(ExportRepository::new(pool)))
-            .execute(dir.path().to_path_buf(), ExportFormat::Markdown)
-            .await
-            .expect("export");
+        let summary =
+            ExportConversationsUseCase::new(Arc::new(ExportRepository::new(Database::new(pool))))
+                .execute(dir.path().to_path_buf(), ExportFormat::Markdown)
+                .await
+                .expect("export");
 
         let root = PathBuf::from(&summary.output_dir);
         let entries: Vec<_> = std::fs::read_dir(root.join("journal"))
@@ -707,13 +711,14 @@ mod tests {
         .await
         .expect("insert conversation");
 
-        let error = ExportConversationsUseCase::new(Arc::new(ExportRepository::new(pool)))
-            .execute(
-                dir.path().to_path_buf(),
-                ExportFormat::Json { pretty: false },
-            )
-            .await
-            .unwrap_err();
+        let error =
+            ExportConversationsUseCase::new(Arc::new(ExportRepository::new(Database::new(pool))))
+                .execute(
+                    dir.path().to_path_buf(),
+                    ExportFormat::Json { pretty: false },
+                )
+                .await
+                .unwrap_err();
 
         assert!(
             matches!(&error, AppError::Database(message) if message.contains("conversation conv-bad has an unreadable model_choice")),
@@ -756,11 +761,12 @@ mod tests {
         std::fs::write(store.path().join(format!("{id}.png")), b"png bytes").expect("image");
 
         let dir = tempdir().expect("tempdir");
-        let summary = ExportConversationsUseCase::new(Arc::new(ExportRepository::new(pool)))
-            .with_chat_images_root(store.path().to_path_buf())
-            .execute(dir.path().to_path_buf(), ExportFormat::Markdown)
-            .await
-            .expect("export");
+        let summary =
+            ExportConversationsUseCase::new(Arc::new(ExportRepository::new(Database::new(pool))))
+                .with_chat_images_root(store.path().to_path_buf())
+                .execute(dir.path().to_path_buf(), ExportFormat::Markdown)
+                .await
+                .expect("export");
 
         let root = PathBuf::from(&summary.output_dir);
         let copied = std::fs::read(root.join("images").join(format!("{id}.png"))).expect("copied");

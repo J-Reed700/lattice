@@ -17,6 +17,7 @@ use lattice_core::application::ports::llm_port::{
     ModelRequirements, OptionalLlmLoader, PinnedModel,
 };
 use lattice_core::application::ports::{EmbeddingPort, LLMPort};
+use lattice_core::application::services::model_contract::kept::{KeptNames, TurnNames};
 use lattice_core::domain::conversation::ChatModelChoice;
 use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::Result;
@@ -190,7 +191,10 @@ pub trait ChatStorage: Send + Sync {
         &self,
         conversation_id: &str,
         focus: Option<&ExplorerFocusDto>,
+        names: Arc<TurnNames>,
     ) -> Option<TurnSource>;
+    /// What a conversation has shown its model, under the names it gave each thing.
+    fn kept_names(&self) -> Arc<KeptNames>;
 }
 
 /// The writes a conversation can branch with: side threads (tangents), forks,

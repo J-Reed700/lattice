@@ -27,10 +27,12 @@ class ChatRagEvalTests(unittest.TestCase):
             "required_citation_docs": ["a"],
         }
         passing = chat_rag_eval.evaluate_answer(
-            query, expectation, "The period is 14 days [1].", ["a", "b"], 10, "m"
+            query, expectation, "The period is 14 days [1].", ["a", "b"], 10, "m",
+            citations=chat_rag_eval.extract_citations("The period is 14 days [1].")
         )
         wrong_source = chat_rag_eval.evaluate_answer(
-            query, expectation, "The period is 14 days [2].", ["a", "b"], 10, "m"
+            query, expectation, "The period is 14 days [2].", ["a", "b"], 10, "m",
+            citations=chat_rag_eval.extract_citations("The period is 14 days [2].")
         )
         self.assertTrue(passing["mechanical_checks_passed"])
         self.assertFalse(wrong_source["mechanical_checks_passed"])
@@ -40,13 +42,15 @@ class ChatRagEvalTests(unittest.TestCase):
         labels = {"required_patterns": [["14"]]}
         for answer in ("The period is NOT 14 days [1].",
                        "The period is 14 days [1]. The Moon is cheese."):
-            row = chat_rag_eval.evaluate_answer(query, labels, answer, ["a"], 1, "m")
+            row = chat_rag_eval.evaluate_answer(query, labels, answer, ["a"], 1, "m",
+                                                 citations=chat_rag_eval.extract_citations(answer))
             self.assertIsNone(row["answer_correct"])
             self.assertIsNone(chat_rag_eval.aggregate([row])["answer_accuracy"])
 
     def test_empty_fact_groups_do_not_vacuously_pass(self):
         row = chat_rag_eval.evaluate_answer(
-            {"id": "q", "relevance": {"a": 3}}, {}, "Cheese [1].", ["a"], 1, "m")
+            {"id": "q", "relevance": {"a": 3}}, {}, "Cheese [1].", ["a"], 1, "m",
+            citations=chat_rag_eval.extract_citations("Cheese [1]."))
         self.assertFalse(row["mechanical_checks_passed"])
 
     def test_unanswerable_requires_abstention_without_citation(self):
@@ -59,6 +63,7 @@ class ChatRagEvalTests(unittest.TestCase):
             ["a"],
             10,
             "m",
+            citations=chat_rag_eval.extract_citations("That information is not provided in the documents."),
         )
         self.assertTrue(row["mechanical_checks_passed"])
 

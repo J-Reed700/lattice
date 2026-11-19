@@ -1,7 +1,7 @@
 //! A synthesis as a job: carried on after a restart from the parts it saved,
 //! and its staged result saved to the Journal once.
+use super::notes::{synthesis_overhead, Section};
 use super::*;
-use crate::features::conversation::dto::MessageDto;
 use lattice_core::shared::persistence::Database;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -10,15 +10,9 @@ use tokio::sync::Notify;
 const WAIT: Duration = Duration::from_secs(10);
 
 pub(super) async fn pool() -> sqlx::SqlitePool {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .idle_timeout(None)
-        .max_lifetime(None)
-        .connect(":memory:")
+    lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
-        .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    pool
+        .unwrap()
 }
 
 fn request() -> StartJournalSynthesisRequestDto {
@@ -35,14 +29,33 @@ fn request() -> StartJournalSynthesisRequestDto {
     }
 }
 
-/// Two parts and the merge; answers each prompt with notes on it, and stops
+const PARTS: [&str; 4] = ["part one", "part two", "part three", "part four"];
+
+fn note(text: String) -> Note {
+    Note {
+        section: Section::Highlights,
+        entries: Vec::new(),
+        text,
+        sources: Vec::new(),
+    }
+}
+
+fn texts(chunks: &[Vec<Note>]) -> String {
+    chunks
+        .iter()
+        .flatten()
+        .map(|note| note.text.as_str())
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+/// Two parts and the merge; answers each step with notes on it, and stops
 /// answering after `answers` of them, as an app about to close would.
 struct FakeWork {
     answers: usize,
     parts: usize,
     part_chars: usize,
     answered: Mutex<Vec<String>>,
-    removed: Mutex<Vec<String>>,
     stalled: Notify,
 }
 
@@ -53,25 +66,31 @@ impl FakeWork {
             parts: 2,
             part_chars: 100_000,
             answered: Mutex::default(),
-            removed: Mutex::default(),
             stalled: Notify::new(),
         })
     }
 
-    /// Four parts whose notes cannot share one merge prompt.
+    /// Four parts whose notes cannot share one merge request.
     fn merging() -> Arc<Self> {
         Arc::new(Self {
             answers: usize::MAX,
             parts: 4,
-            part_chars: build_journal_reduce_prompt(&[]).chars().count() + 40,
+            part_chars: synthesis_overhead().unwrap() + 40,
             answered: Mutex::default(),
-            removed: Mutex::default(),
             stalled: Notify::new(),
         })
     }
 
     fn answered(&self) -> Vec<String> {
         self.answered.lock().unwrap().clone()
+    }
+
+    async fn turn(&self, step: String) {
+        if self.answered.lock().unwrap().len() >= self.answers {
+            self.stalled.notify_one();
+            std::future::pending::<()>().await;
+        }
+        self.answered.lock().unwrap().push(step);
     }
 }
 
@@ -81,11 +100,7 @@ impl SynthesisWork for FakeWork {
         Ok(SynthesisPlan {
             scope: "conversation".into(),
             entry_count: 2,
-            prompts: ["part one", "part two", "part three", "part four"]
-                .iter()
-                .take(self.parts)
-                .map(|prompt| prompt.to_string())
-                .collect(),
+            chunks: vec![Vec::new(); self.parts],
             conversation_ids: selection.conversation_ids.clone(),
             citations: Vec::new(),
             sources: Vec::new(),
@@ -93,39 +108,25 @@ impl SynthesisWork for FakeWork {
         })
     }
 
-    async fn open_scratch(&self) -> Result<String> {
-        Ok(uuid::Uuid::new_v4().to_string())
+    async fn notes(&self, _plan: &SynthesisPlan, index: usize) -> Result<Vec<Note>> {
+        self.turn(PARTS[index].to_string()).await;
+        Ok(vec![note(format!("notes on {}", PARTS[index]))])
     }
 
-    async fn answer(&self, conversation_id: &str, prompt: &str) -> Result<ChatResponse> {
-        if self.answered.lock().unwrap().len() >= self.answers {
-            self.stalled.notify_one();
-            std::future::pending::<()>().await;
-        }
-        self.answered.lock().unwrap().push(prompt.to_string());
-        let notes = format!("notes on {}", prompt.lines().next().unwrap_or_default());
-        Ok(ChatResponse {
-            conversation_id: conversation_id.into(),
-            message: notes.clone(),
-            messages: vec![MessageDto {
-                id: uuid::Uuid::new_v4().to_string(),
-                conversation_id: conversation_id.into(),
-                role: "assistant".into(),
-                content: notes,
-                tokens: 3,
-                created_at: String::new(),
-                metadata: None,
-                status: "completed".into(),
-            }],
-            context_used: 0,
-            sources: Vec::new(),
-            timing_metrics: None,
-        })
+    async fn merge(
+        &self,
+        _plan: &SynthesisPlan,
+        chunks: &[Vec<Note>],
+        _group: usize,
+        _groups: usize,
+    ) -> Result<Vec<Note>> {
+        self.turn(format!("merge: {}", texts(chunks))).await;
+        Ok(vec![note(format!("merged {}", texts(chunks)))])
     }
 
-    async fn remove_scratch(&self, conversation_id: String) -> Result<()> {
-        self.removed.lock().unwrap().push(conversation_id);
-        Ok(())
+    async fn brief(&self, _plan: &SynthesisPlan, chunks: &[Vec<Note>]) -> Result<String> {
+        self.turn(format!("brief: {}", texts(chunks))).await;
+        Ok(format!("brief of {}", texts(chunks)))
     }
 }
 
@@ -144,9 +145,8 @@ pub(super) async fn finished(jobs: &JobRuntime, id: &str) -> JobRecord {
     .expect("the synthesis never finished")
 }
 
-async fn runtime_with(pool: &sqlx::SqlitePool, work: Arc<FakeWork>) -> Arc<JobRuntime> {
-    let jobs =
-        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
+async fn runtime_with(db: &Database, work: Arc<FakeWork>) -> Arc<JobRuntime> {
+    let jobs = JobRuntime::with_poll_interval(db.clone(), Duration::from_millis(50));
     jobs.register(
         JOURNAL_SYNTHESIS,
         Arc::new(JournalSynthesisJob::with(work)),
@@ -159,9 +159,9 @@ async fn runtime_with(pool: &sqlx::SqlitePool, work: Arc<FakeWork>) -> Arc<JobRu
 
 #[tokio::test]
 async fn a_synthesis_stopped_by_a_restart_resumes_at_the_first_part_it_had_not_saved() {
-    let pool = pool().await;
+    let db = Database::new(pool().await);
     let before = FakeWork::answering(1);
-    let jobs = runtime_with(&pool, before.clone()).await;
+    let jobs = runtime_with(&db, before.clone()).await;
     let started = synthesize_journal_entries_impl(request(), &jobs)
         .await
         .unwrap();
@@ -172,16 +172,11 @@ async fn a_synthesis_stopped_by_a_restart_resumes_at_the_first_part_it_had_not_s
     jobs.close();
     jobs.drain().await;
     assert_eq!(before.answered(), ["part one"]);
-    assert_eq!(
-        before.removed.lock().unwrap().len(),
-        2,
-        "no scratch conversation is left behind"
-    );
     let saved = jobs.store().get(&started.job.id).await.unwrap();
     assert_eq!(saved.status, JobStatus::Pending);
 
     let after = FakeWork::answering(usize::MAX);
-    let jobs = runtime_with(&pool, after.clone()).await;
+    let jobs = runtime_with(&db, after.clone()).await;
     let job = finished(&jobs, &started.job.id).await;
 
     assert_eq!(job.status, JobStatus::Completed, "{:?}", job.error_message);
@@ -192,9 +187,7 @@ async fn a_synthesis_stopped_by_a_restart_resumes_at_the_first_part_it_had_not_s
     let result = get_journal_synthesis_result_impl(&job.id, &jobs)
         .await
         .unwrap();
-    assert!(result
-        .synthesis
-        .starts_with("notes on Below are chunk syntheses of a journal"));
+    assert!(result.synthesis.starts_with("brief of notes on part one"));
     assert_eq!(result.chunk_count, 2);
     assert_eq!(result.conversation_ids, ["first", "second"]);
     jobs.close();
@@ -203,8 +196,8 @@ async fn a_synthesis_stopped_by_a_restart_resumes_at_the_first_part_it_had_not_s
 
 #[tokio::test]
 async fn a_synthesis_finished_while_closed_waits_staged_and_is_saved_once() {
-    let pool = pool().await;
-    let jobs = runtime_with(&pool, FakeWork::answering(usize::MAX)).await;
+    let db = Database::new(pool().await);
+    let jobs = runtime_with(&db, FakeWork::answering(usize::MAX)).await;
     let started = synthesize_journal_entries_impl(request(), &jobs)
         .await
         .unwrap();
@@ -213,7 +206,7 @@ async fn a_synthesis_finished_while_closed_waits_staged_and_is_saved_once() {
     jobs.drain().await;
 
     // The app opens again: the finished synthesis is listed with where it goes.
-    let jobs = runtime_with(&pool, FakeWork::answering(0)).await;
+    let jobs = runtime_with(&db, FakeWork::answering(0)).await;
     let listed = list_journal_syntheses_impl(&jobs).await.unwrap();
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].job.status, JobStatus::Completed);
@@ -239,10 +232,27 @@ async fn a_synthesis_finished_while_closed_waits_staged_and_is_saved_once() {
 }
 
 #[tokio::test]
+async fn every_open_synthesis_is_listed_however_many_there_are() {
+    let db = Database::new(pool().await);
+    let jobs = runtime_with(&db, FakeWork::answering(0)).await;
+    for n in 0..51 {
+        let mut start = request();
+        start.destination = SynthesisDestinationDto::Note {
+            note_id: format!("note-{n}"),
+        };
+        synthesize_journal_entries_impl(start, &jobs).await.unwrap();
+    }
+
+    assert_eq!(list_journal_syntheses_impl(&jobs).await.unwrap().len(), 51);
+    jobs.close();
+    jobs.drain().await;
+}
+
+#[tokio::test]
 async fn a_synthesis_still_running_cannot_be_marked_applied() {
-    let pool = pool().await;
+    let db = Database::new(pool().await);
     let work = FakeWork::answering(0);
-    let jobs = runtime_with(&pool, work.clone()).await;
+    let jobs = runtime_with(&db, work.clone()).await;
     let started = synthesize_journal_entries_impl(request(), &jobs)
         .await
         .unwrap();
@@ -265,9 +275,9 @@ async fn a_synthesis_still_running_cannot_be_marked_applied() {
 /// holds them, every note read.
 #[tokio::test]
 async fn notes_too_many_for_one_brief_are_merged_in_levels_first() {
-    let pool = pool().await;
+    let db = Database::new(pool().await);
     let work = FakeWork::merging();
-    let jobs = runtime_with(&pool, work.clone()).await;
+    let jobs = runtime_with(&db, work.clone()).await;
     let started = synthesize_journal_entries_impl(request(), &jobs)
         .await
         .unwrap();
@@ -277,7 +287,7 @@ async fn notes_too_many_for_one_brief_are_merged_in_levels_first() {
     let answered = work.answered();
     let merges: Vec<&String> = answered
         .iter()
-        .filter(|prompt| prompt.starts_with("Merge these chunk syntheses"))
+        .filter(|step| step.starts_with("merge: "))
         .collect();
     // Four parts, merged in pairs; the two merges then go to the brief.
     assert_eq!(answered.len(), 4 + 2 + 1, "{answered:#?}");
@@ -290,10 +300,7 @@ async fn notes_too_many_for_one_brief_are_merged_in_levels_first() {
             "{part} reached no merge"
         );
     }
-    assert!(answered
-        .last()
-        .unwrap()
-        .starts_with("Below are chunk syntheses of a journal"));
+    assert!(answered.last().unwrap().starts_with("brief: "));
     jobs.close();
     jobs.drain().await;
 }

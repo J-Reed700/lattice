@@ -134,7 +134,7 @@ plugin_choose_archive_destination() -> ArchiveStatusDto
   Rust-side folder picker. Cancel => unchanged status. Stores destination.
   Rejects a destination equal to or inside <app_data_dir>.
 
-plugin_set_archive_keep_count(request: { keep_count: u32 }) -> ArchiveStatusDto   // 1..=50
+plugin_set_archive_keep_count(request: { keep_count: u32 }) -> ArchiveStatusDto   // >= 1
 plugin_set_archive_passphrase(request: { passphrase: Option<String> }) -> ArchiveStatusDto  // None removes the slot; needs master key from keyring
 plugin_rotate_recovery_code() -> ArchiveSetupDto   // new code; confirm with plugin_confirm_archive_setup (passphrase ignored, slot kept)
 plugin_disable_archive() -> ArchiveStatusDto        // clears destination only; key and envelope stay

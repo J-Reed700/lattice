@@ -36,12 +36,13 @@ vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeo
   getLearningLessonEvidence: mocks.evidence,
   getLearningLessonClaimReview: mocks.review,
   getLearningPlan: mocks.plan,
+  prepareLearningAhead: () => new Promise(() => {}),
   getLearningPracticeWorkspace: async (programId: string) => ({ ok: true, data: { programId, sessions: [] } }),
   getLearningMemory: async () => ({ ok: true, data: { programId: 'program-1', journalId: null, lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0 } }),
   listStudyDecks: async () => ({ ok: true, data: [] }),
   courseIndexStatus: async () => ({ ok: true, data: { state: 'ready', mode: 'hybrid' } }),
-  courseIndexOpen: async () => ({ ok: true, data: undefined }),
-  courseIndexClose: async () => ({ ok: true, data: undefined }),
+  courseIndexOpen: async () => ({ ok: true, data: null }),
+  courseIndexClose: async () => ({ ok: true, data: null }),
 } }));
 
 const PAGE_WAIT = { timeout: 5000 };
@@ -71,7 +72,8 @@ describe('Learning Studio page: opening the claim review on a claim', () => {
     mocks.evidence.mockResolvedValue(ok({
       policy: 'lesson-evidence-v21', checkedAt: 1, checkerModel: 'checker', retrievalMode: 'hybrid', embeddingModel: null, contentSha256: 'hash', claimCount: 1, confirmedCount: 0,
       executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true,
-      teachingClaims: [{ sectionIndex: 0, contentQuote: STATEMENT, claim: STATEMENT, verdict: 'unsupported', reason: 'No passage.', supportingQuote: null, passages: [], resolution: 'not_verified', note: null, sufficiency: null, unverifiedReason: 'unsupported', claimId: 'claim-1' }],
+      teachingClaims: [{ sectionIndex: 0, contentQuote: STATEMENT, claim: STATEMENT, verdict: 'unsupported', reason: 'No passage.', supportingQuote: null, passages: [], resolution: 'not_verified', note: null, sufficiency: null, unverifiedReason: 'unsupported', claimId: 'claim-1', cites: [] }],
+      citations: [], sections: [],
     }));
   });
 

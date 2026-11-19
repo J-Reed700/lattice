@@ -1,4 +1,4 @@
-use super::{SettingsDto, VectorIndexCompressionModeDto, MAX_VECTOR_COMPRESSION_DIMS};
+use super::{SettingsDto, VectorIndexCompressionModeDto};
 
 #[test]
 fn default_settings_validate_without_errors() {
@@ -23,15 +23,15 @@ fn invalid_values_are_reported_under_their_category() {
 }
 
 #[test]
-fn a_very_large_chunk_size_is_a_warning_not_an_error() {
+fn a_zero_highlight_term_budget_is_a_warning_not_an_error() {
     let mut settings = SettingsDto::default();
-    settings.indexing.chunk_size = 15000;
+    settings.llm.tool_output.highlight_terms_max = 0;
 
     let result = settings.validate();
 
     assert!(result.valid);
     assert!(result.has_warnings());
-    assert!(result.warnings.contains_key("indexing"));
+    assert!(result.warnings.contains_key("llm"));
 }
 
 /// The dims are remembered while the mode is `none`, so validation only
@@ -41,7 +41,7 @@ fn a_very_large_chunk_size_is_a_warning_not_an_error() {
 fn vector_compression_dims_are_only_checked_when_truncation_is_on() {
     let mut settings = SettingsDto::default();
     settings.search.vector_index_compression.mode = VectorIndexCompressionModeDto::None;
-    settings.search.vector_index_compression.dims = 1;
+    settings.search.vector_index_compression.dims = 0;
     assert!(settings.validate().valid);
 
     settings.search.vector_index_compression.mode = VectorIndexCompressionModeDto::Truncated;
@@ -56,8 +56,8 @@ fn vector_compression_dims_are_only_checked_when_truncation_is_on() {
     settings.search.vector_index_compression.dims = 512;
     assert!(settings.validate().valid);
 
-    settings.search.vector_index_compression.dims = MAX_VECTOR_COMPRESSION_DIMS + 1;
-    assert!(!settings.validate().valid);
+    settings.search.vector_index_compression.dims = 100_000;
+    assert!(settings.validate().valid);
 }
 
 /// The page-fetch timeout bounds the pipeline's own page reads. With page

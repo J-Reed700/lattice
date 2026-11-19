@@ -3,6 +3,7 @@
 //! and shaped as a citation the turn can number.
 
 use super::course_turn::{place, CourseTurn};
+use super::names::Source;
 use super::repository::source_text;
 use crate::dto::{LearningProgramDto, LearningSourceDto};
 use crate::reference_collection::{ReferenceCollection, ReferencePassage, Scope};
@@ -44,13 +45,14 @@ fn source_passage(
     place: Option<&str>,
     title: &str,
     version_id: &str,
+    name: &str,
     span: (usize, usize),
     text: &str,
     score: f32,
 ) -> SourcePassage {
     let label = place.map_or_else(
-        || format!("{title} (source_id: {version_id})"),
-        |place| format!("{place} › {title} (source_id: {version_id})"),
+        || format!("{title} {name}"),
+        |place| format!("{place} › {title} {name}"),
     );
     SourcePassage {
         label,
@@ -78,6 +80,12 @@ fn source_passage(
             web_snapshot: None,
         },
     }
+}
+
+/// One stretch of a source and the character the next stretch starts at, when there is one.
+pub(super) struct Read {
+    pub passages: SourcePassages,
+    pub next: Option<usize>,
 }
 
 impl CourseTurn {
@@ -113,22 +121,23 @@ impl CourseTurn {
             .iter()
             .map(|source| (source.id.as_str(), source.title.as_str()))
             .collect();
-        Ok(found
+        found
             .iter()
             .map(|passage| {
-                source_passage(
+                Ok(source_passage(
                     places.get(passage.source_id.as_str()).map(String::as_str),
                     titles
                         .get(passage.source_id.as_str())
                         .copied()
                         .unwrap_or_default(),
                     &passage.source_id,
+                    &self.name(Source(passage.source_id.clone()))?,
                     (passage.start_byte, passage.end_byte),
                     &passage.text,
                     passage.score as f32,
-                )
+                ))
             })
-            .collect())
+            .collect()
     }
 
     async fn sources(&self) -> Result<Vec<LearningSourceDto>> {
@@ -203,13 +212,13 @@ impl CourseTurn {
     }
 
     /// The `read_course_source` tool: one stretch of a source from character
-    /// `offset`, as much as `max_chars` shows, saying where the next starts.
+    /// `offset`, as much as `max_chars` shows, and where the next starts.
     pub(super) async fn read_source(
         &self,
         version_id: &str,
         offset: usize,
         max_chars: usize,
-    ) -> Result<Option<SourcePassages>> {
+    ) -> Result<Option<Read>> {
         let Some((title, text)) = source_text(&self.database, &self.program_id, version_id).await?
         else {
             return Ok(None);
@@ -220,32 +229,38 @@ impl CourseTurn {
         let shown: String = text.chars().skip(start).take(room).collect();
         let end = start + shown.chars().count();
         if shown.trim().is_empty() {
-            return Ok(Some(SourcePassages {
-                passages: Vec::new(),
-                note: Some(format!(
-                    "Nothing at character {offset}: this source is {total} characters long."
-                )),
+            return Ok(Some(Read {
+                passages: SourcePassages {
+                    passages: Vec::new(),
+                    note: Some(format!(
+                        "Nothing at character {offset}: this source is {total} characters long."
+                    )),
+                },
+                next: None,
             }));
         }
         let note = if end < total {
-            format!(
-                "Characters {start} to {end} of {total}. Call read_course_source with this source_id and offset={end} to read on."
-            )
+            format!("Characters {start} to {end} of {total}.")
         } else {
             format!("Characters {start} to {end} of {total}: the end of this source.")
         };
         let program = self.program().await?;
         let places = lessons_citing(program);
-        Ok(Some(SourcePassages {
-            passages: vec![source_passage(
-                places.get(version_id).map(String::as_str),
-                &title,
-                version_id,
-                (start, end),
-                &shown,
-                1.0,
-            )],
-            note: Some(note),
+        let name = self.name(Source(version_id.to_string()))?;
+        Ok(Some(Read {
+            passages: SourcePassages {
+                passages: vec![source_passage(
+                    places.get(version_id).map(String::as_str),
+                    &title,
+                    version_id,
+                    &name,
+                    (start, end),
+                    &shown,
+                    1.0,
+                )],
+                note: Some(note),
+            },
+            next: (end < total).then_some(end),
         }))
     }
 }

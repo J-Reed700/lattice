@@ -9,7 +9,7 @@ use super::recall::{
 use super::*;
 use crate::features::conversation::repository::ConversationRepository;
 use lattice_core::domain::conversation::memory::{compute_digest, SourceRole};
-use sqlx::sqlite::SqlitePoolOptions;
+use lattice_core::shared::persistence::Database;
 use sqlx::SqlitePool;
 
 // ---------------------------------------------------------------------------
@@ -17,8 +17,9 @@ use sqlx::SqlitePool;
 // ---------------------------------------------------------------------------
 
 async fn migrated_pool() -> SqlitePool {
-    let pool = SqlitePoolOptions::new().connect(":memory:").await.unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+        .await
+        .unwrap();
     sqlx::query("PRAGMA foreign_keys = ON")
         .execute(&pool)
         .await
@@ -120,8 +121,8 @@ fn matched_ids(result: &FunctionResult) -> Vec<String> {
 
 /// A repository is the real `ConversationMemoryReadPort`; the tools only ever
 /// see the trait.
-fn port(pool: &SqlitePool) -> ConversationRepository {
-    ConversationRepository::new(pool.clone())
+fn port(db: &Database) -> ConversationRepository {
+    ConversationRepository::new(db.clone())
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +135,7 @@ fn port(pool: &SqlitePool) -> ConversationRepository {
 #[tokio::test]
 async fn a_tool_call_cannot_reach_another_conversation_by_changing_its_arguments() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Mine").await;
     seed_conversation(&pool, "conv-theirs", "Theirs").await;
     seed_message(
@@ -154,7 +156,7 @@ async fn a_tool_call_cannot_reach_another_conversation_by_changing_its_arguments
         "completed",
     )
     .await;
-    let port = port(&pool);
+    let port = port(&db);
     let scope = scope("conv-mine");
     let mut memo = HistoryToolMemo::default();
 
@@ -239,6 +241,33 @@ fn neither_tool_schema_offers_a_conversation_argument() {
     }
 }
 
+#[test]
+fn no_history_tool_asks_the_model_for_an_id_a_sequence_a_cursor_or_an_offset() {
+    for definition in history_tool_definitions() {
+        let properties = definition.parameters["properties"]
+            .as_object()
+            .expect("an object schema");
+        for key in [
+            "message_ids",
+            "from_sequence",
+            "to_sequence",
+            "start_byte",
+            "offset",
+        ] {
+            assert!(
+                !properties.contains_key(key),
+                "{} asks for {key}",
+                definition.name
+            );
+        }
+    }
+    let read = history_tool_definitions()
+        .into_iter()
+        .find(|tool| tool.name == TOOL_READ_CONVERSATION_HISTORY)
+        .expect("the read tool is defined");
+    assert!(read.parameters["properties"]["message"].is_object());
+}
+
 // ---------------------------------------------------------------------------
 // The shared index
 // ---------------------------------------------------------------------------
@@ -250,6 +279,7 @@ fn neither_tool_schema_offers_a_conversation_argument() {
 #[tokio::test]
 async fn title_and_bookmark_rows_never_come_back_as_message_sources() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Pomegranate planning").await;
     seed_message(
         &pool,
@@ -261,7 +291,7 @@ async fn title_and_bookmark_rows_never_come_back_as_message_sources() {
     )
     .await;
     seed_bookmark(&pool, "conv-mine", "m1", "zeppelin reminder").await;
-    let port = port(&pool);
+    let port = port(&db);
     let scope = scope("conv-mine");
     let mut memo = HistoryToolMemo::default();
 
@@ -289,6 +319,7 @@ async fn title_and_bookmark_rows_never_come_back_as_message_sources() {
 #[tokio::test]
 async fn exact_identifiers_and_non_latin_queries_return_their_passages() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     seed_message(
         &pool,
@@ -335,7 +366,7 @@ async fn exact_identifiers_and_non_latin_queries_return_their_passages() {
         "completed",
     )
     .await;
-    let port = port(&pool);
+    let port = port(&db);
     let scope = scope("conv-mine");
 
     for (query, expected) in [
@@ -369,6 +400,7 @@ async fn exact_identifiers_and_non_latin_queries_return_their_passages() {
 #[tokio::test]
 async fn an_exact_identifier_is_reported_as_an_exact_match_not_a_ranked_guess() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     seed_message(
         &pool,
@@ -381,7 +413,7 @@ async fn an_exact_identifier_is_reported_as_an_exact_match_not_a_ranked_guess() 
     .await;
     let mut memo = HistoryToolMemo::default();
     let result = execute(
-        &port(&pool),
+        &port(&db),
         &scope("conv-mine"),
         &mut memo,
         search_call(serde_json::json!({"query": "AuthToken::refresh"})),
@@ -398,6 +430,7 @@ async fn an_exact_identifier_is_reported_as_an_exact_match_not_a_ranked_guess() 
 #[tokio::test]
 async fn adjacent_turn_expansion_explains_a_short_reply_and_stays_inside_budget() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     // A word two messages of three hold could not pick them out.
     seed_unrelated(&pool, "conv-mine", 12).await;
@@ -430,7 +463,7 @@ async fn adjacent_turn_expansion_explains_a_short_reply_and_stays_inside_budget(
     .await;
 
     let recalled = recall_for_turn(
-        &port(&pool),
+        &port(&db),
         &scope("conv-mine"),
         &RecallRequest {
             user_input: "which option did we settle on",
@@ -475,6 +508,7 @@ async fn adjacent_turn_expansion_explains_a_short_reply_and_stays_inside_budget(
 #[tokio::test]
 async fn a_passage_already_in_the_prompt_is_referenced_rather_than_repeated() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     seed_message(
         &pool,
@@ -497,7 +531,7 @@ async fn a_passage_already_in_the_prompt_is_referenced_rather_than_repeated() {
 
     let already = ["User: the deploy freeze lasts until Friday".to_string()];
     let recalled = recall_for_turn(
-        &port(&pool),
+        &port(&db),
         &scope("conv-mine"),
         &RecallRequest {
             user_input: "deploy freeze",
@@ -529,6 +563,7 @@ async fn a_passage_already_in_the_prompt_is_referenced_rather_than_repeated() {
 #[tokio::test]
 async fn a_group_with_nothing_new_to_add_is_dropped() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     seed_message(
         &pool,
@@ -542,7 +577,7 @@ async fn a_group_with_nothing_new_to_add_is_dropped() {
 
     let already = ["the deploy freeze lasts until Friday".to_string()];
     let recalled = recall_for_turn(
-        &port(&pool),
+        &port(&db),
         &scope("conv-mine"),
         &RecallRequest {
             user_input: "deploy freeze",
@@ -563,6 +598,7 @@ async fn a_group_with_nothing_new_to_add_is_dropped() {
 #[tokio::test]
 async fn the_message_being_answered_is_not_recalled_as_an_older_passage() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     let earlier = [
         "How much notice stops the Aldersgate Print agreement from renewing?".to_string(),
@@ -583,7 +619,7 @@ async fn the_message_being_answered_is_not_recalled_as_an_older_passage() {
     seed_message(&pool, "conv-mine", "q2", "user", question, "pending").await;
 
     let recalled = recall_for_turn(
-        &port(&pool),
+        &port(&db),
         &scope("conv-mine"),
         &RecallRequest {
             user_input: question,
@@ -663,6 +699,7 @@ async fn seed_vector(pool: &SqlitePool, conversation: &str, message: &str, vecto
 #[tokio::test]
 async fn the_strongest_fused_candidate_is_the_first_one_packed() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     seed_unrelated(&pool, "conv-mine", 3).await;
     seed_message(
@@ -695,7 +732,7 @@ async fn the_strongest_fused_candidate_is_the_first_one_packed() {
     )
     .await;
     seed_vector(&pool, "conv-mine", "best", [1.0, 0.0]).await;
-    let port = port(&pool).with_memory_embedding(Some(std::sync::Arc::new(Embedder)));
+    let port = port(&db).with_memory_embedding(Some(std::sync::Arc::new(Embedder)));
 
     let recalled = recall_for_turn(
         &port,
@@ -751,6 +788,7 @@ fn the_floor_reads_the_same_in_a_short_and_a_long_conversation() {
 #[tokio::test]
 async fn an_instruction_with_nothing_behind_it_recalls_nothing() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     seed_unrelated(&pool, "conv-mine", 40).await;
     for index in 0..20 {
@@ -766,7 +804,7 @@ async fn an_instruction_with_nothing_behind_it_recalls_nothing() {
     }
 
     let recalled = recall_for_turn(
-        &port(&pool),
+        &port(&db),
         &scope("conv-mine"),
         &recall_request("rename this variable"),
     )
@@ -785,6 +823,7 @@ async fn an_instruction_with_nothing_behind_it_recalls_nothing() {
 #[tokio::test]
 async fn a_question_finds_its_answer_by_the_one_word_they_share() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     seed_unrelated(&pool, "conv-mine", 40).await;
     seed_message(
@@ -798,7 +837,7 @@ async fn a_question_finds_its_answer_by_the_one_word_they_share() {
     .await;
 
     let recalled = recall_for_turn(
-        &port(&pool),
+        &port(&db),
         &scope("conv-mine"),
         &recall_request("what did I say my interview date was?"),
     )
@@ -815,13 +854,14 @@ async fn a_question_finds_its_answer_by_the_one_word_they_share() {
 #[tokio::test]
 async fn a_word_past_the_opening_of_a_long_message_still_counts() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     seed_unrelated(&pool, "conv-mine", 40).await;
     let long = format!("{} and the interview is on Friday", "notes ".repeat(500));
     seed_message(&pool, "conv-mine", "long", "user", &long, "completed").await;
 
     let recalled = recall_for_turn(
-        &port(&pool),
+        &port(&db),
         &scope("conv-mine"),
         &recall_request("when is the interview"),
     )
@@ -839,6 +879,7 @@ async fn a_word_past_the_opening_of_a_long_message_still_counts() {
 #[tokio::test]
 async fn recent_turns_answer_only_for_a_message_with_no_words_of_its_own() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     seed_message(
         &pool,
@@ -853,10 +894,10 @@ async fn recent_turns_answer_only_for_a_message_with_no_words_of_its_own() {
     let recent = ["We were talking about Aldersgate and docs/aldersgate.md".to_string()];
     let recall = |input: &'static str| {
         let recent = &recent;
-        let pool = pool.clone();
+        let db = db.clone();
         async move {
             recall_for_turn(
-                &port(&pool),
+                &port(&db),
                 &scope("conv-mine"),
                 &RecallRequest {
                     user_input: input,
@@ -964,16 +1005,6 @@ async fn nothing_above_the_floor_does_not_page_through_the_conversation() {
         ) -> lattice_core::shared::error::Result<SourcePage> {
             Ok(SourcePage::default())
         }
-        async fn search_memory_labels(
-            &self,
-            _: &str,
-            _: &str,
-            _: usize,
-        ) -> lattice_core::shared::error::Result<
-            Vec<lattice_core::domain::conversation::memory::MemoryId>,
-        > {
-            Ok(Vec::new())
-        }
     }
     let port = Common {
         searches: AtomicUsize::new(0),
@@ -994,6 +1025,7 @@ async fn nothing_above_the_floor_does_not_page_through_the_conversation() {
 #[tokio::test]
 async fn a_passage_with_no_shared_word_is_recalled_only_when_close_in_meaning() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     seed_unrelated(&pool, "conv-mine", 6).await;
     seed_message(
@@ -1027,7 +1059,7 @@ async fn a_passage_with_no_shared_word_is_recalled_only_when_close_in_meaning() 
     .await;
     seed_vector(&pool, "conv-mine", "close", [0.95, 0.31]).await;
     seed_vector(&pool, "conv-mine", "loose", [0.2, 0.98]).await;
-    let port = port(&pool).with_memory_embedding(Some(std::sync::Arc::new(Embedder)));
+    let port = port(&db).with_memory_embedding(Some(std::sync::Arc::new(Embedder)));
 
     let recalled = recall_for_turn(&port, &scope("conv-mine"), &recall_request("canine"))
         .await
@@ -1045,6 +1077,7 @@ async fn a_passage_with_no_shared_word_is_recalled_only_when_close_in_meaning() 
 #[tokio::test]
 async fn an_empty_query_a_miss_and_an_unavailable_index_are_three_different_answers() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     seed_message(
         &pool,
@@ -1055,7 +1088,7 @@ async fn an_empty_query_a_miss_and_an_unavailable_index_are_three_different_answ
         "completed",
     )
     .await;
-    let port = port(&pool);
+    let port = port(&db);
     let scope = scope("conv-mine");
 
     // 1. Nothing was asked, so nothing was established.
@@ -1113,6 +1146,7 @@ async fn an_empty_query_a_miss_and_an_unavailable_index_are_three_different_answ
 #[tokio::test]
 async fn automatic_retrieval_separates_a_miss_from_an_unavailable_index() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     seed_message(
         &pool,
@@ -1123,7 +1157,7 @@ async fn automatic_retrieval_separates_a_miss_from_an_unavailable_index() {
         "completed",
     )
     .await;
-    let port = port(&pool);
+    let port = port(&db);
     let scope = scope("conv-mine");
     let request = |input: &'static str| RecallRequest {
         user_input: input,
@@ -1158,8 +1192,41 @@ async fn automatic_retrieval_separates_a_miss_from_an_unavailable_index() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+async fn ids_past_the_per_read_ceiling_are_named_as_not_read() {
+    let pool = migrated_pool().await;
+    seed_conversation(&pool, "conv-mine", "Work").await;
+    let mut ids = Vec::new();
+    for index in 0..66 {
+        let id = format!("m{index}");
+        seed_message(&pool, "conv-mine", &id, "user", "a short note", "completed").await;
+        ids.push(id);
+    }
+    let port = port(&Database::new(pool.clone()));
+    let scope = scope("conv-mine");
+    let mut memo = HistoryToolMemo::default();
+
+    let read = execute(
+        &port,
+        &scope,
+        &mut memo,
+        read_call(serde_json::json!({"message_ids": ids})),
+    )
+    .await
+    .unwrap();
+
+    let unread = data(&read)["not_readable_message_ids"]
+        .as_array()
+        .expect("the ids that were not read");
+    assert!(
+        unread.iter().any(|id| id == "m65"),
+        "an id the read dropped without a word: {unread:?}"
+    );
+}
+
+#[tokio::test]
 async fn a_repeated_read_of_an_exhausted_range_returns_a_reference_not_the_text() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     seed_message(
         &pool,
@@ -1170,7 +1237,7 @@ async fn a_repeated_read_of_an_exhausted_range_returns_a_reference_not_the_text(
         "completed",
     )
     .await;
-    let port = port(&pool);
+    let port = port(&db);
     let scope = scope("conv-mine");
     let mut memo = HistoryToolMemo::default();
 
@@ -1214,10 +1281,11 @@ async fn a_repeated_read_of_an_exhausted_range_returns_a_reference_not_the_text(
 #[tokio::test]
 async fn a_truncated_read_resumes_instead_of_resending_its_prefix() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     let long = "A".repeat(2000) + "TAIL";
     seed_message(&pool, "conv-mine", "m1", "user", &long, "completed").await;
-    let port = port(&pool);
+    let port = port(&db);
     let scope = HistoryToolScope::new(
         "conv-mine",
         HistoryToolBudget {
@@ -1262,6 +1330,7 @@ async fn a_truncated_read_resumes_instead_of_resending_its_prefix() {
 #[tokio::test]
 async fn a_read_cut_inside_multibyte_text_stays_on_a_character_boundary() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     let text = "é".repeat(800);
     seed_message(&pool, "conv-mine", "m1", "user", &text, "completed").await;
@@ -1276,7 +1345,7 @@ async fn a_read_cut_inside_multibyte_text_stays_on_a_character_boundary() {
     let mut memo = HistoryToolMemo::default();
 
     let result = execute(
-        &port(&pool),
+        &port(&db),
         &scope,
         &mut memo,
         read_call(serde_json::json!({"message_ids": ["m1"]})),
@@ -1293,6 +1362,7 @@ async fn a_read_cut_inside_multibyte_text_stays_on_a_character_boundary() {
 #[tokio::test]
 async fn history_reads_stop_when_the_turn_has_spent_its_share() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     seed_message(
         &pool,
@@ -1308,7 +1378,7 @@ async fn history_reads_stop_when_the_turn_has_spent_its_share() {
         ..Default::default()
     };
 
-    let port = port(&pool);
+    let port = port(&db);
     let scope = scope("conv-mine");
     let result = execute(
         &port,
@@ -1340,6 +1410,7 @@ async fn history_reads_stop_when_the_turn_has_spent_its_share() {
 #[tokio::test]
 async fn an_expired_turn_deadline_stops_a_history_tool_before_it_reads() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     seed_message(
         &pool,
@@ -1361,7 +1432,7 @@ async fn an_expired_turn_deadline_stops_a_history_tool_before_it_reads() {
     let mut memo = HistoryToolMemo::default();
 
     let result = execute(
-        &port(&pool),
+        &port(&db),
         &scope,
         &mut memo,
         search_call(serde_json::json!({"query": "importer"})),
@@ -1372,7 +1443,7 @@ async fn an_expired_turn_deadline_stops_a_history_tool_before_it_reads() {
 
     // Automatic retrieval reports the same thing as a reason, not as a miss.
     let recalled = recall_for_turn(
-        &port(&pool),
+        &port(&db),
         &scope,
         &RecallRequest {
             user_input: "importer",
@@ -1393,6 +1464,7 @@ async fn an_expired_turn_deadline_stops_a_history_tool_before_it_reads() {
 #[tokio::test]
 async fn the_same_search_twice_in_one_turn_is_answered_with_a_reference() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     seed_message(
         &pool,
@@ -1403,7 +1475,7 @@ async fn the_same_search_twice_in_one_turn_is_answered_with_a_reference() {
         "completed",
     )
     .await;
-    let port = port(&pool);
+    let port = port(&db);
     let scope = scope("conv-mine");
     let mut memo = HistoryToolMemo::default();
     let call = || search_call(serde_json::json!({"query": "importer"}));
@@ -1423,6 +1495,7 @@ async fn the_same_search_twice_in_one_turn_is_answered_with_a_reference() {
 #[tokio::test]
 async fn a_read_needs_exactly_one_way_of_naming_what_to_read() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     seed_message(
         &pool,
@@ -1433,7 +1506,7 @@ async fn a_read_needs_exactly_one_way_of_naming_what_to_read() {
         "completed",
     )
     .await;
-    let port = port(&pool);
+    let port = port(&db);
     let scope = scope("conv-mine");
     let mut memo = HistoryToolMemo::default();
 
@@ -1459,6 +1532,7 @@ async fn a_read_needs_exactly_one_way_of_naming_what_to_read() {
 #[tokio::test]
 async fn a_failed_assistant_draft_is_not_returned_as_history() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     seed_message(
         &pool,
@@ -1481,7 +1555,7 @@ async fn a_failed_assistant_draft_is_not_returned_as_history() {
     let mut memo = HistoryToolMemo::default();
 
     let result = execute(
-        &port(&pool),
+        &port(&db),
         &scope("conv-mine"),
         &mut memo,
         read_call(serde_json::json!({"from_sequence": 0})),
@@ -1523,7 +1597,8 @@ fn closed_book_keeps_internal_history_access_while_dropping_external_tools() {
         [
             TOOL_SEARCH_SAVED_KNOWLEDGE,
             TOOL_SEARCH_CONVERSATION_HISTORY,
-            TOOL_READ_CONVERSATION_HISTORY
+            TOOL_READ_CONVERSATION_HISTORY,
+            "read_more"
         ]
     );
 
@@ -1537,12 +1612,13 @@ fn closed_book_keeps_internal_history_access_while_dropping_external_tools() {
             "web_search",
             TOOL_SEARCH_SAVED_KNOWLEDGE,
             TOOL_SEARCH_CONVERSATION_HISTORY,
-            TOOL_READ_CONVERSATION_HISTORY
+            TOOL_READ_CONVERSATION_HISTORY,
+            "read_more"
         ]
     );
 
     // A grounded branch that offers a single tool still gains them.
-    assert_eq!(tools_for_turn(&external[..1], false, true).len(), 4);
+    assert_eq!(tools_for_turn(&external[..1], false, true).len(), 5);
 
     // And when memory is unavailable, nothing is advertised that cannot answer:
     // §9.3 forbids telling a model to call a tool it was not given.
@@ -1671,6 +1747,7 @@ fn a_requested_response_ceiling_cannot_exceed_what_the_turn_can_afford() {
 #[tokio::test]
 async fn retrieval_diagnostics_report_ids_and_counts_only() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     seed_message(
         &pool,
@@ -1683,7 +1760,7 @@ async fn retrieval_diagnostics_report_ids_and_counts_only() {
     .await;
 
     let recalled = recall_for_turn(
-        &port(&pool),
+        &port(&db),
         &scope("conv-mine"),
         &RecallRequest {
             user_input: "passphrase",
@@ -1710,6 +1787,7 @@ async fn retrieval_diagnostics_report_ids_and_counts_only() {
 #[tokio::test]
 async fn passage_groups_fill_the_budget_rather_than_a_fixed_count() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     for index in 0..20 {
         seed_message(
@@ -1724,7 +1802,7 @@ async fn passage_groups_fill_the_budget_rather_than_a_fixed_count() {
     }
 
     let recalled = recall_for_turn(
-        &port(&pool),
+        &port(&db),
         &scope("conv-mine"),
         &RecallRequest {
             user_input: "importer decision",
@@ -1764,6 +1842,7 @@ async fn passage_groups_fill_the_budget_rather_than_a_fixed_count() {
 #[tokio::test]
 async fn groups_render_chronologically_while_the_flattened_list_stays_worst_last() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     for (id, content) in [
         ("early", "the deploy window is the usual one"),
@@ -1776,7 +1855,7 @@ async fn groups_render_chronologically_while_the_flattened_list_stays_worst_last
     }
 
     let recalled = recall_for_turn(
-        &port(&pool),
+        &port(&db),
         &scope("conv-mine"),
         &RecallRequest {
             user_input: "deploy window v9.9.9",
@@ -1811,6 +1890,7 @@ async fn groups_render_chronologically_while_the_flattened_list_stays_worst_last
 #[tokio::test]
 async fn reading_history_leaves_the_conversation_untouched() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     seed_message(
         &pool,
@@ -1831,7 +1911,7 @@ async fn reading_history_leaves_the_conversation_untouched() {
     .await
     .unwrap();
 
-    let port = port(&pool);
+    let port = port(&db);
     let scope = scope("conv-mine");
     let mut memo = HistoryToolMemo::default();
     execute(
@@ -1885,6 +1965,7 @@ async fn reading_history_leaves_the_conversation_untouched() {
 #[tokio::test]
 async fn a_search_result_names_the_role_and_sequence_of_every_excerpt() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     let sequence = seed_message(
         &pool,
@@ -1898,7 +1979,7 @@ async fn a_search_result_names_the_role_and_sequence_of_every_excerpt() {
     let mut memo = HistoryToolMemo::default();
 
     let result = execute(
-        &port(&pool),
+        &port(&db),
         &scope("conv-mine"),
         &mut memo,
         search_call(serde_json::json!({"query": "deploy Friday"})),
@@ -1920,12 +2001,13 @@ async fn a_search_result_names_the_role_and_sequence_of_every_excerpt() {
 #[tokio::test]
 async fn a_message_longer_than_the_recall_budget_is_cut_and_marked() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     let long = format!("importer decision {}", "detail ".repeat(2_000));
     seed_message(&pool, "conv-mine", "m0", "user", &long, "completed").await;
 
     let recalled = recall_for_turn(
-        &port(&pool),
+        &port(&db),
         &scope("conv-mine"),
         &RecallRequest {
             user_input: "importer decision",
@@ -1954,6 +2036,7 @@ async fn a_message_longer_than_the_recall_budget_is_cut_and_marked() {
 #[tokio::test]
 async fn a_search_pages_through_every_match_by_offset() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     for n in 0..12 {
         seed_message(
@@ -1966,7 +2049,7 @@ async fn a_search_pages_through_every_match_by_offset() {
         )
         .await;
     }
-    let port = port(&pool);
+    let port = port(&db);
     let scope = scope("conv-mine");
     let mut memo = HistoryToolMemo::default();
     let mut seen = std::collections::HashSet::new();
@@ -2002,6 +2085,7 @@ async fn a_search_pages_through_every_match_by_offset() {
 #[tokio::test]
 async fn the_turns_history_budget_follows_the_window() {
     let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
     seed_conversation(&pool, "conv-mine", "Work").await;
     seed_message(
         &pool,
@@ -2025,7 +2109,7 @@ async fn the_turns_history_budget_follows_the_window() {
         },
     );
     let result = execute(
-        &port(&pool),
+        &port(&db),
         &scope,
         &mut memo,
         read_call(serde_json::json!({"message_ids": ["m1"]})),

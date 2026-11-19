@@ -85,7 +85,7 @@ pub(super) fn is_structural_result(result: &SearchResultDto) -> bool {
 }
 
 /// What the cross-encoder judges passages against: the message, the HyDE
-/// passage when there is one, and up to ten follow-up anchor terms.
+/// passage when there is one, and the follow-up anchor terms.
 fn build_rerank_query(
     validated_message: &str,
     interpretation: &lattice_core::domain::qa::hyde::HyDEInterpretation,
@@ -103,11 +103,7 @@ fn build_rerank_query(
         if !anchors.is_empty() {
             let mut ordered_anchors: Vec<String> = anchors.iter().cloned().collect();
             ordered_anchors.sort();
-            let anchor_text = ordered_anchors
-                .into_iter()
-                .take(10)
-                .collect::<Vec<_>>()
-                .join(" ");
+            let anchor_text = ordered_anchors.into_iter().collect::<Vec<_>>().join(" ");
             if !anchor_text.is_empty() {
                 query = format!("{}\n{}", query, anchor_text);
             }

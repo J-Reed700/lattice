@@ -156,8 +156,8 @@ async fn a_cancelled_build_is_an_error_as_in_prove() {
     cancel.cancel();
     let proof = proved(&runner(5), "REF", cancel.clone()).await;
     let truth = established(runner(5), "REF", cancel).await;
-    assert!(matches!(proof, Err(AppError::InvalidState(_))));
-    assert!(matches!(truth, Err(AppError::InvalidState(_))));
+    assert!(matches!(proof, Err(AppError::Cancelled(_))));
+    assert!(matches!(truth, Err(AppError::Cancelled(_))));
 }
 
 #[tokio::test]

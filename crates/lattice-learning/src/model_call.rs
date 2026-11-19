@@ -8,12 +8,27 @@
 
 use std::future::Future;
 
+use lattice_core::application::ports::llm_port::ANSWER_EFFORT;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::{
     self, CallOptions, GroundedGenerationError, GroundedOutput, GroundedRequest, Measured,
     Streaming,
 };
+use lattice_core::application::services::model_contract::legacy;
+#[cfg(test)]
+use lattice_core::application::services::model_contract::{tagged, ContractCall};
+pub use lattice_core::shared::error::ErrorClass;
 use lattice_core::shared::error::{AppError, Result};
+
+tokio::task_local! {
+    /// Set while a packer's call runs: a size refusal there makes it send less.
+    pub(crate) static PACKED: ();
+}
+
+/// Whether the running call was sent by a packer that sends less on a size refusal.
+pub(crate) fn sent_by_packer() -> bool {
+    PACKED.try_with(|_| ()).is_ok()
+}
 
 /// Whether authoring calls (outline and lesson drafts and their reviews) work
 /// through the task in prose before the schema-constrained answer: asking for
@@ -34,16 +49,21 @@ pub(crate) fn structured(
     prompt: String,
     schema: serde_json::Value,
     output_tokens: usize,
-    reasoning_effort: &str,
 ) -> GroundedRequest {
-    let mut request = GroundedRequest::new(system, prompt);
-    request.output_tokens = output_tokens;
-    request.call = CallOptions {
-        json_schema: Some(schema),
-        reasoning_effort: Some(reasoning_effort.to_owned()),
-        ..Default::default()
-    };
+    let mut request = legacy::grounded(system, prompt);
+    let says = legacy::grounded_says(&mut request);
+    *says.output_tokens = output_tokens;
+    *says.schema = Some(legacy::schema(schema));
+    request.call = answer_options();
     request
+}
+
+/// The options of a learning call that answers in a structure.
+pub(crate) fn answer_options() -> CallOptions {
+    CallOptions {
+        reasoning_effort: Some(ANSWER_EFFORT.to_owned()),
+        ..Default::default()
+    }
 }
 
 /// What a request the model's window cannot hold fails with.
@@ -61,9 +81,21 @@ impl<'a> From<&'a str> for TooLarge<'a> {
     }
 }
 
-/// Send `request` with no elapsed-time limit. A request the model's window
-/// cannot hold fails as `too_large` says and is never sent.
+/// Send `request` with no elapsed-time limit, tagged with `call`. A request
+/// the model's window cannot hold fails as `too_large` says and is never sent.
+#[cfg(test)]
 pub(crate) async fn send<'a>(
+    llm: &dyn LLMPort,
+    call: &ContractCall,
+    request: GroundedRequest,
+    streaming: Option<&Streaming<'_>>,
+    too_large: impl Into<TooLarge<'a>>,
+) -> Result<GroundedOutput> {
+    send_tagged(&tagged(llm, call), request, streaming, too_large).await
+}
+
+/// Send `request` with no elapsed-time limit through `llm` as it is, already tagged by its caller.
+pub(crate) async fn send_tagged<'a>(
     llm: &dyn LLMPort,
     mut request: GroundedRequest,
     streaming: Option<&Streaming<'_>>,
@@ -86,10 +118,10 @@ pub(crate) async fn send<'a>(
 
 /// The refusal for material that does not fit the Learning model's window:
 /// `what` says what does not fit, and the message names the model, its
-/// window and the fix. A configuration error, because the window is a
-/// setting, not something the learner typed.
+/// window and the fix. Its own error, because the window is a setting, not
+/// something the learner typed and not a missing model.
 pub(crate) fn window_too_small(llm: &dyn LLMPort, what: &str) -> AppError {
-    AppError::InvalidConfig(format!(
+    AppError::WindowTooSmall(format!(
         "{what} in {}'s {}-token context window. Raise your Learning model's context length in Settings → Downloaded, or choose a Learning model with a larger window",
         llm.model_name(),
         llm.max_context_tokens()
@@ -133,6 +165,7 @@ impl Fit {
 /// shrinks the room in proportion and builds again. `room` is in the planner's
 /// estimate tokens (see [`source_room`]); `build(0)` is the skeleton, with no
 /// material.
+#[cfg(test)]
 pub(crate) async fn fit_room(
     llm: &dyn LLMPort,
     room: usize,
@@ -176,7 +209,11 @@ async fn settle(
         counts += usize::from(measured.is_some_and(|measured| measured.exact));
         let next = match measured {
             Some(measured) if measured.fits() => None,
-            Some(measured) => Some(shrunk(room, skeleton_tokens, &measured)),
+            Some(measured) => Some(grounded_generation::shrunk(
+                room,
+                skeleton_tokens,
+                &measured,
+            )),
             None => Some(room / 2),
         };
         // A request whose estimate is the skeleton's carries no material.
@@ -193,25 +230,6 @@ async fn settle(
                 return (fit, skeleton_tokens);
             }
         }
-    }
-}
-
-/// The room to try after a request built at `room` measured over: the
-/// material it carried, scaled by the room the skeleton leaves over what the
-/// prompt beside that skeleton measured. Every token of the overflow is
-/// blamed on the material, which shrinks too far rather than too little.
-/// Always below `room`; halved when the measurement says nothing better.
-fn shrunk(room: usize, skeleton_tokens: usize, measured: &Measured) -> usize {
-    let material = measured.estimated.saturating_sub(skeleton_tokens);
-    let beside = measured.allowed.saturating_sub(skeleton_tokens);
-    let next = material
-        .saturating_mul(beside)
-        .checked_div(measured.prompt_tokens.saturating_sub(skeleton_tokens))
-        .unwrap_or(0);
-    if next < room && measured.prompt_tokens > measured.allowed {
-        next
-    } else {
-        room / 2
     }
 }
 
@@ -253,13 +271,13 @@ where
         }
         let sent = fit.room;
         let measured = fit.measured;
-        room = match call(fit.request).await {
+        room = match PACKED.scope((), call(fit.request)).await {
             Err(AppError::PromptExceedsWindow {
                 prompt_tokens,
                 counted_exactly,
                 ..
             }) => match measured.filter(|_| counted_exactly) {
-                Some(measured) => shrunk(
+                Some(measured) => grounded_generation::shrunk(
                     sent,
                     skeleton_tokens,
                     &Measured {

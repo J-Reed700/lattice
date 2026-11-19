@@ -6,6 +6,7 @@ use lattice_core::application::contracts::search::{
 };
 use lattice_core::application::ports::hybrid_search::HybridSearchTrait;
 use lattice_core::domain::qa::hyde::HyDEInterpretation;
+use lattice_core::shared::persistence::Database;
 use std::sync::Mutex;
 
 /// Finds the same passages for every query and reranks by reversing the
@@ -98,7 +99,7 @@ async fn two_documents(
             .unwrap();
         }
     }
-    Arc::new(ConversationRepository::new(pool))
+    Arc::new(ConversationRepository::new(Database::new(pool)))
 }
 
 fn hit(document: &str, index: usize, content: &str) -> SearchResultDto {

@@ -18,12 +18,15 @@ use crate::drills::repository::{self, NewDrill, StoredDrill};
 use crate::drills::runner::{CodeRunner, RunOutcome};
 use crate::drills::schedules;
 use crate::drills::spec::DrillSpec;
-use crate::persistence::{db, now};
+use crate::lessons::structured_call::is_draft_request;
+use crate::persistence::now;
 use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
 use lattice_core::application::ports::LLMPort;
+#[cfg(test)]
+use lattice_core::domain::learning::drills::patterns_for;
 use lattice_core::domain::learning::drills::{
     apply, Assessment, Drill, DrillFile, Edit, Finding, FindingOutcome, IssueOutcome, KeyIssue,
     LessonBrief, LessonSentence, LineSpan, Material, PatternDue, Proof, Severity,
@@ -43,7 +46,7 @@ pub const MODEL: &str = "scripted-drill-model";
 /// The role and the text of each message a request carries.
 pub(super) fn messages(request: &CompletionRequest) -> Vec<(String, String)> {
     request
-        .input
+        .input()
         .iter()
         .filter_map(|item| match item {
             CompletionInput::Message { role, content } => Some((role.clone(), content.clone())),
@@ -73,6 +76,10 @@ pub(super) fn last(request: &CompletionRequest) -> String {
 pub(super) fn purpose(request: &CompletionRequest) -> &'static str {
     let system = system(request);
     for (needle, name) in [
+        (
+            "Some findings are about no issue of the key; for every one of them",
+            "grade extras",
+        ),
         (
             "You decide whether a passage from a course's sources",
             "passage check",
@@ -174,6 +181,11 @@ impl ScriptedModel {
 #[async_trait]
 impl LLMPort for ScriptedModel {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        if is_draft_request(request) {
+            return Ok(CompletionResponse::from_text(
+                "The answer is worked through in prose.".to_owned(),
+            ));
+        }
         if let Ok(mut requests) = self.requests.lock() {
             requests.push(request.clone());
         }
@@ -193,6 +205,12 @@ impl LLMPort for ScriptedModel {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -361,6 +379,21 @@ impl ReviewGrader for FakeGrader {
     }
 }
 
+/// The handle a request shows the first line of `file` that reads `line`, when the files are shown as lines in
+/// order, each line under the next `u` number.
+pub(super) fn handle_of(files: &[DrillFile], file: &str, line: &str) -> String {
+    let mut number = 0;
+    for shown in files {
+        for text in shown.text.split_inclusive('\n') {
+            number += 1;
+            if shown.path == file && text.trim_end_matches('\n') == line {
+                return format!("u{number}");
+            }
+        }
+    }
+    "none".to_owned()
+}
+
 /// Lines joined with `\n`, the last one ended.
 pub(super) fn text(lines: &[&str]) -> String {
     let mut text = lines.join("\n");
@@ -522,27 +555,32 @@ pub(super) fn clean_code_answer() -> String {
 }
 
 pub(super) fn review_answer(issues: Vec<Value>) -> String {
-    json!({"issues": issues}).to_string()
+    json!({"items": issues}).to_string()
 }
 
-/// What the model answers to the plant call for [`spec`].
+/// What the model answers to the plant call for [`spec`]: the operator changed on line 13 of the first file under
+/// the first pattern, the magic number on line 8 of the second under the second.
 pub(super) fn plant_answer() -> String {
-    json!({"mutations": [
+    let files = files();
+    let at = |path: &str, line: usize| line_handle(&files, path, line);
+    json!({"entries": [
         {
-            "pattern": OPERATOR, "path": "src/limiter.py",
-            "before": OPERATOR_BEFORE, "after": OPERATOR_AFTER,
+            "of": "t1",
+            "change": replacing(&at("src/limiter.py", 13), OPERATOR_AFTER.trim_end_matches('\n')),
             "severity": "major",
             "consequence": "A caller gets one call more than the limit.",
             "explanation": "The comparison lets one call too many through. It should refuse at the limit.",
-            "killingTest": KILLING_TEST, "noTestBecause": ""
+            "killingTest": KILLING_TEST, "noTestBecause": "",
+            "lessonSentences": [], "lessonPattern": "none"
         },
         {
-            "pattern": LITERALS, "path": "src/config.py",
-            "before": LITERALS_BEFORE, "after": LITERALS_AFTER,
+            "of": "t2",
+            "change": replacing(&at("src/config.py", 8), LITERALS_AFTER.trim_end_matches('\n')),
             "severity": "nit",
             "consequence": "The default limit and window are written twice, so they can drift.",
             "explanation": "The constants are no longer used. Use them so the defaults change in one place.",
-            "killingTest": "", "noTestBecause": ""
+            "killingTest": "", "noTestBecause": "",
+            "lessonSentences": [], "lessonPattern": "none"
         }
     ]})
     .to_string()
@@ -693,14 +731,40 @@ pub fn proved() -> Proved {
     }
 }
 
-/// What the blind reviewer says: a finding on the changed operator, one whose quote is in the file twice, one on
-/// `forget` that the grader will call a real extra, and one whose quote is nowhere.
+/// The name the reviewer is shown for line `line` of the file at `path`, among the lines of `files` in order.
+pub(super) fn line_handle(files: &[DrillFile], path: &str, line: usize) -> String {
+    let before: usize = files
+        .iter()
+        .take_while(|file| file.path != path)
+        .map(|file| file.text.lines().count())
+        .sum();
+    format!("u{}", before + line)
+}
+
+/// The name the describer is shown for the pattern `id` among the patterns of `material`.
+#[cfg(test)]
+pub(super) fn pattern_handle(material: &Material, id: &str) -> String {
+    let at = patterns_for(material)
+        .position(|pattern| pattern.id == id)
+        .expect("the pattern is in the catalogue");
+    format!("p{}", at + 1)
+}
+
+/// A change that replaces one line.
+pub(super) fn replacing(at: &str, with: &str) -> Value {
+    json!({"replace": [{"at": at, "with": with}], "insert": [], "remove": [], "move": []})
+}
+
+/// What the blind reviewer says: a finding on the changed operator, one on a line the file has twice, one on
+/// `forget` that the grader will call a real extra, and one on the last line of the second file.
 pub(super) fn blind_answer() -> String {
-    json!({"findings": [
-        {"path": "src/limiter.py", "quote": "if len(recent) > self.limit:", "comment": "This lets one call more than the limit through.", "severity": "major"},
-        {"path": "src/limiter.py", "quote": "self.hits[key] = recent", "comment": "The dictionary is written twice.", "severity": "nit"},
-        {"path": "src/limiter.py", "quote": "self.hits.pop(key, None)", "comment": "Nothing calls forget, so the dictionary grows without bound.", "severity": "minor"},
-        {"path": "src/limiter.py", "quote": "this text is not in the file", "comment": "Something is wrong here.", "severity": "nit"}
+    let files = proved().files;
+    let at = |path: &str, line: usize| line_handle(&files, path, line);
+    json!({"items": [
+        {"from": at("src/limiter.py", 13), "to": at("src/limiter.py", 13), "comment": "This lets one call more than the limit through.", "severity": "major"},
+        {"from": at("src/limiter.py", 17), "to": at("src/limiter.py", 17), "comment": "The dictionary is written twice.", "severity": "nit"},
+        {"from": at("src/limiter.py", 21), "to": at("src/limiter.py", 21), "comment": "Nothing calls forget, so the dictionary grows without bound.", "severity": "minor"},
+        {"from": at("src/config.py", 8), "to": at("src/config.py", 8), "comment": "Something is wrong here.", "severity": "nit"}
     ]})
     .to_string()
 }
@@ -721,7 +785,7 @@ pub(super) fn blind_assessment() -> Assessment {
         findings: vec![
             (
                 FindingOutcome::Matches { issues: vec![0] },
-                "It is the changed operator.".into(),
+                "The comment names the operator.".into(),
             ),
             (
                 FindingOutcome::FalsePositive,
@@ -739,46 +803,59 @@ pub(super) fn blind_assessment() -> Assessment {
 /// What the judge answers when asked to grade the findings of [`blind_answer`] against the key of [`proved`]: the
 /// assessment [`blind_assessment`] is.
 pub(super) fn grade_answer() -> String {
-    json!({
-        "issues": [
-            {
-                "issue": 1, "reason": "The comment names the operator.", "outcome": "found",
-                "finding": 1, "quote": "lets one call more than the limit through"
-            },
-            {
-                "issue": 2, "reason": "No comment mentions the literals.", "outcome": "missed",
-                "finding": null, "quote": null
-            }
-        ],
-        "findings": [
-            {"finding": 1, "reason": "It is the changed operator.", "outcome": "matches", "issues": [1]},
-            {"finding": 2, "reason": "That is how the code is meant to read.", "outcome": "false_positive", "issues": []},
-            {"finding": 3, "reason": "The dictionary really does grow without bound.", "outcome": "valid_extra", "issues": []},
-            {"finding": 4, "reason": "It names nothing.", "outcome": "false_positive", "issues": []}
-        ]
-    })
+    json!({"entries": [
+        {
+            "of": "i1", "reason": "The comment names the operator.", "outcome": "found",
+            "finding": "f1", "findings": []
+        },
+        {
+            "of": "i2", "reason": "No comment mentions the literals.", "outcome": "missed",
+            "finding": "none", "findings": []
+        }
+    ]})
+    .to_string()
+}
+
+/// What the judge answers when asked about the findings of [`blind_answer`] that no issue claims.
+pub(super) fn grade_extras_answer() -> String {
+    json!({"entries": [
+        {"of": "f1", "reason": "That is how the code is meant to read.", "outcome": "false_positive"},
+        {"of": "f2", "reason": "The dictionary really does grow without bound.", "outcome": "valid_extra"},
+        {"of": "f3", "reason": "It names nothing.", "outcome": "false_positive"}
+    ]})
+    .to_string()
+}
+
+/// An entry of the key as the model writes it: an instance of the pattern `pattern` that the one line `line` of
+/// src/limiter.py becomes `with` repairs.
+#[cfg(test)]
+pub(super) fn entry_for(pattern_id: &str, line: usize, with: &str) -> String {
+    let at = line_handle(&proved().files, "src/limiter.py", line);
+    json!({"entry": {
+        "kind": "issue",
+        "pattern": pattern_handle(&Material::code("python"), pattern_id),
+        "severity": "minor",
+        "consequence": "Every key ever seen stays in memory.",
+        "fix": replacing(&at, with),
+        "explanation": "The dictionary only grows. Drop keys whose window has passed."
+    }})
     .to_string()
 }
 
 /// What the model answers when asked to describe the extra finding as an entry of the key.
+#[cfg(test)]
 pub(super) fn entry_answer() -> String {
-    json!({
-        "pattern": "resources.unbounded_growth",
-        "severity": "minor",
-        "consequence": "Every key ever seen stays in memory.",
-        "fix": {
-            "path": "src/limiter.py",
-            "before": "        self.hits.pop(key, None)\n",
-            "after": "        self.hits.pop(key, None)\n        self.hits = {k: v for k, v in self.hits.items() if v}\n"
-        },
-        "explanation": "The dictionary only grows. Drop keys whose window has passed."
-    })
-    .to_string()
+    entry_for(
+        "resources.unbounded_growth",
+        21,
+        "        self.hits.clear()",
+    )
 }
 
 /// A pool with every migration, and a drill build job queued for [`spec`] and claimed, as the runtime would.
 pub(super) struct Harness {
     pub pool: SqlitePool,
+    pub db: Database,
     pub store: JobStore,
     pub job: String,
 }
@@ -787,19 +864,25 @@ impl Harness {
     /// A harness over a new course from [`code_spec`], and the spec of its build.
     pub(super) async fn lesson() -> Result<(Self, DrillSpec)> {
         let pool = crate::test_support::pool().await?;
-        let spec = code_spec(&pool).await?;
-        Ok((Self::on(pool, &spec).await?, spec))
+        let db = Database::new(pool.clone());
+        let spec = code_spec(&pool, &db).await?;
+        Ok((Self::on(pool, db, &spec).await?, spec))
     }
 
     /// A harness over `pool`, with a build job queued for `spec` and claimed.
-    pub(super) async fn on(pool: SqlitePool, spec: &DrillSpec) -> Result<Self> {
-        let job = bank::queue_build(&Database::from(pool.clone()), spec, "test").await?;
-        let store = JobStore::new(pool.clone());
+    pub(super) async fn on(pool: SqlitePool, db: Database, spec: &DrillSpec) -> Result<Self> {
+        let job = bank::queue_build(&db, spec, "test").await?;
+        let store = JobStore::new(db.clone());
         store
             .claim(&job)
             .await?
             .ok_or_else(|| AppError::InternalError("The job was not claimed.".into()))?;
-        Ok(Self { pool, store, job })
+        Ok(Self {
+            pool,
+            db,
+            store,
+            job,
+        })
     }
 
     pub(super) async fn context(&self) -> Result<JobContext> {
@@ -819,7 +902,7 @@ impl Harness {
                 runner.map(|runner| runner as &dyn CodeRunner),
             )),
             grader,
-            &Database::from(self.pool.clone()),
+            &self.db,
             CancellationToken::new(),
         )
     }
@@ -838,7 +921,7 @@ pub fn quiet() -> BlindReview {
 
 /// A build on these fakes, over a pool with every migration but no job.
 pub(super) fn build<'a>(
-    pool: &'a SqlitePool,
+    db: &'a Database,
     model: &'a ScriptedModel,
     runner: Option<&'a FakeRunner>,
     grader: &'a FakeGrader,
@@ -849,7 +932,7 @@ pub(super) fn build<'a>(
             runner.map(|runner| runner as &dyn CodeRunner),
         )),
         grader,
-        &Database::from(pool.clone()),
+        db,
         CancellationToken::new(),
     )
 }
@@ -938,13 +1021,13 @@ pub(super) fn raised_all(drill: &Drill) -> Assessment {
 }
 
 /// [`stock_on`] for [`spec`]: a drill built for no course and no lesson.
-pub async fn stock(pool: &SqlitePool, id: &str) -> Result<()> {
-    stock_on(pool, id, &spec()).await
+pub async fn stock(db: &Database, id: &str) -> Result<()> {
+    stock_on(db, id, &spec()).await
 }
 
 /// Puts the drill of [`proved`] into the bank, ready, as a finished build for `spec` leaves it: with its suite, its
 /// runner and its evidence. The course and the lesson of `spec` must exist for the drill to keep them.
-pub(super) async fn stock_on(pool: &SqlitePool, id: &str, spec: &DrillSpec) -> Result<()> {
+pub(super) async fn stock_on(db: &Database, id: &str, spec: &DrillSpec) -> Result<()> {
     let proved = proved();
     let drill = Drill {
         id: id.into(),
@@ -962,9 +1045,9 @@ pub(super) async fn stock_on(pool: &SqlitePool, id: &str, spec: &DrillSpec) -> R
         &unchecked(),
         &quiet(),
     );
-    let mut connection = pool.acquire().await.map_err(db)?;
+    let mut tx = db.begin_write().await?;
     repository::insert_in(
-        &mut connection,
+        &mut tx,
         &NewDrill {
             drill: &drill,
             clean_files: &clean,
@@ -977,39 +1060,39 @@ pub(super) async fn stock_on(pool: &SqlitePool, id: &str, spec: &DrillSpec) -> R
             evidence: &evidence,
         },
     )
-    .await
+    .await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 /// The drill a build stored: the only one in the pool.
 pub(super) async fn built_drill(pool: &SqlitePool) -> Result<Option<StoredDrill>> {
     let id: Option<String> = sqlx::query_scalar("SELECT id FROM learning_drills")
         .fetch_optional(pool)
-        .await
-        .map_err(db)?;
+        .await?;
     let Some(id) = id else {
         return Ok(None);
     };
-    let mut connection = pool.acquire().await.map_err(db)?;
+    let mut connection = pool.acquire().await?;
     repository::find_in(&mut connection, &id).await
 }
 
 /// Takes the stocked drill `drill_id` from the bank and opens an attempt on it, as starting a drill does, without the
 /// bank choosing it.
-pub(super) async fn opened(
-    pool: &SqlitePool,
-    drill_id: &str,
-    mode: AttemptMode,
-) -> Result<Attempt> {
-    let mut connection = pool.acquire().await.map_err(db)?;
-    let taken = repository::mark_taken_in(&mut connection, drill_id, now()).await?;
+pub(super) async fn opened(db: &Database, drill_id: &str, mode: AttemptMode) -> Result<Attempt> {
+    let mut tx = db.begin_write().await?;
+    let taken = repository::mark_taken_in(&mut tx, drill_id, now()).await?;
     assert!(taken, "the drill {drill_id} was ready to be taken");
-    attempts::repository::open_in(&mut connection, drill_id, mode).await
+    let attempt = attempts::repository::open_in(&mut tx, drill_id, mode).await?;
+    tx.commit().await?;
+    Ok(attempt)
 }
 
 /// A pool with every migration, a drill stocked and an attempt opened on it and submitted, and its grading job
 /// claimed, as the job runtime would.
 pub(super) struct Waiting {
     pub pool: SqlitePool,
+    pub db: Database,
     pub store: JobStore,
     pub attempt: String,
     pub job: String,
@@ -1032,10 +1115,11 @@ impl Waiting {
         fix_files: Option<Vec<DrillFile>>,
     ) -> Result<Self> {
         let pool = crate::test_support::pool().await?;
-        stock(&pool, "drill").await?;
-        let attempt = opened(&pool, "drill", AttemptMode::Practice).await?;
+        let db = Database::new(pool.clone());
+        stock(&db, "drill").await?;
+        let attempt = opened(&db, "drill", AttemptMode::Practice).await?;
         let queued = attempts::submit(
-            &Database::from(pool.clone()),
+            &db,
             &attempt.id,
             Submission {
                 findings,
@@ -1047,9 +1131,10 @@ impl Waiting {
         let job = queued
             .job
             .ok_or_else(|| AppError::InternalError("No job was queued.".into()))?;
-        let store = JobStore::new(pool.clone());
+        let store = JobStore::new(db.clone());
         Ok(Self {
             pool,
+            db,
             store,
             attempt: attempt.id,
             job,
@@ -1070,7 +1155,7 @@ impl Waiting {
     }
 
     pub(super) async fn attempt(&self) -> Result<Attempt> {
-        attempts::get(&Database::from(self.pool.clone()), &self.attempt)
+        attempts::get(&self.db, &self.attempt)
             .await
             .map(|(attempt, _)| attempt)
     }
@@ -1088,7 +1173,7 @@ impl Waiting {
                 runner.map(|runner| runner as &dyn CodeRunner),
             )),
             grader,
-            &Database::from(self.pool.clone()),
+            &self.db,
             CancellationToken::new(),
         )
     }
@@ -1100,10 +1185,9 @@ impl Waiting {
         runner: Option<&FakeRunner>,
         grader: &FakeGrader,
     ) -> Result<lattice_core::shared::runtime::jobs::JobOutcome> {
-        let (attempt, stored) =
-            attempts::waiting(&Database::from(self.pool.clone()), &self.attempt)
-                .await?
-                .ok_or_else(|| AppError::InternalError("The attempt is not waiting.".into()))?;
+        let (attempt, stored) = attempts::waiting(&self.db, &self.attempt)
+            .await?
+            .ok_or_else(|| AppError::InternalError("The attempt is not waiting.".into()))?;
         let context = self.context().await?;
         let grading = self.grading(model, runner, grader);
         let outcome = grading.run(&context, &attempt, &stored).await;
@@ -1370,21 +1454,22 @@ pub(super) fn reversed_mutation() -> Mutation {
     }
 }
 
-/// What the model answers to the plant call of [`passage_spec`]: the figure planted as a minor error.
+/// What the model answers to the plant call of [`passage_spec`]: the figure planted as a minor error on the first
+/// sentence, the direction reversed on the third.
 pub(super) fn passage_plant_answer() -> String {
     let figure = figure_mutation();
     let reversed = reversed_mutation();
-    json!({"mutations": [
+    json!({"entries": [
         {
-            "pattern": FIGURE, "path": "explanation.md",
-            "before": figure.edit.before, "after": figure.edit.after,
+            "of": "t1",
+            "change": replacing("u1", FIRST_PLANTED),
             "severity": "minor",
             "consequence": figure.consequence,
             "explanation": figure.explanation
         },
         {
-            "pattern": REVERSED, "path": "explanation.md",
-            "before": reversed.edit.before, "after": reversed.edit.after,
+            "of": "t2",
+            "change": replacing("u3", THIRD_PLANTED),
             "severity": "major",
             "consequence": reversed.consequence,
             "explanation": reversed.explanation
@@ -1422,7 +1507,7 @@ pub(super) fn passage_baseline() -> Baseline {
 
 /// A build of a passage drill on these fakes, over a pool with every migration.
 pub(super) fn passage_build<'a>(
-    pool: &'a SqlitePool,
+    db: &'a Database,
     model: &'a ScriptedModel,
     check: &'a ScriptedCheck,
     grader: &'a FakeGrader,
@@ -1431,7 +1516,7 @@ pub(super) fn passage_build<'a>(
         model,
         Box::new(PassageMaterial::new(check)),
         grader,
-        &Database::from(pool.clone()),
+        db,
         CancellationToken::new(),
     )
 }
@@ -1443,9 +1528,9 @@ pub(super) const SPACING_LESSON: &str = "Spacing study over sessions";
 pub(super) const SLEEP_LESSON: &str = "Sleep after learning";
 
 /// A course with the sources [`SPACING`] and [`SLEEP`], in that order, and its id.
-pub(super) async fn course(pool: &SqlitePool) -> Result<String> {
+pub(super) async fn course(db: &Database) -> Result<String> {
     course_of(
-        pool,
+        db,
         &[("Spacing and memory", SPACING), ("Sleep and memory", SLEEP)],
     )
     .await
@@ -1454,7 +1539,7 @@ pub(super) async fn course(pool: &SqlitePool) -> Result<String> {
 /// A course with `sources` (a title and a text each), in that order, and its id. The first module's two lessons are
 /// [`SPACING_LESSON`] and [`SLEEP_LESSON`], so that a lesson's query finds what the fixture sources say; the second
 /// module keeps the fixture's.
-pub(super) async fn course_of(pool: &SqlitePool, sources: &[(&str, &str)]) -> Result<String> {
+pub(super) async fn course_of(db: &Database, sources: &[(&str, &str)]) -> Result<String> {
     use crate::dto::LearningSourceDto;
     use crate::repository::LearningRepository;
     let mut program = crate::test_support::fixture();
@@ -1485,9 +1570,7 @@ pub(super) async fn course_of(pool: &SqlitePool, sources: &[(&str, &str)]) -> Re
             acquired_at: i64::try_from(position).unwrap_or(0) + 1,
         })
         .collect();
-    LearningRepository::new(pool.clone())
-        .create(&program)
-        .await?;
+    LearningRepository::new(db.clone()).create(&program).await?;
     Ok(program.summary.id)
 }
 
@@ -1502,7 +1585,7 @@ pub(super) async fn lesson_titled(
         .bind(title)
         .fetch_one(pool)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// Gives the lesson `lesson_id` these teaching blocks, in order: a kind, a body and the source versions it cites each.
@@ -1520,8 +1603,7 @@ pub(super) async fn add_blocks(
             .bind(*body)
             .bind(serde_json::to_string(cited).unwrap_or_default())
             .execute(pool)
-            .await
-            .map_err(db)?;
+            .await?;
     }
     Ok(())
 }
@@ -1538,12 +1620,12 @@ pub(super) async fn prepare_lesson(
         .execute(pool)
         .await
         .map(drop)
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// A spec for code in Python on a new course from [`course`], built from its spacing lesson.
-pub(super) async fn code_spec(pool: &SqlitePool) -> Result<DrillSpec> {
-    let program = course(pool).await?;
+pub(super) async fn code_spec(pool: &SqlitePool, db: &Database) -> Result<DrillSpec> {
+    let program = course(db).await?;
     let lesson = lesson_titled(pool, &program, SPACING_LESSON).await?;
     Ok(DrillSpec {
         program_id: Some(program),
@@ -1570,13 +1652,13 @@ pub(super) async fn lessons_of(pool: &SqlitePool, program_id: &str) -> Result<Ve
         .bind(program_id)
         .fetch_all(pool)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// Records that the lesson `lesson_id` of the course `program_id` does not fit `material`, on the lesson's basis now.
 /// Code is turned down by a build whose code fit check answers no.
 pub(super) async fn record_unfit(
-    pool: &SqlitePool,
+    db: &Database,
     program_id: &str,
     lesson_id: &str,
     material: &Material,
@@ -1590,7 +1672,7 @@ pub(super) async fn record_unfit(
         };
         let model = ScriptedModel::new([code_check_answer(false)]);
         let grader = idle_grader();
-        return match build(pool, &model, None, &grader).clean_code(&spec).await {
+        return match build(db, &model, None, &grader).clean_code(&spec).await {
             Err(AppError::InvalidInput(_)) => Ok(()),
             other => Err(AppError::InternalError(format!(
                 "The code fit check did not turn the lesson down: {:?}",
@@ -1598,10 +1680,10 @@ pub(super) async fn record_unfit(
             ))),
         };
     }
-    let mut connection = pool.acquire().await.map_err(db)?;
-    let basis = schedules::fit_basis_in(&mut connection, program_id, lesson_id).await?;
+    let mut tx = db.begin_write().await?;
+    let basis = schedules::fit_basis_in(&mut tx, program_id, lesson_id).await?;
     schedules::record_fit_in(
-        &mut connection,
+        &mut tx,
         program_id,
         lesson_id,
         material,
@@ -1609,7 +1691,9 @@ pub(super) async fn record_unfit(
         &basis,
         now(),
     )
-    .await
+    .await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 /// Sets the curriculum state of the lesson `lesson_id`, such as `skipped` or `replaced`.
@@ -1620,7 +1704,7 @@ pub(super) async fn set_state(pool: &SqlitePool, lesson_id: &str, state: &str) -
         .execute(pool)
         .await
         .map(drop)
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// The patterns of a drill's key, each once and in the key's order, as the schedule holds them back while the drill
@@ -1653,5 +1737,5 @@ pub(super) async fn schedule_pattern(
         .execute(pool)
         .await
         .map(drop)
-        .map_err(db)
+        .map_err(AppError::from)
 }

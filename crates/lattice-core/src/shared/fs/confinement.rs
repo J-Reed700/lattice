@@ -64,7 +64,7 @@ pub fn confine_to_root(root: &Path, candidate: &Path) -> Result<PathBuf, AppErro
 /// Canonicalizing the whole path fails when the leaf is missing, and
 /// canonicalizing nothing leaves symlinks unresolved — this does the useful
 /// part of both.
-fn resolve_against_existing_ancestor(path: &Path) -> Result<PathBuf, AppError> {
+pub fn resolve_against_existing_ancestor(path: &Path) -> Result<PathBuf, AppError> {
     if let Ok(canonical) = path.canonicalize() {
         return Ok(canonical);
     }

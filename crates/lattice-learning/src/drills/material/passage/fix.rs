@@ -12,6 +12,9 @@ use crate::drills::proof::Tools;
 use crate::generation::parse_json;
 use crate::lessons::structured_call::complete_checked;
 use async_trait::async_trait;
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::domain::learning::drills::{
     line_diff, pattern, DecidedBy, DiffKind, FixOutcome, IssueCheck, KeyIssue, LineSpan,
 };
@@ -48,6 +51,12 @@ enum Rewrite {
     Removed,
     /// What they wrote there, as one text.
     Text(String),
+}
+
+struct PassageFixJudgement;
+impl Contract for PassageFixJudgement {
+    const ID: ContractId = ContractId::new("passage-fix-judgement");
+    type Input = PromptInput;
 }
 
 #[async_trait]
@@ -148,8 +157,13 @@ impl SourceCheckedFix<'_> {
                 "errorGone": {"type": "boolean"}
             }
         });
+        let call = ContractCall::of::<PassageFixJudgement>(&PromptInput {
+            system: SYSTEM.to_owned(),
+            prompt: task.clone(),
+        })?;
         complete_checked(
             self.tools.llm,
+            &call,
             SYSTEM,
             task,
             schema,

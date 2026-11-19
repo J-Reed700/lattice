@@ -70,13 +70,11 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
             // sidecar. The LLM factory looks this up via
             // `app.try_state::<SidecarRegistry>()` when starting a
             // llama-server child process. Registering first guarantees
-            // every spawned sidecar is included in the shutdown sweep. The
-            // orphan scan cleans up sidecars left by a previous crash.
+            // every spawned sidecar is included in the shutdown sweep.
             app.manage(lattice::features::llm::engine::sidecar_manager::SidecarRegistry::new());
             app.manage(bootstrap::SidecarSweep(
                 lattice::features::llm::engine::sidecar_manager::kill_registered_sidecars,
             ));
-            lattice::features::llm::engine::sidecar_manager::reap_orphan_sidecars();
 
             #[cfg(windows)]
             setup::microphone::allow_in_main_window(app);

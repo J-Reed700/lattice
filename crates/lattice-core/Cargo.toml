@@ -53,12 +53,19 @@ uuid = { workspace = true }
 # (see shared/runtime/autorelease.rs). Already in the tree through `metal`.
 objc = { workspace = true }
 
+[target.'cfg(unix)'.dependencies]
+# Parent-death binding for child processes (shared/process).
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
 # Power requests keep the PC awake while user work runs (shared/runtime/user_activity.rs).
 # Same version as lattice-desktop, so Cargo builds one copy.
-windows = { version = "0.52", features = ["Win32_Foundation", "Win32_System_Power", "Win32_System_Threading"] }
+windows = { version = "0.52", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Power", "Win32_System_Threading"] }
 
 [dev-dependencies]
+bytes = "1"
+h2 = "0.4"
+http = "1"
 mockall = { workspace = true }
 proptest = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }

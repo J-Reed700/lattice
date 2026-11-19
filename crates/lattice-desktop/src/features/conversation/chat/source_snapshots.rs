@@ -9,6 +9,7 @@
 use crate::features::conversation::chat::ports::{
     ChatRecords, ChatRuntime, ChatStorage, FetchUrlContentOutput,
 };
+use crate::features::conversation::chat::reply_text::ReplyText;
 use lattice_core::application::contracts::sources::{SourceDto, WebSnapshotDto};
 use std::collections::HashMap;
 use tracing::warn;
@@ -149,19 +150,10 @@ pub(super) async fn with_archived_page_text(
 pub(super) async fn attach_archived_snapshots(
     container: &dyn ChatStorage,
     conversation_id: &str,
-    response: &str,
+    reply: &ReplyText,
     sources: &mut [SourceDto],
 ) -> Vec<UncapturedPage> {
-    let cited_ids: std::collections::HashSet<u32> = regex::Regex::new(r"\[(\d+)\]")
-        .ok()
-        .into_iter()
-        .flat_map(|regex| {
-            regex
-                .captures_iter(response)
-                .filter_map(|capture| capture.get(1)?.as_str().parse::<u32>().ok())
-                .collect::<Vec<_>>()
-        })
-        .collect();
+    let cited_ids: std::collections::HashSet<u32> = reply.cited().into_iter().collect();
     let mut pending: HashMap<String, Vec<usize>> = HashMap::new();
     for (index, source) in sources.iter_mut().enumerate() {
         if source.web_snapshot.is_some() {

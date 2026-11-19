@@ -3,7 +3,8 @@
 //! applied, and only the sentences an earlier correction replaced or removed.
 use super::super::repair::goal_words;
 use super::acceptance_switch_tests::{
-    claim, identified, lesson_of, local_check, open, walk, CUTTING, RESEARCHING, SOURCED,
+    claim, identified, lesson_of, local_check, open, walk, walk_because, CUTTING, REASONED,
+    RESEARCHING, SOURCED,
 };
 use super::claim_ledger_tests::{pass_report, prepare, section};
 use super::class_checks_tests::Classes;
@@ -25,12 +26,14 @@ const SECOND: &str = "DictReader removes all whitespace from CSV values by defau
 const WHAT_THE_PASSAGES_STATE: &str = "Say only what the claim's evidence passages state. Where no passage states a detail, keep the sentence's point and leave that detail out.";
 /// Why a rewrite that left the sentence as it was could not be applied.
 const LEFT_AS_IT_WAS: &str = "The repair left the sentence as it was.";
+/// Why a correction that changed nothing in its sentence is charged.
+const NOT_CHANGED: &str = "The correction made no change to the sentence it was asked to correct.";
 
 /// The steps that leave a Sourced statement at `s.rewrite`.
 const AT_REWRITE: [(Step, Outcome); 3] = [
     (Step::Read(Reading::Parts), Outcome::Unproven),
     (Step::Research, Outcome::FoundNothing),
-    (Step::Read(Reading::Page), Outcome::Unproven),
+    (Step::Read(Reading::Page), Outcome::Refuted),
 ];
 
 /// A model that extracts the statements it is given, as `Classes` does, and
@@ -55,7 +58,10 @@ impl Stopping {
 
     async fn respond(&self, prompt: &str) -> Result<String> {
         if prompt.starts_with("Repair verified lesson defects.") {
-            self.requests.lock().unwrap().push(super::context(prompt));
+            self.requests
+                .lock()
+                .unwrap()
+                .push(fixture_task(prompt).unwrap());
             return Err(AppError::Network(
                 "the run ends at the first repair request".into(),
             ));
@@ -85,6 +91,12 @@ impl LLMPort for Stopping {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// A model that keeps the context of each repair request. Its first correction
@@ -109,37 +121,38 @@ impl Corrections {
 
     async fn respond(&self, prompt: &str) -> Result<String> {
         if prompt.starts_with("Extract lesson claims.") {
-            let data = super::context(prompt);
+            let data = fixture_task(prompt).unwrap();
             let passage = data["units"][0]["passages"]
                 .as_array()
                 .unwrap()
                 .iter()
                 .find(|p| p["field"] == "/body")
                 .unwrap();
-            let text = passage["text"].as_str().unwrap();
+            let text = passage_text(passage);
             let claims: Vec<_> = [BAD, SECOND, GOOD]
                 .into_iter()
                 .filter(|s| text.contains(s))
-                .map(|statement| json!({"passageId":passage["id"],"statement":statement}))
+                .map(|statement| json!({"sentenceId":sentence_id(passage, statement),"statement":statement}))
                 .collect();
             return Ok(inventory::fixture_response(vec![
-                json!({"index":0,"claims":claims,"nonFactualReason":""}),
+                json!({"of":"s1","claims":claims,"nonFactualReason":""}),
             ])
             .to_string());
         }
         if prompt.starts_with("Repair verified lesson defects.") {
             let mut asked = self.requests.lock().unwrap();
-            asked.push(super::context(prompt));
+            asked.push(fixture_task(prompt).unwrap());
             if asked.len() > 1 {
                 return Err(AppError::Network(
                     "the run ends at the second repair request".into(),
                 ));
             }
-            let body = super::context(prompt)["candidate"]["blocks"][0]["body"]
-                .as_str()
-                .unwrap()
-                .replace(&format!("{BAD} "), "");
-            return Ok(repair_body(prompt, json!(body)));
+            let removal =
+                json!({"edits":[{"path":"/blocks/0/body","before":format!("{BAD} "),"after":""}]});
+            return Ok(super::super::tests::repair_script::answer(
+                &fixture_task(prompt).unwrap(),
+                &removal,
+            ));
         }
         if prompt.starts_with("Source passages:")
             && prompt
@@ -175,11 +188,22 @@ impl LLMPort for Corrections {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// The repair requests a lesson with two sentences its sources contradict is
 /// sent: one for both, and one for the sentence the first correction left.
 async fn requests_for_two_contradicted_sentences() -> Result<Vec<Value>> {
+    requests_after_the_writer_asked("{}").await
+}
+
+/// The same requests, the writer's request being `writer_request`.
+async fn requests_after_the_writer_asked(writer_request: &str) -> Result<Vec<Value>> {
     let model = Corrections::new();
     let body = format!("{}{BAD} {SECOND}", format!("{GOOD} ").repeat(12));
     let lesson = json!({"blocks":[{"kind":"explanation","title":"CSV header names","body":body,"rubric":[]}],"questions":[]});
@@ -187,7 +211,7 @@ async fn requests_for_two_contradicted_sentences() -> Result<Vec<Value>> {
     // The second request ends the run.
     let _ = verify_and_repair(
         &model,
-        "{}",
+        writer_request,
         &json!({}),
         lesson.to_string(),
         &[source()],
@@ -223,7 +247,7 @@ async fn a_statement_at_the_retry_of_a_rewrite_is_told_why_its_first_correction_
 
     let retried = &requests[1]["failedClaims"][0];
     assert_eq!(retried["statement"], SECOND);
-    assert_eq!(retried["notApplied"], LEFT_AS_IT_WAS, "{retried}");
+    assert_eq!(retried["notApplied"], NOT_CHANGED, "{retried}");
     Ok(())
 }
 
@@ -231,29 +255,24 @@ async fn a_statement_at_the_retry_of_a_rewrite_is_told_why_its_first_correction_
 async fn the_repair_history_does_not_carry_a_statement_that_waits_at_a_node_that_is_no_repair(
 ) -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&db).await?;
     let body = section(&format!("{REWRITING_SENTENCE} {WAITING_SENTENCE}"));
     let raw = lesson_of(&body).to_string();
     // One statement stands at `s.rewrite`; the other failed and waits at
     // `s.research`.
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job,
-        &lesson_id,
-        async {
-            lesson_drafts::resume(INPUT.into()).await?;
-            lesson_drafts::save(&raw).await?;
-            let mut ledger = open().await?;
-            let rewriting = (REWRITING_SENTENCE, REWRITING_SENTENCE);
-            let id = claim(&mut ledger, "rewriting", rewriting, &body, SOURCED).await?;
-            walk(&mut ledger, &id, Class::Sourced, &AT_REWRITE).await?;
-            let waiting = (WAITING_SENTENCE, WAITING_SENTENCE);
-            let id = claim(&mut ledger, "waiting", waiting, &body, SOURCED).await?;
-            walk(&mut ledger, &id, Class::Sourced, &RESEARCHING).await?;
-            Ok(())
-        },
-    )
+    lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        lesson_drafts::resume(INPUT.into()).await?;
+        lesson_drafts::save(&raw).await?;
+        let mut ledger = open().await?;
+        let rewriting = (REWRITING_SENTENCE, REWRITING_SENTENCE);
+        let id = claim(&mut ledger, "rewriting", rewriting, &body, SOURCED).await?;
+        walk(&mut ledger, &id, Class::Sourced, &AT_REWRITE).await?;
+        let waiting = (WAITING_SENTENCE, WAITING_SENTENCE);
+        let id = claim(&mut ledger, "waiting", waiting, &body, SOURCED).await?;
+        walk(&mut ledger, &id, Class::Sourced, &RESEARCHING).await?;
+        Ok(())
+    })
     .await?;
     let program_id = repo.job(&job).await?.program_id;
     let model = Stopping::new(&[REWRITING_SENTENCE, WAITING_SENTENCE]);
@@ -261,19 +280,11 @@ async fn the_repair_history_does_not_carry_a_statement_that_waits_at_a_node_that
     // Research reaches nothing, so the second statement stays where it is,
     // and the first is repaired.
     let ended = research::run(
-        Database::from(pool.clone()),
+        db.clone(),
         program_id,
         "Research methods".into(),
         Some(research::tests::web(false)),
-        prepare(
-            &Database::from(pool.clone()),
-            &repo,
-            &job,
-            &lesson_id,
-            &model,
-            Some(raw),
-            &[source()],
-        ),
+        prepare(&db, &repo, &job, &lesson_id, &model, Some(raw), &[source()]),
     )
     .await
     .err()
@@ -287,6 +298,32 @@ async fn the_repair_history_does_not_carry_a_statement_that_waits_at_a_node_that
     };
     let history = request["repairHistory"].to_string();
     assert!(!history.contains(WAITING_SENTENCE), "{history}");
+    Ok(())
+}
+
+const DRAFT_QUESTIONS: &str =
+    "Create exactly two distinct multiple-choice items of each kind: practice, quiz, and test.";
+
+#[tokio::test]
+async fn a_verification_repair_is_told_the_shape_the_lesson_is_kept_with() -> Result<()> {
+    let writer_request = json!({"lessonShape":[DRAFT_QUESTIONS]}).to_string();
+    let requests = requests_after_the_writer_asked(&writer_request).await?;
+
+    let lines = requests[0]["requirements"]["lessonShape"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !lines.contains(&json!(DRAFT_QUESTIONS)),
+        "the repair was told the draft's questions: {lines:?}"
+    );
+    let words: Vec<&str> = lines.iter().filter_map(Value::as_str).collect();
+    assert!(
+        words
+            .join("\n")
+            .contains("at least one question of each kind"),
+        "{words:?}"
+    );
     Ok(())
 }
 
@@ -324,6 +361,72 @@ async fn the_request_after_a_correction_lists_the_sentence_it_removed_and_why() 
     assert_eq!(removed["sentence"], BAD);
     let reason = removed["reason"].as_str().unwrap_or_default();
     assert!(!reason.is_empty(), "{removed}");
+    Ok(())
+}
+
+/// What a reasoning statement is asked once a veto refuted it and its passages said nothing.
+const CORRECT_WHAT_WAS_FOUND: &str = "Correct what the reason found wrong in the sentence, and keep the rest of the sentence as it is.";
+
+#[tokio::test]
+async fn the_rewrite_of_a_vetoed_statement_its_passages_do_not_address_carries_the_veto_reason(
+) -> Result<()> {
+    const VETO: &str = "The sentence says the reader keeps every space, which the sources deny.";
+    const SILENT: &str = "The passages do not address this.";
+    let policy = StandardPolicy::new();
+    let sentence = "The reader keeps every space of a field, so headers match by position.";
+    let mut ledger = open().await?;
+    let id = claim(
+        &mut ledger,
+        "vetoed",
+        (sentence, sentence),
+        sentence,
+        REASONED,
+    )
+    .await?;
+    walk_because(
+        &mut ledger,
+        &id,
+        Class::Reasoning,
+        &[
+            (
+                Step::Read(Reading::Consistency),
+                Outcome::Stands,
+                "It follows.",
+            ),
+            (Step::Read(Reading::Veto), Outcome::Refuted, VETO),
+            (Step::Read(Reading::Ground), Outcome::Refuted, SILENT),
+        ],
+    )
+    .await?;
+    let lesson = lesson_of(sentence);
+    identified(
+        &mut ledger,
+        &Model::new(),
+        &lesson,
+        &[(sentence, sentence)],
+        &[],
+    )
+    .await?;
+    let mut finding = unsupported(sentence);
+    finding.reason = SILENT.into();
+    let report = pass_report(vec![finding]);
+
+    let context = repair_context(
+        "{}",
+        &lesson,
+        &report,
+        (&ledger, &policy),
+        &[id],
+        &ReferenceCollection::lexical(&[])?,
+    )?;
+
+    let failed = context["failedClaims"].as_array().unwrap();
+    let [sent] = failed.as_slice() else {
+        panic!("one failed claim: {failed:?}");
+    };
+    assert_eq!(sent["goal"], CORRECT_WHAT_WAS_FOUND);
+    assert_eq!(sent["reason"], VETO);
+    assert_eq!(sent["groundReason"], SILENT);
     Ok(())
 }
 
@@ -531,6 +634,10 @@ async fn the_history_is_the_statements_that_failed_a_reading_and_were_rewritten_
         statement: "The code example example-0 runs to completion with the output it shows.".into(),
     };
     assert!(ledger.append(&example, extracted).await?);
+    let run = ClaimEvent::CodeExample {
+        observation: "example-0".into(),
+    };
+    assert!(ledger.append(&example, run).await?);
     let check = local_check(failed, "It did not run.", vec![]);
     assert!(ledger.append(&example, ClaimEvent::Checked(check)).await?);
     let removed = repair(EXAMPLE, RepairOutcome::Removed);

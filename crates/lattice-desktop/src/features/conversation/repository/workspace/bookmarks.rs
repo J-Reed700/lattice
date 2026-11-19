@@ -1,5 +1,4 @@
 use super::*;
-use lattice_core::shared::persistence::Transactions;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct MessageBookmarkRow {
@@ -10,6 +9,7 @@ struct MessageBookmarkRow {
     message_id: String,
     message_role: String,
     message_preview: String,
+    message_metadata: Option<String>,
     title: Option<String>,
     note: Option<String>,
     created_at: String,
@@ -21,7 +21,7 @@ impl ConversationRepository {
         request: BookmarkConversationMessageRequestDto,
     ) -> Result<RenameConversationResponseDto, AppError> {
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -86,6 +86,7 @@ impl ConversationRepository {
         &self,
         request: UnbookmarkConversationMessageRequestDto,
     ) -> Result<RenameConversationResponseDto, AppError> {
+        let mut tx = self.db.begin_write().await?;
         sqlx::query(
             r#"
         DELETE FROM conversation_message_bookmarks
@@ -94,9 +95,10 @@ impl ConversationRepository {
         )
         .bind(&request.conversation_id)
         .bind(&request.message_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to remove message bookmark: {}", e)))?;
+        tx.commit().await?;
 
         Ok(RenameConversationResponseDto {
             status: "success".to_string(),
@@ -107,7 +109,7 @@ impl ConversationRepository {
         &self,
         request: DeleteConversationMessageRequestDto,
     ) -> Result<RenameConversationResponseDto, AppError> {
-        let mut tx = self.pool.begin_write().await.map_err(|e| {
+        let mut tx = self.db.begin_write().await.map_err(|e| {
             AppError::Database(format!("Failed to start delete message transaction: {}", e))
         })?;
 
@@ -133,13 +135,13 @@ impl ConversationRepository {
             )));
         }
 
-        sqlx::query(
-            &crate::infrastructure::storage::file_intents::record_releases_sql(
+        sqlx::query(sqlx::AssertSqlSafe(
+            crate::infrastructure::storage::file_intents::record_releases_sql(
                 crate::infrastructure::storage::FileStore::ChatImage,
                 "id || '.' || ext",
                 "chat_images WHERE message_id = ? AND conversation_id = ?",
             ),
-        )
+        ))
         .bind(crate::infrastructure::storage::file_intents::run_id())
         .bind(&request.message_id)
         .bind(&request.conversation_id)
@@ -223,8 +225,7 @@ impl ConversationRepository {
         &self,
         query: ListMessageBookmarksQueryDto,
     ) -> Result<ListMessageBookmarksResponseDto, AppError> {
-        let limit = query.limit.unwrap_or(100).clamp(1, 200);
-        let offset = query.offset.unwrap_or(0).max(0);
+        let page = Page::new(query.limit, query.offset)?;
         let search_query = query
             .query
             .as_ref()
@@ -232,6 +233,7 @@ impl ConversationRepository {
             .filter(|q| !q.is_empty());
         let fts_query = search_query.and_then(build_fts_query);
 
+        let mut read = self.db.begin_read().await?;
         let mut qb = QueryBuilder::<Sqlite>::new(
             r#"
         SELECT
@@ -242,6 +244,7 @@ impl ConversationRepository {
             b.message_id,
             m.role AS message_role,
             m.content AS message_preview,
+            m.metadata AS message_metadata,
             b.title,
             b.note,
             b.created_at
@@ -268,15 +271,16 @@ impl ConversationRepository {
         }
 
         qb.push(" LIMIT ")
-            .push_bind(limit)
+            .push_bind(page.sql_limit())
             .push(" OFFSET ")
-            .push_bind(offset);
+            .push_bind(page.offset());
 
         let rows = qb
             .build_query_as::<MessageBookmarkRow>()
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *read)
             .await
             .map_err(|e| AppError::Database(format!("Failed to list message bookmarks: {}", e)))?;
+        read.commit().await?;
 
         let bookmarks = rows
             .into_iter()
@@ -287,7 +291,11 @@ impl ConversationRepository {
                 space_id: row.space_id,
                 message_id: row.message_id,
                 message_role: row.message_role,
-                message_preview: row.message_preview,
+                message_preview: lattice_core::shared::stored_references::text_without_references(
+                    &row.message_preview,
+                    row.message_metadata.as_deref(),
+                )
+                .into_owned(),
                 title: row.title,
                 note: row.note,
                 created_at: row.created_at,
@@ -300,7 +308,7 @@ impl ConversationRepository {
 
 /// The search rows that belong to a bookmark: its own text, its message, and
 /// its conversation's title.
-fn push_bookmark_matches(qb: &mut QueryBuilder<'_, Sqlite>, fts: &str) {
+fn push_bookmark_matches(qb: &mut QueryBuilder<Sqlite>, fts: &str) {
     qb.push(
         " FROM conversation_search_fts fts
         WHERE fts.conversation_id = b.conversation_id

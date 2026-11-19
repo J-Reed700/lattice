@@ -151,6 +151,8 @@ pub enum LearningGenerationJobKind {
     QuizBank,
     /// Grades a submitted quiz's written answers and near-miss short answers.
     QuizGrading,
+    /// Plans what each lesson of the outline teaches.
+    CoursePlan,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
@@ -216,6 +218,9 @@ pub struct LearningGenerationActivity {
     pub model_running: bool,
     pub response_characters: u32,
     pub model_attempt: u32,
+    /// Set while the lesson has model requests queued for a slot and none holding one.
+    #[serde(default)]
+    pub waiting_for_model: bool,
     pub verification_pass: u32,
     /// Claims of this pass with a finished first check. Each claim counts once.
     pub checks_completed: u32,
@@ -312,6 +317,9 @@ pub struct LearningGenerationJob {
     /// The lessons the job prepares, in course order.
     #[serde(default)]
     pub lesson_ids: Vec<String>,
+    /// The lessons the job finished by holding them for review.
+    #[serde(default)]
+    pub held_lesson_ids: Vec<String>,
     pub retry_of_job_id: Option<String>,
     pub created_at: i64,
     pub started_at: Option<i64>,
@@ -322,16 +330,6 @@ fn id(value: &str, label: &str) -> Result<()> {
     uuid::Uuid::parse_str(value)
         .map(|_| ())
         .map_err(|_| AppError::InvalidInput(format!("Invalid {label} ID")))
-}
-
-fn text(value: &str, label: &str, max: usize) -> Result<()> {
-    let len = value.trim().chars().count();
-    if len == 0 || len > max {
-        return Err(AppError::InvalidInput(format!(
-            "{label} must contain 1–{max} characters."
-        )));
-    }
-    Ok(())
 }
 
 fn not_blank(value: &str, label: &str) -> Result<()> {
@@ -347,9 +345,9 @@ fn validate_lesson(lesson: &LearningCurriculumLesson) -> Result<()> {
     id(&lesson.id, "lesson")?;
     not_blank(&lesson.title, "Lesson title")?;
     not_blank(&lesson.objective, "Lesson objective")?;
-    if !(1..=600).contains(&lesson.estimated_minutes) {
+    if lesson.estimated_minutes < 1 {
         return Err(AppError::InvalidInput(
-            "Lesson time must be between 1 and 600 minutes.".into(),
+            "Lesson time must be at least 1 minute.".into(),
         ));
     }
     if lesson.state == LearningCurriculumLessonState::Replaced
@@ -368,10 +366,10 @@ pub fn validate_curriculum(revision: &LearningCurriculumRevision) -> Result<()> 
     if let Some(parent) = revision.parent_revision_id.as_deref() {
         id(parent, "parent curriculum revision")?;
     }
-    text(&revision.reason, "Curriculum revision reason", 2_000)?;
-    if revision.modules.is_empty() || revision.modules.len() > 24 {
+    not_blank(&revision.reason, "Curriculum revision reason")?;
+    if revision.modules.is_empty() {
         return Err(AppError::InvalidInput(
-            "A curriculum must contain 1–24 modules.".into(),
+            "A curriculum must contain at least one module.".into(),
         ));
     }
     let mut ids = HashSet::new();
@@ -380,9 +378,9 @@ pub fn validate_curriculum(revision: &LearningCurriculumRevision) -> Result<()> 
         id(&module.id, "module")?;
         not_blank(&module.title, "Module title")?;
         not_blank(&module.purpose, "Module purpose")?;
-        if module.lessons.is_empty() || module.lessons.len() > 64 {
+        if module.lessons.is_empty() {
             return Err(AppError::InvalidInput(
-                "A module must contain 1–64 lessons.".into(),
+                "A module must contain at least one lesson.".into(),
             ));
         }
         if !ids.insert(module.id.as_str()) || !module_ids.insert(module.id.as_str()) {

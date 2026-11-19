@@ -187,7 +187,7 @@ mod tests {
 
         async fn find_all_paginated(
             &self,
-            _limit: usize,
+            _page: lattice_core::shared::persistence::Page,
         ) -> Result<Vec<lattice_core::domain::entities::Document>> {
             Ok(vec![])
         }

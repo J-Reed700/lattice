@@ -8,6 +8,7 @@ use lattice_core::application::ports::download_manager::{DownloadBatchItem, Down
 use lattice_core::domain::download::{DownloadError, DownloadSession};
 use lattice_core::domain::models::downloaded::ModelLocation;
 use lattice_core::domain::DownloadedModel;
+use lattice_core::shared::persistence::Database;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
@@ -88,13 +89,10 @@ impl DownloadManager for Recorder {
 
 /// A migrated in-memory repository holding one local model at `path`.
 async fn repository_with(path: PathBuf) -> SqliteModels {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    let repository = SqliteModels::new(pool);
+    let repository = SqliteModels::new(Database::new(pool));
     let row = DownloadedModel::new(
         "row-1".into(),
         "Qwen 3.5 9B".into(),

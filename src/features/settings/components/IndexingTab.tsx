@@ -169,12 +169,11 @@ export function IndexingTab() {
             id="batchSize"
             type="number"
             min={1}
-            max={128}
             step={1}
             value={batchSizeDraft}
             onChange={(e) => {
               const next = parseInt(e.target.value, 10);
-              if (!Number.isNaN(next)) setBatchSizeDraft(Math.min(128, Math.max(1, next)));
+              if (!Number.isNaN(next)) setBatchSizeDraft(Math.max(1, next));
             }}
             onBlur={commitBatchSize}
             onKeyDown={(e) => {

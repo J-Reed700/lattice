@@ -50,7 +50,6 @@ pub(crate) fn validate_content(
     }
     if format == LearningRecallCardFormat::Cloze {
         if content.cloze_deletions.is_empty()
-            || content.cloze_deletions.len() > 12
             || content
                 .cloze_deletions
                 .iter()

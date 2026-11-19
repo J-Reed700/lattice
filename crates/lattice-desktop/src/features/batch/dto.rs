@@ -149,7 +149,7 @@ pub struct CancelBatchJobResponseDto {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ListBatchJobsRequestDto {
-    /// Maximum number of jobs to return (default: 50, max: 100)
+    /// Maximum number of jobs to return; omitted returns every job
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
 

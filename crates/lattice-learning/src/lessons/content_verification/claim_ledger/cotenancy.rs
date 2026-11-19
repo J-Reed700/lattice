@@ -4,13 +4,13 @@
 //! §2.3, §2.6).
 
 use super::fields::field_text;
-use super::located::located_quote;
-use super::{is_gone, stand_together, ClaimLedger, Place};
+use super::located::{located, located_quote};
+use super::{is_example, stand_together, ClaimLedger, Place};
 use lattice_core::domain::learning::acceptance::Goal;
 use lattice_core::domain::learning::claim_review::{
     span_of, ClaimEvent, ClaimId, ClaimLedgerEntry, RepairOutcome,
 };
-use lattice_core::shared::text::claim_sentence;
+use lattice_core::shared::text::sentences;
 use serde_json::Value;
 
 /// What the cut of a statement takes out of its field. `ClaimLedger::cut_of`
@@ -24,9 +24,10 @@ pub(in crate::lessons::content_verification) enum CutOf<'t> {
     /// One narrowing rewrite by the model takes the statement out of its
     /// sentence and keeps the others; nothing is cut this round.
     Narrow,
-    /// Everything the statement's quote touches: its narrowing was not
-    /// applied.
-    Whole,
+    /// No cut is made: the statement is unknown, or its narrowing was asked and
+    /// not applied. The statement ends Unverified; when it stands in a question
+    /// the lesson can lose, its question goes instead.
+    Refused,
 }
 
 /// Whether a narrowing rewrite of the statement of `entry` was asked and not
@@ -44,35 +45,6 @@ fn narrowing_spent(entry: &ClaimLedgerEntry) -> bool {
     })
 }
 
-/// The group each of `places` stands in with the others on its sentence: an
-/// id the statements of one group share, none for one alone. Two stand
-/// together directly or through a third.
-pub(in crate::lessons::content_verification) fn sentences(
-    places: &[Place<'_>],
-) -> Vec<Option<u32>> {
-    let mut group: Vec<usize> = (0..places.len()).collect();
-    for (at, here) in places.iter().enumerate() {
-        for (other, there) in places.iter().enumerate().skip(at + 1) {
-            if !stand_together(here, there) {
-                continue;
-            }
-            if let (Some(&to), Some(&from)) = (group.get(at), group.get(other)) {
-                group
-                    .iter_mut()
-                    .filter(|label| **label == from)
-                    .for_each(|label| *label = to);
-            }
-        }
-    }
-    group
-        .iter()
-        .map(|&label| {
-            let shared = group.iter().filter(|&&other| other == label).count() > 1;
-            u32::try_from(label).ok().filter(|_| shared)
-        })
-        .collect()
-}
-
 impl ClaimLedger {
     /// The live claims standing on the same sentence as `claim_id`: those in
     /// its unit and field whose quote holds its quote or is held by it. A
@@ -87,7 +59,7 @@ impl ClaimLedger {
         let here = Place::of(entry.location());
         self.entries
             .iter()
-            .filter(|other| other.claim_id() != claim_id && !is_gone(other.state()))
+            .filter(|other| other.claim_id() != claim_id && !other.state().is_gone())
             .filter(|other| stand_together(&here, &Place::of(other.location())))
             .map(|other| other.claim_id().clone())
             .collect()
@@ -111,13 +83,7 @@ impl ClaimLedger {
         self.entries
             .iter()
             .filter(|other| other.claim_id() != claim_id)
-            .filter(|other| {
-                !is_gone(other.state())
-                    && !self
-                        .examples
-                        .values()
-                        .any(|example| example == other.claim_id())
-            })
+            .filter(|other| !other.state().is_gone() && !is_example(other))
             .filter(|other| other.location().unit_index == unit && other.location().field == field)
             .any(|other| {
                 let own = located_quote(other.location(), other.statement(), text);
@@ -133,11 +99,11 @@ impl ClaimLedger {
     }
 
     /// What the cut of the statement `claim_id` takes out of `text`, the text
-    /// of its field (acceptance design §2.3, §2.6): the sentence that states
-    /// it, which `claim_sentence` names in the quote's place in the field,
-    /// when no other live statement stands on it. Otherwise, while its
+    /// of its field (acceptance design §2.3, §2.6): the sentence it stands
+    /// on, which `located` gives, when that is one sentence of the field that
+    /// no other live statement stands on. Otherwise, while its
     /// narrowing is unspent, one narrowing rewrite; and once a narrowing was
-    /// asked and not applied, everything its quote touches. The one decision
+    /// asked and not applied, no cut at all. The one decision
     /// the repair's records and request and the last attempt all read.
     pub(in crate::lessons::content_verification) fn cut_of<'t>(
         &self,
@@ -145,17 +111,21 @@ impl ClaimLedger {
         text: &'t str,
     ) -> CutOf<'t> {
         let Some(entry) = self.entry(claim_id) else {
-            return CutOf::Whole;
+            return CutOf::Refused;
         };
         let place = entry.location();
-        let alone = span_of(text, &place.quote)
-            .or(place.span)
-            .and_then(|within| claim_sentence(text, within, entry.statement()))
+        let (sentence, span) = located(place, entry.statement(), text);
+        let alone = Some(sentence.as_str())
+            .filter(|sentence| sentences(sentence).len() == 1)
+            .and_then(|sentence| {
+                span_of(text, sentence)
+                    .or(span.filter(|&(start, end)| text.get(start..end) == Some(sentence)))
+            })
             .and_then(|(start, end)| text.get(start..end))
-            .filter(|sentence| !self.shares_sentence(claim_id, text, sentence));
+            .filter(|cut| !self.shares_sentence(claim_id, text, cut));
         match alone {
             Some(sentence) => CutOf::Sentence(sentence),
-            None if narrowing_spent(entry) => CutOf::Whole,
+            None if narrowing_spent(entry) => CutOf::Refused,
             None => CutOf::Narrow,
         }
     }
@@ -174,17 +144,17 @@ impl ClaimLedger {
             .is_some_and(|text| matches!(self.cut_of(claim_id, &text), CutOf::Narrow))
     }
 
-    /// The statements of the claims still standing, each with its section,
-    /// but `claims`: what the lesson keeps of its sentences when these claims
-    /// lose theirs.
-    pub(in crate::lessons::content_verification) fn live_statements_but(
+    /// The sentences of the claims still standing, each with its section, but
+    /// `claims`: what the lesson keeps of its sentences when these claims lose
+    /// theirs.
+    pub(in crate::lessons::content_verification) fn live_sentences_but(
         &self,
         claims: &[ClaimId],
     ) -> Vec<(usize, String)> {
         self.entries
             .iter()
-            .filter(|entry| !is_gone(entry.state()) && !claims.contains(entry.claim_id()))
-            .map(|entry| (entry.location().unit_index, entry.statement().to_owned()))
+            .filter(|entry| !entry.state().is_gone() && !claims.contains(entry.claim_id()))
+            .map(|entry| (entry.location().unit_index, entry.location().quote.clone()))
             .collect()
     }
 

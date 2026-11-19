@@ -1,6 +1,6 @@
 use super::*;
-use crate::shared::error::{AppError, Result};
-use crate::shared::persistence::Database;
+use crate::shared::error::{AppError, ErrorClass, Result};
+use crate::shared::persistence::{Database, Page};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, Semaphore};
@@ -10,18 +10,13 @@ const ONCE: &str = "test.once";
 const WAIT: Duration = Duration::from_secs(5);
 
 async fn pool() -> sqlx::SqlitePool {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .idle_timeout(None)
-        .max_lifetime(None)
-        .connect(":memory:")
+    crate::shared::testing::sqlite::migrated_in_memory()
         .await
-        .unwrap();
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .unwrap();
-    pool
+        .unwrap()
+}
+
+async fn database() -> Database {
+    Database::new(pool().await)
 }
 
 fn new_job(kind: &str, operation: &str, subject: Option<&str>) -> NewJob {
@@ -106,7 +101,7 @@ async fn finished(runtime: &JobRuntime, id: &str) {
 
 #[tokio::test]
 async fn resubmitting_an_operation_returns_the_saved_job() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let first = store
         .submit(&new_job(KIND, "op-1", Some("subject")))
         .await?;
@@ -132,7 +127,7 @@ async fn resubmitting_an_operation_returns_the_saved_job() -> Result<()> {
 
 #[tokio::test]
 async fn reusing_an_operation_id_with_a_different_payload_is_rejected() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     store.submit(&new_job(KIND, "op-1", None)).await?;
     let mut changed = new_job(KIND, "op-1", None);
     changed.payload_hash = "different".into();
@@ -149,7 +144,7 @@ async fn reusing_an_operation_id_with_a_different_payload_is_rejected() -> Resul
 
 #[tokio::test]
 async fn a_job_cancelled_before_it_runs_never_runs() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let (handler, mut started) = gate();
     // Saved before its kind is registered, then cancelled while queued.
     let saved = runtime
@@ -201,7 +196,7 @@ async fn a_job_cancelled_before_it_runs_never_runs() -> Result<()> {
 
 #[tokio::test]
 async fn cancelling_a_running_job_commits_before_signalling_and_late_writes_lose() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let (handler, mut started) = gate();
     runtime
         .register(
@@ -233,7 +228,7 @@ async fn cancelling_a_running_job_commits_before_signalling_and_late_writes_lose
 
 #[tokio::test]
 async fn a_retry_links_a_new_attempt_that_inherits_saved_work() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let first = store.submit(&new_job(KIND, "first", None)).await?.id;
     assert!(matches!(
         store.retry(&first, "too-early", "Retry queued").await,
@@ -311,7 +306,7 @@ async fn deferred_jobs_wait_for_their_retry_time_and_back_off() -> Result<()> {
     let delays: Vec<u64> = (0..6).map(|n| backoff.delay(n).as_secs()).collect();
     assert_eq!(delays, vec![30, 60, 120, 240, 300, 300]);
 
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let outage = Deferral {
         code: "temporarily_unavailable".into(),
         message: "The service is down".into(),
@@ -411,8 +406,7 @@ impl JobHandler for Repeating {
 /// A runtime that redelivers deferred jobs at once, running one [`Repeating`]
 /// job.
 async fn repeating(error: AppError, saves: bool) -> Result<(Arc<JobRuntime>, String)> {
-    let runtime =
-        JobRuntime::with_poll_interval(Database::from(pool().await), Duration::from_millis(10));
+    let runtime = JobRuntime::with_poll_interval(database().await, Duration::from_millis(10));
     runtime
         .register(
             KIND,
@@ -480,10 +474,8 @@ async fn the_same_failure_twice_with_nothing_saved_ends_the_job() -> Result<()> 
 #[tokio::test]
 async fn a_busy_database_never_ends_a_job_however_often_it_repeats() -> Result<()> {
     for error in [
-        AppError::Database("error returned from database: (code: 5) database is locked".into()),
-        AppError::ServiceNotAvailable(
-            "The database is temporarily busy. Saved work is retained.".into(),
-        ),
+        AppError::DatabaseBusy("error returned from database: (code: 5) database is locked".into()),
+        AppError::from(sqlx::Error::PoolTimedOut),
     ] {
         let (runtime, id) = repeating(error.clone(), false).await?;
         let job = saved_once(&runtime, &id, |job| {
@@ -514,8 +506,7 @@ impl JobHandler for Renumbered {
 
 #[tokio::test]
 async fn the_same_failure_in_changing_words_still_ends_the_job() -> Result<()> {
-    let runtime =
-        JobRuntime::with_poll_interval(Database::from(pool().await), Duration::from_millis(10));
+    let runtime = JobRuntime::with_poll_interval(database().await, Duration::from_millis(10));
     runtime
         .register(
             KIND,
@@ -535,10 +526,84 @@ async fn the_same_failure_in_changing_words_still_ends_the_job() -> Result<()> {
     Ok(())
 }
 
+/// Fails attempt `n` with `errors[n]` (the last one from then on), deferring
+/// every failure.
+struct Sequence {
+    errors: Vec<AppError>,
+    attempts: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl JobHandler for Sequence {
+    async fn run(&self, _: &JobContext) -> Result<JobOutcome> {
+        let attempt = self
+            .attempts
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err(self.errors[attempt.min(self.errors.len() - 1)].clone())
+    }
+
+    fn failure(&self, _: &JobRecord, error: &AppError) -> JobFailure {
+        JobFailure::Defer(Deferral {
+            code: "deferred".into(),
+            message: error.to_string(),
+            progress_message: "Waiting".into(),
+            activity: None,
+        })
+    }
+}
+
+/// The finished job after deferring each failure of `errors` in turn.
+async fn deferred_through(errors: Vec<AppError>) -> Result<JobRecord> {
+    let runtime =
+        JobRuntime::with_poll_interval(Database::new(pool().await), Duration::from_millis(10));
+    runtime
+        .register(
+            KIND,
+            Arc::new(Sequence {
+                errors,
+                attempts: Default::default(),
+            }),
+            JobKindConfig::new(RecoveryPolicy::Requeue).backoff(Backoff {
+                initial: Duration::ZERO,
+                max: Duration::ZERO,
+            }),
+        )
+        .await?;
+    let id = runtime.submit(&new_job(KIND, "sequence", None)).await?.id;
+    let job = saved_once(&runtime, &id, |job| job.status.is_finished()).await;
+    runtime.close();
+    runtime.drain().await;
+    Ok(job)
+}
+
+#[tokio::test]
+async fn two_different_failures_with_nothing_saved_are_not_a_repeat() -> Result<()> {
+    let job = deferred_through(vec![
+        AppError::ModelAnswerUnusable("no json".into()),
+        AppError::AnswerCutOff("length".into()),
+        AppError::AnswerCutOff("length".into()),
+    ])
+    .await?;
+    assert_eq!(job.error_code.as_deref(), Some(REPEATED_FAILURE));
+    assert_eq!(job.retry_count, 2, "the third attempt repeated the second");
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_same_deferred_failure_twice_with_nothing_saved_is_a_repeat() -> Result<()> {
+    let job = deferred_through(vec![
+        AppError::ModelAnswerUnusable("no json".into()),
+        AppError::ModelAnswerUnusable("no json".into()),
+    ])
+    .await?;
+    assert_eq!(job.error_code.as_deref(), Some(REPEATED_FAILURE));
+    assert_eq!(job.retry_count, 1);
+    Ok(())
+}
+
 #[tokio::test]
 async fn cancelling_a_deferred_job_forgets_its_last_failure() -> Result<()> {
-    let runtime =
-        JobRuntime::with_poll_interval(Database::from(pool().await), Duration::from_millis(10));
+    let runtime = JobRuntime::with_poll_interval(database().await, Duration::from_millis(10));
     runtime
         .register(
             KIND,
@@ -616,7 +681,7 @@ impl JobHandler for BusyAtTheEnd {
         let connection = loop {
             match self.pool.acquire().await {
                 Err(sqlx::Error::PoolTimedOut) => continue,
-                other => break other.map_err(|error| AppError::Database(error.to_string()))?,
+                other => break other?,
             }
         };
         let hold = self.hold;
@@ -637,7 +702,7 @@ async fn while_busy<T, F: std::future::Future<Output = Result<T>>>(
 ) -> Result<T> {
     loop {
         match call().await {
-            Err(error) if JobFailure::is_transient(&error) => {
+            Err(error) if ErrorClass::of(&error).is_temporary() => {
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
             other => return other,
@@ -653,20 +718,20 @@ async fn a_job_that_ends_while_the_database_is_busy_is_still_recorded() -> Resul
     // pool of its own on the same file, so on a loaded machine only that
     // write meets the busy store.
     let directory = tempfile::tempdir().unwrap();
-    let options = crate::shared::testing::sqlite::file_options(directory.path().join("jobs.db"));
-    let setup = sqlx::sqlite::SqlitePoolOptions::new()
-        .connect_with(options.clone())
+    let path = directory.path().join("jobs.db");
+    crate::shared::testing::sqlite::write_migrated(&path)
         .await
         .unwrap();
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&setup)
+    let options = crate::shared::testing::sqlite::file_options(&path);
+    let setup = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(options.clone())
         .await
         .unwrap();
     let busy = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .acquire_timeout(Duration::from_millis(100))
         .connect_lazy_with(options);
-    let runtime = JobRuntime::new(Database::from(busy.clone()));
+    let runtime = JobRuntime::new(Database::new(busy.clone()));
     let retry = Duration::from_millis(20);
     let config = JobKindConfig::new(RecoveryPolicy::Requeue).backoff(Backoff {
         initial: retry,
@@ -679,7 +744,7 @@ async fn a_job_that_ends_while_the_database_is_busy_is_still_recorded() -> Resul
     while_busy(|| runtime.register(KIND, handler.clone(), config)).await?;
     let new = new_job(KIND, "busy-end", None);
     let job = while_busy(|| runtime.submit(&new)).await?;
-    let saved = JobStore::new(setup);
+    let saved = JobStore::new(Database::new(setup));
     let ended = tokio::time::timeout(Duration::from_secs(30), async {
         loop {
             let status = saved.get(&job.id).await?.status;
@@ -712,7 +777,7 @@ async fn transient_errors_defer_and_other_errors_fail() -> Result<()> {
             JobStatus::Failed,
         ),
     ] {
-        let runtime = JobRuntime::new(Database::from(pool().await));
+        let runtime = JobRuntime::new(database().await);
         runtime
             .register(
                 KIND,
@@ -731,38 +796,36 @@ async fn transient_errors_defer_and_other_errors_fail() -> Result<()> {
 }
 
 #[test]
-fn an_http_status_is_transient_only_when_waiting_can_change_it() {
+fn an_http_status_is_deferred_only_when_waiting_can_change_it() {
     let answered = |status: u16| AppError::HttpStatus {
         status,
         message: format!("HTTP {status}: the site answered"),
     };
     for status in [429, 502, 503, 504] {
-        let error = answered(status);
-        assert!(JobFailure::is_transient(&error), "{status}");
-        assert!(error.is_recoverable(), "{status}");
         assert!(
-            !JobFailure::is_outage(&error),
-            "{status}: one site's answer is not an outage"
+            matches!(
+                JobFailure::classify(&answered(status)),
+                JobFailure::Defer(_)
+            ),
+            "{status}"
         );
     }
     for status in [400, 401, 403, 404, 410, 500] {
-        let error = answered(status);
-        assert!(!JobFailure::is_transient(&error), "{status}");
-        assert!(!error.is_recoverable(), "{status}");
-        assert!(!JobFailure::is_outage(&error), "{status}");
-        assert!(matches!(
-            JobFailure::classify(&error),
-            JobFailure::Fail { .. }
-        ));
+        assert!(
+            matches!(
+                JobFailure::classify(&answered(status)),
+                JobFailure::Fail { .. }
+            ),
+            "{status}"
+        );
     }
     let lost = AppError::Network("connection reset".into());
-    assert!(JobFailure::is_transient(&lost));
-    assert!(JobFailure::is_outage(&lost));
+    assert!(matches!(JobFailure::classify(&lost), JobFailure::Defer(_)));
 }
 
 #[tokio::test]
 async fn checkpoints_round_trip_and_are_written_only_while_running() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let id = store.submit(&new_job(KIND, "checkpoints", None)).await?.id;
     assert!(!store.put_checkpoint(&id, "lesson/a", &json!(1)).await?);
     store.claim(&id).await?;
@@ -795,7 +858,7 @@ async fn checkpoints_round_trip_and_are_written_only_while_running() -> Result<(
 
 #[tokio::test]
 async fn progress_only_moves_forward_and_drops_stale_activity() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let id = store.submit(&new_job(KIND, "progress", None)).await?.id;
     assert!(!store.progress(&id, 1, "not running", None).await?);
     store.claim(&id).await?;
@@ -827,7 +890,7 @@ async fn progress_only_moves_forward_and_drops_stale_activity() -> Result<()> {
 
 #[tokio::test]
 async fn one_subject_runs_one_job_at_a_time_while_other_subjects_proceed() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let (handler, mut started) = gate();
     runtime
         .register(
@@ -866,7 +929,7 @@ async fn one_subject_runs_one_job_at_a_time_while_other_subjects_proceed() -> Re
 
 #[tokio::test]
 async fn a_kind_runs_no_more_jobs_than_its_concurrency() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let (handler, mut started) = gate();
     runtime
         .register(
@@ -934,7 +997,7 @@ impl JobHandler for Abandons {
 
 #[tokio::test]
 async fn cancellation_drops_in_flight_work_before_the_handler_continues() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let (started, mut receiver) = mpsc::unbounded_channel();
     let (signal, dropped) = tokio::sync::oneshot::channel();
     let observed: Arc<Mutex<Option<bool>>> = Arc::default();
@@ -964,7 +1027,7 @@ async fn cancellation_drops_in_flight_work_before_the_handler_continues() -> Res
 
 #[tokio::test]
 async fn startup_recovery_requeues_or_interrupts_by_kind() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let store = runtime.store();
     let resumable = store.submit(&new_job(KIND, "resume", None)).await?.id;
     let single = store.submit(&new_job(ONCE, "once", None)).await?.id;
@@ -1024,7 +1087,7 @@ async fn startup_recovery_requeues_or_interrupts_by_kind() -> Result<()> {
 
 #[tokio::test]
 async fn shutdown_drains_workers_and_keeps_resumable_work_pending() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let (resume_handler, mut resumed) = gate();
     let (once_handler, mut once_started) = gate();
     runtime
@@ -1069,7 +1132,7 @@ async fn shutdown_drains_workers_and_keeps_resumable_work_pending() -> Result<()
 
 #[tokio::test]
 async fn observers_see_each_transition_of_a_job() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let seen: Arc<Mutex<Vec<(String, JobStatus)>>> = Arc::default();
     let sink = seen.clone();
     runtime.observe(move |job| {
@@ -1111,19 +1174,18 @@ async fn observers_see_each_transition_of_a_job() -> Result<()> {
 #[tokio::test]
 async fn startup_recovery_waits_for_a_concurrent_writer() -> Result<()> {
     let directory = tempfile::tempdir().unwrap();
-    let options = crate::shared::testing::sqlite::file_options(
-        directory.path().join("startup-recovery.sqlite"),
-    );
+    let path = directory.path().join("startup-recovery.sqlite");
+    crate::shared::testing::sqlite::write_migrated(&path)
+        .await
+        .unwrap();
+    let options = crate::shared::testing::sqlite::file_options(&path);
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options)
         .await
         .unwrap();
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .unwrap();
-    let store = JobStore::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let store = JobStore::new(db.clone());
     let id = store.submit(&new_job(KIND, "running", None)).await?.id;
     store.claim(&id).await?;
     let mut writer = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
@@ -1160,7 +1222,7 @@ impl JobHandler for Judged {
 
 #[tokio::test]
 async fn a_handler_can_judge_its_work_failed_without_an_error() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     runtime
         .register(
             ONCE,
@@ -1184,7 +1246,7 @@ async fn a_handler_can_judge_its_work_failed_without_an_error() -> Result<()> {
 
 #[tokio::test]
 async fn a_requeued_job_gives_up_its_turn_to_the_work_already_waiting() -> Result<()> {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let (handler, mut started) = gate();
     runtime
         .register(
@@ -1228,7 +1290,7 @@ async fn a_requeued_job_gives_up_its_turn_to_the_work_already_waiting() -> Resul
 
 #[tokio::test]
 async fn listings_show_live_jobs_and_each_imports_latest_attempt() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let first = store.submit(&new_job(KIND, "first", None)).await?;
     let second = store.submit(&new_job(KIND, "second", None)).await?;
     store.submit(&new_job(ONCE, "other kind", None)).await?;
@@ -1246,7 +1308,7 @@ async fn listings_show_live_jobs_and_each_imports_latest_attempt() -> Result<()>
         .retry(&first.id, "first-retry", "Retry queued")
         .await?;
     let latest: Vec<String> = store
-        .list_latest(&[KIND], 10, 0)
+        .list_latest(&[KIND], Page::new(Some(10), None)?)
         .await?
         .into_iter()
         .map(|job| job.id)
@@ -1256,15 +1318,28 @@ async fn listings_show_live_jobs_and_each_imports_latest_attempt() -> Result<()>
         !latest.contains(&first.id),
         "a retried attempt is not listed"
     );
-    assert_eq!(store.list_latest(&[KIND, ONCE], 10, 0).await?.len(), 3);
-    assert_eq!(store.list_latest(&[KIND, ONCE], 1, 1).await?.len(), 1);
+    assert_eq!(
+        store
+            .list_latest(&[KIND, ONCE], Page::new(Some(10), None)?)
+            .await?
+            .len(),
+        3
+    );
+    assert_eq!(
+        store
+            .list_latest(&[KIND, ONCE], Page::new(Some(1), Some(1))?)
+            .await?
+            .len(),
+        1
+    );
     Ok(())
 }
 
 #[tokio::test]
 async fn deleting_a_finished_job_takes_its_earlier_attempts_and_refuses_live_ones() -> Result<()> {
     let pool = pool().await;
-    let store = JobStore::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let store = JobStore::new(db.clone());
     let first = store.submit(&new_job(KIND, "first", None)).await?;
     store.claim(&first.id).await?;
     store.fail(&first.id, "failed", "broken").await?;
@@ -1298,26 +1373,98 @@ async fn deleting_a_finished_job_takes_its_earlier_attempts_and_refuses_live_one
     Ok(())
 }
 
-/// A lesson job failed for good on "database is locked": another connection
-/// held SQLite's lock past the busy timeout. That is waited out like an
-/// outage, while any other database error still fails the attempt.
-#[test]
-fn a_locked_database_is_retried_and_other_database_errors_are_not() {
-    let locked =
-        AppError::Database("error returned from database: (code: 5) database is locked".into());
-    let table_locked = AppError::Database("database table is locked: jobs".into());
+/// Another connection held SQLite's lock past the busy timeout: the work is
+/// untouched, so the job is waited out, while any other database error fails
+/// the attempt.
+#[tokio::test]
+async fn a_locked_sqlite_database_defers_the_job() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("jobs.db");
+    crate::shared::testing::sqlite::write_migrated(&path)
+        .await
+        .unwrap();
+    let options = crate::shared::testing::sqlite::file_options(&path);
+    let setup = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(options.clone())
+        .await
+        .unwrap();
+    let mut holder = setup.acquire().await.unwrap();
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    let blocked = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(options.busy_timeout(Duration::ZERO))
+        .await
+        .unwrap();
+    let error = JobStore::new(Database::new(blocked))
+        .submit(&new_job(KIND, "locked", None))
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AppError::DatabaseBusy(_)), "{error}");
+    assert!(matches!(JobFailure::classify(&error), JobFailure::Defer(_)));
     let corrupt = AppError::Database("database disk image is malformed".into());
-    assert!(JobFailure::is_transient(&locked));
-    assert!(JobFailure::is_transient(&table_locked));
-    assert!(matches!(
-        JobFailure::classify(&locked),
-        JobFailure::Defer(_)
-    ));
-    assert!(!JobFailure::is_transient(&corrupt));
     assert!(matches!(
         JobFailure::classify(&corrupt),
         JobFailure::Fail { .. }
     ));
+}
+
+/// A driver error that carries only an SQLite result code.
+#[derive(Debug)]
+struct Coded(&'static str);
+
+impl std::fmt::Display for Coded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "driver failure")
+    }
+}
+
+impl std::error::Error for Coded {}
+
+impl sqlx::error::DatabaseError for Coded {
+    fn message(&self) -> &str {
+        "driver failure"
+    }
+
+    fn code(&self) -> Option<std::borrow::Cow<'_, str>> {
+        Some(self.0.into())
+    }
+
+    fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+        self
+    }
+
+    fn as_error_mut(&mut self) -> &mut (dyn std::error::Error + Send + Sync + 'static) {
+        self
+    }
+
+    fn into_error(self: Box<Self>) -> Box<dyn std::error::Error + Send + Sync + 'static> {
+        self
+    }
+
+    fn kind(&self) -> sqlx::error::ErrorKind {
+        sqlx::error::ErrorKind::Other
+    }
+}
+
+/// The driver's busy and locked results defer a job whatever their text says.
+#[test]
+fn a_database_the_driver_calls_busy_defers_the_job_by_its_code() {
+    let timed_out = AppError::from(sqlx::Error::PoolTimedOut);
+    let busy_snapshot = AppError::from(sqlx::Error::Database(Box::new(Coded("517"))));
+    let locked = AppError::from(sqlx::Error::Database(Box::new(Coded("6"))));
+    let constraint = AppError::from(sqlx::Error::Database(Box::new(Coded("2067"))));
+    for busy in [timed_out, busy_snapshot, locked] {
+        assert!(
+            matches!(JobFailure::classify(&busy), JobFailure::Defer(_)),
+            "{busy}"
+        );
+    }
+    assert!(
+        matches!(JobFailure::classify(&constraint), JobFailure::Fail { .. }),
+        "{constraint}"
+    );
 }
 
 fn deferral(error: &AppError) -> Deferral {
@@ -1331,10 +1478,8 @@ fn deferral(error: &AppError) -> Deferral {
 #[test]
 fn a_wait_describes_the_database_when_the_database_is_busy() {
     for busy in [
-        AppError::Database("error returned from database: (code: 5) database is locked".into()),
-        AppError::ServiceNotAvailable(
-            "The database is temporarily busy. Saved work is retained.".into(),
-        ),
+        AppError::DatabaseBusy("error returned from database: (code: 5) database is locked".into()),
+        AppError::from(sqlx::Error::PoolTimedOut),
     ] {
         let deferral = deferral(&busy);
         assert_eq!(deferral.code, "temporarily_unavailable", "{busy}");
@@ -1360,13 +1505,10 @@ fn a_wait_keeps_the_outage_message_when_the_connection_is_lost() {
 #[tokio::test]
 async fn a_job_deferred_on_a_busy_database_records_the_database_as_its_cause() -> Result<()> {
     for error in [
-        AppError::Database("error returned from database: (code: 5) database is locked".into()),
-        AppError::ServiceNotAvailable(
-            "The database is temporarily busy. Saved work is retained.".into(),
-        ),
+        AppError::DatabaseBusy("error returned from database: (code: 5) database is locked".into()),
+        AppError::from(sqlx::Error::PoolTimedOut),
     ] {
-        let runtime =
-            JobRuntime::with_poll_interval(Database::from(pool().await), Duration::from_millis(10));
+        let runtime = JobRuntime::with_poll_interval(database().await, Duration::from_millis(10));
         runtime
             .register(
                 KIND,
@@ -1425,7 +1567,7 @@ async fn ranks_seen_by_a_job(
     config: JobKindConfig,
     rank: Option<i64>,
 ) -> (Vec<Option<i64>>, Option<RankTicket>) {
-    let runtime = JobRuntime::new(Database::from(pool().await));
+    let runtime = JobRuntime::new(database().await);
     let (seen, mut receiver) = mpsc::unbounded_channel();
     runtime
         .register(KIND, Arc::new(Peek { seen }), config)
@@ -1482,7 +1624,7 @@ async fn a_ranked_kinds_job_saved_without_a_rank_sees_none() {
 
 #[tokio::test]
 async fn a_jobs_rank_is_saved_and_a_retry_keeps_it() -> Result<()> {
-    let store = JobStore::new(pool().await);
+    let store = JobStore::new(database().await);
     let admitted = store
         .submit_ranked(&new_job(KIND, "op-1", Some("subject")), 3)
         .await?;
@@ -1496,5 +1638,35 @@ async fn a_jobs_rank_is_saved_and_a_retry_keeps_it() -> Result<()> {
         .submit(&new_job(KIND, "op-3", Some("subject")))
         .await?;
     assert_eq!(store.get(&plain.id).await?.rank, None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_heartbeat_recorded_behind_a_long_write_waits_its_turn_and_lands() -> Result<()> {
+    let busy_timeout = Duration::from_millis(100);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("heartbeat-behind-writer.sqlite");
+    crate::shared::testing::sqlite::write_migrated(&path)
+        .await
+        .unwrap();
+    let options = crate::shared::testing::sqlite::file_options(&path).busy_timeout(busy_timeout);
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(2)
+        .connect_with(options)
+        .await
+        .unwrap();
+    let db = Database::new(pool.clone());
+    let store = JobStore::new(db.clone());
+    let id = store.submit(&new_job(KIND, "heartbeat", None)).await?.id;
+    store.claim(&id).await?;
+    let writer = db.begin_write().await.unwrap();
+    let beat = tokio::spawn({
+        let store = store.clone();
+        let id = id.clone();
+        async move { store.heartbeat(&id).await }
+    });
+    tokio::time::sleep(busy_timeout * 3).await;
+    writer.commit().await.unwrap();
+    assert!(beat.await.unwrap()?);
     Ok(())
 }

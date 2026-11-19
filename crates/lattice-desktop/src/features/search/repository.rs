@@ -1,6 +1,5 @@
-use crate::infrastructure::persistence::database::connection::query_with_timeout;
 use lattice_core::shared::error::AppError;
-use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Database;
 use sqlx::Row;
 
 pub(super) struct ChunkMetadataRow {
@@ -20,10 +19,9 @@ pub(super) struct ChunkMetadataRow {
 
 /// Metadata for a batch of chunk IDs.
 pub(super) async fn chunk_metadata(
-    pool: &impl DriverPool,
+    db: &Database,
     batch: &[String],
 ) -> Result<Vec<ChunkMetadataRow>, AppError> {
-    let pool = pool.sqlx_pool();
     let placeholders = batch.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
 
     let query = format!(
@@ -54,13 +52,17 @@ pub(super) async fn chunk_metadata(
         placeholders
     );
 
-    let mut query_builder = sqlx::query(&query);
+    let mut query_builder = sqlx::query(sqlx::AssertSqlSafe(query.as_str()));
     for id in batch {
         query_builder = query_builder.bind(id);
     }
 
-    let rows: Vec<sqlx::sqlite::SqliteRow> =
-        query_with_timeout(|| async { query_builder.fetch_all(pool).await }).await?;
+    let mut read = db.begin_read().await?;
+    let rows: Vec<sqlx::sqlite::SqliteRow> = query_builder
+        .fetch_all(&mut *read)
+        .await
+        .map_err(|e| AppError::Database(format!("Database query failed: {}", e)))?;
+    read.commit().await?;
 
     Ok(rows
         .into_iter()

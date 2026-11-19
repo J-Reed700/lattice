@@ -6,7 +6,7 @@ use super::{
     entries::{decode, ExportScope, ImportScope, SectionRows},
     evidence_tables::{
         insert_evidence_snapshot, snapshot_evidence_tables, AggregateTableSnapshot,
-        LearningEvidenceSnapshot, EVIDENCE_TABLES, MAX_TABLE_ROWS,
+        LearningEvidenceSnapshot, EVIDENCE_TABLES,
     },
     invalid, json, parse,
     remap::map_evidence_ids,
@@ -22,6 +22,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::WriteTx;
 use sqlx::SqliteConnection;
 use std::collections::{BTreeMap, HashMap};
 
@@ -39,17 +40,6 @@ fn encode_evidence(snapshot: &LearningEvidenceSnapshot) -> Result<Vec<LearningPa
             .any(|(table, spec)| table.table != spec.table)
     {
         return Err(invalid("Pack aggregate table set is incomplete."));
-    }
-    if let Some(table) = snapshot
-        .tables
-        .iter()
-        .find(|table| table.rows.len() > MAX_TABLE_ROWS)
-    {
-        return Err(invalid(format!(
-            "This course has {} records in {}, more than the {MAX_TABLE_ROWS} per table a course pack can carry, so no computer could import it.",
-            table.rows.len(),
-            table.table
-        )));
     }
     snapshot
         .tables
@@ -206,14 +196,10 @@ impl SectionRows for EvidenceTableRows {
         validate_aggregate_id_namespaces(&snapshot, program, &outcomes)?;
         map_evidence_ids(&snapshot, ids)
     }
-    async fn insert(
-        &self,
-        connection: &mut SqliteConnection,
-        scope: &ImportScope<'_>,
-    ) -> Result<()> {
+    async fn insert(&self, tx: &mut WriteTx, scope: &ImportScope<'_>) -> Result<()> {
         let Some(snapshot) = decode_evidence(scope.pack)? else {
             return Ok(());
         };
-        insert_evidence_snapshot(connection, &scope.program.summary.id, &snapshot, scope.ids).await
+        insert_evidence_snapshot(tx, &scope.program.summary.id, &snapshot, scope.ids).await
     }
 }

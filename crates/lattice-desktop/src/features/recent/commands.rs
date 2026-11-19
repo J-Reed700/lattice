@@ -75,7 +75,7 @@ pub enum RecentDocumentResponse {
 /// # Operation Types
 ///
 /// - **Track**: Record document access (updates timestamp, increments count, applies LRU)
-/// - **GetRecent**: Retrieve recent documents list (limit capped at 100)
+/// - **GetRecent**: Retrieve recent documents list (at most `limit`, which must be at least 1)
 /// - **Clear**: Delete all recent document history
 ///
 /// # Architecture

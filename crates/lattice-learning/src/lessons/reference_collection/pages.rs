@@ -106,10 +106,6 @@ pub(crate) struct ClaimList {
     pub deeper: bool,
 }
 
-fn overlapping(a: &ReferencePassage, b: &ReferencePassage) -> bool {
-    a.source_id == b.source_id && a.start_byte < b.end_byte && b.start_byte < a.end_byte
-}
-
 impl ReferenceCollection<'_> {
     /// `claim`'s corroboration list over `scope`: the claim and its counter query
     /// ranked together, hits widened to their source text, minus passages
@@ -134,21 +130,27 @@ impl ReferenceCollection<'_> {
             let tail = ranked
                 .last()
                 .map(|hit| (hit.passage.score, hit.dense, hit.lexical));
-            let widened =
-                self.verification_context(ranked.into_iter().map(|hit| hit.passage).collect())?;
-            // The fetched tail still on the subject: the subject's passages
-            // may go on past this depth.
-            if deeper
-                && widened
-                    .last()
-                    .is_some_and(|passage| on_subject(&passage.text))
-            {
+            // The fetched tail's own window still on the subject: the
+            // subject's passages may go on past this depth.
+            let tail_on_subject = match ranked.last() {
+                Some(hit) => self
+                    .source_passages(
+                        &hit.passage.source_id,
+                        &[(hit.passage.start_byte, hit.passage.end_byte)],
+                    )?
+                    .iter()
+                    .any(|window| on_subject(&window.text)),
+                None => false,
+            };
+            if deeper && tail_on_subject {
                 depth = depth.saturating_mul(2);
                 continue;
             }
+            let widened =
+                self.verification_context(ranked.into_iter().map(|hit| hit.passage).collect())?;
             let mut passages: Vec<ReferencePassage> = widened
                 .into_iter()
-                .filter(|passage| !shown.iter().any(|seen| overlapping(seen, passage)))
+                .filter(|passage| !shown.iter().any(|seen| seen.overlaps(passage)))
                 .collect();
             let end = passages
                 .iter()

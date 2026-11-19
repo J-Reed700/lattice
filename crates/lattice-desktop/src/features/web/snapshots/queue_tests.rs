@@ -14,14 +14,9 @@ impl SnapshotEvents for NoEvents {
 }
 
 async fn service() -> (SqlitePool, Arc<WebPageSnapshotService>, tempfile::TempDir) {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .idle_timeout(None)
-        .max_lifetime(None)
-        .connect(":memory:")
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     sqlx::query(
         "INSERT INTO conversations (id, title, space_id, created_at, updated_at) \
          VALUES ('conv-queue', 'Queue', 'space_general', '2026-10-13T00:00:00Z', '2026-10-13T00:00:00Z')",
@@ -32,7 +27,7 @@ async fn service() -> (SqlitePool, Arc<WebPageSnapshotService>, tempfile::TempDi
     let dir = tempfile::tempdir().unwrap();
     let sweep_gate = Arc::new(lattice_core::shared::fs::SweepGate::default());
     sweep_gate.open();
-    let database = Database::from(pool.clone());
+    let database = Database::new(pool.clone());
     let service = Arc::new(WebPageSnapshotService::new(
         database.clone(),
         dir.path().join("web-snapshots"),
@@ -46,7 +41,7 @@ async fn service() -> (SqlitePool, Arc<WebPageSnapshotService>, tempfile::TempDi
 }
 
 async fn count(pool: &SqlitePool, table: &str) -> i64 {
-    sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
         .fetch_one(pool)
         .await
         .unwrap()

@@ -1,144 +1,593 @@
-//! Per-format item schemas, and turning a model's item into a checked bank
-//! item (section 5.2).
+//! What each format's item holds as the model writes it, and turning it into a
+//! checked bank item (section 5.2).
 use super::*;
+use crate::dto::LearningPracticeEvidenceDimension;
+use crate::generation::{long_enough_quote, MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
+use lattice_core::application::services::model_contract::shape::{
+    Authored, Count, Fields, Form, Vocabulary,
+};
+use lattice_core::application::services::model_contract::shown::Picked;
+use lattice_core::application::services::model_contract::units::{Grain, Unit, Units};
+use std::marker::PhantomData;
+use std::ops::RangeInclusive;
 
-#[derive(Deserialize, Default)]
-#[serde(rename_all = "camelCase", default)]
-struct RawPair {
+/// How many ordered values a writer is asked for.
+pub(super) const ORDERING_ASKED: RangeInclusive<usize> = 3..=8;
+
+const OPTIONS: Count = Count("options");
+const PAIRS: Count = Count("pairs");
+const ORDERED: Count = Count("orderedValues");
+const ACCEPTED: Count = Count("acceptedAnswers");
+const BLANKS: Count = Count("blanks");
+
+/// One fill-in blank as the key keeps it.
+#[derive(Debug, Default)]
+pub(super) struct RawBlank {
+    pub(super) accepted_answers: Vec<String>,
+}
+
+/// One matching pair as the key keeps it.
+#[derive(Debug, Default)]
+pub(super) struct RawPair {
+    pub(super) left: String,
+    pub(super) right: String,
+}
+
+/// An item as the app keeps it between the model's statement and the bank:
+/// positions and keys are made from what was written.
+#[derive(Debug, Default)]
+pub(crate) struct RawItem {
+    pub(super) prompt: String,
+    pub(super) options: Vec<String>,
+    /// The positions of the options marked right.
+    pub(super) right: Vec<usize>,
+    pub(super) distractor_rationales: Vec<String>,
+    pub(super) is_true: bool,
+    pub(super) accepted_answers: Vec<String>,
+    pub(super) is_numeric: bool,
+    pub(super) numeric_value: f64,
+    pub(super) tolerance: f64,
+    pub(super) units: Vec<String>,
+    pub(super) blanks: Vec<RawBlank>,
+    pub(super) pairs: Vec<RawPair>,
+    pub(super) extra_right: String,
+    pub(super) ordered_values: Vec<String>,
+    pub(super) rubric: Vec<crate::teaching::GeneratedCriterion>,
+    pub(super) explanation: String,
+    /// The sentences of the passages the item rests on.
+    pub(super) cited: Vec<Picked<Unit>>,
+    pub(super) difficulty: u8,
+}
+
+/// Whether an option is the right answer or a distractor.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Mark {
+    Right,
+    Wrong,
+}
+
+impl Vocabulary for Mark {
+    const WORDS: &'static [(&'static str, Self)] =
+        &[("right", Self::Right), ("wrong", Self::Wrong)];
+}
+
+/// A truth value, written as a word.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Truth {
+    True,
+    False,
+}
+
+impl Vocabulary for Truth {
+    const WORDS: &'static [(&'static str, Self)] = &[("true", Self::True), ("false", Self::False)];
+}
+
+/// The kind of performance a rubric criterion looks for.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Dimension {
+    Recall,
+    Explanation,
+    Application,
+    Transfer,
+}
+
+impl Vocabulary for Dimension {
+    const WORDS: &'static [(&'static str, Self)] = &[
+        ("recall", Self::Recall),
+        ("explanation", Self::Explanation),
+        ("application", Self::Application),
+        ("transfer", Self::Transfer),
+    ];
+}
+
+impl Dimension {
+    fn evidence(self) -> LearningPracticeEvidenceDimension {
+        match self {
+            Self::Recall => LearningPracticeEvidenceDimension::Recall,
+            Self::Explanation => LearningPracticeEvidenceDimension::Explanation,
+            Self::Application => LearningPracticeEvidenceDimension::Application,
+            Self::Transfer => LearningPracticeEvidenceDimension::Transfer,
+        }
+    }
+}
+
+/// One option of a choice question: its words, whether it is right, and its own rationale.
+pub(crate) struct Choice {
+    text: String,
+    verdict: Mark,
+    reason: String,
+}
+
+impl Authored for Choice {
+    fn form() -> Form {
+        Form::new()
+            .text("text")
+            .word::<Mark>("verdict")
+            .text("reason")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(Self {
+            text: fields.text("text")?,
+            verdict: fields.word("verdict")?,
+            reason: fields.text("reason")?,
+        })
+    }
+}
+
+/// One written phrase of a list: an accepted answer, a unit, an ordered value.
+pub(crate) struct Phrase {
+    text: String,
+}
+
+impl Authored for Phrase {
+    fn form() -> Form {
+        Form::new().text("text")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(Self {
+            text: fields.text("text")?,
+        })
+    }
+}
+
+/// One blank of a cloze item, with every spelling it accepts.
+pub(crate) struct Blank {
+    accepted: Vec<Phrase>,
+}
+
+impl Authored for Blank {
+    fn form() -> Form {
+        Form::new().counted::<Phrase>("acceptedAnswers", &ACCEPTED)
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(Self {
+            accepted: fields.list("acceptedAnswers")?,
+        })
+    }
+}
+
+/// One matching pair.
+pub(crate) struct Pair {
     left: String,
     right: String,
 }
 
-#[derive(Deserialize, Default)]
-#[serde(rename_all = "camelCase", default)]
-struct RawBlank {
-    accepted_answers: Vec<String>,
+impl Authored for Pair {
+    fn form() -> Form {
+        Form::new().text("left").text("right")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(Self {
+            left: fields.text("left")?,
+            right: fields.text("right")?,
+        })
+    }
 }
 
-#[derive(Deserialize, Default)]
-#[serde(rename_all = "camelCase", default)]
-pub(super) struct RawItem {
-    prompt: String,
-    options: Vec<String>,
-    answer_index: usize,
-    distractor_rationales: Vec<String>,
-    is_true: bool,
-    correct_indices: Vec<usize>,
-    accepted_answers: Vec<String>,
-    is_numeric: bool,
-    numeric_value: f64,
-    tolerance: f64,
-    units: Vec<String>,
-    blanks: Vec<RawBlank>,
-    pairs: Vec<RawPair>,
-    extra_right: String,
-    ordered_values: Vec<String>,
-    rubric: Vec<crate::teaching::GeneratedCriterion>,
-    explanation: String,
-    block_index: usize,
-    quote: String,
-    difficulty: u8,
+/// One rubric criterion.
+pub(crate) struct Criterion {
+    title: String,
+    description: String,
+    dimension: Dimension,
 }
 
-fn strings(min: usize, max: usize) -> Value {
-    json!({"type":"array","minItems":min,"maxItems":max,"items":{"type":"string","minLength":1}})
+impl Authored for Criterion {
+    fn form() -> Form {
+        Form::new()
+            .text("title")
+            .text("description")
+            .word::<Dimension>("dimension")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(Self {
+            title: fields.text("title")?,
+            description: fields.text("description")?,
+            dimension: fields.word("dimension")?,
+        })
+    }
 }
 
-pub(super) fn item_schema(
-    format: LearningItemFormat,
-    passages: usize,
-    min_d: u8,
-    max_d: u8,
-) -> Value {
-    let mut properties = serde_json::Map::new();
-    let mut put = |name: &str, schema: Value| {
-        properties.insert(name.into(), schema);
-    };
-    put("prompt", json!({"type":"string","minLength":1}));
-    match format {
-        LearningItemFormat::SingleChoice => {
-            put("options", strings(4, 4));
-            put("distractorRationales", strings(4, 4));
-            put(
-                "answerIndex",
-                json!({"type":"integer","minimum":0,"maximum":3}),
-            );
+fn texts(phrases: Vec<Phrase>) -> Vec<String> {
+    phrases.into_iter().map(|phrase| phrase.text).collect()
+}
+
+fn read_options(fields: &mut Fields<'_, '_>, raw: &mut RawItem) -> Option<()> {
+    for (at, option) in fields.list::<Choice>("options")?.into_iter().enumerate() {
+        if option.verdict == Mark::Right {
+            raw.right.push(at);
         }
-        LearningItemFormat::TrueFalse => put("isTrue", json!({"type":"boolean"})),
-        LearningItemFormat::MultiSelect => {
-            put("options", strings(4, 6));
-            put("distractorRationales", strings(4, 6));
-            put(
-                "correctIndices",
-                json!({"type":"array","minItems":2,"maxItems":3,"uniqueItems":true,"items":{"type":"integer","minimum":0,"maximum":5}}),
-            );
+        raw.options.push(option.text);
+        raw.distractor_rationales.push(option.reason);
+    }
+    Some(())
+}
+
+const CHOICE_FIELDS: &str =
+    "options (a list; each option has text, verdict as the word right or wrong, and rationale)";
+
+/// What the items of one format hold between their prompt and their explanation.
+pub(crate) trait Body: 'static {
+    /// The fields in words, for the instructions.
+    const FIELDS: &'static str;
+
+    fn fields(form: Form) -> Form;
+
+    /// What the request asks for the lists these fields count.
+    fn asks(_showing: &mut Showing<'_>) {}
+
+    fn read(fields: &mut Fields<'_, '_>, raw: &mut RawItem) -> Option<()>;
+}
+
+/// The options of a single-choice question.
+pub(crate) struct ChoiceBody;
+
+impl Body for ChoiceBody {
+    const FIELDS: &'static str = CHOICE_FIELDS;
+
+    fn fields(form: Form) -> Form {
+        form.counted::<Choice>("options", &OPTIONS)
+    }
+
+    fn asks(showing: &mut Showing<'_>) {
+        showing.asks(&OPTIONS, CHOICES_PER_QUESTION..=CHOICES_PER_QUESTION);
+    }
+
+    fn read(fields: &mut Fields<'_, '_>, raw: &mut RawItem) -> Option<()> {
+        read_options(fields, raw)
+    }
+}
+
+/// The truth value of a true/false statement.
+pub(crate) struct TruthBody;
+
+impl Body for TruthBody {
+    const FIELDS: &'static str = "isTrue (the word true or false)";
+
+    fn fields(form: Form) -> Form {
+        form.word::<Truth>("isTrue")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>, raw: &mut RawItem) -> Option<()> {
+        raw.is_true = fields.word::<Truth>("isTrue")? == Truth::True;
+        Some(())
+    }
+}
+
+/// The options of a multi-select question.
+pub(crate) struct SelectBody;
+
+impl Body for SelectBody {
+    const FIELDS: &'static str = CHOICE_FIELDS;
+
+    fn fields(form: Form) -> Form {
+        form.counted::<Choice>("options", &OPTIONS)
+    }
+
+    fn asks(showing: &mut Showing<'_>) {
+        showing.asks(&OPTIONS, MULTI_SELECT_OPTIONS);
+    }
+
+    fn read(fields: &mut Fields<'_, '_>, raw: &mut RawItem) -> Option<()> {
+        read_options(fields, raw)
+    }
+}
+
+/// The accepted answers of a short-answer question.
+pub(crate) struct ShortBody;
+
+impl Body for ShortBody {
+    const FIELDS: &'static str = "acceptedAnswers (a list of objects with text), isNumeric (the word true or false), numericValue and tolerance (numbers written as text), units (a list of objects with text)";
+
+    fn fields(form: Form) -> Form {
+        form.counted::<Phrase>("acceptedAnswers", &ACCEPTED)
+            .word::<Truth>("isNumeric")
+            .text("numericValue")
+            .text("tolerance")
+            .list::<Phrase>("units")
+    }
+
+    fn asks(showing: &mut Showing<'_>) {
+        showing.asks(&ACCEPTED, 1..);
+    }
+
+    fn read(fields: &mut Fields<'_, '_>, raw: &mut RawItem) -> Option<()> {
+        raw.accepted_answers = texts(fields.list("acceptedAnswers")?);
+        raw.is_numeric = fields.word::<Truth>("isNumeric")? == Truth::True;
+        let value = fields.text("numericValue")?;
+        let tolerance = fields.text("tolerance")?;
+        raw.units = texts(fields.list("units")?);
+        if raw.is_numeric {
+            raw.numeric_value = value.trim().parse().ok()?;
+            raw.tolerance = tolerance.trim().parse().ok()?;
         }
-        LearningItemFormat::ShortAnswer => {
-            put("acceptedAnswers", strings(3, 12));
-            put("isNumeric", json!({"type":"boolean"}));
-            put("numericValue", json!({"type":"number"}));
-            put("tolerance", json!({"type":"number","minimum":0}));
-            put(
-                "units",
-                json!({"type":"array","maxItems":8,"items":{"type":"string"}}),
-            );
-        }
-        LearningItemFormat::Cloze => put(
-            "blanks",
-            json!({"type":"array","minItems":1,"maxItems":4,"items":{"type":"object","additionalProperties":false,"required":["acceptedAnswers"],"properties":{"acceptedAnswers":strings(1, 8)}}}),
-        ),
-        LearningItemFormat::Matching => {
-            put(
-                "pairs",
-                json!({"type":"array","minItems":3,"maxItems":5,"items":{"type":"object","additionalProperties":false,"required":["left","right"],"properties":{"left":{"type":"string","minLength":1},"right":{"type":"string","minLength":1}}}}),
-            );
-            put("extraRight", json!({"type":"string"}));
-        }
-        LearningItemFormat::Ordering => put("orderedValues", strings(3, 8)),
-        LearningItemFormat::Explanation | LearningItemFormat::Artifact => {
-            put("rubric", crate::teaching::rubric_schema())
+        Some(())
+    }
+}
+
+/// The blanks of a cloze question.
+pub(crate) struct ClozeBody;
+
+impl Body for ClozeBody {
+    const FIELDS: &'static str =
+        "blanks (a list; each blank has acceptedAnswers, a list of objects with text)";
+
+    fn fields(form: Form) -> Form {
+        form.counted::<Blank>("blanks", &BLANKS)
+    }
+
+    fn asks(showing: &mut Showing<'_>) {
+        showing.asks(&BLANKS, 1..);
+        showing.asks(&ACCEPTED, 1..);
+    }
+
+    fn read(fields: &mut Fields<'_, '_>, raw: &mut RawItem) -> Option<()> {
+        raw.blanks = fields
+            .list::<Blank>("blanks")?
+            .into_iter()
+            .map(|blank| RawBlank {
+                accepted_answers: texts(blank.accepted),
+            })
+            .collect();
+        Some(())
+    }
+}
+
+/// The pairs of a matching question.
+pub(crate) struct PairsBody;
+
+impl Body for PairsBody {
+    const FIELDS: &'static str =
+        "pairs (a list of objects with left and right), extraRight (text, empty for none)";
+
+    fn fields(form: Form) -> Form {
+        form.counted::<Pair>("pairs", &PAIRS).text("extraRight")
+    }
+
+    fn asks(showing: &mut Showing<'_>) {
+        showing.asks(&PAIRS, MATCHING_PAIRS);
+    }
+
+    fn read(fields: &mut Fields<'_, '_>, raw: &mut RawItem) -> Option<()> {
+        raw.pairs = fields
+            .list::<Pair>("pairs")?
+            .into_iter()
+            .map(|pair| RawPair {
+                left: pair.left,
+                right: pair.right,
+            })
+            .collect();
+        raw.extra_right = fields.text("extraRight")?;
+        Some(())
+    }
+}
+
+/// The values of an ordering question, in their correct order.
+pub(crate) struct OrderBody;
+
+impl Body for OrderBody {
+    const FIELDS: &'static str =
+        "orderedValues (a list of objects with text, in their correct order)";
+
+    fn fields(form: Form) -> Form {
+        form.counted::<Phrase>("orderedValues", &ORDERED)
+    }
+
+    fn asks(showing: &mut Showing<'_>) {
+        showing.asks(&ORDERED, ORDERING_ASKED);
+    }
+
+    fn read(fields: &mut Fields<'_, '_>, raw: &mut RawItem) -> Option<()> {
+        raw.ordered_values = texts(fields.list("orderedValues")?);
+        Some(())
+    }
+}
+
+/// The criteria of an explanation task.
+pub(crate) struct RubricBody;
+
+impl Body for RubricBody {
+    const FIELDS: &'static str = "rubric (a list of criteria, each with title, description and dimension as the word recall, explanation, application or transfer)";
+
+    fn fields(form: Form) -> Form {
+        form.list::<Criterion>("rubric")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>, raw: &mut RawItem) -> Option<()> {
+        raw.rubric = fields
+            .list::<Criterion>("rubric")?
+            .into_iter()
+            .map(|criterion| crate::teaching::GeneratedCriterion {
+                title: criterion.title,
+                description: criterion.description,
+                dimension: criterion.dimension.evidence(),
+            })
+            .collect();
+        Some(())
+    }
+}
+
+/// Who decides an item's difficulty.
+pub(crate) trait Role: 'static {
+    /// Whether the model writes the difficulty; otherwise the app keeps the item's own.
+    const WRITES_DIFFICULTY: bool;
+}
+
+/// An item written for a need.
+pub(crate) struct Fresh;
+
+impl Role for Fresh {
+    const WRITES_DIFFICULTY: bool = true;
+}
+
+/// An item written in the place of one that was refused.
+pub(crate) struct Replacement;
+
+impl Role for Replacement {
+    const WRITES_DIFFICULTY: bool = false;
+}
+
+/// One item as the model writes it: its prompt, the fields of its format, its
+/// explanation, the sentences it rests on and, for a fresh item, its difficulty.
+pub(crate) struct Item<B, R>(RawItem, PhantomData<fn() -> (B, R)>);
+
+impl<B, R> Item<B, R> {
+    pub(super) fn prompt(&self) -> &str {
+        self.0.prompt.trim()
+    }
+
+    pub(super) fn into_raw(self) -> RawItem {
+        self.0
+    }
+}
+
+impl<B: Body, R: Role> Authored for Item<B, R> {
+    fn form() -> Form {
+        let form = B::fields(Form::new().text("prompt"))
+            .text("explanation")
+            .cite::<Unit>("quote");
+        if R::WRITES_DIFFICULTY {
+            form.text("difficulty")
+        } else {
+            form
         }
     }
-    put("explanation", json!({"type":"string","minLength":1}));
-    put(
-        "blockIndex",
-        json!({"type":"integer","minimum":0,"maximum":passages.saturating_sub(1)}),
-    );
-    put("quote", json!({"type":"string","minLength":12}));
-    put(
-        "difficulty",
-        json!({"type":"integer","minimum":min_d,"maximum":max_d}),
-    );
-    let required: Vec<String> = properties.keys().cloned().collect();
-    json!({"type":"object","additionalProperties":false,"required":required,"properties":properties})
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        let mut raw = RawItem {
+            prompt: fields.text("prompt")?,
+            ..RawItem::default()
+        };
+        B::read(fields, &mut raw)?;
+        raw.explanation = fields.text("explanation")?;
+        raw.cited = fields.cite::<Unit>("quote");
+        if R::WRITES_DIFFICULTY {
+            raw.difficulty = fields.text("difficulty")?.trim().parse().ok()?;
+        }
+        Some(Self(raw, PhantomData))
+    }
 }
 
-const ABSOLUTES: [&str; 8] = [
-    "always", "never", "all", "none", "every", "only", "cannot", "must",
-];
-
-fn spaced_lower(value: &str) -> String {
-    value
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
+/// An item the checks refused: what it said, and every fault, in words its rewrite is told.
+#[derive(Debug)]
+pub(super) struct Unbuilt {
+    pub(super) prompt: String,
+    pub(super) options: Vec<String>,
+    pub(super) faults: Vec<String>,
+    pub(super) difficulty: u8,
 }
 
-/// Turn one model item into a validated candidate, or say why it is refused.
+/// The passages the cited sentences lie in, each once in the order first cited,
+/// and what the sentences say, read from the app's own copy of the passages; a
+/// fault when they name no sentence of any.
+fn quoted<'a>(
+    cited: &[Picked<Unit>],
+    passages: &[&'a MaterialPassage],
+) -> std::result::Result<(Vec<&'a MaterialPassage>, String), String> {
+    let sentences: Vec<(&'a MaterialPassage, Units)> = passages
+        .iter()
+        .map(|passage| (*passage, Units::of(&passage.text, Grain::Sentence)))
+        .collect();
+    let mut homes: Vec<&'a MaterialPassage> = Vec::new();
+    let mut said: Vec<String> = Vec::new();
+    for cite in cited {
+        let found = sentences.iter().find_map(|(passage, units)| {
+            units
+                .text_of(cite.reference)
+                .map(|text| (*passage, text.to_owned()))
+        });
+        let Some((passage, text)) = found else {
+            continue;
+        };
+        if !homes.iter().any(|held| std::ptr::eq(*held, passage)) {
+            homes.push(passage);
+        }
+        said.push(text);
+    }
+    if homes.is_empty() {
+        return Err("The item's quote cites no sentence of the supplied passages.".into());
+    }
+    Ok((homes, said.join(" ")))
+}
+
+/// Turn one model item into a validated candidate, or say every fault it has.
 pub(super) fn to_candidate(
     raw: RawItem,
     need: &AuthoringNeed,
     passages: &[&MaterialPassage],
-) -> std::result::Result<AuthoredItem, String> {
-    let format = need.requirement.format;
-    let Some(passage) = passages.get(raw.block_index) else {
-        return Err("The item names a passage that was not supplied.".into());
+) -> std::result::Result<AuthoredItem, Unbuilt> {
+    let prompt = raw.prompt.trim().to_string();
+    let said = raw.options.clone();
+    let difficulty = raw.difficulty;
+    let refuse = |options: Vec<String>, faults: Vec<String>| Unbuilt {
+        prompt: prompt.clone(),
+        options,
+        faults,
+        difficulty,
     };
-    let quote = raw.quote.trim().to_string();
-    if quote.chars().count() < 12 || !spaced_lower(&passage.text).contains(&spaced_lower(&quote)) {
-        return Err("The item's quote is not copied exactly from its passage.".into());
+    let (cited_passages, quote) = match quoted(&raw.cited, passages) {
+        Ok(found) => found,
+        Err(fault) => return Err(refuse(said, vec![fault])),
+    };
+    let quote = quote.trim().to_string();
+    let mut faults = Vec::new();
+    if !long_enough_quote(&quote) {
+        faults.push(format!("The item's quote is shorter than {MIN_QUOTE_CHARS} characters or {MIN_QUOTE_WORDS} words."));
     }
+    let mut candidate = match candidate_of(raw, need, &cited_passages) {
+        Ok(candidate) => candidate,
+        Err(fault) => {
+            faults.push(fault);
+            return Err(refuse(said, faults));
+        }
+    };
+    faults.extend(engine::checks::item_faults(&candidate));
+    if let (true, Err(error)) = (faults.is_empty(), engine::validate_candidate(&candidate)) {
+        faults.push(error.to_string());
+    }
+    if !faults.is_empty() {
+        return Err(refuse(candidate.options, faults));
+    }
+    // Code, not the model, decides where the key sits.
+    engine::shuffle_authored(&mut candidate);
+    Ok(AuthoredItem {
+        candidate: candidate.into(),
+        source_quote: quote,
+        lesson_id: need.lesson_id.clone(),
+    })
+}
+
+/// The bank candidate a model item makes, unchecked; a fault when its key or rubric cannot be built.
+fn candidate_of(
+    raw: RawItem,
+    need: &AuthoringNeed,
+    passages: &[&MaterialPassage],
+) -> std::result::Result<LearningAssessmentCandidate, String> {
+    let format = need.requirement.format;
     let mut options = vec![];
     let mut left = vec![];
     let mut rationales = vec![];
@@ -147,26 +596,23 @@ pub(super) fn to_candidate(
         LearningItemFormat::SingleChoice => {
             options = raw.options;
             rationales = raw.distractor_rationales;
-            LearningAssessmentKey::Choice(raw.answer_index)
+            match raw.right.as_slice() {
+                [only] => LearningAssessmentKey::Choice(*only),
+                _ => {
+                    return Err(
+                        "A single-choice question has exactly one option marked right.".into(),
+                    )
+                }
+            }
         }
         LearningItemFormat::TrueFalse => {
-            let statement = engine::normalize_answer(&raw.prompt);
-            let source = engine::normalize_answer(&passage.text);
-            if let Some(word) = ABSOLUTES.iter().find(|w| {
-                format!(" {statement} ").contains(&format!(" {w} "))
-                    && !format!(" {source} ").contains(&format!(" {w} "))
-            }) {
-                return Err(format!(
-                    "The statement says “{word}”, which its passage does not."
-                ));
-            }
             options = engine::TRUE_FALSE.map(String::from).to_vec();
             LearningAssessmentKey::Choice(if raw.is_true { 0 } else { 1 })
         }
         LearningItemFormat::MultiSelect => {
             options = raw.options;
             rationales = raw.distractor_rationales;
-            LearningAssessmentKey::Choices(raw.correct_indices.into_iter().collect::<BTreeSet<_>>())
+            LearningAssessmentKey::Choices(raw.right.into_iter().collect::<BTreeSet<_>>())
         }
         LearningItemFormat::ShortAnswer => LearningAssessmentKey::Text(LearningTextKey {
             variants: raw.accepted_answers,
@@ -223,7 +669,7 @@ pub(super) fn to_candidate(
         need.requirement.difficulty_min,
         need.requirement.difficulty_max,
     );
-    let mut candidate = LearningAssessmentCandidate {
+    Ok(LearningAssessmentCandidate {
         id: uuid::Uuid::new_v4().to_string(),
         outcome_ids: vec![need.requirement.outcome_id.clone()],
         format,
@@ -231,13 +677,15 @@ pub(super) fn to_candidate(
         prompt: raw.prompt.trim().to_string(),
         options,
         left,
-        source_version_ids: passage
-            .source_version_ids
-            .iter()
-            .filter(|id| uuid::Uuid::parse_str(id).is_ok())
-            .take(24)
-            .cloned()
-            .collect(),
+        source_version_ids: {
+            let mut ids: Vec<String> = Vec::new();
+            for id in passages.iter().flat_map(|p| p.source_version_ids.iter()) {
+                if uuid::Uuid::parse_str(id).is_ok() && !ids.contains(id) {
+                    ids.push(id.clone());
+                }
+            }
+            ids
+        },
         rubric,
         key,
         explanation: raw.explanation.trim().to_string(),
@@ -245,20 +693,5 @@ pub(super) fn to_candidate(
             .into_iter()
             .map(|r| r.trim().to_string())
             .collect(),
-    };
-    engine::validate_candidate(&candidate).map_err(|e| e.to_string())?;
-    if need
-        .existing_prompts
-        .iter()
-        .any(|p| engine::near_duplicate(p, &candidate.prompt))
-    {
-        return Err("The item repeats a question already in the bank.".into());
-    }
-    // Code, not the model, decides where the key sits.
-    engine::shuffle_authored(&mut candidate);
-    Ok(AuthoredItem {
-        candidate: candidate.into(),
-        source_quote: quote,
-        lesson_id: need.lesson_id.clone(),
     })
 }

@@ -109,28 +109,13 @@ fn weighed(
     )
 }
 
-/// The ledger's gate on a weighed finding.
-fn judge(finding: &Finding) -> Sufficiency {
-    let quote = finding.supporting_quote.clone().unwrap_or_default();
-    let source = supporting_passages(finding)
-        .first()
-        .map(|passage| passage.source_id.clone())
-        .unwrap_or_default();
-    ProvenanceGate.judge(&Supported {
-        claim: &finding.statement,
-        source_version_id: &source,
-        supporting_quote: &quote,
-        passages: &finding.evidence,
-    })
-}
-
 const STRUCTURED: &str =
     "Structured Outputs ensures the model always follows the supplied JSON Schema.";
 
 #[test]
 fn a_primary_source_meets_a_specification_bar() {
     let text = "Structured Outputs ensures the model always follows the supplied JSON Schema.";
-    let mut claim = finding(STRUCTURED, text, vec![passage("docs", text)]);
+    let claim = finding(STRUCTURED, text, vec![passage("docs", text)]);
     let facts = HashMap::from([(
         "docs".to_owned(),
         facts(level("primary"), "web:openai.com", text, Vec::new()),
@@ -143,8 +128,6 @@ fn a_primary_source_meets_a_specification_bar() {
     assert!(matches!(trust.decision, Decision::Sufficient { .. }));
     assert_eq!(trust.supports.len(), 1);
     assert_eq!(trust.supports[0].passage, PassageKind::Direct);
-    claim.trust = Some(Box::new(trust));
-    assert!(matches!(judge(&claim), Sufficiency::Sufficient));
 }
 
 #[test]
@@ -155,7 +138,7 @@ fn an_established_source_alone_fails_a_specification_bar_and_names_its_next_step
     assert_eq!(links.len(), 1, "the fixture text carries one link");
     let mut blog = facts(level("established"), "web:blog.example", &text, links);
     blog.owner_hints = vec!["platform.openai.com".into()];
-    let mut claim = finding(
+    let claim = finding(
         STRUCTURED,
         "Structured Outputs ensures the model always follows the supplied JSON Schema",
         vec![passage("blog", &text)],
@@ -190,8 +173,6 @@ fn an_established_source_alone_fails_a_specification_bar_and_names_its_next_step
     // The support is below the bar and the checker's verdict stands: the
     // claim is labelled for what its support is.
     assert_eq!(trust.label(), Some(Label::Secondary));
-    claim.trust = Some(Box::new(trust));
-    assert!(matches!(judge(&claim), Sufficiency::Sufficient));
 }
 
 #[test]
@@ -379,7 +360,7 @@ fn only_passages_holding_the_quotation_support_and_each_version_once() {
             passage("a", "Monotremes lay eggs. Platypuses are monotremes."),
             passage("b", "Most mammals give birth to live young."),
             EvidencePassage {
-                retrieval_kind: EXECUTION.into(),
+                retrieval_kind: "execution".into(),
                 ..passage("run", text)
             },
         ],
@@ -408,46 +389,11 @@ fn material_the_user_added_is_sufficient_and_says_so() {
 }
 
 #[test]
-fn a_quotation_outside_the_named_passage_is_never_sufficient() {
-    let text = "Structured Outputs ensures the model always follows the supplied JSON Schema.";
-    let mut claim = finding(
-        STRUCTURED,
-        "words the passage does not hold",
-        vec![passage("docs", text)],
-    );
-    let facts = HashMap::from([(
-        "docs".to_owned(),
-        facts(level("primary"), "web:openai.com", text, Vec::new()),
-    )]);
-    claim.trust = Some(Box::new(weighed(
-        &profile(ClaimKind::Specification, Some("OpenAI API")),
-        &claim,
-        &facts,
-    )));
-    let quote = claim.supporting_quote.clone().unwrap();
-    let verdict = ProvenanceGate.judge(&Supported {
-        claim: &claim.statement,
-        source_version_id: "docs",
-        supporting_quote: &quote,
-        passages: &claim.evidence,
-    });
-    assert!(matches!(verdict, Sufficiency::Insufficient { .. }));
-}
-
-#[test]
-fn an_unweighed_finding_keeps_the_quotation_rule_alone() {
-    let text = "Monotremes lay eggs.";
-    let claim = finding(text, text, vec![passage("a", text)]);
-    assert!(claim.trust.is_none());
-    assert!(matches!(judge(&claim), Sufficiency::Sufficient));
-}
-
-#[test]
 fn a_contrary_that_outranks_the_support_is_recorded_and_the_claim_stands() {
     let text = "The current stable Python is 3.13.";
     let mut current = profile(ClaimKind::VersionBound, Some("Python"));
     current.temporal = TemporalScope::Current;
-    let mut claim = finding(text, text, vec![passage("blog", text)]);
+    let claim = finding(text, text, vec![passage("blog", text)]);
     // Unix seconds: published mid-2025, saved and contradicted in 2026.
     let mut blog = facts(level("established"), "web:blog.example", text, Vec::new());
     blog.dates.published = Some(1_750_000_000);
@@ -477,11 +423,6 @@ fn a_contrary_that_outranks_the_support_is_recorded_and_the_claim_stands() {
         trust.assessment("v1", "").overturn(),
         Overturn::Contradicted { .. }
     ));
-    claim.trust = Some(Box::new(trust));
-    assert!(
-        matches!(judge(&claim), Sufficiency::Sufficient),
-        "the weighing records the contradiction and does not take the verdict away"
-    );
 }
 
 #[test]
@@ -524,52 +465,6 @@ fn a_contradiction_another_reading_found_is_weighed_as_a_contrary() {
         )]),
     );
     assert!(unweighed.contrary.is_empty());
-}
-
-#[test]
-fn both_supports_of_a_claim_are_weighed_and_the_strongest_names_it() {
-    const CITED: &str = "Laboratory records confirm the beta behaviour of the sample.";
-    const FOUND: &str = "The owner's manual documents the beta behaviour of the sample.";
-    // The citation (established) and a page of the course (primary) both
-    // support the claim: the page's support is kept beside the citation's,
-    // not dropped.
-    let mut claim = finding(
-        "The sample shows the beta behaviour.",
-        CITED,
-        vec![passage("book", CITED)],
-    );
-    claim.two_pass.also_supported.push(SupportingPassage {
-        passage: passage("owner", FOUND),
-        quote: FOUND.into(),
-    });
-    let weighed: Vec<&str> = supporting_passages(&claim)
-        .iter()
-        .map(|passage| passage.source_id.as_str())
-        .collect();
-    assert_eq!(weighed, ["book", "owner"], "both are weighed");
-    // The gate met the bar with the owner's page first: it names the claim.
-    claim.trust = Some(Box::new(FindingTrust {
-        profile: profile(ClaimKind::Specification, None),
-        supports: Vec::new(),
-        contrary: Vec::new(),
-        decision: Decision::Sufficient {
-            met_by: vec!["owner".to_owned(), "book".to_owned()],
-            label: None,
-            reasons: Vec::new(),
-        },
-        available: None,
-    }));
-    name_strongest(&mut claim);
-    assert_eq!(claim.supporting_quote.as_deref(), Some(FOUND));
-    assert_eq!(
-        claim.two_pass.supported_by.as_ref().unwrap().source_id,
-        "owner"
-    );
-    assert_eq!(claim.two_pass.also_supported[0].passage.source_id, "book");
-    assert!(claim
-        .evidence
-        .iter()
-        .any(|passage| passage.source_id == "owner" && passage.text.contains(FOUND)));
 }
 
 #[test]
@@ -664,6 +559,12 @@ impl LLMPort for CountingChecker {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// The function-calling lesson (`live_fixtures/function_calling_claims.json`):
@@ -731,16 +632,15 @@ async fn the_function_calling_lesson_passes_its_primary_backed_claims_without_a_
         claim.trust = Some(Box::new(trust));
         match case["decision"].as_str().unwrap() {
             "sufficient" => assert!(
-                matches!(judge(&claim), Sufficiency::Sufficient),
+                matches!(
+                    claim.trust.as_ref().unwrap().decision,
+                    Decision::Sufficient { .. }
+                ),
                 "{id}: {}",
                 claim.trust.as_ref().unwrap().explain()
             ),
             _ => {
                 let trust = claim.trust.as_ref().unwrap();
-                assert!(
-                    matches!(judge(&claim), Sufficiency::Sufficient),
-                    "{id}: a support below its bar still stands"
-                );
                 assert_eq!(trust.label(), label_below_primary(&trust.profile), "{id}");
                 let Decision::Insufficient { bar, next, .. } = &trust.decision else {
                     unreachable!()
@@ -769,6 +669,7 @@ async fn outside_a_trust_scope_an_outline_assertion_is_not_weighed() -> Result<(
     let weighed = weigh_claim(
         &checker,
         0,
+        "Module 1",
         "The API returns JSON in strict mode.",
         &page,
         SupportedBy {
@@ -790,7 +691,7 @@ struct SecondUnitFails;
 impl LLMPort for SecondUnitFails {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let prompt: String = request
-            .input
+            .input()
             .iter()
             .filter_map(|input| match input {
                 lattice_core::application::ports::llm_port::CompletionInput::Message {
@@ -804,7 +705,7 @@ impl LLMPort for SecondUnitFails {
             return Err(AppError::InternalError("the model went away".into()));
         }
         Ok(CompletionResponse {
-            text: r#"{"claims":[{"id":"claim-0","kind":"general","subject":null,"temporal":{"scope":"timeless","version":null,"date":null},"measurement_origin":null,"attributed_to":null}]}"#.into(),
+            text: r#"{"entries":[{"of":"c1","kind":"general","subject":{"kind":"none"},"temporal":{"scope":"timeless","version":"","date":""},"measurement_origin":"","attributed_to":""}]}"#.into(),
             finish_reason: "stop".into(),
             ..Default::default()
         })
@@ -821,24 +722,29 @@ impl LLMPort for SecondUnitFails {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[tokio::test]
 async fn a_unit_profiled_before_another_unit_fails_keeps_its_profiles() -> Result<()> {
     let pool = crate::test_support::pool().await?;
+    let db = Database::new(pool.clone());
     let mut judgements =
-        context::Judgements::cached(Database::from(pool.clone()), "program", "profile-model")
-            .await?;
+        context::Judgements::cached(db.clone(), "program", "profile-model").await?;
     let claims = [
-        (0, "The first unit states one claim."),
-        (1, "The second unit states another claim."),
+        ("Section 1", "The first unit states one claim."),
+        ("Section 2", "The second unit states another claim."),
     ];
     let result = judgements.profiles(&SecondUnitFails, &claims).await;
     assert!(result.is_err(), "the second unit's call failed");
     let saved: Vec<String> = sqlx::query_scalar("SELECT input_sha256 FROM claim_profiles")
         .fetch_all(&pool)
-        .await
-        .map_err(|error| AppError::Database(error.to_string()))?;
+        .await?;
     let first = lattice_core::application::services::source_trust::claim_profile_key(
         claims[0].1,
         &[],
@@ -867,6 +773,8 @@ struct Judges {
     standing_calls: AtomicUsize,
     standing_now: AtomicUsize,
     standing_most: AtomicUsize,
+    /// The unit title of each profile request.
+    titles: std::sync::Mutex<Vec<String>>,
 }
 
 impl Judges {
@@ -883,6 +791,7 @@ impl Judges {
             standing_calls: AtomicUsize::new(0),
             standing_now: AtomicUsize::new(0),
             standing_most: AtomicUsize::new(0),
+            titles: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -896,7 +805,7 @@ impl Judges {
 impl LLMPort for Judges {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let prompt: String = request
-            .input
+            .input()
             .iter()
             .filter_map(|input| match input {
                 lattice_core::application::ports::llm_port::CompletionInput::Message {
@@ -919,13 +828,29 @@ impl LLMPort for Judges {
             self.now.fetch_sub(1, Ordering::SeqCst);
             r#"{"relation":"owner","basis":[{"code":"publisher_is_owner","text":"It publishes the subject."}],"owner_origin_hints":[]}"#.to_owned()
         } else if prompt.contains(PROFILE_PROMPT) {
+            let tail = prompt
+                .split_once(PROFILE_PROMPT)
+                .map_or("", |(_, tail)| tail);
+            let input = tail.find('{').map_or("", |start| &tail[start..]);
+            let data = serde_json::Deserializer::from_str(input)
+                .into_iter::<Value>()
+                .next()
+                .and_then(|value| value.ok());
+            let title = data
+                .as_ref()
+                .and_then(|value| value["unit_title"].as_str().map(str::to_owned));
+            let claim = data
+                .as_ref()
+                .and_then(|value| value["claims"][0]["id"].as_str().map(str::to_owned))
+                .unwrap_or_default();
+            self.titles.lock().unwrap().extend(title);
             let subject = if prompt.contains("Section 2") {
                 self.second_subject
             } else {
                 "Alpha"
             };
             format!(
-                r#"{{"claims":[{{"id":"claim-0","kind":"general","subject":{{"name":"{subject}","kind":"product","aliases":[],"classes":[]}},"temporal":{{"scope":"timeless","version":null,"date":null}},"measurement_origin":null,"attributed_to":null}}]}}"#
+                r#"{{"entries":[{{"of":"{claim}","kind":"general","subject":{{"kind":"named","name":"{subject}","subject_kind":"product","aliases":[],"classes":[]}},"temporal":{{"scope":"timeless","version":"","date":""}},"measurement_origin":"","attributed_to":""}}]}}"#
             )
         } else {
             self.standing_calls.fetch_add(1, Ordering::SeqCst);
@@ -941,7 +866,7 @@ impl LLMPort for Judges {
             )
             .await;
             self.standing_now.fetch_sub(1, Ordering::SeqCst);
-            r#"{"standing":"institutional","publisher":{"name":"Acme","kind":"vendor"},"editorial":"editorial","nature":"documentation","flags":[],"reasons":[{"code":"publisher_metadata","text":"Acme publishes it."}]}"#.to_owned()
+            r#"{"standing":"institutional","publisher":{"kind":"named","name":"Acme","publisher_kind":"vendor"},"editorial":"editorial","nature":"documentation","flags":[],"reasons":[{"code":"publisher_metadata","text":"Acme publishes it."}]}"#.to_owned()
         };
         Ok(CompletionResponse::from_text(text))
     }
@@ -957,24 +882,30 @@ impl LLMPort for Judges {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// Saves a library source with one version at `url`, with the provenance a
 /// web capture gives it.
 async fn seed_version(
     pool: &sqlx::SqlitePool,
+    db: &Database,
     program_id: &str,
     id: &str,
     url: &str,
 ) -> Result<()> {
-    let db = |error: sqlx::Error| AppError::Database(error.to_string());
     let text = format!("{id} states the fact.");
     sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,created_at,updated_at,added_by) VALUES(?,?,'pasted','seed',NULL,'fixed',?,NULL,0,1,1,'user')")
         .bind(id).bind(program_id).bind(id)
-        .execute(pool).await.map_err(db)?;
+        .execute(pool).await?;
     sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) VALUES(?,?,?,1,'Seed',?,'',?,4,0,'test',1)")
         .bind(id).bind(program_id).bind(id).bind(&text).bind(id)
-        .execute(pool).await.map_err(db)?;
+        .execute(pool).await?;
     let origin = lattice_core::domain::provenance::Origin::of_url(url)
         .map_err(|error| AppError::InternalError(format!("{error:?}")))?;
     let signals = serde_json::from_value(serde_json::json!({
@@ -984,7 +915,7 @@ async fn seed_version(
         "dates": { "acquired_at": 1_760_000_000 },
         "extraction_version": lattice_core::domain::provenance::PAGE_SIGNALS_VERSION,
     }))?;
-    crate::references::trust::SqliteSourceTrustStore::new(pool.clone())
+    crate::references::trust::SqliteSourceTrustStore::new(db.clone())
         .save_provenance(&lattice_core::domain::provenance::ProvenanceRecord {
             source_version_id: id.into(),
             program_id: program_id.into(),
@@ -1020,15 +951,20 @@ async fn weighed_by(
     claims: &[(usize, &str)],
 ) -> Result<Judges> {
     let pool = crate::test_support::pool().await?;
+    let db = Database::new(pool.clone());
     let mut program = crate::test_support::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
-    crate::repository::LearningRepository::new(pool.clone())
+    crate::repository::LearningRepository::new(db.clone())
         .create(&program)
         .await?;
     let program_id = program.summary.id;
     for (id, url) in versions {
-        seed_version(&pool, &program_id, id, url).await?;
+        seed_version(&pool, &db, &program_id, id, url).await?;
     }
+    let candidate = json!({
+        "blocks": [{"kind": "explanation"}, {"kind": "explanation"}],
+        "questions": [{"prompt": "Which?"}],
+    });
     let mut results: Vec<CheckedClaim> = claims
         .iter()
         .enumerate()
@@ -1043,12 +979,9 @@ async fn weighed_by(
             (ordinal, statement, claim, false)
         })
         .collect();
-    context::with_trust(
-        Database::from(pool.clone()),
-        program_id,
-        "Topic".into(),
-        async { weigh(&model, &mut results, &HashSet::new()).await },
-    )
+    context::with_trust(db.clone(), program_id, "Topic".into(), async {
+        weigh(&model, &candidate, &mut results, &HashSet::new()).await
+    })
     .await?;
     assert!(results.iter().all(|(_, _, claim, _)| claim.trust.is_some()));
     Ok(model)
@@ -1110,5 +1043,19 @@ async fn a_version_cited_by_two_claims_has_its_standing_judged_once() -> Result<
     .await?;
 
     assert_eq!(model.standing_calls.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_question_claim_is_profiled_under_its_question() -> Result<()> {
+    let model = weighed_claims(
+        &[("va", "https://alpha.example.com/docs")],
+        &[(2, "va")],
+        "Alpha",
+        1,
+    )
+    .await?;
+
+    assert_eq!(*model.titles.lock().unwrap(), ["Question 1"]);
     Ok(())
 }

@@ -146,7 +146,7 @@ fn anthropic_counts_the_cached_prompt_as_prompt() {
 #[tokio::test]
 async fn reasoning_is_delivered_before_the_completion_arrives() {
     let (sender, receiver) =
-        tokio::sync::mpsc::unbounded_channel::<std::result::Result<Vec<u8>, String>>();
+        tokio::sync::mpsc::unbounded_channel::<std::result::Result<Vec<u8>, std::io::Error>>();
     let (shown, observed) = tokio::sync::oneshot::channel();
     let shown = Mutex::new(Some(shown));
     let on_reasoning = |delta: String| {
@@ -197,7 +197,7 @@ async fn stalled_streams_and_oversized_events_fail() {
     // The answer started, then went silent.
     let started = frames(&[json!({"type":"response.output_text.delta","delta":"Hel"})]);
     let pending =
-        futures::stream::iter([Ok::<_, String>(started)]).chain(futures::stream::pending());
+        futures::stream::iter([Ok::<_, std::io::Error>(started)]).chain(futures::stream::pending());
     let error = drain(
         protocols(CloudProvider::Openai).completion,
         pending,
@@ -279,7 +279,7 @@ fn google_stream_keeps_each_calls_thought_signature_for_the_replay() {
 #[tokio::test(start_paused = true)]
 async fn silence_before_the_first_delta_is_not_a_stall() {
     let (sender, receiver) =
-        tokio::sync::mpsc::unbounded_channel::<std::result::Result<Vec<u8>, String>>();
+        tokio::sync::mpsc::unbounded_channel::<std::result::Result<Vec<u8>, std::io::Error>>();
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(600)).await;
         sender
@@ -333,4 +333,63 @@ fn anthropic_calls_with_no_or_broken_arguments_do_not_fail_the_reply() {
     let problem =
         lattice_core::application::ports::llm_port::invalid_tool_call_problem(&arguments[1]);
     assert!(problem.is_some_and(|problem| problem.contains("not JSON")));
+}
+
+/// A message is not cut off after 1024 content blocks.
+#[test]
+fn anthropic_accepts_a_content_block_at_a_high_index() {
+    let events = frames(&[
+        json!({"type":"message_start","message":{"id":"m1","content":[],"usage":{"input_tokens":10,"output_tokens":1},"stop_reason":null}}),
+        json!({"type":"content_block_start","index":1024,"content_block":{"type":"text","text":""}}),
+        json!({"type":"content_block_delta","index":1024,"delta":{"type":"text_delta","text":"Far block"}}),
+        json!({"type":"content_block_stop","index":1024}),
+        json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}),
+        json!({"type":"message_stop"}),
+    ]);
+    let mut decoder = Decoder::new(protocols(CloudProvider::Anthropic).completion);
+    decoder.push(&events, &|_| Ok(()), &|_| Ok(())).unwrap();
+    let response = decoder.finish(&|_| Ok(()), &|_| Ok(())).unwrap();
+    assert_eq!(response.text, "Far block");
+}
+
+/// Whether `events`, pushed whole, left the model's answer begun.
+fn begun_after(provider: CloudProvider, events: &[Value]) -> bool {
+    let mut decoder = Decoder::new(protocols(provider).completion);
+    decoder
+        .push(&frames(events), &|_| Ok(()), &|_| Ok(()))
+        .unwrap();
+    decoder.events.answer_begun()
+}
+
+#[test]
+fn a_claude_answer_begins_with_its_first_content_block() {
+    let start = json!({"type":"message_start","message":{"id":"m1","content":[],"usage":{"input_tokens":10,"output_tokens":1},"stop_reason":null}});
+    let thinking = json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}});
+    assert!(!begun_after(
+        CloudProvider::Anthropic,
+        std::slice::from_ref(&start)
+    ));
+    assert!(begun_after(CloudProvider::Anthropic, &[start, thinking]));
+}
+
+#[test]
+fn an_openai_answer_begins_with_its_first_output_item() {
+    let created = json!({"type":"response.created","response":{"status":"in_progress"}});
+    let item = json!({"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","id":"rs_1","summary":[]}});
+    assert!(!begun_after(
+        CloudProvider::Openai,
+        std::slice::from_ref(&created)
+    ));
+    assert!(begun_after(CloudProvider::Openai, &[created, item]));
+}
+
+#[test]
+fn a_chat_answer_begins_with_its_first_content_not_its_role() {
+    let role = json!({"choices":[{"index":0,"delta":{"role":"assistant"}}]});
+    let content = json!({"choices":[{"index":0,"delta":{"content":"Hi"}}]});
+    assert!(!begun_after(
+        CloudProvider::Google,
+        std::slice::from_ref(&role)
+    ));
+    assert!(begun_after(CloudProvider::Google, &[role, content]));
 }

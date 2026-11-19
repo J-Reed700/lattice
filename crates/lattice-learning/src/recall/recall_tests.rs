@@ -8,7 +8,7 @@ use crate::{
     source_library::{CapturedLearningSource, LearningSourceLibraryRepository},
     tests,
 };
-use lattice_core::shared::error::Result;
+use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Database;
 use sqlx::sqlite::SqlitePoolOptions;
 
@@ -22,11 +22,11 @@ async fn file_pool(path: &std::path::Path) -> Result<sqlx::SqlitePool> {
         .max_connections(1)
         .connect_with(options)
         .await
-        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))
+        .map_err(AppError::from)
 }
 
-async fn active_program(pool: &sqlx::SqlitePool) -> Result<crate::dto::LearningProgramDto> {
-    let repo = LearningRepository::new(pool.clone());
+async fn active_program(db: &Database) -> Result<crate::dto::LearningProgramDto> {
+    let repo = LearningRepository::new(db.clone());
     let program = tests::fixture();
     repo.create(&program).await?;
     repo.accept(&crate::dto::AcceptLearningProgramRequestDto {
@@ -41,8 +41,9 @@ async fn active_program(pool: &sqlx::SqlitePool) -> Result<crate::dto::LearningP
 #[tokio::test]
 async fn recall_and_study_reviews_share_one_fsrs_schedule() -> Result<()> {
     let pool = tests::pool().await?;
-    let program = active_program(&pool).await?;
-    let memory = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let program = active_program(&db).await?;
+    let memory = LearningRepository::new(db.clone());
     let lesson = program
         .modules
         .first()
@@ -53,7 +54,7 @@ async fn recall_and_study_reviews_share_one_fsrs_schedule() -> Result<()> {
     memory
         .ensure_lesson_note(&program.summary.id, &lesson.id, "Notes", "")
         .await?;
-    let recall = LearningRecallRepository::new(pool.clone());
+    let recall = LearningRecallRepository::new(db.clone());
     let card_id = id();
     let save = SaveLearningRecallCardRequestDto {
         operation_id: id(),
@@ -115,7 +116,7 @@ async fn recall_and_study_reviews_share_one_fsrs_schedule() -> Result<()> {
     );
 
     // The deck view reviews the same card through the same scheduler.
-    let study = StudyRepository::new(pool.clone());
+    let study = StudyRepository::new(db.clone());
     let studied = study
         .review(
             &ReviewStudyCardRequestDto {
@@ -147,8 +148,9 @@ async fn recall_and_study_reviews_share_one_fsrs_schedule() -> Result<()> {
 #[tokio::test]
 async fn source_tombstone_reimport_selector_search_and_recall_history_persist() -> Result<()> {
     let pool = tests::pool().await?;
-    let program = active_program(&pool).await?;
-    let sources = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let db = Database::new(pool.clone());
+    let program = active_program(&db).await?;
+    let sources = LearningSourceLibraryRepository::new(db.clone());
     let source_id = id();
     let first_version = id();
     sources
@@ -178,7 +180,7 @@ async fn source_tombstone_reimport_selector_search_and_recall_history_persist() 
         )
         .await?;
 
-    let recall = LearningRecallRepository::new(pool.clone());
+    let recall = LearningRecallRepository::new(db.clone());
     let selector_text = "🦀 repeated rule";
     let text = "A prefix 🦀 repeated rule. A second 🦀 repeated rule. Recall safely.";
     let start = text.rfind(selector_text).unwrap_or_default();
@@ -213,7 +215,7 @@ async fn source_tombstone_reimport_selector_search_and_recall_history_persist() 
         })
         .await?;
     assert_eq!(matched.start_byte, Some(start));
-    let other = active_program(&pool).await?;
+    let other = active_program(&db).await?;
     assert!(recall
         .get_selector(&other.summary.id, &selector_id)
         .await
@@ -374,8 +376,9 @@ async fn source_tombstone_reimport_selector_search_and_recall_history_persist() 
 #[tokio::test]
 async fn deck_cards_without_a_recall_profile_join_recall_with_their_schedule() -> Result<()> {
     let pool = tests::pool().await?;
-    let program = active_program(&pool).await?;
-    let memory = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let program = active_program(&db).await?;
+    let memory = LearningRepository::new(db.clone());
     let lesson = program
         .modules
         .first()
@@ -390,24 +393,21 @@ async fn deck_cards_without_a_recall_profile_join_recall_with_their_schedule() -
         sqlx::query_scalar("SELECT deck_id FROM learning_memory WHERE program_id=?")
             .bind(&program.summary.id)
             .fetch_one(&pool)
-            .await
-            .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+            .await?;
     let card_id = id();
     sqlx::query("INSERT INTO study_cards(id,deck_id,question,answer,options_json,correct_index,explanation,source_json,topic,due_at,review_count,format) VALUES(?,?,?,?,?,?,?,?,?,?,1,?)")
         .bind(&card_id).bind(&deck_id).bind("Accepted question").bind("Yes")
         .bind("[\"No\",\"Yes\"]").bind(1_i64).bind("Old note")
         .bind("{}").bind("accepted").bind(chrono::Utc::now().timestamp_millis())
         .bind("multiple_choice")
-        .execute(&pool).await
-        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+        .execute(&pool).await?;
     let review_id = id();
     sqlx::query("INSERT INTO study_reviews(id,card_id,reviewed_at,rating,mode,correct,selected_option) VALUES(?,?,?,?,?,?,?)")
         .bind(&review_id).bind(&card_id).bind(100_i64).bind("good").bind("quiz")
         .bind(1_i64).bind(1_i64)
-        .execute(&pool).await
-        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+        .execute(&pool).await?;
 
-    let workspace = LearningRecallRepository::new(pool.clone())
+    let workspace = LearningRecallRepository::new(db.clone())
         .workspace(&program.summary.id)
         .await?;
     let card = workspace.cards.iter().find(|card| card.id == card_id);
@@ -416,8 +416,7 @@ async fn deck_cards_without_a_recall_profile_join_recall_with_their_schedule() -
     let preserved: i64 = sqlx::query_scalar("SELECT count(*) FROM study_reviews WHERE id=?")
         .bind(review_id)
         .fetch_one(&pool)
-        .await
-        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+        .await?;
     assert_eq!(preserved, 1);
     Ok(())
 }
@@ -427,12 +426,10 @@ async fn recall_card_and_immutable_version_survive_database_reopen() -> Result<(
     let directory = tempfile::tempdir()
         .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
     let path = directory.path().join("learning-recall.sqlite");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
     let pool = file_pool(&path).await?;
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
-    let program = active_program(&pool).await?;
+    let db = Database::new(pool.clone());
+    let program = active_program(&db).await?;
     let lesson = program
         .modules
         .first()
@@ -440,11 +437,11 @@ async fn recall_card_and_immutable_version_survive_database_reopen() -> Result<(
         .ok_or_else(|| {
             lattice_core::shared::error::AppError::InvalidState("Fixture has no lesson".into())
         })?;
-    LearningRepository::new(pool.clone())
+    LearningRepository::new(db.clone())
         .ensure_lesson_note(&program.summary.id, &lesson.id, "Notes", "")
         .await?;
     let card_id = id();
-    LearningRecallRepository::new(pool.clone())
+    LearningRecallRepository::new(db.clone())
         .save_card(&SaveLearningRecallCardRequestDto {
             operation_id: id(),
             program_id: program.summary.id.clone(),
@@ -464,14 +461,11 @@ async fn recall_card_and_immutable_version_survive_database_reopen() -> Result<(
             change_reason: "Initial card".into(),
         })
         .await?;
-    pool.close().await;
+    db.close().await;
 
     let reopened = file_pool(&path).await?;
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&reopened)
-        .await
-        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
-    let workspace = LearningRecallRepository::new(reopened)
+    let reopened_db = Database::new(reopened.clone());
+    let workspace = LearningRecallRepository::new(reopened_db)
         .workspace(&program.summary.id)
         .await?;
     let saved = workspace.cards.iter().find(|card| card.id == card_id);
@@ -486,7 +480,8 @@ async fn recall_card_and_immutable_version_survive_database_reopen() -> Result<(
 #[tokio::test]
 async fn typed_recall_formats_round_trip_through_canonical_study_rows() -> Result<()> {
     let pool = tests::pool().await?;
-    let program = active_program(&pool).await?;
+    let db = Database::new(pool.clone());
+    let program = active_program(&db).await?;
     let lesson = program
         .modules
         .first()
@@ -494,7 +489,7 @@ async fn typed_recall_formats_round_trip_through_canonical_study_rows() -> Resul
         .ok_or_else(|| {
             lattice_core::shared::error::AppError::InvalidState("Fixture has no lesson".into())
         })?;
-    LearningRepository::new(pool.clone())
+    LearningRepository::new(db.clone())
         .ensure_lesson_note(&program.summary.id, &lesson.id, "Notes", "")
         .await?;
     let formats = [
@@ -547,7 +542,7 @@ async fn typed_recall_formats_round_trip_through_canonical_study_rows() -> Resul
             },
         ),
     ];
-    let recall = LearningRecallRepository::new(pool.clone());
+    let recall = LearningRecallRepository::new(db.clone());
     let mut saved = Vec::new();
     for (format, content) in formats {
         let card_id = id();
@@ -665,7 +660,8 @@ fn recall_content_is_checked_for_blank_text_never_for_how_long_it_is() {
 #[tokio::test]
 async fn a_recall_card_of_any_length_is_saved_and_read_back() -> Result<()> {
     let pool = tests::pool().await?;
-    let program = active_program(&pool).await?;
+    let db = Database::new(pool.clone());
+    let program = active_program(&db).await?;
     let lesson = program
         .modules
         .first()
@@ -673,7 +669,7 @@ async fn a_recall_card_of_any_length_is_saved_and_read_back() -> Result<()> {
         .ok_or_else(|| {
             lattice_core::shared::error::AppError::InvalidState("Fixture has no lesson".into())
         })?;
-    LearningRepository::new(pool.clone())
+    LearningRepository::new(db.clone())
         .ensure_lesson_note(&program.summary.id, &lesson.id, "Notes", "")
         .await?;
     let long = |sentence: &str, count: usize| sentence.repeat(count).trim().to_owned();
@@ -696,7 +692,7 @@ async fn a_recall_card_of_any_length_is_saved_and_read_back() -> Result<()> {
         language: Some("A programming language whose name runs on and on forever".into()),
         cloze_deletions: vec![],
     };
-    let recall = LearningRecallRepository::new(pool.clone());
+    let recall = LearningRecallRepository::new(db.clone());
     let mut saved = Vec::new();
     for (format, content) in [
         (LearningRecallCardFormat::MultipleChoice, multiple_choice),
@@ -728,7 +724,8 @@ async fn a_recall_card_of_any_length_is_saved_and_read_back() -> Result<()> {
 #[tokio::test]
 async fn an_accepted_deck_card_with_a_long_option_joins_recall() -> Result<()> {
     let pool = tests::pool().await?;
-    let program = active_program(&pool).await?;
+    let db = Database::new(pool.clone());
+    let program = active_program(&db).await?;
     let lesson = program
         .modules
         .first()
@@ -736,15 +733,14 @@ async fn an_accepted_deck_card_with_a_long_option_joins_recall() -> Result<()> {
         .ok_or_else(|| {
             lattice_core::shared::error::AppError::InvalidState("Fixture has no lesson".into())
         })?;
-    LearningRepository::new(pool.clone())
+    LearningRepository::new(db.clone())
         .ensure_lesson_note(&program.summary.id, &lesson.id, "Notes", "")
         .await?;
     let deck_id: String =
         sqlx::query_scalar("SELECT deck_id FROM learning_memory WHERE program_id=?")
             .bind(&program.summary.id)
             .fetch_one(&pool)
-            .await
-            .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+            .await?;
     let wrong = "An option that restates the condition in full. "
         .repeat(15)
         .trim()
@@ -756,10 +752,9 @@ async fn an_accepted_deck_card_with_a_long_option_joins_recall() -> Result<()> {
         .bind(&options).bind(1_i64).bind("Old note")
         .bind("{}").bind("accepted").bind(chrono::Utc::now().timestamp_millis())
         .bind("multiple_choice")
-        .execute(&pool).await
-        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+        .execute(&pool).await?;
 
-    let workspace = LearningRecallRepository::new(pool.clone())
+    let workspace = LearningRecallRepository::new(db.clone())
         .workspace(&program.summary.id)
         .await?;
     let card = workspace.cards.iter().find(|card| card.id == card_id);

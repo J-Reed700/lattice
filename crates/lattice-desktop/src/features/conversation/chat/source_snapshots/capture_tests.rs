@@ -12,6 +12,7 @@ use crate::features::conversation::{
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::conversation::MessageRole;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
 
@@ -58,9 +59,13 @@ struct Saved {
 }
 
 /// Save an answer that cites one search result whose page was never read.
-async fn save_answer_citing_an_unread_page(runtime: &FakeRuntime, pool: sqlx::SqlitePool) -> Saved {
+async fn save_answer_citing_an_unread_page(
+    runtime: &FakeRuntime,
+    pool: sqlx::SqlitePool,
+    db: &Database,
+) -> Saved {
     let service: Arc<dyn ConversationServiceTrait> = Arc::new(ConversationService::new(Arc::new(
-        ConversationRepository::new(pool.clone()),
+        ConversationRepository::new(db.clone()),
     )));
     let conversation_id = service
         .create_conversation("Chat".into(), None)
@@ -78,7 +83,7 @@ async fn save_answer_citing_an_unread_page(runtime: &FakeRuntime, pool: sqlx::Sq
         )
         .await
         .unwrap();
-    let source: SourceDto = serde_json::from_value(serde_json::json!({
+    let mut source: SourceDto = serde_json::from_value(serde_json::json!({
         "documentId": format!("web:{PAGE}"),
         "chunkId": "web-1",
         "content": "A search snippet.",
@@ -94,6 +99,14 @@ async fn save_answer_citing_an_unread_page(runtime: &FakeRuntime, pool: sqlx::Sq
         "citationId": 1
     }))
     .unwrap();
+    let names =
+        Arc::new(lattice_core::application::services::model_contract::kept::TurnNames::unstored());
+    super::super::retrieval::source_names::name_sources(&names, std::slice::from_mut(&mut source));
+    let reply = crate::features::conversation::chat::reply_text::ReplyText::read(
+        &names,
+        crate::features::conversation::chat::reply_text::markers(None),
+        "The page says so [s1].",
+    );
     let llm: Arc<dyn LLMPort> = Arc::new(crate::features::llm::engine::factory::MockLLMPort::new());
     let focus = FocusScope::default();
     let recorder = TurnRecorder::silent(&conversation_id, "request-1");
@@ -107,6 +120,7 @@ async fn save_answer_citing_an_unread_page(runtime: &FakeRuntime, pool: sqlx::Sq
         highlight_terms: &[],
         focus: &focus,
         recorder: &recorder,
+        names: &names,
     };
     let answer = tokio::time::timeout(
         std::time::Duration::from_secs(5),
@@ -117,7 +131,7 @@ async fn save_answer_citing_an_unread_page(runtime: &FakeRuntime, pool: sqlx::Sq
             2,
             0,
             FinishedAnswer {
-                response: "The page says so [1].".into(),
+                reply,
                 sources: vec![source],
                 verification: None,
                 memory_usage: None,
@@ -139,10 +153,17 @@ async fn save_answer_citing_an_unread_page(runtime: &FakeRuntime, pool: sqlx::Sq
 }
 
 /// One migrated database per test, shared by the service and the archive.
-async fn migrated_pool() -> sqlx::SqlitePool {
-    let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    pool
+async fn migrated_pool() -> (tempfile::TempDir, sqlx::SqlitePool) {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("lattice.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path)
+        .await
+        .unwrap();
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(lattice_core::shared::testing::sqlite::file_options(&path))
+        .await
+        .unwrap();
+    (directory, pool)
 }
 
 async fn metadata_of(pool: &sqlx::SqlitePool, id: &str) -> serde_json::Value {
@@ -199,7 +220,9 @@ async fn the_turn_returns_while_a_cited_page_is_still_being_read() {
         })),
         ..Default::default()
     };
-    let saved = save_answer_citing_an_unread_page(&runtime, migrated_pool().await).await;
+    let (_directory, pool) = migrated_pool().await;
+    let db = Database::new(pool.clone());
+    let saved = save_answer_citing_an_unread_page(&runtime, pool, &db).await;
     assert_eq!(
         saved.answer.uncaptured,
         vec![UncapturedPage {
@@ -236,13 +259,14 @@ async fn the_turn_returns_while_a_cited_page_is_still_being_read() {
 async fn a_captured_page_is_archived_attached_and_announced() {
     // The archive and the conversation share one database, so the page is
     // stored beside the conversation it was cited in.
-    let pool = migrated_pool().await;
+    let (_directory, pool) = migrated_pool().await;
+    let db = Database::new(pool.clone());
     let runtime = FakeRuntime {
         page_reader: Some(Arc::new(ReadyReader)),
-        records: Some(Arc::new(ConversationRepository::new(pool.clone()))),
+        records: Some(Arc::new(ConversationRepository::new(db.clone()))),
         ..Default::default()
     };
-    let saved = save_answer_citing_an_unread_page(&runtime, pool).await;
+    let saved = save_answer_citing_an_unread_page(&runtime, pool, &db).await;
 
     let events = Arc::new(Mutex::new(Vec::new()));
     let emitted = Arc::new(Notify::new());

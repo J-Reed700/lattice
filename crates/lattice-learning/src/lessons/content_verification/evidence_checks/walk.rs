@@ -97,7 +97,7 @@ pub(in crate::lessons::content_verification) fn page_of(
     let mut passed_over = 0;
     for passage in list
         .iter()
-        .filter(|passage| !shown.iter().any(|seen| overlaps(seen, passage)))
+        .filter(|passage| !shown.iter().any(|seen| seen.overlaps(passage)))
     {
         let mut grown = page.clone();
         grown.push(passage.clone());

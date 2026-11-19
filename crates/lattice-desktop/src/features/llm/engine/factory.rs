@@ -33,8 +33,8 @@ use lattice_core::shared::error::AppError;
 #[derive(Debug, Clone)]
 pub enum LLMConfig {
     /// Local LLM routed through the bundled `llama-server` sidecar. Requires
-    /// `app_handle` to be supplied so `tauri-plugin-shell` can spawn
-    /// the child process.
+    /// `app_handle` to be supplied so the sidecar is registered for the
+    /// shutdown sweep.
     Local {
         /// Path to GGUF model file
         model_path: PathBuf,
@@ -42,8 +42,8 @@ pub enum LLMConfig {
         n_gpu_layers: i32,
         /// Generation configuration (temperature, top-p, etc.)
         generation_config: GenerationConfig,
-        /// Tauri AppHandle, used to spawn the llama-server child
-        /// process via `tauri-plugin-shell`. Populated by the DI
+        /// Tauri AppHandle, through which the llama-server child is
+        /// registered for the shutdown sweep. Populated by the DI
         /// Container via `with_app_handle()` at app boot. `None` is
         /// only acceptable in test fixtures that don't reach the
         /// sidecar dispatch path.

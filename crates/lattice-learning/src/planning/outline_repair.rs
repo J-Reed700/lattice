@@ -3,7 +3,7 @@
 //! what it contradicts or leaves unsupported is rewritten. A plan finding is
 //! rewritten. Repair never adds a citation of its own: a rewrite keeps or
 //! drops what it was given, and evidence linking then runs on that module.
-use crate::lessons::content_verification::{judge_for_publication, ranking, shown_of};
+use crate::lessons::content_verification::{fits_window, judge_for_publication, ranking, shown_of};
 use crate::outline_linking::{self, CitationReceipt, ItemKind};
 use crate::outline_references::{self, GatherPurpose, PlannedSubtopic, ReferencePlan};
 use crate::outline_review::{item_text, kind_name};
@@ -17,7 +17,9 @@ use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::application::services::claim_verification::{
     ClaimJudgment, ClaimVerdict, JudgeOutcome,
 };
+use lattice_core::protocol;
 use lattice_core::shared::hash::sha256_hex;
+use lattice_core::shared::protocol::Protocol;
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -25,7 +27,7 @@ use lattice_core::{
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
 
-const CLAIM_POLICY: &str = "outline-claim-v1";
+const CLAIM_POLICY: Protocol = protocol!("outline-claim", 1);
 
 /// Per-kind, per-attempt repair instructions (design section 6.1).
 pub(crate) const CORRECT: &str = "Correct the assertion to what the contradicting passage says.";
@@ -34,7 +36,7 @@ pub(crate) const REMOVE: &str =
     "Remove the assertion or restate it as a learning activity rather than a fact.";
 pub(crate) const PLAN_FIX: &str = "Fix the plan defect described; do not add or change citations.";
 pub(crate) const PLAN_SMALLEST: &str =
-    "This is the last attempt and the previous rewording did not remove the defect. Rewrite the text at this finding's path so the reason no longer applies: delete or replace every phrase the reason objects to instead of rewording it. If a sentence cannot be fixed, remove it; if the item cannot be fixed, drop it.";
+    "This is the last attempt and the previous rewording did not remove the defect. Rewrite the text this finding is about so the reason no longer applies: delete or replace every phrase the reason objects to instead of rewording it. If a sentence cannot be fixed, remove it; if the item cannot be fixed, drop it.";
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct RepairOutcome {
@@ -290,10 +292,7 @@ async fn resolve_factual(
     // A finding is checked alone, so its first page may fill the checker's
     // window. An unsupported verdict walks on to the next page, passages not
     // yet shown, while that page shares a content term with the claim.
-    let share = crate::content_verification::claim_share(llm, &claim, 1);
-    let fits = |passages: &[ReferencePassage]| {
-        crate::content_verification::within_share(llm, share, passages.iter())
-    };
+    let fits = |passages: &[ReferencePassage]| fits_window(llm, &claim, passages);
     let mut shown: Vec<ReferencePassage> = Vec::new();
     let mut decision = None;
     let subject = collection.subject_of(&claim).await?;
@@ -383,7 +382,8 @@ async fn resolve_factual(
     let (verdict, reason) = match (&verdict, &evidence) {
         (ClaimVerdict::Supported, Some((source_id, quote))) => {
             let unit = module_index(&issue.path).unwrap_or_default();
-            match insufficient(llm, unit, &claim, &page, source_id, quote).await? {
+            let title = location(&issue.path);
+            match insufficient(llm, unit, &title, &claim, &page, source_id, quote).await? {
                 Some(lacks) => (ClaimVerdict::Unsupported, lacks),
                 None => (verdict, reason),
             }
@@ -544,11 +544,19 @@ pub(crate) async fn repair(
                 LearningOutlineIssueKind::Plan => PLAN_FIX,
                 _ => instructions.get(id).copied().unwrap_or(NARROW),
             };
-            let mut entry = json!({"id":issue.id,"path":issue.path,"kind":kind_name(issue.kind),"claim":issue.claim,"reason":issue.message,"instruction":instruction});
-            if let (Some(source_id), Some(object)) = (&issue.source_id, entry.as_object_mut()) {
-                object.insert("contradictingPassage".into(), json!({"sourceIndex":sources.iter().position(|s| &s.id == source_id),"quote":issue.quote}));
-            }
-            listed.push(entry);
+            listed.push(Finding::new(
+                &issue.path,
+                kind_name(issue.kind),
+                &issue.claim,
+                &issue.message,
+                instruction,
+                issue.source_id.as_ref().map(|source_id| {
+                    (
+                        sources.iter().position(|s| &s.id == source_id),
+                        issue.quote.clone(),
+                    )
+                }),
+            ));
         }
         let rewrite =
             rewrite_module(repo, llm, program, draft, sources, index, &listed, progress).await?;
@@ -582,7 +590,7 @@ pub(crate) async fn repair(
 mod evidence;
 use evidence::{insufficient, locate};
 mod rewrite;
-use rewrite::{rewrite_module, Rewrite};
+use rewrite::{rewrite_module, Finding, Rewrite};
 
 #[cfg(test)]
 mod tests;

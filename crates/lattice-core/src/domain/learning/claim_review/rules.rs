@@ -216,11 +216,14 @@ pub struct Identities {
 /// twice. A claim keeps a prior id when it is in the same unit and has the
 /// same statement or the same quote; failing that, when the prior quote's
 /// span in the same field (where it occurs once now, or else its stored span)
-/// overlaps the new claim's (the largest overlap wins). `prior` is the live
-/// claims of the re-extracted units; `field_text(unit_index, field)` is a
-/// field's current text.
+/// overlaps the new claim's (the largest overlap wins). A claim a narrowing
+/// took out of its sentence (`narrowed`) keeps its id only by the same
+/// statement or quote, since the sentence it stood on now holds the others'
+/// statements. `prior` is the live claims of the re-extracted units;
+/// `field_text(unit_index, field)` is a field's current text.
 pub fn identities<'a>(
     prior: &[&ClaimLedgerEntry],
+    narrowed: &[ClaimId],
     extracted: &[ExtractedClaim],
     field_text: impl Fn(usize, &str) -> Option<&'a str>,
 ) -> Identities {
@@ -263,6 +266,9 @@ pub fn identities<'a>(
             continue;
         };
         for (owner, old) in prior.iter().enumerate() {
+            if narrowed.contains(old.claim_id()) {
+                continue;
+            }
             let old = old.location();
             if old.unit_index != new.location.unit_index || old.field != new.location.field {
                 continue;
@@ -295,23 +301,9 @@ pub fn identities<'a>(
     Identities { assigned, orphaned }
 }
 
-/// The BLOCKED rule (§2.1, §6.1): while any claim is the machine's the lesson
-/// is still verifying; once none is, it is ready only if every claim is
-/// resolved, and otherwise needs the user's review.
+/// The lesson's end state: [`ClaimCounts::end_state`] of its claims.
 pub fn end_state<'a>(claims: impl IntoIterator<Item = &'a ClaimLedgerEntry>) -> LessonReviewState {
-    let mut needs_review = false;
-    for claim in claims {
-        let state = claim.state();
-        if state.is_machine_owned() && !claim.held_for_standing() {
-            return LessonReviewState::Verifying;
-        }
-        needs_review |= !state.is_resolved();
-    }
-    if needs_review {
-        LessonReviewState::NeedsReview
-    } else {
-        LessonReviewState::Ready
-    }
+    ClaimCounts::tally(claims).end_state()
 }
 
 /// Claims per outcome, for the review header and the lesson card (§6.3).
@@ -375,6 +367,24 @@ impl ClaimCounts {
             *slot += 1;
         }
         counts
+    }
+
+    /// Claims waiting for the user or still the machine's.
+    pub fn unresolved(&self) -> usize {
+        self.queued + self.open
+    }
+
+    /// The BLOCKED rule (§2.1, §6.1): while any claim is the machine's the
+    /// lesson is still verifying; once none is, it is ready only if none
+    /// waits for the user.
+    pub fn end_state(&self) -> LessonReviewState {
+        if self.open > 0 {
+            LessonReviewState::Verifying
+        } else if self.queued > 0 {
+            LessonReviewState::NeedsReview
+        } else {
+            LessonReviewState::Ready
+        }
     }
 
     /// The user's own verdicts: confirmed, removed or edited away.

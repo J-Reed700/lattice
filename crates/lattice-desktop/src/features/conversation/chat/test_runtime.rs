@@ -15,7 +15,10 @@ use lattice_core::application::ports::llm_port::{
 use lattice_core::application::ports::{ChatImagesPort, ImageTurnScope};
 use lattice_core::application::ports::{EmbeddingPort, LLMPort};
 use lattice_core::application::services::chat_model_resolution::{
-    resolve, resolve_learning, DefaultChatModel,
+    resolve, resolve_learning, Candidates, DefaultChatModel,
+};
+use lattice_core::application::services::model_contract::kept::{
+    KeptNames, MemoryNames, TurnNames,
 };
 use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::{AppError, Result};
@@ -79,6 +82,7 @@ pub(in crate::features::conversation) struct FakeRuntime {
     /// One picture store per test, so what a turn stored, attached and
     /// released can be read back.
     pub(in crate::features::conversation) images: Arc<FakeChatImages>,
+    pub(in crate::features::conversation) names: Arc<KeptNames>,
 }
 
 impl Default for FakeRuntime {
@@ -101,6 +105,7 @@ impl Default for FakeRuntime {
             page_reader: None,
             records: None,
             images: Arc::default(),
+            names: Arc::new(KeptNames::new(Arc::new(MemoryNames::new()))),
         }
     }
 }
@@ -417,12 +422,19 @@ impl ChatModels for FakeRuntime {
         _requirements: ModelRequirements,
     ) -> Result<PinnedModel> {
         let choice = self.conversations.model_choice(conversation_id)?;
-        let default =
-            DefaultChatModel(self.llm.as_ref().map(|_| default_model()).ok_or_else(|| {
-                AppError::AiModelsNotInstalled(
-                    "No chat model is selected in Settings → Downloaded".into(),
-                )
-            }));
+        let default = DefaultChatModel(
+            self.llm
+                .as_ref()
+                .map(|_| Candidates {
+                    models: vec![default_model()],
+                    auto: false,
+                })
+                .ok_or_else(|| {
+                    AppError::AiModelsNotInstalled(
+                        "No chat model is selected in Settings → Downloaded".into(),
+                    )
+                }),
+        );
         self.pinned(resolve(request_override, &choice, &default)?)
     }
     async fn learning_llm(&self, _requirements: ModelRequirements) -> Result<PinnedModel> {
@@ -489,9 +501,11 @@ impl ChatStorage for FakeRuntime {
         }
         // Never queried unless the model calls a history tool.
         Arc::new(ConversationRepository::new(
-            sqlx::sqlite::SqlitePoolOptions::new()
-                .connect_lazy("sqlite::memory:")
-                .unwrap(),
+            lattice_core::shared::persistence::Database::new(
+                sqlx::sqlite::SqlitePoolOptions::new()
+                    .connect_lazy("sqlite::memory:")
+                    .unwrap(),
+            ),
         ))
     }
     fn chat_starter_cache(&self) -> Arc<dyn ChatStarterCache> {
@@ -513,14 +527,18 @@ impl ChatStorage for FakeRuntime {
         unreachable!("{UNUSED}")
     }
     fn conversation_branches(&self) -> Arc<dyn ConversationBranches> {
-        unreachable!("{UNUSED}")
+        self.conversations.clone()
     }
     async fn turn_source(
         &self,
         _conversation_id: &str,
         _focus: Option<&lattice_core::application::contracts::explorer::ExplorerFocusDto>,
+        _names: Arc<TurnNames>,
     ) -> Option<TurnSource> {
         None
+    }
+    fn kept_names(&self) -> Arc<KeptNames> {
+        self.names.clone()
     }
 }
 
@@ -731,5 +749,11 @@ impl LLMPort for Scripted {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }

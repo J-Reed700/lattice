@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { makePreviewPdf } from './fixtures/previewPdf';
+import { mockActiveModels } from './fixtures/activeModels';
 import { installCustomCollectionsFixture } from './fixtures/customCollections';
 import { installTauriMock, mockCommands, type CommandResult, type Fixture } from './fixtures/tauri';
 import type { JobDto, LearningLessonDto, StartJournalSynthesisRequestDto, LearningProgramDto, MessageDto, ModelCategoryDto, SynthesizeJournalEntriesResponseDto } from '../src/lib/bindings';
@@ -22,7 +23,11 @@ test('inline citations support keyboard passage navigation and clean reading', a
       category: 'Web Article', content: text, score: 1, fileSizeBytes: 0, modifiedAt: stamp, citationId: 1,
       webSnapshot: { url: 'https://example.org/field-guide', title: 'Field guide', text, fetchedAt: stamp, truncated: false },
     };
-    const message = { id: 'citations-answer', conversationId: conversation.id, role: 'assistant', content: 'Record the chosen measure [1]. Keep the observation period [1].', tokens: 20, status: 'completed', createdAt: stamp, metadata: JSON.stringify({ sources: [source] }) };
+    // An answer as the backend hands it over: its text, and the same text as pieces between resolved references.
+    const cited = { type: 'reference' as const, reference: { written: '[s1]', kind: 'source', number: 1 } };
+    const said = (text: string) => ({ type: 'text' as const, text });
+    const reply = [said('Record the chosen measure '), cited, said('. Keep the observation period '), cited, said('.')];
+    const message = { id: 'citations-answer', conversationId: conversation.id, role: 'assistant', content: 'Record the chosen measure [s1]. Keep the observation period [s1].', reply, tokens: 20, status: 'completed', createdAt: stamp, metadata: JSON.stringify({ sources: [source] }) };
     return {
       get_settings: () => settings,
       list_conversation_spaces: () => [{ id: 'space_general', name: 'General', isArchived: false }],
@@ -119,7 +124,7 @@ for (const [width, entry] of [[1440, 'menu'], [620, 'selection'], [1440, 'reply'
           const turn = args as { conversationId: string; message: string; cancelOnly?: boolean };
           if (turn.conversationId !== 'tangent-1') throw new Error('Tangent question was sent to the main conversation');
           if (turn.cancelOnly) {
-            cancelPending?.({ code: 'INVALID_STATE', message: 'Generation cancelled' });
+            cancelPending?.({ code: 'CANCELLED', message: 'Generation cancelled by user.' });
             cancelPending = null;
             return { conversationId: turn.conversationId, messages: state.messages, contextUsed: 2 };
           }
@@ -216,6 +221,7 @@ for (const [width, entry] of [[1440, 'menu'], [620, 'selection'], [1440, 'reply'
 
 test.beforeEach(async ({ page }) => {
   await installTauriMock(page);
+  await mockActiveModels(page);
   await installCustomCollectionsFixture(page);
   // Renderer checks must not wait for external font servers when DNS is offline.
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
@@ -396,7 +402,7 @@ test('opens imported PDF bytes in the library and renders pages after reopening'
       get_settings: () => settings,
       list_all_documents: () => [{
         id: 'imported-pdf', fileName: 'preview.pdf', filePath, fileType: 'pdf',
-        category: 'Document', language: 'en', wordCount: 100,
+        category: 'Document', language: 'en', wordCount: 100, web: false, typeBucket: 'PDF',
         modifiedAt: '2026-09-15T00:00:00Z', indexedAt: '2026-09-15T00:00:00Z',
       }],
       read_file_bytes: (args) => {
@@ -450,7 +456,7 @@ test.describe('Library collections', () => {
       const documents = ['Field guide.pdf', 'Interview notes.pdf', 'Planning.pdf'].map((fileName, index) => ({
         id: `collection-doc-${index}`, fileName,
         filePath: `/home/test/.lattice/files/${String(index).repeat(64)}/${fileName}`,
-        fileType: 'pdf', category: 'Document', language: 'en', wordCount: 1200 + index * 200,
+        fileType: 'pdf', category: 'Document', language: 'en', wordCount: 1200 + index * 200, web: false, typeBucket: 'PDF',
         modifiedAt: '2026-09-15T00:00:00Z', indexedAt: '2026-09-15T00:00:00Z',
       }));
       return {
@@ -644,9 +650,10 @@ test('HTML and code previews follow light and dark themes', async ({ page }, tes
       get_settings: () => settings,
       list_all_documents: () => ['article.html', 'example.ts'].map((fileName, index) => ({
         id: `preview-${index}`, fileName, filePath: `${fileRoot}/${fileName}`, fileType: index ? 'ts' : 'html',
-        category: 'Document', language: 'en', wordCount: 100,
+        category: 'Document', language: 'en', wordCount: 100, web: false, typeBucket: index ? 'Code' : 'HTML',
         modifiedAt: '2026-09-15T00:00:00Z', indexedAt: '2026-09-15T00:00:00Z',
       })),
+      saved_web_article: () => null,
       read_file_content: (args) => (args as { path: string }).path.endsWith('.ts')
         ? 'const answer = 42;'
         : '<style>body { color: black; background: white; }</style><h1>Theme preview</h1><p style="color: black; background: white">Readable article</p><pre>const answer = 42;</pre>',
@@ -1077,7 +1084,6 @@ test('Downloaded switches chat between llama.cpp and local while keeping the uti
       },
       get_active_chat_model: () => null,
       get_active_embedding_model: () => null,
-      get_active_models: () => ({ chat_model: null, embedding_model: null }),
       list_journals: () => [],
       list_downloads: () => [],
       activity_snapshot: () => ({ items: [], running: 0 }),
@@ -1153,7 +1159,6 @@ test('Downloaded assigns the Learning model in Settings without touching the cha
       },
       get_active_chat_model: () => null,
       get_active_embedding_model: () => null,
-      get_active_models: () => ({ chat_model: null, embedding_model: null }),
       list_journals: () => [],
       list_downloads: () => [],
       activity_snapshot: () => ({ items: [], running: 0 }),
@@ -1208,7 +1213,6 @@ test('Downloaded only lists configured connections and remembers a saved localho
       }],
       get_active_chat_model: () => null,
       get_active_embedding_model: () => null,
-      get_active_models: () => ({ chat_model: null, embedding_model: null }),
       list_journals: () => [],
       list_downloads: () => [],
       activity_snapshot: () => ({ items: [], running: 0 }),
@@ -1264,7 +1268,6 @@ test('keeps Ollama and llama.cpp connections separate across provider changes', 
       list_downloaded_models: () => [],
       get_active_chat_model: () => null,
       get_active_embedding_model: () => null,
-      get_active_models: () => ({ chat_model: null, embedding_model: null }),
     };
   }, makeAppSettings());
   await page.goto('/settings');
@@ -1498,7 +1501,8 @@ test('creates a subject-agnostic flashcard deck in Studio, reviews, quizzes, ope
       list_downloads: () => [],
       activity_snapshot: () => ({ items: [], running: 0 }),
       get_batch_history: () => ({ jobs: [] }),
-      list_all_documents: () => [{ id: 'biology', fileName: source.fileName, filePath: source.filePath, fileType: 'md', category: 'Document', wordCount: 20 }],
+      list_all_documents: () => [{ id: 'biology', fileName: source.fileName, filePath: source.filePath, fileType: 'md', category: 'Document', wordCount: 20, web: false, typeBucket: 'Markdown' }],
+      saved_web_article: () => null,
       read_file_content: (args) => {
         if ((args as { path: string }).path !== source.filePath) throw new Error('Unexpected source');
         return '# Photosynthesis notes\n\nChlorophyll absorbs the light used in photosynthesis.\n\nPhotosynthesis converts light energy into chemical energy.';
@@ -1813,7 +1817,7 @@ test('cancels a 43-document deletion after the pending document completes', asyn
     let documents = Array.from({ length: 43 }, (_, index) => ({
       id: `delete-${index}`, fileName: `Delete ${index}.pdf`,
       filePath: `/home/test/.lattice/files/${String(index).padStart(64, '0')}/Delete ${index}.pdf`,
-      fileType: 'pdf', category: 'Document', language: 'en', wordCount: 100,
+      fileType: 'pdf', category: 'Document', language: 'en', wordCount: 100, web: false, typeBucket: 'PDF',
       modifiedAt: '2026-09-15T00:00:00Z', indexedAt: '2026-09-15T00:00:00Z',
     }));
     let calls = 0;
@@ -1900,7 +1904,17 @@ test('Learning Studio integrates with the app shell and opens its Quizzes tab', 
       list_conversation_spaces: () => [],
       list_learning_programs: () => [program.summary],
       get_learning_program: () => program,
+      prepare_learning_ahead: (args) => {
+        const request = (args as { request?: { programId?: string; lessonId?: string } })?.request;
+        if (request?.programId !== program.summary.id || !program.modules.some((module) => module.lessons.some((entry) => entry.id === request.lessonId))) throw new Error('That lesson is not in this course.');
+        return program;
+      },
       get_learning_outline_evidence: () => null,
+      get_learning_course_plan: (args) => {
+        const { programId } = args as { programId: string };
+        if (programId !== program.summary.id) throw new Error('Learning program not found');
+        return { programId, outlineRevision: program.summary.revision, state: 'none', error: null, entries: [] };
+      },
       get_learning_memory: () => ({ programId: program.summary.id, journalId: null, lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0 }),
       get_learning_practice_workspace: () => ({ programId: program.summary.id, sessions: [] }),
       // The open lesson's warm-up asks for due review cards; none are due.

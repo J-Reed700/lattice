@@ -1,8 +1,6 @@
 //! Where a program's problems come from: the author the Program kind drafts with, and the build the evals run.
 
-use crate::drills::build::ask::{ask_request, refuse};
-use crate::generation::parse_json;
-use crate::lessons::structured_call::reask;
+use crate::lessons::structured_call::Asking;
 use crate::model_call;
 use crate::practice::coding::problem::{
     CaseCompare, CaseVisibility, Misreading, Problem, ProblemCase, ProblemClarification,
@@ -18,6 +16,8 @@ use crate::practice::session::builder::{build, BuildSteps, Built, Making, Nothin
 use crate::practice::session::kind::Kind;
 use async_trait::async_trait;
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::ask::{self, ask, Refusal, Settled};
+use lattice_core::application::services::model_contract::shown::{Internal, Scope, Told};
 use lattice_core::domain::learning::practice::problem_patterns::{
     named_in, problem_pattern, PROBLEM_PATTERNS,
 };
@@ -29,6 +29,12 @@ use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
+
+mod answer;
+use answer::{
+    AuthorProblem, Brief, CaseAnswer, CompareWord, Earlier, Input, Line, Pattern, ProblemAnswer,
+    Wanted,
+};
 
 #[cfg(test)]
 mod tests;
@@ -90,7 +96,7 @@ pub struct ProgramFacts {
     pub details: Option<String>,
 }
 
-/// The Program kind's author: the model writes a problem for the lesson, and `read` refuses what the app can see is
+/// The Program kind's author: the model writes a problem for the lesson, and `drafted` refuses what the app can see is
 /// wrong without running anything.
 pub struct ProgramAuthor {
     pub tools: Arc<dyn Toolchains>,
@@ -100,28 +106,78 @@ pub struct ProgramAuthor {
 impl Author for ProgramAuthor {
     async fn draft(&self, commission: &Commission<'_>) -> Result<Authored> {
         let request = request_of(commission)?;
+        let mut wanted = Vec::new();
         for id in &request.patterns {
-            if problem_pattern(id).is_none() {
+            let Some(pattern) = problem_pattern(id) else {
                 return Err(AppError::InvalidInput(format!(
                     "{id} is not one of the problem patterns."
                 )));
-            }
+            };
+            wanted.push(Wanted {
+                id: Internal::of(pattern.id.to_owned()),
+                name: Told(pattern.name.to_owned()),
+                cue: Told(pattern.cue.to_owned()),
+            });
         }
         let runner = self.tools.runner(&request.language)?;
-        let mut asking = model_call::structured(
-            SYSTEM,
-            prompt(&request, runner.contract()),
-            schema(),
-            PROBLEM_ANSWER_TOKENS,
-            "low",
-        );
-        for failed in commission.failed {
-            asking = reask(asking, &failed.raw, &failed.reason);
-        }
-        let asked = ask_request(commission.llm, asking, |raw| read(raw, &request)).await?;
+        let input = Input {
+            difficulty: Told(request.difficulty),
+            language: Told(request.language.clone()),
+            runtime: Told(runner.contract().to_owned()),
+            lesson: request.lesson.as_ref().map(|lesson| Brief {
+                title: Told(lesson.title.clone()),
+                objective: Told(lesson.objective.clone()),
+            }),
+            focus: request
+                .focus
+                .iter()
+                .find(|focus| !focus.trim().is_empty())
+                .map(|focus| Told(focus.clone())),
+            details: request
+                .details
+                .iter()
+                .find(|details| !details.trim().is_empty())
+                .map(|details| Told(details.clone())),
+            wanted,
+            others: PROBLEM_PATTERNS
+                .iter()
+                .filter(|pattern| !request.patterns.iter().any(|id| id == pattern.id))
+                .map(|pattern| Pattern {
+                    id: pattern.id.to_owned(),
+                    name: Told(pattern.name.to_owned()),
+                    cue: Told(pattern.cue.to_owned()),
+                })
+                .collect(),
+            repair: request.form == Form::Repair,
+            earlier: commission
+                .failed
+                .iter()
+                .map(|failed| Earlier {
+                    answer: Told(failed.raw.clone()),
+                    reason: Told(failed.reason.clone()),
+                })
+                .collect(),
+        };
+        let settled = ask::<AuthorProblem>(
+            commission.llm,
+            &Asking {
+                progress: None,
+                reasoning: None,
+            },
+            &mut Scope::for_question(),
+            &input,
+            &model_call::answer_options(),
+        )
+        .await?;
+        let answer = match settled {
+            Settled::Answered(answer) => answer,
+            Settled::Unanswered(why) => return Err(ask::failed(&why)),
+        };
+        let problem = drafted(&input, &answer)
+            .map_err(|Refusal(reason)| AppError::ModelAnswerUnusable(reason))?;
         Ok(Authored::Draft {
-            draft: Box::new(exercise_draft_of(asked.value, commission.form)?),
-            raw: asked.raw,
+            draft: Box::new(exercise_draft_of(problem, commission.form)?),
+            raw: answer_text(&answer),
         })
     }
 }
@@ -253,171 +309,6 @@ struct Draft {
     cases: Vec<ProblemCase>,
 }
 
-/// How a draft compares a result with what a case expects.
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum CompareKind {
-    Exact,
-    Unordered,
-    FloatWithin,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct MisreadingAnswer {
-    description: String,
-    code: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct CaseAnswer {
-    category: String,
-    args: Vec<String>,
-    expected: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ScaleAnswer {
-    category: String,
-    args: Vec<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Answer {
-    title: String,
-    statement: String,
-    function_name: String,
-    params: Vec<SignatureParam>,
-    returns: String,
-    constraints: Vec<String>,
-    clarifications: Vec<ProblemClarification>,
-    target_complexity: String,
-    patterns: Vec<String>,
-    compare: CompareKind,
-    tolerance: f64,
-    reference: String,
-    misreadings: Vec<MisreadingAnswer>,
-    examples: Vec<CaseAnswer>,
-    hidden: Vec<CaseAnswer>,
-    scale: Vec<ScaleAnswer>,
-}
-
-const SYSTEM: &str = "You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case.";
-
-fn prompt(request: &ProblemRequest, runtime: &str) -> String {
-    let difficulty = match request.difficulty {
-        ProblemDifficulty::Easy => "easy",
-        ProblemDifficulty::Medium => "medium",
-        ProblemDifficulty::Hard => "hard",
-    };
-    let mut parts = vec![format!(
-        "Write one {difficulty} {} problem. The learner writes a single function in solution.py. {runtime}",
-        request.language
-    )];
-    if let Some(lesson) = &request.lesson {
-        parts.push(format!(
-            "It practises the lesson \"{}\", whose objective is: {}",
-            lesson.title, lesson.objective
-        ));
-    }
-    if let Some(focus) = request
-        .focus
-        .as_deref()
-        .filter(|focus| !focus.trim().is_empty())
-    {
-        parts.push(format!("The learner asked to focus on: {focus}"));
-    }
-    if let Some(details) = request
-        .details
-        .as_deref()
-        .filter(|details| !details.trim().is_empty())
-    {
-        parts.push(format!("The learner is preparing for: {details}"));
-    }
-    let required: Vec<String> = request
-        .patterns
-        .iter()
-        .filter_map(|id| problem_pattern(id))
-        .map(|pattern| format!("{} ({}): {}", pattern.id, pattern.name, pattern.cue))
-        .collect();
-    if !required.is_empty() {
-        parts.push(format!(
-            "The problem must call for these patterns, and its \"patterns\" must list them:\n{}",
-            required.join("\n")
-        ));
-    }
-    parts.push(
-        "Rules:\n\
-- The title and statement must never name a pattern or technique that solves the problem, or hint at one by name. The learner recognises the pattern.\n\
-- Arguments and expected results are Python literals, one argument for each parameter in the signature's order. Use built-in types and annotations such as list[int]; import nothing.\n\
-- The reference is a complete, correct solution.py that meets the target complexity.\n\
-- A misreading is a complete solution.py that a careful learner could write by reading the statement wrongly, or by missing an edge. Write at least three, and make each fail a case you wrote. It must still run.\n\
-- Write examples the statement shows, hidden cases that each probe an edge or a misreading, and at least one scale case.\n\
-- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals, arithmetic, comparisons, conditional expressions, indexing and comprehensions, such as list(range(50000)), [3] * 100000 or [i * 7919 % 100003 for i in range(100000)]. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.\n\
-- \"clarifications\" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume."
-            .to_owned(),
-    );
-    if request.form == Form::Repair {
-        parts.push(
-            "The learner will be handed one misreading as buggy code to repair, so write each misreading as a small, realistic change to the reference (an off-by-one, a wrong comparison, a missed case) that keeps the function's shape."
-                .to_owned(),
-        );
-    }
-    parts.join("\n\n")
-}
-
-fn text() -> Value {
-    json!({"type": "string", "minLength": 1})
-}
-
-fn list_of(items: Value) -> Value {
-    json!({"type": "array", "items": items})
-}
-
-fn object(properties: Value) -> Value {
-    let required: Vec<String> = match &properties {
-        Value::Object(map) => map.keys().cloned().collect(),
-        _ => Vec::new(),
-    };
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "required": required,
-        "properties": properties
-    })
-}
-
-/// The schema of an answer. Every item has six properties or fewer: larger item grammars fail on Claude.
-fn schema() -> Value {
-    let ids: Vec<&str> = PROBLEM_PATTERNS.iter().map(|pattern| pattern.id).collect();
-    let case = object(json!({
-        "category": text(),
-        "args": list_of(text()),
-        "expected": text(),
-    }));
-    object(json!({
-        "title": text(),
-        "statement": text(),
-        "functionName": text(),
-        "params": list_of(object(json!({"name": text(), "annotation": text()}))),
-        "returns": text(),
-        "constraints": list_of(text()),
-        "clarifications": list_of(object(json!({"question": text(), "answer": text()}))),
-        "targetComplexity": text(),
-        "patterns": {"type": "array", "minItems": 1, "items": {"type": "string", "enum": ids}},
-        "compare": {"type": "string", "enum": ["exact", "unordered", "float_within"]},
-        "tolerance": {"type": "number"},
-        "reference": text(),
-        "misreadings": list_of(object(json!({"description": text(), "code": text()}))),
-        "examples": list_of(case.clone()),
-        "hidden": list_of(case),
-        "scale": list_of(object(json!({"category": text(), "args": list_of(text())})))
-    }))
-}
-
 fn is_identifier(name: &str) -> bool {
     let mut chars = name.chars();
     chars
@@ -426,9 +317,39 @@ fn is_identifier(name: &str) -> bool {
         && chars.all(|c| c.is_alphanumeric() || c == '_')
 }
 
-/// Reads an answer, refusing what the app can see is wrong without running anything.
-fn read(raw: &str, request: &ProblemRequest) -> Result<Draft> {
-    let answer: Answer = parse_json(raw)?;
+fn refuse(reason: impl Into<String>) -> Refusal {
+    Refusal(reason.into())
+}
+
+/// The decimal a `tolerance` text holds, when it is greater than zero.
+fn tolerance_of(text: &str) -> Option<f64> {
+    text.trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|tolerance| tolerance.is_finite() && *tolerance > 0.0)
+}
+
+/// The patterns a problem calls for: the ones asked for, then the others the model named.
+fn patterns_of(input: &Input, answer: &ProblemAnswer) -> Vec<String> {
+    let mut patterns: Vec<String> = input
+        .wanted
+        .iter()
+        .map(|pattern| pattern.id.value().clone())
+        .collect();
+    for pick in &answer.patterns {
+        if !patterns.contains(&pick.reference) {
+            patterns.push(pick.reference.clone());
+        }
+    }
+    patterns
+}
+
+fn lines_of(lines: &[Line]) -> Vec<String> {
+    lines.iter().map(|line| line.text.clone()).collect()
+}
+
+/// The draft an answer makes, refusing what the app can see is wrong without running anything.
+fn drafted(input: &Input, answer: &ProblemAnswer) -> std::result::Result<Draft, Refusal> {
     for (value, what) in [
         (&answer.title, "title"),
         (&answer.statement, "statement"),
@@ -461,19 +382,11 @@ fn read(raw: &str, request: &ProblemRequest) -> Result<Draft> {
         }
     }
 
-    let mut patterns: Vec<String> = Vec::new();
-    for id in &answer.patterns {
-        if problem_pattern(id).is_none() {
-            return Err(refuse(format!("{id} is not one of the problem patterns.")));
-        }
-        if !patterns.contains(id) {
-            patterns.push(id.clone());
-        }
-    }
-    if let Some(missing) = request.patterns.iter().find(|id| !patterns.contains(id)) {
-        return Err(refuse(format!(
-            "The problem must call for the pattern {missing}, and \"patterns\" must list it."
-        )));
+    let patterns = patterns_of(input, answer);
+    if patterns.is_empty() {
+        return Err(refuse(
+            "The problem must call for at least one pattern; name it in \"patterns\" by its handle.",
+        ));
     }
     let shown = format!("{}\n{}", answer.title, answer.statement);
     if let Some(pattern) = named_in(&shown, &patterns) {
@@ -484,18 +397,16 @@ fn read(raw: &str, request: &ProblemRequest) -> Result<Draft> {
     }
 
     let compare = match answer.compare {
-        CompareKind::Exact => CaseCompare::Exact,
-        CompareKind::Unordered => CaseCompare::Unordered,
-        CompareKind::FloatWithin => {
-            if !answer.tolerance.is_finite() || answer.tolerance <= 0.0 {
+        CompareWord::Exact => CaseCompare::Exact,
+        CompareWord::Unordered => CaseCompare::Unordered,
+        CompareWord::FloatWithin => match tolerance_of(&answer.tolerance) {
+            Some(tolerance) => CaseCompare::FloatWithin { tolerance },
+            None => {
                 return Err(refuse(
                     "compare float_within needs a tolerance greater than zero.",
-                ));
+                ))
             }
-            CaseCompare::FloatWithin {
-                tolerance: answer.tolerance,
-            }
-        }
+        },
     };
 
     for (count, least, what) in [
@@ -532,11 +443,12 @@ fn read(raw: &str, request: &ProblemRequest) -> Result<Draft> {
     }
     for (index, scale) in answer.scale.iter().enumerate() {
         let id = format!("scale-{}", index + 1);
-        check_args(&id, &scale.category, &scale.args, arity)?;
+        let args = lines_of(&scale.args);
+        check_args(&id, &scale.category, &args, arity)?;
         cases.push(ProblemCase {
             id,
             category: scale.category.clone(),
-            args: scale.args.clone(),
+            args,
             expected: None,
             compare: CaseCompare::Exact,
             visibility: CaseVisibility::Hidden,
@@ -562,9 +474,16 @@ fn read(raw: &str, request: &ProblemRequest) -> Result<Draft> {
     }
 
     let signature = ProblemSignature {
-        function: answer.function_name,
-        params: answer.params,
-        returns: answer.returns,
+        function: answer.function_name.clone(),
+        params: answer
+            .params
+            .iter()
+            .map(|param| SignatureParam {
+                name: param.name.clone(),
+                annotation: param.annotation.clone(),
+            })
+            .collect(),
+        returns: answer.returns.clone(),
     };
     let starter = starter_of(&signature);
     Ok(Draft {
@@ -572,21 +491,63 @@ fn read(raw: &str, request: &ProblemRequest) -> Result<Draft> {
             title: answer.title.trim().to_owned(),
             statement: answer.statement.trim().to_owned(),
             signature,
-            constraints: answer.constraints,
-            clarifications: answer.clarifications,
-            language: request.language.clone(),
-            difficulty: request.difficulty,
-            target_complexity: answer.target_complexity,
+            constraints: lines_of(&answer.constraints),
+            clarifications: answer
+                .clarifications
+                .iter()
+                .map(|clarification| ProblemClarification {
+                    question: clarification.question.clone(),
+                    answer: clarification.answer.clone(),
+                })
+                .collect(),
+            language: input.language.0.clone(),
+            difficulty: input.difficulty.0,
+            target_complexity: answer.target_complexity.clone(),
             patterns,
             starter,
         },
-        reference: answer.reference,
+        reference: answer.reference.clone(),
         misreadings,
         cases,
     })
 }
 
-fn check_args(id: &str, category: &str, args: &[String], arity: usize) -> Result<()> {
+/// The answer as the model wrote it, to hand back when the proof refuses it.
+fn answer_text(answer: &ProblemAnswer) -> String {
+    let lines = |lines: &[Line]| -> Vec<Value> {
+        lines
+            .iter()
+            .map(|line| json!({"text": line.text}))
+            .collect()
+    };
+    let case = |case: &CaseAnswer| json!({"category": case.category, "args": lines(&case.args), "expected": case.expected});
+    json!({
+        "title": answer.title,
+        "statement": answer.statement,
+        "functionName": answer.function_name,
+        "params": answer.params.iter().map(|param| json!({"name": param.name, "annotation": param.annotation})).collect::<Vec<_>>(),
+        "returns": answer.returns,
+        "constraints": lines(&answer.constraints),
+        "clarifications": answer.clarifications.iter().map(|clarification| json!({"question": clarification.question, "answer": clarification.answer})).collect::<Vec<_>>(),
+        "targetComplexity": answer.target_complexity,
+        "patterns": answer.patterns.iter().map(|pick| pick.handle.written()).collect::<Vec<_>>(),
+        "compare": answer.compare.written(),
+        "tolerance": answer.tolerance,
+        "reference": answer.reference,
+        "misreadings": answer.misreadings.iter().map(|misreading| json!({"description": misreading.description, "code": misreading.code})).collect::<Vec<_>>(),
+        "examples": answer.examples.iter().map(case).collect::<Vec<_>>(),
+        "hidden": answer.hidden.iter().map(case).collect::<Vec<_>>(),
+        "scale": answer.scale.iter().map(|scale| json!({"category": scale.category, "args": lines(&scale.args)})).collect::<Vec<_>>(),
+    })
+    .to_string()
+}
+
+fn check_args(
+    id: &str,
+    category: &str,
+    args: &[String],
+    arity: usize,
+) -> std::result::Result<(), Refusal> {
     if category.trim().is_empty() {
         return Err(refuse(format!("The case {id} has no category.")));
     }
@@ -608,15 +569,16 @@ fn shown_case(
     compare: &CaseCompare,
     answer: &CaseAnswer,
     arity: usize,
-) -> Result<ProblemCase> {
-    check_args(&id, &answer.category, &answer.args, arity)?;
+) -> std::result::Result<ProblemCase, Refusal> {
+    let args = lines_of(&answer.args);
+    check_args(&id, &answer.category, &args, arity)?;
     if answer.expected.trim().is_empty() {
         return Err(refuse(format!("The case {id} has no expected result.")));
     }
     Ok(ProblemCase {
         id,
         category: answer.category.clone(),
-        args: answer.args.clone(),
+        args,
         expected: Some(answer.expected.clone()),
         compare: compare.clone(),
         visibility,

@@ -10,7 +10,7 @@ use crate::features::conversation::workspace_dto::*;
 use chrono::Utc;
 use lattice_core::shared::error::AppError;
 use serde_json::Value;
-use sqlx::{QueryBuilder, Sqlite, SqlitePool};
+use sqlx::{QueryBuilder, Sqlite};
 use std::collections::HashSet;
 const DEFAULT_SPACE_ID: &str = "space_general";
 
@@ -24,6 +24,7 @@ mod sources;
 mod spaces;
 mod state;
 
+use lattice_core::shared::persistence::Page;
 use listing::{build_fts_query, listing_response, ConversationListRow, ConversationListing};
 use spaces::ensure_standard_space;
 

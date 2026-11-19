@@ -3,6 +3,7 @@
 //! the window, then web research for a claim that page leaves unsupported.
 use super::readings_tests::{claim, paged, read_one, world_of};
 use super::*;
+use crate::reference_collection::PassageKind;
 use lattice_core::domain::learning::acceptance::{Outcome, Reading};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
@@ -128,6 +129,12 @@ impl LLMPort for PagingModel {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -303,6 +310,47 @@ fn a_page_never_exceeds_its_budget_while_it_fits_the_window() {
     assert_eq!(alone.len(), 1);
 }
 
+#[test]
+fn adjacent_hits_of_one_source_do_not_take_a_page_from_another_source() -> Result<()> {
+    let filler = "Background sentence here. ".repeat(58);
+    let long: String = [
+        "first matching fact.",
+        "second matching fact.",
+        "third matching fact.",
+    ]
+    .iter()
+    .map(|fact| format!("{filler}{fact} "))
+    .collect::<String>()
+        + &filler;
+    let other = format!("{filler}other matching fact. {filler}");
+    let references = ReferenceCollection::lexical(&[
+        reference("long".into(), long.clone()),
+        reference("other".into(), other.clone()),
+    ])?;
+    let list = references.cited_passages(&[
+        "first matching fact.",
+        "other matching fact.",
+        "second matching fact.",
+        "third matching fact.",
+    ])?;
+    let model = PagingModel::new(100_000);
+    let window_of = |text: &str, fact: &str| {
+        let start = text.find(fact).unwrap();
+        let span =
+            crate::reference_collection::verification_window(text, start..start + fact.len());
+        text[span].to_owned()
+    };
+    let budget = bank_tokens(&model, &window_of(&long, "first matching fact."))
+        + bank_tokens(&model, &window_of(&other, "other matching fact."))
+        + 10;
+    let (page, _) = evidence_checks::page_of(&model, CLAIM, &list, &[], Some(budget));
+    assert!(
+        page.iter().any(|passage| passage.source_id == "other"),
+        "the other source's passage is on the first page"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_term_in_no_passage_neither_counts_nor_lowers_the_bar() {
     let one = |id: &str, text: &str| reference(id.into(), text.into());
@@ -329,8 +377,8 @@ async fn research_found_for_a_claim_leads_its_first_page() -> Result<()> {
     let claims = inventory(&[CLAIM.into()]);
     let retained = ClaimChecks::default();
     let first = paged(&model, &references, &claims, &retained).await?;
-    assert_eq!(first[0].finding.verdict, ClaimVerdict::Unsupported);
-    let findings: Vec<_> = first.iter().map(|read| read.finding.clone()).collect();
+    assert_eq!(first[0].finding().verdict, ClaimVerdict::Unsupported);
+    let findings: Vec<_> = first.iter().map(|read| read.finding().clone()).collect();
     let checks_before = model.checks.lock().unwrap().len();
 
     // Research saves a source that states the claim.
@@ -341,11 +389,11 @@ async fn research_found_for_a_claim_leads_its_first_page() -> Result<()> {
         format!("{archive} Mineral alpha property records: {MARKER} {archive}"),
     ));
     let expanded = ReferenceCollection::lexical(&expanded_sources)?;
-    evidence_selection::record_research_scope(&expanded, &findings, &retained).await?;
+    evidence_selection::record_research_scope(&expanded, &findings, &[], &retained).await?;
     let second = paged(&model, &expanded, &claims, &retained).await?;
 
-    assert_eq!(second[0].finding.verdict, ClaimVerdict::Supported);
-    assert_eq!(second[0].finding.two_pass.reach, Some(Reach::Researched));
+    assert_eq!(second[0].finding().verdict, ClaimVerdict::Supported);
+    assert_eq!(second[0].finding().two_pass.reach, Some(Reach::Researched));
     let checks = model.checks.lock().unwrap();
     let recheck = checks
         .get(checks_before)
@@ -354,7 +402,7 @@ async fn research_found_for_a_claim_leads_its_first_page() -> Result<()> {
         recheck[0].contains(MARKER),
         "what research found is read first"
     );
-    assert!(fits_window(&model, CLAIM, &second[0].finding.evidence));
+    assert!(fits_window(&model, CLAIM, &second[0].finding().evidence));
     Ok(())
 }
 
@@ -369,7 +417,11 @@ struct BrokenJudge {
 impl LLMPort for BrokenJudge {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let (_, user) = crate::lessons::structured_call::task_messages(request);
-        if user.contains("Claim: ") || user.contains("\"sourcePassages\"") {
+        if user.contains("Claim: ")
+            || request.contract().is_some_and(|call| {
+                call.id == lattice_core::application::services::claim_verification::ClaimBatch::ID
+            })
+        {
             if self.outage {
                 return Err(AppError::ServiceNotAvailable("503: loading model".into()));
             }
@@ -389,11 +441,16 @@ impl LLMPort for BrokenJudge {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 
 #[tokio::test]
 async fn an_unusable_check_leaves_the_claim_with_its_cause_and_an_outage_defers_it() -> Result<()> {
-    use lattice_core::shared::runtime::jobs::JobFailure;
     let sources: Vec<_> = (0..3).map(related).collect();
     let references = ReferenceCollection::lexical(&sources)?;
     let references = &references;
@@ -414,13 +471,13 @@ async fn an_unusable_check_leaves_the_claim_with_its_cause_and_an_outage_defers_
         outage: false,
     })
     .await?;
-    assert_eq!(results[0].outcome, Outcome::Unjudged);
-    assert_eq!(results[0].finding.verdict, ClaimVerdict::Unverified);
-    assert_eq!(results[0].finding.statement, CLAIM);
+    assert_eq!(results[0].outcome(), Outcome::Unjudged);
+    assert_eq!(results[0].finding().verdict, ClaimVerdict::Unverified);
+    assert_eq!(results[0].finding().statement, CLAIM);
     assert!(
-        results[0].finding.reason.contains("unusable"),
+        results[0].finding().reason.contains("unusable"),
         "{}",
-        results[0].finding.reason
+        results[0].finding().reason
     );
     // Transient: the outage fails the check and the job defers it.
     let error = check(BrokenJudge {
@@ -430,7 +487,10 @@ async fn an_unusable_check_leaves_the_claim_with_its_cause_and_an_outage_defers_
     .await
     .err()
     .unwrap();
-    assert!(JobFailure::is_transient(&error), "{error}");
+    assert!(
+        crate::model_call::ErrorClass::of(&error).is_temporary(),
+        "{error}"
+    );
     Ok(())
 }
 
@@ -449,7 +509,8 @@ async fn the_checker_reads_a_source_index_as_its_title() -> Result<()> {
     let read = read_one(Reading::Parts, &model, &world, &statement).await?;
 
     assert_eq!(
-        read.finding.statement, statement,
+        read.finding().statement,
+        statement,
         "the finding keeps the lesson's words"
     );
     let claims = model.claims.lock().unwrap();
@@ -482,7 +543,8 @@ async fn a_verdict_the_challenge_overturned_is_checked_again_under_the_trust_pol
 {
     use crate::lesson_drafts;
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&db).await?;
     let sources = marker_collection();
     let references = ReferenceCollection::lexical(&sources)?;
     let model = PagingModel::new(6_000);
@@ -525,26 +587,23 @@ async fn a_verdict_the_challenge_overturned_is_checked_again_under_the_trust_pol
             )
         )
     );
-    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+    lesson_drafts::run(&db, &repo, &job, &lesson, async {
         lesson_drafts::record_checkpoint(
             &earlier,
             serde_json::to_value(ClaimReceipt {
                 verdict: ClaimVerdict::Unsupported,
                 reason: "Independent review raised unresolved evidence questions.".into(),
                 supporting_quote: None,
-                interpretation_policy: Some(
-                    lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY
-                        .into(),
-                ),
                 shown: None,
+                parts: Vec::new(),
             })?,
         )
         .await?;
         let read = read_one(Reading::Parts, &model, &world, CLAIM).await?;
-        assert_eq!(read.outcome, Outcome::Stands);
-        assert_eq!(read.finding.verdict, ClaimVerdict::Supported);
+        assert_eq!(read.outcome(), Outcome::Stands);
+        assert_eq!(read.finding().verdict, ClaimVerdict::Supported);
         assert_eq!(
-            read.finding.two_pass.pass,
+            read.finding().two_pass.pass,
             Some(Pass::Attribution),
             "the citation supports it"
         );
@@ -575,7 +634,7 @@ impl LLMPort for DenseModel {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         use lattice_core::application::ports::llm_port::CompletionInput;
         let estimate: usize = request
-            .input
+            .input()
             .iter()
             .map(|item| match item {
                 CompletionInput::Message { content, .. } => self.count_tokens(content),
@@ -611,6 +670,12 @@ impl LLMPort for DenseModel {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.paging.enforces(schema)
+    }
 }
 
 #[tokio::test]
@@ -634,15 +699,15 @@ async fn a_page_counted_past_the_window_is_sent_again_with_fewer_passages() -> R
     let checks = model.paging.checks.lock().unwrap();
     let saw = |check: &[String], text: &str| check.iter().any(|seen| seen.contains(text));
     // The refused page was judged, on fewer passages: the claim has a verdict.
-    assert_eq!(results[0].finding.verdict, ClaimVerdict::Unsupported);
+    assert_eq!(results[0].finding().verdict, ClaimVerdict::Unsupported);
     assert!(
         checks[0].len() < first.len(),
         "page 1 was sent again, shorter"
     );
     // The finding names only the passages the judge read.
-    assert!(!results[0].finding.evidence.is_empty());
+    assert!(!results[0].finding().evidence.is_empty());
     assert!(results[0]
-        .finding
+        .finding()
         .evidence
         .iter()
         .all(|passage| saw(&checks[0], &passage.text)));
@@ -679,7 +744,7 @@ impl LLMPort for CountingDenseModel {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         use lattice_core::application::ports::llm_port::CompletionInput;
         let text = request
-            .input
+            .input()
             .iter()
             .filter_map(|item| match item {
                 CompletionInput::Message { content, .. } => Some(content.as_str()),
@@ -722,16 +787,21 @@ impl LLMPort for CountingDenseModel {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.paging.enforces(schema)
+    }
 }
 
 /// The single-claim judge's checker.
 fn strict_checker(
     model: &dyn LLMPort,
 ) -> lattice_core::application::services::claim_verification::ClaimChecker<'_> {
-    lattice_core::application::services::claim_verification::ClaimChecker::new(
+    lattice_core::application::services::claim_verification::ClaimChecker::for_policy(
         model,
         lattice_core::application::ports::llm_port::SamplingOverride::deterministic(),
-        512,
         lattice_core::application::services::claim_verification::CheckPolicy::Strict,
     )
 }
@@ -811,8 +881,8 @@ fn a_page_loses_its_least_needed_passages_not_its_last() {
     // In page order, as the judge reads it; cited and researched passages
     // carry no score.
     let page = vec![
-        ranked_passage(evidence_selection::RESEARCHED, 0.0, "researched"),
-        ranked_passage(CITED, 0.0, "cited"),
+        ranked_passage(PassageKind::Researched.label(), 0.0, "researched"),
+        ranked_passage(PassageKind::Cited.label(), 0.0, "cited"),
         ranked_passage("lexical", 1.0 / 63.0, "third-ranked"),
         ranked_passage("lexical", 1.0 / 61.0, "top-ranked"),
         ranked_passage("lexical", 1.0 / 62.0, "second-ranked"),
@@ -834,13 +904,10 @@ fn a_restored_receipt_names_only_the_passages_its_judge_was_shown() {
         verdict: ClaimVerdict::Supported,
         reason: "The passage states it.".into(),
         supporting_quote: Some("shown".into()),
-        interpretation_policy: Some(
-            lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY
-                .into(),
-        ),
         shown: Some(vec![0]),
+        parts: Vec::new(),
     }
-    .finding(0, &claim, &page)
+    .restored(0, &claim, &page)
     .unwrap();
     assert_eq!(finding.evidence.len(), 1);
     assert_eq!(finding.evidence[0].text, "shown");

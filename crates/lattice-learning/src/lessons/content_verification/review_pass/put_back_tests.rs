@@ -313,3 +313,20 @@ fn a_cut_recorded_in_another_block_does_not_make_this_blocks_place_ambiguous() {
     apply(None, &mut draft, found);
     assert_eq!(body(&draft), [ALPHA, BRAVO, ECHO].join(" "));
 }
+
+#[test]
+fn a_put_back_whose_text_overlaps_itself_is_not_applied() {
+    let mut draft = json!({"blocks": [{"title": "A", "body": "Go. Go. Go."}], "questions": []});
+    apply(
+        None,
+        &mut draft,
+        vec![Change::Edit {
+            claim: ClaimId("c1".into()),
+            unit: 0,
+            pointer: "/blocks/0/body".into(),
+            before: "Go. Go.".into(),
+            after: "Run.".into(),
+        }],
+    );
+    assert_eq!(body(&draft), "Go. Go. Go.");
+}

@@ -4,8 +4,6 @@ import { Paperclip } from 'lucide-react';
 
 import { TiptapViewer, textWithFormulas } from '@/components/TiptapEditor';
 import { ClaimActionsPopover } from '@/features/chat/components/actions/ClaimActionsPopover';
-import { CitationFootnote } from '@/features/chat/components/CitationFootnote';
-import { CitationHoverCard } from '@/features/chat/components/CitationHoverCard';
 import { ClaimHoverCard } from '@/features/chat/components/ClaimHoverCard';
 import { EvidenceMargin } from '@/features/chat/components/EvidenceMargin';
 import { MessageHeader } from '@/features/chat/components/message/MessageHeader';
@@ -22,13 +20,15 @@ import { useMessageEvidence } from '@/features/chat/hooks/useMessageEvidence';
 import { useRevealStreamingRef } from '@/features/chat/hooks/useRevealStreamingRef';
 import { useChatFigures } from '@/features/chat/images/useChatFigures';
 import { openInFolder, revealInFolder } from '@/features/chat/model/folderThreadHost';
+import { CitationFootnote } from '@/features/reading/components/CitationFootnote';
+import { CitationHoverCard } from '@/features/reading/components/CitationHoverCard';
 import { SourceCitations } from '@/features/reading/components/SourceCitations';
-import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
+import { useReaderStore } from '@/features/reading/stores/readerStore';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
+import { useDrawnReply } from '@/shared/conversations/useDrawnReply';
 import type { DisplayMessage, SourceWithMetadata } from '@/types/conversation';
-import { normalizeAssistantMarkdown } from '@/utils/assistantMarkdown';
 
 /** The answer as the reader sees it, each formula as its source. */
 function readAnswer(answer: HTMLElement | null): string {
@@ -83,7 +83,7 @@ export const Message = memo(({
 
   // One reader serves the whole thread. A message hands it a citation to show
   // and reads back where the viewer found it.
-  const resolvedLocations = useChatReaderStore((s) => s.resolvedLocations);
+  const resolvedLocations = useReaderStore((s) => s.resolvedLocations);
   const showCitations = useCitationDisplayStore((s) => s.visible);
 
   const messageId = 'id' in message ? message.id : undefined;
@@ -154,11 +154,9 @@ export const Message = memo(({
     verificationBadge,
   } = verification;
 
-  const normalizedMarkdownContent = useMemo(
-    () => (isUser ? message.content : normalizeAssistantMarkdown(message.content)),
-    [isUser, message.content]
-  );
-  useRevealStreamingRef(normalizedMarkdownContent, showsCodeRefs && isPending);
+  const drawn = useDrawnReply(message, !isUser, showsCodeRefs);
+  const normalizedMarkdownContent = drawn ? drawn.readable : message.content;
+  useRevealStreamingRef(drawn?.files, showsCodeRefs && isPending);
 
   const {
     isEditing,
@@ -297,11 +295,13 @@ export const Message = memo(({
         >
           <TangentSelection conversationId={conversationId} messageId={messageId} enabled={!isUser && !isPending && !isFailed && message.status !== 'processing'}>
           <TiptapViewer
-            content={normalizedMarkdownContent}
+            content={drawn ? drawn.markdown : message.content}
             citationNumbers={citationNumbers}
+            marks={drawn?.numbers}
             claims={isUser ? undefined : claimVerdicts}
             showEvidence={showCitations}
             codeRefs={showsCodeRefs}
+            files={drawn?.files}
             streaming={isPending}
             images={figures}
           />

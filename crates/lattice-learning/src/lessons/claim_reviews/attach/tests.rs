@@ -28,14 +28,18 @@ use serde_json::{json, Value};
 
 use super::super::recheck::waiting_claims;
 use super::acquire::{acquire, Acquired};
+use super::check;
 use super::failures::AttachFailureDto;
 use super::report::{ClaimAttachProgressDto, PutBackOutcomeDto, SnapshotNoteDto};
 use super::{
     attach, attach_to, attach_to_lesson, AttachDeps, AttachRequest, Evidence, LessonSourceRequest,
     Others,
 };
+use crate::dto::LearningSourceDto;
 use crate::lessons::claim_reviews::dto::{AttachOutcomeDto, SourceAddedByDto};
+use crate::lessons::content_verification::fits_window;
 use crate::lessons::content_verification::tests::{fixture_completion, fixture_prompts};
+use crate::reference_collection::ReferenceCollection;
 use crate::source_library::LearningSourceLibraryRepository;
 use crate::{repository::LearningRepository, tests};
 
@@ -413,10 +417,17 @@ impl LLMPort for Judge {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 struct World {
-    pool: lattice_core::shared::persistence::Database,
+    db: lattice_core::shared::persistence::Database,
+    pool: sqlx::SqlitePool,
     program_id: String,
     ledger: MemoryLedger,
 }
@@ -431,7 +442,8 @@ async fn world() -> World {
 
 async fn world_with(claims: Vec<ClaimLedgerEntry>) -> World {
     let pool = tests::pool().await.unwrap();
-    let repo = LearningRepository::new(pool.clone());
+    let db = lattice_core::shared::persistence::Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let program = tests::fixture();
     repo.create(&program).await.unwrap();
     repo.accept(&crate::dto::AcceptLearningProgramRequestDto {
@@ -444,7 +456,8 @@ async fn world_with(claims: Vec<ClaimLedgerEntry>) -> World {
     let program_id = program.summary.id.clone();
     let ledger = MemoryLedger::new(&program_id, claims);
     World {
-        pool: pool.into(),
+        db,
+        pool,
         program_id,
         ledger,
     }
@@ -462,7 +475,7 @@ impl World {
         let library = EmptyLibrary;
         attach(
             &AttachDeps {
-                database: &self.pool,
+                database: &self.db,
                 store: &self.ledger,
                 web,
                 snapshots,
@@ -500,7 +513,7 @@ impl World {
         let progress = |stage: ClaimAttachProgressDto| stages.lock().unwrap().push(stage);
         let report = attach_to(
             &AttachDeps {
-                database: &self.pool,
+                database: &self.db,
                 store: &self.ledger,
                 web: &web,
                 snapshots: &snapshots,
@@ -541,7 +554,7 @@ impl World {
         let progress = |stage: ClaimAttachProgressDto| stages.lock().unwrap().push(stage);
         let report = attach_to_lesson(
             &AttachDeps {
-                database: &self.pool,
+                database: &self.db,
                 store: &self.ledger,
                 web,
                 snapshots: &snapshots,
@@ -569,7 +582,7 @@ impl World {
     }
 
     async fn source_count(&self) -> usize {
-        LearningSourceLibraryRepository::new(self.pool.clone())
+        LearningSourceLibraryRepository::new(self.db.clone())
             .workspace(&self.program_id)
             .await
             .unwrap()
@@ -692,7 +705,7 @@ async fn pasted_text_that_supports_the_claim_verifies_it_and_checks_the_others()
     assert_eq!(world.ledger.claim("mercury").events().len(), 2);
     assert_eq!(*web.fetched.lock().unwrap(), 0);
 
-    let saved = LearningSourceLibraryRepository::new(world.pool.clone())
+    let saved = LearningSourceLibraryRepository::new(world.db.clone())
         .saved_version(&world.program_id, &source.source_version_id)
         .await
         .unwrap()
@@ -835,7 +848,7 @@ async fn a_link_is_saved_as_the_users_and_frozen() {
     assert_eq!(report.snapshot, SnapshotNoteDto::Ready);
     assert_eq!(*snapshots.requested.lock().unwrap(), vec![url.clone()]);
     let source = report.source.unwrap();
-    let saved = LearningSourceLibraryRepository::new(world.pool.clone())
+    let saved = LearningSourceLibraryRepository::new(world.db.clone())
         .saved_version(&world.program_id, &source.source_version_id)
         .await
         .unwrap()
@@ -889,7 +902,7 @@ async fn a_stale_review_is_refused_before_anything_is_saved() {
     let library = EmptyLibrary;
     let refused = attach(
         &AttachDeps {
-            database: &world.pool,
+            database: &world.db,
             store: &world.ledger,
             web: &web,
             snapshots: &snapshots,
@@ -970,7 +983,7 @@ async fn a_new_source_is_checked_for_the_waiting_claims_by_the_machine() {
     let library = EmptyLibrary;
     let judge = Judge::says("supported");
     let deps = AttachDeps {
-        database: &world.pool,
+        database: &world.db,
         store: &world.ledger,
         web: &web,
         snapshots: &snapshots,
@@ -1204,6 +1217,60 @@ async fn a_lesson_with_no_open_claims_saves_the_source_and_checks_nothing() {
         .iter()
         .all(|stage| !matches!(stage, ClaimAttachProgressDto::Checking { .. })));
     assert!(matches!(stages.last(), Some(ClaimAttachProgressDto::Done)));
+}
+
+/// A model with a chosen context window and no replies.
+struct Window(usize);
+
+#[async_trait]
+impl LLMPort for Window {
+    async fn complete(&self, _: &CompletionRequest) -> Result<CompletionResponse> {
+        Err(AppError::InvalidState("This model answers nothing.".into()))
+    }
+    fn model_name(&self) -> &str {
+        "window-fixture"
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len() / 4
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.0
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
+}
+
+#[tokio::test]
+async fn an_attached_sources_passages_fill_the_single_claim_judges_window() {
+    let filler = "The quick lemon fox jumps over the lazy dog. ".repeat(150);
+    let sources = [LearningSourceDto {
+        id: "source-1".into(),
+        title: "Notes".into(),
+        url: None,
+        excerpt: format!("{WATER} {filler}{WATER} {filler}{WATER}"),
+        acquired_at: 0,
+    }];
+    let references = ReferenceCollection::lexical(&sources).unwrap();
+    let all = check::passages_from(&Window(1_000_000), &references, "source-1", WATER)
+        .await
+        .unwrap();
+    assert!(all.len() >= 2);
+    let window = (1..2_000_000)
+        .find(|&window| fits_window(&Window(window), WATER, &all))
+        .unwrap();
+
+    let held = check::passages_from(&Window(window), &references, "source-1", WATER)
+        .await
+        .unwrap();
+
+    assert_eq!(held.len(), all.len());
 }
 
 #[path = "write_tests.rs"]

@@ -24,6 +24,7 @@ use lattice_core::shared::error::Result;
 mod read;
 mod recall;
 mod search;
+pub(crate) mod view;
 
 use read::execute_read;
 pub use recall::{
@@ -106,8 +107,8 @@ pub fn history_tool_definitions() -> Vec<ToolDefinition> {
             name: TOOL_SEARCH_CONVERSATION_HISTORY.to_string(),
             description: "Search the original messages of THIS conversation, including older \
                  turns that were compacted out of your context. Returns ranked excerpts with \
-                 message ids, sequence numbers and roles, so you can then read the full text \
-                 with read_conversation_history. Results are a ranked subset, not a complete \
+                 a bracketed name and the role of each message, so you can then read the full \
+                 text with read_conversation_history. Results are a ranked subset, not a complete \
                  inventory: finding nothing means this search did not match it, not that it \
                  was never said. Always scoped to the current conversation."
                 .to_string(),
@@ -125,12 +126,6 @@ pub fn history_tool_definitions() -> Vec<ToolDefinition> {
                         "default": 8,
                         "minimum": 1,
                         "maximum": MAX_CANDIDATES
-                    },
-                    "offset": {
-                        "type": "integer",
-                        "description": "Matches to skip: the next_offset a previous page named",
-                        "default": 0,
-                        "minimum": 0
                     }
                 },
                 "required": ["query"],
@@ -139,37 +134,15 @@ pub fn history_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: TOOL_READ_CONVERSATION_HISTORY.to_string(),
-            description: "Read the exact original text of messages in THIS conversation, by \
-                 message id or by sequence interval. Give either message_ids or from_sequence \
-                 (with an optional to_sequence), not both. Responses are cut at a byte budget \
-                 and carry a continuation cursor; pass start_byte to resume. Always scoped to \
-                 the current conversation."
+            description: "Read the exact original text of a message in THIS conversation, by \
+                 the bracketed name a search showed for it. A response cut at the byte budget \
+                 names the point to read on from for read_more. Always scoped to the current \
+                 conversation."
                 .to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "message_ids": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Message ids from search_conversation_history",
-                        "maxItems": MAX_READ_MESSAGES
-                    },
-                    "from_sequence": {
-                        "type": "integer",
-                        "description": "First sequence number to read, inclusive",
-                        "minimum": 0
-                    },
-                    "to_sequence": {
-                        "type": "integer",
-                        "description": "Last sequence number to read, inclusive. Omit to read \
-                                        forward until the budget is spent.",
-                        "minimum": 0
-                    },
-                    "start_byte": {
-                        "type": "integer",
-                        "description": "Resume offset from a previous continuation cursor",
-                        "minimum": 0
-                    },
+                    "message": lattice_core::application::services::tool_handles::message_property(),
                     "max_bytes": {
                         "type": "integer",
                         "description": "Requested response ceiling in bytes; the turn's own \
@@ -197,7 +170,10 @@ pub fn tools_for_turn(
         external_tools.to_vec()
     };
     if history_available {
-        for definition in history_tool_definitions() {
+        let more = lattice_core::application::services::tool_handles::read_more_definition()
+            .ok()
+            .map(ToolDefinition::from);
+        for definition in history_tool_definitions().into_iter().chain(more) {
             if !selected.iter().any(|tool| tool.name == definition.name) {
                 selected.push(definition);
             }

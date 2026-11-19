@@ -31,13 +31,14 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{
     AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt,
 };
-use tokio::process::{Child, Command};
+use tokio::process::Child;
 use tokio_util::sync::CancellationToken;
 
 use super::embedded_runtime::BuiltinLabExecutionSpec;
 use super::lab_runtime::{self, LearningLabExecutionResult, LearningLabRunStatus};
 use super::python_runtime::PythonBundle;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::process::BoundCommand;
 
 /// The argument that makes this executable a lab runner instead of the app.
 pub const LAB_RUNNER_ARG: &str = "--lattice-lab-runner";
@@ -281,6 +282,7 @@ pub(crate) async fn run(
     // and protocol failure, and kill_on_drop when the caller goes away.
     let mut child = runner_command(runner, scratch.path())?
         .spawn()
+        .await
         .map_err(|error| {
             AppError::ServiceNotAvailable(format!("The lab runner could not start: {error}"))
         })?;
@@ -289,24 +291,23 @@ pub(crate) async fn run(
 
 /// This executable as a runner: no inherited environment, the run's scratch
 /// directory as working directory and temporary directory, piped stdio.
-fn runner_command(runner: Runner, scratch: &Path) -> Result<Command> {
+fn runner_command(runner: Runner, scratch: &Path) -> Result<BoundCommand> {
     let executable = tauri_utils::platform::current_exe().map_err(|error| {
         AppError::InternalError(format!("Cannot locate this executable: {error}"))
     })?;
-    let mut command = Command::new(executable);
-    command
+    let command = BoundCommand::new(executable)
         .args(runner_args(runner))
         .env_clear()
         .envs(runner_environment(scratch))
         .current_dir(scratch)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+        .stderr(Stdio::piped());
     #[cfg(any(test, feature = "test-support"))]
-    if let Runner::Test(_) = runner {
-        command.env(CHILD_MODE, "serve");
-    }
+    let command = match runner {
+        Runner::Test(_) => command.env(CHILD_MODE, "serve"),
+        Runner::App => command,
+    };
     Ok(command)
 }
 
@@ -553,10 +554,13 @@ pub(super) mod tests {
         }
     }
 
-    fn spawn_child(scratch: &Path, mode: &str) -> Child {
-        let mut command = runner_command(Runner::Test(CHILD_TEST), scratch).unwrap();
-        command.env(CHILD_MODE, mode);
-        command.spawn().unwrap()
+    async fn spawn_child(scratch: &Path, mode: &str) -> Child {
+        runner_command(Runner::Test(CHILD_TEST), scratch)
+            .unwrap()
+            .env(CHILD_MODE, mode)
+            .spawn()
+            .await
+            .unwrap()
     }
 
     fn short_deadlines() -> Deadlines {
@@ -691,7 +695,7 @@ pub(super) mod tests {
     #[tokio::test]
     async fn the_child_inherits_no_environment_and_works_in_its_scratch_directory() -> Result<()> {
         let scratch = tempfile::tempdir()?;
-        let mut child = spawn_child(scratch.path(), "environment");
+        let mut child = spawn_child(scratch.path(), "environment").await;
         let result = supervise(
             &mut child,
             &request(""),
@@ -723,7 +727,7 @@ pub(super) mod tests {
     #[tokio::test]
     async fn a_child_that_outlives_its_deadline_is_killed() -> Result<()> {
         let scratch = tempfile::tempdir()?;
-        let mut child = spawn_child(scratch.path(), "hang");
+        let mut child = spawn_child(scratch.path(), "hang").await;
         let result = supervise(
             &mut child,
             &request(""),
@@ -740,7 +744,7 @@ pub(super) mod tests {
     #[tokio::test]
     async fn cancelling_a_run_kills_its_child() -> Result<()> {
         let scratch = tempfile::tempdir()?;
-        let mut child = spawn_child(scratch.path(), "hang");
+        let mut child = spawn_child(scratch.path(), "hang").await;
         let cancellation = CancellationToken::new();
         let cancel = cancellation.clone();
         tokio::spawn(async move {

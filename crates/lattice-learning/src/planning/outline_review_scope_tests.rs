@@ -1,6 +1,7 @@
 //! Incremental review receipts under optional citations. Carried over from
 //! the deleted research tests; the review protocol itself is rebuilt next.
 use super::outline_reference_tests::*;
+use crate::lessons::content_verification::tests::fixture_task;
 use crate::{
     dto::*,
     lessons::course_generation_tests::{outline, repair_answer, request},
@@ -15,22 +16,22 @@ use crate::{
     service,
 };
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 use serde_json::json;
 
 #[tokio::test]
 async fn single_module_recheck_reuses_completed_checks_and_keeps_whole_course_connections(
 ) -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
-    let mut initial = candidate();
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
+    let initial = candidate();
     let mut source = original_source();
     let quote = ORIGINAL.repeat(12);
     source.excerpt = quote.clone();
-    cite_at(&mut initial, "/modules/1/summary", 0, &quote);
     let mut fixed = initial["modules"][1].clone();
     fixed["project"]["brief"] = json!("Extend the Experimental design module 0 project with a measurement protocol and observable outcomes.");
     let llm = model(vec![
-        initial,
-        links(&[("/modules/1/summary", ORIGINAL)]),
+        initial.clone(),
+        links(&initial, &[("/modules/1/outcomes/0", ORIGINAL)]),
         issue(1),
         repair_answer(fixed.clone()),
         verdicts(&[("finding-1", "resolved")], vec![]),
@@ -66,15 +67,15 @@ async fn single_module_recheck_reuses_completed_checks_and_keeps_whole_course_co
             .unwrap();
         assert!(last_link < first_review);
     }
-    let full = payload(&prompts[1]);
-    let recheck = payload(&prompts[3]);
+    let full = fixture_task(&prompts[1]).unwrap();
+    let recheck = fixture_task(&prompts[3]).unwrap();
     assert_eq!(full["reviewScope"]["mode"], "full");
     // The reviewer never sees citation fields anywhere in the payload (source
     // passages are still supplied, so the text itself may appear there).
-    assert!(full["candidate"]["modules"][1]["summary"]
+    assert!(full["candidate"]["modules"][1]["outcomes"][0]
         .get("quote")
         .is_none());
-    assert!(full["candidate"]["modules"][1]["summary"]
+    assert!(full["candidate"]["modules"][1]["outcomes"][0]
         .get("sourceIndex")
         .is_none());
     assert_eq!(recheck["reviewScope"]["mode"], "changed_modules");
@@ -83,7 +84,7 @@ async fn single_module_recheck_reuses_completed_checks_and_keeps_whole_course_co
     assert_eq!(recheck["modulesToReview"].as_array().unwrap().len(), 1);
     assert_eq!(recheck["modulesToReview"][0]["path"], "/modules/1");
     assert_eq!(recheck["modulesToReview"][0]["moduleNumber"], 2);
-    assert!(recheck["modulesToReview"][0]["module"]["summary"]
+    assert!(recheck["modulesToReview"][0]["module"]["outcomes"][0]
         .get("quote")
         .is_none());
     assert_eq!(recheck["courseSequence"].as_array().unwrap().len(), 4);
@@ -99,7 +100,7 @@ async fn single_module_recheck_reuses_completed_checks_and_keeps_whole_course_co
         .get("quote")
         .is_none());
     let saved = repo.outline_draft(&program.summary.id).await?.unwrap();
-    assert_eq!(saved.candidate["modules"][1]["summary"]["quote"], quote);
+    assert_eq!(saved.candidate["modules"][1]["outcomes"][0]["quote"], quote);
     Ok(())
 }
 
@@ -195,7 +196,8 @@ async fn review_receipts_survive_new_references_and_invalidate_on_model_request_
 async fn interrupted_incremental_review_resumes_from_last_completed_receipt_without_approval(
 ) -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool);
+    let repo = LearningRepository::new(db.clone());
     let mut initial = candidate();
     let sources = vec![original_source()];
     cite_at(&mut initial, "/modules/0/summary", 0, ORIGINAL);
@@ -205,8 +207,8 @@ async fn interrupted_incremental_review_resumes_from_last_completed_receipt_with
     // The rewrite changes the summary text, so that one item is linked again
     // after the repair (nothing qualifies) before the review that fails.
     let llm = model(vec![
-        initial,
-        links(&[("/modules/0/summary", ORIGINAL)]),
+        initial.clone(),
+        links(&initial, &[("/modules/0/summary", ORIGINAL)]),
         issue(1),
         repair_answer(fixed.clone()),
         no_links(),
@@ -237,7 +239,7 @@ async fn interrupted_incremental_review_resumes_from_last_completed_receipt_with
     )
     .await
     .is_err());
-    let reopened = LearningRepository::new(pool);
+    let reopened = LearningRepository::new(db);
     // The resumed check reuses the link receipts and the module receipts:
     // one incremental review call, nothing else.
     let llm = model(vec![verdicts(&[("finding-1", "resolved")], vec![])]);
@@ -260,11 +262,11 @@ async fn interrupted_incremental_review_resumes_from_last_completed_receipt_with
     let prompts = llm.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 1);
     assert_eq!(
-        payload(&prompts[0])["reviewScope"]["moduleIndices"],
+        fixture_task(&prompts[0]).unwrap()["reviewScope"]["moduleIndices"],
         json!([1])
     );
     assert_eq!(
-        payload(&prompts[0])["reviewScope"]["mode"],
+        fixture_task(&prompts[0]).unwrap()["reviewScope"]["mode"],
         "changed_modules"
     );
     Ok(())
@@ -273,7 +275,7 @@ async fn interrupted_incremental_review_resumes_from_last_completed_receipt_with
 #[tokio::test]
 async fn incremental_review_anchors_cross_module_effects_to_the_module_that_must_change(
 ) -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let mut initial = candidate();
     let sources = vec![original_source()];
     cite_at(&mut initial, "/modules/0/summary", 0, ORIGINAL);
@@ -286,7 +288,7 @@ async fn incremental_review_anchors_cross_module_effects_to_the_module_that_must
     // unchanged, which declines the plan finding: it stays as a suggestion.
     let llm = model(vec![
         initial.clone(),
-        links(&[("/modules/0/summary", ORIGINAL)]),
+        links(&initial, &[("/modules/0/summary", ORIGINAL)]),
         issue(1),
         repair_answer(fixed.clone()),
         verdicts(
@@ -321,9 +323,9 @@ async fn incremental_review_anchors_cross_module_effects_to_the_module_that_must
     // Draft, full review, repair, incremental review, one repair: no other
     // module is rewritten for a problem anchored to module 1.
     assert_eq!(prompts.len(), 5);
-    let recheck = payload(&prompts[3]);
-    assert_eq!(recheck["openFindings"][0]["id"], "finding-1");
+    let recheck = fixture_task(&prompts[3]).unwrap();
+    assert_eq!(recheck["openFindings"][0]["id"], "f1");
     assert_eq!(recheck["openFindings"][0]["attempts"], 1);
-    assert_eq!(payload(&prompts[4])["moduleIndex"], 1);
+    assert_eq!(fixture_task(&prompts[4]).unwrap()["moduleNumber"], 2);
     Ok(())
 }

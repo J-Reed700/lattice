@@ -92,7 +92,7 @@ describe('useWeeklySynthesisCandidatesQuery', () => {
     });
   });
 
-  it('never promises more than a run reads (12 / 20 / 8)', async () => {
+  it('counts everything in the week, however much there is', async () => {
     listConversations.mockResolvedValue({ ok: true, data: { conversations: conversations(30) } });
     listPassageReferences.mockResolvedValue({ ok: true, data: passages(50) });
     listWorkspaceNotes.mockResolvedValue({ ok: true, data: { notes: notes(20) } });
@@ -100,11 +100,13 @@ describe('useWeeklySynthesisCandidatesQuery', () => {
     const { result } = renderHook(() => useWeeklySynthesisCandidatesQuery(), { wrapper });
     await waitFor(() => expect(result.current.data).toBeDefined());
     expect(result.current.data).toEqual({
-      conversations: 12,
-      references: 20,
-      notes: 8,
-      total: 40,
+      conversations: 30,
+      references: 50,
+      notes: 20,
+      total: 100,
     });
+    expect(listConversations).toHaveBeenCalledWith();
+    expect(listPassageReferences).toHaveBeenCalledWith();
   });
 
   it('counts a failing call as nothing rather than failing the row', async () => {

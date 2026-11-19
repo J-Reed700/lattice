@@ -1,6 +1,7 @@
 use super::Operation;
-use crate::persistence::{db, decode, encode, now};
+use crate::persistence::{decode, encode, now};
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::WriteTx;
 use serde::{de::DeserializeOwned, Serialize};
 use sqlx::{Row, SqliteConnection};
 
@@ -27,22 +28,18 @@ impl Operation<'_> {
     }
 
     /// Record this request and what it produced.
-    pub(crate) async fn record<T>(
-        &self,
-        connection: &mut SqliteConnection,
-        result: &T,
-    ) -> Result<()>
+    pub(crate) async fn record<T>(&self, tx: &mut WriteTx, result: &T) -> Result<()>
     where
         T: Serialize + ?Sized,
     {
-        insert(connection, self, &encode(result)?).await
+        insert(tx, self, &encode(result)?).await
     }
 
     /// Drop this identical request's row once what it produced is gone, so
     /// the same ID can do the work again inside the caller's transaction. A
     /// row recorded for any other request is left alone.
-    pub(crate) async fn forget(&self, connection: &mut SqliteConnection) -> Result<()> {
-        delete(connection, self).await
+    pub(crate) async fn forget(&self, tx: &mut WriteTx) -> Result<()> {
+        delete(tx, self).await
     }
 }
 
@@ -58,7 +55,7 @@ pub(crate) struct RecordedOperation {
 }
 
 pub(super) async fn insert(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     operation: &Operation<'_>,
     result_json: &str,
 ) -> Result<()> {
@@ -71,24 +68,19 @@ pub(super) async fn insert(
         .bind(operation.payload_hash)
         .bind(result_json)
         .bind(now())
-        .execute(connection)
-        .await
-        .map_err(db)?;
+        .execute(&mut **tx)
+        .await?;
     Ok(())
 }
 
-pub(super) async fn delete(
-    connection: &mut SqliteConnection,
-    operation: &Operation<'_>,
-) -> Result<()> {
+pub(super) async fn delete(tx: &mut WriteTx, operation: &Operation<'_>) -> Result<()> {
     sqlx::query("DELETE FROM learning_operations WHERE operation_id=? AND scope=? AND kind=? AND payload_hash=?")
         .bind(operation.id)
         .bind(operation.scope)
         .bind(operation.kind)
         .bind(operation.payload_hash)
-        .execute(connection)
-        .await
-        .map_err(db)?;
+        .execute(&mut **tx)
+        .await?;
     Ok(())
 }
 
@@ -99,8 +91,7 @@ pub(super) async fn find(
     let row = sqlx::query("SELECT scope,kind,program_id,subject_id,payload_hash,result_json FROM learning_operations WHERE operation_id=?")
         .bind(operation_id)
         .fetch_optional(connection)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(row.map(|row| RecordedOperation {
         scope: row.get("scope"),
         kind: row.get("kind"),

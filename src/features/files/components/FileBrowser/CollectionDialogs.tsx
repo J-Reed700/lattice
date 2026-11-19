@@ -88,7 +88,7 @@ export function AddToCollectionDialog({ documentIds, onClose }: {
         ) : <p className="text-sm text-text-secondary">Create your first collection for these documents.</p>}
         <form onSubmit={event => { event.preventDefault(); void create(); }} className="space-y-3 border-t border-border-subtle pt-4">
           <label htmlFor="new-collection-name" className="text-sm text-text-secondary">New collection</label>
-          <Input id="new-collection-name" placeholder="Collection name" maxLength={120} value={name} onChange={event => { setName(event.target.value); setError(''); }} />
+          <Input id="new-collection-name" placeholder="Collection name" value={name} onChange={event => { setName(event.target.value); setError(''); }} />
           {error ? <p role="alert" className="text-sm text-danger">{error}</p> : null}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
@@ -190,7 +190,7 @@ export function RenameCollectionDialog({ collection, onClose }: { collection: Cu
             onClose();
           }).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
         }}>
-          <Input aria-label="Collection name" value={name} maxLength={120} onChange={event => { setName(event.target.value); setError(''); }} />
+          <Input aria-label="Collection name" value={name} onChange={event => { setName(event.target.value); setError(''); }} />
           {error ? <p role="alert" className="text-sm text-danger">{error}</p> : null}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>

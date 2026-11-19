@@ -9,6 +9,8 @@ const shape = (total: number, byType: Array<[string, number]>): CorpusShapeDto =
   total,
   byType: byType.map(([type, count]) => ({ type, count })),
   grownLast7Days: 0,
+  grownToday: 0,
+  lastIndexedAt: null,
 });
 
 describe('composeIngestSummary', () => {

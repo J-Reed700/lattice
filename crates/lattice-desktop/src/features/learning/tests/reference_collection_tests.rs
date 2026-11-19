@@ -3,6 +3,7 @@
 use super::course_index::tests::indexes;
 use super::pool;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 use lattice_learning::lessons::reference_collection::test_support::{
     collection_fixture, source_of,
 };
@@ -33,13 +34,13 @@ async fn live_rust_book_is_captured_beyond_chat_limit() -> Result<()> {
 async fn document_and_web_snapshots_rank_through_the_course_index() -> Result<()> {
     use crate::infrastructure::passage_index::testing::{FakeEmbedder, FixedEmbedders};
     use lattice_learning::references::course_index::IndexMode;
-    let pool = pool().await?;
-    let (id, sources) = collection_fixture(&pool, ["doc-ownership", "doc-plants"]).await?;
+    let db = Database::new(pool().await?);
+    let (id, sources) = collection_fixture(&db, ["doc-ownership", "doc-plants"]).await?;
     // Another course's references live in another index and never rank here.
-    let (other, _) = collection_fixture(&pool, ["doc-elsewhere", "doc-elsewhere-2"]).await?;
+    let (other, _) = collection_fixture(&db, ["doc-elsewhere", "doc-elsewhere-2"]).await?;
     let temp = tempfile::tempdir().unwrap();
     let courses = indexes(
-        &pool,
+        &db,
         temp.path(),
         FixedEmbedders::new(Some(FakeEmbedder::new("fixture-model"))),
     );

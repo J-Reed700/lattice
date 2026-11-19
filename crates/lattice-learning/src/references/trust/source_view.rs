@@ -15,7 +15,6 @@ use crate::dto::{
     LearningSourceTrustEntryDto, LearningSourceTrustViewDto, LearningTrackRecordDto,
     LearningTrustClaimRequestDto, LearningTrustLevel, LearningTrustReasonDto,
 };
-use crate::persistence::db;
 use lattice_core::application::ports::SourceTrustStore;
 use lattice_core::application::services::source_trust::{
     claim_profile_key, standing_key, CLAIM_PROFILE_POLICY, OWNERSHIP_POLICY, STANDING_POLICY,
@@ -27,7 +26,7 @@ use lattice_core::domain::provenance::{
     TrackRecord, TrustOverride, POLICY,
 };
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::Database;
 use std::collections::BTreeSet;
 
 /// The relations through which a version inherits a level (§5 step 4), as
@@ -144,9 +143,9 @@ impl Course<'_> {
     }
 
     async fn text(&self, version_id: &str) -> Result<String> {
-        let mut read = self.database.begin_read().await.map_err(db)?;
+        let mut read = self.database.begin_read().await?;
         let text = version_text(&mut read, self.program_id, version_id).await?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         Ok(text)
     }
 

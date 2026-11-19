@@ -33,7 +33,7 @@ const program = { summary: { id: 'program-1', revision: 44, status: 'active' }, 
 const held: LearningGenerationJob = {
   id: 'job-1', programId: 'program-1', operationId: 'op', kind: 'lesson_preparation', payloadSha256: 'hash', baseRevisionNumber: 44,
   status: 'completed', progressCompleted: 1, progressTotal: 1, progressMessage: 'Needs your review: 1 statement', activity: null,
-  resultId: 'needs_review:lesson-1', error: null, retryOfJobId: null, createdAt: 1, startedAt: 1, finishedAt: 2,
+  resultId: null, heldLessonIds: ['lesson-1'], error: null, retryOfJobId: null, createdAt: 1, startedAt: 1, finishedAt: 2,
 };
 
 function show(lesson: LearningLessonDto, current: boolean) {

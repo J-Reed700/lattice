@@ -38,6 +38,7 @@ use lattice_core::application::ports::llm_port::{
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::models::vision::VisionGeometry;
+use lattice_core::shared::error::WithCauses;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::http::{auth_header_map, reqwest_client_builder};
 
@@ -138,9 +139,9 @@ impl OllamaClient {
             builder = builder.default_headers(auth_header_map(&name, &value)?);
         }
 
-        let client = builder
-            .build()
-            .map_err(|e| AppError::Network(format!("Failed to create HTTP client: {}", e)))?;
+        let client = builder.build().map_err(|e| {
+            AppError::Network(format!("Failed to create HTTP client: {}", WithCauses(&e)))
+        })?;
 
         let model_name = model_name.into();
         if model_name.trim().is_empty() {
@@ -247,7 +248,7 @@ impl OllamaClient {
             .send()
             .await
             .map_err(|error| {
-                warn!(error = %error, "Ollama health check failed");
+                warn!(error = %WithCauses(&error), "Ollama health check failed");
                 network_error(error)
             })?;
         let status = response.status();
@@ -266,11 +267,11 @@ impl OllamaClient {
         if request.has_images() && self.vision.is_none() {
             return Err(not_set_up_to_see(&self.model_name));
         }
-        let mut messages = Vec::with_capacity(request.input.len());
+        let mut messages = Vec::with_capacity(request.input().len());
         // Ollama names the tool a result answers rather than the call's id,
         // so each id is resolved to the name of the call it answers.
         let mut call_names = HashMap::new();
-        for input in &request.input {
+        for input in request.input() {
             let message = match input {
                 CompletionInput::Message { role, content } => OllamaChatMessage {
                     role: role.clone(),
@@ -357,9 +358,9 @@ impl OllamaClient {
             };
             messages.push(message);
         }
-        let tools = (!request.tools.is_empty()).then(|| {
+        let tools = (!request.tools().is_empty()).then(|| {
             request
-                .tools
+                .tools()
                 .iter()
                 .map(|tool| OllamaTool::new(&tool.name, &tool.description, tool.parameters.clone()))
                 .collect()
@@ -400,8 +401,8 @@ impl OllamaClient {
         if let Some(num_predict) = fitted.ceiling() {
             options.insert("num_predict".to_string(), serde_json::json!(num_predict));
         }
-        if !request.stop.is_empty() {
-            options.insert("stop".to_string(), serde_json::json!(request.stop));
+        if !request.stop().is_empty() {
+            options.insert("stop".to_string(), serde_json::json!(request.stop()));
         }
 
         // `think: false` is sent every time thinking is off: Ollama rejects
@@ -430,7 +431,7 @@ impl OllamaClient {
             options: Some(options),
             keep_alive: None,
             tools,
-            format: request.json_schema.clone(),
+            format: request.schema().map(|schema| schema.as_json().clone()),
             think: Some(think),
         })
     }
@@ -734,6 +735,13 @@ impl ModelBackend for OllamaClient {
 
     fn keeps_read_prompts(&self) -> bool {
         false
+    }
+
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        true
     }
 
     fn is_alive(&self) -> bool {

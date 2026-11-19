@@ -15,7 +15,6 @@ use crate::drills::repository::{self, NewDrill, StoredDrill};
 use crate::drills::schedules;
 use crate::drills::spec::DrillSpec;
 use crate::dto::LearningProgramDto;
-use crate::persistence::db;
 use crate::recall::schedule::CardSchedule;
 use crate::recall::study_dto::StudyRating;
 use crate::repository::LearningRepository;
@@ -86,8 +85,7 @@ async fn pattern_schedule(
     .bind(material)
     .bind(pattern)
     .fetch_optional(pool)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok(row.as_ref().map(schedule_of))
 }
 
@@ -102,19 +100,21 @@ async fn lesson_schedule(
     .bind(program)
     .bind(lesson)
     .fetch_optional(pool)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok(row.as_ref().map(schedule_of))
 }
 
 async fn count(pool: &SqlitePool, sql: &str) -> Result<i64> {
-    sqlx::query_scalar(sql).fetch_one(pool).await.map_err(db)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .fetch_one(pool)
+        .await
+        .map_err(AppError::from)
 }
 
 /// A course of two modules of two lessons, the first lesson current.
-async fn course_of(pool: &SqlitePool) -> Result<LearningProgramDto> {
+async fn course_of(database: &Database) -> Result<LearningProgramDto> {
     let program = fixture();
-    LearningRepository::new(pool.clone())
+    LearningRepository::new(database.clone())
         .create(&program)
         .await?;
     Ok(program)
@@ -158,7 +158,7 @@ impl<'a> Put<'a> {
     }
 
     /// Puts the drill into the bank, ready.
-    async fn stock(self, pool: &SqlitePool) -> Result<()> {
+    async fn stock(self, database: &Database) -> Result<()> {
         let passage = matches!(self.material, Material::Passage);
         let built = proved();
         let mut key = built.planted_key(&unchecked());
@@ -215,9 +215,9 @@ impl<'a> Put<'a> {
             &unchecked(),
             &quiet(),
         );
-        let mut connection = pool.acquire().await.map_err(db)?;
+        let mut tx = database.begin_write().await?;
         repository::insert_in(
-            &mut connection,
+            &mut tx,
             &NewDrill {
                 drill: &drill,
                 clean_files: &clean,
@@ -230,7 +230,9 @@ impl<'a> Put<'a> {
                 evidence: &evidence,
             },
         )
-        .await
+        .await?;
+        tx.commit().await?;
+        Ok(())
     }
 }
 
@@ -244,17 +246,16 @@ enum State {
 }
 
 /// Takes a drill from the bank and opens an attempt on it, carried to `state`.
-async fn hand_out(pool: &SqlitePool, drill: &str, state: State) -> Result<()> {
-    let mut connection = pool.acquire().await.map_err(db)?;
-    repository::mark_taken_in(&mut connection, drill, 1).await?;
-    let attempt =
-        attempts::repository::open_in(&mut connection, drill, AttemptMode::Practice).await?;
-    drop(connection);
+async fn hand_out(database: &Database, drill: &str, state: State) -> Result<()> {
+    let mut tx = database.begin_write().await?;
+    repository::mark_taken_in(&mut tx, drill, 1).await?;
+    let attempt = attempts::repository::open_in(&mut tx, drill, AttemptMode::Practice).await?;
+    tx.commit().await?;
     if matches!(state, State::Open) {
         return Ok(());
     }
     attempts::submit(
-        &Database::from(pool.clone()),
+        database,
         &attempt.id,
         Submission {
             findings: vec![extra_finding()],
@@ -263,7 +264,7 @@ async fn hand_out(pool: &SqlitePool, drill: &str, state: State) -> Result<()> {
         },
     )
     .await?;
-    let mut connection = pool.acquire().await.map_err(db)?;
+    let mut tx = database.begin_write().await?;
     match state {
         State::Graded => {
             let key = proved().planted_key(&unchecked());
@@ -271,7 +272,7 @@ async fn hand_out(pool: &SqlitePool, drill: &str, state: State) -> Result<()> {
             let scored = score(&key, &[operator_finding(), extra_finding()], &assessment);
             let rated = ratings(&key, &assessment);
             attempts::repository::record_graded_in(
-                &mut connection,
+                &mut tx,
                 &attempt.id,
                 &Graded {
                     assessment: &assessment,
@@ -284,35 +285,33 @@ async fn hand_out(pool: &SqlitePool, drill: &str, state: State) -> Result<()> {
             .await?;
         }
         State::CouldntGrade => {
-            attempts::repository::record_ungraded_in(
-                &mut connection,
-                &attempt.id,
-                None,
-                "No answer.",
-            )
-            .await?;
+            attempts::repository::record_ungraded_in(&mut tx, &attempt.id, None, "No answer.")
+                .await?;
         }
         State::Open | State::Submitted => {}
     }
+    tx.commit().await?;
     Ok(())
 }
 
 async fn stored(pool: &SqlitePool, id: &str) -> Result<StoredDrill> {
-    let mut connection = pool.acquire().await.map_err(db)?;
+    let mut connection = pool.acquire().await?;
     repository::find_in(&mut connection, id)
         .await?
         .ok_or_else(|| AppError::InternalError(format!("No drill {id}.")))
 }
 
 async fn record(
-    pool: &SqlitePool,
+    database: &Database,
     drill: &StoredDrill,
     rated: &[IssueRating],
     lesson: Option<PatternRating>,
     now: i64,
 ) -> Result<()> {
-    let mut connection = pool.acquire().await.map_err(db)?;
-    schedules::record_in(&mut connection, drill, rated, lesson, now).await
+    let mut tx = database.begin_write().await?;
+    schedules::record_in(&mut tx, drill, rated, lesson, now).await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 fn rate(pattern: &str, rating: PatternRating) -> IssueRating {
@@ -328,7 +327,7 @@ async fn pattern_states(
     taking: &[&str],
 ) -> Result<Vec<PatternDue>> {
     let taking: Vec<String> = taking.iter().map(|id| (*id).to_owned()).collect();
-    let mut connection = pool.acquire().await.map_err(db)?;
+    let mut connection = pool.acquire().await?;
     schedules::pattern_states_in(&mut connection, material, &taking).await
 }
 
@@ -338,7 +337,7 @@ async fn standings(
     material: &Material,
     taking: Option<&str>,
 ) -> Result<Vec<LessonStanding>> {
-    let mut connection = pool.acquire().await.map_err(db)?;
+    let mut connection = pool.acquire().await?;
     schedules::lesson_states_in(&mut connection, program, material, taking).await
 }
 
@@ -357,20 +356,22 @@ fn pending_of(all: &[LessonStanding]) -> Vec<bool> {
 }
 
 async fn basis(pool: &SqlitePool, program: &str, lesson: &str) -> Result<String> {
-    let mut connection = pool.acquire().await.map_err(db)?;
+    let mut connection = pool.acquire().await?;
     schedules::fit_basis_in(&mut connection, program, lesson).await
 }
 
 async fn record_fit(
-    pool: &SqlitePool,
+    database: &Database,
     program: &str,
     lesson: &str,
     material: &Material,
     fits: bool,
     basis: &str,
 ) -> Result<()> {
-    let mut connection = pool.acquire().await.map_err(db)?;
-    schedules::record_fit_in(&mut connection, program, lesson, material, fits, basis, 10).await
+    let mut tx = database.begin_write().await?;
+    schedules::record_fit_in(&mut tx, program, lesson, material, fits, basis, 10).await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 fn due(pattern: &str, due_at: Option<i64>, pending: bool) -> PatternDue {
@@ -425,10 +426,11 @@ async fn a_graded_review_moves_each_rated_patterns_schedule_once() -> Result<()>
 #[tokio::test]
 async fn two_ratings_of_one_pattern_write_one_review_rated_hard() -> Result<()> {
     let pool = pool().await?;
-    Put::new("drill").stock(&pool).await?;
+    let database = Database::new(pool.clone());
+    Put::new("drill").stock(&database).await?;
     let drill = stored(&pool, "drill").await?;
     record(
-        &pool,
+        &database,
         &drill,
         &[
             rate(OPERATOR, PatternRating::Easy),
@@ -457,12 +459,13 @@ async fn two_ratings_of_one_pattern_write_one_review_rated_hard() -> Result<()> 
 #[tokio::test]
 async fn a_second_review_moves_a_schedule_on_from_where_it_stands() -> Result<()> {
     let pool = pool().await?;
-    Put::new("drill").stock(&pool).await?;
+    let database = Database::new(pool.clone());
+    Put::new("drill").stock(&database).await?;
     let drill = stored(&pool, "drill").await?;
     let first_at = 5_000;
     let second_at = first_at + 3 * DAY_MS;
     record(
-        &pool,
+        &database,
         &drill,
         &[rate(OPERATOR, PatternRating::Easy)],
         None,
@@ -474,7 +477,7 @@ async fn a_second_review_moves_a_schedule_on_from_where_it_stands() -> Result<()
         .expect("rated");
     assert_eq!(first, once(StudyRating::Easy, first_at));
     record(
-        &pool,
+        &database,
         &drill,
         &[rate(OPERATOR, PatternRating::Good)],
         None,
@@ -497,25 +500,33 @@ async fn a_second_review_moves_a_schedule_on_from_where_it_stands() -> Result<()
 #[tokio::test]
 async fn a_passage_and_each_language_keep_their_own_schedule_of_a_pattern() -> Result<()> {
     let pool = pool().await?;
-    Put::new("python").stock(&pool).await?;
+    let database = Database::new(pool.clone());
+    Put::new("python").stock(&database).await?;
     Put {
         material: Material::code("rust"),
         ..Put::new("rust")
     }
-    .stock(&pool)
+    .stock(&database)
     .await?;
     Put {
         material: Material::Passage,
         patterns: [FIGURE, REVERSED],
         ..Put::new("passage")
     }
-    .stock(&pool)
+    .stock(&database)
     .await?;
     let easy = [rate(OPERATOR, PatternRating::Easy)];
-    record(&pool, &stored(&pool, "python").await?, &easy, None, 1_000).await?;
-    record(&pool, &stored(&pool, "rust").await?, &easy, None, 2_000).await?;
     record(
-        &pool,
+        &database,
+        &stored(&pool, "python").await?,
+        &easy,
+        None,
+        1_000,
+    )
+    .await?;
+    record(&database, &stored(&pool, "rust").await?, &easy, None, 2_000).await?;
+    record(
+        &database,
         &stored(&pool, "passage").await?,
         &[rate(FIGURE, PatternRating::Good)],
         None,
@@ -540,21 +551,24 @@ async fn a_passage_and_each_language_keep_their_own_schedule_of_a_pattern() -> R
 #[tokio::test]
 async fn a_drill_of_a_lesson_moves_that_lessons_schedule_with_the_rating_given() -> Result<()> {
     let pool = pool().await?;
-    let program = course_of(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course_of(&database).await?;
     let course = program.summary.id.clone();
     let (first, second) = (lesson_of(&program, 0, 0), lesson_of(&program, 0, 1));
-    Put::of("built", &course, &first).stock(&pool).await?;
+    Put::of("built", &course, &first).stock(&database).await?;
     Put {
         program: Some(&course),
         ..Put::new("plain")
     }
-    .stock(&pool)
+    .stock(&database)
     .await?;
-    Put::of("unrated", &course, &second).stock(&pool).await?;
+    Put::of("unrated", &course, &second)
+        .stock(&database)
+        .await?;
 
     let good = [rate(OPERATOR, PatternRating::Good)];
     record(
-        &pool,
+        &database,
         &stored(&pool, "built").await?,
         &good,
         Some(PatternRating::Hard),
@@ -567,14 +581,21 @@ async fn a_drill_of_a_lesson_moves_that_lessons_schedule_with_the_rating_given()
     );
 
     record(
-        &pool,
+        &database,
         &stored(&pool, "plain").await?,
         &good,
         Some(PatternRating::Easy),
         9_000,
     )
     .await?;
-    record(&pool, &stored(&pool, "unrated").await?, &good, None, 9_000).await?;
+    record(
+        &database,
+        &stored(&pool, "unrated").await?,
+        &good,
+        None,
+        9_000,
+    )
+    .await?;
     assert_eq!(lesson_schedule(&pool, &course, &second).await?, None);
     assert_eq!(
         count(
@@ -592,30 +613,26 @@ async fn a_drill_of_a_lesson_moves_that_lessons_schedule_with_the_rating_given()
 /// taken, submitted and graded; the pool, the course and the lesson.
 async fn graded_code_drill(link: bool) -> Result<(SqlitePool, String, String)> {
     let pool = pool().await?;
-    let program = course_of(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course_of(&database).await?;
     let course = program.summary.id.clone();
     let lesson = lesson_of(&program, 0, 0);
     Put {
         link,
         ..Put::of("built", &course, &lesson)
     }
-    .stock(&pool)
+    .stock(&database)
     .await?;
     let python = Material::code("python");
     let shelf = Shelf {
         program_id: &course,
         material: &python,
     };
-    let begun = attempts::start(
-        &Database::from(pool.clone()),
-        shelf,
-        None,
-        AttemptMode::Practice,
-    )
-    .await?
-    .expect("a ready drill");
+    let begun = attempts::start(&database, shelf, None, AttemptMode::Practice)
+        .await?
+        .expect("a ready drill");
     let queued = attempts::submit(
-        &Database::from(pool.clone()),
+        &database,
         &begun.attempt.id,
         Submission {
             findings: vec![operator_finding(), extra_finding()],
@@ -625,10 +642,11 @@ async fn graded_code_drill(link: bool) -> Result<(SqlitePool, String, String)> {
     )
     .await?;
     let job = queued.job.expect("a grading job");
-    let store = JobStore::new(pool.clone());
+    let store = JobStore::new(database.clone());
     Waiting::claim(&store, &job).await?;
     let waiting = Waiting {
         pool: pool.clone(),
+        db: database.clone(),
         store,
         attempt: begun.attempt.id.clone(),
         job,
@@ -683,15 +701,16 @@ async fn a_code_drill_with_no_lesson_issue_rates_its_lesson_by_every_rated_issue
 }
 
 async fn drilled_by(pool: &SqlitePool, program_id: &str, lesson_id: &str) -> Result<bool> {
-    let mut connection = pool.acquire().await.map_err(db)?;
+    let mut connection = pool.acquire().await?;
     schedules::repository::drills_lesson_in(&mut connection, program_id, lesson_id).await
 }
 
 #[tokio::test]
 async fn a_course_drills_its_lessons_that_are_not_replaced_or_skipped() -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
-    let other = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
+    let other = course(&database).await?;
     let lessons = lessons_of(&pool, &program).await?;
     let others = lessons_of(&pool, &other).await?;
     for lesson in &lessons {
@@ -719,10 +738,9 @@ async fn a_course_drills_its_lessons_that_are_not_replaced_or_skipped() -> Resul
 #[tokio::test]
 async fn grading_an_attempt_a_second_time_moves_no_schedule_again() -> Result<()> {
     let waiting = Waiting::new(vec![operator_finding(), extra_finding()], None).await?;
-    let (attempt, drill) =
-        attempts::waiting(&Database::from(waiting.pool.clone()), &waiting.attempt)
-            .await?
-            .expect("waiting");
+    let (attempt, drill) = attempts::waiting(&waiting.db, &waiting.attempt)
+        .await?
+        .expect("waiting");
     let model = none();
     let grader = FakeGrader::new(review_assessment());
     let context = waiting.context().await?;
@@ -751,17 +769,16 @@ async fn grading_an_attempt_a_second_time_moves_no_schedule_again() -> Result<()
 #[tokio::test]
 async fn a_grade_that_was_not_recorded_rates_nothing() -> Result<()> {
     let waiting = Waiting::new(vec![operator_finding(), extra_finding()], None).await?;
-    let (attempt, drill) =
-        attempts::waiting(&Database::from(waiting.pool.clone()), &waiting.attempt)
-            .await?
-            .expect("waiting");
+    let (attempt, drill) = attempts::waiting(&waiting.db, &waiting.attempt)
+        .await?
+        .expect("waiting");
     let key = &drill.drill.key;
     let assessment = review_assessment();
     let scored = score(key, &[operator_finding(), extra_finding()], &assessment);
     let rated = ratings(key, &assessment);
-    let mut connection = waiting.pool.acquire().await.map_err(db)?;
+    let mut tx = waiting.db.begin_write().await?;
     let recorded = attempts::repository::record_graded_in(
-        &mut connection,
+        &mut tx,
         &attempt.id,
         &Graded {
             assessment: &assessment,
@@ -772,7 +789,7 @@ async fn a_grade_that_was_not_recorded_rates_nothing() -> Result<()> {
         },
     )
     .await?;
-    drop(connection);
+    tx.commit().await?;
     assert!(recorded, "graded elsewhere while this job ran");
 
     let context = waiting.context().await?;
@@ -799,7 +816,8 @@ async fn a_grade_that_was_not_recorded_rates_nothing() -> Result<()> {
 async fn a_pattern_is_listed_with_its_schedule_and_as_pending_while_a_drill_holds_it() -> Result<()>
 {
     let pool = pool().await?;
-    let program = course_of(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course_of(&database).await?;
     let course = program.summary.id.clone();
     let lesson = lesson_of(&program, 0, 0);
     schedule_pattern(&pool, "code:python", OPERATOR, 100).await?;
@@ -808,13 +826,13 @@ async fn a_pattern_is_listed_with_its_schedule_and_as_pending_while_a_drill_hold
     schedule_pattern(&pool, "passage", FIGURE, 400).await?;
 
     Put::of("ready-lesson", &course, &lesson)
-        .stock(&pool)
+        .stock(&database)
         .await?;
     Put {
         patterns: [OFF_BY_ONE, BOUNDARY],
         ..Put::new("ready-old")
     }
-    .stock(&pool)
+    .stock(&database)
     .await?;
     for (id, state, patterns) in [
         ("submitted", State::Submitted, [MUTATED, CHECK_THEN_ACT]),
@@ -838,16 +856,16 @@ async fn a_pattern_is_listed_with_its_schedule_and_as_pending_while_a_drill_hold
             patterns,
             ..Put::new(id)
         }
-        .stock(&pool)
+        .stock(&database)
         .await?;
-        hand_out(&pool, id, state).await?;
+        hand_out(&database, id, state).await?;
     }
     Put {
         material: Material::code("rust"),
         patterns: ["errors.unwrap_on_fallible", "correctness.integer_overflow"],
         ..Put::of("ready-rust", &course, &lesson)
     }
-    .stock(&pool)
+    .stock(&database)
     .await?;
 
     let python = pattern_states(&pool, &Material::code("python"), &[LITERALS, LOOSE]).await?;
@@ -884,7 +902,8 @@ async fn a_pattern_is_listed_with_its_schedule_and_as_pending_while_a_drill_hold
 #[tokio::test]
 async fn lessons_come_in_course_order_without_replaced_or_skipped_ones() -> Result<()> {
     let pool = pool().await?;
-    let program = course_of(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course_of(&database).await?;
     let course = program.summary.id.clone();
     let all = [
         lesson_of(&program, 0, 0),
@@ -911,8 +930,7 @@ async fn lessons_come_in_course_order_without_replaced_or_skipped_ones() -> Resu
             .bind(state)
             .bind(lesson)
             .execute(&pool)
-            .await
-            .map_err(db)?;
+            .await?;
     }
     let left = standings(&pool, &course, &code, None).await?;
     assert_eq!(ids(&left), [all[0].as_str(), all[3].as_str()]);
@@ -920,14 +938,12 @@ async fn lessons_come_in_course_order_without_replaced_or_skipped_ones() -> Resu
     sqlx::query("UPDATE learning_lessons SET completed=1 WHERE id=?")
         .bind(&all[3])
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     sqlx::query("UPDATE learning_programs SET current_lesson_id=? WHERE id=?")
         .bind(&all[3])
         .bind(&course)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     let marked = standings(&pool, &course, &code, None).await?;
     let (first, last) = (standing(&marked, &all[0]), standing(&marked, &all[3]));
     assert_eq!((first.current, first.completed), (false, false));
@@ -938,12 +954,13 @@ async fn lessons_come_in_course_order_without_replaced_or_skipped_ones() -> Resu
 #[tokio::test]
 async fn a_lessons_due_date_is_the_one_in_its_schedule() -> Result<()> {
     let pool = pool().await?;
-    let program = course_of(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course_of(&database).await?;
     let course = program.summary.id.clone();
     let (first, last) = (lesson_of(&program, 0, 0), lesson_of(&program, 1, 1));
-    Put::of("built", &course, &last).stock(&pool).await?;
+    Put::of("built", &course, &last).stock(&database).await?;
     record(
-        &pool,
+        &database,
         &stored(&pool, "built").await?,
         &[rate(OPERATOR, PatternRating::Good)],
         Some(PatternRating::Good),
@@ -962,8 +979,9 @@ async fn a_lessons_due_date_is_the_one_in_its_schedule() -> Result<()> {
 #[tokio::test]
 async fn a_lesson_is_pending_while_a_drill_of_it_is_ready_or_waits_for_its_grade() -> Result<()> {
     let pool = pool().await?;
-    let program = course_of(&pool).await?;
-    let other = course_of(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course_of(&database).await?;
+    let other = course_of(&database).await?;
     let course = program.summary.id.clone();
     let [a, b, c, d] = [
         lesson_of(&program, 0, 0),
@@ -972,19 +990,19 @@ async fn a_lesson_is_pending_while_a_drill_of_it_is_ready_or_waits_for_its_grade
         lesson_of(&program, 1, 1),
     ];
     let elsewhere = lesson_of(&other, 0, 0);
-    Put::of("ready-code", &course, &a).stock(&pool).await?;
+    Put::of("ready-code", &course, &a).stock(&database).await?;
     Put {
         material: Material::Passage,
         ..Put::of("ready-passage", &course, &b)
     }
-    .stock(&pool)
+    .stock(&database)
     .await?;
-    Put::of("open", &course, &c).stock(&pool).await?;
-    hand_out(&pool, "open", State::Open).await?;
-    Put::of("submitted", &course, &d).stock(&pool).await?;
-    hand_out(&pool, "submitted", State::Submitted).await?;
+    Put::of("open", &course, &c).stock(&database).await?;
+    hand_out(&database, "open", State::Open).await?;
+    Put::of("submitted", &course, &d).stock(&database).await?;
+    hand_out(&database, "submitted", State::Submitted).await?;
     Put::of("of-another", &other.summary.id, &elsewhere)
-        .stock(&pool)
+        .stock(&database)
         .await?;
 
     let code = Material::code("python");
@@ -1007,7 +1025,8 @@ async fn a_lesson_is_pending_while_a_drill_of_it_is_ready_or_waits_for_its_grade
 async fn a_lesson_recorded_as_not_fitting_passages_on_the_current_basis_does_not_fit_them(
 ) -> Result<()> {
     let pool = pool().await?;
-    let program = course_of(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course_of(&database).await?;
     let course = program.summary.id.clone();
     let (first, second) = (lesson_of(&program, 0, 0), lesson_of(&program, 0, 1));
     let passage = Material::Passage;
@@ -1020,7 +1039,7 @@ async fn a_lesson_recorded_as_not_fitting_passages_on_the_current_basis_does_not
     );
 
     let current = basis(&pool, &course, &first).await?;
-    record_fit(&pool, &course, &first, &passage, false, &current).await?;
+    record_fit(&database, &course, &first, &passage, false, &current).await?;
     let all = standings(&pool, &course, &passage, None).await?;
     assert!(!standing(&all, &first).fits);
     assert!(standing(&all, &second).fits);
@@ -1030,14 +1049,14 @@ async fn a_lesson_recorded_as_not_fitting_passages_on_the_current_basis_does_not
         "a lesson that does not fit passages can still be drilled in code"
     );
 
-    record_fit(&pool, &course, &first, &passage, false, "another basis").await?;
+    record_fit(&database, &course, &first, &passage, false, "another basis").await?;
     let all = standings(&pool, &course, &passage, None).await?;
     assert!(
         standing(&all, &first).fits,
         "a record on another basis no longer stands"
     );
 
-    record_fit(&pool, &course, &first, &passage, true, &current).await?;
+    record_fit(&database, &course, &first, &passage, true, &current).await?;
     let all = standings(&pool, &course, &passage, None).await?;
     assert!(standing(&all, &first).fits);
     assert_eq!(
@@ -1049,7 +1068,7 @@ async fn a_lesson_recorded_as_not_fitting_passages_on_the_current_basis_does_not
 }
 
 async fn fits_code(pool: &SqlitePool, course: &str, lesson: &str, language: &str) -> Result<bool> {
-    let mut connection = pool.acquire().await.map_err(db)?;
+    let mut connection = pool.acquire().await?;
     schedules::lesson_fits_in(&mut connection, course, lesson, &Material::code(language)).await
 }
 
@@ -1057,7 +1076,8 @@ async fn fits_code(pool: &SqlitePool, course: &str, lesson: &str, language: &str
 async fn a_lesson_the_code_check_turned_down_on_its_current_basis_does_not_fit_code() -> Result<()>
 {
     let pool = pool().await?;
-    let program = course_of(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course_of(&database).await?;
     let course = program.summary.id.clone();
     let (first, second) = (lesson_of(&program, 0, 0), lesson_of(&program, 0, 1));
     let code = Material::code("python");
@@ -1068,7 +1088,7 @@ async fn a_lesson_the_code_check_turned_down_on_its_current_basis_does_not_fit_c
         "no check, no refusal"
     );
 
-    record_unfit(&pool, &course, &first, &code).await?;
+    record_unfit(&database, &course, &first, &code).await?;
     let all = standings(&pool, &course, &code, None).await?;
     assert!(!standing(&all, &first).fits);
     assert!(standing(&all, &second).fits);
@@ -1090,22 +1110,21 @@ async fn a_lesson_the_code_check_turned_down_on_its_current_basis_does_not_fit_c
 async fn a_code_check_made_on_another_basis_or_that_said_the_lesson_teaches_does_not_stop_it_fitting_code(
 ) -> Result<()> {
     let pool = pool().await?;
-    let program = course_of(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course_of(&database).await?;
     let course = program.summary.id.clone();
     let first = lesson_of(&program, 0, 0);
-    record_unfit(&pool, &course, &first, &Material::code("python")).await?;
+    record_unfit(&database, &course, &first, &Material::code("python")).await?;
     assert!(!fits_code(&pool, &course, &first, "python").await?);
     let (current,): (String,) =
         sqlx::query_as("SELECT basis FROM learning_drill_code_checks WHERE lesson_id=?")
             .bind(&first)
             .fetch_one(&pool)
-            .await
-            .map_err(db)?;
+            .await?;
 
     sqlx::query("UPDATE learning_drill_code_checks SET basis='another basis'")
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert!(
         fits_code(&pool, &course, &first, "python").await?,
         "a verdict on another basis no longer stands"
@@ -1114,19 +1133,16 @@ async fn a_code_check_made_on_another_basis_or_that_said_the_lesson_teaches_does
     sqlx::query("UPDATE learning_drill_code_checks SET basis=?")
         .bind(&current)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert!(!fits_code(&pool, &course, &first, "python").await?);
     let objective: String = sqlx::query_scalar("SELECT objective FROM learning_lessons WHERE id=?")
         .bind(&first)
         .fetch_one(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     sqlx::query("UPDATE learning_lessons SET objective='Another objective' WHERE id=?")
         .bind(&first)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert!(
         fits_code(&pool, &course, &first, "python").await?,
         "the lesson's objective changed, so the question is asked again"
@@ -1136,12 +1152,10 @@ async fn a_code_check_made_on_another_basis_or_that_said_the_lesson_teaches_does
         .bind(&objective)
         .bind(&first)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     sqlx::query("UPDATE learning_drill_code_checks SET teaches=1")
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert!(fits_code(&pool, &course, &first, "python").await?);
     Ok(())
 }
@@ -1149,12 +1163,13 @@ async fn a_code_check_made_on_another_basis_or_that_said_the_lesson_teaches_does
 #[tokio::test]
 async fn the_fit_table_no_longer_decides_whether_a_lesson_fits_code() -> Result<()> {
     let pool = pool().await?;
-    let program = course_of(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course_of(&database).await?;
     let course = program.summary.id.clone();
     let first = lesson_of(&program, 0, 0);
     let code = Material::code("python");
     let current = basis(&pool, &course, &first).await?;
-    record_fit(&pool, &course, &first, &code, false, &current).await?;
+    record_fit(&database, &course, &first, &code, false, &current).await?;
     assert!(fits_code(&pool, &course, &first, "python").await?);
     let all = standings(&pool, &course, &code, None).await?;
     assert!(standing(&all, &first).fits);
@@ -1164,20 +1179,20 @@ async fn the_fit_table_no_longer_decides_whether_a_lesson_fits_code() -> Result<
 #[tokio::test]
 async fn changing_a_source_of_the_course_ends_a_record_made_before() -> Result<()> {
     let pool = pool().await?;
-    let program = course_of(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course_of(&database).await?;
     let course = program.summary.id.clone();
     let lesson = lesson_of(&program, 0, 0);
     let passage = Material::Passage;
     let current = basis(&pool, &course, &lesson).await?;
-    record_fit(&pool, &course, &lesson, &passage, false, &current).await?;
+    record_fit(&database, &course, &lesson, &passage, false, &current).await?;
     let all = standings(&pool, &course, &passage, None).await?;
     assert!(!standing(&all, &lesson).fits);
 
     sqlx::query("UPDATE learning_source_library SET deleted_at=5 WHERE program_id=?")
         .bind(&course)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     let all = standings(&pool, &course, &passage, None).await?;
     assert!(
         standing(&all, &lesson).fits,
@@ -1190,8 +1205,9 @@ async fn changing_a_source_of_the_course_ends_a_record_made_before() -> Result<(
 async fn the_basis_of_a_fit_changes_with_the_lessons_blocks_and_the_courses_sources() -> Result<()>
 {
     let pool = pool().await?;
-    let program = course_of(&pool).await?;
-    let other = course_of(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course_of(&database).await?;
+    let other = course_of(&database).await?;
     let course = program.summary.id.clone();
     let (lesson, neighbour) = (lesson_of(&program, 0, 0), lesson_of(&program, 0, 1));
     let start = basis(&pool, &course, &lesson).await?;
@@ -1199,36 +1215,26 @@ async fn the_basis_of_a_fit_changes_with_the_lessons_blocks_and_the_courses_sour
     assert_eq!(basis(&pool, &course, &lesson).await?, start);
 
     let block = "INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json) VALUES(?,0,'recap','Title','Body','[]')";
-    sqlx::query(block)
-        .bind(&neighbour)
-        .execute(&pool)
-        .await
-        .map_err(db)?;
+    sqlx::query(block).bind(&neighbour).execute(&pool).await?;
     assert_eq!(
         basis(&pool, &course, &lesson).await?,
         start,
         "another lesson's blocks are not this lesson's"
     );
-    sqlx::query(block)
-        .bind(&lesson)
-        .execute(&pool)
-        .await
-        .map_err(db)?;
+    sqlx::query(block).bind(&lesson).execute(&pool).await?;
     let with_block = basis(&pool, &course, &lesson).await?;
     assert_ne!(with_block, start);
     sqlx::query("UPDATE learning_blocks SET body='Another body' WHERE lesson_id=?")
         .bind(&lesson)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     let edited = basis(&pool, &course, &lesson).await?;
     assert_ne!(edited, with_block);
 
     sqlx::query("UPDATE learning_source_library SET deleted_at=5 WHERE program_id=?")
         .bind(&other.summary.id)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(
         basis(&pool, &course, &lesson).await?,
         edited,
@@ -1237,8 +1243,7 @@ async fn the_basis_of_a_fit_changes_with_the_lessons_blocks_and_the_courses_sour
     sqlx::query("UPDATE learning_source_library SET deleted_at=5 WHERE program_id=?")
         .bind(&course)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_ne!(basis(&pool, &course, &lesson).await?, edited);
     Ok(())
 }
@@ -1246,24 +1251,25 @@ async fn the_basis_of_a_fit_changes_with_the_lessons_blocks_and_the_courses_sour
 #[tokio::test]
 async fn a_drill_keeps_the_lesson_it_names_only_when_it_is_of_the_course_it_keeps() -> Result<()> {
     let pool = pool().await?;
-    let program = course_of(&pool).await?;
-    let other = course_of(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course_of(&database).await?;
+    let other = course_of(&database).await?;
     let course = program.summary.id.clone();
     let lesson = lesson_of(&program, 1, 0);
     let elsewhere = lesson_of(&other, 0, 0);
 
-    Put::of("kept", &course, &lesson).stock(&pool).await?;
+    Put::of("kept", &course, &lesson).stock(&database).await?;
     Put::of("of-another-course", &course, &elsewhere)
-        .stock(&pool)
+        .stock(&database)
         .await?;
     Put::of("not-there", &course, "no-such-lesson")
-        .stock(&pool)
+        .stock(&database)
         .await?;
     Put {
         lesson: Some(&lesson),
         ..Put::new("no-course")
     }
-    .stock(&pool)
+    .stock(&database)
     .await?;
 
     let kept = stored(&pool, "kept").await?;
@@ -1279,24 +1285,23 @@ async fn a_drill_keeps_the_lesson_it_names_only_when_it_is_of_the_course_it_keep
 async fn deleting_a_course_removes_its_schedules_and_fits_and_keeps_its_drills_with_no_lesson(
 ) -> Result<()> {
     let pool = pool().await?;
-    let program = course_of(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course_of(&database).await?;
     let course = program.summary.id.clone();
     let (first, second) = (lesson_of(&program, 0, 0), lesson_of(&program, 0, 1));
-    Put::of("first", &course, &first).stock(&pool).await?;
-    Put::of("second", &course, &second).stock(&pool).await?;
+    Put::of("first", &course, &first).stock(&database).await?;
+    Put::of("second", &course, &second).stock(&database).await?;
     for lesson in [&first, &second] {
         sqlx::query("INSERT INTO learning_drill_lesson_schedules(program_id,lesson_id,stability,difficulty,last_reviewed_at,due_at,interval_days,review_count,lapses) VALUES(?,?,1.0,5.0,0,1,1,1,0)")
             .bind(&course)
             .bind(lesson)
             .execute(&pool)
-            .await
-            .map_err(db)?;
+            .await?;
         sqlx::query("INSERT INTO learning_drill_lesson_fits(program_id,lesson_id,material,fits,basis,decided_at) VALUES(?,?,'passage',0,'b',1)")
             .bind(&course)
             .bind(lesson)
             .execute(&pool)
-            .await
-            .map_err(db)?;
+            .await?;
     }
     assert_eq!(
         stored(&pool, "first").await?.lesson_id.as_deref(),
@@ -1306,8 +1311,7 @@ async fn deleting_a_course_removes_its_schedules_and_fits_and_keeps_its_drills_w
     sqlx::query("DELETE FROM learning_lessons WHERE id=?")
         .bind(&second)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     let orphaned = stored(&pool, "second").await?;
     assert_eq!(orphaned.lesson_id, None);
     assert_eq!(orphaned.program_id.as_deref(), Some(course.as_str()));
@@ -1327,8 +1331,7 @@ async fn deleting_a_course_removes_its_schedules_and_fits_and_keeps_its_drills_w
     sqlx::query("DELETE FROM learning_programs WHERE id=?")
         .bind(&course)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(
         count(
             &pool,
@@ -1352,8 +1355,9 @@ async fn deleting_a_course_removes_its_schedules_and_fits_and_keeps_its_drills_w
 async fn the_schedule_tables_refuse_what_is_not_a_schedule_or_a_lesson_of_the_course() -> Result<()>
 {
     let pool = pool().await?;
-    let program = course_of(&pool).await?;
-    let other = course_of(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course_of(&database).await?;
+    let other = course_of(&database).await?;
     let lesson = lesson_of(&program, 0, 0);
     let insert = |material: &'static str, reviews: i64| {
         let pool = pool.clone();
@@ -1392,7 +1396,7 @@ async fn versions_of(pool: &SqlitePool, program_id: &str) -> Result<Vec<String>>
         .bind(program_id)
         .fetch_all(pool)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// Stores a verdict of the passage check on the bytes `start..end` of the version `version`.
@@ -1422,26 +1426,23 @@ const CODE_CHECKS: &str = "SELECT count(*) FROM learning_drill_code_checks";
 #[tokio::test]
 async fn deleting_a_lesson_removes_its_passage_checks() -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
     let lessons = lessons_of(&pool, &program).await?;
     let versions = versions_of(&pool, &program).await?;
     for lesson in lessons.iter().take(2) {
-        insert_check(&pool, &program, lesson, &versions[0], (0, 10), 1)
-            .await
-            .map_err(db)?;
+        insert_check(&pool, &program, lesson, &versions[0], (0, 10), 1).await?;
     }
     assert_eq!(count(&pool, CHECKS).await?, 2);
 
     sqlx::query("DELETE FROM learning_lessons WHERE id=?")
         .bind(&lessons[1])
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(count(&pool, CHECKS).await?, 1);
     let kept: String = sqlx::query_scalar("SELECT lesson_id FROM learning_drill_passage_checks")
         .fetch_one(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(kept, lessons[0]);
     Ok(())
 }
@@ -1449,27 +1450,24 @@ async fn deleting_a_lesson_removes_its_passage_checks() -> Result<()> {
 #[tokio::test]
 async fn deleting_a_course_removes_its_passage_checks() -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
-    let other = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
+    let other = course(&database).await?;
     for owner in [&program, &other] {
         let lesson = lessons_of(&pool, owner).await?[0].clone();
         let version = versions_of(&pool, owner).await?[0].clone();
-        insert_check(&pool, owner, &lesson, &version, (0, 10), 0)
-            .await
-            .map_err(db)?;
+        insert_check(&pool, owner, &lesson, &version, (0, 10), 0).await?;
     }
     assert_eq!(count(&pool, CHECKS).await?, 2);
 
     sqlx::query("DELETE FROM learning_programs WHERE id=?")
         .bind(&program)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(count(&pool, CHECKS).await?, 1);
     let kept: String = sqlx::query_scalar("SELECT program_id FROM learning_drill_passage_checks")
         .fetch_one(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(kept, other);
     Ok(())
 }
@@ -1477,27 +1475,24 @@ async fn deleting_a_course_removes_its_passage_checks() -> Result<()> {
 #[tokio::test]
 async fn deleting_a_source_version_removes_its_passage_checks() -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
     let lesson = lessons_of(&pool, &program).await?[0].clone();
     let versions = versions_of(&pool, &program).await?;
     assert!(versions.len() >= 2, "{versions:?}");
     for version in versions.iter().take(2) {
-        insert_check(&pool, &program, &lesson, version, (0, 10), 1)
-            .await
-            .map_err(db)?;
+        insert_check(&pool, &program, &lesson, version, (0, 10), 1).await?;
     }
     assert_eq!(count(&pool, CHECKS).await?, 2);
 
     sqlx::query("DELETE FROM learning_source_versions WHERE id=?")
         .bind(&versions[0])
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(count(&pool, CHECKS).await?, 1);
     let kept: String = sqlx::query_scalar("SELECT version_id FROM learning_drill_passage_checks")
         .fetch_one(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(kept, versions[1]);
     Ok(())
 }
@@ -1506,8 +1501,9 @@ async fn deleting_a_source_version_removes_its_passage_checks() -> Result<()> {
 async fn the_passage_check_table_refuses_a_lesson_or_version_of_another_course_and_what_is_not_a_verdict_or_a_span(
 ) -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
-    let other = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
+    let other = course(&database).await?;
     let lesson = lessons_of(&pool, &program).await?[0].clone();
     let version = versions_of(&pool, &program).await?[0].clone();
     let elsewhere_lesson = lessons_of(&pool, &other).await?[0].clone();
@@ -1574,25 +1570,22 @@ async fn insert_code_check(
 #[tokio::test]
 async fn deleting_a_lesson_removes_its_code_check() -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
     let lessons = lessons_of(&pool, &program).await?;
     for lesson in lessons.iter().take(2) {
-        insert_code_check(&pool, &program, lesson, 1)
-            .await
-            .map_err(db)?;
+        insert_code_check(&pool, &program, lesson, 1).await?;
     }
     assert_eq!(count(&pool, CODE_CHECKS).await?, 2);
 
     sqlx::query("DELETE FROM learning_lessons WHERE id=?")
         .bind(&lessons[1])
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(count(&pool, CODE_CHECKS).await?, 1);
     let kept: String = sqlx::query_scalar("SELECT lesson_id FROM learning_drill_code_checks")
         .fetch_one(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(kept, lessons[0]);
     Ok(())
 }
@@ -1600,26 +1593,23 @@ async fn deleting_a_lesson_removes_its_code_check() -> Result<()> {
 #[tokio::test]
 async fn deleting_a_course_removes_its_code_checks() -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
-    let other = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
+    let other = course(&database).await?;
     for owner in [&program, &other] {
         let lesson = lessons_of(&pool, owner).await?[0].clone();
-        insert_code_check(&pool, owner, &lesson, 0)
-            .await
-            .map_err(db)?;
+        insert_code_check(&pool, owner, &lesson, 0).await?;
     }
     assert_eq!(count(&pool, CODE_CHECKS).await?, 2);
 
     sqlx::query("DELETE FROM learning_programs WHERE id=?")
         .bind(&program)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(count(&pool, CODE_CHECKS).await?, 1);
     let kept: String = sqlx::query_scalar("SELECT program_id FROM learning_drill_code_checks")
         .fetch_one(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_eq!(kept, other);
     Ok(())
 }
@@ -1628,8 +1618,9 @@ async fn deleting_a_course_removes_its_code_checks() -> Result<()> {
 async fn the_code_check_table_refuses_a_lesson_of_another_course_and_what_is_not_a_verdict(
 ) -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
-    let other = course(&pool).await?;
+    let database = Database::new(pool.clone());
+    let program = course(&database).await?;
+    let other = course(&database).await?;
     let lesson = lessons_of(&pool, &program).await?[0].clone();
     let elsewhere = lessons_of(&pool, &other).await?[0].clone();
 

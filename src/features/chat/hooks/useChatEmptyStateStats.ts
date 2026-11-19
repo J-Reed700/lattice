@@ -17,12 +17,6 @@ export interface ChatEmptyStateStats {
   documentsAddedThisWeek: number;
 }
 
-function startOfDayMs(date: Date): number {
-  const copy = new Date(date);
-  copy.setHours(0, 0, 0, 0);
-  return copy.getTime();
-}
-
 export function useChatEmptyStateStats(
   options?: Omit<UseQueryOptions<ChatEmptyStateStats, Error>, 'queryKey' | 'queryFn'>
 ) {
@@ -30,39 +24,19 @@ export function useChatEmptyStateStats(
   return useQuery<ChatEmptyStateStats, Error>({
     queryKey: ['chat-empty-state-stats'],
     queryFn: async () => {
-      const [statsResult, recentResult] = await Promise.all([
+      const [statsResult, shapeResult] = await Promise.all([
         api.getIndexingStats(),
-        api.listAllDocuments(10000),
+        api.getCorpusShape(),
       ]);
 
       const totalDocuments = statsResult.ok
         ? statsResult.data.indexedDocuments ?? 0
         : 0;
 
-      let documentsAddedToday = 0;
-      let documentsAddedThisWeek = 0;
-
-      if (recentResult.ok) {
-        const now = new Date();
-        const todayStart = startOfDayMs(now);
-        const weekStart = todayStart - 6 * 24 * 60 * 60 * 1000;
-
-        for (const doc of recentResult.data) {
-          const ts = Date.parse(doc.indexedAt);
-          if (!Number.isFinite(ts)) continue;
-          if (ts >= todayStart) {
-            documentsAddedToday += 1;
-          }
-          if (ts >= weekStart) {
-            documentsAddedThisWeek += 1;
-          }
-        }
-      }
-
       return {
         totalDocuments,
-        documentsAddedToday,
-        documentsAddedThisWeek,
+        documentsAddedToday: shapeResult.ok ? shapeResult.data.grownToday : 0,
+        documentsAddedThisWeek: shapeResult.ok ? shapeResult.data.grownLast7Days : 0,
       };
     },
     staleTime: 60 * 1000,

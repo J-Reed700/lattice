@@ -27,6 +27,10 @@ beforeEach(() => {
   mockSaveTextFile.mockReset();
   mockGetBackendLogs.mockResolvedValue({ ok: true, data: [] });
 });
+it('asks for the newest 300 backend lines', async () => {
+  renderTab();
+  await waitFor(() => expect(mockGetBackendLogs).toHaveBeenCalledWith(300));
+});
 it('updates live, filters, and requires confirmation to clear', async () => {
   renderTab();
   await waitFor(() => expect(mockGetBackendLogs).toHaveBeenCalled());

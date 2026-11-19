@@ -3,9 +3,9 @@
 //! Opens a file by document ID, looking up the file path first.
 
 use crate::features::file::dto::{OpenFileByIdRequestDto, OpenFileResponseDto};
-use crate::infrastructure::adapters::fs::web_article::WebArticleDetector;
 use crate::infrastructure::security::FileAccessConfig;
 use lattice_core::application::ports::{DocumentRepositoryPort, FileStoragePort, FileSystemPort};
+use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::shared::error::{AppError, Result};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -28,6 +28,7 @@ pub struct OpenFileByIdUseCase {
     file_storage: Arc<dyn FileStoragePort>,
     file_access_config: Arc<FileAccessConfig>,
     vault_path: PathBuf,
+    archive: Arc<dyn ArticleArchive>,
 }
 
 impl OpenFileByIdUseCase {
@@ -38,6 +39,7 @@ impl OpenFileByIdUseCase {
         file_storage: Arc<dyn FileStoragePort>,
         file_access_config: Arc<FileAccessConfig>,
         vault_path: PathBuf,
+        archive: Arc<dyn ArticleArchive>,
     ) -> Self {
         Self {
             document_repository,
@@ -45,6 +47,7 @@ impl OpenFileByIdUseCase {
             file_storage,
             file_access_config,
             vault_path,
+            archive,
         }
     }
 
@@ -79,18 +82,8 @@ impl OpenFileByIdUseCase {
             )));
         }
 
-        if WebArticleDetector::is_web_article(&validated_path) {
-            let html_path = WebArticleDetector::get_html_path(&validated_path)
-                .ok_or_else(|| AppError::NotFound("page.html not found".to_string()))?;
-
-            let title = WebArticleDetector::get_title(&validated_path)
-                .await
-                .unwrap_or_else(|_| "Web Article".to_string());
-
-            return Ok(OpenFileResponseDto::render_internal(
-                html_path.to_string_lossy().to_string(),
-                title,
-            ));
+        if let Some(article) = self.archive.saved_article(&validated_path).await {
+            return Ok(OpenFileResponseDto::saved_article(article));
         }
 
         self.file_system.open_file(&validated_path).await?;
@@ -112,10 +105,27 @@ mod tests {
     // `validate_path` resolves it against the current directory, which then
     // falls outside the configured root and turns every success case into an
     // `InvalidInput`. `test_paths::abs` spells it per-platform instead.
+    use crate::features::web::services::archive::WebArchiveService;
     use async_trait::async_trait;
     use lattice_core::shared::testing::paths::{abs, abs_str};
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
+
+    fn no_archive() -> Arc<dyn ArticleArchive> {
+        Arc::new(WebArchiveService::with_base_dir(PathBuf::from(
+            "/no-web-archive",
+        )))
+    }
+
+    fn write_article(dir: &Path) -> PathBuf {
+        std::fs::create_dir_all(dir).expect("article directory");
+        let text = dir.join("article.md");
+        std::fs::write(&text, "body").expect("write text");
+        std::fs::write(dir.join("page.html"), "<html></html>").expect("write page");
+        std::fs::write(dir.join("metadata.json"), r#"{"title": "Saved Title"}"#)
+            .expect("write metadata");
+        text
+    }
 
     struct MockDocumentRepository {
         documents: Vec<(String, String)>, // (id, path)
@@ -216,7 +226,7 @@ mod tests {
 
         async fn find_all_paginated(
             &self,
-            _limit: usize,
+            _page: lattice_core::shared::persistence::Page,
         ) -> Result<Vec<lattice_core::domain::entities::Document>> {
             Ok(vec![])
         }
@@ -349,6 +359,7 @@ mod tests {
             file_storage,
             file_access_config,
             vault_path,
+            no_archive(),
         );
 
         let request = OpenFileByIdRequestDto {
@@ -381,6 +392,7 @@ mod tests {
             file_storage,
             file_access_config,
             vault_path,
+            no_archive(),
         );
 
         let request = OpenFileByIdRequestDto {
@@ -410,6 +422,7 @@ mod tests {
             file_storage,
             file_access_config,
             vault_path,
+            no_archive(),
         );
 
         let request = OpenFileByIdRequestDto {
@@ -420,5 +433,121 @@ mod tests {
 
         assert!(result.is_err());
         assert!(matches!(result, Err(AppError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn an_article_and_page_saved_outside_the_archive_open_in_the_system_app() {
+        use crate::infrastructure::security::FileAccessConfig;
+
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path().canonicalize().expect("canonical root");
+        let article = write_article(&root.join("elsewhere"));
+        let doc_repo =
+            Arc::new(MockDocumentRepository::new().with_document("doc-1", "elsewhere/article.md"));
+        let file_system = Arc::new(MockFileSystem::new());
+        let file_storage =
+            Arc::new(MockFileStorage::new().with_file(&article.display().to_string()));
+        let use_case = OpenFileByIdUseCase::new(
+            doc_repo,
+            file_system.clone(),
+            file_storage,
+            Arc::new(FileAccessConfig::new(vec![root.clone()])),
+            root.clone(),
+            Arc::new(WebArchiveService::with_base_dir(root.join("web-archive"))),
+        );
+
+        let response = use_case
+            .execute(OpenFileByIdRequestDto {
+                document_id: "doc-1".to_string(),
+            })
+            .await
+            .expect("open");
+
+        assert_eq!(response.action, "opened_external");
+        assert_eq!(
+            file_system.get_opened_files(),
+            vec![article.display().to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn an_article_in_the_archive_renders_its_saved_page_with_its_title() {
+        use crate::infrastructure::security::FileAccessConfig;
+
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path().canonicalize().expect("canonical root");
+        let base = root.join("web-archive");
+        let dir = base.join("example.org").join("essay-1");
+        let article = write_article(&dir);
+        let doc_repo = Arc::new(
+            MockDocumentRepository::new()
+                .with_document("doc-1", "web-archive/example.org/essay-1/article.md"),
+        );
+        let file_system = Arc::new(MockFileSystem::new());
+        let file_storage =
+            Arc::new(MockFileStorage::new().with_file(&article.display().to_string()));
+        let use_case = OpenFileByIdUseCase::new(
+            doc_repo,
+            file_system.clone(),
+            file_storage,
+            Arc::new(FileAccessConfig::new(vec![root.clone()])),
+            root.clone(),
+            Arc::new(WebArchiveService::with_base_dir(
+                temp.path().join("web-archive"),
+            )),
+        );
+
+        let response = use_case
+            .execute(OpenFileByIdRequestDto {
+                document_id: "doc-1".to_string(),
+            })
+            .await
+            .expect("open");
+
+        assert_eq!(response.action, "render_internal");
+        assert_eq!(
+            response.content_path,
+            dir.join("page.html").to_string_lossy()
+        );
+        assert_eq!(response.title.as_deref(), Some("Saved Title"));
+        assert!(file_system.get_opened_files().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_article_in_the_archive_without_its_page_opens_in_the_reader_at_its_text() {
+        use crate::infrastructure::security::FileAccessConfig;
+
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path().canonicalize().expect("canonical root");
+        let dir = root.join("web-archive").join("example.org").join("essay-1");
+        let article = write_article(&dir);
+        std::fs::remove_file(dir.join("page.html")).expect("remove page");
+        let doc_repo = Arc::new(
+            MockDocumentRepository::new()
+                .with_document("doc-1", "web-archive/example.org/essay-1/article.md"),
+        );
+        let file_system = Arc::new(MockFileSystem::new());
+        let file_storage =
+            Arc::new(MockFileStorage::new().with_file(&article.display().to_string()));
+        let use_case = OpenFileByIdUseCase::new(
+            doc_repo,
+            file_system.clone(),
+            file_storage,
+            Arc::new(FileAccessConfig::new(vec![root.clone()])),
+            root.clone(),
+            Arc::new(WebArchiveService::with_base_dir(root.join("web-archive"))),
+        );
+
+        let response = use_case
+            .execute(OpenFileByIdRequestDto {
+                document_id: "doc-1".to_string(),
+            })
+            .await
+            .expect("open");
+
+        assert_eq!(response.action, "render_internal");
+        assert_eq!(response.content_path, article.to_string_lossy());
+        assert_eq!(response.title.as_deref(), Some("Saved Title"));
+        assert!(file_system.get_opened_files().is_empty());
     }
 }

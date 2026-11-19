@@ -15,7 +15,7 @@ export const functionsApi = {
     name: string,
     args: Record<string, Wire.JsonValue>,
   ): Promise<ApiResult<FunctionResult>> =>
-    apiCall<FunctionResult>('execute_function', {
+    apiCall('execute_function', {
       call: {
         id: crypto.randomUUID(),
         name,
@@ -30,7 +30,7 @@ export const functionsApi = {
    * @returns Array of tool definitions with names, descriptions, and input schemas
    */
   listAvailableFunctions: async (): Promise<ApiResult<FunctionDefinition[]>> =>
-    apiCall<FunctionDefinition[]>('list_available_functions'),
+    apiCall('list_available_functions'),
 
   /**
    * Gets statistics about LLM function calling usage.
@@ -39,5 +39,5 @@ export const functionsApi = {
    * @returns Function calling statistics
    */
   getFunctionStats: async (): Promise<ApiResult<Record<string, unknown>>> =>
-    apiCall<Record<string, unknown>>('get_function_stats'),
+    apiCall('get_function_stats'),
 };

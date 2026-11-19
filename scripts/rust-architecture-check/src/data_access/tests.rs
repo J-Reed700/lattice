@@ -10,6 +10,7 @@ fn found(path: &str, source: &str) -> Vec<String> {
     let ast = syn::parse_file(source).unwrap();
     file_violations(path, &ast)
         .iter()
+        .filter(|violation| violation.rule != 6)
         .map(ToString::to_string)
         .collect()
 }
@@ -291,7 +292,7 @@ fn awaits(path: &str, line: usize, name: &str, what: &str) -> String {
 
 #[test]
 fn two_statements_on_the_pool_are_flagged() {
-    let source = r#"pub async fn rename(pool: &impl DriverPool) {
+    let source = r#"pub async fn rename(pool: &Database) {
     sqlx::query("UPDATE a").execute(pool).await.unwrap();
     sqlx::query("SELECT b").fetch_one(pool).await.unwrap();
 }
@@ -304,7 +305,7 @@ fn two_statements_on_the_pool_are_flagged() {
 
 #[test]
 fn two_reads_on_the_pool_in_a_read_only_function_are_flagged() {
-    let source = r#"pub async fn both(pool: &impl DriverPool) {
+    let source = r#"pub async fn both(pool: &Database) {
     sqlx::query("SELECT a").fetch_all(pool).await.unwrap();
     sqlx::query("SELECT b").fetch_optional(pool).await.unwrap();
 }
@@ -317,7 +318,7 @@ fn two_reads_on_the_pool_in_a_read_only_function_are_flagged() {
 
 #[test]
 fn a_single_statement_on_the_pool_is_not_flagged() {
-    let source = r#"pub async fn rename(pool: &impl DriverPool) {
+    let source = r#"pub async fn rename(pool: &Database) {
     sqlx::query("UPDATE a").execute(pool).await.unwrap();
 }
 "#;
@@ -326,7 +327,7 @@ fn a_single_statement_on_the_pool_is_not_flagged() {
 
 #[test]
 fn two_statements_on_a_connection_from_acquire_are_flagged() {
-    let source = r#"pub async fn move_it(pool: &impl DriverPool) {
+    let source = r#"pub async fn move_it(pool: &Database) {
     let mut conn = pool.acquire().await.unwrap();
     sqlx::query("UPDATE a").execute(&mut *conn).await.unwrap();
     sqlx::query("SELECT b").fetch_one(&mut *conn).await.unwrap();
@@ -340,7 +341,7 @@ fn two_statements_on_a_connection_from_acquire_are_flagged() {
 
 #[test]
 fn statements_on_a_transaction_or_a_borrowed_connection_are_not_flagged() {
-    let source = r#"pub async fn move_it(pool: &impl DriverPool) {
+    let source = r#"pub async fn move_it(pool: &Database) {
     let mut tx = pool.begin_write().await.unwrap();
     sqlx::query("UPDATE a").execute(&mut *tx).await.unwrap();
     sqlx::query("UPDATE b").execute(&mut *tx).await.unwrap();
@@ -356,7 +357,7 @@ pub async fn move_in(conn: &mut SqliteConnection) {
 
 #[test]
 fn a_pre_check_on_the_pool_before_begin_write_is_flagged() {
-    let source = r#"pub async fn rename(pool: &impl DriverPool) {
+    let source = r#"pub async fn rename(pool: &Database) {
     let row = sqlx::query("SELECT a").fetch_one(pool).await.unwrap();
     let mut tx = pool.begin_write().await.unwrap();
     sqlx::query("UPDATE a").execute(&mut *tx).await.unwrap();
@@ -371,7 +372,7 @@ fn a_pre_check_on_the_pool_before_begin_write_is_flagged() {
 
 #[test]
 fn a_read_on_the_pool_inside_the_write_transaction_is_flagged() {
-    let own = r#"pub async fn rename(pool: &impl DriverPool) {
+    let own = r#"pub async fn rename(pool: &Database) {
     let mut tx = pool.begin_write().await.unwrap();
     let row = sqlx::query("SELECT a").fetch_one(pool).await.unwrap();
     sqlx::query("UPDATE a").execute(&mut *tx).await.unwrap();
@@ -431,7 +432,7 @@ fn a_read_on_the_pool_after_the_commit_is_flagged_twice() {
 
 #[test]
 fn a_re_read_in_a_read_transaction_after_the_write_commit_is_flagged() {
-    let source = r#"pub async fn rename(pool: &impl DriverPool) {
+    let source = r#"pub async fn rename(pool: &Database) {
     let mut tx = pool.begin_write().await.unwrap();
     sqlx::query("UPDATE a").execute(&mut *tx).await.unwrap();
     tx.commit().await.unwrap();
@@ -451,7 +452,7 @@ fn a_re_read_in_a_read_transaction_after_the_write_commit_is_flagged() {
 
 #[test]
 fn two_read_transactions_in_one_function_are_flagged() {
-    let source = r#"pub async fn both(pool: &impl DriverPool) {
+    let source = r#"pub async fn both(pool: &Database) {
     let mut first = pool.begin_read().await.unwrap();
     sqlx::query("SELECT a").fetch_one(&mut *first).await.unwrap();
     first.commit().await.unwrap();
@@ -468,7 +469,7 @@ fn two_read_transactions_in_one_function_are_flagged() {
 
 #[test]
 fn two_write_transactions_in_one_function_are_flagged() {
-    let source = r#"pub async fn both(pool: &impl DriverPool) {
+    let source = r#"pub async fn both(pool: &Database) {
     let mut first = pool.begin_write().await.unwrap();
     sqlx::query("UPDATE a").execute(&mut *first).await.unwrap();
     first.commit().await.unwrap();
@@ -485,7 +486,7 @@ fn two_write_transactions_in_one_function_are_flagged() {
 
 #[test]
 fn a_read_transaction_that_ends_before_the_write_transaction_begins_is_not_flagged() {
-    let source = r#"pub async fn rename(pool: &impl DriverPool) {
+    let source = r#"pub async fn rename(pool: &Database) {
     let mut read = pool.begin_read().await.unwrap();
     sqlx::query("SELECT a").fetch_one(&mut *read).await.unwrap();
     read.commit().await.unwrap();
@@ -500,7 +501,7 @@ fn a_read_transaction_that_ends_before_the_write_transaction_begins_is_not_flagg
 
 #[test]
 fn two_reads_in_one_read_transaction_are_not_flagged() {
-    let source = r#"pub async fn both(pool: &impl DriverPool) {
+    let source = r#"pub async fn both(pool: &Database) {
     let mut read = pool.begin_read().await.unwrap();
     sqlx::query("SELECT a").fetch_one(&mut *read).await.unwrap();
     sqlx::query("SELECT b").fetch_one(&mut *read).await.unwrap();
@@ -578,37 +579,39 @@ fn a_statement_after_the_last_commit_is_flagged_even_with_an_early_return() {
 }
 
 #[test]
-fn a_listed_function_is_excepted() {
-    let source = r#"pub async fn compact(pool: &impl DriverPool) {
+fn a_listed_function_is_excepted_from_rule_3_but_not_rule_6() {
+    let source = r#"pub async fn compact(pool: &Database) {
     sqlx::query("VACUUM").execute(pool).await.unwrap();
     sqlx::query("PRAGMA wal_checkpoint").fetch_one(pool).await.unwrap();
 }
 "#;
     let ast = syn::parse_file(source).unwrap();
+    let rules = |exceptions: &[Exception]| -> Vec<u8> {
+        file_violations_with(REPOSITORY, &ast, exceptions)
+            .iter()
+            .map(|violation| violation.rule)
+            .collect()
+    };
     let listed = [(
         REPOSITORY,
         "compact",
         Exempt::Shape,
         "VACUUM runs outside a transaction",
     )];
-    assert_eq!(
-        file_violations_with(REPOSITORY, &ast, &[]).len(),
-        1,
-        "unlisted"
-    );
-    assert!(file_violations_with(REPOSITORY, &ast, &listed).is_empty());
     let other_file = [(
         "crates/x/src/repository.rs",
         "compact",
         Exempt::Shape,
         "elsewhere",
     )];
-    assert_eq!(file_violations_with(REPOSITORY, &ast, &other_file).len(), 1);
+    assert_eq!(rules(&[]), vec![3, 6, 6], "unlisted");
+    assert_eq!(rules(&listed), vec![6, 6], "listed");
+    assert_eq!(rules(&other_file), vec![3, 6, 6], "listed in another file");
 }
 
 #[test]
 fn statements_inside_a_macro_body_count() {
-    let source = r#"pub async fn load(pool: &impl DriverPool) {
+    let source = r#"pub async fn load(pool: &Database) {
     tokio::try_join!(
         sqlx::query("UPDATE a").execute(pool),
         sqlx::query("SELECT b").fetch_all(pool),
@@ -631,7 +634,7 @@ fn methods_count_and_services_and_test_functions_are_not_checked() {
     }
 }
 #[cfg(test)]
-async fn helper(pool: &impl DriverPool) {
+async fn helper(pool: &Database) {
     sqlx::query("UPDATE a").execute(pool).await.unwrap();
     sqlx::query("SELECT b").fetch_one(pool).await.unwrap();
 }
@@ -646,7 +649,7 @@ async fn helper(pool: &impl DriverPool) {
 }
 "#;
     assert_eq!(found(SERVICE, service), Vec::<String>::new());
-    let data = r#"async fn rename(pool: &impl DriverPool) {
+    let data = r#"async fn rename(pool: &Database) {
     foo.execute(pool).await.unwrap();
     foo.fetch_one(pool).await.unwrap();
 }
@@ -764,14 +767,14 @@ fn helpers_given_the_transaction_are_not_flagged() {
 
 #[test]
 fn a_free_helper_counts_when_its_executor_parameter_receives_the_pool() {
-    let source = r#"pub async fn update(pool: &impl DriverPool) {
+    let source = r#"pub async fn update(pool: &Database) {
     write_title(pool).await;
     write_prompt(pool).await;
 }
-async fn write_title(executor: &impl DriverPool) {
+async fn write_title(executor: &Database) {
     sqlx::query("UPDATE a").execute(executor).await.unwrap();
 }
-async fn write_prompt(executor: &impl DriverPool) {
+async fn write_prompt(executor: &Database) {
     sqlx::query("UPDATE b").execute(executor).await.unwrap();
 }
 "#;
@@ -786,7 +789,7 @@ async fn write_prompt(executor: &impl DriverPool) {
             "write_title, write_prompt"
         )]
     );
-    let in_transaction = r#"pub async fn update(pool: &impl DriverPool) {
+    let in_transaction = r#"pub async fn update(pool: &Database) {
     let mut tx = pool.begin_write().await.unwrap();
     write_title(&mut *tx).await;
     write_prompt(&mut *tx).await;
@@ -935,7 +938,7 @@ fn a_same_file_helper_named_begin_is_not_a_deferred_begin_but_a_pool_begin_is() 
     async fn through_the_connection(&self) {
         let tx = self.db_conn.pool().begin().await.unwrap();
     }
-    async fn on_a_parameter(pool: &impl DriverPool) {
+    async fn on_a_parameter(pool: &Database) {
         let tx = pool.begin().await.unwrap();
     }
 }
@@ -1053,7 +1056,6 @@ fn a_data_function_with_a_pool_typed_parameter_of_any_name_is_checked() {
         "Arc<Database>",
         "Option<&Database>",
         "&sqlx::Pool<sqlx::Sqlite>",
-        "&impl DriverPool",
     ] {
         let source = format!(
             "pub async fn rename(db: {ty}) {{
@@ -1068,27 +1070,11 @@ fn a_data_function_with_a_pool_typed_parameter_of_any_name_is_checked() {
             "{ty}"
         );
     }
-    let bounded = "pub async fn rename<D: DriverPool>(db: &D) {
-    sqlx::query(\"UPDATE a\").execute(db).await.unwrap();
-    sqlx::query(\"SELECT b\").fetch_one(db).await.unwrap();
-}
-pub async fn clause<D>(db: &D) where D: DriverPool {
-    sqlx::query(\"UPDATE a\").execute(db).await.unwrap();
-    sqlx::query(\"SELECT b\").fetch_one(db).await.unwrap();
-}
-";
-    assert_eq!(
-        found(REPOSITORY, bounded),
-        vec![
-            on_pool(REPOSITORY, 1, "rename", 2, 2, ""),
-            on_pool(REPOSITORY, 5, "clause", 2, 2, ""),
-        ]
-    );
 }
 
 #[test]
 fn a_database_parameter_driven_through_sqlx_pool_is_still_the_pool() {
-    let source = r#"pub async fn rename(database: &impl DriverPool) {
+    let source = r#"pub async fn rename(database: &Database) {
     sqlx::query("UPDATE a").execute(database.sqlx_pool()).await.unwrap();
     sqlx::query("SELECT b").fetch_one(database.sqlx_pool()).await.unwrap();
 }

@@ -12,6 +12,7 @@ import { useConversationsStore } from '@/shared/conversations/conversationsStore
 import type { ConversationsState, GenerationOutcome } from '@/shared/conversations/conversationsStore.types';
 import { toast } from '@/stores/toastStore';
 import type { ConversationMessage } from '@/types/conversation';
+import { plainTextOf } from '@/utils/replyPieces';
 
 import { openMic } from '../model/micInput';
 import { encodePcm } from '../model/pcm';
@@ -21,7 +22,7 @@ const VOICE_SOURCE = 'voice-reply';
 
 function replyBeingWritten(state: ConversationsState, conversationId: string | null): string {
   for (const message of state.optimisticMessages.values()) {
-    if (message.role === 'assistant' && message.conversationId === conversationId) return message.content;
+    if (message.role === 'assistant' && message.conversationId === conversationId) return plainTextOf(message);
   }
   return '';
 }

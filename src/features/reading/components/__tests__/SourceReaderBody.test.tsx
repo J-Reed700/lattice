@@ -12,13 +12,14 @@ import type { SourceWithMetadata } from '@/types/conversation';
 const mocks = vi.hoisted(() => ({
   resolveSourcePath: vi.fn(),
   readFileContent: vi.fn(),
+  savedWebArticle: vi.fn(),
   getWebPageSnapshot: vi.fn(),
   activeConversationId: null as string | null,
 }));
 
 vi.mock('@/lib/api', () => ({
-  default: { readFileContent: mocks.readFileContent },
-  VaultAPI: { readFileContent: mocks.readFileContent },
+  default: { readFileContent: mocks.readFileContent, savedWebArticle: mocks.savedWebArticle },
+  VaultAPI: { readFileContent: mocks.readFileContent, savedWebArticle: mocks.savedWebArticle },
 }));
 vi.mock('@/features/reading/hooks/sourceFileActions', () => ({
   resolveSourcePath: mocks.resolveSourcePath,
@@ -42,7 +43,11 @@ vi.mock('@/features/reading', () => ({
   SelectionToolbar: () => null,
   useTextSelection: () => null,
 }));
-vi.mock('@/features/reading/components/viewers/HTMLViewer', () => ({ HTMLViewer: () => null }));
+vi.mock('@/features/reading/components/viewers/HTMLViewer', () => ({
+  HTMLViewer: ({ article, htmlPath }: { article?: { pagePath: string | null }; htmlPath?: string }) => (
+    <div data-testid="html-viewer" data-page={article?.pagePath ?? htmlPath ?? ''} />
+  ),
+}));
 vi.mock('@/features/reading/components/viewers/DocxViewer', () => ({
   DocxViewer: ({ filePath, title }: { filePath: string; title?: string }) => (
     <div data-testid="docx-viewer" data-path={filePath}>{title}</div>
@@ -114,6 +119,7 @@ beforeEach(() => {
     data: documentId.startsWith('223e') ? '/vault/current/second.txt' : '/vault/current/notes.txt',
   }));
   mocks.readFileContent.mockResolvedValue({ ok: true, data: 'Full file at its current path' });
+  mocks.savedWebArticle.mockResolvedValue({ ok: true, data: null });
 });
 
 describe('SourceReaderBody local citations', () => {
@@ -340,5 +346,91 @@ describe('SourceReaderBody Reader | Page toggle', () => {
 
     const article = await screen.findByTestId('web-article');
     expect(article.getAttribute('data-text')).toBe('Full immutable captured text from web source repository');
+  });
+});
+
+describe('SourceReaderBody saved web articles', () => {
+  const savedArticle = (folder: string) => ({
+    textPath: `${folder}article.md`,
+    pagePath: `${folder}page.html`,
+    title: 'A saved piece',
+    url: 'https://example.com/a',
+    links: [],
+  });
+  const articleSource = (filePath: string) =>
+    source({
+      documentId: undefined,
+      fileName: 'article.md',
+      filePath,
+      mimeType: 'text/markdown',
+      category: 'local file',
+    });
+
+  it('shows the saved page of an article at a Windows path, as the archive says', async () => {
+    const folder = 'C:\\Users\\me\\.lattice\\web-archive\\example.com\\a-1\\';
+    mocks.savedWebArticle.mockResolvedValue({ ok: true, data: savedArticle(folder) });
+    renderBody(articleSource(`${folder}article.md`));
+
+    const viewer = await screen.findByTestId('html-viewer');
+    expect(viewer.getAttribute('data-page')).toBe(`${folder}page.html`);
+    expect(mocks.savedWebArticle).toHaveBeenCalledWith(`${folder}article.md`);
+    expect(mocks.readFileContent).not.toHaveBeenCalled();
+  });
+
+  it('shows the saved page of an article in a custom data folder', async () => {
+    const folder = '/data/lattice/web-archive/x/';
+    mocks.savedWebArticle.mockResolvedValue({ ok: true, data: savedArticle(folder) });
+    renderBody(articleSource(`${folder}article.md`));
+
+    const viewer = await screen.findByTestId('html-viewer');
+    expect(viewer.getAttribute('data-page')).toBe(`${folder}page.html`);
+    expect(mocks.readFileContent).not.toHaveBeenCalled();
+  });
+
+  it('reads a file the archive does not claim as plain markdown, whatever its path says', async () => {
+    mocks.savedWebArticle.mockResolvedValue({ ok: true, data: null });
+    const path = '/Users/me/.lattice/web-archive/id/article.md';
+    renderBody(articleSource(path));
+
+    expect(await screen.findByText('Full file at its current path')).toBeTruthy();
+    expect(mocks.readFileContent).toHaveBeenCalledWith(path);
+    expect(screen.queryByTestId('html-viewer')).toBeNull();
+  });
+
+  it('reads nothing while the archive has not answered, and shows the loading state', async () => {
+    mocks.savedWebArticle.mockReturnValue(new Promise(() => undefined));
+    const { container } = renderBody(articleSource('/data/notes/article.md'));
+
+    await waitFor(() => expect(mocks.savedWebArticle).toHaveBeenCalledWith('/data/notes/article.md'));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mocks.readFileContent).not.toHaveBeenCalled();
+    expect(container.querySelector('.animate-spin')).not.toBeNull();
+    expect(screen.queryByTestId('html-viewer')).toBeNull();
+  });
+
+  it("asks the archive about the document's current path when the cited path is stale", async () => {
+    const folder = '/vault/current/web-archive/example.com/a-1/';
+    mocks.resolveSourcePath.mockResolvedValue({ ok: true, data: `${folder}article.md` });
+    mocks.savedWebArticle.mockImplementation(async (path: string) => ({
+      ok: true,
+      data: path === `${folder}article.md` ? savedArticle(folder) : null,
+    }));
+    renderBody(
+      source({
+        fileName: 'article.md',
+        filePath: '/old/home/web-archive/example.com/a-1/article.md',
+        mimeType: 'text/markdown',
+        category: 'local file',
+      }),
+    );
+
+    const viewer = await screen.findByTestId('html-viewer');
+    expect(viewer.getAttribute('data-page')).toBe(`${folder}page.html`);
+    expect(mocks.savedWebArticle).toHaveBeenCalledWith(`${folder}article.md`);
+    expect(mocks.savedWebArticle).not.toHaveBeenCalledWith(
+      '/old/home/web-archive/example.com/a-1/article.md',
+    );
   });
 });

@@ -6,9 +6,16 @@
 //! `lattice_core::application::ports::claim_review`.
 //! Design: docs/design/2026-10-16-lesson-claim-review.md §7.
 
+/// `n` as a count a review DTO carries, saturating at `u32::MAX`.
+pub(crate) fn count(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
+}
+
 mod actions;
 pub mod attach;
 pub mod checker_examples;
+#[cfg(test)]
+mod code_example_migration_tests;
 pub mod dto;
 #[cfg(test)]
 mod dto_tests;

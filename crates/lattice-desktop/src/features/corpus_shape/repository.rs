@@ -6,13 +6,12 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::{Row, SqlitePool};
+use sqlx::Row;
 use std::collections::HashMap;
 
 use crate::features::corpus_shape::entity::{Cluster, ClusterMember, ClusterRun, LabelSource};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::Database;
 
 /// Port for persisting cluster runs + clusters. Kept narrow — `corpus_shape`
 /// is the only feature that writes this, so the contract stays here.
@@ -37,13 +36,12 @@ pub trait ClusterRepositoryPort: Send + Sync {
 
 /// Production implementation backed by SQLite.
 pub struct SqliteClusterRepository {
-    pool: SqlitePool,
+    db: Database,
 }
 
 impl SqliteClusterRepository {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 
     fn encode_centroid(centroid: &[f32]) -> Vec<u8> {
@@ -72,7 +70,7 @@ impl ClusterRepositoryPort for SqliteClusterRepository {
         clusters: &[(Cluster, Vec<ClusterMember>)],
     ) -> Result<()> {
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("begin tx: {}", e)))?;
@@ -153,6 +151,7 @@ impl ClusterRepositoryPort for SqliteClusterRepository {
     }
 
     async fn get_latest_run(&self) -> Result<Option<ClusterRun>> {
+        let mut read = self.db.begin_read().await?;
         let row_opt = sqlx::query(
             r#"
             SELECT id, ran_at, doc_count, cluster_count, noise_count, params_hash, duration_ms, llm_calls
@@ -161,9 +160,10 @@ impl ClusterRepositoryPort for SqliteClusterRepository {
             LIMIT 1
             "#,
         )
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *read)
         .await
         .map_err(|e| AppError::Database(format!("get_latest_run: {}", e)))?;
+        read.commit().await?;
 
         let Some(row) = row_opt else {
             return Ok(None);
@@ -203,7 +203,7 @@ impl ClusterRepositoryPort for SqliteClusterRepository {
     }
 
     async fn get_clusters_for_run(&self, run_id: &str) -> Result<Vec<Cluster>> {
-        let mut tx = self.pool.begin_read().await?;
+        let mut tx = self.db.begin_read().await?;
         let rows = sqlx::query(
             r#"
             SELECT id, run_id, label, description, centroid, fingerprint,
@@ -286,6 +286,7 @@ impl ClusterRepositoryPort for SqliteClusterRepository {
     }
 
     async fn get_members_for_cluster(&self, cluster_id: &str) -> Result<Vec<ClusterMember>> {
+        let mut read = self.db.begin_read().await?;
         let rows = sqlx::query(
             r#"
             SELECT document_id, membership_probability, is_representative
@@ -295,9 +296,10 @@ impl ClusterRepositoryPort for SqliteClusterRepository {
             "#,
         )
         .bind(cluster_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
         .map_err(|e| AppError::Database(format!("get_members_for_cluster: {}", e)))?;
+        read.commit().await?;
 
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {

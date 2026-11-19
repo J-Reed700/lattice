@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { useApi } from '@/contexts/ApiContext';
+import { useApi, type ApiClient } from '@/contexts/ApiContext';
 import type { WaitingClaimsCheck } from '@/features/learning/api/client';
 import { invalidateLearningSourceDependents } from '@/features/learning/api/learningInvalidation';
 import type {
@@ -36,11 +36,17 @@ export function useLearningSourceWorkspace(programId: string) {
   });
 }
 
+export function learningSourceVersionQuery(api: ApiClient, request: GetLearningSourceVersionRequestDto | null) {
+  return {
+    queryKey: learningSourceVersionKey(request),
+    queryFn: async () => unwrap(await api.getLearningSourceVersion(request!)),
+  };
+}
+
 export function useLearningSourceVersion(request: GetLearningSourceVersionRequestDto | null) {
   const api = useApi();
   return useQuery<LearningSourceVersionDto>({
-    queryKey: learningSourceVersionKey(request),
-    queryFn: async () => unwrap(await api.getLearningSourceVersion(request!)),
+    ...learningSourceVersionQuery(api, request),
     enabled: Boolean(request?.programId && request.sourceId && request.versionId),
     staleTime: 60_000,
     retry: false,

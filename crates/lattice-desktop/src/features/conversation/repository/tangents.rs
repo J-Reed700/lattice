@@ -63,35 +63,43 @@ impl ConversationRepository {
             Some(selected_text),
         )
         .await?;
-        sqlx::query_as::<_, ConversationTangentRow>(&format!(
+        let mut read = self.db.begin_read().await?;
+        let tangent = sqlx::query_as::<_, ConversationTangentRow>(sqlx::AssertSqlSafe(format!(
             "SELECT {TANGENT_COLUMNS} FROM conversations WHERE id = ?"
-        ))
+        )))
         .bind(&id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *read)
         .await
         .map(Into::into)
-        .map_err(|e| AppError::Database(format!("Failed to read tangent: {e}")))
+        .map_err(|e| AppError::Database(format!("Failed to read tangent: {e}")))?;
+        read.commit().await?;
+        Ok(tangent)
     }
 
     pub async fn list_tangents(&self, parent_id: &str) -> Result<Vec<ConversationTangentDto>> {
-        sqlx::query_as::<_, ConversationTangentRow>(&format!(
+        let mut read = self.db.begin_read().await?;
+        let tangents = sqlx::query_as::<_, ConversationTangentRow>(sqlx::AssertSqlSafe(format!(
             "SELECT {TANGENT_COLUMNS} FROM conversations WHERE tangent_parent_id = ? ORDER BY updated_at DESC, id"
-        )).bind(parent_id).fetch_all(&self.pool).await
+        ))).bind(parent_id).fetch_all(&mut *read).await
             .map(|rows| rows.into_iter().map(Into::into).collect())
-            .map_err(|e| AppError::Database(format!("Failed to list tangents: {e}")))
+            .map_err(|e| AppError::Database(format!("Failed to list tangents: {e}")))?;
+        read.commit().await?;
+        Ok(tangents)
     }
 
     /// Promotion keeps the same id and transcript, including the fork context.
     /// Repeating it is harmless; an ordinary conversation remains ordinary.
     pub async fn promote_tangent(&self, id: &str) -> Result<()> {
+        let mut tx = self.db.begin_write().await?;
         let result = sqlx::query("UPDATE conversations SET tangent_parent_id = NULL WHERE id = ?")
             .bind(id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| AppError::Database(format!("Failed to promote tangent: {e}")))?;
         if result.rows_affected() == 0 {
             return Err(AppError::NotFound(format!("Tangent {id} not found")));
         }
+        tx.commit().await?;
         Ok(())
     }
 }

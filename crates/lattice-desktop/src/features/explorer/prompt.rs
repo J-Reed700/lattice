@@ -6,6 +6,7 @@
 //! lines. The open file and the passages ride along on every turn so that a
 //! model without tool calling can still answer about the folder.
 
+use super::file_refs::{rewrite_old_references, FileNames};
 use super::fs;
 use super::index::search::{FolderHit, FolderSearch};
 use super::index::tool as folder_index_tool;
@@ -20,6 +21,9 @@ use lattice_core::application::contracts::tools::explorer::{
 use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
 use lattice_core::application::ports::turn_source::{TurnSourcePolicy, TurnSourcePort};
 use lattice_core::application::ports::ToolDefinition;
+use lattice_core::application::services::model_contract::kept::TurnNames;
+use lattice_core::application::services::model_contract::reply::{Markers, Place};
+use lattice_core::application::services::tool_handles::FolderFile;
 use lattice_core::shared::persistence::Database;
 use std::sync::Arc;
 use tracing::warn;
@@ -33,10 +37,10 @@ const TOP_LEVEL_ENTRIES: usize = 40;
 pub(crate) const FOLDER_TEMPLATE: &str = "Answer the user's question about the folder open beside this chat: \
      what its code does, how it fits together, and the ideas behind it. Explain from the folder and \
      from what you know; teaching how the code works, or a concept it uses, needs no source and no \
-     citation. Point at the folder's code with line references, as the folder's rules below describe. \
-     Bracket numbers like [1] belong only to the numbered library or web passages in this message: put \
-     one after a claim such a passage supports, and never on the folder, on these instructions or on \
-     your own explanation.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
+     citation. Point at the folder's code by a file's bracketed name and lines, as the folder's rules below describe. \
+     Bracketed labels like [s1] belong only to the labelled library or web passages in this message: put \
+     one after a claim such a passage supports, and never on these instructions or on your own \
+     explanation; the folder's files have names like [f2], given where a file is shown.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
 
 /// How a turn treats the folder. The question is about the folder on
 /// screen, so the library is searched only when the user turns it on, and
@@ -70,6 +74,7 @@ pub struct ExplorerTurn {
     focus: Option<ExplorerFocusDto>,
     /// The open folder's index, when it has anything in it.
     index: Option<Arc<FolderSearch>>,
+    names: Arc<TurnNames>,
 }
 
 impl std::fmt::Debug for ExplorerTurn {
@@ -93,6 +98,7 @@ impl ExplorerTurn {
         folders: Option<&super::index::manager::FolderIndexManager>,
         conversation_id: &str,
         focus: Option<&ExplorerFocusDto>,
+        names: Arc<TurnNames>,
     ) -> Option<Self> {
         let root = match repository::conversation_root(database, conversation_id).await {
             Ok(Some(root)) => root,
@@ -112,6 +118,7 @@ impl ExplorerTurn {
                     scope,
                     focus: focus.cloned(),
                     index,
+                    names,
                 })
             }
             Err(error) => {
@@ -126,12 +133,18 @@ impl ExplorerTurn {
         scope: Scope,
         focus: Option<ExplorerFocusDto>,
         index: Option<Arc<FolderSearch>>,
+        names: Arc<TurnNames>,
     ) -> Self {
         Self {
             scope,
             focus,
             index,
+            names,
         }
+    }
+
+    fn file_names(&self) -> FileNames {
+        FileNames::new(Arc::clone(&self.names))
     }
 
     /// Whether `search_folder` is offered: the folder's index has passages.
@@ -179,18 +192,31 @@ impl ExplorerTurn {
         let scope = self.scope.clone();
         let focus = self.focus.clone();
         let folder_search = self.has_folder_index();
-        tokio::task::spawn_blocking(move || {
-            render_context(
-                &scope,
-                focus.as_ref(),
-                max_chars,
-                tools_offered,
-                folder_search,
-                &passages,
-            )
+        let names = self.file_names();
+        let block = tokio::task::spawn_blocking({
+            let names = names.clone();
+            move || {
+                render_context(
+                    &scope,
+                    &names,
+                    focus.as_ref(),
+                    max_chars,
+                    tools_offered,
+                    folder_search,
+                    &passages,
+                )
+            }
         })
-        .await
-        .unwrap_or_default()
+        .await;
+        names.keep().await;
+        match block {
+            Ok(Ok(block)) => block,
+            Ok(Err(error)) => {
+                warn!(%error, "The folder block could not be written");
+                String::new()
+            }
+            Err(_) => String::new(),
+        }
     }
 
     /// Runs one folder tool call: `search_folder` against the index, the
@@ -200,21 +226,24 @@ impl ExplorerTurn {
         call: FunctionCall,
         max_chars: usize,
     ) -> lattice_core::shared::Result<FunctionResult> {
-        if call.name != TOOL_SEARCH_FOLDER {
-            return tools::execute(&self.scope, call, max_chars).await;
-        }
-        let Some(index) = &self.index else {
-            return Ok(FunctionResult::error(
+        let names = self.file_names();
+        let result = if call.name != TOOL_SEARCH_FOLDER {
+            tools::execute(&self.scope, &names, call, max_chars).await
+        } else if let Some(index) = &self.index {
+            Ok(
+                match folder_index_tool::run(index, &names, &call.arguments, max_chars).await {
+                    Ok(text) => FunctionResult::success(serde_json::Value::String(text)),
+                    Err(error) => FunctionResult::error("explorer_error", tools::describe(&error)),
+                },
+            )
+        } else {
+            Ok(FunctionResult::error(
                 "explorer_error",
                 "The folder has no index to search. Use search_files instead.",
-            ));
+            ))
         };
-        Ok(
-            match folder_index_tool::run(index, &call.arguments, max_chars).await {
-                Ok(text) => FunctionResult::success(serde_json::Value::String(text)),
-                Err(error) => FunctionResult::error("explorer_error", tools::describe(&error)),
-            },
-        )
+        names.keep().await;
+        result
     }
 }
 
@@ -249,6 +278,14 @@ impl TurnSourcePort for ExplorerTurn {
         ExplorerTurn::context_block(self, max_chars, tools_offered, question).await
     }
 
+    fn reply_markers(&self, markers: Markers) -> Markers {
+        markers.of_lines::<FolderFile>(Place::Inline)
+    }
+
+    fn old_references(&self, reply: String) -> String {
+        rewrite_old_references(&reply, &self.file_names())
+    }
+
     async fn execute_tool(
         &self,
         call: FunctionCall,
@@ -269,28 +306,33 @@ fn rules(tools_offered: bool, folder_search: bool) -> String {
     format!(
         "How to answer about the folder:\n\
          - {reading}\n\
-         - Point at lines with a line reference written as inline code: the whole path from the folder root (never the file name alone), a colon, and 1-based line numbers, like `src/main.rs:10-24`, or `src/main.rs:12` for one line. The user sees each one as a link that opens the file at those lines. Only reference lines you have actually seen.\n\
-         - The folder is what the user is looking at. Their library and the web are outside knowledge: cite those with bracket numbers like [1] only when numbered passages from them appear in this message, and never use bracket numbers for the folder."
+         - Point at lines of a file with its bracketed name and the lines, like [f2:10-24], or [f2:12] for one line, or [f2] for the file as a whole. The user sees each one as a link that opens the file there. Only point at lines you have actually seen.\n\
+         - The folder is what the user is looking at. Their library and the web are outside knowledge: cite those with their own bracketed labels like [s1] only when labelled passages from them appear in this message; the folder's files have names like [f2], given where a file is shown."
     )
 }
 
 /// The passages section, at most `budget` characters; empty without hits.
-fn render_passages(passages: &FolderPassages, budget: usize) -> String {
-    if passages.hits.is_empty() {
-        return String::new();
-    }
-    let heading = "Passages from the folder that may bear on the question, found by its search index. Each is headed by its line reference; cite one the same way if you use it.\n";
+fn render_passages(
+    passages: &FolderPassages,
+    budget: usize,
+    names: &FileNames,
+) -> lattice_core::shared::Result<String> {
+    let Some(first) = passages.hits.first() else {
+        return Ok(String::new());
+    };
+    let heading = "Passages from the folder that may bear on the question, found by its search index. Each is headed by its file's bracketed name with the passage's lines; point at one the same way if you use it.\n";
     let note = passages
         .progress
         .as_deref()
         .map(|note| format!("{note}\n"))
         .unwrap_or_default();
     let room = budget.saturating_sub(heading.len() + note.len());
-    let body = folder_index_tool::render_passages(&passages.hits, room);
-    if body.trim().is_empty() || body.starts_with('[') {
-        return String::new();
+    let body = folder_index_tool::render_passages(&passages.hits, room, names)?;
+    let opening = names.name_lines(&first.path, first.start_line, first.end_line)?;
+    if !body.starts_with(&opening) {
+        return Ok(String::new());
     }
-    format!("{heading}{body}{note}")
+    Ok(format!("{heading}{body}{note}"))
 }
 
 /// The block for one turn. A focus that does not resolve inside the scope (a
@@ -301,14 +343,15 @@ fn render_passages(passages: &FolderPassages, budget: usize) -> String {
 /// file and selection keep the rest.
 pub fn render_context(
     scope: &Scope,
+    names: &FileNames,
     focus: Option<&ExplorerFocusDto>,
     max_chars: usize,
     tools_offered: bool,
     folder_search: bool,
     passages: &FolderPassages,
-) -> String {
+) -> lattice_core::shared::Result<String> {
     let rules = rules(tools_offered, folder_search);
-    let passages = render_passages(passages, max_chars / 2);
+    let passages = render_passages(passages, max_chars / 2, names)?;
     let mut out = format!(
         "Folder open beside this chat: {}. The user is looking at it in Explorer; every path here is relative to its root.\n",
         scope.name()
@@ -342,9 +385,10 @@ pub fn render_context(
 
     if let Some(open) = focus.and_then(|focus| focus.open_path.as_deref()) {
         if let Ok(file) = fs::read_file(scope, open) {
+            let name = names.name(&file.path)?;
             match file.text.as_deref() {
                 None => out.push_str(&format!(
-                    "Open file: {} ({}; not shown).\n",
+                    "Open file: {name} {} ({}; not shown).\n",
                     file.path,
                     if file.binary { "binary" } else { "too large" }
                 )),
@@ -365,14 +409,14 @@ pub fn render_context(
                             start,
                             end,
                             format!(
-                                "Open file: {} ({total} lines). The user selected lines {start}–{end}:",
+                                "Open file: {name} {} ({total} lines). The user selected lines {start}–{end}:",
                                 file.path
                             ),
                         ),
                         None => (
                             1,
                             total,
-                            format!("Open file: {} ({total} lines):", file.path),
+                            format!("Open file: {name} {} ({total} lines):", file.path),
                         ),
                     };
                     out.push_str(&heading);
@@ -417,11 +461,54 @@ pub fn render_context(
         }
     }
 
+    let room = max_chars.saturating_sub(out.len() + passages.len() + rules.len() + 2);
+    let named = render_named(names, room);
+    if !named.is_empty() {
+        out.push('\n');
+        out.push_str(&named);
+    }
     if !passages.is_empty() {
         out.push('\n');
         out.push_str(&passages);
     }
     out.push('\n');
     out.push_str(&rules);
+    Ok(out)
+}
+
+/// The files this conversation has named, newest first, within `room` characters;
+/// a closing line counts the ones left out. Empty when nothing is named or nothing fits.
+fn render_named(names: &FileNames, room: usize) -> String {
+    let held = names.held();
+    if held.is_empty() {
+        return String::new();
+    }
+    let heading = "Files named so far in this conversation:\n";
+    let lines: Vec<String> = held
+        .iter()
+        .map(|(name, path)| format!("{name} {path}\n"))
+        .collect();
+    let closing = |left: usize| format!("[{left} more not shown.]\n");
+    let all = heading.len() + lines.iter().map(String::len).sum::<usize>();
+    let reserve = if all <= room {
+        0
+    } else {
+        closing(lines.len()).len()
+    };
+    let mut out = String::from(heading);
+    let mut shown = 0usize;
+    for line in &lines {
+        if out.len() + line.len() + reserve > room {
+            break;
+        }
+        out.push_str(line);
+        shown += 1;
+    }
+    if shown == 0 {
+        return String::new();
+    }
+    if shown < lines.len() {
+        out.push_str(&closing(lines.len() - shown));
+    }
     out
 }

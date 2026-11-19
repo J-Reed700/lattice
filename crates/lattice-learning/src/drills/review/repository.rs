@@ -1,7 +1,7 @@
 //! What the review view reads: whether a course is there, its lessons' titles, and the language a code drill was last
 //! taken in.
 
-use crate::persistence::db;
+use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
 use sqlx::SqliteConnection;
 
@@ -14,7 +14,7 @@ pub(super) async fn course_exists_in(
         .bind(program_id)
         .fetch_one(&mut *connection)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 /// The course's lessons as (lesson id, lesson title, module id, module title).
@@ -28,7 +28,7 @@ pub(super) async fn lesson_titles_in(
     .bind(program_id)
     .fetch_all(&mut *connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// The language the latest code drill attempted in the course was taken in.
@@ -42,7 +42,7 @@ pub(super) async fn course_language_in(
     .bind(program_id)
     .fetch_optional(&mut *connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// The language the latest code drill attempted in any course was taken in.
@@ -54,5 +54,5 @@ pub(super) async fn latest_language_in(
     )
     .fetch_optional(&mut *connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }

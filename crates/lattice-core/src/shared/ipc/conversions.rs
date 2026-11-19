@@ -1,16 +1,110 @@
 //! Mapping application, domain, I/O, database and serialization errors onto `ApiError`.
 use super::*;
 
+/// The code of a domain error.
+impl From<&DomainError> for ErrorCode {
+    fn from(err: &DomainError) -> Self {
+        match err {
+            DomainError::EntityNotFound { .. } => ErrorCode::NotFound,
+            DomainError::InvalidState { .. } => ErrorCode::InvalidState,
+            DomainError::ValidationFailed { .. } => ErrorCode::ValidationError,
+            DomainError::UnsupportedFileType { .. } => ErrorCode::UnsupportedFileType,
+            DomainError::FileTooLarge { .. } => ErrorCode::FileTooLarge,
+            DomainError::ConcurrentModification { .. } => ErrorCode::ConcurrentModification,
+            DomainError::ConstraintViolation { .. } => ErrorCode::ConstraintViolation,
+        }
+    }
+}
+
+/// The code of an application error.
+impl From<&ApplicationError> for ErrorCode {
+    fn from(err: &ApplicationError) -> Self {
+        match err {
+            ApplicationError::Domain(domain_err) => ErrorCode::from(domain_err),
+            ApplicationError::InvalidConfig { .. } => ErrorCode::InvalidConfig,
+            ApplicationError::ServiceNotAvailable { .. } => ErrorCode::ServiceNotAvailable,
+            ApplicationError::SerializationFailed { .. } => ErrorCode::SerializationError,
+            ApplicationError::DeserializationFailed { .. } => ErrorCode::DeserializationError,
+            ApplicationError::JsonError { .. } | ApplicationError::ParsingError { .. } => {
+                ErrorCode::ParsingError
+            }
+            ApplicationError::UseCaseFailed { .. } | ApplicationError::MappingError { .. } => {
+                ErrorCode::ProcessingError
+            }
+        }
+    }
+}
+
+/// The one code of an error, for the frontend, the logs and the audit records.
+impl From<&AppError> for ErrorCode {
+    fn from(err: &AppError) -> Self {
+        match err {
+            AppError::Domain(domain_err) => ErrorCode::from(&**domain_err),
+            AppError::Application(app_err) => ErrorCode::from(&**app_err),
+            AppError::InvalidConfig(_) => ErrorCode::InvalidConfig,
+            AppError::WindowTooSmall(_) => ErrorCode::WindowTooSmall,
+            AppError::LearningModelNotSet(_) => ErrorCode::LearningModelNotSet,
+            AppError::ModelServerCannotStart(_) => ErrorCode::ModelLoadError,
+            AppError::NotFound(_) => ErrorCode::NotFound,
+            AppError::PermissionDenied(_) => ErrorCode::PermissionDenied,
+            AppError::InvalidInput(_) | AppError::InvalidUrl(_) | AppError::InvalidData(_) => {
+                ErrorCode::InvalidInput
+            }
+            AppError::PromptExceedsWindow { .. } => ErrorCode::PromptExceedsWindow,
+            AppError::ValidationFailed(_) => ErrorCode::ValidationError,
+            AppError::Conflict(_) => ErrorCode::Conflict,
+            AppError::InvalidState(_) => ErrorCode::InvalidState,
+            AppError::Cancelled(_) => ErrorCode::Cancelled,
+            AppError::FileNotFound { .. } => ErrorCode::FileNotFound,
+            AppError::FileTooLarge { .. } => ErrorCode::FileTooLarge,
+            AppError::UnsupportedFileType { .. } => ErrorCode::UnsupportedFileType,
+            AppError::FileRead { .. } => ErrorCode::FileReadError,
+            AppError::FileStorage(_) | AppError::FileSystem(_) | AppError::Io { .. } => {
+                ErrorCode::FileSystemError
+            }
+            AppError::DatabaseBusy(_) => ErrorCode::DatabaseBusy,
+            AppError::Database(_) => ErrorCode::DatabaseError,
+            AppError::Migration(_) => ErrorCode::MigrationError,
+            AppError::Network(_) => ErrorCode::NetworkError,
+            AppError::HttpStatus { .. } => ErrorCode::HttpStatus,
+            AppError::RateLimitExceeded(_) => ErrorCode::RateLimitExceeded,
+            AppError::ServiceNotAvailable(_) => ErrorCode::ServiceNotAvailable,
+            AppError::ModelRejected(_) => ErrorCode::ModelRejected,
+            AppError::ModelAnswerUnusable(_) => ErrorCode::ModelAnswerUnusable,
+            AppError::AnswerCutOff(_) => ErrorCode::AnswerCutOff,
+            AppError::AiModelsNotInstalled(_) | AppError::ModelLoadFailed(_) => {
+                ErrorCode::ModelNotLoaded
+            }
+            AppError::EmbeddingFailed { .. } => ErrorCode::EmbeddingError,
+            AppError::ContentExtraction { .. } => ErrorCode::ExtractionError,
+            AppError::TokenizationError { .. } => ErrorCode::TokenizationError,
+            AppError::Serialization(_) => ErrorCode::SerializationError,
+            AppError::Deserialization(_) | AppError::Parsing(_) => ErrorCode::DeserializationError,
+            AppError::ConcurrentModification { .. } => ErrorCode::ConcurrentModification,
+            AppError::BackupCreationFailed(_) => ErrorCode::BackupCreationFailed,
+            AppError::BackupRestoreFailed(_) => ErrorCode::BackupRestoreFailed,
+            AppError::BackupCorrupted(_) => ErrorCode::BackupCorrupted,
+            AppError::Json { .. } => ErrorCode::ParsingError,
+            AppError::Security(_) | AppError::KeyringError(_) => ErrorCode::SecurityViolation,
+            AppError::Storage(_) | AppError::InternalError(_) | AppError::Other(_) => {
+                ErrorCode::InternalError
+            }
+            AppError::LessonHeld(_) => ErrorCode::LessonHeld,
+        }
+    }
+}
+
 /// Convert ApplicationError (application layer) to ApiError
 impl From<ApplicationError> for ApiError {
     fn from(err: ApplicationError) -> Self {
+        let code = ErrorCode::from(&err);
         match err {
             // Domain errors
             ApplicationError::Domain(domain_err) => domain_err.into(),
 
             // Configuration errors
             ApplicationError::InvalidConfig { ref details } => ApiError {
-                code: ErrorCode::InvalidConfig,
+                code,
                 message: "Invalid configuration".to_string(),
                 details: Some(details.clone()),
             },
@@ -20,16 +114,9 @@ impl From<ApplicationError> for ApiError {
                 ref service,
                 ref reason,
             } => ApiError {
-                code: ErrorCode::ServiceNotAvailable,
+                code,
                 message: format!("Service '{}' not available", service),
                 details: Some(reason.clone()),
-            },
-
-            // Queue full
-            ApplicationError::QueueFull { ref queue_name } => ApiError {
-                code: ErrorCode::QueueFull,
-                message: format!("Queue '{}' is full", queue_name),
-                details: Some("Please retry later".to_string()),
             },
 
             // Serialization errors
@@ -37,7 +124,7 @@ impl From<ApplicationError> for ApiError {
                 ref context,
                 ref reason,
             } => ApiError {
-                code: ErrorCode::SerializationError,
+                code,
                 message: format!("Serialization failed for {}", context),
                 details: Some(reason.clone()),
             },
@@ -47,7 +134,7 @@ impl From<ApplicationError> for ApiError {
                 ref context,
                 ref reason,
             } => ApiError {
-                code: ErrorCode::DeserializationError,
+                code,
                 message: format!("Deserialization failed for {}", context),
                 details: Some(reason.clone()),
             },
@@ -58,7 +145,7 @@ impl From<ApplicationError> for ApiError {
                 line,
                 column,
             } => ApiError {
-                code: ErrorCode::ParsingError,
+                code,
                 message: "JSON parsing error".to_string(),
                 details: Some(format!("{}:{}: {}", line, column, message)),
             },
@@ -68,7 +155,7 @@ impl From<ApplicationError> for ApiError {
                 ref context,
                 ref reason,
             } => ApiError {
-                code: ErrorCode::ParsingError,
+                code,
                 message: format!("Parsing error in {}", context),
                 details: Some(reason.clone()),
             },
@@ -77,7 +164,7 @@ impl From<ApplicationError> for ApiError {
                 ref use_case,
                 ref reason,
             } => ApiError {
-                code: ErrorCode::ProcessingError,
+                code,
                 message: format!("Use case '{}' failed", use_case),
                 details: Some(reason.clone()),
             },
@@ -87,7 +174,7 @@ impl From<ApplicationError> for ApiError {
                 ref context,
                 ref reason,
             } => ApiError {
-                code: ErrorCode::ProcessingError,
+                code,
                 message: format!("Mapping error in {}", context),
                 details: Some(reason.clone()),
             },
@@ -98,7 +185,7 @@ impl From<ApplicationError> for ApiError {
 /// Convert AppError (shared layer) to ApiError
 impl From<AppError> for ApiError {
     fn from(err: AppError) -> Self {
-        let busy = err.is_database_busy();
+        let code = ErrorCode::from(&err);
         match err {
             // Domain errors
             AppError::Domain(domain_err) => (*domain_err).into(),
@@ -108,65 +195,70 @@ impl From<AppError> for ApiError {
 
             // Configuration errors
             AppError::InvalidConfig(ref details) => ApiError {
-                code: ErrorCode::InvalidConfig,
+                code,
+                message: "Invalid configuration".to_string(),
+                details: Some(details.clone()),
+            },
+            AppError::WindowTooSmall(ref details) => ApiError {
+                code,
                 message: "Invalid configuration".to_string(),
                 details: Some(details.clone()),
             },
 
             AppError::LearningModelNotSet(ref details) => ApiError {
-                code: ErrorCode::LearningModelNotSet,
+                code,
                 message: "No Learning model is set".to_string(),
                 details: Some(details.clone()),
             },
             AppError::ModelServerCannotStart(ref details) => ApiError {
-                code: ErrorCode::ModelLoadError,
+                code,
                 message: "The model server could not start".to_string(),
                 details: Some(details.clone()),
             },
 
             // Resource errors
             AppError::NotFound(ref msg) => ApiError {
-                code: ErrorCode::NotFound,
+                code,
                 message: format!("Not found: {}", msg),
                 details: None,
             },
 
             // Permission errors
             AppError::PermissionDenied(ref msg) => ApiError {
-                code: ErrorCode::PermissionDenied,
+                code,
                 message: format!("Permission denied: {}", msg),
                 details: None,
             },
 
             AppError::InvalidInput(ref msg) => ApiError {
-                code: ErrorCode::InvalidInput,
+                code,
                 message: msg.clone(),
                 details: None,
             },
             AppError::PromptExceedsWindow { ref message, .. } => ApiError {
-                code: ErrorCode::PromptExceedsWindow,
+                code,
                 message: message.clone(),
                 details: None,
             },
             AppError::ValidationFailed(ref msg) => ApiError {
-                code: ErrorCode::ValidationError,
+                code,
                 message: format!("Validation failed: {}", msg),
                 details: None,
             },
             AppError::Conflict(ref msg) => ApiError {
-                code: ErrorCode::Conflict,
+                code,
                 message: msg.clone(),
                 details: None,
             },
-            AppError::InvalidState(ref msg) => ApiError {
-                code: ErrorCode::InvalidState,
+            AppError::InvalidState(ref msg) | AppError::Cancelled(ref msg) => ApiError {
+                code,
                 message: msg.clone(),
                 details: None,
             },
 
             // File errors
             AppError::FileNotFound { ref path } => ApiError {
-                code: ErrorCode::FileNotFound,
+                code,
                 message: format!("File not found: {}", path),
                 details: None,
             },
@@ -175,7 +267,7 @@ impl From<AppError> for ApiError {
                 size_bytes,
                 max_size_bytes,
             } => ApiError {
-                code: ErrorCode::FileTooLarge,
+                code,
                 message: format!("File too large: {}", path),
                 details: Some(format!(
                     "Size: {} bytes, Max: {} bytes",
@@ -186,7 +278,7 @@ impl From<AppError> for ApiError {
                 ref path,
                 ref detected_type,
             } => ApiError {
-                code: ErrorCode::UnsupportedFileType,
+                code,
                 message: format!("Unsupported file type: {}", path),
                 details: Some(format!("Detected type: {}", detected_type)),
             },
@@ -194,79 +286,74 @@ impl From<AppError> for ApiError {
                 ref path,
                 ref reason,
             } => ApiError {
-                code: ErrorCode::FileReadError,
+                code,
                 message: format!("Failed to read file: {}", path),
                 details: Some(reason.clone()),
             },
             AppError::FileStorage(ref msg) | AppError::FileSystem(ref msg) => ApiError {
-                code: ErrorCode::FileSystemError,
+                code,
                 message: "File system error".to_string(),
                 details: Some(msg.clone()),
             },
 
             // Database errors
-            AppError::Database(ref msg) if busy => ApiError {
-                code: ErrorCode::DatabaseBusy,
+            AppError::DatabaseBusy(ref msg) => ApiError {
+                code,
                 message: "Database busy".to_string(),
                 details: Some(sanitize_database_error(msg)),
             },
             AppError::Database(ref msg) => ApiError {
-                code: ErrorCode::DatabaseError,
+                code,
                 message: "Database error".to_string(),
                 details: Some(sanitize_database_error(msg)),
             },
             AppError::Migration(ref msg) => ApiError {
-                code: ErrorCode::MigrationError,
+                code,
                 message: "Database migration failed".to_string(),
                 details: Some(msg.clone()),
             },
 
             // Network errors
             AppError::Network(ref msg) => ApiError {
-                code: ErrorCode::NetworkError,
+                code,
                 message: "Network error".to_string(),
                 details: Some(msg.clone()),
             },
             AppError::HttpStatus { ref message, .. } => ApiError {
-                code: ErrorCode::HttpStatus,
+                code,
                 message: message.clone(),
                 details: None,
             },
             AppError::InvalidUrl(ref msg) => ApiError {
-                code: ErrorCode::InvalidInput,
+                code,
                 message: "Invalid URL".to_string(),
                 details: Some(msg.clone()),
             },
             AppError::RateLimitExceeded(ref msg) => ApiError {
-                code: ErrorCode::RateLimitExceeded,
+                code,
                 message: "Rate limit exceeded".to_string(),
                 details: Some(msg.clone()),
             },
 
             // Service errors
-            AppError::ServiceNotAvailable(ref msg) if busy => ApiError {
-                code: ErrorCode::DatabaseBusy,
-                message: "Database busy".to_string(),
-                details: Some(msg.clone()),
-            },
             AppError::ServiceNotAvailable(ref msg) => ApiError {
-                code: ErrorCode::ServiceNotAvailable,
+                code,
                 message: "Service not available".to_string(),
                 details: Some(msg.clone()),
             },
             AppError::ModelRejected(ref msg) => ApiError {
-                code: ErrorCode::ProcessingError,
+                code,
                 message: "The model rejected the request".to_string(),
                 details: Some(msg.clone()),
             },
-            AppError::ModelAnswerUnusable(ref msg) => ApiError {
-                code: ErrorCode::ProcessingError,
+            AppError::ModelAnswerUnusable(ref msg) | AppError::AnswerCutOff(ref msg) => ApiError {
+                code,
                 message: "The model's answer could not be used".to_string(),
                 details: Some(msg.clone()),
             },
             AppError::AiModelsNotInstalled(ref msg) | AppError::ModelLoadFailed(ref msg) => {
                 ApiError {
-                    code: ErrorCode::ModelNotLoaded,
+                    code,
                     message: "AI model not available".to_string(),
                     details: Some(msg.clone()),
                 }
@@ -274,7 +361,7 @@ impl From<AppError> for ApiError {
 
             // Processing errors
             AppError::EmbeddingFailed { ref reason } => ApiError {
-                code: ErrorCode::EmbeddingError,
+                code,
                 message: "Embedding generation failed".to_string(),
                 details: Some(reason.clone()),
             },
@@ -282,22 +369,22 @@ impl From<AppError> for ApiError {
                 ref path,
                 ref reason,
             } => ApiError {
-                code: ErrorCode::ExtractionError,
+                code,
                 message: format!("Content extraction failed: {} ({})", path, reason),
                 details: Some(reason.clone()),
             },
             AppError::TokenizationError { ref reason } => ApiError {
-                code: ErrorCode::TokenizationError,
+                code,
                 message: "Tokenization error".to_string(),
                 details: Some(reason.clone()),
             },
             AppError::Serialization(ref msg) => ApiError {
-                code: ErrorCode::SerializationError,
+                code,
                 message: "Serialization failed".to_string(),
                 details: Some(msg.clone()),
             },
             AppError::Deserialization(ref msg) | AppError::Parsing(ref msg) => ApiError {
-                code: ErrorCode::DeserializationError,
+                code,
                 message: "Deserialization failed".to_string(),
                 details: Some(msg.clone()),
             },
@@ -307,36 +394,31 @@ impl From<AppError> for ApiError {
                 ref resource,
                 ref details,
             } => ApiError {
-                code: ErrorCode::ConcurrentModification,
+                code,
                 message: format!("Concurrent modification: {}", resource),
                 details: Some(details.clone()),
-            },
-            AppError::QueueFull => ApiError {
-                code: ErrorCode::QueueFull,
-                message: "Processing queue is full".to_string(),
-                details: Some("Please retry later".to_string()),
             },
 
             // Backup errors
             AppError::BackupCreationFailed(ref msg) => ApiError {
-                code: ErrorCode::BackupCreationFailed,
+                code,
                 message: "Backup creation failed".to_string(),
                 details: Some(msg.clone()),
             },
             AppError::BackupRestoreFailed(ref msg) => ApiError {
-                code: ErrorCode::BackupRestoreFailed,
+                code,
                 message: "Backup restore failed".to_string(),
                 details: Some(msg.clone()),
             },
             AppError::BackupCorrupted(ref msg) => ApiError {
-                code: ErrorCode::BackupCorrupted,
+                code,
                 message: "Backup file is corrupted".to_string(),
                 details: Some(msg.clone()),
             },
 
             // I/O errors
             AppError::Io { ref message, .. } => ApiError {
-                code: ErrorCode::FileSystemError,
+                code,
                 message: "I/O error".to_string(),
                 details: Some(message.clone()),
             },
@@ -347,31 +429,33 @@ impl From<AppError> for ApiError {
                 line,
                 column,
             } => ApiError {
-                code: ErrorCode::ParsingError,
+                code,
                 message: "JSON parsing error".to_string(),
                 details: Some(format!("{}:{}: {}", line, column, message)),
             },
 
             // Security errors
             AppError::Security(ref msg) | AppError::KeyringError(ref msg) => ApiError {
-                code: ErrorCode::SecurityViolation,
+                code,
                 message: "Security error".to_string(),
                 details: Some(msg.clone()),
             },
 
             // Generic errors
             AppError::InvalidData(ref msg) => ApiError {
-                code: ErrorCode::InvalidInput,
+                code,
                 message: "Invalid data".to_string(),
                 details: Some(msg.clone()),
             },
             AppError::Storage(ref msg) => ApiError {
-                code: ErrorCode::InternalError,
+                code,
                 message: "Storage error".to_string(),
                 details: Some(msg.clone()),
             },
-            AppError::InternalError(ref msg) | AppError::Other(ref msg) => ApiError {
-                code: ErrorCode::InternalError,
+            AppError::InternalError(ref msg)
+            | AppError::Other(ref msg)
+            | AppError::LessonHeld(ref msg) => ApiError {
+                code,
                 message: "Internal error".to_string(),
                 details: Some(msg.clone()),
             },
@@ -382,17 +466,18 @@ impl From<AppError> for ApiError {
 /// Convert DomainError to ApiError
 impl From<DomainError> for ApiError {
     fn from(err: DomainError) -> Self {
+        let code = ErrorCode::from(&err);
         match err {
             DomainError::EntityNotFound {
                 ref entity_type,
                 ref identifier,
             } => ApiError {
-                code: ErrorCode::NotFound,
+                code,
                 message: format!("{} not found", entity_type),
                 details: Some(format!("Identifier: {}", identifier)),
             },
             DomainError::InvalidState { ref details } => ApiError {
-                code: ErrorCode::InvalidState,
+                code,
                 message: "Invalid state".to_string(),
                 details: Some(details.clone()),
             },
@@ -400,7 +485,7 @@ impl From<DomainError> for ApiError {
                 ref field,
                 ref reason,
             } => ApiError {
-                code: ErrorCode::ValidationError,
+                code,
                 message: format!("Validation failed for field '{}'", field),
                 details: Some(reason.clone()),
             },
@@ -408,7 +493,7 @@ impl From<DomainError> for ApiError {
                 ref path,
                 ref detected_type,
             } => ApiError {
-                code: ErrorCode::UnsupportedFileType,
+                code,
                 message: format!("Unsupported file type: {}", path.display()),
                 details: detected_type.clone(),
             },
@@ -417,7 +502,7 @@ impl From<DomainError> for ApiError {
                 size_bytes,
                 max_size_bytes,
             } => ApiError {
-                code: ErrorCode::FileTooLarge,
+                code,
                 message: format!("File too large: {}", path.display()),
                 details: Some(format!(
                     "Size: {} bytes, Max: {} bytes",
@@ -428,12 +513,12 @@ impl From<DomainError> for ApiError {
                 ref resource,
                 ref details,
             } => ApiError {
-                code: ErrorCode::ConcurrentModification,
+                code,
                 message: format!("Concurrent modification: {}", resource),
                 details: Some(details.clone()),
             },
             DomainError::ConstraintViolation { ref constraint } => ApiError {
-                code: ErrorCode::ConstraintViolation,
+                code,
                 message: "Constraint violation".to_string(),
                 details: Some(constraint.clone()),
             },

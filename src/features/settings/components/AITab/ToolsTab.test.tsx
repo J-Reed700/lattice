@@ -155,7 +155,7 @@ describe('ToolsTab', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Save tools' }));
       expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled();
       expect(h.llm.saveLlmUpdates).toHaveBeenCalledWith({
-        customTools: [{ ...tidesTool, name: 'tides_v2', defaultMaxResults: 100 }],
+        customTools: [{ ...tidesTool, name: 'tides_v2', defaultMaxResults: 500 }],
       });
       await act(async () => { pending.resolve(true); await pending.promise; });
       expect(h.toast.success).toHaveBeenCalledWith('Tools saved');

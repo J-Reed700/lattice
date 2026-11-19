@@ -1,5 +1,6 @@
 //! Learner-safe verification report. Assessment claims, keys and explanations
 //! stay on the backend; only teaching claims and original source passages leave.
+use lattice_core::application::contracts::replies::ReplyPieceDto;
 use lattice_core::domain::learning::claim_review::UnverifiedReason;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::Database;
@@ -21,6 +22,28 @@ pub struct LearningEvidencePassageDto {
     /// The level of this passage's source for the claim's subject, when the
     /// passage supports the claim and its support was weighed.
     pub trust: Option<crate::dto::LearningSourceTrustDto>,
+}
+
+/// A passage a citation chip of the lesson opens, numbered down the lesson.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningCitationDto {
+    pub number: u32,
+    /// The saved source the passage's version belongs to; none for an
+    /// executed example.
+    pub source_id: Option<String>,
+    /// Its trust is always none: a level belongs to each statement a passage
+    /// supports, on that statement's own passages.
+    pub passage: LearningEvidencePassageDto,
+}
+
+/// One lesson block's body as the frontend draws it: text between citation
+/// chips.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningSectionTextDto {
+    pub section_index: usize,
+    pub pieces: Vec<ReplyPieceDto>,
 }
 /// How a published claim stands (§5.6): verified against a source, confirmed
 /// by the user, or verified against a source since removed. A string union,
@@ -73,6 +96,8 @@ pub enum LearningClaimPartKindDto {
     Stated,
     /// No passage states it, and it is standard knowledge of the field.
     Common,
+    /// No passage states it and none needs to: one of the lesson's own figures.
+    Own,
     /// No passage gives a specific it states.
     SpecificMissing,
     /// A passage says otherwise.
@@ -126,6 +151,10 @@ pub struct LearningClaimEvidenceDto {
     /// from before findings named theirs.
     #[serde(default)]
     pub claim_id: Option<String>,
+    /// The numbers, in the lesson's `citations`, of the passages this
+    /// statement stands on; empty when it cites none.
+    #[serde(default)]
+    pub cites: Vec<u32>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -144,6 +173,10 @@ pub struct LearningLessonEvidenceDto {
     pub unexecuted_languages: Vec<String>,
     pub sources_current: bool,
     pub teaching_claims: Vec<LearningClaimEvidenceDto>,
+    /// Every passage of the report, numbered from 1.
+    pub citations: Vec<LearningCitationDto>,
+    /// One per lesson block, in block order.
+    pub sections: Vec<LearningSectionTextDto>,
 }
 
 /// Read a single database snapshot, then project the typed private report.

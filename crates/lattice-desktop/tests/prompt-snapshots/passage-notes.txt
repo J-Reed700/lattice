@@ -1,0 +1,71 @@
+######## request 1 of 2 ########
+=== input 1: message (system) ===
+Do not answer my question yet. First read these passages, each on its own.
+
+=== input 2: message (user) ===
+[p1] Document: d1.md
+[u1] The sluice gate was rebuilt in oak in 1902.
+[u2] The oak came from the old quay.
+
+[p2] Document: d2.md
+[u1] Floods in 1911 breached the weir twice.
+
+[p3] Document: d3.md
+[u1] The kiln was fired every Friday.
+[u2] Its chimney fell in 1952.
+
+[p4] Document: d4.md
+[u1] Tide tables were printed in March.
+
+My question is: "Question: What happened at the harbour?"
+
+Answer with one line for each passage that has sentences bearing on my question, including any exception or condition: the passage's handle, a colon, then the handle of each of those sentences, written out in full and separated by spaces. Leave out a passage that says nothing bearing on my question, however near its subject. When my question names a document, leave out every passage from any other document. If no passage bears on my question, answer `none`. Write nothing else.
+
+=== sent with ===
+{
+  "reasoning_effort": "none",
+  "tool_choice": null,
+  "include_reasoning": false,
+  "sampling": {
+    "temperature": 0.0,
+    "top_p": 1.0,
+    "top_k": 1,
+    "presence_penalty": 0.0
+  },
+  "thinking": "off",
+  "max_output_tokens": 8192,
+  "stop": [],
+  "want_logprobs": false,
+  "priority": "background",
+  "cache_key": "conversation"
+}
+######## request 2 of 2 ########
+=== input 1: message (system) ===
+Do not answer my question yet. First read these passages, each on its own.
+
+=== input 2: message (user) ===
+[p4] Document: d4.md
+[u1] Tide tables were printed in March.
+
+My question is: "Question: What happened at the harbour?"
+
+Answer with one line for each passage that has sentences bearing on my question, including any exception or condition: the passage's handle, a colon, then the handle of each of those sentences, written out in full and separated by spaces. Leave out a passage that says nothing bearing on my question, however near its subject. When my question names a document, leave out every passage from any other document. If no passage bears on my question, answer `none`. Write nothing else.
+
+=== sent with ===
+{
+  "reasoning_effort": "none",
+  "tool_choice": null,
+  "include_reasoning": false,
+  "sampling": {
+    "temperature": 0.0,
+    "top_p": 1.0,
+    "top_k": 1,
+    "presence_penalty": 0.0
+  },
+  "thinking": "off",
+  "max_output_tokens": 8192,
+  "stop": [],
+  "want_logprobs": false,
+  "priority": "background",
+  "cache_key": "conversation"
+}

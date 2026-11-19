@@ -27,23 +27,6 @@ pub(super) fn in_section_body(entry: &ClaimLedgerEntry) -> bool {
     location.unit_kind == UnitKind::Block && location.field == "body"
 }
 
-/// Whether `quote` is a whole sentence of `text`: it ends a sentence and
-/// starts where one starts, so removing it leaves the rest intact (§5.1).
-pub(super) fn whole_sentence(text: &str, quote: &str) -> bool {
-    let quote = quote.trim();
-    let Some(start) = text.find(quote).filter(|_| !quote.is_empty()) else {
-        return false;
-    };
-    let ends = quote
-        .trim_end_matches(['"', '\'', ')', '”', '’'])
-        .ends_with(['.', '!', '?']);
-    let starts = text
-        .get(..start)
-        .map(str::trim_end)
-        .is_some_and(|before| before.is_empty() || before.ends_with(['.', '!', '?', ':', '\n']));
-    ends && starts
-}
-
 /// The actions the claim offers now.
 pub(super) fn offered(entry: &ClaimLedgerEntry, published: bool) -> Vec<ClaimActionKind> {
     entry

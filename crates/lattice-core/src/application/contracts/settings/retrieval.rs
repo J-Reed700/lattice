@@ -263,13 +263,6 @@ impl Default for VectorIndexCompressionSettingsDto {
     }
 }
 
-/// Smallest prefix worth keeping. Below this the Matryoshka objective has no
-/// headroom left and the rescore pass is doing all the work.
-pub const MIN_VECTOR_COMPRESSION_DIMS: u32 = 32;
-
-/// No embedding model in the catalog is wider than this.
-pub const MAX_VECTOR_COMPRESSION_DIMS: u32 = 4096;
-
 /// Evaluated Qwen3 Matryoshka prefix: 16x smaller than 1024-d f32 vectors.
 pub const DEFAULT_VECTOR_COMPRESSION_DIMS: u32 = 256;
 

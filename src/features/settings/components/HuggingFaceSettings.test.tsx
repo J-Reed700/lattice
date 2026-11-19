@@ -40,8 +40,8 @@ function renderSection() {
 describe('HuggingFaceSettings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSetToken.mockResolvedValue({ ok: true, data: undefined });
-    mockDeleteToken.mockResolvedValue({ ok: true, data: undefined });
+    mockSetToken.mockResolvedValue({ ok: true, data: null });
+    mockDeleteToken.mockResolvedValue({ ok: true, data: null });
   });
 
   it('offers to add a token when none is stored', async () => {

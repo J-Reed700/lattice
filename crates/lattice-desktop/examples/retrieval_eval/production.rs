@@ -268,6 +268,7 @@ impl ProductionIndex {
             .max_lifetime(None)
             .connect(":memory:")
             .await?;
+        let db = Database::new(pool.clone());
         sqlx::raw_sql(SCHEMA).execute(&pool).await?;
         sqlx::raw_sql(fts_header.trigger()).execute(&pool).await?;
 
@@ -303,7 +304,8 @@ impl ProductionIndex {
             .execute(&pool)
             .await?;
 
-            let prepared = prepare_chunks(&model, &chunker, &title, &file_name, &document.text)?;
+            let prepared =
+                prepare_chunks(&model, &chunker, &title, &file_name, &document.text).await?;
             // The texts `IndexingActor` hands the embedder: prefix plus chunk, once each.
             let contextualized: Vec<ContextualizedChunk> =
                 prepared.iter().map(|p| p.chunk.clone()).collect();
@@ -370,12 +372,9 @@ impl ProductionIndex {
         let mut search = HybridSearchUseCase::new(
             Arc::clone(&model) as Arc<dyn EmbeddingPort>,
             Arc::clone(&index) as Arc<dyn VectorSearchPort>,
-            Arc::new(
-                SqliteTextSearch::new(Database::from(pool.clone()))
-                    .with_header_weight(fts_header.weight()),
-            ),
+            Arc::new(SqliteTextSearch::new(db.clone()).with_header_weight(fts_header.weight())),
         )
-        .with_chunk_repository(Arc::new(ChunkRepository::new(pool.clone())))
+        .with_chunk_repository(Arc::new(ChunkRepository::new(db.clone())))
         .with_rrf_k(rrf_k);
         let reranks = reranker.is_some();
         if let Some(reranker) = reranker {
@@ -708,7 +707,7 @@ async fn embed_chunks(
 }
 
 /// `IndexingActor::process_file`'s chunk preparation, over an in-memory document.
-fn prepare_chunks(
+async fn prepare_chunks(
     model: &LlamaEmbeddingService,
     chunker: &SemanticChunker,
     title: &str,
@@ -726,7 +725,10 @@ fn prepare_chunks(
             metadata.section = extract_metadata(&path, &chunk.text, 0)?.section;
         }
         let prefix = context_prefix(&metadata);
-        for part in model.split_text(&chunk.text, &format!("{prefix}\n\n"))? {
+        for part in model
+            .split_text(&chunk.text, &format!("{prefix}\n\n"))
+            .await?
+        {
             prepared.push(PreparedChunk {
                 chunk: ContextualizedChunk {
                     contextualized_content: format!("{prefix}\n\n{}", part.text),
@@ -875,6 +877,7 @@ mod tests {
             .connect(":memory:")
             .await
             .expect("in-memory pool");
+        let db = Database::new(pool.clone());
         sqlx::raw_sql(SCHEMA).execute(&pool).await.expect("schema");
         sqlx::raw_sql(COLUMN_TRIGGER)
             .execute(&pool)
@@ -905,7 +908,7 @@ mod tests {
         // What the orchestrator's vault-wide branches read: the keyword search, which leaves
         // chat attachments out, and the chunk repository's attachment and body lookups.
         let hits = TextSearchPort::search_scoped(
-            &SqliteTextSearch::new(Database::from(pool.clone())),
+            &SqliteTextSearch::new(db.clone()),
             "quota",
             5,
             None,
@@ -918,7 +921,7 @@ mod tests {
             (hits[0].chunk_id.as_str(), hits[0].doc_id.as_str()),
             ("d::0", "d")
         );
-        let chunks = ChunkRepository::new(pool);
+        let chunks = ChunkRepository::new(db);
         assert!(
             ChunkRepositoryPort::find_conversation_attached_chunk_ids(&chunks)
                 .await

@@ -87,10 +87,10 @@ fn stripping_turns_pictures_into_caption_lines() {
         CompletionInput::Message { role, content }
             if role == "user" && content == "Describe it\n[Picture: cat.jpg (448×336)]"
     ));
-    assert!(!CompletionRequest {
+    assert!(!legacy::completion(legacy::Completion {
         input: stripped,
         ..Default::default()
-    }
+    })
     .has_images());
 }
 
@@ -101,10 +101,10 @@ fn the_text_a_tokenizer_reads_leaves_the_bytes_out() {
     assert_eq!(input[0].text(), "cat.jpg\nDescribe it");
     assert_eq!(input[0].image_tokens(), 194);
     assert!(input[0].is_user());
-    let request = CompletionRequest {
+    let request = legacy::completion(legacy::Completion {
         input,
         ..Default::default()
-    };
+    });
     assert!(request.has_images());
     assert_eq!(request.image_tokens(), 194);
     assert!(!format!("{request:?}").contains("QUJDRA=="));

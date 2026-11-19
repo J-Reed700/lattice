@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 
+import { useActiveModels } from '@/features/model/hooks/useActiveModels';
 import { useCloudModelCatalogs } from '@/features/model/hooks/useCloudModels';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { useSettingsQuery } from '@/features/settings/hooks/useSettingsQuery';
@@ -15,6 +16,7 @@ import {
   sameModelRef,
 } from '@/utils/chatModelSelection';
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
+import { plainTextOf } from '@/utils/replyPieces';
 
 /**
  * What to say about a regenerate that failed.
@@ -66,6 +68,7 @@ export function useMessageActions({
   );
 
   const { downloadedModels } = useDownloadedModels();
+  const { activeModels } = useActiveModels();
   const { catalogs } = useCloudModelCatalogs(false);
   const { data: settings } = useSettingsQuery();
 
@@ -81,7 +84,7 @@ export function useMessageActions({
       return;
     }
 
-    const compact = message.content.replace(/\s+/g, ' ').trim();
+    const compact = plainTextOf(message).replace(/\s+/g, ' ').trim();
     const title = compact.length > 80 ? `${compact.slice(0, 80)}...` : compact;
     if (!(await bookmarkMessage(activeConversationId, messageId, title || null, null))) return;
     // Say where it went and what it is for; a silent save teaches nothing.
@@ -106,7 +109,7 @@ export function useMessageActions({
   const handleTryWithModel = useCallback(
     async (modelId: string, modelLabel: string) => {
       if (!conversationId) return;
-      const option = buildChatModelOptions(settings?.llm, downloadedModels, catalogs).find((o) => o.id === modelId);
+      const option = buildChatModelOptions(settings?.llm, downloadedModels, catalogs, activeModels).find((o) => o.id === modelId);
       if (!option) {
         toast.error("Couldn't regenerate", {
           message: `${modelLabel} is no longer available. Pick another model.`,
@@ -128,7 +131,7 @@ export function useMessageActions({
       }
 
       // Offer to keep it only when it is not what this chat already uses.
-      const current = resolveEffectiveChatOption(modelChoice ?? DEFAULT_CHOICE, settings?.llm, downloadedModels, catalogs);
+      const current = resolveEffectiveChatOption(modelChoice ?? DEFAULT_CHOICE, settings?.llm, downloadedModels, catalogs, activeModels);
       const isChatsModel = current !== null && !isUnavailableChatModel(current) && sameModelRef(current.ref, option.ref);
       toast.success(
         `Answered with ${modelLabel}`,
@@ -150,7 +153,7 @@ export function useMessageActions({
             }
       );
     },
-    [conversationId, downloadedModels, catalogs, modelChoice, regenerateResponse, setConversationModelChoice, settings?.llm]
+    [conversationId, downloadedModels, catalogs, activeModels, modelChoice, regenerateResponse, setConversationModelChoice, settings?.llm]
   );
 
   const handleBranch = useCallback(async () => {

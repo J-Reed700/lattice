@@ -11,13 +11,4 @@ export type {
   PassageReferenceDto,
 } from '../../lib/bindings';
 
-export interface CreatePassageReferenceRequest {
-  documentId: string;
-  chunkId?: string | null;
-  filePath: string;
-  fileName: string;
-  locator?: string | null;
-  text: string;
-  title?: string | null;
-  note?: string | null;
-}
+export type CreatePassageReferenceRequest = import('../../lib/bindings').CreatePassageReferenceRequestDto;

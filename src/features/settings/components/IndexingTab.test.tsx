@@ -63,8 +63,8 @@ describe('IndexingTab', () => {
     vi.clearAllMocks();
     mockGetSettings.mockResolvedValue({ ok: true, data: baseSettings });
     mockUpdateSettings.mockResolvedValue({ ok: true, data: baseSettings });
-    mockAddWatchFolder.mockResolvedValue({ ok: true, data: undefined });
-    mockRemoveWatchFolder.mockResolvedValue({ ok: true, data: undefined });
+    mockAddWatchFolder.mockResolvedValue({ ok: true, data: null });
+    mockRemoveWatchFolder.mockResolvedValue({ ok: true, data: null });
   });
 
   it('renders the page header and sections', async () => {

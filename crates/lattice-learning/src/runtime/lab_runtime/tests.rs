@@ -387,7 +387,9 @@ async fn opt_in_container_smoke_proves_runtime_containment_and_read_only_checks(
         .args(["inspect", &container_name(&cancelled_spec.run_id)])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()
+        .spawn()
+        .await?
+        .wait()
         .await?;
     assert!(
         !inspect.success(),

@@ -149,6 +149,12 @@ mod tests {
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
+        }
     }
 
     struct Loaded;
@@ -161,12 +167,9 @@ mod tests {
 
     #[tokio::test]
     async fn auto_tagging_applies_tags_only_when_the_document_lock_is_free() {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
             .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         let metadata = Document::new(
             lattice_core::shared::types::ValidatedFilePath::new(std::path::PathBuf::from(
                 "/notes.txt",
@@ -180,11 +183,11 @@ mod tests {
         let chunk = Chunk::new(metadata.id().clone(), "Ownership in Rust".into(), 0);
         let document = metadata.from_parts(vec![chunk], vec![]).unwrap();
         let document_id = document.id().as_str().to_string();
-        DocumentRepository::new(pool.clone())
+        let database = Database::new(pool);
+        DocumentRepository::new(database.clone())
             .save_batch(std::slice::from_ref(&document))
             .await
             .unwrap();
-        let database = Database::from(pool);
         let tag_service = build_service(database.clone());
         let tags = build(tag_service.clone());
         let ai = build_ai(database, tag_service, Arc::new(Loaded));

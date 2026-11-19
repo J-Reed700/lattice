@@ -66,6 +66,7 @@ pub async fn reconcile_orphaned_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lattice_core::shared::persistence::Database;
 
     fn open_gate() -> SweepGate {
         let gate = SweepGate::default();
@@ -75,12 +76,9 @@ mod tests {
 
     #[tokio::test]
     async fn orphan_cleanup_keeps_every_directory_no_record_names() {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
             .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         let dir = tempfile::tempdir().unwrap();
         for id in ["pending", "installed", "orphan"] {
             std::fs::create_dir(dir.path().join(id)).unwrap();
@@ -93,7 +91,7 @@ mod tests {
         sqlx::query("INSERT INTO models (id, model_id, model_name, base_path, total_size_bytes, status, model_type, architecture, storage_kind, storage_path) VALUES ('installed', 'installed', 'Installed', '', 10, 'completed', 'chat', 'llama', 'local_dir', ?)")
             .bind(dir.path().join("installed").to_str().unwrap())
             .execute(&pool).await.unwrap();
-        let repo = Arc::new(DownloadedModelRepository::new(pool));
+        let repo = Arc::new(DownloadedModelRepository::new(Database::new(pool.clone())));
         assert!(repo.find_by_model_id("pending").await.is_err());
         assert!(repo.find_by_model_id("installed").await.unwrap().is_some());
 
@@ -123,7 +121,7 @@ mod tests {
         let model = dir.path().join("model");
         std::fs::create_dir(&model).unwrap();
         std::fs::write(model.join("weights"), b"keep").unwrap();
-        let repo = Arc::new(DownloadedModelRepository::new(pool));
+        let repo = Arc::new(DownloadedModelRepository::new(Database::new(pool.clone())));
 
         assert_eq!(
             reconcile_orphaned_files(repo, dir.path(), &open_gate())
@@ -136,17 +134,14 @@ mod tests {
 
     #[tokio::test]
     async fn orphan_cleanup_keeps_every_model_while_the_gate_is_shut() {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
             .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         let dir = tempfile::tempdir().unwrap();
         let orphan = dir.path().join("orphan");
         std::fs::create_dir(&orphan).unwrap();
         std::fs::write(orphan.join("weights"), b"keep").unwrap();
-        let repo = Arc::new(DownloadedModelRepository::new(pool));
+        let repo = Arc::new(DownloadedModelRepository::new(Database::new(pool.clone())));
 
         let removed = reconcile_orphaned_files(repo, dir.path(), &SweepGate::default())
             .await

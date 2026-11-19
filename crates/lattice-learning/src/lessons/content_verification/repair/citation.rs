@@ -6,10 +6,11 @@
 //! numbered sources, as the writer's are, so the citation can name it.
 use super::super::classify::figures;
 use super::super::*;
-use crate::generation::{validate_excerpt_quote, MAX_CITATIONS, MAX_QUOTE_CHARS};
-use crate::reference_collection::{checked_span, shared_terms};
+use crate::generation::{validate_excerpt_quote, MAX_QUOTE_CHARS};
+use crate::reference_collection::{shared_terms, verification_window};
 use lattice_core::domain::learning::claim_review::ClaimEvent;
-use lattice_core::shared::text::{claim_sentence, sentences};
+use lattice_core::shared::text::same_text::holds_sentence;
+use lattice_core::shared::text::sentences;
 use std::collections::BTreeSet;
 use std::ops::Range;
 
@@ -30,7 +31,7 @@ struct Run<'s> {
 /// `source` that supports it: a contiguous run of the passage's whole
 /// sentences, no longer than a lesson quotation may be. The check that
 /// decides the repair reads the citation as verification widens it
-/// ([`checked_span`]), so the run is the one whose checked passage shows most
+/// ([`verification_window`]), so the run is the one whose checked passage shows most
 /// of the claim's figures, then most of its terms, read as the course index
 /// reads words ([`shared_terms`]). Of those, the run holding most of the
 /// terms itself, then the shortest, since a longer one only adds words the
@@ -54,8 +55,8 @@ pub(in crate::lessons::content_verification) fn quotation<'s>(
             if chars > MAX_QUOTE_CHARS {
                 break;
             }
-            let (from, to) = checked_span(source, within.start + start, within.start + end);
-            let read = source.get(from..to).unwrap_or(text);
+            let window = verification_window(source, within.start + start..within.start + end);
+            let read = source.get(window).unwrap_or(text);
             let shown: BTreeSet<&str> = figures(read).collect();
             runs.push(Run {
                 figures: stated.intersection(&shown).count(),
@@ -80,38 +81,6 @@ pub(in crate::lessons::content_verification) fn quotation<'s>(
         .find(|run| validate_excerpt_quote(run, source).is_ok())
 }
 
-/// Every `sourceIndex` of a lesson `schema` allows the `count` sources the
-/// lesson numbers, once verification has numbered one more.
-pub(in crate::lessons::content_verification) fn number_sources(schema: &mut Value, count: usize) {
-    fn allow(index: &mut Value, count: usize) {
-        if let Some(maximum) = index.get_mut("maximum") {
-            *maximum = json!(count.saturating_sub(1));
-        }
-        if let Some(options) = index.get_mut("anyOf").and_then(Value::as_array_mut) {
-            for option in options {
-                allow(option, count);
-            }
-        }
-    }
-    match schema {
-        Value::Object(fields) => {
-            for (name, value) in fields.iter_mut() {
-                if name == "sourceIndex" {
-                    allow(value, count);
-                } else {
-                    number_sources(value, count);
-                }
-            }
-        }
-        Value::Array(items) => {
-            for item in items {
-                number_sources(item, count);
-            }
-        }
-        _ => {}
-    }
-}
-
 /// Names, in the repair context's evidence table, the `sourceIndex` of each
 /// passage whose source the lesson numbers, so a repair that cites a passage
 /// can say which excerpt it is.
@@ -133,56 +102,6 @@ pub(in crate::lessons::content_verification) fn number_evidence(
     }
 }
 
-/// The citations `repaired` appended to `section`'s own, in order.
-pub(super) fn appended(section: &Value, repaired: &Value) -> Vec<Value> {
-    let had = section
-        .get("citations")
-        .and_then(Value::as_array)
-        .map_or(0, Vec::len);
-    repaired
-        .get("citations")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .skip(had)
-        .cloned()
-        .collect()
-}
-
-/// Puts the `appended` citations back into `confined`, a section whose repair
-/// was confined to the failed sentences. Only a citation of a sentence that
-/// stands in the section's text is kept, and none twice.
-pub(super) fn restore_appended(confined: &mut Value, appended: Vec<Value>, field: &str) {
-    let held: Vec<String> = crate::lessons::text_edits::citable_texts(confined, field != "blocks")
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
-    let standing: Vec<Value> = appended
-        .into_iter()
-        .filter(|entry| {
-            entry
-                .get("sentence")
-                .and_then(Value::as_str)
-                .is_some_and(|sentence| held.iter().any(|text| text.contains(sentence)))
-        })
-        .collect();
-    if standing.is_empty() {
-        return;
-    }
-    let Some(listed) = confined
-        .as_object_mut()
-        .map(|section| section.entry("citations").or_insert_with(|| json!([])))
-        .and_then(Value::as_array_mut)
-    else {
-        return;
-    };
-    for entry in standing {
-        if !listed.contains(&entry) {
-            listed.push(entry);
-        }
-    }
-}
-
 /// What the citation repair did for one finding.
 pub(in crate::lessons::content_verification) enum Cited {
     /// The sentence's citation moved to the passage found, or the sentence
@@ -192,39 +111,69 @@ pub(in crate::lessons::content_verification) enum Cited {
     /// cites one claim of a sentence so that two cannot write one entry: the
     /// claim waits for the next round.
     Deferred,
-    /// No citation can be written for it: the locator names no sentence of its
-    /// quote, no run of the passage's whole sentences can be one, it was
-    /// written before, the section already cites the passage, or the section
-    /// lists as many citations as the lesson schema allows.
-    Cannot,
+    /// No citation was written for it, for the reason given.
+    Cannot(Unwritten),
 }
 
-/// The sentence of `quote`, a claim's passage, that `statement` restates.
-fn stating<'q>(quote: &'q str, statement: &str) -> Option<&'q str> {
-    let (start, end) = claim_sentence(quote, (0, quote.len()), statement)?;
-    quote.get(start..end)
+/// Why the citation repair wrote nothing for a finding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::lessons::content_verification) enum Unwritten {
+    /// The finding is not a support found elsewhere in the course.
+    NotSupportedElsewhere,
+    /// The claim's quote is not one sentence.
+    SeveralSentences,
+    /// The source of the passage found is not among the saved sources.
+    SourceNotSaved,
+    /// No run of the passage's whole sentences can be a lesson citation.
+    NoCitableRun,
+    /// This citation was written before in the job.
+    WrittenBefore,
+    /// The claim's section is not in the draft.
+    SectionMissing,
+    /// The sentence's citation already is the passage found.
+    AlreadyCited,
+    /// The claim's sentence is not in its section's citable text.
+    NotInSection,
+}
+
+impl Unwritten {
+    /// The reason, as one plain sentence.
+    pub(in crate::lessons::content_verification) fn why(&self) -> &'static str {
+        match self {
+            Self::NotSupportedElsewhere => "no page of the course found it supported elsewhere",
+            Self::SeveralSentences => "its quote is more than one sentence, so none is its own",
+            Self::SourceNotSaved => "the source of the passage found is not saved",
+            Self::NoCitableRun => {
+                "no run of whole sentences of the passage found can be a lesson citation"
+            }
+            Self::WrittenBefore => "this citation was written before",
+            Self::SectionMissing => "its section is not in the draft",
+            Self::AlreadyCited => "its sentence already cites the passage found",
+            Self::NotInSection => "its sentence is not in its section's citable text",
+        }
+    }
 }
 
 /// Cites the sentence that states each claim a page found support for
 /// elsewhere at the passage found: `quote` becomes the best-matching run of
 /// the passage's sentences ([`quotation`]) and `sourceIndex` its source,
-/// numbered if new. The entry of the section's `citations` that restates the
-/// claim moves there. Where the sentence has no entry, or its entry is also the
-/// citation of a statement of `kept` (the live statements not being cited), an
-/// entry is added instead and the shared one stays, unless the section lists as
-/// many as the lesson schema allows. The section's own `quote` and
+/// numbered if new. A finding's `quote` is the one sentence it stands on. The
+/// entry of the section's `citations` that holds the sentence moves there.
+/// Where the sentence has no entry, or its entry also holds a sentence of
+/// `kept` (the live claims' sentences not being cited), an entry is added
+/// instead and the shared one stays. The section's own `quote` and
 /// `sourceIndex`, which its other statements are read against, are never
 /// written. One claim of a sentence is cited in a call, so that two cannot
-/// write one entry; `tried` citations are never written again, so two passages
-/// cannot trade places. Gives what became of each of `findings`, in their
-/// order.
+/// write one entry; a sentence is not cited again at a passage `tried` cited
+/// it at, so two passages cannot trade places. Gives what became of each of
+/// `findings`, in their order.
 pub(in crate::lessons::content_verification) fn cite_where_supported(
     candidate: &mut Value,
     findings: &[Finding],
     kept: &[(usize, String)],
     numbered: &mut Vec<LearningSourceDto>,
     references: &ReferenceCollection<'_>,
-    tried: &mut HashSet<(usize, String)>,
+    tried: &mut HashSet<(usize, String, String)>,
 ) -> Result<Vec<Cited>> {
     let mut written = BTreeSet::new();
     let mut repairs = Vec::with_capacity(findings.len());
@@ -235,13 +184,14 @@ pub(in crate::lessons::content_verification) fn cite_where_supported(
             .as_ref()
             .filter(|_| finding.verdict == ClaimVerdict::Supported)
         else {
-            repairs.push(Cited::Cannot);
+            repairs.push(Cited::Cannot(Unwritten::NotSupportedElsewhere));
             continue;
         };
-        let Some(sentence) = stating(&finding.quote, &finding.statement) else {
-            repairs.push(Cited::Cannot);
+        let sentence = finding.quote.as_str();
+        if sentences(sentence).len() != 1 {
+            repairs.push(Cited::Cannot(Unwritten::SeveralSentences));
             continue;
-        };
+        }
         if written.contains(&(finding.unit, sentence.to_owned())) {
             repairs.push(Cited::Deferred);
             continue;
@@ -251,7 +201,7 @@ pub(in crate::lessons::content_verification) fn cite_where_supported(
             .iter()
             .find(|source| source.id == found.source_id)
         else {
-            repairs.push(Cited::Cannot);
+            repairs.push(Cited::Cannot(Unwritten::SourceNotSaved));
             continue;
         };
         let Some(quote) = quotation(
@@ -264,32 +214,45 @@ pub(in crate::lessons::content_verification) fn cite_where_supported(
                 source = %found.source_id,
                 "No run of whole sentences of the supporting passage can be a lesson citation"
             );
-            repairs.push(Cited::Cannot);
+            repairs.push(Cited::Cannot(Unwritten::NoCitableRun));
             continue;
         };
-        if !tried.insert((finding.unit, quote.to_owned())) {
-            repairs.push(Cited::Cannot);
+        if !tried.insert((finding.unit, sentence.to_owned(), quote.to_owned())) {
+            repairs.push(Cited::Cannot(Unwritten::WrittenBefore));
             continue;
         }
-        let (field, item) = super::location(candidate, finding.unit)?;
+        let (field, item) = super::section_of(candidate, finding.unit)?;
+        let numbered_at = numbered.iter().position(|known| known.id == source.id);
+        let index = numbered_at.unwrap_or(numbered.len());
+        let added = candidate
+            .get(field)
+            .and_then(Value::as_array)
+            .and_then(|items| items.get(item))
+            .and_then(|part| {
+                crate::lessons::text_edits::citation_entry(
+                    part,
+                    field != "blocks",
+                    sentence,
+                    json!(index),
+                    quote,
+                )
+            });
         let Some(section) = candidate
             .get_mut(field)
             .and_then(Value::as_array_mut)
             .and_then(|items| items.get_mut(item))
             .and_then(Value::as_object_mut)
         else {
-            repairs.push(Cited::Cannot);
+            repairs.push(Cited::Cannot(Unwritten::SectionMissing));
             continue;
         };
-        let numbered_at = numbered.iter().position(|known| known.id == source.id);
-        let index = numbered_at.unwrap_or(numbered.len());
         let listed = section.get("citations").and_then(Value::as_array);
         let own = listed.and_then(|listed| {
             listed.iter().position(|entry| {
                 entry
                     .get("sentence")
                     .and_then(Value::as_str)
-                    .is_some_and(|cited| restates(cited, &finding.statement))
+                    .is_some_and(|cited| holds_sentence(cited, sentence))
             })
         });
         let entry = own.and_then(|at| listed.and_then(|listed| listed.get(at)));
@@ -298,7 +261,7 @@ pub(in crate::lessons::content_verification) fn cite_where_supported(
             .and_then(Value::as_str)
             .is_some_and(|cited| {
                 kept.iter()
-                    .any(|(unit, other)| *unit == finding.unit && restates(cited, other))
+                    .any(|(unit, other)| *unit == finding.unit && holds_sentence(cited, other))
             });
         let moves = own.filter(|_| !shared);
         let cites = |quoted: Option<&Value>, indexed: Option<&Value>| {
@@ -309,9 +272,8 @@ pub(in crate::lessons::content_verification) fn cite_where_supported(
             Some(entry) => cites(entry.get("quote"), entry.get("sourceIndex")),
             None => cites(section.get("quote"), section.get("sourceIndex")),
         };
-        let full = listed.map_or(0, Vec::len) >= MAX_CITATIONS;
-        if already || (moves.is_none() && full) {
-            repairs.push(Cited::Cannot);
+        if already {
+            repairs.push(Cited::Cannot(Unwritten::AlreadyCited));
             continue;
         }
         let wrote = match moves {
@@ -324,17 +286,16 @@ pub(in crate::lessons::content_verification) fn cite_where_supported(
                     entry.insert("quote".into(), json!(quote));
                     entry.insert("sourceIndex".into(), json!(index));
                 }),
-            None => section
-                .entry("citations")
-                .or_insert_with(|| json!([]))
-                .as_array_mut()
-                .map(|listed| {
-                    listed
-                        .push(json!({"sentence": sentence, "sourceIndex": index, "quote": quote}));
-                }),
+            None => added.and_then(|entry| {
+                section
+                    .entry("citations")
+                    .or_insert_with(|| json!([]))
+                    .as_array_mut()
+                    .map(|listed| listed.push(entry))
+            }),
         };
         if wrote.is_none() {
-            repairs.push(Cited::Cannot);
+            repairs.push(Cited::Cannot(Unwritten::NotInSection));
             continue;
         }
         if numbered_at.is_none() {
@@ -359,30 +320,30 @@ pub(in crate::lessons::content_verification) fn cite_where_supported(
     Ok(repairs)
 }
 
-/// Drops the sentence's own citation for each of the `statements`, a section's
-/// index and what it states: the entry of the section's `citations` whose
-/// sentence restates the statement, unless a statement of `kept` restates it
-/// too, since it is that statement's citation. A sentence with no entry of its
-/// own keeps what it has: the section's quote, which the others are read
-/// against. Gives, for each statement, the source versions of the entry it
-/// stood on and lost, empty when nothing went.
+/// Drops the sentence's own citation for each of `quotes`, a section's index
+/// and the sentence a claim stands on: the entry of the section's `citations`
+/// whose sentence holds it, unless a sentence of `kept` is held by it too,
+/// since it is that claim's citation. A sentence with no entry of its own keeps
+/// what it has: the section's quote, which the others are read against. Gives,
+/// for each sentence, the source versions of the entry it stood on and lost,
+/// empty when nothing went.
 pub(in crate::lessons::content_verification) fn uncite(
     candidate: &mut Value,
-    statements: &[(usize, String)],
+    quotes: &[(usize, String)],
     kept: &[(usize, String)],
     references: &ReferenceCollection<'_>,
 ) -> Result<Vec<Vec<String>>> {
-    let mut dropped: Vec<Vec<String>> = Vec::with_capacity(statements.len());
+    let mut dropped: Vec<Vec<String>> = Vec::with_capacity(quotes.len());
     let mut removed: Vec<(usize, String, Vec<String>)> = Vec::new();
-    for (unit, statement) in statements {
+    for (unit, claimed) in quotes {
         if let Some((_, _, sources)) = removed
             .iter()
-            .find(|(held, sentence, _)| held == unit && restates(sentence, statement))
+            .find(|(held, sentence, _)| held == unit && holds_sentence(sentence, claimed))
         {
             dropped.push(sources.clone());
             continue;
         }
-        let (field, item) = super::location(candidate, *unit)?;
+        let (field, item) = super::section_of(candidate, *unit)?;
         let cited = candidate
             .get_mut(field)
             .and_then(Value::as_array_mut)
@@ -394,7 +355,7 @@ pub(in crate::lessons::content_verification) fn uncite(
                 entry
                     .get("sentence")
                     .and_then(Value::as_str)
-                    .is_some_and(|sentence| restates(sentence, statement))
+                    .is_some_and(|sentence| holds_sentence(sentence, claimed))
             })
         });
         let (Some(cited), Some(at)) = (cited, at) else {
@@ -409,7 +370,7 @@ pub(in crate::lessons::content_verification) fn uncite(
             .to_owned();
         let stands = kept
             .iter()
-            .any(|(held, other)| held == unit && restates(&sentence, other));
+            .any(|(held, other)| held == unit && holds_sentence(&sentence, other));
         if stands {
             dropped.push(Vec::new());
             continue;

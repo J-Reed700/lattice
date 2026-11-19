@@ -24,7 +24,7 @@ function contextValue(overrides: Partial<StudyTangentsContextValue> = {}): Study
   };
 }
 
-function renderSelection(context: StudyTangentsContextValue | null = contextValue(), text = PASSAGE) {
+function renderSelection(context: StudyTangentsContextValue | null = contextValue(), text: ReactNode = PASSAGE) {
   const view = render(
     <StudyTangentsContext.Provider value={context}>
       <article tabIndex={-1} aria-label="Lesson">
@@ -46,6 +46,17 @@ function select(node: Node, start = 0, end = node.textContent?.length ?? 0) {
   window.getSelection()!.addRange(range);
   act(() => { document.dispatchEvent(new Event('selectionchange')); });
 }
+
+function selectContents(node: Node) {
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  window.getSelection()!.removeAllRanges();
+  window.getSelection()!.addRange(range);
+  act(() => { document.dispatchEvent(new Event('selectionchange')); });
+}
+
+const MARKS = /[\uE000-\uE00D]/;
+const chip = (number: number) => <span className="cite-chip" data-cite={number}>{'\uE000\uE001\uE00B'}</span>;
 
 const passageText = () => screen.getByTestId('passage').firstChild!;
 const toolbar = () => screen.queryByRole('toolbar', { name: 'Selected passage' });
@@ -82,6 +93,26 @@ describe('StudyTangentSelection', () => {
     expect(context!.startTangent).toHaveBeenCalledWith({ moduleId: 'm1', lessonId: 'l1', sectionIndex: 2, sectionTitle: 'Floods', selectedText: 'Nile' });
     expect(toolbar()).not.toBeInTheDocument();
     expect(window.getSelection()?.rangeCount).toBe(0);
+  });
+
+  it('offers a passage without the citation marks a selection crosses', () => {
+    const { context } = renderSelection(contextValue(), <>Uses a hash map.{chip(2)} Lookups are fast.</>);
+    selectContents(screen.getByTestId('passage'));
+    fireEvent.click(screen.getByRole('button', { name: 'Ask in a tangent' }));
+    const selectedText = vi.mocked(context!.startTangent).mock.calls[0]![0].selectedText;
+    expect(selectedText).toBe('Uses a hash map. Lookups are fast.');
+    expect(selectedText).not.toMatch(MARKS);
+  });
+
+  it('reads a formula as its source and leaves the citation marks out', () => {
+    const { context } = renderSelection(contextValue(), (
+      <>Uses <span data-type="inline-math" data-latex="x^2">drawn x squared</span> twice.{chip(1)}</>
+    ));
+    selectContents(screen.getByTestId('passage'));
+    fireEvent.click(screen.getByRole('button', { name: 'Ask in a tangent' }));
+    const selectedText = vi.mocked(context!.startTangent).mock.calls[0]![0].selectedText;
+    expect(selectedText).toBe('Uses $x^2$ twice.');
+    expect(selectedText).not.toMatch(MARKS);
   });
 
   it('ignores selections outside the lesson or of whitespace', () => {
@@ -259,8 +290,9 @@ describe('SectionTangentBar', () => {
     renderBar(context, { sectionText: long });
     fireEvent.click(screen.getByTestId('section-tangent-btn-2'));
     const field = screen.getByRole('textbox', { name: 'Passage to explore' });
-    expect(field).toHaveValue('x'.repeat(4000));
-    expect(screen.getByText(`${(4000).toLocaleString()} / 8,000 characters`)).toBeInTheDocument();
+    expect(field).toHaveValue(long);
+    expect(screen.getByText(`${(MAX_STUDY_TANGENT_PASSAGE_LENGTH + 10).toLocaleString()} / 8,000 characters`)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start tangent' })).toBeDisabled();
 
     fireEvent.change(field, { target: { value: '   ' } });
     expect(screen.getByRole('button', { name: 'Start tangent' })).toBeDisabled();

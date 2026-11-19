@@ -5,19 +5,17 @@ use super::{
     PracticalWorkspaceSnapshot,
 };
 use crate::embedded_runtime::LearningBuiltinRuntime;
-use crate::persistence::db;
 use crate::practical_dto::*;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
 use sqlx::Row;
 use std::collections::HashMap;
 
 impl LearningPracticalRepository {
     pub async fn workspace(&self, program_id: &str) -> Result<PracticalWorkspaceSnapshot> {
         uuid(program_id, "program")?;
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await?;
         let workspace = Self::workspace_on(&mut tx, program_id).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(workspace)
     }
 
@@ -28,8 +26,7 @@ impl LearningPracticalRepository {
         let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_optional(&mut *connection)
-            .await
-            .map_err(db)?;
+            .await?;
         if exists.is_none() {
             return Err(AppError::NotFound("Learning program not found".into()));
         }
@@ -39,8 +36,7 @@ impl LearningPracticalRepository {
         )
         .bind(program_id)
         .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?;
+        .await?;
         let mut activities = Vec::with_capacity(activity_rows.len());
         let mut builtin_versions = HashMap::new();
         for row in activity_rows {
@@ -55,8 +51,7 @@ impl LearningPracticalRepository {
         )
         .bind(program_id)
         .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?;
+        .await?;
         let mut runs = Vec::with_capacity(run_rows.len());
         for row in run_rows {
             runs.push(Self::parse_run(connection, row).await?);
@@ -66,8 +61,7 @@ impl LearningPracticalRepository {
         )
         .bind(program_id)
         .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?;
+        .await?;
         let mut simulations = Vec::with_capacity(simulation_rows.len());
         for row in simulation_rows {
             simulations.push(Self::parse_simulation(connection, row).await?);
@@ -87,8 +81,10 @@ impl LearningPracticalRepository {
     }
 
     pub(crate) async fn profiles(&self) -> Result<Vec<LearningRuntimeProfileDto>> {
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        Self::profiles_on(&mut connection).await
+        let mut tx = self.db.begin_read().await?;
+        let profiles = Self::profiles_on(&mut tx).await?;
+        tx.commit().await?;
+        Ok(profiles)
     }
 
     async fn profiles_on(
@@ -96,8 +92,7 @@ impl LearningPracticalRepository {
     ) -> Result<Vec<LearningRuntimeProfileDto>> {
         let rows = sqlx::query("SELECT * FROM learning_runtime_profiles ORDER BY name,id")
             .fetch_all(&mut *connection)
-            .await
-            .map_err(db)?;
+            .await?;
         rows.into_iter()
             .map(|row| {
                 Ok(LearningRuntimeProfileDto {
@@ -122,7 +117,7 @@ impl LearningPracticalRepository {
     ) -> Result<LearningPracticalActivityDto> {
         let id: String = row.get("id");
         let file_rows = sqlx::query("SELECT * FROM learning_practical_files WHERE activity_id=? AND role IN ('starter','reference') ORDER BY ordinal")
-            .bind(&id).fetch_all(&mut *connection).await.map_err(db)?;
+            .bind(&id).fetch_all(&mut *connection).await?;
         let mut files = Vec::new();
         let mut interview_plan = None;
         for file in file_rows {
@@ -236,8 +231,7 @@ impl LearningPracticalRepository {
         )
         .bind(&id)
         .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?
+        .await?
         .into_iter()
         .map(|check| {
             let detail_json: Option<String> = check.get("detail_json");
@@ -304,8 +298,7 @@ impl LearningPracticalRepository {
         )
         .bind(&id)
         .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?
+        .await?
         .into_iter()
         .map(|turn| {
             Ok(LearningSimulationTurnDto {
@@ -338,31 +331,29 @@ impl LearningPracticalRepository {
 
     pub async fn run(&self, run_id: &str) -> Result<LearningPracticalRunDto> {
         uuid(run_id, "run")?;
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await?;
         let connection = &mut *tx;
         let row = sqlx::query("SELECT * FROM learning_practical_runs WHERE id=?")
             .bind(run_id)
             .fetch_optional(&mut *connection)
-            .await
-            .map_err(db)?
+            .await?
             .ok_or_else(|| AppError::NotFound("Practical run not found".into()))?;
         let result = Self::parse_run(connection, row).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(result)
     }
 
     pub async fn simulation(&self, session_id: &str) -> Result<LearningSimulationSessionDto> {
         uuid(session_id, "simulation")?;
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await?;
         let connection = &mut *tx;
         let row = sqlx::query("SELECT * FROM learning_simulation_sessions WHERE id=?")
             .bind(session_id)
             .fetch_optional(&mut *connection)
-            .await
-            .map_err(db)?
+            .await?
             .ok_or_else(|| AppError::NotFound("Simulation not found".into()))?;
         let result = Self::parse_simulation(connection, row).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(result)
     }
 }

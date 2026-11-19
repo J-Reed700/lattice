@@ -3,32 +3,27 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::{Database, Transactions, WriteTx};
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::{Database, WriteTx};
+use sqlx::SqliteConnection;
 use tracing::{debug, warn};
 
 use super::{db_err, fts_external_content_table, is_blob_hash, SnapshotInfo, EXCLUDED_TABLES};
 use crate::features::backup::archive::format::ArchiveError;
 use crate::features::backup::database_repository;
+use crate::infrastructure::persistence::database::{open_to_change, open_to_read};
 
 /// `VACUUM INTO dest_str` of the live database, onto `dest`.
 pub(super) async fn copy_database(
-    database: &impl DriverPool,
+    database: &Database,
     dest: &Path,
     dest_str: &str,
 ) -> Result<(), ArchiveError> {
-    let mut connection = database.sqlx_pool().acquire().await.map_err(db_err)?;
-    database_repository::vacuum_into(&mut connection, dest_str)
-        .await
-        .map_err(|error| {
-            ArchiveError::Database(format!("VACUUM INTO {} failed: {error}", dest.display()))
-        })
+    database.vacuum_into(dest_str).await.map_err(|error| {
+        ArchiveError::Database(format!("VACUUM INTO {} failed: {error}", dest.display()))
+    })
 }
 
-/// Scratch database over the copy. One connection, rollback journal (so no
-/// `-wal`/`-shm` appear), foreign keys off: every excluded table is
+/// Scratch database over the copy, foreign keys off: every excluded table is
 /// re-derivable, so we do not care about the order the rows disappear in.
 /// (For the record, `PRAGMA foreign_key_list` on them gives
 /// text_embeddings -> text_chunks, image_embeddings -> documents,
@@ -37,23 +32,17 @@ pub(super) async fn copy_database(
 /// The list above is already child-before-parent, so the order would be
 /// safe even with enforcement on.)
 pub(super) async fn open_snapshot_copy(dest: &Path) -> Result<Database, ArchiveError> {
-    let options = SqliteConnectOptions::new()
-        .filename(dest)
-        .create_if_missing(false)
-        .journal_mode(SqliteJournalMode::Delete)
-        .foreign_keys(false);
-    SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(options)
+    open_to_change(dest)
         .await
-        .map(Database::from)
         .map_err(|error| ArchiveError::Database(format!("failed to open snapshot copy: {error}")))
 }
 
 /// Does `table` exist in the connected database?
-async fn table_exists(pool: &SqlitePool, table: &str) -> Result<bool, ArchiveError> {
-    let mut connection = pool.acquire().await.map_err(db_err)?;
-    database_repository::table_exists(&mut connection, table)
+async fn table_exists(
+    connection: &mut SqliteConnection,
+    table: &str,
+) -> Result<bool, ArchiveError> {
+    database_repository::table_exists(connection, table)
         .await
         .map_err(db_err)
 }
@@ -92,7 +81,7 @@ async fn reconcile_fts_tables(
             content = %content_table,
             "external-content fts5 index over a cleared table; rebuilding it empty"
         );
-        database_repository::rebuild_fts5_index(&mut *tx, &name)
+        database_repository::rebuild_fts5_index(tx, &name)
             .await
             .map_err(db_err)?;
         rebuilt.push(name);
@@ -103,34 +92,33 @@ async fn reconcile_fts_tables(
 /// Everything that happens on the scratch pool, so the caller can always
 /// close it afterwards.
 pub(super) async fn finish_snapshot(
-    database: &impl DriverPool,
+    database: &Database,
 ) -> Result<(Vec<String>, Option<i64>), ArchiveError> {
-    let pool = database.sqlx_pool();
-    let cleared = clear_snapshot_tables(pool).await?;
+    let cleared = clear_snapshot_tables(database).await?;
 
     // Reclaim the pages the deletes freed. SQLite refuses VACUUM inside a
     // transaction, so it runs after the commit.
-    let mut connection = pool.acquire().await.map_err(db_err)?;
-    database_repository::vacuum(&mut connection)
+    database
+        .vacuum()
         .await
         .map_err(|error| ArchiveError::Database(format!("VACUUM of snapshot failed: {error}")))?;
-    drop(connection);
 
-    let migration_version = if table_exists(pool, "_sqlx_migrations").await? {
-        let mut connection = pool.acquire().await.map_err(db_err)?;
-        database_repository::newest_migration(&mut connection)
+    let mut read = database.begin_read().await.map_err(db_err)?;
+    let migration_version = if table_exists(&mut read, "_sqlx_migrations").await? {
+        database_repository::newest_migration(&mut read)
             .await
             .map_err(db_err)?
     } else {
         None
     };
+    read.commit().await.map_err(db_err)?;
 
     Ok((cleared, migration_version))
 }
 
 /// Empties the excluded tables in one unit of work and returns the ones cleared.
-async fn clear_snapshot_tables(pool: &SqlitePool) -> Result<Vec<String>, ArchiveError> {
-    let mut tx = pool.begin_write().await.map_err(db_err)?;
+async fn clear_snapshot_tables(database: &Database) -> Result<Vec<String>, ArchiveError> {
+    let mut tx = database.begin_write().await.map_err(db_err)?;
     let mut cleared: Vec<String> = Vec::new();
     for table in EXCLUDED_TABLES {
         if !database_repository::table_exists(&mut tx, table)
@@ -152,9 +140,12 @@ async fn clear_snapshot_tables(pool: &SqlitePool) -> Result<Vec<String>, Archive
 }
 
 /// Does `table` have a column called `column`?
-async fn column_exists(pool: &SqlitePool, table: &str, column: &str) -> Result<bool, ArchiveError> {
-    let mut connection = pool.acquire().await.map_err(db_err)?;
-    database_repository::column_exists(&mut connection, table, column)
+async fn column_exists(
+    connection: &mut SqliteConnection,
+    table: &str,
+    column: &str,
+) -> Result<bool, ArchiveError> {
+    database_repository::column_exists(connection, table, column)
         .await
         .map_err(db_err)
 }
@@ -170,47 +161,35 @@ async fn column_exists(pool: &SqlitePool, table: &str, column: &str) -> Result<b
 /// Shipping a few orphans is a much better failure than silently dropping the
 /// user's files out of their only backup.
 pub async fn referenced_blob_hashes(db: &Path) -> Result<Option<HashSet<String>>, ArchiveError> {
-    // Read-only with a rollback journal, exactly like `validate_snapshot`:
-    // reading the set must not leave a `-wal`/`-shm` beside the file that is
-    // about to be packed.
-    let options = SqliteConnectOptions::new()
-        .filename(db)
-        .read_only(true)
-        .create_if_missing(false)
-        .journal_mode(SqliteJournalMode::Delete)
-        .foreign_keys(false);
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(options)
-        .await
-        .map_err(|error| {
-            ArchiveError::Database(format!(
-                "failed to open snapshot {} to list referenced blobs: {error}",
-                db.display()
-            ))
-        })?;
+    let database = open_to_read(db).await.map_err(|error| {
+        ArchiveError::Database(format!(
+            "failed to open snapshot {} to list referenced blobs: {error}",
+            db.display()
+        ))
+    })?;
 
-    let result = read_referenced_blob_hashes(&pool).await;
-    pool.close().await;
+    let result = read_referenced_blob_hashes(&database).await;
+    database.close().await;
     result
 }
 
 async fn read_referenced_blob_hashes(
-    pool: &SqlitePool,
+    database: &Database,
 ) -> Result<Option<HashSet<String>>, ArchiveError> {
-    if !table_exists(pool, "documents").await? {
+    let mut read = database.begin_read().await.map_err(db_err)?;
+    if !table_exists(&mut read, "documents").await? {
         warn!("snapshot has no documents table; every library blob will be packed");
         return Ok(None);
     }
-    if !column_exists(pool, "documents", "checksum").await? {
+    if !column_exists(&mut read, "documents", "checksum").await? {
         warn!("snapshot documents table has no checksum column; every library blob will be packed");
         return Ok(None);
     }
 
-    let mut connection = pool.acquire().await.map_err(db_err)?;
-    let checksums = database_repository::distinct_checksums(&mut connection)
+    let checksums = database_repository::distinct_checksums(&mut read)
         .await
         .map_err(db_err)?;
+    read.commit().await.map_err(db_err)?;
 
     let total = checksums.len();
     let hashes: HashSet<String> = checksums
@@ -227,12 +206,11 @@ async fn read_referenced_blob_hashes(
     Ok(Some(hashes))
 }
 
-async fn count_rows(pool: &SqlitePool, table: &str) -> Result<u64, ArchiveError> {
-    if !table_exists(pool, table).await? {
+async fn count_rows(connection: &mut SqliteConnection, table: &str) -> Result<u64, ArchiveError> {
+    if !table_exists(connection, table).await? {
         return Ok(0);
     }
-    let mut connection = pool.acquire().await.map_err(db_err)?;
-    let count = database_repository::count_rows(&mut connection, table)
+    let count = database_repository::count_rows(connection, table)
         .await
         .map_err(db_err)?;
     Ok(u64::try_from(count).unwrap_or(0))
@@ -247,30 +225,18 @@ pub async fn validate_snapshot(db: &Path) -> Result<SnapshotInfo, ArchiveError> 
         )));
     }
 
-    // Read-only, rollback journal: never create a `-wal`/`-shm` beside a file
-    // that may live on read-only or sync-backed storage.
-    let options = SqliteConnectOptions::new()
-        .filename(db)
-        .read_only(true)
-        .create_if_missing(false)
-        .journal_mode(SqliteJournalMode::Delete)
-        .foreign_keys(false);
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(options)
-        .await
-        .map_err(|error| {
-            ArchiveError::Corrupt(format!("{} is not a database: {error}", db.display()))
-        })?;
+    let database = open_to_read(db).await.map_err(|error| {
+        ArchiveError::Corrupt(format!("{} is not a database: {error}", db.display()))
+    })?;
 
-    let result = inspect_snapshot(&pool).await;
-    pool.close().await;
+    let result = inspect_snapshot(&database).await;
+    database.close().await;
     result
 }
 
-async fn inspect_snapshot(pool: &SqlitePool) -> Result<SnapshotInfo, ArchiveError> {
-    let mut connection = pool.acquire().await.map_err(db_err)?;
-    let integrity = database_repository::integrity_check(&mut connection)
+async fn inspect_snapshot(database: &Database) -> Result<SnapshotInfo, ArchiveError> {
+    let mut read = database.begin_read().await.map_err(db_err)?;
+    let integrity = database_repository::integrity_check(&mut read)
         .await
         .map_err(|error| ArchiveError::Corrupt(format!("integrity check failed: {error}")))?;
     if integrity != "ok" {
@@ -279,41 +245,37 @@ async fn inspect_snapshot(pool: &SqlitePool) -> Result<SnapshotInfo, ArchiveErro
         )));
     }
 
-    drop(connection);
-
-    let migration_version = if table_exists(pool, "_sqlx_migrations").await? {
-        let mut connection = pool.acquire().await.map_err(db_err)?;
-        database_repository::newest_migration(&mut connection)
+    let migration_version = if table_exists(&mut read, "_sqlx_migrations").await? {
+        database_repository::newest_migration(&mut read)
             .await
             .map_err(db_err)?
     } else {
         None
     };
 
-    let mut connection = pool.acquire().await.map_err(db_err)?;
-    let tables = database_repository::table_count(&mut connection)
+    let tables = database_repository::table_count(&mut read)
         .await
         .map_err(db_err)?;
-    drop(connection);
 
-    let memory_tables_present = table_exists(pool, "conversation_memory_state").await?
-        && table_exists(pool, "conversation_memory_items").await?
-        && table_exists(pool, "conversation_memory_evidence").await?;
+    let memory_tables_present = table_exists(&mut read, "conversation_memory_state").await?
+        && table_exists(&mut read, "conversation_memory_items").await?
+        && table_exists(&mut read, "conversation_memory_evidence").await?;
     let memory_schema_version = if memory_tables_present {
-        let mut connection = pool.acquire().await.map_err(db_err)?;
-        database_repository::newest_memory_schema_version(&mut connection)
+        database_repository::newest_memory_schema_version(&mut read)
             .await
             .map_err(db_err)?
     } else {
         None
     };
 
-    Ok(SnapshotInfo {
+    let info = SnapshotInfo {
         migration_version,
         table_count: u64::try_from(tables).unwrap_or(0),
-        document_count: count_rows(pool, "documents").await?,
-        conversation_count: count_rows(pool, "conversations").await?,
+        document_count: count_rows(&mut read, "documents").await?,
+        conversation_count: count_rows(&mut read, "conversations").await?,
         memory_tables_present,
         memory_schema_version,
-    })
+    };
+    read.commit().await.map_err(db_err)?;
+    Ok(info)
 }

@@ -1,6 +1,6 @@
 //! Replacement backups must describe exactly the database state being removed.
 use super::{
-    db, export,
+    export,
     files::{atomic_write, managed_path},
     guards, hash, invalid, json_string, now,
     records::BackupExportRecord,
@@ -10,8 +10,7 @@ use crate::{
     portability_dto::{ExportLearningPackRequestDto, LearningPackExportOptionsDto},
 };
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::{Transactions, WriteTx};
+use lattice_core::shared::persistence::WriteTx;
 use sqlx::{Row, SqliteConnection};
 use std::path::Path;
 
@@ -19,40 +18,38 @@ use std::path::Path;
 #[path = "replacement_tests.rs"]
 mod tests;
 
-pub(super) async fn begin_apply(
-    pool: &impl DriverPool,
+/// Readies `tx` to apply the preview: it is still pending, no job is preparing the course it
+/// replaces, and that course is backed up first. Returns the backup, if one was made.
+pub(super) async fn prepare_apply(
+    tx: &mut WriteTx,
     managed_dir: &Path,
     preview_id: &str,
     program_id: &str,
     replaces_program: bool,
-) -> Result<(WriteTx, Option<BackupExportRecord>)> {
-    let pool = pool.sqlx_pool();
-    let mut tx = pool.begin_write().await.map_err(db)?;
+) -> Result<Option<BackupExportRecord>> {
     sqlx::query("PRAGMA defer_foreign_keys=ON")
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?;
+        .execute(&mut **tx)
+        .await?;
     let pending = sqlx::query_scalar::<_, String>(
         "SELECT status FROM learning_pack_import_previews WHERE id=? AND status='pending'",
     )
     .bind(preview_id)
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(db)?;
+    .fetch_optional(&mut **tx)
+    .await?;
     if pending.is_none() {
         return Err(invalid("Pack preview changed while it was being applied."));
     }
     // A job may have started after the preview; deleting the course now would
     // remove its rows from under the worker.
-    if replaces_program && guards::active_job_exists(&mut tx, program_id).await? {
+    if replaces_program && guards::active_job_exists(tx, program_id).await? {
         return Err(invalid(guards::PREPARING));
     }
     let backup = if replaces_program {
-        backup_if_present(&mut tx, managed_dir, program_id).await?
+        backup_if_present(tx, managed_dir, program_id).await?
     } else {
         None
     };
-    Ok((tx, backup))
+    Ok(backup)
 }
 
 pub(super) async fn require_recoverable_on(
@@ -79,12 +76,11 @@ pub(super) async fn unrecoverable_reason(
     const OMITTED: &[(&str, &str)] = &[
         ("hidden practical evaluators", "SELECT COUNT(*) FROM learning_practical_files f JOIN learning_practical_activities a ON a.id=f.activity_id WHERE a.program_id=? AND f.role IN ('check','solution')"),
     ];
-    for (label, sql) in OMITTED {
+    for &(label, sql) in OMITTED {
         if sqlx::query_scalar::<_, i64>(sql)
             .bind(program_id)
             .fetch_one(&mut *connection)
-            .await
-            .map_err(db)?
+            .await?
             > 0
         {
             return Ok(Some(format!("Replace was blocked because the target has {label} that this pack version cannot restore. The existing program was left unchanged.")));
@@ -106,8 +102,7 @@ pub(super) async fn replace_warnings(
     )
     .bind(program_id)
     .fetch_one(&mut *connection)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok(match unfinished {
         0 => Vec::new(),
         1 => vec!["Replacing discards 1 unfinished lesson review on this computer; that lesson will need preparing again.".into()],
@@ -153,16 +148,14 @@ pub(super) async fn snapshot_local_links(
     )
     .bind(program_id)
     .fetch_optional(&mut *connection)
-    .await
-    .map_err(db)?
+    .await?
     .flatten();
     let notes = sqlx::query(
         "SELECT lesson_id,note_id,created_at FROM learning_lesson_note_links WHERE program_id=? ORDER BY rowid",
     )
     .bind(program_id)
     .fetch_all(&mut *connection)
-    .await
-    .map_err(db)?
+    .await?
     .into_iter()
     .map(|row| (row.get("lesson_id"), row.get("note_id"), row.get("created_at")))
     .collect();
@@ -171,20 +164,17 @@ pub(super) async fn snapshot_local_links(
     )
     .bind(program_id)
     .fetch_all(&mut *connection)
-    .await
-    .map_err(db)?;
+    .await?;
     let tutor_chats = sqlx::query_as("SELECT id,lesson_id FROM conversations WHERE program_id=?")
         .bind(program_id)
         .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?;
+        .await?;
     let verifier = sqlx::query_as(
         "SELECT verifier_audit,verifier_web_search,verifier_consent_at,verifier_consent_provider FROM learning_programs WHERE id=?",
     )
     .bind(program_id)
     .fetch_optional(&mut *connection)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok(LocalLinks {
         journal_id,
         notes,
@@ -198,7 +188,7 @@ pub(super) async fn snapshot_local_links(
 /// replaced: notes and tangent chats on every lesson it still has, its
 /// notebook when the pack's memory record has none, and the Verifier consent.
 pub(super) async fn restore_local_links(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     saved: LocalLinks,
 ) -> Result<()> {
@@ -206,18 +196,16 @@ pub(super) async fn restore_local_links(
         sqlx::query("INSERT OR IGNORE INTO learning_memory(program_id,journal_id,deck_id,created_at) VALUES(?,NULL,NULL,?)")
             .bind(program_id)
             .bind(now())
-            .execute(&mut *connection)
-            .await
-            .map_err(db)?;
+            .execute(&mut **tx)
+            .await?;
     }
     if let Some(journal_id) = &saved.journal_id {
         sqlx::query("UPDATE learning_memory SET journal_id=? WHERE program_id=? AND journal_id IS NULL AND EXISTS(SELECT 1 FROM journals WHERE id=?)")
             .bind(journal_id)
             .bind(program_id)
             .bind(journal_id)
-            .execute(&mut *connection)
-            .await
-            .map_err(db)?;
+            .execute(&mut **tx)
+            .await?;
     }
     for (lesson_id, note_id, created_at) in saved.notes {
         sqlx::query("INSERT OR IGNORE INTO learning_lesson_note_links(program_id,lesson_id,note_id,created_at) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM learning_lessons WHERE program_id=? AND id=?) AND EXISTS(SELECT 1 FROM daily_notes_workspace WHERE id=?)")
@@ -228,9 +216,8 @@ pub(super) async fn restore_local_links(
             .bind(program_id)
             .bind(&lesson_id)
             .bind(&note_id)
-            .execute(&mut *connection)
-            .await
-            .map_err(db)?;
+            .execute(&mut **tx)
+            .await?;
     }
     // The lesson's module comes from the imported course, where it may have moved.
     for (
@@ -253,9 +240,8 @@ pub(super) async fn restore_local_links(
             .bind(program_id)
             .bind(&lesson_id)
             .bind(&conversation_id)
-            .execute(&mut *connection)
-            .await
-            .map_err(db)?;
+            .execute(&mut **tx)
+            .await?;
     }
     for (conversation_id, lesson_id) in saved.tutor_chats {
         sqlx::query("UPDATE conversations SET program_id=?,lesson_id=(SELECT id FROM learning_lessons WHERE program_id=? AND id=?) WHERE id=?")
@@ -263,9 +249,8 @@ pub(super) async fn restore_local_links(
             .bind(program_id)
             .bind(&lesson_id)
             .bind(&conversation_id)
-            .execute(&mut *connection)
-            .await
-            .map_err(db)?;
+            .execute(&mut **tx)
+            .await?;
     }
     if let Some((audit, web_search, consent_at, provider)) = saved.verifier {
         sqlx::query("UPDATE learning_programs SET verifier_audit=?,verifier_web_search=?,verifier_consent_at=?,verifier_consent_provider=? WHERE id=?")
@@ -274,9 +259,8 @@ pub(super) async fn restore_local_links(
             .bind(consent_at)
             .bind(provider)
             .bind(program_id)
-            .execute(&mut *connection)
-            .await
-            .map_err(db)?;
+            .execute(&mut **tx)
+            .await?;
     }
     Ok(())
 }
@@ -292,8 +276,7 @@ async fn backup_if_present(
     let exists = sqlx::query_scalar::<_, i64>("SELECT 1 FROM learning_programs WHERE id=?")
         .bind(program_id)
         .fetch_optional(&mut *connection)
-        .await
-        .map_err(db)?;
+        .await?;
     if exists.is_none() {
         return Ok(None);
     }

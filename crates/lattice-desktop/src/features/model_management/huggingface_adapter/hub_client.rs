@@ -1,5 +1,6 @@
 //! The Hub HTTP client that implements `ModelCatalogPort`.
 use super::*;
+use lattice_core::shared::error::WithCauses;
 
 /// The user agent every Hub request carries.
 pub const HUB_USER_AGENT: &str = "RecallDesktop/1.0";
@@ -11,6 +12,10 @@ pub struct HuggingFaceAdapter {
     client: Client,
 }
 
+/// Catalog listings are of GGUF repositories, the only weights the bundled
+/// llama.cpp runs. The fields are named because `full=true` leaves out `gguf`.
+const LISTING_FIELDS: &str = "expand[]=author&expand[]=downloads&expand[]=gated&expand[]=gguf&expand[]=lastModified&expand[]=library_name&expand[]=likes&expand[]=pipeline_tag&expand[]=siblings&expand[]=tags";
+
 impl HuggingFaceAdapter {
     /// Create a new Hugging Face adapter.
     ///
@@ -20,7 +25,9 @@ impl HuggingFaceAdapter {
         let client = reqwest_client_builder()
             .timeout(Duration::from_secs(10))
             .build()
-            .map_err(|e| AppError::Network(format!("Failed to create HTTP client: {e}")))?;
+            .map_err(|e| {
+                AppError::Network(format!("Failed to create HTTP client: {}", WithCauses(&e)))
+            })?;
 
         Ok(Self { client })
     }
@@ -33,13 +40,13 @@ impl HuggingFaceAdapter {
     pub(super) fn search_url(query: &str, limit: usize) -> String {
         if let Some(filter) = query.strip_prefix("filter:") {
             format!(
-                "https://huggingface.co/api/models?filter={}&limit={}&full=true&sort=downloads&direction=-1",
+                "https://huggingface.co/api/models?filter={}&filter=gguf&limit={}&sort=downloads&direction=-1&{LISTING_FIELDS}",
                 urlencoding::encode(filter),
                 limit
             )
         } else {
             format!(
-                "https://huggingface.co/api/models?search={}&limit={}&full=true&sort=downloads&direction=-1",
+                "https://huggingface.co/api/models?search={}&filter=gguf&limit={}&sort=downloads&direction=-1&{LISTING_FIELDS}",
                 urlencoding::encode(query),
                 limit
             )
@@ -64,7 +71,12 @@ impl HuggingFaceAdapter {
             .header("User-Agent", HUB_USER_AGENT)
             .send()
             .await
-            .map_err(|e| AppError::Network(format!("Hugging Face API request failed: {}", e)))?;
+            .map_err(|e| {
+                AppError::Network(format!(
+                    "Hugging Face API request failed: {}",
+                    WithCauses(&e)
+                ))
+            })?;
 
         if !response.status().is_success() {
             return Err(AppError::Network(format!(
@@ -74,7 +86,10 @@ impl HuggingFaceAdapter {
         }
 
         let models: Vec<HuggingFaceModel> = response.json().await.map_err(|e| {
-            AppError::Network(format!("Failed to parse Hugging Face response: {}", e))
+            AppError::Network(format!(
+                "Failed to parse Hugging Face response: {}",
+                WithCauses(&e)
+            ))
         })?;
 
         Ok(models)
@@ -98,7 +113,12 @@ impl HuggingFaceAdapter {
             .header("User-Agent", HUB_USER_AGENT)
             .send()
             .await
-            .map_err(|e| AppError::Network(format!("Hugging Face API request failed: {}", e)))?;
+            .map_err(|e| {
+                AppError::Network(format!(
+                    "Hugging Face API request failed: {}",
+                    WithCauses(&e)
+                ))
+            })?;
 
         if response.status().as_u16() == 404 {
             return Err(AppError::NotFound(format!("Model not found: {}", model_id)));
@@ -112,7 +132,10 @@ impl HuggingFaceAdapter {
         }
 
         let model: HuggingFaceModel = response.json().await.map_err(|e| {
-            AppError::Network(format!("Failed to parse Hugging Face response: {}", e))
+            AppError::Network(format!(
+                "Failed to parse Hugging Face response: {}",
+                WithCauses(&e)
+            ))
         })?;
 
         Ok(model)

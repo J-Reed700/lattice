@@ -16,8 +16,11 @@ pub mod markdown_math;
 pub mod markdown_media;
 pub mod path_safety;
 pub mod persistence;
+pub mod process;
+pub mod protocol;
 pub mod resilience;
 pub mod runtime;
+pub mod stored_references;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 pub mod text;

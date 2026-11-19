@@ -42,8 +42,10 @@ import { normalizeHexColor } from '@/features/spaces/model/spaces';
 import { isBoundChat } from '@/shared/conversations/boundChats';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
+import type { ConversationMessage } from '@/types/conversation';
 import { scrollToMessage } from '@/utils/chatMessageNavigation';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
+import { plainTextOf } from '@/utils/replyPieces';
 
 interface ConversationListProps {
   isJournalScope: boolean;
@@ -55,6 +57,11 @@ interface ConversationListProps {
   exportActions: ConversationExportActions;
 }
 const MENU_ITEM_CLASS = 'flex w-full items-center gap-2.5 rounded-sm px-2.5 py-2 text-left text-sm text-text-primary transition-colors duration-fast hover:bg-surface focus-visible:bg-surface focus-visible:outline-hidden disabled:cursor-not-allowed disabled:opacity-50';
+
+function lastMessageText(messages: ConversationMessage[] | undefined): string | undefined {
+  const last = messages?.[messages.length - 1];
+  return last ? plainTextOf(last) : undefined;
+}
 
 export function ConversationList({ isJournalScope, isSelectionMode, selectedConversationIds, toggleConversationSelection, synthesis, exportActions }: ConversationListProps) {
   const prefersReducedMotion = useReducedMotion();
@@ -266,7 +273,7 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
                 const metaLine = [spaceLabel, relativeTime].filter(Boolean).join(' · ');
                 const preview =
                   conversation.lastMessagePreview
-                  ?? conversation.messages?.[conversation.messages.length - 1]?.content
+                  ?? lastMessageText(conversation.messages)
                   ?? '';
 
                 return (
@@ -350,7 +357,6 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
                           <input
                             autoFocus
                             value={renameDraft}
-                            maxLength={120}
                             onChange={(e) => setRenameDraft(e.target.value)}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') {
@@ -496,7 +502,7 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
                                 onClick={() => {
                                   setOpenActionsId(null);
                                   generateStudyDeck.mutate(
-                                    { conversationId: conversation.id, title: `${conversation.title} · Verified claims`.slice(0, 120) },
+                                    { conversationId: conversation.id, title: `${conversation.title} · Verified claims` },
                                     { onError: (error) => toast.error("Couldn't create flashcards", { message: error.message }) },
                                   );
                                 }}

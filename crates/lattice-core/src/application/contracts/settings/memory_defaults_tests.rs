@@ -52,6 +52,9 @@ fn generation_settings_fill_in_when_missing_and_keep_their_wire_shape() {
     assert!(SpeculativeDecodingDto::MtpDraft { n_max: 0 }
         .problem()
         .is_some());
+    assert!(SpeculativeDecodingDto::MtpDraft { n_max: 64 }
+        .problem()
+        .is_none());
     assert!(SamplingProfileDto::thinking()
         .problems("thinking")
         .is_empty());

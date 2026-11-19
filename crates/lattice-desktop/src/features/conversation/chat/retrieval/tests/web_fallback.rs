@@ -18,6 +18,7 @@ use lattice_core::application::contracts::search::{
 use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult, ToolDefinition};
 use lattice_core::application::ports::hybrid_search::HybridSearchTrait;
 use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::persistence::Database;
 use std::sync::Mutex;
 
 const CONVERSATION: &str = "fallback-chat";
@@ -45,7 +46,7 @@ async fn handbook_records() -> Arc<dyn ChatRecords> {
     .execute(&pool)
     .await
     .unwrap();
-    Arc::new(ConversationRepository::new(pool))
+    Arc::new(ConversationRepository::new(Database::new(pool)))
 }
 
 fn passage(index: usize, content: &str) -> SearchResultDto {
@@ -187,6 +188,12 @@ impl LLMPort for Rewriter {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// The flags of an unflagged turn the intent step read as needing the web.
@@ -266,6 +273,9 @@ async fn run_turn(
             highlight_terms: &[],
             focus: &crate::features::conversation::chat::focus::FocusScope::default(),
             recorder: &recorder,
+            names: &std::sync::Arc::new(
+                lattice_core::application::services::model_contract::kept::TurnNames::unstored(),
+            ),
         },
         &SettingsDto::default(),
         &decision,

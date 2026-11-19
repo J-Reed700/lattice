@@ -3,18 +3,24 @@
 
 use async_trait::async_trait;
 use lattice_core::application::ports::LLMPort;
-use lattice_core::application::services::grounded_generation::GroundedRequest;
+use lattice_core::application::services::model_contract::ask::{
+    self, ask, Alone, Answered, Refusal, Says, Settled,
+};
+use lattice_core::application::services::model_contract::shape::{Authored, Fields, Form, Value};
+use lattice_core::application::services::model_contract::shown::{
+    Drawn, Internal, Kind, Picked, Scope, Showing, Told,
+};
+use lattice_core::application::services::model_contract::{Contract, ContractId};
 use lattice_core::domain::learning::practice::named_in;
 use lattice_core::domain::learning::practice::work::{Rung, Setting};
 use lattice_core::shared::error::{AppError, Result};
-use serde::Deserialize;
-use serde_json::{json, Value};
+use serde::{Deserialize, Serialize};
+use std::fmt::Write as _;
 use tokio_util::sync::CancellationToken;
 
 use crate::drills::runner::CodeRunner;
-use crate::generation::parse_json;
 use crate::lab_runtime::LearningLabFile;
-use crate::lessons::structured_call::{complete_checked_request, reask};
+use crate::lessons::structured_call::Asking;
 use crate::model_call;
 use crate::practice::coding::harness::CaseHarness;
 use crate::practice::coding::problem::Problem;
@@ -32,22 +38,21 @@ const PYTHON_KEYWORDS: &[&str] = &[
     "with", "yield",
 ];
 
+/// A line of one of the candidate's files.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Place {
+    pub path: String,
+    /// 1-based.
+    pub line: u32,
+}
+
 /// A hint that passed its checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeHint {
     pub rung: Rung,
     pub text: String,
     pub reason: String,
-    pub lines: Vec<u32>,
-    pub path: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct Written {
-    text: String,
-    reason: String,
-    lines: Vec<u32>,
-    path: Option<String>,
+    pub lines: Vec<Place>,
 }
 
 /// Writes the hint for `rung` on what the observation says, checks it, and asks once more with the reason when a
@@ -66,30 +71,23 @@ pub(crate) async fn write_hint_from(
     in_role: bool,
     cancel: CancellationToken,
 ) -> Result<CodeHint> {
-    let hinting = Hinting {
-        reference: &problem.reference,
-        starter: &problem.spec.starter,
-        patterns: &problem.spec.patterns,
+    let input = Input::of(
+        &problem.reference,
+        &problem.spec.starter,
+        &problem.spec.patterns,
+        observed,
         setting,
         draft,
-    };
+        rung,
+        in_role,
+    );
     let proof = Sandbox {
         runner,
         harness,
         problem,
         cancel: &cancel,
     };
-    let request = ask(&problem.reference, observed, rung, in_role, setting);
-    write_checked(llm, &hinting, &proof, request, rung).await
-}
-
-/// What the checks read of the problem and the session.
-struct Hinting<'a> {
-    reference: &'a str,
-    starter: &'a str,
-    patterns: &'a [String],
-    setting: Setting,
-    draft: &'a [LearningLabFile],
+    write_checked(llm, input, &proof).await
 }
 
 /// The two things a check runs: code as a parse, and code as the solution.
@@ -142,41 +140,23 @@ fn says_something(line: &str) -> bool {
 
 /// The first reference line the hint repeats word for word, as a 1-based line number. Lines also in the starter
 /// and lines of Python keywords and punctuation alone do not count.
-fn repeated_reference_line(hinting: &Hinting<'_>, shown: &[&str]) -> Option<usize> {
-    hinting
+fn repeated_reference_line(input: &Input, shown: &[&str]) -> Option<usize> {
+    input
         .reference
+        .0
         .lines()
         .enumerate()
         .map(|(index, line)| (index + 1, line.trim()))
         .filter(|(_, line)| says_something(line))
-        .filter(|(_, line)| !hinting.starter.lines().any(|kept| kept.trim() == *line))
+        .filter(|(_, line)| {
+            !input
+                .starter
+                .value()
+                .lines()
+                .any(|kept| kept.trim() == *line)
+        })
         .find(|(_, line)| shown.iter().any(|text| text.contains(line)))
         .map(|(number, _)| number)
-}
-
-/// What is wrong with the lines a Line hint names, if anything.
-fn bad_lines(hinting: &Hinting<'_>, hint: &CodeHint) -> Option<String> {
-    if hint.lines.is_empty() {
-        return Some("A Line hint names at least one line of the candidate's code.".into());
-    }
-    let Some(path) = hint.path.as_deref() else {
-        return Some("A Line hint names the file its lines are in, in `path`.".into());
-    };
-    let Some(file) = hinting.draft.iter().find(|file| file.path == path) else {
-        return Some(format!(
-            "`path` {path} is not one of the candidate's files."
-        ));
-    };
-    let count = file.content.lines().count();
-    hint.lines
-        .iter()
-        .find(|line| {
-            usize::try_from(**line)
-                .ok()
-                .filter(|line| (1..=count).contains(line))
-                .is_none()
-        })
-        .map(|line| format!("Line {line} does not exist in {path}, which has {count} lines."))
 }
 
 /// Only a coach's Idea hint may name the technique.
@@ -184,46 +164,46 @@ fn may_name_technique(setting: Setting, rung: Rung) -> bool {
     setting == Setting::Coached && rung == Rung::Idea
 }
 
-/// Why a check refuses `hint`, or None when every check accepts it. Errors are runs that could not be made.
-async fn refusal(
-    hinting: &Hinting<'_>,
-    proof: &dyn Proof,
-    hint: &CodeHint,
-) -> Result<Option<String>> {
-    if hint.text.trim().is_empty() || hint.reason.trim().is_empty() {
-        return Ok(Some("The hint needs both its text and its reason.".into()));
+/// Why a rule of what the model wrote refuses a hint of `text`, `reason` and `named` lines, or None when none
+/// does.
+fn refusal(input: &Input, text: &str, reason: &str, named: usize) -> Option<String> {
+    if text.trim().is_empty() || reason.trim().is_empty() {
+        return Some("The hint needs both its text and its reason.".into());
     }
-    let blocks = code_blocks(&hint.text);
-    if matches!(hint.rung, Rung::Nudge | Rung::Idea) && !blocks.is_empty() {
-        return Ok(Some(format!(
+    if matches!(input.rung, Rung::Nudge | Rung::Idea) && !code_blocks(text).is_empty() {
+        return Some(format!(
             "A {} hint holds no fenced code block. Say it in words.",
-            rung_name(hint.rung)
-        )));
+            rung_name(input.rung)
+        ));
     }
-    if hint.rung == Rung::Point {
-        if let Some(why) = bad_lines(hinting, hint) {
-            return Ok(Some(why));
-        }
+    if input.rung == Rung::Point && named == 0 {
+        return Some("A Line hint names at least one line of the candidate's code.".into());
     }
-    let shown = [hint.text.as_str(), hint.reason.as_str()];
-    if let Some(number) = repeated_reference_line(hinting, &shown) {
-        return Ok(Some(format!(
+    let shown = [text, reason];
+    if let Some(number) = repeated_reference_line(input, &shown) {
+        return Some(format!(
             "The hint repeats line {number} of the reference solution word for word. Say it in other words."
-        )));
+        ));
     }
-    if !may_name_technique(hinting.setting, hint.rung) {
+    if !may_name_technique(input.setting, input.rung) {
         let named = shown
             .iter()
-            .find_map(|text| named_in(text, hinting.patterns));
+            .find_map(|text| named_in(text, input.patterns.value()));
         if let Some(pattern) = named {
-            return Ok(Some(format!(
+            return Some(format!(
                 "The hint names the pattern \"{}\". Describe what to do without naming the technique.",
                 pattern.name
-            )));
+            ));
         }
     }
-    for block in &blocks {
-        if hint.rung == Rung::Plan {
+    None
+}
+
+/// Why running the code blocks of `text` refuses a hint of `rung`, or None when no block does. Errors are runs
+/// that could not be made.
+async fn unproven(proof: &dyn Proof, rung: Rung, text: &str) -> Result<Option<String>> {
+    for block in &code_blocks(text) {
+        if rung == Rung::Plan {
             if proof.parses(block).await? {
                 return Ok(Some(
                     "A block in a Plan hint parses as Python. Write the steps as pseudo-code, or without a block."
@@ -237,20 +217,6 @@ async fn refusal(
         }
     }
     Ok(None)
-}
-
-fn schema() -> Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "text": {"type": "string", "minLength": 1},
-            "reason": {"type": "string", "minLength": 1},
-            "lines": {"type": "array", "items": {"type": "integer", "minimum": 1}},
-            "path": {"type": ["string", "null"]}
-        },
-        "required": ["text", "reason", "lines", "path"]
-    })
 }
 
 fn rung_instruction(rung: Rung, setting: Setting) -> &'static str {
@@ -268,81 +234,233 @@ fn rung_instruction(rung: Rung, setting: Setting) -> &'static str {
             "Give numbered steps in plain language, each with its reason. A fenced block, if any, is pseudo-code that is not valid Python."
         }
         Rung::Point => {
-            "Point at the lines of the candidate's code that are wrong, and say why. Set `path` to the file and `lines` to its 1-based line numbers. Never write the corrected line."
+            "Point at the lines of the candidate's code that are wrong, and say why. Set `lines` to their handles. Never write the corrected line."
         }
     }
 }
 
-/// The request that asks for a hint of `rung`.
-fn ask(
-    reference: &str,
-    observation: &str,
-    rung: Rung,
-    in_role: bool,
-    setting: Setting,
-) -> GroundedRequest {
-    let voice = if in_role {
-        "You are the interviewer in a coding interview. Write the hint as the words you say to the candidate, in your own voice, staying in role."
-    } else if setting == Setting::Coached {
-        "You are a coach helping a learner through a coding problem."
-    } else {
-        "You give a candidate one hint on a coding problem."
-    };
-    let naming = if may_name_technique(setting, rung) {
-        ""
-    } else {
-        " Never name the technique or pattern that solves the problem."
-    };
-    let system = format!(
-        "{voice} The reference solution is private: it is there so that your hint is right, never to be quoted. Never write a line of it, and never write code that solves the problem.{naming} Speak about the candidate's code only from what they have written and run. Fill `path` and `lines` only for a Line hint; otherwise give `lines` as an empty list and `path` as null."
-    );
-    let prompt = format!(
-        "Reference solution (private):\n{reference}\n\nWhat the candidate sees and has done:\n{observation}\n\nWrite a {} hint. {}",
-        rung_name(rung),
-        rung_instruction(rung, setting)
-    );
-    model_call::structured(&system, prompt, schema(), HINT_TOKENS, "low")
+struct HintAuthor;
+
+impl Contract for HintAuthor {
+    const ID: ContractId = ContractId::new("coding-hint");
+    type Input = Input;
 }
 
-/// Asks for `request`, checks the answer, and asks once more with the reason when a check refuses it.
-async fn write_checked(
-    llm: &dyn LLMPort,
-    hinting: &Hinting<'_>,
-    proof: &dyn Proof,
-    request: GroundedRequest,
+/// One line of the candidate's code, as a Line hint may point at it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Line {
+    path: Told<String>,
+    number: u32,
+    text: Told<String>,
+}
+
+impl Kind for Line {
+    const PREFIX: &'static str = "l";
+    const DRAWN: Drawn = Drawn::Itself;
+    type Ref = Place;
+
+    fn reference(&self) -> Place {
+        Place {
+            path: self.path.0.clone(),
+            line: self.number,
+        }
+    }
+}
+
+/// A hint a check refused, and why.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Earlier {
+    hint: Told<String>,
+    why: Told<String>,
+}
+
+/// What one request says about the hint to write.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Input {
+    reference: Told<String>,
+    observed: Told<String>,
+    starter: Internal<String>,
+    patterns: Internal<Vec<String>>,
+    setting: Setting,
     rung: Rung,
-) -> Result<CodeHint> {
-    let mut request = request;
+    in_role: bool,
+    /// The lines a Line hint may point at; none for another rung.
+    lines: Vec<Line>,
+    earlier: Option<Earlier>,
+}
+
+impl Input {
+    #[allow(clippy::too_many_arguments)]
+    fn of(
+        reference: &str,
+        starter: &str,
+        patterns: &[String],
+        observed: &str,
+        setting: Setting,
+        draft: &[LearningLabFile],
+        rung: Rung,
+        in_role: bool,
+    ) -> Self {
+        let lines = if rung == Rung::Point {
+            draft
+                .iter()
+                .flat_map(|file| {
+                    file.content
+                        .lines()
+                        .enumerate()
+                        .filter_map(|(index, text)| {
+                            Some(Line {
+                                path: Told(file.path.clone()),
+                                number: u32::try_from(index + 1).ok()?,
+                                text: Told(text.to_owned()),
+                            })
+                        })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Self {
+            reference: Told(reference.to_owned()),
+            observed: Told(observed.to_owned()),
+            starter: Internal::of(starter.to_owned()),
+            patterns: Internal::of(patterns.to_vec()),
+            setting,
+            rung,
+            in_role,
+            lines,
+            earlier: None,
+        }
+    }
+}
+
+/// What the model wrote for one hint.
+struct Said {
+    text: String,
+    reason: String,
+    lines: Vec<Picked<Line>>,
+}
+
+impl Authored for Said {
+    fn form() -> Form {
+        Form::new()
+            .text("text")
+            .text("reason")
+            .cite::<Line>("lines")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(Self {
+            text: fields.text("text")?,
+            reason: fields.text("reason")?,
+            lines: fields.cite::<Line>("lines"),
+        })
+    }
+}
+
+impl Answered for HintAuthor {
+    type Answer = Value<Said>;
+    const ALONE: Alone = Alone::Fails;
+
+    fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
+        let lines = showing.show(&input.lines)?;
+        let voice = if input.in_role {
+            "You are the interviewer in a coding interview. Write the hint as the words you say to the candidate, in your own voice, staying in role."
+        } else if input.setting == Setting::Coached {
+            "You are a coach helping a learner through a coding problem."
+        } else {
+            "You give a candidate one hint on a coding problem."
+        };
+        let naming = if may_name_technique(input.setting, input.rung) {
+            ""
+        } else {
+            " Never name the technique or pattern that solves the problem."
+        };
+        let system = format!(
+            "{voice} The reference solution is private: it is there so that your hint is right, never to be quoted. Never write a line of it, and never write code that solves the problem.{naming} Speak about the candidate's code only from what they have written and run. Fill `lines` only for a Line hint; otherwise give `lines` as an empty list."
+        );
+        let prompt = format!(
+            "Reference solution (private):\n{}\n\nWhat the candidate sees and has done:\n{}\n\nWrite a {} hint. {}",
+            input.reference.0,
+            input.observed.0,
+            rung_name(input.rung),
+            rung_instruction(input.rung, input.setting)
+        );
+        let mut closing = Vec::new();
+        if !lines.is_empty() {
+            let mut rows = String::from(
+                "Lines of the candidate's code you may point at, each under its handle:",
+            );
+            let mut path: Option<&str> = None;
+            for (handle, line) in lines.iter() {
+                if path != Some(line.path.0.as_str()) {
+                    let _ = write!(rows, "\n=== {} ===", line.path.0);
+                    path = Some(line.path.0.as_str());
+                }
+                let _ = write!(rows, "\n{} {}", handle.bracketed(), line.text.0);
+            }
+            closing.push(rows);
+        }
+        if let Some(earlier) = &input.earlier {
+            closing.push(format!(
+                "Your earlier hint was refused.\nYour earlier hint: {}\nWhy it was refused: {}\nWrite the hint again.",
+                earlier.hint.0, earlier.why.0
+            ));
+        }
+        let mut says = Says::new(system, prompt);
+        says.closing = closing.join("\n\n");
+        says.output_tokens = HINT_TOKENS;
+        Ok(says)
+    }
+
+    fn accept(input: &Input, said: &Said) -> std::result::Result<(), Refusal> {
+        match refusal(input, &said.text, &said.reason, said.lines.len()) {
+            Some(why) => Err(Refusal(why)),
+            None => Ok(()),
+        }
+    }
+}
+
+/// Asks for a hint, and asks once more with the reason when running its code refuses it.
+async fn write_checked(llm: &dyn LLMPort, mut input: Input, proof: &dyn Proof) -> Result<CodeHint> {
+    let mut scope = Scope::for_question();
     let mut again = false;
     loop {
-        let (raw, written) = complete_checked_request(llm, request.clone(), None, None, |raw| {
-            parse_json::<Written>(raw).map(|written| (raw.to_owned(), written))
-        })
+        let settled = ask::<HintAuthor>(
+            llm,
+            &Asking {
+                progress: None,
+                reasoning: None,
+            },
+            &mut scope,
+            &input,
+            &model_call::answer_options(),
+        )
         .await?;
-        let hint = if rung == Rung::Point {
-            CodeHint {
-                rung,
-                text: written.text,
-                reason: written.reason,
-                lines: written.lines,
-                path: written.path,
-            }
-        } else {
-            CodeHint {
-                rung,
-                text: written.text,
-                reason: written.reason,
-                lines: Vec::new(),
-                path: None,
-            }
+        let said = match settled {
+            Settled::Answered(said) => said,
+            Settled::Unanswered(why) => return Err(ask::failed(&why)),
         };
-        let Some(why) = refusal(hinting, proof, &hint).await? else {
+        let hint = CodeHint {
+            rung: input.rung,
+            text: said.text,
+            reason: said.reason,
+            lines: if input.rung == Rung::Point {
+                said.lines.into_iter().map(|line| line.reference).collect()
+            } else {
+                Vec::new()
+            },
+        };
+        let Some(why) = unproven(proof, hint.rung, &hint.text).await? else {
             return Ok(hint);
         };
         if again {
             return Err(AppError::ModelAnswerUnusable(why));
         }
-        request = reask(request, &raw, &why);
+        input.earlier = Some(Earlier {
+            hint: Told(hint.text),
+            why: Told(why),
+        });
         again = true;
     }
 }
@@ -351,6 +469,7 @@ async fn write_checked(
 mod tests {
     use super::*;
     use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+    use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
     use lattice_core::domain::learning::practice::PROBLEM_PATTERNS;
     use std::collections::VecDeque;
     use std::sync::Mutex;
@@ -405,14 +524,17 @@ mod tests {
             }
         }
 
-        fn hinting(&self, setting: Setting) -> Hinting<'_> {
-            Hinting {
-                reference: &self.reference,
-                starter: &self.starter,
-                patterns: &self.patterns,
+        fn input(&self, setting: Setting, rung: Rung) -> Input {
+            Input::of(
+                &self.reference,
+                &self.starter,
+                &self.patterns,
+                "{}",
                 setting,
-                draft: &self.draft,
-            }
+                &self.draft,
+                rung,
+                false,
+            )
         }
 
         fn pattern_name(&self) -> &'static str {
@@ -426,20 +548,29 @@ mod tests {
             text: text.into(),
             reason: "It points at what the code does not yet do.".into(),
             lines: Vec::new(),
-            path: None,
         }
     }
 
-    fn line_hint(lines: Vec<u32>, path: Option<&str>) -> CodeHint {
+    fn place(line: u32) -> Place {
+        Place {
+            path: "solution.py".into(),
+            line,
+        }
+    }
+
+    fn line_hint(lines: Vec<Place>) -> CodeHint {
         CodeHint {
             lines,
-            path: path.map(str::to_owned),
             ..hint(Rung::Point, "This return ends the loop on the first pass.")
         }
     }
 
     async fn refused(fixture: &Fixture, setting: Setting, hint: &CodeHint) -> Option<String> {
-        refusal(&fixture.hinting(setting), &Fake, hint)
+        let input = fixture.input(setting, hint.rung);
+        if let Some(why) = refusal(&input, &hint.text, &hint.reason, hint.lines.len()) {
+            return Some(why);
+        }
+        unproven(&Fake, hint.rung, &hint.text)
             .await
             .expect("the checks run")
     }
@@ -455,7 +586,7 @@ mod tests {
                 None
             );
         }
-        let line = line_hint(vec![3], Some("solution.py"));
+        let line = line_hint(vec![place(3)]);
         assert_eq!(refused(&fixture, Setting::Mock, &line).await, None);
     }
 
@@ -500,25 +631,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_line_hint_names_lines_that_exist_in_a_file_of_the_draft() {
+    async fn a_line_hint_names_at_least_one_line() {
         let fixture = Fixture::new();
-        let cases = [
-            line_hint(Vec::new(), Some("solution.py")),
-            line_hint(vec![0], Some("solution.py")),
-            line_hint(vec![5], Some("solution.py")),
-            line_hint(vec![2, 9], Some("solution.py")),
-            line_hint(vec![2], None),
-            line_hint(vec![2], Some("other.py")),
-        ];
-        for refused_hint in cases {
-            assert!(
-                refused(&fixture, Setting::Mock, &refused_hint)
-                    .await
-                    .is_some(),
-                "{refused_hint:?}"
-            );
-        }
-        let last = line_hint(vec![1, 4], Some("solution.py"));
+        assert_eq!(
+            refused(&fixture, Setting::Mock, &line_hint(Vec::new())).await,
+            Some("A Line hint names at least one line of the candidate's code.".into())
+        );
+        let last = line_hint(vec![place(1), place(4)]);
         assert_eq!(refused(&fixture, Setting::Mock, &last).await, None);
     }
 
@@ -527,12 +646,12 @@ mod tests {
         let fixture = Fixture::new();
         let solving = CodeHint {
             text: "Try this:\n```python\nPASSES\n```".into(),
-            ..line_hint(vec![2], Some("solution.py"))
+            ..line_hint(vec![place(2)])
         };
         assert!(refused(&fixture, Setting::Mock, &solving).await.is_some());
         let fragment = CodeHint {
             text: "Try this:\n```python\nfragment\n```".into(),
-            ..line_hint(vec![2], Some("solution.py"))
+            ..line_hint(vec![place(2)])
         };
         assert_eq!(refused(&fixture, Setting::Mock, &fragment).await, None);
     }
@@ -575,8 +694,7 @@ mod tests {
             for rung in [Rung::Nudge, Rung::Idea, Rung::Plan, Rung::Point] {
                 let mut named = hint(rung, &text);
                 if rung == Rung::Point {
-                    named.lines = vec![2];
-                    named.path = Some("solution.py".into());
+                    named.lines = vec![place(2)];
                 }
                 let allowed = setting == Setting::Coached && rung == Rung::Idea;
                 assert_eq!(
@@ -625,6 +743,12 @@ mod tests {
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
+        }
     }
 
     fn answer(text: &str) -> String {
@@ -632,7 +756,6 @@ mod tests {
             "text": text,
             "reason": "It points at what the code does not yet do.",
             "lines": [],
-            "path": null
         })
         .to_string()
     }
@@ -640,9 +763,11 @@ mod tests {
     const BAD: &str = "Then store it with `seen[n] = i` each time.";
 
     async fn written(llm: &Scripted, fixture: &Fixture, rung: Rung) -> Result<CodeHint> {
-        let hinting = fixture.hinting(Setting::Mock);
-        let request = ask(&fixture.reference, "{}", rung, false, Setting::Mock);
-        write_checked(llm, &hinting, &Fake, request, rung).await
+        write_checked(llm, fixture.input(Setting::Mock, rung), &Fake).await
+    }
+
+    fn text_of(request: &CompletionRequest) -> String {
+        format!("{request:?}")
     }
 
     #[tokio::test]
@@ -658,7 +783,7 @@ mod tests {
             .expect("the first answer is refused");
         let requests = llm.requests();
         assert_eq!(requests.len(), 2);
-        assert!(format!("{:?}", requests[1]).contains(&why));
+        assert!(text_of(&requests[1]).contains(&why));
     }
 
     #[tokio::test]
@@ -682,32 +807,161 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn only_a_line_hint_keeps_lines_and_a_path() {
+    async fn a_block_that_runs_as_the_solution_is_asked_for_again_once() {
+        let fixture = Fixture::new();
+        let pointing = |text: &str| {
+            serde_json::json!({
+                "text": text,
+                "reason": "It points at what the code does not yet do.",
+                "lines": ["l3"],
+            })
+            .to_string()
+        };
+        let llm = Scripted::new(&[
+            &pointing("Try this:\n```python\nPASSES\n```"),
+            &pointing(CLEAN),
+        ]);
+        let hint = written(&llm, &fixture, Rung::Point)
+            .await
+            .expect("second is clean");
+        assert_eq!(hint.text, CLEAN);
+        let requests = llm.requests();
+        assert_eq!(requests.len(), 2);
+        assert!(text_of(&requests[1]).contains("A block in the hint solves the problem."));
+
+        let solving = answer("Steps:\n```\nPARSES\n```");
+        let llm = Scripted::new(&[&solving, &answer(CLEAN)]);
+        let hint = written(&llm, &fixture, Rung::Plan)
+            .await
+            .expect("second is clean");
+        assert_eq!(hint.text, CLEAN);
+        let requests = llm.requests();
+        assert_eq!(requests.len(), 2);
+        assert!(text_of(&requests[1]).contains("A block in a Plan hint parses as Python."));
+
+        let llm = Scripted::new(&[&solving, &solving]);
+        let error = written(&llm, &fixture, Rung::Plan).await.unwrap_err();
+        assert!(
+            matches!(error, AppError::ModelAnswerUnusable(_)),
+            "{error:?}"
+        );
+        assert_eq!(llm.requests().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn only_a_line_hint_keeps_the_lines_it_points_at() {
         let fixture = Fixture::new();
         let with_lines = serde_json::json!({
             "text": CLEAN,
             "reason": "It points at what the code does not yet do.",
-            "lines": [3],
-            "path": "solution.py"
+            "lines": ["l3"],
         })
         .to_string();
         let llm = Scripted::new(&[&with_lines, &with_lines]);
         let nudge = written(&llm, &fixture, Rung::Nudge).await.expect("clean");
-        assert!(nudge.lines.is_empty() && nudge.path.is_none());
+        assert!(nudge.lines.is_empty());
+        assert!(!text_of(&llm.requests()[0]).contains("[l3]"));
         let line = written(&llm, &fixture, Rung::Point).await.expect("clean");
-        assert_eq!(line.lines, vec![3]);
-        assert_eq!(line.path.as_deref(), Some("solution.py"));
+        assert_eq!(line.lines, vec![place(3)]);
+        assert!(text_of(&llm.requests()[1]).contains("[l3]         return [0]"));
     }
+
+    #[tokio::test]
+    async fn a_handle_that_names_no_line_costs_only_that_pointer() {
+        let fixture = Fixture::new();
+        let pointing = serde_json::json!({
+            "text": CLEAN,
+            "reason": "It points at what the code does not yet do.",
+            "lines": ["l9", "l2"],
+        })
+        .to_string();
+        let llm = Scripted::new(&[&pointing]);
+        let line = written(&llm, &fixture, Rung::Point).await.expect("clean");
+        assert_eq!(line.lines, vec![place(2)]);
+        assert_eq!(llm.requests().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_line_hint_that_points_at_nothing_is_asked_for_again() {
+        let fixture = Fixture::new();
+        let nothing = answer(CLEAN);
+        let pointing = serde_json::json!({
+            "text": CLEAN,
+            "reason": "It points at what the code does not yet do.",
+            "lines": ["l1"],
+        })
+        .to_string();
+        let llm = Scripted::new(&[&nothing, &pointing]);
+        let line = written(&llm, &fixture, Rung::Point)
+            .await
+            .expect("second points");
+        assert_eq!(line.lines, vec![place(1)]);
+        assert!(text_of(&llm.requests()[1])
+            .contains("A Line hint names at least one line of the candidate's code."));
+    }
+
+    #[test]
+    fn the_request_tells_what_it_must_and_writes_no_internal_value() {
+        for earlier in [false, true] {
+            let mut marks = Marks::new();
+            let input = Input {
+                reference: marks.told("def two_sum(numbers, target):".to_owned()),
+                observed: marks.told("The candidate ran the cases.".to_owned()),
+                starter: marks.internal("def starter_kept_line(numbers):".to_owned()),
+                patterns: marks.internal(vec!["pattern-key-0001".to_owned()]),
+                setting: Setting::Coached,
+                rung: Rung::Point,
+                in_role: false,
+                lines: vec![Line {
+                    path: marks.told("solution.py file".to_owned()),
+                    number: 1,
+                    text: marks.told("def two_sum(numbers, target):".to_owned()),
+                }],
+                earlier: earlier.then(|| Earlier {
+                    hint: marks.told("Then store it each time.".to_owned()),
+                    why: marks.told("The hint repeats a line.".to_owned()),
+                }),
+            };
+            holds::<HintAuthor>(&input, &marks);
+        }
+    }
+
+    #[tokio::test]
+    async fn prompt_snapshot_hint_author() {
+        use lattice_core::application::services::model_contract::test_support::snapshot;
+        let fixture = Fixture::new();
+        let llm = Scripted::new(&[&answer(CLEAN)]);
+        let observation = "Problem: find two numbers that add up to the target.
+The candidate ran the cases: 1 of 3 passed.
+Their file solution.py returns on the first pass of the loop.";
+        let input = Input::of(
+            &fixture.reference,
+            &fixture.starter,
+            &fixture.patterns,
+            observation,
+            Setting::Coached,
+            &fixture.draft,
+            Rung::Idea,
+            true,
+        );
+        write_checked(&llm, input, &Fake).await.expect("clean");
+        snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), "coding-hint", &llm.requests());
+    }
+
     const NEVER_NAME: &str = "Never name the technique or pattern that solves the problem.";
 
     #[test]
     fn the_naming_rule_is_in_every_request_that_does_not_allow_a_name() {
+        let fixture = Fixture::new();
         for setting in [Setting::Coached, Setting::Mock, Setting::Watched] {
             for rung in [Rung::Nudge, Rung::Idea, Rung::Plan, Rung::Point] {
-                let request = ask("ref", "obs", rung, false, setting);
+                let input = fixture.input(setting, rung);
+                let mut scope = Scope::for_question();
+                let mut showing = scope.request();
+                let says = HintAuthor::says(&input, &mut showing).expect("says");
                 let allowed = setting == Setting::Coached && rung == Rung::Idea;
                 assert_eq!(
-                    request.instructions.contains(NEVER_NAME),
+                    says.instructions.contains(NEVER_NAME),
                     !allowed,
                     "{setting:?} {rung:?}"
                 );

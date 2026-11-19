@@ -18,17 +18,17 @@ use lattice_core::application::ports::CredentialsPort;
 /// **Fields**: ~10
 /// - Database connection pool
 /// - Security context and file access config
-/// - Application data directory
+/// - Application data directory and the app's own readable folders
 /// - Background scope for spawned work
 /// - Credentials port for API keys
 #[derive(Clone)]
 pub struct CoreModule {
     // Cross-cutting shared infrastructure — not owned by any feature slice.
     database: Database,
-    db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
     security_context: Arc<SecurityContext>,
     file_access_config: Arc<FileAccessConfig>,
     data_dir: PathBuf,
+    app_owned_roots: Vec<PathBuf>,
     background: Arc<BackgroundTasks>,
 
     // Feature slice
@@ -39,37 +39,38 @@ impl CoreModule {
     /// Build shared Layer-1 infrastructure plus the credentials feature slice.
     pub async fn new(
         database: Database,
-        db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
         data_dir: PathBuf,
         background: Arc<BackgroundTasks>,
     ) -> lattice_core::shared::error::Result<Self> {
         let security_context = Arc::new(SecurityContext::new());
 
-        // Imported documents live outside data_dir. Create their root before
-        // canonicalizing the policy, including on the first launch before any
-        // import. Otherwise a policy refresh would discard the missing root.
+        // The app's own folders exist before the policy resolves them.
         let library_root =
             crate::infrastructure::storage::ContentAddressedStorage::default_library_root()?;
-        tokio::fs::create_dir_all(&library_root)
-            .await
-            .map_err(|error| {
+        let web_archive_root = lattice_core::shared::fs::roots::web_archive_root()?;
+        for (name, root) in [
+            ("library", &library_root),
+            ("web archive", &web_archive_root),
+        ] {
+            tokio::fs::create_dir_all(root).await.map_err(|error| {
                 lattice_core::shared::error::AppError::FileStorage(format!(
-                    "Failed to create library directory: {error}"
+                    "Failed to create {name} directory: {error}"
                 ))
             })?;
+        }
+        let app_owned_roots = vec![data_dir.clone(), library_root, web_archive_root];
         // The user's vault and indexed folders are added by refresh_allowed_roots.
-        let file_access_config =
-            Arc::new(FileAccessConfig::new(vec![data_dir.clone(), library_root]));
+        let file_access_config = Arc::new(FileAccessConfig::new(app_owned_roots.clone()));
 
         let credentials_path = data_dir.join("credentials.json");
         let credentials = crate::features::credentials::di::build(credentials_path);
 
         Ok(Self {
             database,
-            db_conn,
             security_context,
             file_access_config,
             data_dir,
+            app_owned_roots,
             background,
             credentials,
         })
@@ -78,12 +79,6 @@ impl CoreModule {
     // Infrastructure getters
     pub fn database(&self) -> &Database {
         &self.database
-    }
-
-    pub fn db_conn(
-        &self,
-    ) -> &Arc<crate::infrastructure::persistence::database::DatabaseConnection> {
-        &self.db_conn
     }
 
     pub fn security_context(&self) -> &Arc<SecurityContext> {
@@ -96,6 +91,11 @@ impl CoreModule {
 
     pub fn data_dir(&self) -> &PathBuf {
         &self.data_dir
+    }
+
+    /// The folders the app owns: its data, the library and the web archive.
+    pub fn app_owned_roots(&self) -> &[PathBuf] {
+        &self.app_owned_roots
     }
 
     /// The app's background scope: shutdown closes it and joins its tasks

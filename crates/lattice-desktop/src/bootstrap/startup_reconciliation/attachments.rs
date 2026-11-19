@@ -56,16 +56,13 @@ mod tests {
     use super::*;
     use crate::features::conversation::repository::ConversationRepository;
     use crate::infrastructure::persistence::repositories::document_scope::SqliteDocumentScope;
+    use lattice_core::shared::persistence::Database;
     use sqlx::SqlitePool;
 
     async fn migrated_pool() -> SqlitePool {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
+        lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
-            .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-        pool
+            .unwrap()
     }
 
     async fn conversation(pool: &SqlitePool, id: &str) {
@@ -104,6 +101,7 @@ mod tests {
     #[tokio::test]
     async fn a_deleted_chats_tangents_leave_orphans_too() {
         let pool = migrated_pool().await;
+        let db = Database::new(pool.clone());
         conversation(&pool, "chat").await;
         for (tangent, parent) in [("tangent", "chat"), ("nested", "tangent")] {
             sqlx::query(
@@ -117,11 +115,11 @@ mod tests {
         }
         attachment(&pool, "in-tangent", "tangent").await;
         attachment(&pool, "in-nested", "nested").await;
-        ConversationRepository::new(pool.clone())
+        ConversationRepository::new(db.clone())
             .delete("chat")
             .await
             .unwrap();
-        let intents = FileIntents::new(pool.clone());
+        let intents = FileIntents::new(db.clone());
 
         let delete = |id: String| {
             let pool = pool.clone();
@@ -133,13 +131,10 @@ mod tests {
                 Ok::<(), AppError>(())
             }
         };
-        let (found, deleted) = reconcile_orphaned_attachments(
-            &SqliteDocumentScope::new(pool.clone()),
-            &intents,
-            delete,
-        )
-        .await
-        .unwrap();
+        let (found, deleted) =
+            reconcile_orphaned_attachments(&SqliteDocumentScope::new(db.clone()), &intents, delete)
+                .await
+                .unwrap();
 
         assert_eq!((found, deleted), (2, 2));
         assert!(documents(&pool).await.is_empty());
@@ -148,15 +143,16 @@ mod tests {
     #[tokio::test]
     async fn a_deleted_chats_leftover_attachment_goes_and_a_lost_rows_does_not() {
         let pool = migrated_pool().await;
+        let db = Database::new(pool.clone());
         conversation(&pool, "deleted-chat").await;
         attachment(&pool, "leftover", "deleted-chat").await;
         // A conversation row that went without the app's delete.
         attachment(&pool, "row-lost", "lost-chat").await;
-        ConversationRepository::new(pool.clone())
+        ConversationRepository::new(db.clone())
             .delete("deleted-chat")
             .await
             .unwrap();
-        let intents = FileIntents::new(pool.clone());
+        let intents = FileIntents::new(db.clone());
 
         let delete = |id: String| {
             let pool = pool.clone();
@@ -168,13 +164,10 @@ mod tests {
                 Ok::<(), AppError>(())
             }
         };
-        let (found, deleted) = reconcile_orphaned_attachments(
-            &SqliteDocumentScope::new(pool.clone()),
-            &intents,
-            delete,
-        )
-        .await
-        .unwrap();
+        let (found, deleted) =
+            reconcile_orphaned_attachments(&SqliteDocumentScope::new(db.clone()), &intents, delete)
+                .await
+                .unwrap();
 
         assert_eq!((found, deleted), (1, 1));
         assert_eq!(documents(&pool).await, ["row-lost"]);

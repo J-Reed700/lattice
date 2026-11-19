@@ -8,11 +8,11 @@
     clippy::panic
 )]
 use super::*;
-use crate::features::learning::review_findings::{FindingKind, ReviewFinding};
+use crate::features::learning::review_findings::ReviewFinding;
 use crate::features::llm::llama_cpp::LlamaCppLlm;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
-use lattice_core::shared::persistence::Database;
+use lattice_core::application::services::model_contract::legacy;
 
 #[path = "live_claim_pairs_eval.rs"]
 mod claim_pairs;
@@ -176,7 +176,7 @@ async fn live_coverage_mapping_recovers_existing_claims_without_inventing_missin
             cases.push((serde_json::json!({"units":[{"index":0,"kind":"teaching",
                 "passages":[{"id":"target","field":"/body","text":text}],
                 "claims":[{"id":"selected","statement":selected},{"id":"unselected","statement":if complete { omitted } else { unrelated }}]}],
-                "mapping":{"target":{"claimIds":["selected"],"nonFactualReason":"","missingClaims":[]}}}), complete));
+                "judged":["target"]}), complete));
         }
     }
     // An optional recorded teaching passage reproduces a real mapping omission.
@@ -304,7 +304,7 @@ impl ObservedModel {
             self.directory.join(format!("call-{call}.json")),
             serde_json::to_vec_pretty(&serde_json::json!({
                 "model":self.inner.model_name(),
-                "input":request.input,"answer":response.text,"finishReason":response.finish_reason,
+                "input":request.input(),"answer":response.text,"finishReason":response.finish_reason,
                 "inputTokens":response.input_tokens,"outputTokens":response.output_tokens,
                 "firstTokenLogprobs":response.first_token_logprobs
             }))?,
@@ -377,6 +377,12 @@ impl LLMPort for ObservedModel {
     async fn is_ready(&self) -> Result<bool> {
         self.inner.is_ready().await
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 
 /// A backend that reports each answer's timing, as llama-server does: it
@@ -405,6 +411,12 @@ impl LLMPort for TimedBackend {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// The model measures its pace from its first answer, and the page that pace
@@ -417,13 +429,13 @@ async fn a_saved_call_names_the_model_that_answered() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let model = ObservedModel::observing(Arc::new(TimedBackend), directory.path().to_path_buf(), 0);
     model
-        .complete(&CompletionRequest {
+        .complete(&legacy::completion(legacy::Completion {
             input: vec![CompletionInput::Message {
                 role: "user".into(),
                 content: "Check this claim.".into(),
             }],
             ..Default::default()
-        })
+        }))
         .await?;
     let saved: serde_json::Value =
         serde_json::from_slice(&std::fs::read(directory.path().join("call-0.json"))?)?;
@@ -452,13 +464,13 @@ async fn an_observed_model_sizes_claim_pages_by_its_measured_pace() -> Result<()
     );
     assert_eq!(model.pace(), None, "nothing is measured before an answer");
     model
-        .complete(&CompletionRequest {
+        .complete(&legacy::completion(legacy::Completion {
             input: vec![CompletionInput::Message {
                 role: "user".into(),
                 content: "Check this claim.".into(),
             }],
             ..Default::default()
-        })
+        }))
         .await?;
     let pace = model
         .pace()
@@ -496,23 +508,18 @@ async fn live_source_passage_judgments() -> Result<()> {
     // Optional real-library retrieval exercises the same evidence windows used
     // by publication. Fixture verdicts still never enter a model request.
     let retrieval = if let Ok(program) = std::env::var("LATTICE_CLAIM_PROGRAM") {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(5)
-            .connect_with(
-                sqlx::sqlite::SqliteConnectOptions::new()
-                    .filename(std::env::var("LATTICE_LESSON_DATABASE").unwrap())
-                    .foreign_keys(true)
-                    .create_if_missing(false),
-            )
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
-        Some((pool, program))
+        let connection = small::open_app_database(
+            std::path::Path::new(&std::env::var("LATTICE_LESSON_DATABASE").unwrap()),
+            true,
+        )
+        .await?;
+        Some((connection, program))
     } else {
         None
     };
     // The course index lives in the app; these runners rank by keyword.
-    let references = if let Some((pool, program)) = &retrieval {
-        let sources = LearningRepository::new(pool.clone())
+    let references = if let Some((connection, program)) = &retrieval {
+        let sources = LearningRepository::new(connection.database().clone())
             .verification_sources(program)
             .await?;
         Some(
@@ -677,7 +684,6 @@ async fn live_teaching_review_evidence_scope() -> Result<()> {
         message("system"),
         crate::features::learning::teaching::LESSON_REVIEW_EVIDENCE_SCOPE
     );
-    let progress = crate::features::learning::outline_progress::OutlineProgress::default();
     let prompt: serde_json::Value = serde_json::from_str(&message("user"))?;
     let mut candidate = prompt["candidate"].clone();
     for block in candidate["blocks"].as_array_mut().unwrap() {
@@ -696,10 +702,11 @@ async fn live_teaching_review_evidence_scope() -> Result<()> {
         &system,
         prompt,
         &candidate,
-        Some(&progress),
-        crate::features::learning::teaching_review::LengthRule::Fail,
+        crate::features::learning::teaching_review::Scope::default(),
+        crate::features::learning::teaching_review::Remit::Open,
     )
-    .await?;
+    .await?
+    .reported;
     std::fs::write(
         directory.join("replay-issues.json"),
         serde_json::to_vec_pretty(&issues)?,
@@ -724,7 +731,7 @@ async fn live_teaching_review_evidence_scope() -> Result<()> {
 
     // Evidence scope must not excuse a demonstrably wrong worked result.
     let wrong = serde_json::json!({"blocks":[{"kind":"explanation","title":"Adding whole numbers","body":"To add two whole numbers, combine their quantities. Worked example: start with two apples and add two more apples. The total is five apples, so 2 + 2 = 5. This is ordinary integer addition, with no rounding or special convention.","rubric":[]}],"questions":[]});
-    let issues = crate::features::learning::teaching_review::review(&model, &system, serde_json::json!({"task":"Review instructional quality","authoringContext":{"goal":"Learn ordinary whole-number addition","sources":[]}}), &wrong, Some(&progress), crate::features::learning::teaching_review::LengthRule::Fail).await?;
+    let issues = crate::features::learning::teaching_review::review(&model, &system, serde_json::json!({"task":"Review instructional quality","authoringContext":{"goal":"Learn ordinary whole-number addition","sources":[]}}), &wrong, crate::features::learning::teaching_review::Scope::default(), crate::features::learning::teaching_review::Remit::Open).await?.reported;
     std::fs::write(
         directory.join("incorrect-example-issues.json"),
         serde_json::to_vec_pretty(&issues)?,
@@ -830,21 +837,20 @@ async fn live_review_findings_require_evidence() -> Result<()> {
     let issues: Vec<ReviewFinding> =
         serde_json::from_value::<Vec<String>>(review["issues"].clone())?
             .into_iter()
-            .map(|issue| ReviewFinding::new(FindingKind::Teaching, None, issue))
+            .enumerate()
+            .map(|(index, issue)| {
+                ReviewFinding::reviewer(u32::try_from(index).unwrap(), None, issue)
+            })
             .collect();
     let authoring = serde_json::from_str(&draft.authoring.unwrap().prompt)?;
     let candidate = serde_json::from_str(&draft.candidate)?;
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(std::env::var("LATTICE_LESSON_DATABASE").unwrap())
-        .foreign_keys(true)
-        .create_if_missing(false);
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+    let connection = small::open_app_database(
+        std::path::Path::new(&std::env::var("LATTICE_LESSON_DATABASE").unwrap()),
+        true,
+    )
+    .await?;
     let program = std::env::var("LATTICE_REVIEW_PROGRAM").unwrap();
-    let sources = LearningRepository::new(pool.clone())
+    let sources = LearningRepository::new(connection.database().clone())
         .verification_sources(&program)
         .await?;
     let references = ReferenceCollection::lexical(&sources)?;
@@ -852,12 +858,14 @@ async fn live_review_findings_require_evidence() -> Result<()> {
     let accepted = review_evidence::check(
         &model,
         &issues,
+        review_evidence::Beside::NONE,
         &authoring,
         &candidate,
         &references,
         Some(&progress),
     )
-    .await?;
+    .await?
+    .established;
     std::fs::write(
         directory.join("accepted-replay-issues.json"),
         serde_json::to_vec_pretty(&accepted)?,
@@ -877,17 +885,22 @@ async fn live_review_findings_require_evidence() -> Result<()> {
         let issues: Vec<ReviewFinding> =
             serde_json::from_value::<Vec<String>>(case["issues"].clone())?
                 .into_iter()
-                .map(|issue| ReviewFinding::new(FindingKind::Teaching, None, issue))
+                .enumerate()
+                .map(|(index, issue)| {
+                    ReviewFinding::reviewer(u32::try_from(index).unwrap(), None, issue)
+                })
                 .collect();
         let accepted = review_evidence::check(
             &model,
             &issues,
+            review_evidence::Beside::NONE,
             &case["requirements"],
             &case["candidate"],
             &references,
             Some(&progress),
         )
-        .await?;
+        .await?
+        .established;
         std::fs::write(
             directory.join(format!("accepted-control-{index}.json")),
             serde_json::to_vec_pretty(&accepted)?,
@@ -908,20 +921,13 @@ async fn live_enqueue_saved_lesson_for_native_resume() -> Result<()> {
         curriculum::LearningGenerationJobStatus as Status,
         plan_dto::LearningGenerationJobActionRequestDto,
     };
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(std::env::var("LATTICE_LESSON_DATABASE").unwrap())
-        .foreign_keys(true)
-        .create_if_missing(false);
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(2)
-        .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let connection = small::open_app_database(
+        std::path::Path::new(&std::env::var("LATTICE_LESSON_DATABASE").unwrap()),
+        true,
+    )
+    .await?;
+    let db = connection.database().clone();
+    let repo = LearningCurriculumRepository::new(db.clone());
     let old = repo
         .job(&std::env::var("LATTICE_LESSON_JOB").unwrap())
         .await?;
@@ -937,7 +943,7 @@ async fn live_enqueue_saved_lesson_for_native_resume() -> Result<()> {
             .any(|job| matches!(job.status, Status::Pending | Status::Running)),
         "Another job is active"
     );
-    let program = LearningRepository::new(pool.clone())
+    let program = LearningRepository::new(db.clone())
         .get(&old.program_id)
         .await?;
     let job = repo
@@ -950,7 +956,7 @@ async fn live_enqueue_saved_lesson_for_native_resume() -> Result<()> {
         .await?;
     assert_eq!(job.status, Status::Pending);
     println!("Native lesson retry queued: {}", job.id);
-    pool.close().await;
+    connection.close().await?;
     Ok(())
 }
 
@@ -972,20 +978,13 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
     };
     let checker_name = observed.model_name().to_owned();
     let llm: Arc<dyn LLMPort> = Arc::new(observed);
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(std::env::var("LATTICE_LESSON_DATABASE").unwrap())
-        .foreign_keys(true)
-        .create_if_missing(false);
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .map_err(|error| AppError::Database(error.to_string()))?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let connection = small::open_app_database(
+        std::path::Path::new(&std::env::var("LATTICE_LESSON_DATABASE").unwrap()),
+        true,
+    )
+    .await?;
+    let db = connection.database().clone();
+    let repo = LearningCurriculumRepository::new(db.clone());
     let old = repo
         .job(&std::env::var("LATTICE_LESSON_JOB").unwrap())
         .await?;
@@ -993,11 +992,11 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
     // Never run this option while its original worker is still alive.
     if std::env::var("LATTICE_LESSON_RECOVER_ORPHAN").as_deref() == Ok("1") {
         assert_eq!(old.status, LearningGenerationJobStatus::Running);
-        lattice_core::shared::runtime::jobs::JobStore::new(pool.clone())
+        lattice_core::shared::runtime::jobs::JobStore::new(db.clone())
             .interrupt(&old.id)
             .await?;
     }
-    let program = LearningRepository::new(pool.clone())
+    let program = LearningRepository::new(db.clone())
         .get(&old.program_id)
         .await?;
     assert!(
@@ -1016,7 +1015,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
         > = serde_json::from_slice(&std::fs::read(path)?)?;
         let library =
             crate::features::learning::source_library::LearningSourceLibraryRepository::new(
-                Database::from(pool.clone()),
+                db.clone(),
             );
         for removal in removals {
             assert_eq!(removal.program_id, old.program_id);
@@ -1024,7 +1023,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
             println!("Removed irrelevant research capture {}", removal.source_id);
         }
     }
-    let source_pool = pool.clone();
+    let source_db = db.clone();
     let web_dir = tempfile::tempdir()?;
     // A copied index and the configured embedding artifact exercise the same
     // hybrid retrieval as the app. Never point these at the live index.
@@ -1035,14 +1034,13 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
         let model =
             crate::interfaces::di::modules::standalone::open_gguf(std::path::Path::new(&gguf))
                 .await?;
-        let database = Database::from(pool.clone());
         Some(
             crate::features::learning::references::course_index::CourseIndexes::new(
                 indexes.into(),
-                database.clone(),
+                db.clone(),
                 Arc::new(GivenModel(Some(Arc::new(model)))),
                 Arc::new(crate::features::search::trait_def::HybridSearchUseCaseFactory),
-                lattice_core::shared::runtime::jobs::JobRuntime::new(database),
+                lattice_core::shared::runtime::jobs::JobRuntime::new(db.clone()),
                 Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),
                 Arc::default(),
             ),
@@ -1061,16 +1059,16 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
             crate::features::web::services::web::WebService::new(web_dir.path())?,
         )),
         verifier: None,
-        database: pool.clone().into(),
+        database: db.clone(),
         load_llm: Arc::new(move || {
             let llm = llm.clone();
             Box::pin(async move { Ok(pinned_for_test(llm)) })
         }),
         courses,
         refresh_sources: Arc::new(move |program_id| {
-            let pool = source_pool.clone();
+            let db = source_db.clone();
             Box::pin(async move {
-                let workspace = crate::features::learning::source_library::LearningSourceLibraryRepository::new(Database::from(pool)).workspace(&program_id).await?;
+                let workspace = crate::features::learning::source_library::LearningSourceLibraryRepository::new(db).workspace(&program_id).await?;
                 assert!(
                     workspace
                         .sources
@@ -1093,7 +1091,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
             })?;
         let service =
             crate::features::learning::lessons::claim_reviews::service::ClaimReviewService::new(
-                Database::from(pool.clone()),
+                db.clone(),
             )
             .with_checker_model(Some(checker_name));
         let review = service.review(&old.program_id, lesson_id).await?.unwrap();
@@ -1136,12 +1134,13 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
         if result.status != LearningGenerationJobStatus::Pending || attempts == 6 {
             break result;
         }
+        let mut read = db.begin_read().await?;
         let not_before: Option<i64> =
             sqlx::query_scalar("SELECT retry_not_before FROM jobs WHERE id=?")
                 .bind(&job.id)
-                .fetch_one(&pool)
-                .await
-                .map_err(|error| AppError::Database(error.to_string()))?;
+                .fetch_one(&mut *read)
+                .await?;
+        read.commit().await?;
         let wait = not_before
             .map(|at| at - chrono::Utc::now().timestamp_millis())
             .unwrap_or(0)
@@ -1157,17 +1156,18 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
         directory.join("result.json"),
         serde_json::to_vec_pretty(&result)?,
     )?;
+    let mut read = db.begin_read().await?;
     let held: Vec<String> = sqlx::query_scalar(
         "SELECT lesson_id FROM learning_lesson_reviews WHERE job_id=? AND state='needs_review'",
     )
     .bind(&job.id)
-    .fetch_all(&pool)
-    .await
-    .map_err(|error| AppError::Database(error.to_string()))?;
+    .fetch_all(&mut *read)
+    .await?;
+    read.commit().await?;
     for lesson in &held {
         let review =
             crate::features::learning::lessons::claim_reviews::service::ClaimReviewService::new(
-                Database::from(pool.clone()),
+                db.clone(),
             )
             .review(&job.program_id, lesson)
             .await?;
@@ -1183,7 +1183,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
         result
     );
     assert!(held.is_empty(), "Completed with held lessons is not successful publication: {held:?}; see review-after files");
-    let published = LearningRepository::new(pool).get(&job.program_id).await?;
+    let published = LearningRepository::new(db).get(&job.program_id).await?;
     std::fs::write(
         directory.join("program.json"),
         serde_json::to_vec_pretty(&published)?,

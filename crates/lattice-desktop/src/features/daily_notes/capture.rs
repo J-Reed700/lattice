@@ -201,10 +201,10 @@ pub(super) fn apply_reference(
                     content: request.message_content.clone(),
                     created_at: request.captured_at.clone(),
                     metadata: None,
+                    reply: None,
                 }],
             },
         );
-        note.conversation_snapshots.truncate(120);
     }
     Ok(request.add_snapshot.then_some(snapshot_id))
 }

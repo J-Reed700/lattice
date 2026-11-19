@@ -84,7 +84,7 @@ vi.mock('@/features/reading/components/FilePreviewModal', () => ({ FilePreviewMo
 
 const doc = (id: string, overrides: Partial<DocumentMetadata> = {}) => ({
   id, fileName: `${id}.md`, filePath: `/library/${id}.md`, fileType: 'md', category: 'document',
-  modifiedAt: '2026-01-01', indexedAt: '2026-01-01', ...overrides,
+  modifiedAt: '2026-01-01', indexedAt: '2026-01-01', web: false, typeBucket: 'Markdown', ...overrides,
 }) as DocumentMetadata;
 
 const docs = [doc('herbs'), doc('spices')];
@@ -299,23 +299,16 @@ describe('FileBrowser', () => {
 
     it('previews a web page from its address', async () => {
       render(<FileBrowser />);
-      await open(doc('bread', { filePath: 'https://example.org/bread', category: 'web article', fileType: 'html' }));
+      await open(doc('bread', { filePath: 'https://example.org/bread', category: 'web article', fileType: 'html', web: true, typeBucket: 'Web' }));
       await waitFor(() => expect(preview().source?.filePath).toBe('https://example.org/bread'));
       expect(h.openDocumentFile).not.toHaveBeenCalled();
     });
 
-    it('previews an archived web page from its saved copy', async () => {
-      h.openDocumentFile.mockResolvedValueOnce({ ok: true, data: { action: 'render_internal', contentPath: '/archive/bread.html' } });
+    it('previews a saved web article from its own path, without asking to open it', async () => {
       render(<FileBrowser />);
-      await open(doc('bread', { filePath: '/data/.lattice/web-archive/bread', category: 'web', fileType: 'html' }));
-      await waitFor(() => expect(preview().source?.filePath).toBe('/archive/bread.html'));
-    });
-
-    it('falls back to the stored path when the archive cannot be rendered', async () => {
-      h.openDocumentFile.mockResolvedValueOnce({ ok: false, error: 'missing' });
-      render(<FileBrowser />);
-      await open(doc('bread', { filePath: '/data/.lattice/web-archive/bread', category: 'web', fileType: 'html' }));
-      await waitFor(() => expect(preview().source?.filePath).toBe('/data/.lattice/web-archive/bread'));
+      await open(doc('bread', { filePath: '/data/.lattice/web-archive/example.org/bread/article.md', category: 'web', fileType: 'html', web: true, typeBucket: 'Web' }));
+      expect(h.openDocumentFile).not.toHaveBeenCalled();
+      await waitFor(() => expect(preview().source?.filePath).toBe('/data/.lattice/web-archive/example.org/bread/article.md'));
     });
 
     it('resolves a relative path before previewing', async () => {

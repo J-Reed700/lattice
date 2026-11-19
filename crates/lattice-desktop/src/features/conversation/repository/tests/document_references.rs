@@ -2,13 +2,15 @@
 
 use super::*;
 use crate::features::conversation::repository::ConversationRepository;
+use lattice_core::shared::persistence::Database;
 
 #[tokio::test]
 async fn test_add_document_reference() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     seed_documents(&pool, &["doc-123"]).await;
-    let repo = ConversationRepository::new(pool);
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
 
     let conversation = repo.create_conversation("Test", None).await.unwrap();
 
@@ -40,7 +42,8 @@ async fn referencing_a_chunk_again_moves_it_to_the_latest_turn() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
     seed_documents(&pool, &["doc-a", "doc-b"]).await;
-    let repo = ConversationRepository::new(pool);
+    let db = Database::new(pool.clone());
+    let repo = ConversationRepository::new(db.clone());
     let id = repo
         .create_conversation("Test", None)
         .await

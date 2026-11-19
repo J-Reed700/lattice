@@ -127,6 +127,31 @@ async fn snapshot_passages_reach_text_past_the_former_prefixes() -> Result<()> {
 }
 
 #[tokio::test]
+async fn snapshot_passages_charge_one_separator_token_per_item() -> Result<()> {
+    let texts = [
+        "Borrowing gives access without moving ownership.",
+        "Borrowing lets code read data it does not own.",
+    ];
+    let sources: Vec<_> = texts
+        .iter()
+        .enumerate()
+        .map(|(at, text)| version(&format!("v{at}"), (*text).into()))
+        .collect();
+    let llm = scripted(vec![]);
+    let cost = |value: Value| llm.count_tokens(&value.to_string()) + 1;
+    let room: usize = sources
+        .iter()
+        .map(|source| {
+            cost(json!(source.full_text))
+                + cost(json!({"sourceId":source.source_id,"versionId":source.version.id,"title":source.version.title,"passages":[]}))
+        })
+        .sum();
+    let found = snapshot_passages(&llm, &sources, "borrowing", room).await?;
+    assert_eq!(found.as_array().map(Vec::len), Some(2), "{found}");
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_need_search_pages_while_new_results_appear_and_search_need_reads_one_page() -> Result<()>
 {
     use lattice_core::application::contracts::web::WebSearchResult;
@@ -162,7 +187,10 @@ async fn research_plans_as_many_searches_as_the_gaps_need() -> Result<()> {
         .iter()
         .map(|query| json!({"gap": 0, "query": query, "kind": "web"}))
         .collect();
-    let llm = scripted(vec![json!({ "needs": needs }).to_string()]);
+    let llm = scripted(vec![crate::references::web_research::needs_answer(json!(
+        needs
+    ))
+    .to_string()]);
     let planned = crate::references::web_research::plan_needs(
         &llm,
         "topic",
@@ -202,8 +230,8 @@ async fn the_starting_point_check_covers_every_module() -> Result<()> {
             created_at: 0,
         })
         .collect();
-    let tasks: Vec<_> = outcomes.iter().map(|o| json!({"outcomeId":o.id,"prompt":"Predict the result of this concrete case and explain why.","expectedAnswer":"The result follows from the stated rule applied to the case.","criteria":"Names the rule, applies it, and states the predicted result."})).collect();
-    let llm = Model(json!({ "tasks": tasks }).to_string());
+    let entries: Vec<_> = (0..outcomes.len()).map(|i| json!({"of":format!("o{}", i + 1),"prompt":"Predict the result of this concrete case and explain why.","expectedAnswer":"The result follows from the stated rule applied to the case.","criteria":"Names the rule, applies it, and states the predicted result."})).collect();
+    let llm = Model(json!({ "entries": entries }).to_string());
     let sources = vec![source("s", "Skill guidance for every module.".into())];
     let authored =
         crate::diagnostic_generation::author(&llm, &program, &outcomes, &sources).await?;
@@ -227,11 +255,12 @@ impl LLMPort for PerRequirement {
         }
         let context: Value = serde_json::from_str(user)?;
         self.prompts.lock().unwrap().push(context.clone());
-        let quote: String = context["passages"][0]["text"]
+        let quote: Vec<&str> = context["passages"][0]["sentences"]
             .as_str()
             .unwrap()
-            .chars()
-            .take(60)
+            .lines()
+            .take(3)
+            .filter_map(|row| row.strip_prefix('[')?.split(']').next())
             .collect();
         let items: Vec<_> = (0..context["returnCount"].as_u64().unwrap()).map(|i| json!({
             "prompt":format!("Explain how partition pruning changes this query plan for {}, case {i}.", context["outcome"].as_str().unwrap()),
@@ -240,7 +269,7 @@ impl LLMPort for PerRequirement {
                 {"title":"Evidence","description":"Connects the explanation to the stated query plan.","dimension":"application"}
             ],
             "explanation":"A strong answer ties pruning to the predicate.",
-            "blockIndex":0,"quote":quote,"difficulty":3
+            "quote":quote,"difficulty":"3"
         })).collect();
         Ok(CompletionResponse::from_text(
             json!({ "items": items }).to_string(),
@@ -258,12 +287,18 @@ impl LLMPort for PerRequirement {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 
 #[tokio::test]
 async fn quiz_items_are_authored_per_requirement_from_retrieved_passages() -> Result<()> {
     use crate::assessment_engine::{LearningBlueprintRequirement, LearningItemFormat};
-    use crate::assessment_generation::{author_items, AuthoringNeed, MaterialPassage};
+    use crate::assessment_generation::{author_items, AuthoringNeed, BankPass, MaterialPassage};
     let needle = "Partition pruning skips partitions that cannot match the predicate.";
     let need = |title: &str| AuthoringNeed {
         requirement: LearningBlueprintRequirement {
@@ -277,6 +312,7 @@ async fn quiz_items_are_authored_per_requirement_from_retrieved_passages() -> Re
         outcome_description: "Explain partition pruning against a predicate.".into(),
         lesson_id: None,
         count: 1,
+        pass: BankPass::Retakes,
         material: vec![MaterialPassage {
             lesson_title: "Query plans".into(),
             title: "Pruning".into(),
@@ -295,54 +331,11 @@ async fn quiz_items_are_authored_per_requirement_from_retrieved_passages() -> Re
     let prompts = model.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 2, "one request per requirement");
     // The passage past the former 8,000-character prefix reached the model.
-    assert!(prompts[0]["passages"][0]["text"]
+    assert!(prompts[0]["passages"][0]["sentences"]
         .as_str()
         .unwrap()
         .contains(needle));
     Ok(())
-}
-
-#[test]
-fn the_tutor_sees_the_newest_whole_turns_that_fit_and_counts_the_rest() {
-    use crate::dto::{LearningPracticeTutorTurnDto, LearningTutorRequestKind};
-    let turn = |index: usize| LearningPracticeTutorTurnDto {
-        id: format!("turn-{index}"),
-        prompt: format!(
-            "Question {index}: {}",
-            "why does this step hold? ".repeat(40)
-        ),
-        response: format!(
-            "Answer {index}: {}",
-            "consider the earlier result. ".repeat(40)
-        ),
-        request_kind: LearningTutorRequestKind::Question,
-        hint_level: None,
-        citations: vec![],
-        proposal_ids: vec![],
-        model_name: "fixture".into(),
-        created_at: index as i64,
-    };
-    let few: Vec<_> = (0..6).map(turn).collect();
-    let many: Vec<_> = (0..400).map(turn).collect();
-    let llm = scripted(vec![]);
-    let prompt =
-        json!({"taskPrompt":"Solve it.","recentTurns":[],"earlierTurns":"","sourceSnapshots":[]});
-    // Six turns all fit: not the former four.
-    let shown = crate::practice_generation::with_recent_turns(&llm, prompt.clone(), &few);
-    assert_eq!(shown["recentTurns"].as_array().unwrap().len(), 6);
-    assert_eq!(shown["earlierTurns"], "");
-    // Four hundred do not: the newest whole turns, then a count of the rest.
-    let shown = crate::practice_generation::with_recent_turns(&llm, prompt, &many);
-    let turns = shown["recentTurns"].as_array().unwrap();
-    assert!(turns.len() > 4 && turns.len() < 400);
-    assert!(turns[0]["request"]
-        .as_str()
-        .unwrap()
-        .starts_with("Question 399:"));
-    assert_eq!(
-        shown["earlierTurns"],
-        format!("{} earlier turns not shown", 400 - turns.len())
-    );
 }
 
 /// Every text length a schema bounds beyond a non-blank string: a `maxLength`
@@ -406,7 +399,7 @@ impl<'a> Recording<'a> {
 #[async_trait::async_trait]
 impl LLMPort for Recording<'_> {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        if let Some(schema) = &request.json_schema {
+        if let Some(schema) = request.schema().map(|schema| schema.as_json()) {
             self.schemas.lock().unwrap().push(schema.clone());
         }
         self.inner.complete(request).await
@@ -422,6 +415,12 @@ impl LLMPort for Recording<'_> {
     }
     async fn is_ready(&self) -> Result<bool> {
         self.inner.is_ready().await
+    }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
     }
 }
 
@@ -468,13 +467,12 @@ fn starting_point_tasks(
     expected_answer: &str,
     criteria: &str,
 ) -> String {
-    let tasks: Vec<_> = outcomes
-        .iter()
-        .map(|outcome| {
-            json!({"outcomeId":outcome.id,"prompt":prompt,"expectedAnswer":expected_answer,"criteria":criteria})
+    let entries: Vec<_> = (0..outcomes.len())
+        .map(|at| {
+            json!({"of":format!("o{}", at + 1),"prompt":prompt,"expectedAnswer":expected_answer,"criteria":criteria})
         })
         .collect();
-    json!({ "tasks": tasks }).to_string()
+    json!({ "entries": entries }).to_string()
 }
 
 #[tokio::test]

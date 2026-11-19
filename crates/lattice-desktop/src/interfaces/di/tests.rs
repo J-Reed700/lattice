@@ -380,7 +380,10 @@ mod di_integration_tests {
         // Query: Search mentions
         let search_results = container
             .mentions()
-            .search_mentions("Project", 10)
+            .search_mentions(
+                "Project",
+                lattice_core::shared::persistence::Page::new(Some(10), None).unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(search_results.len(), 1);

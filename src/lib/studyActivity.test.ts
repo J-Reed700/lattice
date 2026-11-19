@@ -69,6 +69,32 @@ describe('Study request activity', () => {
     start.finish();
   });
 
+  it('shows no receipt for planning a course: it only queues the plan job', () => {
+    expect(beginStudyActivity('learning', 'plan_learning_course', { request: { programId: 'course-1' } })).toBeUndefined();
+    expect(activities()).toEqual([]);
+  });
+
+  it('names a slow change to planned topics and leads to the course lessons', async () => {
+    const change = beginStudyActivity('learning', 'change_learning_course_plan_entries', { request: { programId: 'course-1' } })!;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(activities()).toMatchObject([{ status: 'pending', title: 'Changing the planned topics', destination: { programId: 'course-1', tab: 'lessons' } }]);
+    change.finish();
+  });
+
+  it('reads a slow read of the plan as the course, not the learning plan', async () => {
+    const read = beginStudyActivity('learning', 'get_learning_course_plan', { programId: 'course-1' })!;
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(activities()).toMatchObject([{ status: 'pending', title: 'Loading your course', destination: { programId: 'course-1', tab: 'lessons' } }]);
+    read.finish();
+  });
+
+  it.each(['edit_learning_course_plan_entry', 'undo_learning_course_plan_entry'])('reads a slow %s as an update to the course', async (command) => {
+    const write = beginStudyActivity('learning', command, { request: { programId: 'course-1' } })!;
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(activities()).toMatchObject([{ status: 'pending', title: 'Updating your course', destination: { programId: 'course-1', tab: 'lessons' } }]);
+    write.finish();
+  });
+
   it('does not duplicate existing progress or mistake a queued job for completed work', () => {
     for (const command of ['prepare_learning_lesson', 'generate_learning_program', 'repair_learning_outline', 'start_learning_generation_job', 'retry_learning_generation_job', 'start_learning_practical_run']) {
       expect(beginStudyActivity('learning', command)).toBeUndefined();
@@ -149,7 +175,7 @@ describe('Study request activity', () => {
   it('leaves the shared transport feature-neutral: a plain apiCall publishes no receipt', async () => {
     let resolve!: (value: unknown) => void;
     vi.mocked(invoke).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
-    const result = apiCall('start_learning_diagnostic', { request: { programId: 'course' } });
+    const result = apiCall('start_learning_diagnostic', { request: { operationId: 'operation', programId: 'course', expectedRevision: 1 } });
     await vi.advanceTimersByTimeAsync(5_000);
     expect(activities()).toEqual([]);
     resolve(null);

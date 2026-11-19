@@ -211,6 +211,7 @@
       "kind": "stopped",
       "reason": {
         "code": "model_rejected",
+        "audit": false,
         "message": "llama.cpp rejected this request twice.",
         "fix": "Lower the context window in Settings to match the server.",
         "at": 1760000900000,

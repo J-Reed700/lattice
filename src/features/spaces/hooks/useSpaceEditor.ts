@@ -101,6 +101,8 @@ export function useSpaceEditor() {
           webSearch: spaceWebDefault,
           deepResearchMode: spaceDeepResearchDefault,
         }),
+        isArchived: null,
+        sortOrder: null,
       });
     } catch (error) {
       toast.error('Could not update space', { message: errorMessage(error) });

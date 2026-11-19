@@ -579,6 +579,14 @@ pub struct SourceMessage {
     /// digest. Empty for an answer.
     #[serde(default)]
     pub pictures: Vec<String>,
+    /// Where the references of an answer saved with them sit in `content`.
+    /// Empty for every other message, and for an answer saved before them.
+    #[serde(default)]
+    pub references: Vec<std::ops::Range<usize>>,
+    /// The text a prompt replays in place of `content`, for an answer saved
+    /// before references; `content` itself is never rewritten.
+    #[serde(default)]
+    pub replayed: Option<String>,
 }
 
 impl SourceMessage {
@@ -593,6 +601,30 @@ impl SourceMessage {
         match self.role {
             SourceRole::User | SourceRole::System => true,
             SourceRole::Assistant => self.status == "completed",
+        }
+    }
+
+    /// The message as the memory layer reads it: the text without its
+    /// references, under the digest of that text. Offsets, digests and quotes
+    /// of memory all mean this text, so a handle of one conversation's scope
+    /// never reaches an item, a summary or another conversation. A message
+    /// without references is returned as it is.
+    pub fn memory_view(&self) -> Self {
+        if self.references.is_empty() {
+            return self.clone();
+        }
+        let text = crate::shared::stored_references::cut(
+            &self.content,
+            0..self.content.len(),
+            &self.references,
+        )
+        .into_owned();
+        Self {
+            content_digest: compute_digest(&text),
+            content: text,
+            references: Vec::new(),
+            replayed: None,
+            ..self.clone()
         }
     }
 

@@ -17,6 +17,7 @@ use url::Url;
 use super::{answered, failed, rank_of, retry_after, scoped_query, FinderHttp};
 use crate::features::web::services::identity;
 use crate::features::web::services::web::{read_text_bounded, MIN_SITE_REQUEST_INTERVAL};
+use lattice_core::shared::error::WithCauses;
 
 pub(crate) const RESULTS_PER_PAGE: usize = 10;
 const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
@@ -149,7 +150,7 @@ impl SourceFinder for Tavily {
             Err(e) => {
                 return failed(
                     &self.descriptor,
-                    FailureCause::Transport(e.to_string()),
+                    FailureCause::Transport(WithCauses(&e).to_string()),
                     started,
                 );
             }

@@ -1,24 +1,21 @@
 use super::chunks::store_document;
 use crate::features::indexing::engine::chunker::TextChunk;
-use sqlx::sqlite::SqlitePoolOptions;
+use lattice_core::shared::persistence::Database;
 use sqlx::SqlitePool;
 
 async fn setup_pool() -> SqlitePool {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(":memory:")
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .unwrap();
     sqlx::query("PRAGMA foreign_keys = ON")
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     pool
 }
 
 async fn count(pool: &SqlitePool, table: &str) -> i64 {
-    sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
         .fetch_one(pool)
         .await
         .unwrap()
@@ -27,6 +24,7 @@ async fn count(pool: &SqlitePool, table: &str) -> i64 {
 #[tokio::test]
 async fn a_document_whose_mentions_cannot_be_saved_is_not_stored() {
     let pool = setup_pool().await;
+    let db = Database::new(pool.clone());
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("note.md");
     let text = "Met @[Alice] about [[Plan]].";
@@ -47,7 +45,7 @@ async fn a_document_whose_mentions_cannot_be_saved_is_not_stored() {
     };
 
     let result = store_document(
-        &pool,
+        &db,
         &path,
         "text/markdown",
         vec![chunk],

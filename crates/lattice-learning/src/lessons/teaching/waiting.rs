@@ -1,12 +1,11 @@
 //! A lesson job's side of the teaching findings that wait for the user
 //! (`claim_reviews::teaching_findings`). Outside a job (tests, the live
 //! checks) nothing is stored.
+use serde_json::Value;
 use std::collections::BTreeSet;
 
-use serde_json::Value;
-
 use crate::lessons::claim_reviews::teaching_findings::TeachingFindingsRepository;
-use crate::review_findings::{FindingKey, ReviewFinding, SetAside};
+use crate::review_findings::{Held, ReviewFinding, SetAside};
 use lattice_core::shared::error::Result;
 
 fn repository() -> Option<(TeachingFindingsRepository, String, String)> {
@@ -21,9 +20,17 @@ fn repository() -> Option<(TeachingFindingsRepository, String, String)> {
 
 /// The findings the user already has for this text: waiting, or kept as
 /// written, for parts that have not changed since.
-pub(crate) async fn held(candidate: &Value) -> Result<BTreeSet<FindingKey>> {
+pub(crate) async fn held(candidate: &Value) -> Result<Held> {
     match repository() {
         Some((store, lesson_id, _)) => store.held(&lesson_id, candidate).await,
+        None => Ok(Held::default()),
+    }
+}
+
+/// The text hashes of the parts whose findings wait for the user and end with their part.
+pub(crate) async fn waiting_part_texts() -> Result<BTreeSet<String>> {
+    match repository() {
+        Some((store, lesson_id, _)) => store.waiting_part_texts(&lesson_id).await,
         None => Ok(BTreeSet::new()),
     }
 }
@@ -61,6 +68,14 @@ pub(crate) async fn record(candidate: &Value, findings: Vec<ReviewFinding>) -> R
             repairs: 0,
         })
         .collect();
+    for aside in &set_aside {
+        crate::lessons::trace::decided_finding(
+            crate::lessons::trace::Stage::TeachingReview,
+            &aside.finding,
+            "waits for the user",
+            "found once the review was over, on the lesson as it publishes",
+        );
+    }
     store
         .record(&lesson_id, &job_id, candidate, &set_aside, false)
         .await

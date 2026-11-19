@@ -1,5 +1,5 @@
 import { studyActivityCall } from '@/lib/studyActivity';
-import type { CommandName } from '@/shared/ipc/transport';
+import type { CommandArgList, CommandName } from '@/shared/ipc/transport';
 
-export const learningCall = <T>(command: CommandName, args?: Record<string, unknown>) =>
-  studyActivityCall<T>('learning', command, args);
+export const learningCall = <C extends CommandName>(command: C, ...args: CommandArgList<C>) =>
+  studyActivityCall('learning', command, ...args);

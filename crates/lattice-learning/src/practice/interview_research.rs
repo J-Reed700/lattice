@@ -12,6 +12,9 @@ use crate::{
         web_research::{self, Candidate, PlannedNeed, Room, NEED_GUIDE},
     },
 };
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{
@@ -23,6 +26,11 @@ use lattice_core::{
     },
 };
 use std::collections::{BTreeSet, HashSet};
+
+/// The web searches one research plan may run: each is fetched and captured,
+/// so the planner's extra searches beyond these are not run.
+const COMPANY_SEARCHES: usize = 4;
+const ANSWER_SEARCHES: usize = 6;
 
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
@@ -120,24 +128,23 @@ fn is_public(need: &PlannedNeed, private: &[&str]) -> bool {
         .chain(need.subject.as_deref())
         .chain(need.identifier.as_deref())
         .chain(need.site.as_deref());
-    need.alternatives.len() <= 3
-        && fields.all(|field| {
-            field.chars().count() <= 240
-                && !field.split_whitespace().any(|word| {
-                    word.trim_matches(['<', '>', '(', ')', '[', ']', ',', ';', '\"', '\''])
-                        .split_once('@')
-                        .is_some_and(|(local, domain)| {
-                            !local.is_empty()
-                                && domain.contains('.')
-                                && domain.rsplit('.').next().is_some_and(|suffix| {
-                                    suffix.len() >= 2
-                                        && suffix.chars().all(|ch| ch.is_ascii_alphabetic())
-                                })
-                        })
-                })
-                && !crate::outline_references::copies_private_text(field, private)
-                && !copies_private_marker(field, private)
-        })
+    fields.all(|field| {
+        field.chars().count() <= 240
+            && !field.split_whitespace().any(|word| {
+                word.trim_matches(['<', '>', '(', ')', '[', ']', ',', ';', '\"', '\''])
+                    .split_once('@')
+                    .is_some_and(|(local, domain)| {
+                        !local.is_empty()
+                            && domain.contains('.')
+                            && domain.rsplit('.').next().is_some_and(|suffix| {
+                                suffix.len() >= 2
+                                    && suffix.chars().all(|ch| ch.is_ascii_alphabetic())
+                            })
+                    })
+            })
+            && !crate::outline_references::copies_private_text(field, private)
+            && !copies_private_marker(field, private)
+    })
 }
 
 fn discovery_url(address: &str) -> Option<url::Url> {
@@ -243,6 +250,12 @@ async fn save_capture(
     Ok(Some(version_id))
 }
 
+struct InterviewCompanySearches;
+impl Contract for InterviewCompanySearches {
+    const ID: ContractId = ContractId::new("interview-company-searches");
+    type Input = PromptInput;
+}
+
 /// Returns newly captured and reused active versions. Search snippets never count
 /// as evidence. Prompt-only intake can identify a company via research planning.
 pub async fn research_interview_target(
@@ -293,10 +306,7 @@ pub async fn research_interview_target(
             .or(target.target_role.as_deref())
             .unwrap_or("Interview");
         let captured = CapturedLearningSource {
-            title: format!("{company} — Interview Brief & Context")
-                .chars()
-                .take(180)
-                .collect(),
+            title: format!("{company} — Interview Brief & Context"),
             publisher: None, // Learner notes are not verified company publications.
             requested_url: None,
             resolved_url: None,
@@ -366,17 +376,23 @@ pub async fn research_interview_target(
     });
     let schema = serde_json::json!({
         "type":"object", "additionalProperties":false, "required":["needs"],
-        "properties":{"needs":{"type":"array","maxItems":4,"items":web_research::need_schema(None)}}
+        "properties":{"needs":{"type":"array","items":web_research::need_schema()}}
     });
     let private = [
         learner_brief,
         target.company_context.as_deref().unwrap_or_default(),
         lesson_title,
     ];
+    let prompt = payload.to_string();
+    let call = ContractCall::of::<InterviewCompanySearches>(&PromptInput {
+        system: system.clone(),
+        prompt: prompt.clone(),
+    })?;
     let planned = crate::generation::complete_checked(
         llm,
+        &call,
         &system,
-        payload.to_string(),
+        prompt,
         schema,
         1_200,
         None,
@@ -384,13 +400,11 @@ pub async fn research_interview_target(
         |raw| {
             let parsed: PlannedSearches = serde_json::from_str(raw)
                 .map_err(|_| invalid("The company research plan was malformed."))?;
-            if parsed.needs.len() > 4 {
-                return Err(invalid("Company research allows at most four searches."));
-            }
             Ok(parsed
                 .needs
                 .into_iter()
                 .flat_map(|need| public_needs(need, &private))
+                .take(COMPANY_SEARCHES)
                 .collect::<Vec<_>>())
         },
     )
@@ -410,6 +424,12 @@ pub async fn research_interview_target(
     versions
         .extend(capture_needs(web, library, program_id, operation_id, &request_hash, needs).await?);
     Ok(versions.into_iter().collect())
+}
+
+struct InterviewAnswerSearches;
+impl Contract for InterviewAnswerSearches {
+    const ID: ContractId = ContractId::new("interview-answer-searches");
+    type Input = PromptInput;
 }
 
 /// Research underlying answer concepts after the exact questions exist. The
@@ -446,15 +466,19 @@ pub async fn research_interview_answers(
     let has_non_behavioral = plan.questions.iter().any(|question| {
         question.round != crate::practical_dto::LearningInterviewRoundKind::Behavioral
     });
+    let prompt = payload.to_string();
+    let call = ContractCall::of::<InterviewAnswerSearches>(&PromptInput {
+        system: system.clone(),
+        prompt: prompt.clone(),
+    })?;
     let needs = crate::generation::complete_checked(
-        llm, &system, payload.to_string(),
+        llm, &call, &system, prompt,
         serde_json::json!({"type":"object","additionalProperties":false,"required":["needs"],"properties":{
-            "needs":{"type":"array","maxItems":6,"items":web_research::need_schema(None)}
+            "needs":{"type":"array","items":web_research::need_schema()}
         }}), 1_600, None, None,
         |raw| {
             let parsed: PlannedSearches = serde_json::from_str(raw).map_err(|_| invalid("The interview answer research plan was malformed."))?;
-            if parsed.needs.len() > 6 { return Err(invalid("Interview answer research allows at most six searches.")); }
-            let filtered = parsed.needs.into_iter().flat_map(|need| public_needs(need, &private)).collect::<Vec<_>>();
+            let filtered = parsed.needs.into_iter().flat_map(|need| public_needs(need, &private)).take(ANSWER_SEARCHES).collect::<Vec<_>>();
             if has_non_behavioral && filtered.is_empty() {
                 return Err(invalid("Plan at least one public concept or official_docs search for non-behavioral interview questions without copying private text."));
             }

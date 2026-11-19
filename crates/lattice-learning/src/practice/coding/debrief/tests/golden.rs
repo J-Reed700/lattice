@@ -1,7 +1,7 @@
 #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 
 use super::*;
-use crate::practice::coding::golden_support::{add_requests, assert_golden, Golden, Recorder};
+use crate::practice::coding::golden_support::{assert_golden, render_completion, Golden};
 
 fn rich_evidence() -> SessionEvidence {
     let mut evidence = evidence();
@@ -19,31 +19,52 @@ fn rich_evidence() -> SessionEvidence {
 
 #[tokio::test]
 async fn golden_debrief() {
-    let evidence = rich_evidence();
-    let mut golden = Golden::default();
-    golden.add("system", &system());
-    golden.add(
-        "schema",
-        &serde_json::to_string_pretty(&schema()).expect("a schema writes out"),
+    let model = scripted(
+        |sent, nth| match nth {
+            0 => answer(good_entries()[..3].to_vec()),
+            _ => answer(vec![entry(
+                &handle_of(sent, "Communication"),
+                "3",
+                json!({"hints": ["h1"]}),
+            )]),
+        },
+        |sent, nth| match nth {
+            0 => json!({"entries": [
+                {"of": "k1", "text": " "},
+                {"of": "k2", "text": "O(n) time, O(n) space"},
+            ]})
+            .to_string(),
+            _ => json!({"entries": [{
+                "of": handle_of(sent, "approach"),
+                "text": "Remember what you have seen in a dictionary.",
+            }]})
+            .to_string(),
+        },
     );
-    golden.add("prompt", &prompt(&evidence).expect("a prompt"));
-
-    let mut faulty = good_rows();
-    if let Some(first) = faulty.first_mut() {
-        *first = row(
-            "problem_solving",
-            Some(3),
-            vec![quote("t1", "words the learner never said")],
-        );
-    }
-    let model = Recorder::new([answer(faulty), answer(good_rows())]);
-    let debrief = CodingDebriefer { llm: &model }.debrief(&evidence).await;
+    let debrief = CodingDebriefer { llm: &model }
+        .debrief(&rich_evidence())
+        .await;
     assert!(debrief.is_ok(), "{debrief:?}");
-    add_requests(
-        &mut golden,
-        "debrief with a fault in the first answer",
-        &model,
-    );
+
+    let mut golden = Golden::default();
+    for (name, requests) in [
+        (
+            "the rows, with a criterion missing from the first answer",
+            sent_to::<DebriefAnswer>(&model),
+        ),
+        (
+            "what it states, with a blank statement in the first answer",
+            sent_to::<DebriefStatements>(&model),
+        ),
+    ] {
+        let total = requests.len();
+        for (at, sent) in requests.iter().enumerate() {
+            golden.add(
+                &format!("{name}, request {} of {total}", at + 1),
+                &render_completion(&sent.request),
+            );
+        }
+    }
 
     assert_golden(
         "debrief",

@@ -21,12 +21,10 @@ fn source(title: &str, url: Option<&str>) -> LearningSourceDto {
 }
 
 /// A course whose library holds `sources`, each saved as the outline's.
-async fn course_with(pool: &sqlx::SqlitePool, sources: Vec<LearningSourceDto>) -> Result<String> {
+async fn course_with(db: &Database, sources: Vec<LearningSourceDto>) -> Result<String> {
     let mut program = fixture();
     program.sources = sources;
-    LearningRepository::new(pool.clone())
-        .create(&program)
-        .await?;
+    LearningRepository::new(db.clone()).create(&program).await?;
     Ok(program.summary.id)
 }
 
@@ -52,8 +50,9 @@ async fn exported(home: &LearningPackRepository, program_id: &str) -> Result<Str
 #[tokio::test]
 async fn a_pack_carries_which_outline_pages_research_found() -> Result<()> {
     let home = pool().await?;
+    let home_db = Database::new(home.clone());
     let course = course_with(
-        &home,
+        &home_db,
         vec![
             source("Found by search", Some("https://example.org/found")),
             source("Chosen address", Some("https://example.org/chosen")),
@@ -72,12 +71,13 @@ async fn a_pack_carries_which_outline_pages_research_found() -> Result<()> {
     ];
     assert_eq!(marks(&home, &course).await?, kept);
     let home_dir = tempfile::tempdir()?;
-    let path = exported(&packs(&home, home_dir.path()), &course).await?;
+    let path = exported(&packs(&home_db, home_dir.path()), &course).await?;
 
     let fresh = pool().await?;
+    let fresh_db = Database::new(fresh.clone());
     let fresh_dir = tempfile::tempdir()?;
     super::r#move::import(
-        &packs(&fresh, fresh_dir.path()),
+        &packs(&fresh_db, fresh_dir.path()),
         &path,
         LearningPackConflictPolicy::MergeSafe,
     )
@@ -86,7 +86,7 @@ async fn a_pack_carries_which_outline_pages_research_found() -> Result<()> {
     assert_eq!(marks(&fresh, &course).await?, kept);
     // The sweep of the moved course reads the page research found, and not
     // what the user chose.
-    let refused = LearningSourceLibraryRepository::new(Database::from(fresh.clone()))
+    let refused = LearningSourceLibraryRepository::new(fresh_db.clone())
         .sweep_admission(&course)
         .await?;
     let titles: Vec<&str> = refused.iter().map(|page| page.title.as_str()).collect();
@@ -97,8 +97,9 @@ async fn a_pack_carries_which_outline_pages_research_found() -> Result<()> {
 #[tokio::test]
 async fn a_pack_written_before_the_mark_imports_by_the_migrations_rule() -> Result<()> {
     let home = pool().await?;
+    let home_db = Database::new(home.clone());
     let course = course_with(
-        &home,
+        &home_db,
         vec![
             source("Outline page", Some("https://example.org/outline")),
             source("Outline document", None),
@@ -121,7 +122,7 @@ async fn a_pack_written_before_the_mark_imports_by_the_migrations_rule() -> Resu
         .await?;
     }
     let home_dir = tempfile::tempdir()?;
-    let path = exported(&packs(&home, home_dir.path()), &course).await?;
+    let path = exported(&packs(&home_db, home_dir.path()), &course).await?;
     // The pack as an exporter from before the mark wrote it: no source says
     // whether research found it.
     let decoded = decode_learning_pack(&std::fs::read(&path)?)?;
@@ -145,9 +146,10 @@ async fn a_pack_written_before_the_mark_imports_by_the_migrations_rule() -> Resu
     std::fs::write(&old_path, old)?;
 
     let fresh = pool().await?;
+    let fresh_db = Database::new(fresh.clone());
     let fresh_dir = tempfile::tempdir()?;
     super::r#move::import(
-        &packs(&fresh, fresh_dir.path()),
+        &packs(&fresh_db, fresh_dir.path()),
         old_path.to_str().expect("a UTF-8 path"),
         LearningPackConflictPolicy::MergeSafe,
     )

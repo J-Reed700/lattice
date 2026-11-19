@@ -6,7 +6,7 @@ use super::{
 };
 use crate::embedded_runtime::{BuiltinLabExecutionSpec, LearningBuiltinRuntime};
 use crate::lab_runtime::{self, LearningLabExecutionSpec, LearningLabFile, LearningLabLimits};
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use crate::practical_dto::*;
 use crate::practical_generation::{
     GeneratedPracticalActivity, PracticalFileRole, INTERVIEW_PLAN_FILE_PATH,
@@ -15,7 +15,6 @@ use crate::practice::coding::problem::{Problem, PROBLEM_FILE_PATH};
 use crate::practice::interview_answers::{InterviewAnswerGuides, INTERVIEW_ANSWERS_FILE_PATH};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::hash::sha256_hex;
-use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqliteConnection};
 use std::collections::HashSet;
 
@@ -30,8 +29,7 @@ impl LearningPracticalRepository {
         uuid(&request.operation_id, "operation")?;
         uuid(&request.program_id, "program")?;
         uuid(&request.profile_id, "runtime profile")?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &request.program_id).await?;
+        let mut tx = self.db.begin_write().await?;
         Self::active_program(&mut tx, &request.program_id).await?;
         let operation = practical_operation(
             "runtime_profile",
@@ -43,21 +41,20 @@ impl LearningPracticalRepository {
             "Operation ID was reused with different runtime setup data.",
         );
         if operation.seen(&mut tx).await? {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return self.workspace(&request.program_id).await.map(Some);
         }
         let exists: Option<i64> =
             sqlx::query_scalar("SELECT 1 FROM learning_runtime_profiles WHERE id=?")
                 .bind(&request.profile_id)
                 .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
         if exists.is_some() {
             return Err(invalid(
                 "This runtime profile already exists; refresh the available environments.",
             ));
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(None)
     }
 
@@ -70,10 +67,8 @@ impl LearningPracticalRepository {
         uuid(&request.program_id, "program")?;
         uuid(&request.profile_id, "runtime profile")?;
         let name = request.name.trim();
-        if name.is_empty() || name.chars().count() > 120 {
-            return Err(invalid(
-                "Runtime profile names must contain 1–120 characters.",
-            ));
+        if name.is_empty() {
+            return Err(invalid("Runtime profile names must not be empty."));
         }
         // Reuse the execution boundary to validate immutable image IDs, trusted
         // argv, and bounded limits. The placeholder file is never executed.
@@ -88,8 +83,7 @@ impl LearningPracticalRepository {
             read_only_paths: vec![],
             limits: request.limits.clone(),
         })?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &request.program_id).await?;
+        let mut tx = self.db.begin_write().await?;
         Self::active_program(&mut tx, &request.program_id).await?;
         let operation = practical_operation(
             "runtime_profile",
@@ -101,7 +95,7 @@ impl LearningPracticalRepository {
             "Operation ID was reused with different runtime profile data.",
         );
         if operation.seen(&mut tx).await? {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return self.workspace(&request.program_id).await;
         }
         let timestamp = now();
@@ -109,7 +103,7 @@ impl LearningPracticalRepository {
             let updated = sqlx::query("UPDATE learning_runtime_profiles SET name=?,engine=?,image_id=?,command_json=?,limits_json=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?")
                 .bind(name).bind(engine_name(request.engine)).bind(&request.image_id)
                 .bind(json(&request.command)?).bind(json(&request.limits)?).bind(timestamp)
-                .bind(&request.profile_id).bind(expected).execute(&mut *tx).await.map_err(db)?;
+                .bind(&request.profile_id).bind(expected).execute(&mut *tx).await?;
             if updated.rows_affected() != 1 {
                 return Err(AppError::Conflict(
                     "Runtime profile changed; reload and retry.".into(),
@@ -120,11 +114,11 @@ impl LearningPracticalRepository {
             sqlx::query("INSERT INTO learning_runtime_profiles(id,name,engine,image_id,command_json,limits_json,enabled,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,1,0,?,?)")
                 .bind(&request.profile_id).bind(name).bind(engine_name(request.engine))
                 .bind(&request.image_id).bind(json(&request.command)?).bind(json(&request.limits)?)
-                .bind(timestamp).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+                .bind(timestamp).bind(timestamp).execute(&mut *tx).await?;
             0
         };
         operation.record(&mut tx, &result_revision).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         self.workspace(&request.program_id).await
     }
 
@@ -228,21 +222,15 @@ impl LearningPracticalRepository {
         ] {
             uuid(value, label)?;
         }
-        if request.allowed_aids.len() > 24
-            || request
-                .allowed_aids
-                .iter()
-                .any(|aid| aid.trim().is_empty() || aid.chars().count() > 160)
-        {
-            return Err(invalid("Practical aid descriptions must be bounded."));
+        if request.allowed_aids.iter().any(|aid| aid.trim().is_empty()) {
+            return Err(invalid("Practical aid descriptions must not be empty."));
         }
         if generator_model.trim().is_empty() {
             return Err(invalid(
                 "Practical generation must record a model identity.",
             ));
         }
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &request.program_id).await?;
+        let mut tx = self.db.begin_write().await?;
         let operation = practical_operation(
             "practical_activity",
             &request.operation_id,
@@ -253,7 +241,7 @@ impl LearningPracticalRepository {
             "Operation ID was reused with different practical activity data.",
         );
         if operation.seen(&mut tx).await? {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return self.workspace(&request.program_id).await;
         }
         let revision = Self::active_program(&mut tx, &request.program_id).await?;
@@ -268,13 +256,12 @@ impl LearningPracticalRepository {
         .bind(&request.lesson_id)
         .bind(&request.program_id)
         .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
         let module_id =
             module_id.ok_or_else(|| AppError::NotFound("Learning lesson not found".into()))?;
         let outcome_ids = sqlx::query_scalar::<_, String>("SELECT id FROM learning_outcome_definitions WHERE program_id=? AND (lesson_id=? OR (lesson_id IS NULL AND module_id=?)) ORDER BY ordinal,id")
             .bind(&request.program_id).bind(&request.lesson_id).bind(&module_id)
-            .fetch_all(&mut *tx).await.map_err(db)?;
+            .fetch_all(&mut *tx).await?;
         for source_id in &generated.source_version_ids {
             let owned: Option<i64> = sqlx::query_scalar(
                 "SELECT 1 FROM learning_source_versions WHERE program_id=? AND id=?",
@@ -282,8 +269,7 @@ impl LearningPracticalRepository {
             .bind(&request.program_id)
             .bind(source_id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
             if owned.is_none() {
                 return Err(invalid(
                     "Practical activity source version is outside this program.",
@@ -297,8 +283,7 @@ impl LearningPracticalRepository {
                     sqlx::query("SELECT * FROM learning_runtime_profiles WHERE id=? AND enabled=1")
                         .bind(profile_id)
                         .fetch_optional(&mut *tx)
-                        .await
-                        .map_err(db)?
+                        .await?
                         .ok_or_else(|| invalid("Selected runtime profile is unavailable."))?;
                 (
                     "container",
@@ -329,10 +314,10 @@ impl LearningPracticalRepository {
             .bind(json(&outcome_ids)?).bind(json(&generated.source_version_ids)?)
             .bind(json(&generated.rubric)?).bind(runtime_kind).bind(profile_id)
             .bind(runtime_engine).bind(image_id).bind(command).bind(limits).bind(generator_model)
-            .bind(timestamp).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+            .bind(timestamp).bind(timestamp).execute(&mut *tx).await?;
         if let Some(runtime) = request.builtin_runtime {
             sqlx::query("UPDATE learning_practical_activities SET builtin_runtime=?,builtin_runtime_version=? WHERE id=?")
-                .bind(runtime.as_str()).bind(runtime.version()).bind(&request.activity_id).execute(&mut *tx).await.map_err(db)?;
+                .bind(runtime.as_str()).bind(runtime.version()).bind(&request.activity_id).execute(&mut *tx).await?;
         }
         let mut paths = HashSet::new();
         for (ordinal, file) in generated.files.iter().enumerate() {
@@ -347,10 +332,10 @@ impl LearningPracticalRepository {
             sqlx::query("INSERT INTO learning_practical_files(activity_id,ordinal,path,role,content,content_sha256,editable) VALUES(?,?,?,?,?,?,?)")
                 .bind(&request.activity_id).bind(ordinal as i64).bind(&file.path).bind(role)
                 .bind(&file.content).bind(sha256_hex(&file.content))
-                .bind(file.editable as i64).execute(&mut *tx).await.map_err(db)?;
+                .bind(file.editable as i64).execute(&mut *tx).await?;
         }
         operation.record(&mut tx, &0_i64).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         self.workspace(&request.program_id).await
     }
 
@@ -360,7 +345,7 @@ impl LearningPracticalRepository {
         program_id: &str,
         lesson_id: Option<&str>,
     ) -> Result<BuildLesson> {
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await?;
         let wanted = match lesson_id {
             Some(id) => Some(id.to_owned()),
             None => sqlx::query_scalar::<_, Option<String>>(
@@ -368,8 +353,7 @@ impl LearningPracticalRepository {
             )
             .bind(program_id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?
+            .await?
             .flatten(),
         };
         let row = match wanted {
@@ -378,18 +362,16 @@ impl LearningPracticalRepository {
                     .bind(id)
                     .bind(program_id)
                     .fetch_optional(&mut *tx)
-                    .await
-                    .map_err(db)?
+                    .await?
             }
             None => {
                 sqlx::query("SELECT l.id,l.title,l.objective FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? ORDER BY m.ordinal,l.ordinal LIMIT 1")
                     .bind(program_id)
                     .fetch_optional(&mut *tx)
-                    .await
-                    .map_err(db)?
+                    .await?
             }
         };
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         let row = row.ok_or_else(|| AppError::NotFound("Learning lesson not found".into()))?;
         Ok(BuildLesson {
             id: row.get("id"),
@@ -400,9 +382,9 @@ impl LearningPracticalRepository {
 
     /// The revision an activity saved for this program must name.
     pub async fn program_revision(&self, program_id: &str) -> Result<i64> {
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await?;
         let revision = Self::active_program(&mut tx, program_id).await;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         revision
     }
 
@@ -412,9 +394,9 @@ impl LearningPracticalRepository {
         program_id: &str,
         activity_id: &str,
     ) -> Result<StoredProblem> {
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.db.begin_read().await?;
         let activity = Self::internal_activity(&mut tx, program_id, activity_id).await;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         let activity = activity?;
         if activity.kind != LearningPracticalActivityKind::Exercise {
             return Err(invalid("This activity is not a coding problem."));
@@ -442,7 +424,7 @@ impl LearningPracticalRepository {
         activity_id: &str,
     ) -> Result<InternalActivitySnapshot> {
         let row = sqlx::query("SELECT a.*,p.enabled AS runtime_enabled FROM learning_practical_activities a LEFT JOIN learning_runtime_profiles p ON p.id=a.runtime_profile_id WHERE a.program_id=? AND a.id=?")
-            .bind(program_id).bind(activity_id).fetch_optional(&mut *tx).await.map_err(db)?
+            .bind(program_id).bind(activity_id).fetch_optional(&mut *tx).await?
             .ok_or_else(||AppError::NotFound("Practical activity not found".into()))?;
         if row.get::<String, _>("status") != "ready" {
             return Err(invalid("Only ready practical activities can be used."));
@@ -452,8 +434,7 @@ impl LearningPracticalRepository {
         )
         .bind(activity_id)
         .fetch_all(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
         let mut interview_plan = None;
         let mut interview_answers = None;
         let mut files = Vec::new();

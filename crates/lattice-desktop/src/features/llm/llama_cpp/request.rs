@@ -21,8 +21,8 @@ impl LlamaCppLlm {
     /// and pictures a model nobody declared able to see would never receive.
     pub(super) fn body(&self, fitted: &Fitted<'_>) -> Result<Value> {
         let request = fitted.request();
-        let carries_tools = !request.tools.is_empty()
-            || request.input.iter().any(|item| {
+        let carries_tools = !request.tools().is_empty()
+            || request.input().iter().any(|item| {
                 matches!(
                     item,
                     CompletionInput::ToolCall { .. } | CompletionInput::ToolResult { .. }
@@ -36,7 +36,7 @@ impl LlamaCppLlm {
         if request.has_images() && self.config.vision.is_none() {
             return Err(not_set_up_to_see(&self.config.model));
         }
-        let messages = chat_messages(&request.input)?;
+        let messages = chat_messages(request.input())?;
         let generation = &self.config.generation;
         let thinks = fitted.thinking().is_on();
         // A caller's explicit override wins field by field; what it leaves
@@ -94,17 +94,17 @@ impl LlamaCppLlm {
         {
             body.insert("reasoning_effort".into(), json!(effort));
         }
-        if !request.tools.is_empty() {
-            body.insert("tools".into(), tool_specs(&request.tools));
+        if !request.tools().is_empty() {
+            body.insert("tools".into(), tool_specs(request.tools()));
             // llama-server lets a reply hold one call unless asked for more,
             // so a round that needs three pages would take three generations.
             body.insert("parallel_tool_calls".into(), json!(true));
-            if let Some(choice) = request.tool_choice {
+            if let Some(choice) = request.tool_choice() {
                 body.insert("tool_choice".into(), json!(choice.as_str()));
             }
         }
-        if !request.stop.is_empty() {
-            body.insert("stop".into(), json!(request.stop));
+        if !request.stop().is_empty() {
+            body.insert("stop".into(), json!(request.stop()));
         }
         if request.want_logprobs {
             body.insert("logprobs".into(), json!(true));
@@ -113,7 +113,7 @@ impl LlamaCppLlm {
                 json!(lattice_core::application::ports::llm_port::FIRST_TOKEN_TOP_LOGPROBS),
             );
         }
-        if let Some(schema) = &request.json_schema {
+        if let Some(schema) = request.schema().map(|schema| schema.as_json()) {
             body.insert(
                 "response_format".into(),
                 json!({"type":"json_schema","json_schema":{"name":"response","schema":schema}}),

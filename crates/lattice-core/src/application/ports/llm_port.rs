@@ -19,13 +19,13 @@
 //!   - `CloudLlm` - OpenAI Responses, Anthropic Messages and Google
 
 use crate::application::contracts::settings::LLMSettingsDto;
+use crate::application::services::model_contract::shape::Schema;
 use crate::domain::models::model_ref::{CloudProvider, ModelRef};
 use crate::domain::models::vision::VisionGeometry;
 use crate::shared::error::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use tokio_util::sync::CancellationToken;
 
 mod grammar;
 mod multimodal;
@@ -249,6 +249,9 @@ pub trait LLMPort: Send + Sync {
         false
     }
 
+    /// Whether this backend holds an answer to `schema` as written.
+    fn enforces(&self, schema: &Schema) -> bool;
+
     /// The geometry this model's vision encoder was declared with, or `None`
     /// for a model that cannot see. Declared (catalog, Settings, provider
     /// default), never probed.
@@ -467,75 +470,11 @@ impl ThinkingMode {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct CompletionRequest {
-    pub input: Vec<CompletionInput>,
-    pub tools: Vec<ToolDefinition>,
-    pub json_schema: Option<serde_json::Value>,
-    pub reasoning_effort: Option<String>,
-    /// How the model may use the offered tools. `None` leaves the provider's
-    /// default (auto). `Some(ToolChoice::None)` keeps the tools in the prompt,
-    /// so the cached prefix stays valid, while forbidding calls this round.
-    pub tool_choice: Option<ToolChoice>,
-    /// Ask providers that support it for displayable reasoning. This controls
-    /// summaries or explicit thinking text only; opaque provider state used for
-    /// replay remains separate in `CompletionResponse::replay`.
-    #[serde(default)]
-    pub include_reasoning: bool,
-    /// Sampling for this request. `None` keeps the provider's configuration.
-    #[serde(default)]
-    pub sampling: Option<SamplingOverride>,
-    /// Whether the model thinks before answering. Off unless the caller asks:
-    /// see [`ThinkingMode`] for why tool rounds never think.
-    #[serde(default)]
-    pub thinking: ThinkingMode,
-    /// Caps generated tokens for this request, overriding the model's own
-    /// ceiling when it is lower. A model that thinks first spends its thinking
-    /// out of the same ceiling, so there the model's ceiling alone applies.
-    ///
-    /// The context assembler reserves output room out of the model's window, and
-    /// a reservation nothing enforces is only bookkeeping: without this the model
-    /// may generate past what the budget set aside and overrun the window it was
-    /// measured against. `None` keeps the provider's configured limit.
-    ///
-    /// A ceiling, never a demand: when the prompt leaves less room in the
-    /// window, the answer gets the room left. No request is refused for its
-    /// answer's size, only for a prompt that leaves no room at all.
-    pub max_output_tokens: Option<u32>,
-    /// Text that ends the answer where the model writes it, sent as the
-    /// provider's stop sequences; the answer stops before the first one. A
-    /// bound the caller can name in the output itself, such as the first label
-    /// past the end of a numbered list. Empty sends none.
-    #[serde(default)]
-    pub stop: Vec<String>,
-    /// Caps wall-clock time across all attempts. Stalls are detected separately,
-    /// so this only needs to exceed the longest legitimate generation.
-    #[serde(skip)]
-    pub time_budget: Option<Duration>,
-    /// Interactive, cancellable workflows may opt out of elapsed-time limits.
-    /// Transport errors, stall detection, and retry limits still apply.
-    #[serde(skip)]
-    pub no_time_limit: bool,
-    /// Ask for the log-probabilities of the first generated token and its top
-    /// alternatives. A classifier reads its answer's probability from these
-    /// rather than trusting one sampled word. Providers that cannot report
-    /// them ignore the flag and return `None`.
-    #[serde(default)]
-    pub want_logprobs: bool,
-    /// Who is waiting on this call. The backend's scheduler admits higher
-    /// priorities first and keeps a slot free for interactive work.
-    #[serde(default)]
-    pub priority: InferencePriority,
-    /// Fires when the caller no longer wants the answer. A queued request
-    /// leaves the queue and an in-flight one is aborted, both with an error.
-    #[serde(skip)]
-    pub cancel: Option<CancellationToken>,
-    /// Requests sharing a key share a prompt prefix (one conversation, one
-    /// course). A llama-server backend sends them to the slot that last served
-    /// the key, so the server reuses that prefix from its KV cache.
-    #[serde(default)]
-    pub cache_key: Option<String>,
-}
+/// The reasoning effort every structured answer is asked with: the lowest
+/// setting every adapter accepts (Ollama refuses anything below "low").
+pub const ANSWER_EFFORT: &str = "low";
+
+pub use crate::application::services::model_contract::request::CompletionRequest;
 
 /// Tool-use policy for one request, mirroring the OpenAI `tool_choice` field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -567,7 +506,7 @@ impl CompletionRequest {
     /// Whether the model could answer this request with a tool call: tools
     /// are offered and the round does not forbid calling them.
     pub fn may_call_tools(&self) -> bool {
-        !self.tools.is_empty() && self.tool_choice != Some(ToolChoice::None)
+        !self.tools().is_empty() && self.tool_choice() != Some(ToolChoice::None)
     }
 }
 
@@ -613,7 +552,7 @@ impl<'de> Deserialize<'de> for ToolChoice {
 impl CompletionRequest {
     /// The last user message: the prompt a scripted test double answers.
     pub fn user_text(&self) -> &str {
-        self.input
+        self.input()
             .iter()
             .rev()
             .find_map(|item| match item {
@@ -661,7 +600,39 @@ pub struct CompletionResponse {
     pub timing: Option<ServedTiming>,
 }
 
+/// How a reply ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Finish {
+    Complete,
+    CutOff,
+    Declined,
+    Filtered,
+}
+
+/// Fragments of a finish reason that mean the reply stopped at its output limit.
+const CUT_OFF_MARKERS: [&str; 4] = ["length", "max_tokens", "max_output_tokens", "incomplete"];
+
+impl Finish {
+    /// What a provider's finish reason says, compared without case.
+    pub fn of(reason: &str) -> Self {
+        let reason = reason.to_ascii_lowercase();
+        if CUT_OFF_MARKERS.iter().any(|marker| reason.contains(marker)) {
+            Self::CutOff
+        } else if reason.contains("content_filter") {
+            Self::Filtered
+        } else if reason == "refusal" {
+            Self::Declined
+        } else {
+            Self::Complete
+        }
+    }
+}
+
 impl CompletionResponse {
+    pub fn finish(&self) -> Finish {
+        Finish::of(&self.finish_reason)
+    }
+
     /// An answer that stopped on its own, replayed as one assistant message.
     pub fn from_text(text: impl Into<String>) -> Self {
         let text = text.into();

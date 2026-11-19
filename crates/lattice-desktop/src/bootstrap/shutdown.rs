@@ -36,11 +36,9 @@ pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
         container.jobs().close();
     }
 
-    // Kill llama-server sidecars first, synchronously,
-    // before any async cleanup runs. This is the load-bearing
-    // anti-zombie hook — by the time the tokio runtime starts tearing
-    // down (which makes Drop-based kills race-y), every sidecar PID
-    // is already SIGKILL'd. Survives panics in the rest of shutdown.
+    // Ask every llama-server sidecar to die before the async cleanup, so none
+    // holds its memory while the rest shuts down. Any still alive when this
+    // process ends, however it ends, is ended by the kernel binding.
     match app_handle
         .try_state::<SidecarSweep>()
         .and_then(|sweep| (sweep.0)(app_handle))

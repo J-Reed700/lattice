@@ -6,7 +6,10 @@ use crate::lessons::structured_call::{
 };
 use crate::{generation, model_call, outline_progress::OutlineProgress};
 use lattice_core::{
-    application::{ports::LLMPort, services::grounded_generation::GroundedRequest},
+    application::{
+        ports::LLMPort,
+        services::{grounded_generation::GroundedRequest, model_contract::ContractCall},
+    },
     shared::error::Result,
 };
 use serde_json::{Map, Value};
@@ -59,6 +62,14 @@ impl WriterExcerpts {
         })
     }
 
+    /// The excerpts, the cited first.
+    pub(super) fn ranked(&self) -> Vec<Value> {
+        self.order
+            .iter()
+            .filter_map(|(position, _)| self.excerpts.get(*position).cloned())
+            .collect()
+    }
+
     /// Those that fit in `room`, in the planner's estimate tokens, in the
     /// writer's order.
     fn within(&self, mut room: usize) -> Vec<Value> {
@@ -77,7 +88,7 @@ impl WriterExcerpts {
 }
 
 /// The sources the candidate's blocks and questions cite, by index.
-fn cited_sources(candidate: &Value) -> BTreeSet<u64> {
+pub(in crate::lessons) fn cited_sources(candidate: &Value) -> BTreeSet<u64> {
     let mut cited = BTreeSet::new();
     for field in ["blocks", "questions"] {
         for item in candidate
@@ -125,7 +136,6 @@ impl Request<'_> {
             Value::Object(prompt).to_string(),
             self.schema.clone(),
             self.output_tokens,
-            "low",
         )
     }
 }
@@ -136,25 +146,34 @@ impl Request<'_> {
 /// as the Learning model's window being too small.
 pub(super) async fn complete<T>(
     llm: &dyn LLMPort,
+    call: &ContractCall,
     request: &Request<'_>,
     excerpts: Option<&WriterExcerpts>,
     progress: Option<&OutlineProgress>,
     reasoning: Option<ReasonFirst<'_>>,
-    accept: impl Fn(&str) -> Result<T>,
+    accept: impl Fn(&str) -> Result<T> + Send + Sync,
 ) -> Result<T> {
     let Some(excerpts) = excerpts else {
-        return complete_checked_request(llm, request.with(None), progress, reasoning, accept)
-            .await;
+        return complete_checked_request(
+            llm,
+            call,
+            request.with(None),
+            progress,
+            reasoning,
+            accept,
+        )
+        .await;
     };
     let build = |room: usize| request.with(Some(excerpts.within(room)));
     let room = model_call::source_room(llm, &build(0), usize::MAX);
     let accept = &accept;
     generation::send_packed(
         llm,
+        call,
         room,
         build,
         |sent| async move {
-            complete_checked_request(llm, sent, progress, reasoning, accept).await
+            complete_checked_request(llm, call, sent, progress, reasoning, accept).await
         },
         request.subject,
         MATERIAL_DOES_NOT_FIT,

@@ -15,6 +15,7 @@
 //! docs/design/2026-10-17-chat-vision.md §11.
 
 use super::markdown_math::display_math_lines;
+use super::text::segmentation::{block_content, code_fences, CodeFence};
 
 /// The `img-N` targets of `![…](img-N)` outside code fences, in the order
 /// the answer first writes them, each once.
@@ -142,98 +143,29 @@ pub fn is_image_ref(target: &str) -> bool {
         .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// An open code fence: its marker character and run length.
-struct Fence {
-    marker: char,
-    len: usize,
-}
-
 /// Call `f(line, in_fence)` for every line (with its newline). Fence lines
 /// themselves — the opening and closing markers — count as inside. A
 /// displayed formula (`$$…$$`, `\[…\]` on lines of its own) is a fenced block
 /// too: like a diagram's labels, its text is not prose.
 fn for_each_line(markdown: &str, mut f: impl FnMut(&str, bool)) {
+    let fences: Vec<_> = code_fences(markdown).iter().map(CodeFence::whole).collect();
     let lines: Vec<&str> = markdown.split_inclusive('\n').collect();
-    let mut open: Option<Fence> = None;
+    let mut offset = 0;
     let mut index = 0;
-    while let Some(&line) = lines.get(index) {
-        index += 1;
-        match &open {
-            Some(fence) => {
-                if closes(fence, line) {
-                    open = None;
-                }
-                f(line, true);
-            }
-            None => {
-                if let Some(fence) = opens(line) {
-                    open = Some(fence);
-                    f(line, true);
-                    continue;
-                }
-                let rest = lines.get(index - 1..).unwrap_or_default();
-                match display_math_lines(rest.iter().map(|line| block_content(line))) {
-                    Some(count) => {
-                        for &line in rest.iter().take(count) {
-                            f(line, true);
-                        }
-                        index += count - 1;
-                    }
-                    None => f(line, false),
-                }
-            }
+    while let Some(rest) = lines.get(index..).filter(|rest| !rest.is_empty()) {
+        let fenced = fences.iter().any(|whole| whole.contains(&offset));
+        let math = if fenced {
+            None
+        } else {
+            display_math_lines(rest.iter().map(|line| block_content(line)))
+        };
+        let count = math.unwrap_or(1);
+        for &line in rest.iter().take(count) {
+            f(line, fenced || math.is_some());
+            offset += line.len();
         }
+        index += count;
     }
-}
-
-/// The line with its indentation, blockquote markers and one list marker
-/// removed: a fence inside a list item or a blockquote is still a fence.
-fn block_content(line: &str) -> &str {
-    let mut rest = line.trim_start();
-    while let Some(after) = rest.strip_prefix('>') {
-        rest = after.trim_start();
-    }
-    if let Some(after) = rest
-        .strip_prefix("- ")
-        .or_else(|| rest.strip_prefix("* "))
-        .or_else(|| rest.strip_prefix("+ "))
-    {
-        return after.trim_start();
-    }
-    let after = rest.trim_start_matches(|c: char| c.is_ascii_digit());
-    if after.len() < rest.len() {
-        if let Some(after) = after
-            .strip_prefix(". ")
-            .or_else(|| after.strip_prefix(") "))
-        {
-            return after.trim_start();
-        }
-    }
-    rest
-}
-
-fn opens(line: &str) -> Option<Fence> {
-    let content = block_content(line);
-    let marker = content.chars().next()?;
-    if marker != '`' && marker != '~' {
-        return None;
-    }
-    let info = content.trim_start_matches(marker);
-    let len = content.len() - info.len();
-    if len < 3 {
-        return None;
-    }
-    // A backtick fence's info string cannot itself hold a backtick.
-    if marker == '`' && info.contains('`') {
-        return None;
-    }
-    Some(Fence { marker, len })
-}
-
-fn closes(fence: &Fence, line: &str) -> bool {
-    let content = block_content(line);
-    let rest = content.trim_start_matches(fence.marker);
-    content.len() - rest.len() >= fence.len && rest.trim().is_empty()
 }
 
 /// One `![alt](target)` in a line, by byte range.

@@ -19,7 +19,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
 
-        let connect_options = crate::tests::sqlite::file_options(&db_path);
+        let connect_options = lattice_core::shared::testing::sqlite::file_options(&db_path);
 
         let pool = SqlitePoolOptions::new()
             .max_connections(5)

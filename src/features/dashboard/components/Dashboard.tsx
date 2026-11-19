@@ -152,7 +152,7 @@ export const Dashboard = () => {
     if (!id) return;
     const opened = await openDocumentFile(id, api);
     if (opened.ok && opened.data.action === 'render_internal') {
-      setPreviewSource({ ...source, filePath: opened.data.contentPath });
+      setPreviewSource(source);
     }
   };
 

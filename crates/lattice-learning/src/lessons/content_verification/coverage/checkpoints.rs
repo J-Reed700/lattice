@@ -3,32 +3,66 @@
 //! assertions as well as the original section. A section whose audit found a gap
 //! keeps its receipt: the gap is a finding, not an addition to the inventory.
 use super::*;
+use lattice_core::protocol;
 use lattice_core::shared::hash::sha256_hex;
+use lattice_core::shared::protocol::Protocol;
+use std::collections::BTreeSet;
+
+const UNIT_KEYS: Protocol = protocol!("coverage-unit", 2);
+const MAPPING_KEYS: Protocol = protocol!("coverage-mapping", 3);
+const FIDELITY_KEYS: Protocol = protocol!("coverage-fidelity", 2);
 
 fn key(llm: &dyn LLMPort, input: &Value) -> String {
-    format!(
-        "coverage-unit-v2:{}",
-        sha256_hex(
-            json!({
-                "inventoryPolicy": INVENTORY_POLICY,
-                "coveragePolicy": POLICY,
-                "model": llm.model_name(), "context": llm.max_context_tokens(),
-                "unit": input,
-            })
-            .to_string()
-        )
-    )
+    UNIT_KEYS.key(sha256_hex(
+        json!({
+            "inventoryPolicy": INVENTORY_POLICY,
+            "coveragePolicy": POLICY,
+            "model": llm.model_name(), "context": llm.max_context_tokens(),
+            "unit": input,
+        })
+        .to_string(),
+    ))
 }
 
-pub(super) fn mapping_key(llm: &dyn LLMPort, inputs: &[Value]) -> String {
-    format!("coverage-mapping-v2:{}", key(llm, &json!(inputs)))
+pub(super) fn mapping_key(llm: &dyn LLMPort, unit: &Value) -> String {
+    MAPPING_KEYS.key(key(llm, unit))
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedMapping {
+    judged: Vec<String>,
+}
+
+/// The passages saved as judged for `unit`, when every one is a passage of it.
+pub(super) async fn load_mapping(
+    llm: &dyn LLMPort,
+    unit: &Value,
+) -> Result<Option<BTreeSet<String>>> {
+    let ids: BTreeSet<String> = mapping::passages_of(unit)
+        .into_iter()
+        .map(|passage| passage.id)
+        .collect();
+    Ok(crate::lesson_drafts::checkpoint(&mapping_key(llm, unit))
+        .await?
+        .and_then(|value| serde_json::from_value::<SavedMapping>(value).ok())
+        .map(|saved| saved.judged.into_iter().collect::<BTreeSet<_>>())
+        .filter(|judged| judged.iter().all(|id| ids.contains(id))))
+}
+
+pub(super) async fn save_mapping(
+    llm: &dyn LLMPort,
+    unit: &Value,
+    judged: &BTreeSet<String>,
+) -> Result<()> {
+    let saved = SavedMapping {
+        judged: judged.iter().cloned().collect(),
+    };
+    crate::lesson_drafts::record_checkpoint(&mapping_key(llm, unit), serde_json::to_value(saved)?)
+        .await
 }
 
 pub(super) fn fidelity_key(llm: &dyn LLMPort, unit: &Value, passage: &Value) -> String {
-    format!(
-        "coverage-fidelity-v2:{}",
-        key(llm, &json!({"unit":unit,"passage":passage}))
-    )
+    FIDELITY_KEYS.key(key(llm, &json!({"unit":unit,"passage":passage})))
 }
 
 pub(super) async fn load_fidelity(key: &str) -> Result<Option<FidelityFinding>> {

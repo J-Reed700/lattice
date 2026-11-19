@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 /// Request to generate an embedding for a single text.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerateSingleEmbeddingRequestDto {
-    /// The text to generate an embedding for (max 10,000 characters)
+    /// The text to generate an embedding for
     pub text: String,
 }
 
@@ -39,7 +39,7 @@ pub struct GenerateSingleEmbeddingResponseDto {
 /// generation multiple times, especially for GPU-based models.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerateBatchEmbeddingsRequestDto {
-    /// The texts to generate embeddings for (1-100 items, each max 10,000 chars)
+    /// The texts to generate embeddings for (1-100 items)
     pub texts: Vec<String>,
 }
 

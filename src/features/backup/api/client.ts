@@ -1,4 +1,3 @@
-import type * as Wire from '@/lib/bindings';
 import { apiCall } from '@/shared/ipc/transport';
 import type {
   ApiResult,
@@ -20,13 +19,13 @@ export const backupApi = {
    * folder argument to pass.
    */
   createBackup: async (): Promise<ApiResult<CreateBackupResult>> =>
-    apiCall<Wire.CreateBackupResultDto>('plugin_create_backup', {
+    apiCall('plugin_create_backup', {
       request: { backupPath: null },
     }),
 
   /** Backups on disk, newest first. */
   listBackups: async (): Promise<ApiResult<BackupInfo[]>> => {
-    const result = await apiCall<Wire.ListBackupsResultDto>(
+    const result = await apiCall(
       'plugin_list_backups',
     );
     if (!result.ok) return result;
@@ -40,19 +39,19 @@ export const backupApi = {
   restoreBackup: async (
     backupPath: string,
   ): Promise<ApiResult<RestoreBackupResult>> =>
-    apiCall<Wire.RestoreBackupResultDto>('plugin_restore_backup', {
+    apiCall('plugin_restore_backup', {
       request: { backupPath },
     }),
 
   /** Exports conversations and journal pages as Markdown into the app's exports folder. */
   exportMarkdown: async (): Promise<ApiResult<ExportSummary>> =>
-    apiCall<Wire.ExportResultDto>('plugin_export_markdown', {
+    apiCall('plugin_export_markdown', {
       request: { outputDir: null },
     }),
 
   /** Exports conversations and journal pages as one JSON file in the app's exports folder. */
   exportJson: async (): Promise<ApiResult<ExportSummary>> =>
-    apiCall<Wire.ExportResultDto>('plugin_export_json', {
+    apiCall('plugin_export_json', {
       request: { outputPath: null, pretty: true },
     }),
 
@@ -60,17 +59,12 @@ export const backupApi = {
    * Off-device backup (encrypted archive).
    *
    * Every path in this group is chosen by a native picker on the Rust side —
-   * the webview neither sends nor receives a folder to write to. The generic
-   * on each `apiCall` is the local DTO type in `types/api/backup.ts` rather
-   * than a `Wire.*` type, because these commands are added to
-   * `lib/bindings.ts` by `npm run bindings:generate` on the Rust side.
+   * the webview neither sends nor receives a folder to write to.
    * ---------------------------------------------------------------- */
 
   /** Current archive configuration, last run, and the archives on disk. */
   getArchiveStatus: async (): Promise<ApiResult<ArchiveStatus>> =>
-    apiCall<Wire.ArchiveStatusDto>('plugin_get_archive_status') as Promise<
-      ApiResult<ArchiveStatus>
-    >,
+    apiCall('plugin_get_archive_status'),
 
   /**
    * Generates a master key and a 24-word recovery code, held in memory only.
@@ -78,7 +72,7 @@ export const backupApi = {
    * throws the previous pending setup away.
    */
   beginArchiveSetup: async (): Promise<ApiResult<ArchiveSetup>> =>
-    apiCall<Wire.ArchiveSetupDto>('plugin_begin_archive_setup'),
+    apiCall('plugin_begin_archive_setup'),
 
   /**
    * Proves the user wrote the recovery code down, then persists the envelope.
@@ -88,48 +82,46 @@ export const backupApi = {
     confirmations: WordConfirmation[],
     passphrase: string | null,
   ): Promise<ApiResult<ArchiveStatus>> =>
-    apiCall<Wire.ArchiveStatusDto>('plugin_confirm_archive_setup', {
+    apiCall('plugin_confirm_archive_setup', {
       request: { confirmations, passphrase },
-    }) as Promise<ApiResult<ArchiveStatus>>,
+    }),
 
   /** Opens the Rust-side folder picker. Cancelling returns the status unchanged. */
   chooseArchiveDestination: async (): Promise<ApiResult<ArchiveStatus>> =>
-    apiCall<Wire.ArchiveStatusDto>(
+    apiCall(
       'plugin_choose_archive_destination',
-    ) as Promise<ApiResult<ArchiveStatus>>,
+    ),
 
   /** How many archives to keep in the destination folder (1–50). */
   setArchiveKeepCount: async (
     keepCount: number,
   ): Promise<ApiResult<ArchiveStatus>> =>
-    apiCall<Wire.ArchiveStatusDto>('plugin_set_archive_keep_count', {
+    apiCall('plugin_set_archive_keep_count', {
       request: { keepCount },
-    }) as Promise<ApiResult<ArchiveStatus>>,
+    }),
 
   /** Sets, changes, or (with `null`) removes the passphrase slot. */
   setArchivePassphrase: async (
     passphrase: string | null,
   ): Promise<ApiResult<ArchiveStatus>> =>
-    apiCall<Wire.ArchiveStatusDto>('plugin_set_archive_passphrase', {
+    apiCall('plugin_set_archive_passphrase', {
       request: { passphrase },
-    }) as Promise<ApiResult<ArchiveStatus>>,
+    }),
 
   /**
    * Issues a new recovery code. Confirm it with `confirmArchiveSetup`; the
    * passphrase slot is untouched, so pass `null` for the passphrase there.
    */
   rotateRecoveryCode: async (): Promise<ApiResult<ArchiveSetup>> =>
-    apiCall<Wire.ArchiveSetupDto>('plugin_rotate_recovery_code'),
+    apiCall('plugin_rotate_recovery_code'),
 
   /** Stops writing archives. The key and the envelope stay, so it can be turned back on. */
   disableArchive: async (): Promise<ApiResult<ArchiveStatus>> =>
-    apiCall<Wire.ArchiveStatusDto>('plugin_disable_archive') as Promise<
-      ApiResult<ArchiveStatus>
-    >,
+    apiCall('plugin_disable_archive'),
 
   /** Writes one archive now, outside the schedule. */
   createArchiveNow: async (): Promise<ApiResult<ArchiveRun>> =>
-    apiCall<Wire.ArchiveRunDto>('plugin_create_archive_now'),
+    apiCall('plugin_create_archive_now'),
 
   /**
    * Restores from an archive the user picks in the Rust-side file dialog.
@@ -140,7 +132,7 @@ export const backupApi = {
   restoreArchive: async (
     secret: string | null,
   ): Promise<ApiResult<RestoreArchiveResult>> =>
-    apiCall<Wire.RestoreArchiveResultDto>('plugin_restore_archive', {
+    apiCall('plugin_restore_archive', {
       request: { secret },
-    }) as Promise<ApiResult<RestoreArchiveResult>>,
+    }),
 };

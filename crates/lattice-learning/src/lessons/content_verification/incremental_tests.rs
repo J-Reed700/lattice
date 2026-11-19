@@ -31,6 +31,12 @@ impl LLMPort for IncrementalModel {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 impl IncrementalModel {
     async fn respond(&self, prompt: &str) -> Result<String> {
@@ -87,10 +93,11 @@ fn references(count: usize) -> Vec<LearningSourceDto> {
 #[tokio::test]
 async fn one_fact_edit_in_175_claims_rechecks_only_that_fact_and_resume_reuses_all() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&db).await?;
     let sources = references(175);
     let model = IncrementalModel::default();
-    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+    lesson_drafts::run(&db, &repo, &job, &lesson, async {
         // Twenty-two facts to a section, a sentence each, as in a real
         // extracted paragraph. Editing one fact rewrites its sentence alone.
         let sentence = |n: usize| format!("Mineral {n} is recorded.");
@@ -107,10 +114,10 @@ async fn one_fact_edit_in_175_claims_rechecks_only_that_fact_and_resume_reuses_a
         assert_eq!(model.calls.lock().unwrap().len(), 175);
         let before: Vec<_> = inventory.units.iter().map(|u|json!({"kind":"teaching","body":u.claims.iter().map(|claim| claim.quote.as_str()).collect::<Vec<_>>().join(" ")})).collect();
         for unit in &inventory.units { inventory::revisions::save(&model, &before, unit).await?; }
-        // A real scalar-text patch, not a replacement section.
-        let document = json!({"blocks":before,"questions":[]});
-        let revised = crate::lessons::text_edits::apply(&document,
-            &json!({"edits":[{"path":"/blocks/0/body","before":sentence(0),"after":"Mineral 0 is catalogued."}]}).to_string())?;
+        // One sentence rewritten in place, not a replacement section.
+        let mut revised = json!({"blocks":before,"questions":[]});
+        let body = revised["blocks"][0]["body"].as_str().unwrap().replacen(&sentence(0), "Mineral 0 is catalogued.", 1);
+        revised["blocks"][0]["body"] = json!(body);
         let content: Vec<Value> = serde_json::from_value(revised["blocks"].clone())?;
         struct DeltaModel;
         #[async_trait::async_trait]
@@ -126,13 +133,16 @@ async fn one_fact_edit_in_175_claims_rechecks_only_that_fact_and_resume_reuses_a
             fn max_context_tokens(&self) -> usize { 128000 }
             fn count_tokens(&self, text: &str) -> usize { text.len()/4 }
             async fn is_ready(&self) -> Result<bool> { Ok(true) }
+            fn enforces(&self, _schema: &lattice_core::application::services::model_contract::shape::Schema) -> bool {
+                false
+            }
         }
         impl DeltaModel {
             async fn respond(&self, prompt: &str) -> Result<String> {
                 assert!(prompt.starts_with("Extract lesson claims."));
-                let data = context(prompt);
+                let data = fixture_task(prompt).unwrap();
                 let passage = &data["units"][0]["passages"][0];
-                Ok(inventory::fixture_response(vec![json!({"index":0,"claims":[{"passageId":passage["id"],"statement":"mineral0"}],"nonFactualReason":""})]).to_string())
+                Ok(inventory::fixture_response(vec![json!({"of":data["units"][0]["id"],"claims":[{"sentenceId":sentence_id(passage, "mineral0"),"statement":"mineral0"}],"nonFactualReason":""})]).to_string())
             }
         }
 
@@ -148,14 +158,14 @@ async fn one_fact_edit_in_175_claims_rechecks_only_that_fact_and_resume_reuses_a
         assert_eq!(updated.claims[21].quote, "Mineral 0 is catalogued.");
         inventory.units[0] = updated;
         let result = paged(&model, &collection, &inventory, &ClaimChecks::default()).await?;
-        assert_eq!(result.iter().filter(|r| r.reused).count(), 174);
+        assert_eq!(result.iter().filter(|r| r.reused()).count(), 174);
         assert_eq!(model.calls.lock().unwrap().len(), 176);
         assert_eq!(model.calls.lock().unwrap().last().unwrap(), "mineral0");
         // Drop memory caches, restore from SQLite, and compare the saved delta.
         let restored = inventory::revisions::update(&DeltaModel, &content, 0).await?.unwrap();
         assert_eq!(restored.claims[21].statement, "mineral0");
         let result = paged(&model, &collection, &inventory, &ClaimChecks::default()).await?;
-        assert_eq!(result.iter().filter(|r| r.reused).count(), 175);
+        assert_eq!(result.iter().filter(|r| r.reused()).count(), 175);
         assert_eq!(model.calls.lock().unwrap().len(), 176);
         Ok(())
     }).await
@@ -164,9 +174,10 @@ async fn one_fact_edit_in_175_claims_rechecks_only_that_fact_and_resume_reuses_a
 #[tokio::test]
 async fn a_receipt_is_found_only_for_the_statement_on_the_quote_it_was_saved_for() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&db).await?;
     let model = IncrementalModel::default();
-    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+    lesson_drafts::run(&db, &repo, &job, &lesson, async {
         // Two sources, so the claim's words tell its passage from the other.
         let sources = references(2);
         let collection = ReferenceCollection::lexical(&sources)?;
@@ -189,12 +200,12 @@ async fn a_receipt_is_found_only_for_the_statement_on_the_quote_it_was_saved_for
         // displace the evidence of the completed comparison.
         lesson_drafts::record_checkpoint(&pending_selection,json!({"sources":evidence_selection::sources(&collection),"passages":[{"source_id":"source0","start":0,"end":8,"sha256":sha256_hex("mineral0")}]})).await?;
         let result = paged(&model,&collection,&revised,&ClaimChecks::default()).await?;
-        assert!(!result[0].reused, "A receipt saved for the statement on another quote was found for this one");
-        assert_eq!(result[0].finding.quote,revised.units[0].claims[0].quote);
+        assert!(!result[0].reused(), "A receipt saved for the statement on another quote was found for this one");
+        assert_eq!(result[0].finding().quote,revised.units[0].claims[0].quote);
         assert_eq!(model.calls.lock().unwrap().len(),1);
         revised.units[0].claims[0].statement = "mineral0".into();
         let result = paged(&model,&collection,&revised,&ClaimChecks::default()).await?;
-        assert!(!result[0].reused, "A changed assertion cannot inherit the old verdict");
+        assert!(!result[0].reused(), "A changed assertion cannot inherit the old verdict");
         assert_eq!(model.calls.lock().unwrap().len(),2);
         Ok(())
     }).await
@@ -204,20 +215,18 @@ async fn a_receipt_is_found_only_for_the_statement_on_the_quote_it_was_saved_for
 async fn research_reopens_one_of_170_checks_and_resume_reuses_all_completed_decisions() -> Result<()>
 {
     let dir = tempfile::tempdir()?;
-    let options = crate::test_support::file_options(dir.path().join("incremental.db"));
+    let path = dir.path().join("incremental.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
+    let options = crate::test_support::file_options(path);
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options.clone())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+        .await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&db).await?;
     let mut sources = references(170);
     let model = IncrementalModel::default();
-    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+    lesson_drafts::run(&db, &repo, &job, &lesson, async {
         let result = paged(
             &model,
             &ReferenceCollection::lexical(&sources)?,
@@ -235,13 +244,13 @@ async fn research_reopens_one_of_170_checks_and_resume_reuses_all_completed_deci
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
-    JobStore::new(pool.clone())
+        .await?;
+    let db = Database::new(pool.clone());
+    let repo = LearningCurriculumRepository::new(db.clone());
+    JobStore::new(db.clone())
         .recover(LESSON_PREPARATION, RecoveryPolicy::Requeue)
         .await?;
-    assert!(JobStore::new(pool.clone()).claim(&job).await?.is_some());
+    assert!(JobStore::new(db.clone()).claim(&job).await?.is_some());
     let broad_counterevidence = format!(
         "{} COUNTEREVIDENCE",
         (0..170)
@@ -257,7 +266,7 @@ async fn research_reopens_one_of_170_checks_and_resume_reuses_all_completed_deci
         acquired_at: 1,
     });
     let resumed = IncrementalModel::default();
-    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+    lesson_drafts::run(&db, &repo, &job, &lesson, async {
         let collection = ReferenceCollection::lexical(&sources)?;
         {
             let transient = ClaimChecks::default();
@@ -278,6 +287,7 @@ async fn research_reopens_one_of_170_checks_and_resume_reuses_all_completed_deci
                     class: None,
                     trust: None,
                 }],
+                &[],
                 &transient,
             )
             .await?;
@@ -286,15 +296,15 @@ async fn research_reopens_one_of_170_checks_and_resume_reuses_all_completed_deci
         // target from SQLite rather than treating this broadly matching source
         // as a reason to reopen all 170 completed comparisons.
         let result = paged(&resumed, &collection, &claims(170), &ClaimChecks::default()).await?;
-        assert_eq!(result.iter().filter(|r| r.reused).count(), 169);
+        assert_eq!(result.iter().filter(|r| r.reused()).count(), 169);
         assert_eq!(*resumed.calls.lock().unwrap(), vec!["mineral84 property84"]);
         assert_eq!(
-            result[84].finding.verdict,
+            result[84].finding().verdict,
             ClaimVerdict::Contradicted,
             "Research must reopen a previous approval when counterevidence is retrieved"
         );
         assert_eq!(
-            result[84].finding.evidence.len(),
+            result[84].finding().evidence.len(),
             2,
             "Retain the original evidence alongside the new source"
         );
@@ -306,7 +316,7 @@ async fn research_reopens_one_of_170_checks_and_resume_reuses_all_completed_deci
         )
         .await?;
         assert_eq!(
-            result.iter().filter(|r| r.reused).count(),
+            result.iter().filter(|r| r.reused()).count(),
             170,
             "Completed negative verdicts are also reusable; repeating them is not progress"
         );
@@ -322,7 +332,7 @@ async fn research_reopens_one_of_170_checks_and_resume_reuses_all_completed_deci
             &ClaimChecks::default(),
         )
         .await?;
-        assert_eq!(result.iter().filter(|r| r.reused).count(), 170);
+        assert_eq!(result.iter().filter(|r| r.reused()).count(), 170);
         assert_eq!(*resumed.calls.lock().unwrap(), vec!["mineral84 property84"]);
         sources[169].excerpt.push_str(" revised");
         let result = paged(
@@ -333,7 +343,7 @@ async fn research_reopens_one_of_170_checks_and_resume_reuses_all_completed_deci
         )
         .await?;
         assert_eq!(
-            result.iter().filter(|r| r.reused).count(),
+            result.iter().filter(|r| r.reused()).count(),
             169,
             "Changing one source must not replace evidence for unrelated claims"
         );
@@ -352,10 +362,11 @@ async fn research_reopens_one_of_170_checks_and_resume_reuses_all_completed_deci
 #[tokio::test]
 async fn ranking_churn_and_unrelated_research_do_not_replace_pinned_evidence() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&db).await?;
     let mut sources = references(10);
     let model = IncrementalModel::default();
-    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+    lesson_drafts::run(&db, &repo, &job, &lesson, async {
         let first = paged(
             &model,
             &ReferenceCollection::lexical(&sources)?,
@@ -391,6 +402,7 @@ async fn ranking_churn_and_unrelated_research_do_not_replace_pinned_evidence() -
                 label: None,
                 class: None,
             }],
+            &[],
             &ClaimChecks::default(),
         )
         .await?;
@@ -398,15 +410,15 @@ async fn ranking_churn_and_unrelated_research_do_not_replace_pinned_evidence() -
         let claim = &claims(1).units[0].claims[0];
         assert_ne!(
             ClaimChecks::key(0, claim, &fresh),
-            ClaimChecks::key(0, claim, &first[0].finding.evidence),
+            ClaimChecks::key(0, claim, &first[0].finding().evidence),
             "The fixture must actually change the claim's fresh retrieval"
         );
         let resumed = paged(&model, &references, &claims(1), &ClaimChecks::default()).await?;
-        assert!(resumed[0].reused);
+        assert!(resumed[0].reused());
         assert_eq!(model.calls.lock().unwrap().len(), 1);
         assert_eq!(
-            ClaimChecks::key(0, claim, &resumed[0].finding.evidence),
-            ClaimChecks::key(0, claim, &first[0].finding.evidence)
+            ClaimChecks::key(0, claim, &resumed[0].finding().evidence),
+            ClaimChecks::key(0, claim, &first[0].finding().evidence)
         );
         Ok(())
     })
@@ -416,10 +428,11 @@ async fn ranking_churn_and_unrelated_research_do_not_replace_pinned_evidence() -
 #[tokio::test]
 async fn the_ranking_bump_rebuilds_the_first_page_of_the_course_once() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&db).await?;
     let sources = references(3);
     let model = IncrementalModel::default();
-    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+    lesson_drafts::run(&db, &repo, &job, &lesson, async {
         let references = ReferenceCollection::lexical(&sources)?;
         let claim = &claims(1).units[0].claims[0];
         // A selection the former ranking saved for this claim, pointing at a
@@ -440,14 +453,14 @@ async fn the_ranking_bump_rebuilds_the_first_page_of_the_course_once() -> Result
         )
         .await?;
         let first = paged(&model, &references, &claims(1), &ClaimChecks::default()).await?;
-        assert_eq!(first[0].finding.verdict, ClaimVerdict::Supported);
-        assert!(first[0].finding.evidence[0]
+        assert_eq!(first[0].finding().verdict, ClaimVerdict::Supported);
+        assert!(first[0].finding().evidence[0]
             .text
             .contains("mineral0 property0"));
         assert_eq!(model.calls.lock().unwrap().len(), 1);
         // Rebuilt once: a second pass with unchanged sources makes no call.
         let second = paged(&model, &references, &claims(1), &ClaimChecks::default()).await?;
-        assert!(second[0].reused);
+        assert!(second[0].reused());
         assert_eq!(model.calls.lock().unwrap().len(), 1);
         Ok(())
     })
@@ -457,9 +470,10 @@ async fn the_ranking_bump_rebuilds_the_first_page_of_the_course_once() -> Result
 #[tokio::test]
 async fn interrupted_new_evidence_cannot_inherit_the_previous_approval() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&db).await?;
     let mut sources = references(2);
-    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+    lesson_drafts::run(&db, &repo, &job, &lesson, async {
         paged(
             &IncrementalModel::default(),
             &ReferenceCollection::lexical(&sources)?,
@@ -494,8 +508,8 @@ async fn interrupted_new_evidence_cannot_inherit_the_previous_approval() -> Resu
             &ClaimChecks::default(),
         )
         .await?;
-        assert!(!resumed[0].reused);
-        assert_eq!(resumed[0].finding.verdict, ClaimVerdict::Contradicted);
+        assert!(!resumed[0].reused());
+        assert_eq!(resumed[0].finding().verdict, ClaimVerdict::Contradicted);
         assert_eq!(model.calls.lock().unwrap().len(), 1);
         Ok(())
     })
@@ -505,8 +519,9 @@ async fn interrupted_new_evidence_cannot_inherit_the_previous_approval() -> Resu
 #[tokio::test]
 async fn teaching_review_survives_added_sources_but_not_changed_content_or_sources() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
-    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&db).await?;
+    lesson_drafts::run(&db, &repo, &job, &lesson, async {
         lesson_drafts::resume("teaching-fixture".into()).await?;
         let candidate = candidate(GOOD).to_string();
         let mut sources = vec![source()];
@@ -514,10 +529,10 @@ async fn teaching_review_survives_added_sources_but_not_changed_content_or_sourc
             &Model::new(),
             "system",
             "{}",
-            &json!({}),
+            crate::teaching::ReviewSchema::Other(&json!({})),
             candidate.clone(),
             3000,
-            &ReferenceCollection::lexical(&sources)?,
+            (&ReferenceCollection::lexical(&sources)?, &[]),
             &[],
         )
         .await?;
@@ -544,6 +559,12 @@ async fn teaching_review_survives_added_sources_but_not_changed_content_or_sourc
             async fn is_ready(&self) -> Result<bool> {
                 Ok(true)
             }
+            fn enforces(
+                &self,
+                _schema: &lattice_core::application::services::model_contract::shape::Schema,
+            ) -> bool {
+                false
+            }
         }
         impl NoRequests {
             async fn respond(&self, _prompt: &str) -> Result<String> {
@@ -556,10 +577,10 @@ async fn teaching_review_survives_added_sources_but_not_changed_content_or_sourc
             &NoRequests,
             "system",
             "{}",
-            &json!({}),
+            crate::teaching::ReviewSchema::Other(&json!({})),
             first.clone(),
             3000,
-            &ReferenceCollection::lexical(&sources)?,
+            (&ReferenceCollection::lexical(&sources)?, &[]),
             &[],
         )
         .await?;
@@ -569,10 +590,10 @@ async fn teaching_review_survives_added_sources_but_not_changed_content_or_sourc
             &NoRequests,
             "system",
             "{}",
-            &json!({}),
+            crate::teaching::ReviewSchema::Other(&json!({})),
             first,
             3000,
-            &ReferenceCollection::lexical(&sources)?,
+            (&ReferenceCollection::lexical(&sources)?, &[]),
             &[],
         )
         .await
@@ -581,10 +602,10 @@ async fn teaching_review_survives_added_sources_but_not_changed_content_or_sourc
             &NoRequests,
             "system",
             "{}",
-            &json!({}),
+            crate::teaching::ReviewSchema::Other(&json!({})),
             candidate.replace(GOOD, BAD),
             3000,
-            &ReferenceCollection::lexical(&sources)?,
+            (&ReferenceCollection::lexical(&sources)?, &[]),
             &[],
         )
         .await

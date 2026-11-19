@@ -2,7 +2,7 @@
 //! plan, with completed and assessed lessons kept in place.
 
 use super::{
-    id, not_blank, text, validate_curriculum, validate_lesson, LearningCurriculumChange,
+    id, not_blank, validate_curriculum, validate_lesson, LearningCurriculumChange,
     LearningCurriculumChangeKind, LearningCurriculumLesson, LearningCurriculumLessonState,
     LearningCurriculumModule, LearningCurriculumOperation, LearningCurriculumRevision,
     LearningCurriculumRevisionRequest, LearningCurriculumRevisionResult,
@@ -126,10 +126,10 @@ pub fn apply_curriculum_revision(
             "A curriculum revision needs a new identifier.".into(),
         ));
     }
-    text(&request.reason, "Curriculum revision reason", 2_000)?;
-    if request.operations.is_empty() || request.operations.len() > 64 {
+    not_blank(&request.reason, "Curriculum revision reason")?;
+    if request.operations.is_empty() {
         return Err(AppError::InvalidInput(
-            "A curriculum revision must contain 1–64 changes.".into(),
+            "A curriculum revision must contain at least one change.".into(),
         ));
     }
     let before = required_count(&base.modules);
@@ -179,9 +179,9 @@ pub fn apply_curriculum_revision(
             } => {
                 not_blank(&title, "Lesson title")?;
                 not_blank(&objective, "Lesson objective")?;
-                if !(1..=600).contains(&estimated_minutes) {
+                if estimated_minutes < 1 {
                     return Err(AppError::InvalidInput(
-                        "Lesson time must be between 1 and 600 minutes.".into(),
+                        "Lesson time must be at least 1 minute.".into(),
                     ));
                 }
                 let (module_index, lesson_index) = lesson_location(&modules, &lesson_id)

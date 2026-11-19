@@ -4,9 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   getSourceExternalUrl,
   getSourcePreviewKind,
-  getWebArchiveHtmlPath,
   isHttpUrl,
-  isWebArchiveArticlePath,
   renderHighlightedText,
   selectInformativeTerms,
   termSalience,
@@ -67,35 +65,7 @@ describe('source URLs', () => {
   });
 });
 
-describe('archived web sources', () => {
-  it.each([
-    ['/Users/me/.lattice/web-archive/id/article.md', true],
-    [' /USERS/ME/.LATTICE/WEB-ARCHIVE/ID/WEBLINK.MD ', true],
-    ['/Users/me/.lattice/web-archive/id/notes.md', false],
-    ['/Users/me/article.md', false],
-    ['', false],
-  ] as const)('classifies %j as archived=%s', (path, expected) => {
-    expect(isWebArchiveArticlePath(path)).toBe(expected);
-  });
-
-  it('maps an archived markdown record to its captured HTML sibling', () => {
-    expect(getWebArchiveHtmlPath('/Users/me/.lattice/web-archive/id/article.md'))
-      .toBe('/Users/me/.lattice/web-archive/id/page.html');
-  });
-
-  it('does not produce an HTML path for an ordinary markdown file', () => {
-    expect(getWebArchiveHtmlPath('/Users/me/notes/article.md')).toBeNull();
-  });
-});
-
 describe('preview kind', () => {
-  it('gives archived pages precedence over their local markdown path', () => {
-    expect(getSourcePreviewKind({
-      filePath: '/Users/me/.lattice/web-archive/id/article.md',
-      path: 'https://example.com',
-    })).toBe('archived-web');
-  });
-
   it.each([
     [{ filePath: 'https://example.com' }, 'external-web'],
     [{ path: 'example.com/story' }, 'external-web'],

@@ -5,6 +5,7 @@ use lattice_core::{
         llm_port::{CompletionInput, CompletionRequest, CompletionResponse, SamplingOverride},
         LLMPort,
     },
+    application::services::model_contract::legacy,
     shared::error::Result,
 };
 
@@ -20,7 +21,7 @@ pub(super) fn candidate(inner: std::sync::Arc<dyn LLMPort>) -> std::sync::Arc<dy
 impl LLMPort for Candidate {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let system = request
-            .input
+            .input()
             .iter()
             .find_map(|item| match item {
                 CompletionInput::Message { role, content } if role == "system" => {
@@ -38,16 +39,16 @@ impl LLMPort for Candidate {
         };
         // A correction already carries an assistant answer; let the production
         // correction proceed rather than inventing a new draft for that step.
-        if request.json_schema.is_none()
-            || request.input.iter().any(
+        if request.schema().is_none()
+            || request.input().iter().any(
                 |item| matches!(item, CompletionInput::Message { role, .. } if role == "assistant"),
             )
         {
             return self.inner.complete(request).await;
         }
         let mut draft_request = request.clone();
-        draft_request.json_schema = None;
-        for item in &mut draft_request.input {
+        *legacy::says(&mut draft_request).schema = None;
+        for item in legacy::says(&mut draft_request).input.iter_mut() {
             if let CompletionInput::Message { role, content } = item {
                 if role == "system" {
                     content.push_str(&format!("\n\nAnswer in two steps. Step 1, now: work through the task in prose. {brief} Write out everything the final answer needs, in full. Step 2 is requested separately and turns this draft into the final answer."));
@@ -59,13 +60,15 @@ impl LLMPort for Candidate {
             return self.inner.complete(request).await;
         }
         let mut answer = draft_request;
-        answer.json_schema = request.json_schema.clone();
+        *legacy::says(&mut answer).schema = request.schema().cloned();
         answer.sampling = Some(SamplingOverride::deterministic());
-        answer.input.push(CompletionInput::Message {
-            role: "assistant".into(),
-            content: draft.text,
-        });
-        answer.input.push(CompletionInput::Message {
+        legacy::says(&mut answer)
+            .input
+            .push(CompletionInput::Message {
+                role: "assistant".into(),
+                content: draft.text,
+            });
+        legacy::says(&mut answer).input.push(CompletionInput::Message {
             role:"user".into(),
             content:"Step 2: give the final answer from your draft. Keep its content, wording, numbers, citations and answers. Copy quotations and identifiers exactly as the task supplies them. Where the draft left something out or stopped early, complete it from the task.".into(),
         });
@@ -98,5 +101,11 @@ impl LLMPort for Candidate {
     }
     fn is_alive(&self) -> bool {
         self.inner.is_alive()
+    }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
     }
 }

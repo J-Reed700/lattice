@@ -60,6 +60,12 @@ impl LLMPort for SummaryPlannerStub {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 impl SummaryPlannerStub {
     async fn respond(&self, prompt: &str) -> Result<String> {
@@ -93,8 +99,7 @@ fn summaries(entries: &[(&str, &str)]) -> HashMap<String, String> {
         .collect()
 }
 
-const PLAN: &str =
-    r#"{"queries":["engine start"],"opening_document_ids":[],"start_at_beginning":false}"#;
+const PLAN: &str = r#"{"queries":[{"query":"engine start"}],"opening_document_ids":[],"start_at_beginning":"false"}"#;
 
 #[tokio::test]
 async fn the_catalog_carries_summaries_when_the_tier_has_them() {

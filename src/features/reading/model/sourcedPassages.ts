@@ -82,9 +82,6 @@ function canonical(raw: string): string {
   return NUMBER_WORDS.get(token) ?? token;
 }
 
-/** `[3]`, `[1][3]` and `[1, 3]` — every form the answers actually carry. */
-const CITATION_MARKER = /\[\d{1,4}(?:\s*,\s*\d{1,4})*\]/g;
-
 interface WeightedToken {
   text: string;
   weight: number;
@@ -190,11 +187,6 @@ function sectionStarts(pageText: string): number[] {
   return starts;
 }
 
-/** The text with `[n]` markers taken out, so they cannot count as content. */
-export function stripCitationMarkers(text: string): string {
-  return text.replace(CITATION_MARKER, ' ');
-}
-
 function isStopword(token: string): boolean {
   return STOPWORDS.has(token) || (token.length < 2 && !/\p{N}/u.test(token));
 }
@@ -207,11 +199,10 @@ function isStopword(token: string): boolean {
  * the answer is about, however many ordinary words it happens to share.
  */
 function weighTokens(sentence: string): WeightedToken[] {
-  const stripped = stripCitationMarkers(sentence);
   const weights = new Map<string, number>();
   let position = 0;
 
-  for (const match of stripped.matchAll(TOKEN_PATTERN)) {
+  for (const match of sentence.matchAll(TOKEN_PATTERN)) {
     const raw = match[0];
     const token = canonical(raw);
     position += 1;
@@ -359,7 +350,7 @@ function bestClauseWindow(
   sentence: string,
   locate: (_text: string, _maxSize: number) => Window | null
 ): Window | null {
-  const clauses = stripCitationMarkers(sentence).split(CLAUSE_BREAK);
+  const clauses = sentence.split(CLAUSE_BREAK);
   if (clauses.length < 2) return null;
   let best: Window | null = null;
   for (const clause of clauses) {

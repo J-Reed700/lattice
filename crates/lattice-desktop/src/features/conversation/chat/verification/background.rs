@@ -20,6 +20,7 @@ use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 
+use super::super::reply_text::ReplyText;
 use super::super::source_snapshots;
 use super::super::turn_record::{TurnRecordDto, TurnStepKind, TurnStepState};
 use super::super::ChatStreamEventDto;
@@ -55,7 +56,7 @@ pub(in crate::features::conversation) struct BackgroundVerification {
     pub conversation_id: String,
     pub request_id: String,
     pub message_id: String,
-    pub response: String,
+    pub reply: ReplyText,
     pub sources: Vec<SourceDto>,
     /// Only the answer's cited sentences are claims about the sources, as in
     /// an Explorer turn (`GroundingVerifier::cited_only`).
@@ -132,14 +133,14 @@ impl BackgroundVerification {
             .with_tuning(&self.tuning)
             .cited_only(self.verifies_cited_only)
             .without_session_talk(self.drops_session_talk);
-        let response = self.response.clone();
+        let reply = self.reply.clone();
         let report = tokio::select! {
             biased;
             _ = cancel.cancelled() => {
                 self.finish_cancelled().await;
                 return;
             }
-            report = verifier.verify(&response, &evidence) => report,
+            report = verifier.verify(&reply, &evidence) => report,
         };
         let elapsed_ms = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
@@ -278,9 +279,11 @@ mod tests {
         let verification = BackgroundVerification {
             conversation_repository: Arc::new(
                 crate::features::conversation::repository::ConversationRepository::new(
-                    sqlx::sqlite::SqlitePoolOptions::new()
-                        .connect_lazy("sqlite::memory:")
-                        .unwrap(),
+                    lattice_core::shared::persistence::Database::new(
+                        sqlx::sqlite::SqlitePoolOptions::new()
+                            .connect_lazy("sqlite::memory:")
+                            .unwrap(),
+                    ),
                 ),
             ),
             conversation_service: service,
@@ -288,7 +291,10 @@ mod tests {
             conversation_id: "conversation-1".to_string(),
             request_id: "request-1".to_string(),
             message_id: "message-1".to_string(),
-            response: "A completed answer.".to_string(),
+            reply: ReplyText {
+                text: "A completed answer.".to_string(),
+                ..Default::default()
+            },
             sources: vec![],
             verifies_cited_only: false,
             drops_session_talk: false,

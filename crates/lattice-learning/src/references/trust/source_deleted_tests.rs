@@ -16,8 +16,8 @@ use lattice_core::domain::learning::claim_review::{
     VerdictKind,
 };
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 use serde_json::json;
-use sqlx::SqlitePool;
 
 const MODEL: &str = "qwen3.5-27b";
 const QUOTE: &str = "A conforming parser rejects a trailing comma.";
@@ -56,13 +56,13 @@ async fn delete_in_the_library_row(course: &Course, saved: &Saved) {
         .unwrap();
 }
 
-async fn extracted(pool: &SqlitePool, lesson_id: &str, unit: usize, quote: &str) -> ClaimId {
+async fn extracted(database: &Database, lesson_id: &str, unit: usize, quote: &str) -> ClaimId {
     let claim = ClaimId(id());
     let event = ClaimEvent::Extracted {
         location: ClaimLocation::locate(unit, UnitKind::Block, "body", quote, quote),
         statement: quote.into(),
     };
-    append(pool, lesson_id, &claim, Actor::Machine, event).await;
+    append(database, lesson_id, &claim, Actor::Machine, event).await;
     claim
 }
 
@@ -80,52 +80,59 @@ fn local_check(result: CheckResult) -> ClaimEvent {
 }
 
 /// A claim a check resolved by a passage of `version`.
-async fn resolved_by(pool: &SqlitePool, lesson_id: &str, version: &str) -> ClaimId {
-    resolved_at(pool, lesson_id, (0, QUOTE), version).await
+async fn resolved_by(database: &Database, lesson_id: &str, version: &str) -> ClaimId {
+    resolved_at(database, lesson_id, (0, QUOTE), version).await
 }
 
 /// A claim on `place` (unit and quote) a check resolved by `version`.
 async fn resolved_at(
-    pool: &SqlitePool,
+    database: &Database,
     lesson_id: &str,
     place: (usize, &str),
     version: &str,
 ) -> ClaimId {
-    let claim = extracted(pool, lesson_id, place.0, place.1).await;
+    let claim = extracted(database, lesson_id, place.0, place.1).await;
     let result = CheckResult::Supported {
         source_version_id: version.into(),
         supporting_quote: place.1.into(),
     };
-    append(pool, lesson_id, &claim, Actor::Machine, local_check(result)).await;
+    append(
+        database,
+        lesson_id,
+        &claim,
+        Actor::Machine,
+        local_check(result),
+    )
+    .await;
     claim
 }
 
 /// A claim the user confirmed, binding the confirmation to `version`.
-async fn confirmed_on(pool: &SqlitePool, lesson_id: &str, version: &str) -> ClaimId {
-    let claim = extracted(pool, lesson_id, 0, QUOTE).await;
+async fn confirmed_on(database: &Database, lesson_id: &str, version: &str) -> ClaimId {
+    let claim = extracted(database, lesson_id, 0, QUOTE).await;
     let failed = local_check(CheckResult::Failed {
         kind: VerdictKind::Unsupported,
     });
-    append(pool, lesson_id, &claim, Actor::Machine, failed).await;
+    append(database, lesson_id, &claim, Actor::Machine, failed).await;
     let confirm = ClaimEvent::UserAction {
         action: UserAction::Confirm {
             bound: HumanBinding::new(QUOTE, vec![version.to_owned()]),
         },
         note: None,
     };
-    append(pool, lesson_id, &claim, Actor::User, confirm).await;
+    append(database, lesson_id, &claim, Actor::User, confirm).await;
     claim
 }
 
-async fn cause_of(pool: &SqlitePool, lesson_id: &str, claim: &ClaimId) -> Option<ReopenCause> {
-    match claim_entry(pool, lesson_id, claim).await.state() {
+async fn cause_of(database: &Database, lesson_id: &str, claim: &ClaimId) -> Option<ReopenCause> {
+    match claim_entry(database, lesson_id, claim).await.state() {
         ClaimState::Reopened { cause, .. } => Some(cause.clone()),
         _ => None,
     }
 }
 
-async fn events_written(pool: &SqlitePool, lesson_id: &str) -> usize {
-    ClaimReviewRepository::new(pool.clone())
+async fn events_written(database: &Database, lesson_id: &str) -> usize {
+    ClaimReviewRepository::new(database.clone())
         .load(lesson_id)
         .await
         .unwrap()
@@ -135,8 +142,8 @@ async fn events_written(pool: &SqlitePool, lesson_id: &str) -> usize {
         .sum()
 }
 
-async fn revision(pool: &SqlitePool, lesson_id: &str) -> i64 {
-    ClaimReviewRepository::new(pool.clone())
+async fn revision(database: &Database, lesson_id: &str) -> i64 {
+    ClaimReviewRepository::new(database.clone())
         .load(lesson_id)
         .await
         .unwrap()
@@ -150,27 +157,27 @@ async fn deleting_a_source_reopens_the_statements_that_rest_on_it() -> Result<()
     let lesson_id = waiting_lesson(&course).await?;
     let doomed = source(&course, "doomed").await?;
     let other = source(&course, "other").await?;
-    let resolved = resolved_by(&course.pool, &lesson_id, &doomed.version_id).await;
-    let confirmed = confirmed_on(&course.pool, &lesson_id, &doomed.version_id).await;
-    let elsewhere = confirmed_on(&course.pool, &lesson_id, &other.version_id).await;
-    let before = revision(&course.pool, &lesson_id).await;
+    let resolved = resolved_by(&course.database, &lesson_id, &doomed.version_id).await;
+    let confirmed = confirmed_on(&course.database, &lesson_id, &doomed.version_id).await;
+    let elsewhere = confirmed_on(&course.database, &lesson_id, &other.version_id).await;
+    let before = revision(&course.database, &lesson_id).await;
 
     delete(&course, &doomed).await?;
 
     let cause = ReopenCause::SourceDeleted(doomed.version_id.clone());
     assert_eq!(
-        cause_of(&course.pool, &lesson_id, &resolved).await,
+        cause_of(&course.database, &lesson_id, &resolved).await,
         Some(cause.clone()),
         "a claim resolved by the deleted source's version reopens"
     );
     assert_eq!(
-        cause_of(&course.pool, &lesson_id, &confirmed).await,
+        cause_of(&course.database, &lesson_id, &confirmed).await,
         Some(cause),
         "a confirmation bound to the deleted source's version reopens"
     );
     assert!(
         matches!(
-            claim_entry(&course.pool, &lesson_id, &elsewhere)
+            claim_entry(&course.database, &lesson_id, &elsewhere)
                 .await
                 .state(),
             ClaimState::Confirmed { .. }
@@ -178,7 +185,7 @@ async fn deleting_a_source_reopens_the_statements_that_rest_on_it() -> Result<()
         "a confirmation bound to another source is untouched"
     );
     assert!(
-        revision(&course.pool, &lesson_id).await > before,
+        revision(&course.database, &lesson_id).await > before,
         "the review's revision advanced"
     );
     Ok(())
@@ -189,8 +196,8 @@ async fn deleting_a_source_holds_a_ready_lesson_for_review() -> Result<()> {
     let course = course().await?;
     let lesson_id = waiting_lesson(&course).await?;
     let doomed = source(&course, "doomed").await?;
-    resolved_by(&course.pool, &lesson_id, &doomed.version_id).await;
-    let store = ClaimReviewRepository::new(course.pool.clone());
+    resolved_by(&course.database, &lesson_id, &doomed.version_id).await;
+    let store = ClaimReviewRepository::new(course.database.clone());
     let mut review = store.load(&lesson_id).await?.review.unwrap();
     review.state = LessonReviewState::Ready;
     store.set_lesson_review(&lesson_id, review).await?;
@@ -208,32 +215,35 @@ async fn reading_the_review_reopens_what_an_earlier_deletion_left_and_only_once(
     let lesson_id = waiting_lesson(&course).await?;
     let doomed = source(&course, "doomed").await?;
     let other = source(&course, "other").await?;
-    let resolved = resolved_by(&course.pool, &lesson_id, &doomed.version_id).await;
-    let confirmed = confirmed_on(&course.pool, &lesson_id, &doomed.version_id).await;
-    let elsewhere = confirmed_on(&course.pool, &lesson_id, &other.version_id).await;
+    let resolved = resolved_by(&course.database, &lesson_id, &doomed.version_id).await;
+    let confirmed = confirmed_on(&course.database, &lesson_id, &doomed.version_id).await;
+    let elsewhere = confirmed_on(&course.database, &lesson_id, &other.version_id).await;
     delete_in_the_library_row(&course, &doomed).await;
     let service = ClaimReviewService::new(course.database.clone());
-    let before = revision(&course.pool, &lesson_id).await;
+    let before = revision(&course.database, &lesson_id).await;
 
     service.review(&course.program_id, &lesson_id).await?;
 
     let cause = ReopenCause::SourceDeleted(doomed.version_id.clone());
     assert_eq!(
-        cause_of(&course.pool, &lesson_id, &resolved).await,
+        cause_of(&course.database, &lesson_id, &resolved).await,
         Some(cause.clone())
     );
     assert_eq!(
-        cause_of(&course.pool, &lesson_id, &confirmed).await,
+        cause_of(&course.database, &lesson_id, &confirmed).await,
         Some(cause)
     );
-    assert_eq!(cause_of(&course.pool, &lesson_id, &elsewhere).await, None);
-    let after = revision(&course.pool, &lesson_id).await;
+    assert_eq!(
+        cause_of(&course.database, &lesson_id, &elsewhere).await,
+        None
+    );
+    let after = revision(&course.database, &lesson_id).await;
     assert!(after > before, "the review's revision advanced");
 
-    let written = events_written(&course.pool, &lesson_id).await;
+    let written = events_written(&course.database, &lesson_id).await;
     service.review(&course.program_id, &lesson_id).await?;
-    assert_eq!(events_written(&course.pool, &lesson_id).await, written);
-    assert_eq!(revision(&course.pool, &lesson_id).await, after);
+    assert_eq!(events_written(&course.database, &lesson_id).await, written);
+    assert_eq!(revision(&course.database, &lesson_id).await, after);
     Ok(())
 }
 
@@ -285,8 +295,8 @@ async fn deleted_source_lesson() -> Result<Lesson> {
     block(&course, &lesson_id, 1, SECOND).await;
     let doomed = source(&course, "doomed").await?;
     let live = source(&course, "live").await?;
-    let lost = resolved_at(&course.pool, &lesson_id, (0, QUOTE), &doomed.version_id).await;
-    let kept = resolved_at(&course.pool, &lesson_id, (1, SECOND), &live.version_id).await;
+    let lost = resolved_at(&course.database, &lesson_id, (0, QUOTE), &doomed.version_id).await;
+    let kept = resolved_at(&course.database, &lesson_id, (1, SECOND), &live.version_id).await;
     let report = json!({
         "policy": "lesson-evidence-v21", "lesson_id": lesson_id, "content_sha256": "fixture",
         "checked_at": 1, "checker_model": MODEL, "sources": [],
@@ -349,7 +359,7 @@ async fn the_report_marks_source_removed_exactly_the_statements_the_review_reope
     removed.sort();
     assert_eq!(removed, vec![lost.0.clone()]);
     assert_eq!(
-        cause_of(&course.pool, &lesson_id, &lost).await,
+        cause_of(&course.database, &lesson_id, &lost).await,
         Some(ReopenCause::SourceDeleted(doomed.version_id.clone()))
     );
     Ok(())
@@ -371,16 +381,16 @@ async fn a_statement_a_live_source_resolved_stays_verified_beside_a_deleted_pass
         .find(|shown| shown.claim_id.as_deref() == Some(kept.0.as_str()))
         .map(|shown| shown.resolution);
     assert_eq!(shown, Some(LearningClaimResolutionDto::Verified));
-    assert_eq!(cause_of(&course.pool, &lesson_id, &kept).await, None);
+    assert_eq!(cause_of(&course.database, &lesson_id, &kept).await, None);
     Ok(())
 }
 
 async fn bound_versions(
-    pool: &SqlitePool,
+    database: &Database,
     lesson_id: &str,
     claim: &ClaimId,
 ) -> Option<Vec<String>> {
-    match claim_entry(pool, lesson_id, claim).await.state() {
+    match claim_entry(database, lesson_id, claim).await.state() {
         ClaimState::Confirmed { bound, .. } => Some(bound.source_version_ids.clone()),
         _ => None,
     }
@@ -395,9 +405,9 @@ async fn confirm_after_deletion(
     let lesson_id = waiting_lesson(&course).await?;
     let doomed = source(&course, "doomed").await?;
     let live = source(&course, "live").await?;
-    let claim = resolved_by(&course.pool, &lesson_id, &doomed.version_id).await;
+    let claim = resolved_by(&course.database, &lesson_id, &doomed.version_id).await;
     delete(&course, &doomed).await?;
-    let revision = revision(&course.pool, &lesson_id).await;
+    let revision = revision(&course.database, &lesson_id).await;
     ClaimReviewService::new(course.database.clone())
         .resolve(
             &lesson_id,
@@ -420,13 +430,13 @@ async fn a_confirmation_made_after_a_deletion_stays_confirmed_on_every_read() ->
     let mut written = None;
     for read in 0..2 {
         service.review(&course.program_id, &lesson_id).await?;
-        let bound = bound_versions(&course.pool, &lesson_id, &claim).await;
+        let bound = bound_versions(&course.database, &lesson_id, &claim).await;
         let bound = bound.unwrap_or_else(|| panic!("read {read}: the claim is not confirmed"));
         assert!(
             !bound.contains(&doomed.version_id),
             "read {read}: the confirmation names the deleted version"
         );
-        let now = events_written(&course.pool, &lesson_id).await;
+        let now = events_written(&course.database, &lesson_id).await;
         assert_eq!(*written.get_or_insert(now), now, "read {read} wrote");
     }
     Ok(())
@@ -443,7 +453,7 @@ async fn a_confirmation_drops_the_deleted_versions_and_keeps_the_rest_in_order()
     })
     .await?;
     assert_eq!(
-        bound_versions(&course.pool, &lesson_id, &claim).await,
+        bound_versions(&course.database, &lesson_id, &claim).await,
         Some(vec![live.version_id.clone(), "unknown-version".into()])
     );
     Ok(())

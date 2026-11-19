@@ -356,6 +356,7 @@ async fn store_builds_paths_only_for_valid_ids_and_extensions() {
 
 struct Fixture {
     pool: SqlitePool,
+    db: Database,
     dir: TempDir,
     network: Arc<FakeNetwork>,
     service: Arc<ChatImageService>,
@@ -382,14 +383,9 @@ impl Fixture {
 }
 
 async fn fixture() -> Fixture {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .idle_timeout(None)
-        .max_lifetime(None)
-        .connect(":memory:")
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     sqlx::query(
         "INSERT INTO conversations (id, title, space_id, created_at, updated_at) \
          VALUES (?, 'Pictures', 'space_general', '2026-10-17T00:00:00Z', '2026-10-17T00:00:00Z')",
@@ -417,8 +413,9 @@ async fn fixture() -> Fixture {
     network.serve("https://upload.wikimedia.org/two.png", gif(32, 24));
     let sweep_gate = Arc::new(lattice_core::shared::fs::SweepGate::default());
     sweep_gate.open();
+    let db = Database::new(pool.clone());
     let service = Arc::new(ChatImageService::new(
-        Database::from(pool.clone()),
+        db.clone(),
         dir.path().join("chat-images"),
         network.clone(),
         Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),
@@ -426,6 +423,7 @@ async fn fixture() -> Fixture {
     ));
     Fixture {
         pool,
+        db,
         dir,
         network,
         service,
@@ -761,7 +759,7 @@ async fn truncating_a_thread_frees_its_pictures() {
         .attach(REQUEST, MESSAGE, &["img-1".into()])
         .await
         .unwrap();
-    crate::features::conversation::repository::ConversationRepository::new(fx.pool.clone())
+    crate::features::conversation::repository::ConversationRepository::new(fx.db.clone())
         .delete_messages(CONVERSATION, &[MESSAGE.to_string()])
         .await
         .unwrap();

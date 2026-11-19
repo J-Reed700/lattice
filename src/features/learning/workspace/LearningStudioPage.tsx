@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft } from 'lucide-react';
@@ -26,10 +26,13 @@ import {
   useGenerateLearningProgram,
   useLearningProgram,
   useLearningPrograms,
+  usePrepareLearningAhead,
   usePrepareLearningLesson,
   usePrepareLearningModule,
 } from '@/features/learning/workspace/useLearningStudio';
 import { useStudioNavigationGuard } from '@/features/learning/workspace/useStudioNavigationGuard';
+import { ReaderPane } from '@/features/reading/components/ReaderPane';
+import { useReaderRoom } from '@/features/reading/hooks/useReaderRoom';
 import { useStopSpeechOnChange } from '@/features/speech/hooks/useSpeech';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { flushPendingSaves } from '@/lib/pendingSaves';
@@ -89,6 +92,15 @@ export function LearningStudioPage() {
 
 const REVIEW_PARAMS = ['course', 'lesson', 'review', 'claim'] as const;
 
+type ProgramMutationState = { error: Error | null; variables: { programId: string } | undefined; submittedAt: number };
+
+const mutationErrorFor = (programId: string, mutation: ProgramMutationState) => (mutation.variables?.programId === programId ? mutation.error : null);
+
+function latestErrorFor(programId: string, mutations: ProgramMutationState[]): Error | undefined {
+  const latest = mutations.reduce<ProgramMutationState | undefined>((best, mutation) => (mutation.variables && (!best || mutation.submittedAt > best.submittedAt) ? mutation : best), undefined);
+  return (latest && mutationErrorFor(programId, latest)) || undefined;
+}
+
 function LearningStudioContent({ destination, exportingAll, onOpenDestination }: { destination?: StudyDestination; exportingAll: boolean; onOpenDestination?: (destination: StudyDestination) => void }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useAppNavigate();
@@ -103,11 +115,14 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
   const accept = useAcceptLearningProgram();
   const prepare = usePrepareLearningLesson();
   const prepareModule = usePrepareLearningModule();
+  const prepareAhead = usePrepareLearningAhead();
   const complete = useCompleteLearningLesson();
   const handledNewRoute = useRef(false);
   const flashcardsRef = useRef<HTMLElement>(null);
+  const rowRef = useRef<HTMLDivElement>(null);
   const routedDestination = useRef<StudyDestination | undefined>(undefined);
   const flashcardRoute = searchParams.has('deck') || searchParams.get('newDeck') === '1';
+  const room = useReaderRoom(rowRef, undefined, [screen, flashcardRoute]);
   // A deck opened from inside a program, such as an interview's drill deck,
   // leaves the program for the deck.
   const requestedDeck = searchParams.get('deck');
@@ -206,9 +221,14 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
     void client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY });
     void client.invalidateQueries({ queryKey: learningProgramKey(programId) });
   };
-  const create = (request: Parameters<typeof generate.mutate>[0]) => generate.mutate(request, {
-    onSuccess: (program) => { clearProgramBuilderDraft(); setSelectedId(program.summary.id); setScreen('programs'); },
-  });
+  const create = (request: Parameters<typeof generate.mutate>[0]) => generate.mutate(request);
+  const { finishedProgramId, reset: resetGenerate } = generate;
+  useLayoutEffect(() => {
+    if (!finishedProgramId) return;
+    clearProgramBuilderDraft();
+    resetGenerate();
+    if (screen === 'builder') { setSelectedId(finishedProgramId); setScreen('programs'); }
+  }, [finishedProgramId, resetGenerate, screen]);
 
   const handleSelectDestination = (next: StudyDestination) => {
     if (onOpenDestination) {
@@ -270,12 +290,13 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
           : <p role="status" className="p-6 text-sm text-text-muted">Loading the review…</p>}
     </div>}
     {/* The course page stays mounted behind the review, so leaving it returns to the same tab and scroll. */}
-    <div hidden={reviewing} className="studio-page-scroll h-full min-h-0 overflow-y-auto bg-background">
+    <div ref={rowRef} hidden={reviewing} className="flex h-full min-h-0 w-full min-w-0 overflow-hidden">
+    <div className="studio-page-scroll h-full min-h-0 min-w-0 flex-1 overflow-y-auto bg-background">
     {navigation.error && <p role="alert" className="mx-auto mb-4 max-w-[1500px] rounded-xl border border-rose-500/25 bg-rose-500/5 p-3 text-sm text-text-primary">{navigation.error}</p>}
     {selectedId ? (
       detail.isLoading ? <div className="mx-auto flex max-w-5xl items-center justify-center rounded-2xl border border-border bg-surface p-16 text-sm text-text-muted">Loading your program…</div>
         : detail.isError || !detail.data ? <div className="mx-auto max-w-3xl rounded-2xl border border-rose-500/25 bg-rose-500/5 p-8"><h2 className="font-serif text-2xl text-text-primary">This program could not be opened</h2><p className="mt-2 text-sm text-text-secondary">{message(detail.error)}</p><div className="mt-5 flex gap-3"><button type="button" onClick={refresh} className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-accent-fg">Retry</button><button type="button" onClick={() => setSelectedId(null)} className="rounded-full border border-border px-4 py-2 text-sm">All programs</button></div></div>
-          : <ProgramWorkspace key={selectedId} destination={destination?.programId === selectedId ? destination : undefined} initialTangentId={destination?.tangentId} outlineGeneration={generate.progress?.programId === selectedId ? generate : undefined} program={detail.data} onBack={() => { setSelectedId(null); void client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY }); }} onOpenProgram={openImported} onReview={openReview} onAccept={(title) => accept.mutate({ programId: selectedId, expectedRevision: detail.data!.summary.revision, title })} acceptPending={accept.isPending} acceptError={accept.error ? message(accept.error) : undefined} onPrepare={(lesson) => prepare.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} onPrepareModule={(module) => prepareModule.mutate({ programId: selectedId, moduleId: module.id, expectedRevision: detail.data!.summary.revision })} preparePending={prepare.isPending || prepareModule.isPending} prepareError={prepare.error ?? undefined} onComplete={(lesson) => complete.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} completePending={complete.isPending} completeError={complete.error ?? undefined} />
+          : <ProgramWorkspace key={selectedId} destination={destination?.programId === selectedId ? destination : undefined} initialTangentId={destination?.tangentId} outlineGeneration={generate.progress?.programId === selectedId ? generate : undefined} program={detail.data} onBack={() => { setSelectedId(null); void client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY }); }} onOpenProgram={openImported} onReview={openReview} onAccept={(title) => accept.mutate({ programId: selectedId, expectedRevision: detail.data!.summary.revision, title }, { onSuccess: (accepted) => { const first = accepted.modules[0]; if (first) prepareModule.mutate({ programId: accepted.summary.id, moduleId: first.id, expectedRevision: accepted.summary.revision }); } })} acceptPending={accept.isPending} acceptError={mutationErrorFor(selectedId, accept) ? message(accept.error) : undefined} onPrepare={(lesson) => prepare.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} onPrepareModule={(module) => prepareModule.mutate({ programId: selectedId, moduleId: module.id, expectedRevision: detail.data!.summary.revision })} onLessonOpened={(lessonId) => prepareAhead.mutate({ programId: selectedId, lessonId })} preparePending={prepare.isPending || prepareModule.isPending} prepareError={latestErrorFor(selectedId, [prepare, prepareModule, prepareAhead])} onComplete={(lesson) => complete.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} completePending={complete.isPending} completeError={complete.error ?? undefined} />
     ) : <ProgramLibrary
       programs={programs.data}
       loading={programs.isLoading}
@@ -289,6 +310,8 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
       onOpenDestination={handleSelectDestination}
       flashcardsRef={flashcardsRef}
     />}
+    </div>
+    <ReaderPane rowWidth={room.width} availableWidth={room.available} resetKey={`${selectedId ?? ''}:${reviewing}`} />
     </div>
   </>;
 }

@@ -75,6 +75,7 @@ chrono = { workspace = true }
 # run pretrained tokenizers for inference.
 tokenizers = { version = "0.15", default-features = false, features = ["progressbar", "onig"] }
 ndarray = "0.16.1"
+aho-corasick = "1.1"
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 rayon = "1.10"
@@ -210,11 +211,6 @@ png = "0.18"
 windows = { version = "0.52", features = [
     "Win32_Storage_FileSystem",
     "Win32_Foundation",
-    # Job Objects provide cascading sidecar termination.
-    # Without this, a hard-killed Lattice main process leaves
-    # orphaned llama-server children running. The Job Object kernel
-    # primitive guarantees they die with us — even on segfault.
-    "Win32_System_JobObjects",
     "Win32_System_Threading",
 ] }
 winreg = "0.52"

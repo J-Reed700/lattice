@@ -1,12 +1,14 @@
 //! The adapter against a wiremock `/v1/embeddings`.
 
 use super::*;
+use crate::features::embedding::input_policy::RETRIEVAL_CHUNK_TARGET_TOKENS;
 use crate::features::embedding::prefixes::{E5, NONE, QWEN3_INSTRUCT};
 use lattice_core::domain::models::downloaded::StoredDownloadedModel;
 use lattice_core::domain::models::metadata::ModelType;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use wiremock::matchers::{header, method, path};
+use std::sync::LazyLock;
+use wiremock::matchers::{body_partial_json, header, method, path};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 const DIMENSION: usize = 4;
@@ -58,13 +60,7 @@ fn running(uri: &str, alive: bool) -> Arc<RunningLlamaServer> {
 }
 
 fn service(uri: &str, prefixes: &'static EmbeddingPrefixes) -> LlamaEmbeddingService {
-    LlamaEmbeddingService::connect(
-        running(uri, true),
-        facts(),
-        InputPolicy::new(tokenizer(), 2048).unwrap(),
-        prefixes,
-    )
-    .expect("loopback client")
+    LlamaEmbeddingService::connect(running(uri, true), facts(), prefixes).expect("loopback client")
 }
 
 /// Answers every input with a vector whose first element is the input's
@@ -116,11 +112,55 @@ async fn sent(server: &MockServer) -> Vec<Vec<String>> {
         .await
         .unwrap()
         .iter()
+        .filter(|request| request.url.path() == "/v1/embeddings")
         .map(|request| {
             let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
             serde_json::from_value(body["input"].clone()).unwrap()
         })
         .collect()
+}
+
+static WORDS: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\w+|[^\w\s]+").unwrap());
+
+/// What the mock server counts `text` as: three tokens a word or run of
+/// punctuation, which a WordLevel `tokenizer()` counts as one, and two for
+/// the BOS and EOS that a whole embedding input carries.
+fn server_count(text: &str) -> usize {
+    3 * WORDS.find_iter(text).count() + 2
+}
+
+/// Answers `/tokenize` with `server_count` tokens for the request's content.
+struct Tokenize;
+
+impl Respond for Tokenize {
+    fn respond(&self, request: &Request) -> ResponseTemplate {
+        let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+        let content = body["content"].as_str().unwrap_or_default();
+        ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "tokens": vec![0; server_count(content)]
+        }))
+    }
+}
+
+/// Mounts `Tokenize` for a count that sends the server's key and asks for the
+/// whole input's special tokens, as `/v1/embeddings` tokenizes it.
+async fn mount_tokenize(server: &MockServer) {
+    Mock::given(method("POST"))
+        .and(path("/tokenize"))
+        .and(header("authorization", format!("Bearer {KEY}").as_str()))
+        .and(body_partial_json(
+            serde_json::json!({"add_special": true, "parse_special": true}),
+        ))
+        .respond_with(Tokenize)
+        .mount(server)
+        .await;
+}
+
+async fn counting_server() -> MockServer {
+    let server = echo_server(DIMENSION, false).await;
+    mount_tokenize(&server).await;
+    server
 }
 
 fn texts(items: &[&str]) -> Vec<String> {
@@ -337,11 +377,10 @@ fn full_batch() -> Vec<String> {
         .collect()
 }
 
-/// A local GGUF row with a `tokenizer.json` beside it.
+/// A local GGUF row, as a download leaves it.
 fn local_model(dir: &Path) -> DownloadedModel {
     let gguf = dir.join("Qwen3-Embedding-0.6B-f16.gguf");
     std::fs::write(&gguf, b"GGUF").unwrap();
-    tokenizer().save(dir.join("tokenizer.json"), false).unwrap();
     DownloadedModel::from_db(StoredDownloadedModel {
         id: "row-1".into(),
         model_name: "Qwen3 Embedding 0.6B".into(),
@@ -591,4 +630,110 @@ fn the_space_identity_is_the_file_hash_plus_any_document_prefix() {
         space_identity(&identity(), e5),
         format!("{}+prefix-e5", identity().as_str())
     );
+}
+
+/// A started service over `servers`, with a WordLevel `tokenizer.json` beside
+/// its GGUF, which counts nothing like the mock server does.
+async fn started_beside_a_tokenizer(
+    dir: &Path,
+    starter: &Arc<FakeStarter>,
+) -> LlamaEmbeddingService {
+    tokenizer().save(dir.join("tokenizer.json"), false).unwrap();
+    let started =
+        LlamaEmbeddingService::start(starter.clone(), &local_model(dir), identity()).await;
+    assert!(started.is_ok(), "{:?}", started.as_ref().err());
+    started.unwrap()
+}
+
+#[tokio::test]
+async fn passages_are_split_by_the_servers_counts_not_a_tokenizer_jsons() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = counting_server().await;
+    let starter = FakeStarter::new(vec![running(&server.uri(), true)]);
+    let service = started_beside_a_tokenizer(dir.path(), &starter).await;
+    let context = "Title\n\n";
+    // 200 words are 200 tokens to the tokenizer.json and 602 to the server,
+    // which is over the chunk target either way it is spent.
+    let text = "word ".repeat(200);
+    assert!(
+        200 < RETRIEVAL_CHUNK_TARGET_TOKENS && server_count(&text) > RETRIEVAL_CHUNK_TARGET_TOKENS
+    );
+
+    let result = service.split_text(&text, context).await;
+
+    assert!(result.is_ok(), "{result:?}");
+    let chunks = result.unwrap_or_default();
+    assert!(
+        chunks.len() >= 2,
+        "the server's count is over the target: {} chunks",
+        chunks.len()
+    );
+    for chunk in &chunks {
+        let counted = format!("{}{context}{}", service.prefixes.document, chunk.text);
+        assert_eq!(chunk.token_count, server_count(&counted), "{counted:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_stored_chunk_is_measured_by_the_servers_count_of_it() {
+    let server = counting_server().await;
+    let service = service(&server.uri(), &NONE);
+    let text = "a short stored chunk of eight words here";
+
+    let result = service.window_parts(text).await;
+
+    assert!(result.is_ok(), "{result:?}");
+    let parts = result.unwrap_or_default();
+    assert_eq!(parts.len(), 1);
+    assert_eq!(
+        parts.first().map(|part| part.token_count),
+        Some(server_count(&service.prefixes.document_input(text)))
+    );
+}
+
+#[tokio::test]
+async fn a_count_on_a_dead_server_starts_it_once_for_light_work_and_the_new_server_answers() {
+    let dir = tempfile::tempdir().unwrap();
+    let live = counting_server().await;
+    let starter = FakeStarter::new(vec![
+        running(&refusing_uri(), false),
+        running(&live.uri(), true),
+    ]);
+    let service = started_beside_a_tokenizer(dir.path(), &starter).await;
+    let text = "count these words";
+
+    let counted = TokenCounter::count(&service, text).await;
+
+    assert_eq!(counted.ok(), Some(server_count(text)));
+    assert_eq!(
+        starter.starts.load(Ordering::SeqCst),
+        2,
+        "one start, one restart"
+    );
+    assert_eq!(
+        *starter.works.lock(),
+        [EmbeddingWork::Light, EmbeddingWork::Light]
+    );
+}
+
+#[tokio::test]
+async fn a_gguf_with_no_tokenizer_json_beside_it_starts() {
+    let dir = tempfile::tempdir().unwrap();
+    let starter = FakeStarter::new(vec![running(&refusing_uri(), true)]);
+
+    let started =
+        LlamaEmbeddingService::start(starter.clone(), &local_model(dir.path()), identity()).await;
+
+    assert!(started.is_ok(), "{:?}", started.as_ref().err());
+    assert_eq!(starter.starts.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_count_from_a_dead_server_that_cannot_be_restarted_is_a_network_error() {
+    let service = LlamaEmbeddingService::connect(running(&refusing_uri(), false), facts(), &NONE)
+        .expect("loopback client");
+
+    let counted = TokenCounter::count(&service, "some words").await;
+
+    assert!(matches!(&counted, Err(AppError::Network(_))), "{counted:?}");
 }

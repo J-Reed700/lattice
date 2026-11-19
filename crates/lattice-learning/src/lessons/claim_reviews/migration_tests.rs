@@ -16,6 +16,8 @@ const TEACHING_SUMMARY: i64 = 20_261_107_010_000;
 const TEACHING_RESOLUTION: i64 = 20_261_107_020_000;
 /// The migration that told a teaching finding when its part was last changed.
 const PART_CHANGED: i64 = 20_261_107_030_000;
+/// The migration that told a teaching finding's key what it identifies.
+const IDENTITY: i64 = 20_261_110_000_000;
 
 fn migrator() -> Migrator {
     sqlx::migrate!("../lattice-desktop/migrations")
@@ -36,7 +38,7 @@ async fn memory_pool() -> SqlitePool {
 
 async fn exec(pool: &SqlitePool, statements: &[&str]) {
     for statement in statements {
-        sqlx::query(statement)
+        sqlx::query(sqlx::AssertSqlSafe(*statement))
             .execute(pool)
             .await
             .unwrap_or_else(|e| panic!("{statement}: {e}"));
@@ -44,7 +46,7 @@ async fn exec(pool: &SqlitePool, statements: &[&str]) {
 }
 
 async fn count(pool: &SqlitePool, table: &str) -> i64 {
-    sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {table}")))
         .fetch_one(pool)
         .await
         .unwrap()
@@ -143,12 +145,14 @@ async fn the_migration_keeps_a_populated_database_and_adds_the_defaults() {
     let migrator = migrator();
     {
         let mut conn = pool.acquire().await.unwrap();
-        conn.ensure_migrations_table().await.unwrap();
+        conn.ensure_migrations_table("_sqlx_migrations")
+            .await
+            .unwrap();
         for migration in migrator
             .iter()
             .filter(|m| m.version < CLAIM_REVIEWS && !m.migration_type.is_down_migration())
         {
-            conn.apply(migration).await.unwrap();
+            conn.apply("_sqlx_migrations", migration).await.unwrap();
         }
     }
     exec(&pool, COURSE).await;
@@ -229,12 +233,14 @@ async fn a_teaching_finding_gets_a_summary_column_and_an_old_one_keeps_its_data(
     let pool = memory_pool().await;
     {
         let mut conn = pool.acquire().await.unwrap();
-        conn.ensure_migrations_table().await.unwrap();
+        conn.ensure_migrations_table("_sqlx_migrations")
+            .await
+            .unwrap();
         for migration in migrator
             .iter()
             .filter(|m| m.version < TEACHING_SUMMARY && !m.migration_type.is_down_migration())
         {
-            conn.apply(migration).await.unwrap();
+            conn.apply("_sqlx_migrations", migration).await.unwrap();
         }
     }
     exec(&pool, COURSE).await;
@@ -268,12 +274,14 @@ async fn a_teaching_finding_gets_a_sentence_and_a_resolution_and_an_old_one_keep
     let pool = memory_pool().await;
     {
         let mut conn = pool.acquire().await.unwrap();
-        conn.ensure_migrations_table().await.unwrap();
+        conn.ensure_migrations_table("_sqlx_migrations")
+            .await
+            .unwrap();
         for migration in migrator
             .iter()
             .filter(|m| m.version < TEACHING_RESOLUTION && !m.migration_type.is_down_migration())
         {
-            conn.apply(migration).await.unwrap();
+            conn.apply("_sqlx_migrations", migration).await.unwrap();
         }
     }
     exec(&pool, COURSE).await;
@@ -375,12 +383,14 @@ async fn a_teaching_finding_gets_a_part_changed_column_and_an_old_one_keeps_its_
     let pool = memory_pool().await;
     {
         let mut conn = pool.acquire().await.unwrap();
-        conn.ensure_migrations_table().await.unwrap();
+        conn.ensure_migrations_table("_sqlx_migrations")
+            .await
+            .unwrap();
         for migration in migrator
             .iter()
             .filter(|m| m.version < PART_CHANGED && !m.migration_type.is_down_migration())
         {
-            conn.apply(migration).await.unwrap();
+            conn.apply("_sqlx_migrations", migration).await.unwrap();
         }
     }
     exec(&pool, COURSE).await;
@@ -411,6 +421,55 @@ async fn a_teaching_finding_gets_a_part_changed_column_and_an_old_one_keeps_its_
             Some("A passage.".into()),
             2,
             None
+        )
+    );
+}
+
+#[tokio::test]
+async fn a_teaching_finding_gets_an_identity_and_an_old_one_is_by_place() {
+    let migrator = migrator();
+    assert!(migrator.iter().any(|m| m.version == IDENTITY));
+    let pool = memory_pool().await;
+    {
+        let mut conn = pool.acquire().await.unwrap();
+        conn.ensure_migrations_table("_sqlx_migrations")
+            .await
+            .unwrap();
+        for migration in migrator
+            .iter()
+            .filter(|m| m.version < IDENTITY && !m.migration_type.is_down_migration())
+        {
+            conn.apply("_sqlx_migrations", migration).await.unwrap();
+        }
+    }
+    exec(&pool, COURSE).await;
+    exec(
+        &pool,
+        &["INSERT INTO learning_lesson_teaching_findings (lesson_id, finding_key, kind, site, unit_index, unit_title, unit_sha256, note, summary, passage, repairs, state, job_id, found_at, kept_at)            VALUES ('l1', 'teaching:section-0', 'teaching', 'section', 0, 'Section 1: Boiling', 'sha', 'A note.', 'What is wrong.', 'A passage.', 2, 'waiting', NULL, 1000, NULL)"],
+    )
+    .await;
+    let columns = "SELECT name FROM pragma_table_info('learning_lesson_teaching_findings')";
+    let before: Vec<String> = sqlx::query_scalar(columns).fetch_all(&pool).await.unwrap();
+    assert!(!before.contains(&"identity".to_owned()));
+
+    migrator.run(&pool).await.unwrap();
+
+    let after: Vec<String> = sqlx::query_scalar(columns).fetch_all(&pool).await.unwrap();
+    assert!(after.contains(&"identity".to_owned()), "{after:?}");
+    let kept: (String, String, Option<String>, i64, String) = sqlx::query_as(
+        "SELECT note, summary, passage, repairs, identity FROM learning_lesson_teaching_findings WHERE finding_key = 'teaching:section-0'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        kept,
+        (
+            "A note.".into(),
+            "What is wrong.".into(),
+            Some("A passage.".into()),
+            2,
+            "place".into()
         )
     );
 }

@@ -292,16 +292,14 @@ impl LibraryGc {
 #[cfg(test)]
 pub(crate) mod test_support {
     use crate::infrastructure::storage::FileIntents;
+    use lattice_core::shared::persistence::Database;
 
     /// A migrated in-memory database and the records kept in it.
     pub(crate) async fn file_intents() -> (sqlx::SqlitePool, FileIntents) {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
             .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-        let intents = FileIntents::new(pool.clone());
+        let intents = FileIntents::new(Database::new(pool.clone()));
         (pool, intents)
     }
 }

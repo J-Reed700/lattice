@@ -2,7 +2,7 @@
 //! claimer's own.
 use super::repository::{ImageRepository, NewImageRow};
 use lattice_core::application::contracts::images::ImageOrigin;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::Database;
 use sqlx::sqlite::SqlitePoolOptions;
 use std::time::Duration;
 
@@ -31,14 +31,15 @@ fn new_row(id: &str) -> NewImageRow {
 #[tokio::test]
 async fn a_picture_claimed_by_another_message_meanwhile_leaves_the_numbering_unbroken() {
     let directory = tempfile::tempdir().unwrap();
-    let pool = SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect_with(crate::tests::sqlite::file_options(
-            directory.path().join("images.db"),
-        ))
+    let path = directory.path().join("images.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path)
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect_with(lattice_core::shared::testing::sqlite::file_options(&path))
+        .await
+        .unwrap();
     sqlx::query(
         "INSERT INTO conversations (id, title, space_id, created_at, updated_at) \
          VALUES ('conv-1', 'Pictures', 'space_general', '2026-10-17T00:00:00Z', '2026-10-17T00:00:00Z')",
@@ -56,11 +57,12 @@ async fn a_picture_claimed_by_another_message_meanwhile_leaves_the_numbering_unb
         .await
         .unwrap();
     }
-    let repo = ImageRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = ImageRepository::new(db);
     repo.insert(&new_row("img-a")).await.unwrap();
     repo.insert(&new_row("img-b")).await.unwrap();
 
-    let mut tx = pool.begin_write().await.unwrap();
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
     sqlx::query(
         "UPDATE chat_images SET message_id = 'msg-other', request_id = 'req-other', ref = 'att-1' \
          WHERE id = 'img-a'",

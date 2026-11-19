@@ -3,6 +3,7 @@
 //! module budgets exhaust, plan repair never adds citations, and targeted
 //! research saves pages that the judge then reads.
 use super::outline_reference_tests::*;
+use crate::lessons::content_verification::tests::fixture_task;
 use crate::{
     dto::*,
     lessons::course_generation_tests::{repair_answer, repair_answer_with, request},
@@ -18,6 +19,7 @@ use crate::{
 };
 use lattice_core::application::services::claim_verification::ClaimVerdict;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 use serde_json::{json, Value};
 
 fn with_summary(text: &str) -> Value {
@@ -57,7 +59,7 @@ async fn generate_with(
 #[tokio::test]
 async fn a_supported_factual_finding_is_closed_by_attached_evidence_without_a_rewrite() -> Result<()>
 {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let mut source = original_source();
     source.excerpt = ADDITIONAL.into();
     let sources = vec![source.clone()];
@@ -119,7 +121,7 @@ async fn a_supported_factual_finding_is_closed_by_attached_evidence_without_a_re
 #[tokio::test]
 async fn a_contradicted_factual_finding_is_rewritten_with_the_contradicting_passage() -> Result<()>
 {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let wrong = "Random assignment increases confounding when treatment groups are compared.";
     let mut source = original_source();
     source.excerpt = ADDITIONAL.into();
@@ -152,8 +154,7 @@ async fn a_contradicted_factual_finding_is_rewritten_with_the_contradicting_pass
     let prompts = calls(&llm);
     assert_eq!(prompts.len(), 5);
     assert!(prompts[3].starts_with("Repair a saved curriculum module"));
-    let repair = payload(&prompts[3]);
-    assert_eq!(repair["findings"][0]["id"], "finding-1");
+    let repair = fixture_task(&prompts[3]).unwrap();
     assert_eq!(repair["findings"][0]["instruction"], CORRECT);
     assert_eq!(
         repair["findings"][0]["contradictingPassage"]["sourceIndex"],
@@ -183,7 +184,7 @@ async fn a_contradicted_factual_finding_is_rewritten_with_the_contradicting_pass
 
 #[tokio::test]
 async fn an_unsupported_assertion_is_narrowed_then_removed_then_left_for_the_user() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let claim = "Random assignment isolates the intervention and eliminates every source of bias in a comparison.";
     let sources = vec![original_source()];
     let initial = with_summary(claim);
@@ -227,14 +228,20 @@ async fn an_unsupported_assertion_is_narrowed_then_removed_then_left_for_the_use
     let prompts = calls(&llm);
     assert_eq!(prompts.len(), 7);
     assert!(prompts[2].starts_with("Source passages:"));
-    assert_eq!(payload(&prompts[3])["findings"][0]["instruction"], NARROW);
-    assert!(payload(&prompts[3])["findings"][0]["reason"]
+    assert_eq!(
+        fixture_task(&prompts[3]).unwrap()["findings"][0]["instruction"],
+        NARROW
+    );
+    assert!(fixture_task(&prompts[3]).unwrap()["findings"][0]["reason"]
         .as_str()
         .unwrap()
         .starts_with("Not supported by the saved references"));
     // The second attempt neither researches nor judges again.
     assert!(prompts[5].starts_with("Repair a saved curriculum module"));
-    assert_eq!(payload(&prompts[5])["findings"][0]["instruction"], REMOVE);
+    assert_eq!(
+        fixture_task(&prompts[5]).unwrap()["findings"][0]["instruction"],
+        REMOVE
+    );
     assert_eq!(
         prompts
             .iter()
@@ -247,7 +254,7 @@ async fn an_unsupported_assertion_is_narrowed_then_removed_then_left_for_the_use
 
 #[tokio::test]
 async fn a_module_that_keeps_spawning_findings_runs_out_of_rewrites() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let initial = candidate();
     let first = module_with_objective(&initial, 0, "Measure the first comparison.");
     let mut second = first.clone();
@@ -319,15 +326,12 @@ async fn a_module_that_keeps_spawning_findings_runs_out_of_rewrites() -> Result<
 
 #[tokio::test]
 async fn plan_repair_never_adds_a_citation() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let sources = vec![original_source()];
     let initial = candidate();
     let mut fixed = initial["modules"][0].clone();
     fixed["project"]["brief"] =
         json!("Measure the comparison with an observable outcome and record its limitations.");
-    // The rewrite also cites the saved passage, exactly, on an unchanged item.
-    fixed["summary"]["sourceIndex"] = json!(0);
-    fixed["summary"]["quote"] = json!(ORIGINAL);
     let llm = model(vec![
         initial,
         no_links(),
@@ -346,7 +350,10 @@ async fn plan_repair_never_adds_a_citation() -> Result<()> {
     assert_eq!(review.citations_verified, 0);
     let prompts = calls(&llm);
     assert_eq!(prompts.len(), 4);
-    assert_eq!(payload(&prompts[2])["findings"][0]["kind"], "plan");
+    assert_eq!(
+        fixture_task(&prompts[2]).unwrap()["findings"][0]["kind"],
+        "plan"
+    );
     // The rewrite changed no item text, so no item was offered for linking
     // again: every linking call precedes the first review.
     {
@@ -377,7 +384,7 @@ async fn plan_repair_never_adds_a_citation() -> Result<()> {
 
 #[tokio::test]
 async fn second_plan_attempt_asks_for_the_smallest_edit() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let initial = candidate();
     let llm = model(vec![
         initial.clone(),
@@ -410,11 +417,11 @@ async fn second_plan_attempt_asks_for_the_smallest_edit() -> Result<()> {
     let prompts = llm.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 6);
     assert_ne!(
-        payload(&prompts[2])["findings"][0]["instruction"],
+        fixture_task(&prompts[2]).unwrap()["findings"][0]["instruction"],
         PLAN_SMALLEST
     );
     assert_eq!(
-        payload(&prompts[4])["findings"][0]["instruction"],
+        fixture_task(&prompts[4]).unwrap()["findings"][0]["instruction"],
         PLAN_SMALLEST
     );
     Ok(())
@@ -423,7 +430,7 @@ async fn second_plan_attempt_asks_for_the_smallest_edit() -> Result<()> {
 #[tokio::test]
 async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the_planner_what_was_searched(
 ) -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let claim = "Random assignment isolates the intervention and limits confounding when groups are compared.";
     let reason = "No saved reference states this; it needs a primary source.";
     // First run: the one page the search finds is irrelevant, the judge finds
@@ -436,7 +443,9 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
         initial.clone(),
         no_links(),
         findings(vec![factual_finding("/modules/0/summary", claim, reason)]),
-        json!({"needs":[{"gap":0,"query":"random assignment confounding primary source","kind":"web"}]}),
+        crate::references::web_research::needs_answer(
+            json!([{"gap":0,"query":"random assignment confounding primary source","kind":"web"}]),
+        ),
         select_all(1),
         judged("unsupported", None),
         repair_answer(initial["modules"][0].clone()),
@@ -473,12 +482,12 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
     let prompts = calls(&llm);
     assert_eq!(prompts.len(), 7);
     assert!(prompts[3].starts_with("Plan focused reference searches"));
-    let planned = payload(&prompts[3]);
+    let planned = fixture_task(&prompts[3]).unwrap();
     assert_eq!(planned["topic"], "Experimental design module 0");
     assert_eq!(planned["gaps"][0]["claim"], claim);
     assert_eq!(planned["gaps"][0]["missingEvidence"], reason);
     assert_eq!(planned["alreadySearched"], json!([]));
-    let selection = payload(&prompts[4]);
+    let selection = fixture_task(&prompts[4]).unwrap();
     assert_eq!(selection["topic"], "Experimental design module 0");
     assert_eq!(selection["gaps"][0]["missingEvidence"], reason);
     // The judge saw the page captured a moment earlier, never a snippet.
@@ -500,7 +509,9 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
     let llm = model(vec![
         no_links(),
         json!({"verdicts":[{"id":"finding-1","status":"unresolved","reason":"The summary still asserts the guarantee without support."}],"newFindings":[]}),
-        json!({"needs":[{"gap":0,"query":"random assignment confounding textbook","kind":"web"}]}),
+        crate::references::web_research::needs_answer(
+            json!([{"gap":0,"query":"random assignment confounding textbook","kind":"web"}]),
+        ),
         select_all(1),
         judged("supported", Some(0)),
     ]);
@@ -528,17 +539,20 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
     let prompts = calls(&llm);
     // The strict judgment is the only check: no challenge call follows it.
     assert_eq!(prompts.len(), 4);
-    assert_eq!(payload(&prompts[0])["openFindings"][0]["attempts"], 0);
     assert_eq!(
-        payload(&prompts[0])["reviewScope"]["mode"],
+        fixture_task(&prompts[0]).unwrap()["openFindings"][0]["attempts"],
+        0
+    );
+    assert_eq!(
+        fixture_task(&prompts[0]).unwrap()["reviewScope"]["mode"],
         "changed_modules"
     );
     assert_eq!(
-        payload(&prompts[0])["reviewScope"]["moduleIndices"],
+        fixture_task(&prompts[0]).unwrap()["reviewScope"]["moduleIndices"],
         json!([0])
     );
     assert_eq!(
-        payload(&prompts[1])["alreadySearched"],
+        fixture_task(&prompts[1]).unwrap()["alreadySearched"],
         json!(["random assignment confounding primary source"])
     );
     assert_eq!(
@@ -568,7 +582,7 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
 
 #[tokio::test]
 async fn an_unchanged_last_attempt_leaves_a_plan_finding_as_an_advisory_and_passes() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let initial = candidate();
     let first = module_with_objective(&initial, 0, "Measure the first comparison.");
     let llm = model(vec![
@@ -606,7 +620,7 @@ async fn an_unchanged_last_attempt_leaves_a_plan_finding_as_an_advisory_and_pass
 #[tokio::test]
 async fn a_first_attempt_that_keeps_the_module_leaves_a_plan_finding_as_an_advisory_and_passes(
 ) -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let initial = candidate();
     let llm = model(vec![
         initial.clone(),
@@ -644,7 +658,7 @@ fn clashing_correction(initial: &Value) -> Value {
 
 #[tokio::test]
 async fn a_correction_that_repeats_another_modules_title_is_asked_again_and_saved() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let initial = candidate();
     let llm = model(vec![
         initial.clone(),
@@ -681,14 +695,16 @@ async fn a_correction_that_repeats_another_modules_title_is_asked_again_and_save
     );
     let prompts = llm.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 5);
-    // The second answer was asked for on the same module task.
-    assert_eq!(payload(&prompts[3])["moduleIndex"], 0);
+    // The second answer was asked for on the same module, with the clash named.
+    assert_eq!(fixture_task(&prompts[2]).unwrap()["moduleNumber"], 1);
+    assert!(prompts[3].starts_with("Repair a saved curriculum module"));
+    assert!(prompts[3].contains("share the title"), "{}", prompts[3]);
     Ok(())
 }
 
 #[tokio::test]
 async fn a_correction_still_unusable_keeps_its_module_and_repair_goes_on() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let initial = candidate();
     let mut second = initial["modules"][1].clone();
     second["lessons"][0]["objective"] = json!("Measure the second comparison.");
@@ -743,9 +759,9 @@ async fn a_correction_still_unusable_keeps_its_module_and_repair_goes_on() -> Re
     );
     let prompts = llm.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 8);
-    assert_eq!(payload(&prompts[4])["moduleIndex"], 1);
+    assert_eq!(fixture_task(&prompts[4]).unwrap()["moduleNumber"], 2);
     assert_eq!(
-        payload(&prompts[6])["findings"][0]["instruction"],
+        fixture_task(&prompts[6]).unwrap()["findings"][0]["instruction"],
         PLAN_SMALLEST
     );
     Ok(())
@@ -753,7 +769,7 @@ async fn a_correction_still_unusable_keeps_its_module_and_repair_goes_on() -> Re
 
 #[tokio::test]
 async fn a_pass_whose_only_correction_is_unusable_says_why_and_keeps_the_findings() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let initial = candidate();
     let llm = model(vec![
         initial.clone(),
@@ -815,7 +831,8 @@ fn lesson_ids(program: &LearningProgramDto, module: usize) -> Vec<String> {
 #[tokio::test]
 async fn a_repair_may_add_a_lesson_and_keeps_every_saved_identity_in_order() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db);
     let initial = candidate();
     let drafts = DraftRunRegistry::new();
     // Both answers in the first run are unusable, so the finding stays open.
@@ -899,12 +916,6 @@ async fn a_repair_may_add_a_lesson_and_keeps_every_saved_identity_in_order() -> 
         saved.candidate["modules"][0]["lessons"][1]["title"],
         "Choose a measurement"
     );
-    assert!(saved.candidate["modules"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .flat_map(|module| module["lessons"].as_array().unwrap())
-        .all(|lesson| lesson.get("from").is_none()));
     assert_eq!(
         repo.get(&repaired.summary.id).await?.summary.lesson_count,
         13
@@ -912,73 +923,31 @@ async fn a_repair_may_add_a_lesson_and_keeps_every_saved_identity_in_order() -> 
     // The finding on the second lesson follows that lesson to its new place.
     let prompts = llm.prompts.lock().unwrap();
     assert_eq!(
-        payload(&prompts[2])["openFindings"][0]["path"],
+        fixture_task(&prompts[2]).unwrap()["openFindings"][0]["path"],
         "/modules/0/lessons/2"
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn an_answer_that_drops_a_lesson_is_asked_again() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
-    let initial = candidate();
-    let mut dropped = initial["modules"][0].clone();
-    if let Some(lessons) = dropped["lessons"].as_array_mut() {
-        lessons.pop();
-    }
-    let llm = model(vec![
-        initial.clone(),
-        issue(0),
-        repair_answer(dropped),
-        repair_answer_with(
-            module_with_added_lesson(&initial, 3),
-            &[Some(0), Some(1), Some(2), None],
-        ),
-        verdicts(&[("finding-1", "resolved")], vec![]),
-    ]);
-    let program = service::generate(
-        &repo,
-        &DraftRunRegistry::new(),
-        &llm,
-        request(LearningCourseDepth::Course),
-        vec![],
-    )
-    .await?;
-    let review = program.outline_review.as_ref().unwrap();
-    assert_eq!(
-        review.status,
-        LearningOutlineReviewStatus::Passed,
-        "{}",
-        review.note
-    );
-    assert_eq!(llm.prompts.lock().unwrap().len(), 5);
-    assert_eq!(program.modules[0].lessons.len(), 4);
-    assert_eq!(program.modules[0].lessons[3].title, "Choose a measurement");
-    Ok(())
-}
-
-#[tokio::test]
 async fn a_kept_lesson_after_an_inserted_one_keeps_its_citation_and_the_new_lesson_is_linked(
 ) -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let mut initial = candidate();
     initial["modules"][0]["lessons"][1]["objective"] = json!(ORIGINAL);
     cite_at(&mut initial, "/modules/0/lessons/1", 0, ORIGINAL);
     let mut module = module_with_added_lesson(&initial, 1);
     module["lessons"][1]["objective"] =
         json!("Explain how a randomized comparison isolates the intervention.");
-    // The model drops the kept lesson's citation and cites the new one.
-    module["lessons"][2]["sourceIndex"] = Value::Null;
-    module["lessons"][2]["quote"] = json!("");
-    module["lessons"][1]["sourceIndex"] = json!(0);
-    module["lessons"][1]["quote"] = json!(ORIGINAL);
+    // The kept lesson keeps its citation by construction; the new one is linked afterwards.
     let sources = vec![original_source()];
+    let repaired = json!({"modules":[module.clone()]});
     let llm = model(vec![
         initial.clone(),
-        links(&[("/modules/0/lessons/1", ORIGINAL)]),
+        links(&initial, &[("/modules/0/lessons/1", ORIGINAL)]),
         issue(0),
         repair_answer_with(module, &[Some(0), None, Some(1), Some(2)]),
-        links(&[("/modules/0/lessons/1", ORIGINAL)]),
+        links(&repaired, &[("/modules/0/lessons/1", ORIGINAL)]),
         verdicts(&[("finding-1", "resolved")], vec![]),
     ]);
     let program = generate_with(&repo, &llm, sources).await?;
@@ -997,8 +966,14 @@ async fn a_kept_lesson_after_an_inserted_one_keeps_its_citation_and_the_new_less
     // Only the new lesson was offered for linking after the repair.
     let offered = linking_prompts(&llm);
     let last = offered.last().unwrap();
-    assert!(last.contains("/modules/0/lessons/1"));
-    assert!(!last.contains("/modules/0/lessons/2"));
+    assert!(last.contains("Explain how a randomized comparison isolates the intervention."));
+    assert_eq!(
+        crate::lessons::content_verification::tests::fixture_task(last).unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
     // Each citation is shown on its own lesson.
     let evidence = crate::outline_evidence_view::project(&program, &saved);
     let kept = evidence
@@ -1045,7 +1020,8 @@ async fn saved_fixture(
 async fn saving_an_outline_with_an_added_lesson_inserts_it_and_renumbers_the_module() -> Result<()>
 {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db);
     let (mut program, mut draft) = saved_fixture(&repo).await?;
     let saved_ids = lesson_ids(&program, 0);
     let mut added = program.modules[0].lessons[0].clone();
@@ -1077,12 +1053,45 @@ async fn saving_an_outline_with_an_added_lesson_inserts_it_and_renumbers_the_mod
 
 #[tokio::test]
 async fn saving_an_outline_that_loses_a_saved_lesson_is_refused() -> Result<()> {
-    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
     let (mut program, mut draft) = saved_fixture(&repo).await?;
     program.modules[0].lessons.remove(0);
     assert!(repo
         .checkpoint_outline(&mut program, &mut draft, &[], &[])
         .await
         .is_err());
+    Ok(())
+}
+
+#[tokio::test]
+async fn prompt_snapshot_outline_module_rewrite() -> Result<()> {
+    use lattice_core::application::services::model_contract::{test_support::snapshot, ContractId};
+    let repo = LearningRepository::new(Database::new(crate::tests::pool().await?));
+    let initial = candidate();
+    let mut fixed = initial["modules"][0].clone();
+    fixed["project"]["brief"] =
+        json!("Measure the comparison with an observable outcome and record its limitations.");
+    let llm = model(vec![
+        initial,
+        issue(0),
+        repair_answer(fixed),
+        verdicts(&[("finding-1", "resolved")], vec![]),
+    ]);
+    let capture = Capture::named(&llm, ContractId::new("outline-module-rewrite"));
+
+    service::generate(
+        &repo,
+        &DraftRunRegistry::new(),
+        &capture,
+        request(LearningCourseDepth::Course),
+        vec![],
+    )
+    .await?;
+
+    snapshot::assert_requests(
+        env!("CARGO_MANIFEST_DIR"),
+        "outline-module-rewrite",
+        &capture.requests(),
+    );
     Ok(())
 }

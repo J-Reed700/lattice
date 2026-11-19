@@ -14,7 +14,7 @@ export type NumericFieldConfig = {
   key: NumericTuningKey;
   label: string;
   min: number;
-  max: number;
+  max?: number;
   step: number;
 };
 
@@ -28,73 +28,65 @@ const CANDIDATE_FIELDS: NumericFieldConfig[] = [
     key: 'docShortlistCandidateMin',
     label: 'Doc shortlist candidate min',
     min: 1,
-    max: 512,
     step: 1,
   },
   {
     key: 'docShortlistCandidateMax',
     label: 'Doc shortlist candidate max',
     min: 1,
-    max: 512,
     step: 1,
   },
-  { key: 'docShortlistDocMin', label: 'Doc shortlist doc min', min: 1, max: 128, step: 1 },
-  { key: 'docShortlistDocMax', label: 'Doc shortlist doc max', min: 1, max: 128, step: 1 },
+  { key: 'docShortlistDocMin', label: 'Doc shortlist doc min', min: 1, step: 1 },
+  { key: 'docShortlistDocMax', label: 'Doc shortlist doc max', min: 1, step: 1 },
   {
     key: 'shortlistGateMinCandidates',
     label: 'Shortlist gate min candidates',
     min: 1,
-    max: 128,
     step: 1,
   },
-  { key: 'shortlistGateMinDocs', label: 'Shortlist gate min docs', min: 1, max: 128, step: 1 },
+  { key: 'shortlistGateMinDocs', label: 'Shortlist gate min docs', min: 1, step: 1 },
 ];
 
 const EXTERNAL_SOURCE_FIELDS: NumericFieldConfig[] = [
-  { key: 'wikiSearchMaxResults', label: 'Wiki search max results', min: 1, max: 50, step: 1 },
-  { key: 'webSearchMaxResults', label: 'Web search max results', min: 1, max: 50, step: 1 },
+  { key: 'wikiSearchMaxResults', label: 'Wiki search max results', min: 1, step: 1 },
+  { key: 'webSearchMaxResults', label: 'Web search max results', min: 1, step: 1 },
   {
     key: 'externalSearchMaxWikiTerms',
     label: 'External max wiki terms',
     min: 1,
-    max: 64,
     step: 1,
   },
   {
     key: 'externalSearchMaxWebTerms',
     label: 'External max web terms',
     min: 1,
-    max: 64,
     step: 1,
   },
   {
     key: 'externalSearchQueryMaxChars',
     label: 'External search query max chars',
-    min: 32,
-    max: 2000,
+    min: 1,
     step: 1,
   },
 ];
 
 const DEEP_RESEARCH_FIELDS: NumericFieldConfig[] = [
-  { key: 'deepResearchDepth', label: 'Deep research depth', min: 1, max: 4, step: 1 },
+  { key: 'deepResearchDepth', label: 'Deep research depth', min: 1, step: 1 },
   {
     key: 'deepResearchBranchQueries',
     label: 'Deep research branch queries',
     min: 1,
-    max: 4,
     step: 1,
   },
 ];
 
 const RERANK_FIELDS: NumericFieldConfig[] = [
-  { key: 'rerankMaxCandidates', label: 'Rerank max candidates', min: 1, max: 256, step: 1 },
-  { key: 'rerankQueryMaxChars', label: 'Rerank query max chars', min: 32, max: 8000, step: 1 },
+  { key: 'rerankMaxCandidates', label: 'Rerank max candidates', min: 1, step: 1 },
+  { key: 'rerankQueryMaxChars', label: 'Rerank query max chars', min: 1, step: 1 },
   {
     key: 'overlapMinHitsForMultiTerm',
     label: 'Overlap min hits (multi-term)',
     min: 1,
-    max: 8,
     step: 1,
   },
 ];
@@ -120,15 +112,13 @@ const DOC_SUPPORT_FIELDS: NumericFieldConfig[] = [
   {
     key: 'docSupportMultiHitRatioFactor',
     label: 'Doc support multi-hit factor',
-    min: 0,
-    max: 1,
+    min: 0.01,
     step: 0.01,
   },
   {
     key: 'docSupportSingleHitRatioFactor',
     label: 'Doc support single-hit factor',
-    min: 0,
-    max: 1,
+    min: 0.01,
     step: 0.01,
   },
   {
@@ -171,7 +161,7 @@ export const TUNING_GROUPS: TuningGroup[] = [
 ];
 
 export function normalizeFieldValue(field: NumericFieldConfig, value: number): number {
-  const clamped = clamp(value, field.min, field.max);
+  const clamped = clamp(value, field.min, field.max ?? Infinity);
   if (field.step >= 1) {
     return Math.round(clamped);
   }

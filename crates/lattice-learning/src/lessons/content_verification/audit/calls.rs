@@ -1,55 +1,36 @@
 //! One audit request: measured against the Verifier's window before it is
-//! built into a batch ([`WindowSizer`]), then sent with or without the web
-//! tools ([`ask`]).
+//! built into a batch ([`WindowSizer`]), then sent through the contract
+//! driver ([`Audit`]).
 
-use lattice_core::application::ports::llm_port::{InferencePriority, SamplingOverride};
+use std::sync::{Mutex, PoisonError};
+
+use async_trait::async_trait;
+
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::context_assembler::budget::{
     BudgetAllocation, BudgetRequest, ModelCapacity,
 };
-use lattice_core::application::services::grounded_generation::{
-    self, CallOptions, GroundedGenerationError, GroundedRequest,
+use lattice_core::application::services::grounded_generation::{self, GroundedRequest};
+use lattice_core::application::services::model_contract::ask::{
+    send_error, Answered, Followup, Sent, Transport,
 };
-use lattice_core::shared::error::AppError;
-
-pub(super) use crate::lessons::structured_call::cut_off;
+use lattice_core::application::services::model_contract::packed::Packed;
+use lattice_core::application::services::model_contract::shown::Scope;
+use lattice_core::application::services::model_contract::{legacy, Contract, ContractId};
+use lattice_core::shared::error::Result;
 
 use super::batches::{Item, Sizer};
-use super::policy::{self, Rendered, SYSTEM_PROMPT};
-use super::tools::{self, VerifierWeb};
-use super::{AuditClaim, AuditPassage, AuditUnit};
+use super::contract::{Claim, Input};
+use super::policy::{self, SYSTEM_PROMPT};
+use super::tools;
+use super::{AuditClaim, AuditUnit};
 
-/// What one request came back with.
-#[derive(Debug, Default)]
-pub(super) struct Answer {
-    pub text: String,
-    /// The answer stopped at its output limit.
-    pub cut_off: bool,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    /// Pages fetched and saved during the request, by label.
-    pub fetched: Vec<(String, AuditPassage)>,
-    /// Why web search could not be used, when it could not.
-    pub web_note: Option<String>,
-}
+/// The audit's one model call.
+pub(super) struct VerifierAudit;
 
-#[derive(Debug)]
-pub(super) enum AskError {
-    /// The window cannot hold the request with its answer.
-    TooLarge,
-    Model(AppError),
-}
-
-impl From<AppError> for AskError {
-    /// The backend refusing a prompt its window cannot hold halves the batch
-    /// rather than failing the job: dense batches can be refused though the
-    /// estimate fit them.
-    fn from(error: AppError) -> Self {
-        match error {
-            AppError::PromptExceedsWindow { .. } => Self::TooLarge,
-            error => Self::Model(error),
-        }
-    }
+impl Contract for VerifierAudit {
+    const ID: ContractId = ContractId::new("verifier-audit");
+    type Input = Input;
 }
 
 /// `text`, cut at a character boundary to at most `tokens` as `llm` counts.
@@ -108,9 +89,30 @@ impl<'a> WindowSizer<'a> {
         self.envelope_tokens + items * self.verdict_tokens
     }
 
+    /// What `items` ask of the Verifier, before any page is fetched.
+    pub(super) fn input(&self, items: &[Item]) -> Input {
+        let claims = items
+            .iter()
+            .filter_map(|item| Claim::of(self.claims, self.units, item))
+            .collect();
+        Input::of(
+            claims,
+            self.units,
+            Packed::default(),
+            self.reserve(items.len()),
+        )
+    }
+
+    fn task(&self, items: &[Item]) -> String {
+        let mut scope = Scope::for_question();
+        let mut showing = scope.request();
+        VerifierAudit::says(&self.input(items), &mut showing)
+            .map(|says| says.task)
+            .unwrap_or_default()
+    }
+
     fn task_tokens(&self, items: &[Item]) -> usize {
-        self.llm
-            .count_tokens(&policy::render(self.claims, self.units, items).task)
+        self.llm.count_tokens(&self.task(items))
     }
 }
 
@@ -120,7 +122,7 @@ impl Sizer for WindowSizer<'_> {
     /// be kept whole, not clamped.
     fn fits(&self, items: &[Item]) -> bool {
         let reserve = self.reserve(items.len());
-        let task = policy::render(self.claims, self.units, items).task;
+        let task = self.task(items);
         if self.tool_tokens > 0 {
             return tools::opening_fits(self.llm, SYSTEM_PROMPT, task, self.tool_tokens, reserve);
         }
@@ -128,8 +130,8 @@ impl Sizer for WindowSizer<'_> {
             .with_output_limit(reserve);
         let answer_kept = BudgetAllocation::plan(&capacity, &BudgetRequest::new(0, 0, 0))
             .is_ok_and(|allocation| allocation.output_reserved >= reserve);
-        let mut request = GroundedRequest::new(SYSTEM_PROMPT, task);
-        request.output_tokens = reserve;
+        let mut request = legacy::grounded(SYSTEM_PROMPT, task);
+        *legacy::grounded_says(&mut request).output_tokens = reserve;
         answer_kept && grounded_generation::evidence_room(self.llm, &request).is_ok()
     }
 
@@ -138,45 +140,40 @@ impl Sizer for WindowSizer<'_> {
     }
 }
 
-/// Send one batch: with the web tools when `web` is given, else as one
-/// grounded request the planner checks before sending.
-pub(super) async fn ask(
-    llm: &dyn LLMPort,
-    rendered: &Rendered,
-    reserve: usize,
-    web: Option<&dyn VerifierWeb>,
-) -> Result<Answer, AskError> {
-    let schema = policy::schema(rendered, web.is_some());
-    if let Some(web) = web {
-        return tools::ask(
-            llm,
-            SYSTEM_PROMPT,
-            rendered.task.clone(),
-            schema,
-            reserve,
-            web,
-        )
-        .await;
+/// The audit's transport: each request sent as it is, its tokens counted.
+#[derive(Default)]
+pub(super) struct Audit {
+    spent: Mutex<(u64, u64)>,
+}
+
+impl Audit {
+    /// The input and output tokens the requests sent through this transport cost.
+    pub(super) fn into_spent(self) -> (u64, u64) {
+        self.spent
+            .into_inner()
+            .unwrap_or_else(PoisonError::into_inner)
     }
-    let mut request = GroundedRequest::new(SYSTEM_PROMPT, rendered.task.clone());
-    request.output_tokens = reserve;
-    request.call = CallOptions {
-        priority: InferencePriority::Verification,
-        sampling: Some(SamplingOverride::deterministic()),
-        no_time_limit: true,
-        json_schema: Some(schema),
-        reasoning_effort: Some("low".into()),
-        ..Default::default()
-    };
-    match grounded_generation::generate(llm, request).await {
-        Ok(output) => Ok(Answer {
-            cut_off: cut_off(&output.finish_reason),
-            text: output.text,
-            input_tokens: output.input_tokens,
-            output_tokens: output.output_tokens,
-            ..Answer::default()
-        }),
-        Err(GroundedGenerationError::Budget(_)) => Err(AskError::TooLarge),
-        Err(GroundedGenerationError::Model(error)) => Err(error.into()),
+
+    async fn generate(&self, llm: &dyn LLMPort, request: GroundedRequest) -> Result<Sent> {
+        let output = grounded_generation::generate(llm, request.clone())
+            .await
+            .map_err(send_error)?;
+        {
+            let mut spent = self.spent.lock().unwrap_or_else(PoisonError::into_inner);
+            spent.0 += output.input_tokens;
+            spent.1 += output.output_tokens;
+        }
+        Ok(Sent::of(request, output))
+    }
+}
+
+#[async_trait]
+impl Transport for Audit {
+    async fn send(&self, llm: &dyn LLMPort, request: GroundedRequest) -> Result<Sent> {
+        self.generate(llm, request).await
+    }
+
+    async fn follow(&self, llm: &dyn LLMPort, step: Followup) -> Result<Sent> {
+        self.generate(llm, step.into_request()).await
     }
 }

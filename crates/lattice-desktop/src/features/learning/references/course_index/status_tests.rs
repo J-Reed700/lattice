@@ -6,20 +6,21 @@ use super::tests::{builds, course, indexes, pages};
 use super::*;
 use crate::features::learning::tests;
 use crate::infrastructure::passage_index::testing::{FakeEmbedder, FixedEmbedders};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobStatus, JobStore};
 use lattice_core::shared::Result;
 use std::sync::Arc;
 
 #[tokio::test]
 async fn a_current_index_is_ready_and_queues_nothing() -> Result<()> {
-    let pool = tests::pool().await?;
+    let db = Database::new(tests::pool().await?);
     let temp = tempfile::tempdir().unwrap();
     let courses = indexes(
-        &pool,
+        &db,
         temp.path(),
         FixedEmbedders::new(Some(FakeEmbedder::new("model-a"))),
     );
-    let (program, _) = course(&pool, &pages(2)).await?;
+    let (program, _) = course(&db, &pages(2)).await?;
     courses.ensure_current_quietly(&program).await?;
 
     assert_eq!(
@@ -28,21 +29,21 @@ async fn a_current_index_is_ready_and_queues_nothing() -> Result<()> {
             mode: "hybrid".into()
         }
     );
-    assert!(builds(&pool, &program).await.is_empty());
+    assert!(builds(&db, &program).await.is_empty());
     Ok(())
 }
 
 #[tokio::test]
 async fn a_course_behind_its_index_queues_one_build_and_never_opens_the_index() -> Result<()> {
-    let pool = tests::pool().await?;
+    let db = Database::new(tests::pool().await?);
     let temp = tempfile::tempdir().unwrap();
     let model = FakeEmbedder::new("model-a");
     let courses = indexes(
-        &pool,
+        &db,
         temp.path(),
         FixedEmbedders::new(Some(Arc::clone(&model))),
     );
-    let (program, _) = course(&pool, &pages(3)).await?;
+    let (program, _) = course(&db, &pages(3)).await?;
 
     let first = courses.status(&program).await;
     assert_eq!(
@@ -58,7 +59,7 @@ async fn a_course_behind_its_index_queues_one_build_and_never_opens_the_index() 
     // Read only: no directory made, nothing chunked or embedded.
     assert!(!courses.dir_of(&program)?.exists());
     assert!(model.embedded().is_empty());
-    let queued = builds(&pool, &program).await;
+    let queued = builds(&db, &program).await;
     assert_eq!(queued.len(), 1);
     assert_eq!(queued[0].status, JobStatus::Pending);
 
@@ -67,23 +68,23 @@ async fn a_course_behind_its_index_queues_one_build_and_never_opens_the_index() 
         courses.status(&program).await,
         CourseIndexStatusDto::Indexing { .. }
     ));
-    assert_eq!(builds(&pool, &program).await.len(), 1);
+    assert_eq!(builds(&db, &program).await.len(), 1);
     Ok(())
 }
 
 #[tokio::test]
 async fn a_running_build_reports_its_own_progress_and_pace() -> Result<()> {
-    let pool = tests::pool().await?;
+    let db = Database::new(tests::pool().await?);
     let temp = tempfile::tempdir().unwrap();
     let courses = indexes(
-        &pool,
+        &db,
         temp.path(),
         FixedEmbedders::new(Some(FakeEmbedder::new("model-a"))),
     );
-    let (program, _) = course(&pool, &pages(3)).await?;
+    let (program, _) = course(&db, &pages(3)).await?;
     courses.status(&program).await;
-    let build = builds(&pool, &program).await.remove(0);
-    let store = JobStore::new(pool.clone());
+    let build = builds(&db, &program).await.remove(0);
+    let store = JobStore::new(db.clone());
     store.claim(&build.id).await?;
     store
         .progress(
@@ -116,17 +117,17 @@ async fn a_running_build_reports_its_own_progress_and_pace() -> Result<()> {
 
 #[tokio::test]
 async fn a_resumed_build_counts_the_whole_index_and_its_own_pace() -> Result<()> {
-    let pool = tests::pool().await?;
+    let db = Database::new(tests::pool().await?);
     let temp = tempfile::tempdir().unwrap();
     let courses = indexes(
-        &pool,
+        &db,
         temp.path(),
         FixedEmbedders::new(Some(FakeEmbedder::new("model-a"))),
     );
-    let (program, _) = course(&pool, &pages(3)).await?;
+    let (program, _) = course(&db, &pages(3)).await?;
     courses.status(&program).await;
-    let build = builds(&pool, &program).await.remove(0);
-    let store = JobStore::new(pool.clone());
+    let build = builds(&db, &program).await.remove(0);
+    let store = JobStore::new(db.clone());
     store.claim(&build.id).await?;
     let embedding = |embedded: usize| {
         let per_second = (embedded > 0).then_some(14.0);
@@ -162,19 +163,19 @@ async fn a_resumed_build_counts_the_whole_index_and_its_own_pace() -> Result<()>
 
 #[tokio::test]
 async fn a_build_queued_behind_another_courses_build_says_it_waits_its_turn() -> Result<()> {
-    let pool = tests::pool().await?;
+    let db = Database::new(tests::pool().await?);
     let temp = tempfile::tempdir().unwrap();
     let courses = indexes(
-        &pool,
+        &db,
         temp.path(),
         FixedEmbedders::new(Some(FakeEmbedder::new("model-a"))),
     );
-    let (first, _) = course(&pool, &pages(2)).await?;
-    let (second, _) = course(&pool, &pages(2)).await?;
+    let (first, _) = course(&db, &pages(2)).await?;
+    let (second, _) = course(&db, &pages(2)).await?;
     courses.status(&first).await;
     courses.status(&second).await;
-    let running = builds(&pool, &first).await.remove(0);
-    JobStore::new(pool.clone()).claim(&running.id).await?;
+    let running = builds(&db, &first).await.remove(0);
+    JobStore::new(db.clone()).claim(&running.id).await?;
 
     assert!(matches!(
         courses.status(&second).await,
@@ -199,25 +200,25 @@ async fn a_build_queued_behind_another_courses_build_says_it_waits_its_turn() ->
 #[tokio::test]
 async fn without_an_embedding_model_the_course_is_searched_by_words_and_nothing_is_queued(
 ) -> Result<()> {
-    let pool = tests::pool().await?;
+    let db = Database::new(tests::pool().await?);
     let temp = tempfile::tempdir().unwrap();
-    let courses = indexes(&pool, temp.path(), FixedEmbedders::new(None));
-    let (program, _) = course(&pool, &pages(2)).await?;
+    let courses = indexes(&db, temp.path(), FixedEmbedders::new(None));
+    let (program, _) = course(&db, &pages(2)).await?;
 
     assert_eq!(
         courses.status(&program).await,
         CourseIndexStatusDto::NoEmbeddingModel
     );
-    assert!(builds(&pool, &program).await.is_empty());
+    assert!(builds(&db, &program).await.is_empty());
     Ok(())
 }
 
 #[tokio::test]
 async fn an_unreadable_index_or_a_bad_id_is_unavailable_with_its_reason() -> Result<()> {
-    let pool = tests::pool().await?;
+    let db = Database::new(tests::pool().await?);
     let temp = tempfile::tempdir().unwrap();
     let courses = indexes(
-        &pool,
+        &db,
         temp.path(),
         FixedEmbedders::new(Some(FakeEmbedder::new("model-a"))),
     );
@@ -226,7 +227,7 @@ async fn an_unreadable_index_or_a_bad_id_is_unavailable_with_its_reason() -> Res
         CourseIndexStatusDto::Unavailable { reason } if reason.contains("Invalid program ID")
     ));
 
-    let (program, _) = course(&pool, &pages(2)).await?;
+    let (program, _) = course(&db, &pages(2)).await?;
     let dir = courses.dir_of(&program)?;
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
@@ -238,23 +239,23 @@ async fn an_unreadable_index_or_a_bad_id_is_unavailable_with_its_reason() -> Res
         courses.status(&program).await,
         CourseIndexStatusDto::Unavailable { .. }
     ));
-    assert!(builds(&pool, &program).await.is_empty());
+    assert!(builds(&db, &program).await.is_empty());
     Ok(())
 }
 
 #[tokio::test]
 async fn a_build_that_could_not_finish_is_reported_and_not_queued_again() -> Result<()> {
-    let pool = tests::pool().await?;
+    let db = Database::new(tests::pool().await?);
     let temp = tempfile::tempdir().unwrap();
     let courses = indexes(
-        &pool,
+        &db,
         temp.path(),
         FixedEmbedders::new(Some(FakeEmbedder::new("model-a"))),
     );
-    let (program, _) = course(&pool, &pages(2)).await?;
+    let (program, _) = course(&db, &pages(2)).await?;
     courses.status(&program).await;
-    let build = builds(&pool, &program).await.remove(0);
-    let store = JobStore::new(pool.clone());
+    let build = builds(&db, &program).await.remove(0);
+    let store = JobStore::new(db.clone());
     store.claim(&build.id).await?;
     store
         .complete(
@@ -269,7 +270,7 @@ async fn a_build_that_could_not_finish_is_reported_and_not_queued_again() -> Res
         matches!(&status, CourseIndexStatusDto::Unavailable { reason } if reason.contains("0 of 2")),
         "{status:?}"
     );
-    let after = builds(&pool, &program).await;
+    let after = builds(&db, &program).await;
     assert_eq!(after.len(), 1);
     assert!(after[0].status.is_finished(), "nothing new is queued");
     Ok(())

@@ -398,7 +398,7 @@ Studio (⌘7) builds learning programs from material you trust.
   offers **Mark lesson complete**; it never completes the lesson for you. Pass
   marks (70 % for a quiz, 75 % for a test and the exam) can be changed under
   **Settings** on the Quizzes tab.
-- **Flashcards.** Make a deck from up to three documents, optionally with a
+- **Flashcards.** Make a deck from the documents you choose, optionally with a
   topic and a learning goal. Lattice writes the questions from your documents,
   each with its source. Review them as flashcards; your results and next review
   dates are saved.

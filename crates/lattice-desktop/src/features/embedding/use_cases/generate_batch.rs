@@ -22,9 +22,6 @@ const MAX_BATCH_SIZE: usize = 100;
 /// Minimum batch size (1 item)
 const MIN_BATCH_SIZE: usize = 1;
 
-/// Maximum text length per item (10,000 characters)
-const MAX_TEXT_LENGTH: usize = 10_000;
-
 /// Generate batch embeddings use case.
 ///
 /// Generates embeddings for multiple texts in a single batch:
@@ -53,7 +50,6 @@ impl GenerateBatchEmbeddingsUseCase {
     /// - Batch is empty
     /// - Batch exceeds max size (100 items)
     /// - Any text is empty
-    /// - Any text exceeds max length (10,000 characters)
     /// - Embedding generation fails
     pub async fn execute(
         &self,
@@ -79,15 +75,6 @@ impl GenerateBatchEmbeddingsUseCase {
                 return Err(AppError::InvalidInput(format!(
                     "Text at index {} is empty",
                     i
-                )));
-            }
-
-            if text.len() > MAX_TEXT_LENGTH {
-                return Err(AppError::InvalidInput(format!(
-                    "Text at index {} exceeds maximum length of {} characters (got {} characters)",
-                    i,
-                    MAX_TEXT_LENGTH,
-                    text.len()
                 )));
             }
         }
@@ -285,13 +272,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_generate_batch_embeddings_contains_too_long_text() {
+    async fn test_generate_batch_embeddings_long_text_is_not_refused_for_its_length() {
         let mock_service = Arc::new(MockEmbeddingService::new(384));
         let use_case = GenerateBatchEmbeddingsUseCase::new(mock_service);
 
         let texts = vec![
             "Valid text".to_string(),
-            "a".repeat(MAX_TEXT_LENGTH + 1), // Too long!
+            "a".repeat(50_000),
             "Another valid text".to_string(),
         ];
 
@@ -299,14 +286,7 @@ mod tests {
             .execute(GenerateBatchEmbeddingsRequestDto { texts })
             .await;
 
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            AppError::InvalidInput(msg) => {
-                assert!(msg.contains("index 1"));
-                assert!(msg.contains("exceeds maximum length"));
-            }
-            _ => panic!("Expected InvalidInput error"),
-        }
+        assert!(result.is_ok());
     }
 
     #[tokio::test]

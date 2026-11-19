@@ -5,25 +5,41 @@ use super::*;
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal};
 use lattice_core::domain::learning::claim_review::ClaimId;
 
+const PENDING_REPAIR: Protocol = lattice_core::protocol!("pending-repair", 3);
+
 #[derive(Serialize, Deserialize)]
-pub(super) struct PendingRepair {
+pub(crate) struct PendingRepair {
     pub(super) fingerprint: String,
     pub(super) defects: usize,
     pub(super) context: Value,
 }
 
-pub(crate) async fn has_pending_repair(
+/// What a preparation's review starts from on this attempt: how many numbered
+/// sources the writer was given, and the repair a previous attempt saved for
+/// this exact candidate and inputs.
+pub(crate) struct Restart {
+    pub(crate) writers: usize,
+    pub(crate) saved: Option<PendingRepair>,
+}
+
+/// Restores `numbered` as a previous attempt left it and finds its saved repair.
+pub(crate) async fn restart(
     llm: &dyn LLMPort,
     prompt: &str,
-    schema: &Value,
+    shape: &dyn crate::lessons::shape::ShapePolicy,
     raw: &str,
     references: &ReferenceCollection<'_>,
-) -> Result<bool> {
+    numbered: &mut Vec<LearningSourceDto>,
+) -> Result<Restart> {
+    let writers = numbered.len();
+    super::repair_loop::renumber(numbered, references).await?;
+    let schema = shape.schema(crate::lessons::shape::Phase::Kept, numbered.len());
     let candidate: Value = crate::generation::parse_json(raw)?;
-    Ok(crate::lesson_drafts::pending_repair(raw)
+    let saved = crate::lesson_drafts::pending_repair(raw)
         .await?
         .and_then(|raw| serde_json::from_str::<PendingRepair>(&raw).ok())
-        .is_some_and(|saved| saved.matches(llm, prompt, schema, &candidate, references)))
+        .filter(|saved| saved.matches(llm, prompt, schema.value(), &candidate, references));
+    Ok(Restart { writers, saved })
 }
 
 pub(super) fn repair_fingerprint(
@@ -39,7 +55,7 @@ pub(super) fn repair_fingerprint(
         .map(|source| (&source.id, sha256_hex(&source.excerpt)))
         .collect();
     sources.sort();
-    sha256_hex(json!({"policy":POLICY,"repairPolicy":"pending-repair-v3","model":llm.model_name(),"prompt":prompt,"schema":schema,"candidate":candidate,"sources":sources}).to_string())
+    sha256_hex(json!({"policy":POLICY,"repairPolicy":PENDING_REPAIR,"model":llm.model_name(),"prompt":prompt,"schema":schema,"candidate":candidate,"sources":sources}).to_string())
 }
 
 impl PendingRepair {
@@ -120,6 +136,15 @@ pub(super) fn repair_context(
                 // after it tests, and why the first could not be applied.
                 if let Some((goal, why)) = ledger.rewrite_ask(policy, id) {
                     fields.insert("goal".into(), json!(goal_words(goal)));
+                    if goal == Goal::CorrectWhatWasFound {
+                        let (veto, ground) = ledger.veto_and_ground_reasons(id);
+                        if let Some(reason) = veto {
+                            fields.insert("reason".into(), json!(reason));
+                        }
+                        if let Some(reason) = ground {
+                            fields.insert("groundReason".into(), json!(reason));
+                        }
+                    }
                     if let Some(reason) = why {
                         fields.insert("notApplied".into(), json!(reason));
                     }

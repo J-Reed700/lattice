@@ -14,6 +14,7 @@
 //! - Creates timestamped backup files
 
 use super::database_repository;
+use crate::infrastructure::persistence::database::open_to_read;
 use async_trait::async_trait;
 use chrono::Utc;
 use lattice_core::application::ports::backup_port::{BackupInfoData, BackupPort};
@@ -50,53 +51,6 @@ fn validate_safe_filename(filename: &str) -> Result<()> {
             AppError::Security("Filename cannot be a path".to_string())
         }
     })
-}
-
-/// Validate that a path is safe for use in SQL queries.
-///
-/// This function provides defense-in-depth protection against SQL injection
-/// in VACUUM INTO commands, which cannot use parameterized queries.
-///
-/// # Security
-///
-/// Checks for SQL injection patterns:
-/// - Semicolons (statement terminators)
-/// - Single quotes (string delimiters)
-/// - Double quotes (identifier delimiters)
-/// - SQL keywords (DROP, DELETE, INSERT, etc.)
-/// - Comment sequences (-- and /* */)
-/// - Null bytes
-fn validate_sql_safe_path(path: &str) -> Result<()> {
-    // SQL keywords are valid in paths and are not rejected here.
-    // that would block legitimate paths like "Dropbox", "update_v2", etc.
-    // Security relies on:
-    // 1. Path canonicalization + starts_with() check (confines to backup_root)
-    // 2. Single-quote escaping below (replace("'", "''"))
-    // We keep basic checks for obvious SQL injection attempts:
-
-    if path.contains(';') {
-        return Err(AppError::Security(
-            "Path contains SQL statement terminator (;)".to_string(),
-        ));
-    }
-
-    if path.contains("--") {
-        return Err(AppError::Security(
-            "Path contains SQL comment sequence (--)".to_string(),
-        ));
-    }
-
-    if path.contains("/*") || path.contains("*/") {
-        return Err(AppError::Security(
-            "Path contains SQL comment sequence (/* */)".to_string(),
-        ));
-    }
-
-    if path.contains('\0') {
-        return Err(AppError::Security("Path contains null byte".to_string()));
-    }
-
-    Ok(())
 }
 
 /// Put the pre-restore safety copy back as the live database. Returns what to
@@ -136,8 +90,6 @@ impl BackupAdapter {
         // Build and verify the new copy before touching the last recovery
         // point. A failed VACUUM (disk full, locked/corrupt DB, etc.) must not
         // destroy the previous safety copy.
-        let destination_str = destination.to_string_lossy().to_string();
-        validate_sql_safe_path(&destination_str)?;
         let file_name = destination
             .file_name()
             .and_then(|name| name.to_str())
@@ -146,10 +98,7 @@ impl BackupAdapter {
             destination.with_file_name(format!(".{file_name}.{}.tmp", uuid::Uuid::new_v4()));
         let _temporary_snapshot = TemporarySnapshot(temp_path.clone());
         let temp_str = temp_path.to_string_lossy().to_string();
-        validate_sql_safe_path(&temp_str)?;
-        if let Err(error) =
-            database_repository::vacuum_database_into(&self.database, &temp_str).await
-        {
+        if let Err(error) = self.database.vacuum_into(&temp_str).await {
             error!("Failed to create safety backup: {}", error);
             return Err(AppError::Database(format!(
                 "Failed to create safety backup: {error}"
@@ -220,20 +169,18 @@ impl BackupAdapter {
     /// Get file count from backup database
     async fn get_backup_file_count(&self, path: &Path) -> Option<usize> {
         // Open backup database read-only
-        let database = database_repository::open_read_only(path).await.ok()?;
+        let database = open_to_read(path).await.ok()?;
 
-        let count = database_repository::database_document_count(&database)
-            .await
-            .ok()?;
+        let count = database_repository::database_document_count(&database).await;
 
         database.close().await;
 
-        Some(count as usize)
+        Some(count.ok()? as usize)
     }
 
     /// Get version from backup metadata
     async fn get_backup_version(&self, path: &Path) -> Option<String> {
-        let database = match database_repository::open_read_only(path).await {
+        let database = match open_to_read(path).await {
             Ok(database) => database,
             Err(error) => {
                 warn!(
@@ -289,15 +236,16 @@ impl BackupAdapter {
         }
 
         // Try to open the backup database
-        let database = database_repository::open_read_only(path)
+        let database = open_to_read(path)
             .await
             .map_err(|e| AppError::Database(format!("Invalid backup file: {}", e)))?;
 
-        let result = database_repository::database_integrity_check(&database)
-            .await
-            .map_err(|e| AppError::Database(format!("Backup integrity check failed: {}", e)))?;
+        let checked = database_repository::database_integrity_check(&database).await;
 
         database.close().await;
+
+        let result = checked
+            .map_err(|e| AppError::Database(format!("Backup integrity check failed: {}", e)))?;
 
         if result != "ok" {
             return Err(AppError::Database(format!(
@@ -332,13 +280,8 @@ impl BackupPort for BackupAdapter {
         // Determine and validate the backup path
         let backup_path = match path {
             Some(p) => {
-                // SECURITY: Early validation of path string for SQL injection patterns
-                // This must happen BEFORE any file system operations to catch malicious paths
-                let path_str = p.to_string_lossy();
-                validate_sql_safe_path(&path_str)?;
-
                 // SECURITY: Validate user-provided path to prevent directory traversal
-                // SQL-safe path validation: ensure path is under backup root
+                // and ensure it is under the backup root
                 let canonical_path = if p.exists() {
                     p.canonicalize().map_err(|e| {
                         error!("Failed to canonicalize backup path: {}", e);
@@ -403,11 +346,8 @@ impl BackupPort for BackupAdapter {
 
         let backup_path_str = backup_path.to_string_lossy().to_string();
 
-        // SECURITY: Validate path for SQL safety (CWE-89 mitigation)
-        validate_sql_safe_path(&backup_path_str)?;
-
-        // Defense in depth: the repository escapes single quotes as well.
-        database_repository::vacuum_database_into(&self.database, &backup_path_str)
+        self.database
+            .vacuum_into(&backup_path_str)
             .await
             .map_err(|e| {
                 error!("Backup failed: {}", e);

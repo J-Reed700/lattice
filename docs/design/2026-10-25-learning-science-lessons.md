@@ -160,7 +160,7 @@ misconceptions. A lesson's recall cards (`recall_draft_prompt`) are
 retrievals, not recognition: they mix stating an idea, explaining why it
 works, applying it to a case whose answer follows from the quoted passage,
 and telling contrasted ideas apart, never give their answer away in the cue,
-and explain the common mistake with the answer. The schema allows 10 to 16 sections of eight kinds.
+and explain the common mistake with the answer. The schema allows 11 to 16 sections of eight kinds.
 `lesson_rules` reports the mix (at least two explanations, two worked
 examples, one contrast and two checks; exactly one guided practice,
 independent practice, reflection and recap), the check format, and the order.

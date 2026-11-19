@@ -26,7 +26,7 @@ mod validation;
 use crate::{
     dto::LearningProgramDto,
     pack::{decode_learning_pack, encode_learning_pack, DecodedLearningPack},
-    persistence::{db, hash, now},
+    persistence::{hash, now},
     portability_dto::*,
 };
 use entries::ImportScope;
@@ -35,11 +35,10 @@ pub use files::DestinationPicker;
 pub use files::PACK_EXTENSION;
 use files::{chosen_file, managed_path, next_free_path, read_untrusted};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::Database;
 use records::{pack_operation, replay, PendingPreview};
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use sqlx::{Row, SqliteConnection};
 use std::{collections::HashMap, path::Path};
 use validation::validate_program;
 
@@ -100,7 +99,7 @@ enum Destination<'a> {
 
 #[derive(Clone)]
 pub struct LearningPackRepository {
-    pool: SqlitePool,
+    db: Database,
     /// App-owned directory where exported packs are written and replacement
     /// backups are kept. The container is deliberately not threaded through
     /// the repository: the feature owns its storage location and the DI
@@ -111,20 +110,19 @@ pub struct LearningPackRepository {
 }
 impl LearningPackRepository {
     pub fn new(
-        pool: impl DriverPool,
+        db: Database,
         managed_dir: std::path::PathBuf,
         app_data_dir: std::path::PathBuf,
     ) -> Self {
-        let pool = pool.sqlx_pool().clone();
         Self {
-            pool,
+            db,
             managed_dir,
             app_data_dir,
         }
     }
 
     pub async fn workspace(&self, program_id: &str) -> Result<LearningPortabilityWorkspaceDto> {
-        records::workspace(&self.pool, program_id).await
+        records::workspace(&self.db, program_id).await
     }
 
     /// Into the app's own pack folder, named after the course.
@@ -169,15 +167,15 @@ impl LearningPackRepository {
         validate_uuid(&req.operation_id, "operation")?;
         validate_uuid(&req.program_id, "program")?;
         let payload = hash(req)?;
-        if let Some(done) = records::replayed_export(&self.pool, req, &payload).await? {
+        if let Some(done) = records::replayed_export(&self.db, req, &payload).await? {
             return Ok(Some(done));
         }
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        let title = guards::require_exportable(&mut connection, &req.program_id)
+        let mut read = self.db.begin_read().await?;
+        let title = guards::require_exportable(&mut read, &req.program_id)
             .await?
             .summary
             .title;
-        drop(connection);
+        read.commit().await?;
         let path = match destination {
             Destination::Managed => managed_path(&self.managed_dir, &title).await?,
             Destination::Folder(dir) => next_free_path(dir, &pack_file_name(&title)).await?,
@@ -186,12 +184,12 @@ impl LearningPackRepository {
                 None => return Ok(None),
             },
         };
-        let snapshot = export::snapshot(&self.pool, &req.program_id, &req.options).await?;
+        let snapshot = export::snapshot(&self.db, &req.program_id, &req.options).await?;
         let bytes = encode_learning_pack(snapshot)?;
         files::atomic_write(&path, &bytes).await?;
         let manifest = decode_learning_pack(&bytes)?.manifest;
         let destination = path.to_string_lossy().into_owned();
-        records::record_export(&self.pool, req, &payload, destination, manifest)
+        records::record_export(&self.db, req, &payload, destination, manifest)
             .await
             .map(Some)
     }
@@ -205,24 +203,24 @@ impl LearningPackRepository {
         validate_uuid(&req.operation_id, "operation")?;
         validate_uuid(&req.preview_id, "preview")?;
         let payload = hash(req)?;
-        if replay(&self.pool, &req.operation_id, "preview_import", &payload)
+        if replay(&self.db, &req.operation_id, "preview_import", &payload)
             .await?
             .is_some()
         {
             return self.workspace_for_preview(&req.preview_id).await;
         }
         let decoded = decode_learning_pack(&read_untrusted(Path::new(&req.source_path)).await?)?;
-        let preview = match conflicts::schema_mismatch(&self.pool, &decoded).await? {
+        let preview = match conflicts::schema_mismatch(&self.db, &decoded).await? {
             Some(blocked) => blocked,
             None => {
                 let program = program_entry::load_program(&decoded)?;
                 validate_program(&program)?;
                 let checked = entries::check(&decoded, &program)?;
-                conflicts::scan(&self.pool, &program, req.conflict_policy, checked).await?
+                conflicts::scan(&self.db, &program, req.conflict_policy, checked).await?
             }
         };
         let program_id =
-            records::record_preview(&self.pool, req, &payload, &decoded, preview).await?;
+            records::record_preview(&self.db, req, &payload, &decoded, preview).await?;
         self.workspace(&program_id).await
     }
 
@@ -233,30 +231,29 @@ impl LearningPackRepository {
         validate_uuid(&req.operation_id, "operation")?;
         validate_uuid(&req.preview_id, "preview")?;
         let payload = hash(req)?;
-        if replay(&self.pool, &req.operation_id, "cancel_import", &payload)
+        if replay(&self.db, &req.operation_id, "cancel_import", &payload)
             .await?
             .is_some()
         {
             return self.workspace_for_preview(&req.preview_id).await;
         }
         let now = now();
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let row =
             sqlx::query("SELECT program_id,status FROM learning_pack_import_previews WHERE id=?")
                 .bind(&req.preview_id)
                 .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?
+                .await?
                 .ok_or_else(|| AppError::NotFound("Pack preview not found".into()))?;
         if row.get::<String, _>("status") != "pending" {
             return Err(invalid("Only a pending pack preview can be cancelled."));
         }
         let program_id: String = row.get("program_id");
-        sqlx::query("UPDATE learning_pack_import_previews SET status='cancelled',decided_at=? WHERE id=? AND status='pending'").bind(now).bind(&req.preview_id).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("UPDATE learning_pack_import_previews SET status='cancelled',decided_at=? WHERE id=? AND status='pending'").bind(now).bind(&req.preview_id).execute(&mut *tx).await?;
         pack_operation(&req.operation_id, "cancel_import", &payload)
             .record(&mut tx, &req.preview_id)
             .await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         self.workspace(&program_id).await
     }
 
@@ -271,13 +268,13 @@ impl LearningPackRepository {
         validate_uuid(&req.operation_id, "operation")?;
         validate_uuid(&req.preview_id, "preview")?;
         let payload = hash(req)?;
-        if replay(&self.pool, &req.operation_id, "apply_import", &payload)
+        if replay(&self.db, &req.operation_id, "apply_import", &payload)
             .await?
             .is_some()
         {
             return self.workspace_for_preview(&req.preview_id).await;
         }
-        let preview = records::pending_preview(&self.pool, &req.preview_id).await?;
+        let preview = records::pending_preview(&self.db, &req.preview_id).await?;
         // Re-read current bytes; a preview never authorizes changed data.
         let decoded =
             decode_learning_pack(&read_untrusted(Path::new(&preview.source_path)).await?)?;
@@ -288,15 +285,16 @@ impl LearningPackRepository {
                 "The pack changed after preview. Preview it again before applying.",
             ));
         }
-        conflicts::require_same_schema(&self.pool, &decoded).await?;
+        conflicts::require_same_schema(&self.db, &decoded).await?;
         let original = program_entry::load_program(&decoded)?;
         validate_program(&original)?;
         entries::check(&decoded, &original)?;
         let replaces = preview.policy.on_existing() == ExistingAction::Replace;
         // Lock before capturing the backup, not merely before deleting rows.
         // Background saves either precede that snapshot or wait for completion.
-        let (mut tx, backup) = replacement::begin_apply(
-            &self.pool,
+        let mut tx = self.db.begin_write().await?;
+        let backup = replacement::prepare_apply(
+            &mut tx,
             &self.managed_dir,
             &req.preview_id,
             &preview.target_id,
@@ -309,12 +307,11 @@ impl LearningPackRepository {
             local_links =
                 Some(replacement::snapshot_local_links(&mut tx, &preview.target_id).await?);
             sqlx::query("DELETE FROM study_decks WHERE id=(SELECT deck_id FROM learning_memory WHERE program_id=? AND deck_id IS NOT NULL)")
-                .bind(&preview.target_id).execute(&mut *tx).await.map_err(db)?;
+                .bind(&preview.target_id).execute(&mut *tx).await?;
             sqlx::query("DELETE FROM learning_programs WHERE id=?")
                 .bind(&preview.target_id)
                 .execute(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
         }
         let scope = ImportScope {
             pack: &decoded,
@@ -337,7 +334,7 @@ impl LearningPackRepository {
             &preview.changes,
         )
         .await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         self.workspace(&program.summary.id).await
     }
 
@@ -354,8 +351,7 @@ impl LearningPackRepository {
             sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
                 .bind(&preview.target_id)
                 .fetch_optional(&mut *connection)
-                .await
-                .map_err(db)?;
+                .await?;
         if preview.policy.on_existing() == ExistingAction::Block && existing.is_some() {
             return Err(invalid(
                 "Merge-safe import is blocked because the incoming program ID already exists.",
@@ -374,7 +370,7 @@ impl LearningPackRepository {
     }
 
     async fn workspace_for_preview(&self, id: &str) -> Result<LearningPortabilityWorkspaceDto> {
-        let program_id = records::preview_program(&self.pool, id).await?;
+        let program_id = records::preview_program(&self.db, id).await?;
         self.workspace(&program_id).await
     }
 }

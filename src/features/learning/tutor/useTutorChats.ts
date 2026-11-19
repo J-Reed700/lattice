@@ -47,7 +47,18 @@ export function useTutorChats(programId: string, courseTitle: string): TutorChat
   const chatsQuery = useQuery({
     queryKey: chatsKey(programId),
     queryFn: async () => {
-      const result = await api.listConversationsExplorer({ programId });
+      const result = await api.listConversationsExplorer({
+        spaceId: null,
+        programId,
+        query: null,
+        savedOnly: null,
+        bookmarkedOnly: null,
+        pinnedOnly: null,
+        hasMessageBookmarks: null,
+        includeArchived: null,
+        limit: null,
+        offset: null,
+      });
       if (!result.ok) throw new Error(result.error);
       return result.data.conversations as Conversation[];
     },

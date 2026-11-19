@@ -15,100 +15,20 @@ export type ConversationDto = import('../../lib/bindings').ConversationDto;
  */
 export type MessageDto = import('../../lib/bindings').MessageDto;
 
-
-/**
- * Request to create a new conversation.
- */
-export interface CreateConversationRequest {
-  /** Conversation title */
-  title: string;
-  /** Optional system prompt */
-  systemPrompt?: string;
-}
-
-/**
- * Request to get a conversation by ID.
- */
-export interface GetConversationRequest {
-  /** Conversation identifier */
-  conversationId: string;
-}
-
-/**
- * Request to get conversation messages.
- */
-export interface GetConversationMessagesRequest {
-  /** Conversation identifier */
-  conversationId: string;
-}
-
-/**
- * Request to rename a conversation.
- */
-export interface RenameConversationRequest {
-  /** Conversation identifier */
-  conversationId: string;
-  /** New title */
-  newTitle: string;
-}
-
-/**
- * Request to delete a conversation.
- */
-export interface DeleteConversationRequest {
-  /** Conversation identifier */
-  conversationId: string;
-}
-
 /**
  * Query parameters for listing conversations.
  */
 export type ListConversationsQuery = import('../../lib/bindings').ListConversationsQuery;
 
+export type CreateConversationResponse = import('../../lib/bindings').CreateConversationResponseDto;
 
-/**
- * Response from creating a conversation.
- */
-export interface CreateConversationResponse {
-  /** The created conversation */
-  conversation: ConversationDto;
-  /** Status message */
-  status: string;
-}
+export type GetConversationResponse = import('../../lib/bindings').GetConversationResponseDto;
 
-/**
- * Response from getting a conversation.
- */
-export interface GetConversationResponse {
-  /** The conversation (null if not found) */
-  conversation: ConversationDto | null;
-}
+export type GetConversationMessagesResponse = import('../../lib/bindings').GetConversationMessagesResponseDto;
 
-/**
- * Response from getting conversation messages.
- */
-export interface GetConversationMessagesResponse {
-  /** List of messages in chronological order */
-  messages: MessageDto[];
-  /** Total count */
-  total: number;
-}
+export type RenameConversationResponse = import('../../lib/bindings').RenameConversationResponseDto;
 
-/**
- * Response from renaming a conversation.
- */
-export interface RenameConversationResponse {
-  /** Status message */
-  status: string;
-}
-
-/**
- * Response from deleting a conversation.
- */
-export interface DeleteConversationResponse {
-  /** Status message */
-  status: string;
-}
+export type DeleteConversationResponse = import('../../lib/bindings').DeleteConversationResponseDto;
 
 export type ListConversationsResponse = import('../../lib/bindings').ListConversationsResponseDto;
 
@@ -124,129 +44,41 @@ export type ConversationSpaceDto = import('../../lib/bindings').ConversationSpac
 
 export type ConversationJournalDto = import('../../lib/bindings').ConversationJournalDto;
 
-export interface CreateConversationSpaceRequest {
-  name: string;
-  description?: string | null;
-  icon?: string | null;
-  accentColor?: string | null;
-  spacePrompt?: string | null;
-  toolPreferencesJson?: string | null;
-}
+export type CreateConversationSpaceRequest = import('../../lib/bindings').CreateConversationSpaceRequestDto;
 
-export interface CreateConversationJournalRequest {
-  name: string;
-  description?: string | null;
-  icon?: string | null;
-  accentColor?: string | null;
-  spacePrompt?: string | null;
-  toolPreferencesJson?: string | null;
-}
+export type CreateConversationJournalRequest = import('../../lib/bindings').CreateConversationJournalRequestDto;
 
-export interface UpdateConversationSpaceRequest {
-  spaceId: string;
-  name?: string;
-  description?: string | null;
-  icon?: string | null;
-  accentColor?: string | null;
-  spacePrompt?: string | null;
-  toolPreferencesJson?: string | null;
-  isArchived?: boolean;
-  sortOrder?: number;
-}
+export type UpdateConversationSpaceRequest = import('../../lib/bindings').UpdateConversationSpaceRequestDto;
 
-export interface UpdateConversationJournalRequest {
-  journalId: string;
-  name?: string;
-  description?: string | null;
-  icon?: string | null;
-  accentColor?: string | null;
-  spacePrompt?: string | null;
-  toolPreferencesJson?: string | null;
-  isArchived?: boolean;
-  sortOrder?: number;
-}
+export type UpdateConversationJournalRequest = import('../../lib/bindings').UpdateConversationJournalRequestDto;
 
-export interface ArchiveConversationSpaceRequest {
-  spaceId: string;
-  archived: boolean;
-}
+export type ArchiveConversationSpaceRequest = import('../../lib/bindings').ArchiveConversationSpaceRequestDto;
 
-export interface ArchiveConversationJournalRequest {
-  journalId: string;
-  archived: boolean;
-}
+export type ArchiveConversationJournalRequest = import('../../lib/bindings').ArchiveConversationJournalRequestDto;
 
-export interface DeleteConversationJournalRequest {
-  journalId: string;
-}
+export type DeleteConversationJournalRequest = import('../../lib/bindings').DeleteConversationJournalRequestDto;
 
-export interface MoveConversationToSpaceRequest {
-  conversationId: string;
-  spaceId: string;
-}
+export type MoveConversationToSpaceRequest = import('../../lib/bindings').MoveConversationToSpaceRequestDto;
 
-export interface AddConversationToJournalRequest {
-  journalSpaceId: string;
-  conversationId: string;
-}
+export type AddConversationToJournalRequest = import('../../lib/bindings').AddConversationToJournalRequestDto;
 
-export interface RemoveConversationFromJournalRequest {
-  journalSpaceId: string;
-  conversationId: string;
-}
+export type RemoveConversationFromJournalRequest = import('../../lib/bindings').RemoveConversationFromJournalRequestDto;
 
-export interface SetConversationStateRequest {
-  conversationId: string;
-  value: boolean;
-}
+export type SetConversationStateRequest = import('../../lib/bindings').SetConversationStateRequestDto;
 
-export interface ListConversationsExplorerQuery {
-  /** Only the tutor chats of this course. */
-  programId?: string;
-  spaceId?: string;
-  query?: string;
-  savedOnly?: boolean;
-  bookmarkedOnly?: boolean;
-  pinnedOnly?: boolean;
-  hasMessageBookmarks?: boolean;
-  includeArchived?: boolean;
-  limit?: number;
-  offset?: number;
-}
+export type ListConversationsExplorerQuery = import('../../lib/bindings').ListConversationsExplorerQueryDto;
 
-export interface ListJournalConversationsQuery {
-  journalSpaceId: string;
-  query?: string;
-  includeArchived?: boolean;
-  limit?: number;
-  offset?: number;
-}
+export type ListJournalConversationsQuery = import('../../lib/bindings').ListJournalConversationsQueryDto;
 
 export type ConversationMessageBookmarkDto = import('../../lib/bindings').ConversationMessageBookmarkDto;
 
-export interface BookmarkConversationMessageRequest {
-  conversationId: string;
-  messageId: string;
-  title?: string | null;
-  note?: string | null;
-}
+export type BookmarkConversationMessageRequest = import('../../lib/bindings').BookmarkConversationMessageRequestDto;
 
-export interface UnbookmarkConversationMessageRequest {
-  conversationId: string;
-  messageId: string;
-}
+export type UnbookmarkConversationMessageRequest = import('../../lib/bindings').UnbookmarkConversationMessageRequestDto;
 
-export interface DeleteConversationMessageRequest {
-  conversationId: string;
-  messageId: string;
-}
+export type DeleteConversationMessageRequest = import('../../lib/bindings').DeleteConversationMessageRequestDto;
 
-export interface ListMessageBookmarksQuery {
-  conversationId?: string;
-  query?: string;
-  limit?: number;
-  offset?: number;
-}
+export type ListMessageBookmarksQuery = import('../../lib/bindings').ListMessageBookmarksQueryDto;
 
 export type ListMessageBookmarksResponse = import('../../lib/bindings').ListMessageBookmarksResponseDto;
 
@@ -258,16 +90,6 @@ export type DocumentSpaceMembershipDto = import('../../lib/bindings').DocumentSp
 
 export type ConversationSpaceMemberDto = import('../../lib/bindings').ConversationSpaceMemberDto;
 
-export interface UpsertConversationSpaceMemberRequest {
-  spaceId: string;
-  memberId: string;
-  displayName?: string;
-  email?: string | null;
-  avatarUrl?: string | null;
-  role: 'owner' | 'editor' | 'viewer';
-}
+export type UpsertConversationSpaceMemberRequest = import('../../lib/bindings').UpsertConversationSpaceMemberRequestDto;
 
-export interface RemoveConversationSpaceMemberRequest {
-  spaceId: string;
-  memberId: string;
-}
+export type RemoveConversationSpaceMemberRequest = import('../../lib/bindings').RemoveConversationSpaceMemberRequestDto;

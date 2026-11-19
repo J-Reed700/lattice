@@ -11,6 +11,7 @@ use lattice_core::shared::persistence::Database;
 
 use super::attach::report::ClaimAttachProgressDto;
 use super::attach::{check_others, course_material, AttachDeps, Checking, OtherClaims, Others};
+use super::count;
 use super::repository;
 use crate::curriculum::LearningGenerationJobStatus;
 use crate::curriculum_repository::LearningCurriculumRepository;
@@ -63,7 +64,7 @@ pub async fn waiting_claims(
     let mut checking = Checking {
         report: progress,
         done: 0,
-        total: u32::try_from(waiting).unwrap_or(u32::MAX),
+        total: count(waiting),
     };
     let (sources, course) = course_material(deps, program_id).await?;
     let references = ReferenceCollection::searchable_now(course.as_ref(), &sources).await?;
@@ -109,8 +110,4 @@ pub async fn running_job(database: &Database, ledger: &Ledger) -> Option<String>
         LearningGenerationJobStatus::Pending | LearningGenerationJobStatus::Running
     )
     .then_some(job.id)
-}
-
-fn count(value: usize) -> u32 {
-    u32::try_from(value).unwrap_or(u32::MAX)
 }

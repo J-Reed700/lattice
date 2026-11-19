@@ -10,7 +10,7 @@ use super::*;
 use crate::references::trust;
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::http::url_identity::identity;
-use lattice_core::shared::persistence::{Transactions, WriteTx};
+use lattice_core::shared::persistence::WriteTx;
 
 impl LearningSourceLibraryRepository {
     /// Captures a source research selected, with the planner's reason for
@@ -99,11 +99,11 @@ impl LearningSourceLibraryRepository {
         if full_text.trim().is_empty() {
             return Err(invalid("Source text must not be empty"));
         }
-        let title = shown(captured.title.trim());
+        let title = captured.title.trim();
         if title.is_empty() {
             return Err(invalid("Source title must not be empty"));
         }
-        let publisher = captured.publisher.as_deref().map(shown);
+        let publisher = captured.publisher.as_deref();
         if origin.trim().is_empty() || origin.chars().count() > 2048 {
             return Err(invalid("Source origin must contain 1–2048 characters"));
         }
@@ -128,9 +128,9 @@ impl LearningSourceLibraryRepository {
             LearningSourceKind::Document => "document",
             LearningSourceKind::Pasted => "pasted",
         };
-        let mut read = self.database.begin_read().await.map_err(db)?;
+        let mut read = self.database.begin_read().await?;
         let saved = trust::capture::saved_texts(&mut read, program_id).await?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         let comparison = trust::capture::compare_saved(
             saved,
             trust::capture::VersionText {
@@ -140,7 +140,7 @@ impl LearningSourceLibraryRepository {
             },
         )
         .await?;
-        let mut tx = self.database.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await?;
         lock_program(&mut tx, program_id).await?;
         if source_operation(
             operation_id,
@@ -250,7 +250,7 @@ impl LearningSourceLibraryRepository {
             },
         )
         .await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(SelectedSaved::Added)
     }
 
@@ -308,9 +308,9 @@ impl LearningSourceLibraryRepository {
         let version_id = uuid::Uuid::new_v4().to_string();
         let comparison = match captured.as_ref().filter(|_| failure.is_none()) {
             Some(captured) => {
-                let mut read = self.database.begin_read().await.map_err(db)?;
+                let mut read = self.database.begin_read().await?;
                 let saved = trust::capture::saved_texts(&mut read, &req.program_id).await?;
-                read.commit().await.map_err(db)?;
+                read.commit().await?;
                 Some(
                     trust::capture::compare_saved(
                         saved,
@@ -325,7 +325,7 @@ impl LearningSourceLibraryRepository {
             }
             None => None,
         };
-        let mut tx = self.database.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await?;
         lock_program(&mut tx, &req.program_id).await?;
         if source_operation(
             &req.operation_id,
@@ -384,8 +384,8 @@ impl LearningSourceLibraryRepository {
                     Some("The page did not contain valid source metadata and text.".into()),
                 )
             } else {
-                let title = shown(captured.title.trim());
-                let publisher = captured.publisher.as_deref().map(shown);
+                let title = captured.title.trim();
+                let publisher = captured.publisher.as_deref();
                 let new_digest = sha256_hex(&text);
                 if active_digest.as_deref() == Some(new_digest.as_str()) {
                     (LearningSourceCheckStatus::Unchanged, None, None)
@@ -513,7 +513,7 @@ impl LearningSourceLibraryRepository {
             },
         )
         .await?;
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 }
 

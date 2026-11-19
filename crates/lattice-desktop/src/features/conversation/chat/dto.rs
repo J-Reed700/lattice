@@ -4,6 +4,7 @@ use super::{
     TurnStepDto, VerificationReadyDto,
 };
 use lattice_core::application::contracts::explorer::ExplorerFocusDto;
+use lattice_core::application::contracts::replies::ReplyReferenceDto;
 pub(super) use lattice_core::application::contracts::sources::SourceDto;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -166,6 +167,11 @@ pub struct ChatStreamEventDto {
     /// message carries the attached ones in `metadata.images`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub images: Option<Vec<lattice_core::application::contracts::images::ChatImageDto>>,
+
+    /// One reference the reply made, in reply order between the text deltas of
+    /// `content`: an event carries a text delta or one reference, never both.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference: Option<ReplyReferenceDto>,
 }
 
 impl ChatStreamEventDto {

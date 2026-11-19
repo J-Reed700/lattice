@@ -67,6 +67,14 @@ describe('Learning Studio Plan editor', () => {
     await waitFor(() => expect(mocks.cancelJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'job-1', expectedRevision: 9 })));
   });
 
+  it('names a course-plan job by what it does', async () => {
+    const running = plan().jobs[0];
+    mocks.getPlan.mockResolvedValue(ok(plan({ jobs: [{ ...running, id: 'plan-job', kind: 'course_plan', status: 'completed', lessonIds: undefined }] })));
+    renderPlan();
+    expect(await screen.findByRole('heading', { name: 'Planning topics' })).toBeVisible();
+    expect(screen.queryByText(/course plan/i)).not.toBeInTheDocument();
+  });
+
   it('folds attempts a retry superseded into one closed list of one-line outcomes', async () => {
     const running = plan().jobs[0];
     const attempt = (id: string, status: string, retryOfJobId: string | null, createdAt: number, error: string | null) => ({

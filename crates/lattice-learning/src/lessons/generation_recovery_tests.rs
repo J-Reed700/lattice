@@ -1,4 +1,5 @@
 use super::*;
+use crate::dto::LearningPreparation;
 use crate::{
     curriculum::LearningGenerationJobStatus as Status,
     curriculum_repository::{lesson_job_config, LESSON_PREPARATION},
@@ -6,13 +7,14 @@ use crate::{
     plan_dto::LearningGenerationJobActionRequestDto,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::error::ErrorClass;
 use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobStore, RecoveryPolicy};
 use serde_json::json;
 
 /// Records an outage the way the runtime does after a failed attempt.
-async fn defer(pool: &SqlitePool, id: &str, error: AppError) -> Result<()> {
-    let store = JobStore::new(pool.clone());
+async fn defer(db: &Database, id: &str, error: AppError) -> Result<()> {
+    let store = JobStore::new(db.clone());
     let job = store.get(id).await?;
     let JobFailure::Defer(deferral) = lesson_failure(&job, &error) else {
         panic!("an outage is deferred, not failed");
@@ -41,11 +43,12 @@ async fn worker_defers_outages_but_preserves_terminal_validation_errors() {
         ),
     ] {
         let pool = crate::tests::pool().await.unwrap();
-        let (repo, job) = repository_tests::queued_job(&pool).await;
+        let db = Database::new(pool.clone());
+        let (repo, job) = repository_tests::queued_job(&db).await;
         let worker = LessonGenerationWorker {
             course_setups: Default::default(),
             runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-            database: pool.clone().into(),
+            database: db.clone(),
             load_llm: Arc::new(|| {
                 Box::pin(async { panic!("Reference refresh must finish first") })
             }),
@@ -70,7 +73,7 @@ async fn worker_defers_outages_but_preserves_terminal_validation_errors() {
                 .activity
                 .is_none_or(|activity| !activity.model_running));
             assert!(
-                JobStore::new(pool.clone())
+                JobStore::new(db.clone())
                     .claim(&job.id)
                     .await
                     .unwrap()
@@ -85,13 +88,14 @@ async fn worker_defers_outages_but_preserves_terminal_validation_errors() {
 #[tokio::test]
 async fn a_busy_database_is_waited_out_and_never_blamed_on_the_model() {
     let pool = crate::tests::pool().await.unwrap();
-    let (_, job) = repository_tests::queued_job(&pool).await;
-    let job = JobStore::new(pool).get(&job.id).await.unwrap();
+    let db = Database::new(pool.clone());
+    let (_, job) = repository_tests::queued_job(&db).await;
+    let job = JobStore::new(db).get(&job.id).await.unwrap();
     for busy in [
-        crate::persistence::db(sqlx::Error::PoolTimedOut),
-        AppError::Database("error returned from database: (code: 5) database is locked".into()),
+        AppError::from(sqlx::Error::PoolTimedOut),
+        AppError::DatabaseBusy("error returned from database: (code: 5) database is locked".into()),
     ] {
-        assert!(JobFailure::is_outage(&busy), "{busy}");
+        assert_eq!(ErrorClass::of(&busy), ErrorClass::Outage, "{busy}");
         let JobFailure::Defer(deferral) = lesson_failure(&job, &busy) else {
             panic!("a busy database is deferred, not failed");
         };
@@ -106,8 +110,9 @@ async fn a_busy_database_is_waited_out_and_never_blamed_on_the_model() {
 #[tokio::test]
 async fn a_website_status_defers_only_when_a_retry_can_change_it() {
     let pool = crate::tests::pool().await.unwrap();
-    let (_, job) = repository_tests::queued_job(&pool).await;
-    let job = JobStore::new(pool).get(&job.id).await.unwrap();
+    let db = Database::new(pool.clone());
+    let (_, job) = repository_tests::queued_job(&db).await;
+    let job = JobStore::new(db).get(&job.id).await.unwrap();
 
     let busy = AppError::HttpStatus {
         status: 503,
@@ -135,71 +140,62 @@ async fn a_website_status_defers_only_when_a_retry_can_change_it() {
 #[tokio::test]
 async fn outage_schedule_and_checkpoints_survive_reopen_and_cancellation_wins() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let options = crate::test_support::file_options(directory.path().join("reconnect.sqlite"));
+    let path = directory.path().join("reconnect.sqlite");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
+    let options = crate::test_support::file_options(path);
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    let (repo, job) = repository_tests::queued_job(&pool).await;
-    let program = LearningRepository::new(pool.clone())
+        .await?;
+    let db = Database::new(pool.clone());
+    let (repo, job) = repository_tests::queued_job(&db).await;
+    let program = LearningRepository::new(db.clone())
         .get(&job.program_id)
         .await?;
     let lesson_id = &program.modules[0].lessons[0].id;
-    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job.id,
-        lesson_id,
-        async {
-            lesson_drafts::resume("fixture-inputs".into()).await?;
-            lesson_drafts::save("saved candidate").await?;
-            lesson_drafts::record_checkpoint("fixture-comparison", json!({"complete": true})).await
-        },
-    )
+    assert!(JobStore::new(db.clone()).claim(&job.id).await?.is_some());
+    lesson_drafts::run(&db, &repo, &job.id, lesson_id, async {
+        lesson_drafts::resume("fixture-inputs".into()).await?;
+        lesson_drafts::save("saved candidate").await?;
+        lesson_drafts::record_checkpoint("fixture-comparison", json!({"complete": true})).await
+    })
     .await?;
     defer(
-        &pool,
+        &db,
         &job.id,
         AppError::ServiceNotAvailable("fixture server failure".into()),
     )
     .await?;
     drop(repo);
-    pool.close().await;
+    db.close().await;
 
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
-    JobStore::new(pool.clone())
+        .await?;
+    let db = Database::new(pool.clone());
+    let repo = LearningCurriculumRepository::new(db.clone());
+    JobStore::new(db.clone())
         .recover(LESSON_PREPARATION, RecoveryPolicy::Requeue)
         .await?;
     assert_eq!(repo.job(&job.id).await?.status, Status::Pending);
-    assert!(!JobStore::new(pool.clone())
+    assert!(!JobStore::new(db.clone())
         .due(LESSON_PREPARATION)
         .await?
         .iter()
         .any(|pending| pending.id == job.id));
-    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_none());
+    assert!(JobStore::new(db.clone()).claim(&job.id).await?.is_none());
     // Advance only this test database's delivery schedule, without wall-clock waits.
     sqlx::query("UPDATE jobs SET retry_not_before=0 WHERE id=?")
         .bind(&job.id)
         .execute(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    assert!(JobStore::new(pool.clone())
+        .await?;
+    assert!(JobStore::new(db.clone())
         .due(LESSON_PREPARATION)
         .await?
         .iter()
         .any(|pending| pending.id == job.id));
-    let store = JobStore::new(pool.clone());
+    let store = JobStore::new(db.clone());
     let (a, b) = tokio::join!(store.claim(&job.id), store.claim(&job.id));
     assert_ne!(
         a?.is_some(),
@@ -220,7 +216,7 @@ async fn outage_schedule_and_checkpoints_survive_reopen_and_cancellation_wins() 
         Some(json!({"complete":true}))
     );
     assert_eq!(
-        LearningRepository::new(pool.clone())
+        LearningRepository::new(db.clone())
             .get(&job.program_id)
             .await?
             .modules[0]
@@ -232,7 +228,7 @@ async fn outage_schedule_and_checkpoints_survive_reopen_and_cancellation_wins() 
     // Repeated outages never turn into a content failure or exhaust a job budget.
     for _ in 0..7 {
         defer(
-            &pool,
+            &db,
             &job.id,
             AppError::ServiceNotAvailable("fixture server failure".into()),
         )
@@ -241,12 +237,11 @@ async fn outage_schedule_and_checkpoints_survive_reopen_and_cancellation_wins() 
         sqlx::query("UPDATE jobs SET retry_not_before=0 WHERE id=?")
             .bind(&job.id)
             .execute(&pool)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
+            .await?;
+        assert!(JobStore::new(db.clone()).claim(&job.id).await?.is_some());
     }
     defer(
-        &pool,
+        &db,
         &job.id,
         AppError::ServiceNotAvailable("fixture server failure".into()),
     )
@@ -259,17 +254,17 @@ async fn outage_schedule_and_checkpoints_survive_reopen_and_cancellation_wins() 
     })
     .await?;
     defer(
-        &pool,
+        &db,
         &job.id,
         AppError::ServiceNotAvailable("fixture server failure".into()),
     )
     .await?;
-    JobStore::new(pool.clone())
+    JobStore::new(db.clone())
         .recover(LESSON_PREPARATION, RecoveryPolicy::Requeue)
         .await?;
     assert_eq!(repo.job(&job.id).await?.status, Status::Cancelled);
-    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_none());
-    pool.close().await;
+    assert!(JobStore::new(db.clone()).claim(&job.id).await?.is_none());
+    db.close().await;
     Ok(())
 }
 
@@ -294,6 +289,12 @@ impl LLMPort for OfflineModel {
     fn max_context_tokens(&self) -> usize {
         32000
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[tokio::test]
@@ -302,7 +303,7 @@ async fn fidelity_propagates_connection_loss_without_creating_a_factual_finding(
         "index":0,"kind":"teaching",
         "passages":[{"id":"p0","field":"/body","text":"The measured value is 12."}],
         "claims":[{"id":"c0","statement":"The measured value is 12."}]
-    }],"mapping":{"p0":{"claimIds":["c0"],"nonFactualReason":"","missingClaims":[]}}});
+    }],"judged":["p0"]});
     let result = crate::content_verification::live_mapping_fixture(&OfflineModel, &fixture).await;
     assert!(matches!(result, Err(AppError::Network(_))));
 }
@@ -311,23 +312,20 @@ async fn fidelity_propagates_connection_loss_without_creating_a_factual_finding(
 async fn source_limit_failure_retries_after_restart_without_losing_saved_checks() -> Result<()> {
     use crate::{dto::*, source_library::*};
     let directory = tempfile::tempdir()?;
-    let options =
-        crate::test_support::file_options(directory.path().join("source-recovery.sqlite"));
+    let path = directory.path().join("source-recovery.sqlite");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
+    let options = crate::test_support::file_options(path);
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    let (repo, job) = repository_tests::queued_job(&pool).await;
-    let program = LearningRepository::new(pool.clone())
+        .await?;
+    let db = Database::new(pool.clone());
+    let (repo, job) = repository_tests::queued_job(&db).await;
+    let program = LearningRepository::new(db.clone())
         .get(&job.program_id)
         .await?;
     let lesson_id = program.modules[0].lessons[0].id.clone();
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let library = LearningSourceLibraryRepository::new(db.clone());
     for index in 1..100 {
         library
             .add(
@@ -356,24 +354,18 @@ async fn source_limit_failure_retries_after_restart_without_losing_saved_checks(
             )
             .await?;
     }
-    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
-    lesson_drafts::run(
-        &Database::from(pool.clone()),
-        &repo,
-        &job.id,
-        &lesson_id,
-        async {
-            lesson_drafts::resume("unchanged-inputs".into()).await?;
-            lesson_drafts::save("Saved exact candidate").await?;
-            lesson_drafts::record_checkpoint(
-                "completed-claim",
-                json!({"claim":"unchanged","result":"supported","evidence":"saved exact passage"}),
-            )
-            .await
-        },
-    )
+    assert!(JobStore::new(db.clone()).claim(&job.id).await?.is_some());
+    lesson_drafts::run(&db, &repo, &job.id, &lesson_id, async {
+        lesson_drafts::resume("unchanged-inputs".into()).await?;
+        lesson_drafts::save("Saved exact candidate").await?;
+        lesson_drafts::record_checkpoint(
+            "completed-claim",
+            json!({"claim":"unchanged","result":"supported","evidence":"saved exact passage"}),
+        )
+        .await
+    })
     .await?;
-    JobStore::new(pool.clone())
+    JobStore::new(db.clone())
         .fail(
             &job.id,
             "generation_failed",
@@ -382,13 +374,13 @@ async fn source_limit_failure_retries_after_restart_without_losing_saved_checks(
         .await?;
     drop(library);
     drop(repo);
-    pool.close().await;
+    db.close().await;
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+        .await?;
+    let db = Database::new(pool.clone());
+    let repo = LearningCurriculumRepository::new(db.clone());
     let retry = repo
         .retry_job(&LearningGenerationJobActionRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),
@@ -412,7 +404,7 @@ async fn source_limit_failure_retries_after_restart_without_losing_saved_checks(
         repo.lesson_checkpoint(&job.id, &lesson_id, "completed-claim")
             .await?
     );
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let library = LearningSourceLibraryRepository::new(db.clone());
     let source = uuid::Uuid::new_v4().to_string();
     let version = uuid::Uuid::new_v4().to_string();
     library
@@ -445,18 +437,15 @@ async fn source_limit_failure_retries_after_restart_without_losing_saved_checks(
         )
         .await?;
     assert_eq!(
-        LearningRepository::new(pool.clone())
+        LearningRepository::new(db.clone())
             .verification_sources(&job.program_id)
             .await?
             .len(),
         101
     );
-    assert!(JobStore::new(pool.clone())
-        .claim(&retry.id)
-        .await?
-        .is_some());
+    assert!(JobStore::new(db.clone()).claim(&retry.id).await?.is_some());
     assert!(repo.job_content_is_current(&retry.id).await?);
-    pool.close().await;
+    db.close().await;
     Ok(())
 }
 
@@ -480,16 +469,23 @@ impl LLMPort for Window {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// Runs the queued lesson job once with `load_llm`, and returns it settled.
 async fn run_with_model(load_llm: super::ModelLoader) -> crate::curriculum::LearningGenerationJob {
     let pool = crate::tests::pool().await.unwrap();
-    let (repo, job) = repository_tests::queued_job(&pool).await;
+    let db = Database::new(pool.clone());
+    let (repo, job) = repository_tests::queued_job(&db).await;
     let worker = LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        database: pool.clone().into(),
+        database: db.clone(),
         load_llm,
         courses: None,
         refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
@@ -607,11 +603,12 @@ async fn a_lesson_job_waits_for_a_server_that_is_still_starting() {
 #[tokio::test]
 async fn a_lesson_job_for_a_course_without_sources_asks_for_them_in_plain_words() {
     let pool = crate::tests::pool().await.unwrap();
-    let (repo, job) = repository_tests::queued_job_without_sources(&pool).await;
+    let db = Database::new(pool.clone());
+    let (repo, job) = repository_tests::queued_job_without_sources(&db).await;
     let worker = LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        database: pool.clone().into(),
+        database: db.clone(),
         load_llm: Arc::new(|| Box::pin(async { panic!("refused before the model loads") })),
         courses: None,
         refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
@@ -633,11 +630,12 @@ async fn a_lesson_job_for_a_course_without_sources_asks_for_them_in_plain_words(
 #[tokio::test]
 async fn a_failed_lesson_job_records_the_code_of_its_error() {
     let pool = crate::tests::pool().await.unwrap();
-    let (repo, job) = repository_tests::queued_job_without_sources(&pool).await;
+    let db = Database::new(pool.clone());
+    let (repo, job) = repository_tests::queued_job_without_sources(&db).await;
     let worker = LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        database: pool.clone().into(),
+        database: db.clone(),
         load_llm: Arc::new(|| Box::pin(async { panic!("refused before the model loads") })),
         courses: None,
         refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
@@ -672,11 +670,12 @@ async fn a_lesson_job_waiting_out_an_outage_records_the_code_of_its_cause() {
         ),
     ] {
         let pool = crate::tests::pool().await.unwrap();
-        let (repo, job) = repository_tests::queued_job(&pool).await;
+        let db = Database::new(pool.clone());
+        let (repo, job) = repository_tests::queued_job(&db).await;
         let worker = LessonGenerationWorker {
             course_setups: Default::default(),
             runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-            database: pool.clone().into(),
+            database: db.clone(),
             load_llm: Arc::new(|| {
                 Box::pin(async { panic!("Reference refresh must finish first") })
             }),
@@ -699,7 +698,8 @@ async fn a_lesson_job_waiting_out_an_outage_records_the_code_of_its_cause() {
 #[tokio::test]
 async fn a_job_stored_without_a_code_reads_null() {
     let pool = crate::tests::pool().await.unwrap();
-    let (repo, job) = repository_tests::queued_job(&pool).await;
+    let db = Database::new(pool.clone());
+    let (repo, job) = repository_tests::queued_job(&db).await;
     assert_eq!(repo.job(&job.id).await.unwrap().error_code, None);
 
     sqlx::query("UPDATE jobs SET status='failed',finished_at=1,error_code='generation_failed',error_message='old failure' WHERE id=?")
@@ -715,11 +715,14 @@ async fn a_job_stored_without_a_code_reads_null() {
 #[tokio::test]
 async fn a_deferred_lesson_says_what_it_waits_on() {
     let pool = crate::tests::pool().await.unwrap();
-    let (_, job) = repository_tests::queued_job(&pool).await;
-    let job = JobStore::new(pool).get(&job.id).await.unwrap();
+    let db = Database::new(pool.clone());
+    let (_, job) = repository_tests::queued_job(&db).await;
+    let job = JobStore::new(db).get(&job.id).await.unwrap();
     for (error, code, progress) in [
         (
-            AppError::Database("error returned from database: (code: 5) database is locked".into()),
+            AppError::DatabaseBusy(
+                "error returned from database: (code: 5) database is locked".into(),
+            ),
             "temporarily_unavailable",
             "Another task is using the database; preparation will retry automatically",
         ),

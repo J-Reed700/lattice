@@ -6,12 +6,12 @@ use crate::{
     repository::LearningRepository,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::Database;
 
 #[derive(sqlx::FromRow)]
 pub(crate) struct SavedEvidenceVersion {
     pub id: String,
+    pub source_id: String,
     pub title: String,
     pub resolved_url: Option<String>,
     pub requested_url: Option<String>,
@@ -28,12 +28,11 @@ pub(super) struct EvidenceSnapshot {
 }
 
 pub(super) async fn read(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: &str,
     lesson_id: &str,
 ) -> Result<EvidenceSnapshot> {
-    let pool = pool.sqlx_pool();
-    let mut tx = pool.begin_read().await?;
+    let mut tx = database.begin_read().await?;
     let program = LearningRepository::get_on(&mut tx, program_id).await?;
     let lesson = program
         .modules
@@ -53,7 +52,7 @@ pub(super) async fn read(
         .transpose()?;
     let versions = if report.is_some() {
         sqlx::query_as::<_, SavedEvidenceVersion>(
-            "SELECT v.id,v.title,v.resolved_url,v.requested_url,v.content_sha256,s.active_version_id,s.deleted_at FROM learning_source_versions v JOIN learning_source_library s ON s.program_id=v.program_id AND s.id=v.source_id WHERE v.program_id=?"
+            "SELECT v.id,v.source_id,v.title,v.resolved_url,v.requested_url,v.content_sha256,s.active_version_id,s.deleted_at FROM learning_source_versions v JOIN learning_source_library s ON s.program_id=v.program_id AND s.id=v.source_id WHERE v.program_id=?"
         ).bind(program_id).fetch_all(&mut *tx).await?
     } else {
         Vec::new()

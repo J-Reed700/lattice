@@ -78,8 +78,7 @@ export function RouterTuningSection({
         <input
           id="router-timeout"
           type="number"
-          min={50}
-          max={5000}
+          min={1}
           step={10}
           value={routerDraft.timeoutMs}
           onChange={(event) =>
@@ -93,7 +92,7 @@ export function RouterTuningSection({
             )
           }
           onBlur={() =>
-            void saveRouterField('timeoutMs', Math.round(clamp(routerDraft.timeoutMs, 50, 5000)))
+            void saveRouterField('timeoutMs', Math.round(Math.max(1, routerDraft.timeoutMs)))
           }
           className={NUMBER_FIELD_CLASS}
         />
@@ -103,8 +102,7 @@ export function RouterTuningSection({
         <input
           id="router-max-tokens"
           type="number"
-          min={16}
-          max={1024}
+          min={1}
           step={1}
           value={routerDraft.maxTokens}
           onChange={(event) =>
@@ -118,7 +116,7 @@ export function RouterTuningSection({
             )
           }
           onBlur={() =>
-            void saveRouterField('maxTokens', Math.round(clamp(routerDraft.maxTokens, 16, 1024)))
+            void saveRouterField('maxTokens', Math.round(Math.max(1, routerDraft.maxTokens)))
           }
           className={NUMBER_FIELD_CLASS}
         />
@@ -129,7 +127,7 @@ export function RouterTuningSection({
           id="router-temperature"
           type="number"
           min={0}
-          max={1}
+          max={2}
           step={0.01}
           value={routerDraft.temperature}
           onChange={(event) =>
@@ -140,7 +138,7 @@ export function RouterTuningSection({
             )
           }
           onBlur={() =>
-            void saveRouterField('temperature', clamp(routerDraft.temperature, 0, 1))
+            void saveRouterField('temperature', clamp(routerDraft.temperature, 0, 2))
           }
           className={NUMBER_FIELD_CLASS}
         />

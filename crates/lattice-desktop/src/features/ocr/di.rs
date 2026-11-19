@@ -3,6 +3,7 @@
 //! Construction is cheap — no file I/O, no process, no model load — so binding
 //! it costs app startup nothing. The server starts on the first scanned page.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use tracing::warn;
@@ -11,16 +12,17 @@ use super::{DownloadedOcrModel, LlamaServerLauncher, VisionOcr};
 use lattice_core::application::ports::{ModelStoragePort, NoopOcr, OcrPort};
 use lattice_core::shared::runtime::background::BackgroundTasks;
 
-/// The app's OCR port: the bundled `llama-server` reading pages with whichever
-/// catalog OCR model is downloaded. Until one is, every page answers
-/// `NotConfigured`, exactly as `NoopOcr` does.
+/// The app's OCR port: the bundled `llama-server` builds at `binaries` reading
+/// pages with whichever catalog OCR model is downloaded. Until one is, every
+/// page answers `NotConfigured`, exactly as `NoopOcr` does.
 pub fn build(
     models: Arc<dyn ModelStoragePort>,
+    binaries: Vec<PathBuf>,
     background: Arc<BackgroundTasks>,
 ) -> Arc<dyn OcrPort> {
     match VisionOcr::new(
         Arc::new(DownloadedOcrModel::new(models)),
-        Arc::new(LlamaServerLauncher::bundled()),
+        Arc::new(LlamaServerLauncher::with_binaries(binaries)),
         background,
     ) {
         Ok(ocr) => Arc::new(ocr),

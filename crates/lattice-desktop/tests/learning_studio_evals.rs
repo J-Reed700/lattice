@@ -285,13 +285,13 @@ fn practical_fixture() -> (LearningLessonDto, LearningSourceVersionDto) {
         objective: "Preserve commas inside quoted fields and explain the edge cases.".into(),
         estimated_minutes: 30,
         preparation: LearningPreparation::Ready,
-        blocks: vec![LearningBlockDto {
-            rubric: vec![],
-            kind: LearningBlockKind::Explanation,
-            title: "Contract".into(),
-            body: "A quoted comma belongs to its field; doubled quotes encode one quote.".into(),
-            source_ids: vec!["00000000-0000-4000-8000-000000000202".into()],
-        }],
+        blocks: vec![LearningBlockDto::new(
+            LearningBlockKind::Explanation,
+            "Contract".into(),
+            "A quoted comma belongs to its field; doubled quotes encode one quote.".into(),
+            vec!["00000000-0000-4000-8000-000000000202".into()],
+            vec![],
+        )],
         completed: false,
     };
     let source = LearningSourceVersionDto {

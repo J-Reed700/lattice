@@ -1,110 +1,268 @@
-//! When a lesson's teaching review stops repairing. Repairs continue while
-//! each recheck shows at least one earlier finding fixed. A finding that
-//! survives two repairs stops being repaired; when a pass fixes none, every
-//! remaining one stops. Stopped findings wait for the user, and the lesson
-//! publishes: no teaching-review finding fails a lesson job.
+//! When a lesson's teaching review stops repairing. Every open finding is sent
+//! to one repair. A repair is charged to each finding it was sent (`charge`,
+//! with what became of its attempt at it), not when it is sent: a finding
+//! charged `REPAIRS_PER_FINDING` repairs stops being repaired, as does one the
+//! user holds or one held during this review. The review ends when no
+//! repairable finding is left, and a pass held up by structure is followed by
+//! one that reviews the content. Stopped findings wait for the user, and the
+//! lesson publishes: no teaching-review finding fails a lesson job.
 //!
-//! A finding is followed by its kind and place (`FindingKey`), never its
-//! wording. Each repair is sent at most `PER_REPAIR` findings; the others
-//! carry to the next pass.
+//! An attempt that changed nothing for a finding is a miss: no change named it,
+//! or none of its changes could be placed. A miss is charged only when the
+//! finding's attempt before it was a miss too, so of any two attempts in a row
+//! one is charged and a finding is sent at most twice `REPAIRS_PER_FINDING`
+//! repairs.
+//!
+//! A finding is followed by its id (`FindingId`): what raised it and what it
+//! is about, never its wording. Findings with one id are one finding; each id
+//! has its own count of repairs. Every repair can leave a new defect with a
+//! new id, so the repairs are also counted per kind of defect (what raised
+//! the finding and which of its checks, never its place or subject) on the
+//! words they worked on: a new finding about those words starts at the most
+//! repairs of its own kind they have been through, and text a repair writes
+//! carries every kind's count of the words it was written for. Along any chain
+//! of findings about words a repair wrote, every charged repair raises one
+//! kind's count on those words, a count stops at `REPAIRS_PER_FINDING`, and
+//! the kinds are finitely many, so the review still ends. A new reviewer
+//! finding with no passage has no words to count, so it starts at the count
+//! of the reviewer's findings with no passage already at its place.
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::lessons::trace::{self, Stage};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-use crate::review_findings::{FindingKey, ReviewFinding, SetAside};
+use crate::review_findings::{
+    sentences_in, sentences_of, subject_of, FindingId, FindingSite, Held, Origin, ReviewFinding,
+    SetAside,
+};
 
-/// Findings sent to one repair, as many as one request handles well.
-pub(super) const PER_REPAIR: usize = 6;
+/// Attempts one finding is given: a first, and one retry that is told what
+/// became of the first. The loop must end on a defect no repair fixes.
+pub(in crate::lessons::teaching) const REPAIRS_PER_FINDING: u8 = 2;
 
-/// Repairs a finding may survive before it stops being repaired.
-const REPAIRS_PER_FINDING: u8 = 2;
+/// What became of one repair's attempt at a finding.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub(super) enum Outcome {
+    /// A change naming it was applied and stands.
+    #[serde(alias = "Reverted")]
+    Applied,
+    /// It was named, and none of its changes could be applied.
+    NotApplied(Vec<String>),
+    /// Its correction was refused: asked again in the same repair it stayed refused, or it
+    /// changed what must stay.
+    Refused(Vec<String>),
+    /// No change named it.
+    Unnamed,
+    /// Its entry in the repair's answer gave a plan and no change.
+    Declined(String),
+    /// The repair's answer could not be used at all.
+    Unusable(String),
+    /// Its edit overlapped another finding's and was left out: not an attempt.
+    Deferred,
+    /// Its repair does not fit the model's window: not an attempt, it waits for the user.
+    NoRoom,
+}
+
+impl Outcome {
+    /// The attempt changed nothing for the finding.
+    fn is_miss(&self) -> bool {
+        matches!(
+            self,
+            Self::Unnamed | Self::Declined(_) | Self::NotApplied(_)
+        )
+    }
+
+    /// What became of the attempt, for the user's log.
+    pub(super) fn in_words(&self) -> String {
+        match self {
+            Self::Applied => "its edits were applied and the defect was still found".to_owned(),
+            Self::NotApplied(reasons) => {
+                format!("its edits could not be applied: {}", reasons.join(" "))
+            }
+            Self::Refused(reasons) => {
+                format!("its correction was refused: {}", reasons.join(" "))
+            }
+            Self::Unnamed => "the repair made no change for it".to_owned(),
+            Self::Declined(plan) => {
+                format!("the repair gave no change for it; its plan was: \"{plan}\"")
+            }
+            Self::Unusable(reason) => format!("the repair's answer could not be used: {reason}"),
+            Self::Deferred => "its edit overlapped another finding's and was left out".to_owned(),
+            Self::NoRoom => NO_ROOM.to_owned(),
+        }
+    }
+}
+
+const NO_ROOM: &str = "its repair did not fit the window";
+
+/// What a finding's repairs came to, for the log of one the user is left with.
+pub(super) struct Account {
+    /// The repairs it started with: words an earlier repair worked on.
+    pub inherited: u8,
+    /// Why the machine did not repair it; empty when it was not held.
+    pub held: String,
+    /// Each attempt's outcome in plain words, in order.
+    pub attempts: String,
+}
 
 pub(super) enum Next {
     /// Nothing is left to repair; these findings wait for the user.
     Done(Vec<SetAside>),
-    /// Repair `send`; `carried` waits for the next pass. Both are rechecked.
-    Repair {
-        send: Vec<ReviewFinding>,
-        carried: Vec<ReviewFinding>,
-    },
+    /// Repair these: every finding that can still be repaired.
+    Repair(Vec<ReviewFinding>),
 }
 
 #[derive(Default)]
 pub(super) struct Passes {
-    /// Findings the user already has, for text that has not changed since.
-    held: BTreeSet<FindingKey>,
-    /// Repairs each finding was sent to.
-    repairs: BTreeMap<FindingKey, u8>,
-    /// The findings that were open when the last repair ran.
-    open_at_repair: Option<BTreeSet<FindingKey>>,
-    /// The latest pass's findings, one per place.
+    /// Findings the user already has, for text that has not changed since,
+    /// and findings held during this review.
+    held: Held,
+    /// Repairs each finding was charged, or started with (words an earlier
+    /// repair worked on).
+    spent: BTreeMap<FindingId, u8>,
+    /// What became of the last repair's attempt at each finding.
+    last: BTreeMap<FindingId, Outcome>,
+    /// What became of every repair's attempt at each finding, in order.
+    attempts: BTreeMap<FindingId, Vec<Outcome>>,
+    /// The repairs each finding started with.
+    inherited: BTreeMap<FindingId, u8>,
+    /// Why each finding held during this review was held.
+    held_because: BTreeMap<FindingId, &'static str>,
+    /// Sentence digest to the repairs those words have been through, per kind
+    /// of defect.
+    worked: BTreeMap<String, BTreeMap<String, u8>>,
+    /// For each place, the most repairs a reviewer finding with no passage
+    /// there has been charged.
+    passage_less: BTreeMap<FindingSite, u8>,
+    /// The latest pass's findings, one per id.
     latest: Vec<ReviewFinding>,
+    /// The digests of the sentences each of the latest findings is about.
+    words: BTreeMap<FindingId, Vec<String>>,
+    /// The digests of the sentences the user's stored reviewer findings are
+    /// about: the machine does not repair a finding about them.
+    stored: BTreeSet<String>,
 }
 
 /// What decides stopping, kept with the draft a repair produced.
 #[derive(Deserialize, Serialize)]
 struct Kept {
-    repairs: Vec<(FindingKey, u8)>,
-    open_at_repair: Option<BTreeSet<FindingKey>>,
+    spent: Vec<(FindingId, u8)>,
+    last: Vec<(FindingId, Outcome)>,
+    worked: BTreeMap<String, BTreeMap<String, u8>>,
+    #[serde(default)]
+    passage_less: Vec<(FindingSite, u8)>,
+    #[serde(default)]
+    attempts: Vec<(FindingId, Vec<Outcome>)>,
+    #[serde(default)]
+    inherited: Vec<(FindingId, u8)>,
+}
+
+/// Raises `kind`'s count in `counts` to at least `count`.
+fn raise(counts: &mut BTreeMap<String, u8>, kind: &str, count: u8) {
+    if count > 0 {
+        let held = counts.entry(kind.to_owned()).or_default();
+        *held = (*held).max(count);
+    }
+}
+
+/// Whether a reviewer's finding has no passage to count the repairs of.
+fn passage_less(finding: &ReviewFinding) -> bool {
+    matches!(finding.origin, Origin::Reviewer { .. }) && finding.passage.is_none()
 }
 
 impl Passes {
-    pub fn new(held: BTreeSet<FindingKey>) -> Self {
+    pub fn new(held: Held) -> Self {
+        let stored = held
+            .reviewer
+            .iter()
+            .filter_map(|(finding, _)| finding.passage.as_deref())
+            .flat_map(|passage| sentences_in(&Value::String(passage.to_owned())))
+            .map(|sentence| subject_of(&sentence))
+            .collect();
         Self {
             held,
+            stored,
             ..Self::default()
         }
     }
 
     /// The state that decides stopping, to save with the draft the latest
     /// repair produced.
-    pub fn saved(&self) -> serde_json::Result<String> {
-        serde_json::to_string(&Kept {
-            repairs: self
-                .repairs
+    pub fn saved(&self) -> serde_json::Result<Value> {
+        serde_json::to_value(Kept {
+            spent: self
+                .spent
                 .iter()
-                .map(|(key, count)| (*key, *count))
+                .map(|(id, count)| (id.clone(), *count))
                 .collect(),
-            open_at_repair: self.open_at_repair.clone(),
+            last: self
+                .last
+                .iter()
+                .map(|(id, outcome)| (id.clone(), outcome.clone()))
+                .collect(),
+            worked: self.worked.clone(),
+            passage_less: self
+                .passage_less
+                .iter()
+                .map(|(site, count)| (*site, *count))
+                .collect(),
+            attempts: self
+                .attempts
+                .iter()
+                .map(|(id, outcomes)| (id.clone(), outcomes.clone()))
+                .collect(),
+            inherited: self
+                .inherited
+                .iter()
+                .map(|(id, count)| (id.clone(), *count))
+                .collect(),
         })
     }
 
     /// Takes up the state a review cut short saved with this draft; state
-    /// that cannot be read is none.
+    /// that cannot be read, such as state saved before finding ids, is none.
     pub fn resume(&mut self, saved: &str) {
         if let Ok(kept) = serde_json::from_str::<Kept>(saved) {
-            self.repairs = kept.repairs.into_iter().collect();
-            self.open_at_repair = kept.open_at_repair;
+            self.spent = kept.spent.into_iter().collect();
+            self.last = kept.last.into_iter().collect();
+            self.worked = kept.worked;
+            self.passage_less = kept.passage_less.into_iter().collect();
+            self.attempts = kept.attempts.into_iter().collect();
+            self.inherited = kept.inherited.into_iter().collect();
         }
     }
 
     /// The machine no longer repairs this finding.
-    fn stopped(&self, key: &FindingKey) -> bool {
-        self.held.contains(key)
-            || self.repairs.get(key).copied().unwrap_or_default() >= REPAIRS_PER_FINDING
+    fn stopped(&self, finding: &ReviewFinding) -> bool {
+        let id = finding.id();
+        self.held.ids.contains(&id)
+            || self.held.places.contains(&finding.place())
+            || self.spent.get(&id).copied().unwrap_or_default() >= REPAIRS_PER_FINDING
     }
 
-    /// Holds these findings for the user: the machine does not repair them
-    /// (a finding about a sentence a live claim stands on, §10.3).
-    pub fn hold(&mut self, keys: impl IntoIterator<Item = FindingKey>) {
-        self.held.extend(keys);
+    /// Holds these findings for the user, `why`: the machine does not repair
+    /// them (a finding about a sentence a live claim stands on, §10.3).
+    pub fn hold(&mut self, ids: impl IntoIterator<Item = FindingId>, why: &'static str) {
+        for id in ids {
+            self.held_because.entry(id.clone()).or_insert(why);
+            self.held.ids.insert(id);
+        }
     }
 
-    /// Whether a deterministic finding at `key` still blocks the content
-    /// review: one the machine stopped on no longer does.
-    pub fn repairable(&self, key: &FindingKey) -> bool {
-        !self.stopped(key)
+    /// Whether a deterministic finding still blocks the content review: one
+    /// the machine stopped on no longer does.
+    pub fn repairable(&self, finding: &ReviewFinding) -> bool {
+        !self.stopped(finding)
     }
 
-    /// Decide on one pass's findings, in the order the review gave them.
-    pub fn next(&mut self, findings: Vec<ReviewFinding>) -> Next {
-        // One finding per place: two notes about one place are one finding.
+    /// Decide on one pass's findings, raised on `candidate`, in the order the
+    /// review gave them.
+    pub fn next(&mut self, candidate: &Value, findings: Vec<ReviewFinding>) -> Next {
+        // One finding per id: two notes about one defect are one finding.
         let mut current: Vec<ReviewFinding> = Vec::new();
         for finding in findings {
-            match current
-                .iter_mut()
-                .find(|known| known.key() == finding.key())
-            {
+            match current.iter_mut().find(|known| known.id() == finding.id()) {
                 Some(known) => {
                     if !known.note.contains(finding.note.as_str()) {
                         known.note = format!("{} {}", known.note, finding.note);
@@ -124,211 +282,197 @@ impl Passes {
                 None => current.push(finding),
             }
         }
-        let keys: BTreeSet<_> = current.iter().map(ReviewFinding::key).collect();
-        let fixed = self
-            .open_at_repair
-            .take()
-            .is_none_or(|open| open.iter().any(|key| !keys.contains(key)));
+        self.words.clear();
+        for finding in &current {
+            let id = finding.id();
+            let about: Vec<String> = sentences_of(candidate, finding)
+                .iter()
+                .map(|sentence| subject_of(sentence))
+                .collect();
+            let kind = finding.origin.kind();
+            let mut start = about
+                .iter()
+                .filter_map(|digest| self.worked.get(digest)?.get(&kind).copied())
+                .max()
+                .unwrap_or_default();
+            self.words.insert(id.clone(), about.clone());
+            if self.spent.contains_key(&id) {
+                continue;
+            }
+            if matches!(finding.origin, Origin::Reviewer { .. })
+                && about.iter().any(|digest| self.stored.contains(digest))
+            {
+                start = REPAIRS_PER_FINDING;
+            }
+            if passage_less(finding) {
+                let site = finding.site.unwrap_or(FindingSite::Lesson);
+                start = start.max(self.passage_less.get(&site).copied().unwrap_or_default());
+            }
+            if start > 0 {
+                self.inherited.insert(id.clone(), start);
+                self.spent.insert(id, start);
+            }
+        }
         self.latest = current;
-        let mut open: Vec<_> = self
+        let open: Vec<_> = self
             .latest
             .iter()
-            .filter(|finding| !self.stopped(&finding.key()))
+            .filter(|finding| !self.stopped(finding))
             .cloned()
             .collect();
-        if !fixed || open.is_empty() {
+        if open.is_empty() {
             return Next::Done(self.set_aside());
         }
-        // Findings not yet repaired go first, so carried ones get their turn.
-        open.sort_by_key(|finding| self.repairs.get(&finding.key()).copied());
-        self.open_at_repair = Some(open.iter().map(ReviewFinding::key).collect());
-        let carried = open.split_off(open.len().min(PER_REPAIR));
-        for finding in &open {
-            *self.repairs.entry(finding.key()).or_default() += 1;
+        Next::Repair(open)
+    }
+
+    /// A repair was sent `finding` and this became of its attempt at it: the
+    /// repair is charged to it, unless its edit was only left out for
+    /// overlapping another finding's, or the attempt was a miss and the one
+    /// before it (not counting those left out) was not. Of two attempts in a
+    /// row one is charged, so the review still ends. A finding whose repair
+    /// does not fit is not charged: it waits for the user.
+    pub fn charge(&mut self, finding: &ReviewFinding, outcome: Outcome) {
+        trace::decided_finding(
+            Stage::TeachingRepair,
+            finding,
+            "charged",
+            &format!("{outcome:?}"),
+        );
+        let id = finding.id();
+        if outcome == Outcome::NoRoom {
+            self.hold([id], NO_ROOM);
+            return;
         }
-        Next::Repair {
-            send: open,
-            carried,
+        let attempts = self.attempts.entry(id.clone()).or_default();
+        let missed_before = attempts
+            .iter()
+            .rev()
+            .find(|past| **past != Outcome::Deferred)
+            .is_some_and(Outcome::is_miss);
+        let free_miss = outcome.is_miss() && !missed_before;
+        attempts.push(outcome.clone());
+        if outcome == Outcome::Deferred || free_miss {
+            self.last.insert(id, outcome);
+            return;
+        }
+        let spent = self.spent.entry(id.clone()).or_default();
+        *spent += 1;
+        let own = *spent;
+        for digest in self.words.get(&id).into_iter().flatten() {
+            let counts = self.worked.entry(digest.clone()).or_default();
+            raise(counts, &finding.origin.kind(), own);
+        }
+        if passage_less(finding) {
+            let site = finding.site.unwrap_or(FindingSite::Lesson);
+            let known = self.passage_less.entry(site).or_default();
+            *known = (*known).max(own);
+        }
+        self.last.insert(id, outcome);
+    }
+
+    /// What became of the last repair's attempt at `id`, told to its next one.
+    pub fn last_attempt(&self, id: &FindingId) -> Option<String> {
+        Some(match self.last.get(id)? {
+            Outcome::Applied => "The last repair's edits for this finding were applied and the defect is still there.".to_owned(),
+            Outcome::NotApplied(reasons) => format!(
+                "The last repair's edits for this finding could not be applied: {}",
+                reasons.join(" ")
+            ),
+            Outcome::Refused(reasons) => format!(
+                "The last repair's correction for this finding was refused, and none of its edits were applied: {}",
+                reasons.join(" ")
+            ),
+            Outcome::Unnamed => "The last repair gave no edit for this finding.".to_owned(),
+            Outcome::Declined(plan) => format!("The last repair gave no change for this finding; its plan was: \"{plan}\""),
+            Outcome::Unusable(reason) => {
+                format!("The last repair's answer could not be used: {reason}")
+            }
+            Outcome::Deferred => "The last repair's edit for this finding overlapped an edit for another finding and was left out; give it again.".to_owned(),
+            Outcome::NoRoom => "The last repair for this finding did not fit the window.".to_owned(),
+        })
+    }
+
+    /// What `finding`'s repairs came to.
+    pub fn account(&self, finding: &ReviewFinding) -> Account {
+        let id = finding.id();
+        let held = if let Some(why) = self.held_because.get(&id) {
+            (*why).to_owned()
+        } else if self.held.ids.contains(&id) || self.held.places.contains(&finding.place()) {
+            "already with the user".to_owned()
+        } else {
+            String::new()
+        };
+        Account {
+            inherited: self.inherited.get(&id).copied().unwrap_or_default(),
+            held,
+            attempts: self
+                .attempts
+                .get(&id)
+                .into_iter()
+                .flatten()
+                .map(Outcome::in_words)
+                .collect::<Vec<_>>()
+                .join(" | "),
         }
     }
 
-    /// Stop now: the latest pass's findings wait for the user, as when a
-    /// repair's answer cannot be used.
+    /// An applied repair for `finding` put these sentences through the repairs
+    /// of every kind the words it is about have been through, and through the
+    /// repairs `finding` has been charged under its own kind: what it wrote,
+    /// or the words it was applied for.
+    pub fn worked_on(
+        &mut self,
+        finding: &ReviewFinding,
+        sentences: impl IntoIterator<Item = String>,
+    ) {
+        let mut carried = BTreeMap::new();
+        for counts in self
+            .words
+            .get(&finding.id())
+            .into_iter()
+            .flatten()
+            .filter_map(|digest| self.worked.get(digest))
+        {
+            for (kind, count) in counts {
+                raise(&mut carried, kind, *count);
+            }
+        }
+        let spent = self.spent.get(&finding.id()).copied().unwrap_or_default();
+        raise(&mut carried, &finding.origin.kind(), spent);
+        for sentence in sentences {
+            let counts = self.worked.entry(subject_of(&sentence)).or_default();
+            for (kind, count) in &carried {
+                raise(counts, kind, *count);
+            }
+        }
+    }
+
+    /// The latest pass's findings, each with the repairs it was charged: what
+    /// waits for the user when the review stops.
     pub fn set_aside(&self) -> Vec<SetAside> {
         self.latest
             .iter()
             .map(|finding| SetAside {
                 finding: finding.clone(),
-                repairs: self
-                    .repairs
-                    .get(&finding.key())
-                    .copied()
-                    .unwrap_or_default(),
+                repairs: self.spent.get(&finding.id()).copied().unwrap_or_default(),
             })
             .collect()
     }
 }
 
 #[cfg(test)]
-mod tests {
-    #![allow(clippy::panic, clippy::indexing_slicing)]
-    use super::*;
-    use crate::review_findings::{FindingKind, FindingSite};
+#[path = "passes_tests.rs"]
+mod tests;
 
-    fn section(index: usize, note: &str) -> ReviewFinding {
-        ReviewFinding::new(
-            FindingKind::Teaching,
-            Some(FindingSite::Section(index)),
-            note,
-        )
-    }
+#[cfg(test)]
+#[path = "passes_refusal_tests.rs"]
+mod refusal_tests;
 
-    fn sent(next: Next) -> Vec<FindingKey> {
-        match next {
-            Next::Repair { send, .. } => send.iter().map(ReviewFinding::key).collect(),
-            Next::Done(_) => panic!("expected a repair"),
-        }
-    }
+#[cfg(test)]
+#[path = "passes_misses_tests.rs"]
+mod misses_tests;
 
-    fn done(next: Next) -> Vec<(FindingKey, u8)> {
-        match next {
-            Next::Done(set_aside) => set_aside
-                .iter()
-                .map(|s| (s.finding.key(), s.repairs))
-                .collect(),
-            Next::Repair { .. } => panic!("expected the review to stop"),
-        }
-    }
-
-    #[test]
-    fn a_clean_first_pass_publishes_with_nothing_set_aside() {
-        assert!(done(Passes::default().next(vec![])).is_empty());
-    }
-
-    #[test]
-    fn a_pass_that_fixes_something_continues_even_with_its_wording_rewritten() {
-        let mut passes = Passes::default();
-        assert_eq!(
-            sent(passes.next(vec![section(0, "A"), section(1, "B")])).len(),
-            2
-        );
-        // Section 1 is fixed; section 0 survives one repair, reworded.
-        let again = sent(passes.next(vec![section(0, "A, said differently")]));
-        assert_eq!(again, vec![section(0, "").key()]);
-        // Fixed at the second repair: the lesson publishes clean.
-        assert!(done(passes.next(vec![])).is_empty());
-    }
-
-    #[test]
-    fn a_finding_that_survives_two_repairs_is_set_aside_while_others_continue() {
-        let mut passes = Passes::default();
-        sent(passes.next(vec![section(0, "A"), section(1, "B"), section(2, "C")]));
-        sent(passes.next(vec![section(0, "A"), section(1, "B")]));
-        // B was fixed, so the review goes on; A survived two repairs and
-        // stops; D is new and is repaired.
-        let third = sent(passes.next(vec![section(0, "A"), section(3, "D")]));
-        assert_eq!(third, vec![section(3, "").key()]);
-        // D fixed; A is the only finding left and it stays set aside.
-        assert_eq!(
-            done(passes.next(vec![section(0, "A")])),
-            vec![(section(0, "").key(), 2)]
-        );
-    }
-
-    #[test]
-    fn a_pass_that_fixes_nothing_sets_every_remaining_finding_aside() {
-        let mut passes = Passes::default();
-        sent(passes.next(vec![section(0, "A"), section(1, "B")]));
-        let stopped =
-            done(passes.next(vec![section(0, "A"), section(1, "B"), section(2, "C, new")]));
-        assert_eq!(
-            stopped,
-            vec![
-                (section(0, "").key(), 1),
-                (section(1, "").key(), 1),
-                (section(2, "").key(), 0),
-            ]
-        );
-    }
-
-    #[test]
-    fn nothing_is_dropped_findings_beyond_one_repair_carry_to_the_next() {
-        let mut passes = Passes::default();
-        let findings: Vec<_> = (0..9).map(|i| section(i, "x")).collect();
-        let Next::Repair { send, carried } = passes.next(findings.clone()) else {
-            panic!("expected a repair");
-        };
-        assert_eq!(send.len(), PER_REPAIR);
-        assert_eq!(carried.len(), 3);
-        // One fixed: the carried three are sent before any second attempt.
-        let second = sent(passes.next(findings[1..].to_vec()));
-        assert_eq!(
-            &second[..3],
-            &[
-                section(6, "").key(),
-                section(7, "").key(),
-                section(8, "").key()
-            ]
-        );
-    }
-
-    #[test]
-    fn a_finding_the_user_already_holds_is_never_repaired() {
-        let held = section(4, "kept as written").key();
-        let mut passes = Passes::new(BTreeSet::from([held]));
-        assert!(!passes.repairable(&held));
-        assert_eq!(
-            done(passes.next(vec![section(4, "still there")])),
-            vec![(held, 0)]
-        );
-    }
-
-    #[test]
-    fn two_notes_about_one_place_are_one_finding() {
-        let mut passes = Passes::default();
-        let Next::Repair { send, .. } =
-            passes.next(vec![section(0, "First."), section(0, "Second.")])
-        else {
-            panic!("expected a repair");
-        };
-        assert_eq!(send.len(), 1);
-        assert_eq!(send[0].note, "First. Second.");
-    }
-
-    #[test]
-    fn the_summaries_of_two_notes_about_one_place_stay_together() {
-        let mut passes = Passes::default();
-        let Next::Repair { send, .. } = passes.next(vec![
-            section(0, "First.").with_summary("One problem."),
-            section(0, "Second.").with_summary("Another problem."),
-            section(0, "Third.").with_summary("One problem."),
-            section(0, "Fourth."),
-        ]) else {
-            panic!("expected a repair");
-        };
-        assert_eq!(send.len(), 1);
-        assert_eq!(send[0].summary, "One problem.\nAnother problem.");
-    }
-
-    /// A note about one sentence lets the user take that sentence out, so a
-    /// note that now stands for more than one has no sentence.
-    #[test]
-    fn a_merged_note_keeps_its_sentence_only_while_every_note_in_it_is_about_that_sentence() {
-        let about = |sentence: &str| section(0, "A note.").with_sentence(sentence);
-        let merged = |findings: Vec<ReviewFinding>| {
-            let mut passes = Passes::default();
-            let Next::Repair { send, .. } = passes.next(findings) else {
-                panic!("expected a repair");
-            };
-            assert_eq!(send.len(), 1);
-            send[0].sentence.clone()
-        };
-        assert_eq!(
-            merged(vec![about("One."), about("One.")]).as_deref(),
-            Some("One.")
-        );
-        assert_eq!(merged(vec![about("One."), about("Two.")]), None);
-        assert_eq!(merged(vec![about("One."), section(0, "Other.")]), None);
-        assert_eq!(merged(vec![section(0, "Other."), about("One.")]), None);
-    }
-}
+#[cfg(test)]
+#[path = "passes_kinds_tests.rs"]
+mod kinds_tests;

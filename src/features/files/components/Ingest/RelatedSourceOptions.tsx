@@ -21,14 +21,14 @@ export function RelatedSourceOptions({ value, onChange, disabled }: Props) {
       {value && <>
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="space-y-1 text-sm">Source title <span className="text-text-muted">(required)</span>
-            <input aria-label="Source title" maxLength={160} placeholder="e.g. Manual of Patent Examining Procedure" className={`${settingsFieldClass} w-full`} value={value.title} onChange={event => onChange({ ...value, title: event.target.value })} />
+            <input aria-label="Source title" placeholder="e.g. Manual of Patent Examining Procedure" className={`${settingsFieldClass} w-full`} value={value.title} onChange={event => onChange({ ...value, title: event.target.value })} />
           </label>
           <label className="space-y-1 text-sm">Edition or version <span className="text-text-muted">(optional)</span>
-            <input aria-label="Edition or version" maxLength={80} placeholder="e.g. Revision 01.2024" className={`${settingsFieldClass} w-full`} value={value.edition ?? ''} onChange={event => onChange({ ...value, edition: event.target.value || null })} />
+            <input aria-label="Edition or version" placeholder="e.g. Revision 01.2024" className={`${settingsFieldClass} w-full`} value={value.edition ?? ''} onChange={event => onChange({ ...value, edition: event.target.value || null })} />
           </label>
         </div>
         <label className="block space-y-1 text-sm">What connects these files? <span className="text-text-muted">(optional)</span>
-          <textarea aria-label="Shared source description" maxLength={500} rows={2} placeholder="e.g. Chapters and appendices from one manual" className={`${settingsFieldClass} w-full`} value={value.description ?? ''} onChange={event => onChange({ ...value, description: event.target.value || null })} />
+          <textarea aria-label="Shared source description" rows={2} placeholder="e.g. Chapters and appendices from one manual" className={`${settingsFieldClass} w-full`} value={value.description ?? ''} onChange={event => onChange({ ...value, description: event.target.value || null })} />
         </label>
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={value.ordered} onChange={event => onChange({ ...value, ordered: event.target.checked })} />

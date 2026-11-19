@@ -4,6 +4,7 @@
 use super::tests::{builds, course, indexes, pages};
 use super::*;
 use crate::infrastructure::passage_index::testing::{FakeEmbedder, FixedEmbedders};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobStatus, RecoveryPolicy};
 use lattice_core::shared::Result;
 use std::time::Duration;
@@ -13,16 +14,16 @@ async fn a_build_that_stopped_the_app_stays_failed_until_the_learner_retries_it(
     // A build running as a job saves progress beside its own reads, which the
     // one-connection test database cannot do.
     let temp = tempfile::tempdir().unwrap();
-    let pool = first_tests::pool(temp.path()).await?;
+    let db = Database::new(first_tests::pool(temp.path()).await?);
     let courses = indexes(
-        &pool,
+        &db,
         &temp.path().join("course-index"),
         FixedEmbedders::new(Some(FakeEmbedder::new("model-a"))),
     );
-    let (program, _) = course(&pool, &pages(2)).await?;
+    let (program, _) = course(&db, &pages(2)).await?;
     // No build handler is registered yet, so the queued build stays queued.
     courses.refresh(&program).await;
-    let queued = builds(&pool, &program).await;
+    let queued = builds(&db, &program).await;
     assert_eq!(queued.len(), 1);
     let id = queued[0].id.clone();
     let store = courses.jobs.store();
@@ -39,7 +40,7 @@ async fn a_build_that_stopped_the_app_stays_failed_until_the_learner_retries_it(
     courses.refresh(&program).await;
     courses.status(&program).await;
 
-    let after = builds(&pool, &program).await;
+    let after = builds(&db, &program).await;
     assert_eq!(
         after.iter().map(|job| job.id.as_str()).collect::<Vec<_>>(),
         [id.as_str()],

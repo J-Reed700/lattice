@@ -8,10 +8,10 @@ use super::{
 };
 use crate::assessment_engine as engine;
 use crate::dto::*;
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use crate::quiz_bank_jobs;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::WriteTx;
 use sqlx::{Row, SqliteConnection};
 
 /// What grading decided for one pending item.
@@ -41,8 +41,7 @@ async fn form_facts(connection: &mut SqliteConnection, form_id: &str) -> Result<
     let h = sqlx::query("SELECT program_id,purpose,mode,allowed_aids_json FROM learning_assessment_forms WHERE id=?")
         .bind(form_id)
         .fetch_optional(&mut *connection)
-        .await
-        .map_err(db)?
+        .await?
         .ok_or_else(|| AppError::NotFound("Quiz not found".into()))?;
     Ok(FormFacts {
         program_id: h.get("program_id"),
@@ -55,7 +54,7 @@ async fn form_facts(connection: &mut SqliteConnection, form_id: &str) -> Result<
 /// Evidence for one graded item, and the follow-ups it suggests.
 #[allow(clippy::too_many_arguments)]
 async fn record_evidence(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     facts: &FormFacts,
     form_id: &str,
     ordinal: i64,
@@ -68,17 +67,15 @@ async fn record_evidence(
     let item = sqlx::query("SELECT format,difficulty FROM learning_assessment_form_items WHERE form_id=? AND ordinal=?")
         .bind(form_id)
         .bind(ordinal)
-        .fetch_one(&mut *connection)
-        .await
-        .map_err(db)?;
+        .fetch_one(&mut **tx)
+        .await?;
     let format = parse_format(item.get("format"))?;
     let difficulty = item.get::<i64, _>("difficulty").clamp(1, 5) as u8;
     let assistance: Option<String> = sqlx::query_scalar("SELECT assistance_json FROM learning_assessment_response_revisions WHERE form_id=? AND item_ordinal=? ORDER BY revision DESC LIMIT 1")
         .bind(form_id)
         .bind(ordinal)
-        .fetch_optional(&mut *connection)
-        .await
-        .map_err(db)?;
+        .fetch_optional(&mut **tx)
+        .await?;
     let used: Vec<String> = assistance
         .as_deref()
         .map(|a| decode(a).unwrap_or_default())
@@ -86,9 +83,8 @@ async fn record_evidence(
     let outcomes = sqlx::query("SELECT fio.outcome_id,o.lesson_id FROM learning_assessment_form_item_outcomes fio LEFT JOIN learning_outcome_definitions o ON o.id=fio.outcome_id WHERE fio.form_id=? AND fio.item_ordinal=? ORDER BY fio.outcome_id")
         .bind(form_id)
         .bind(ordinal)
-        .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?;
+        .fetch_all(&mut **tx)
+        .await?;
     let uncertain = overridden
         || matches!(
             status,
@@ -125,25 +121,23 @@ async fn record_evidence(
             .bind(quote)
             .bind(json(&assistance_json)?)
             .bind(now())
-            .execute(&mut *connection)
-            .await
-            .map_err(db)?;
+            .execute(&mut **tx)
+            .await?;
         let events = std::slice::from_ref(&event);
         if result == "not_observed" {
             let latest: Option<i64> = sqlx::query_scalar("SELECT max(observed_at) FROM learning_evidence_events WHERE program_id=? AND outcome_id=? AND source_id<>?")
                 .bind(&facts.program_id)
                 .bind(&outcome_id)
                 .bind(form_id)
-                .fetch_one(&mut *connection)
-                .await
-                .map_err(db)?;
+                .fetch_one(&mut **tx)
+                .await?;
             if latest.is_some_and(|date| now() - date > STALE_EVIDENCE_MS) {
-                insert_followup(connection, &facts.program_id, Some(&outcome_id), "stale_evidence", "Earlier evidence for this outcome is old enough to benefit from a fresh check.", "assessment", Some(form_id), events).await?;
+                insert_followup(tx, &facts.program_id, Some(&outcome_id), "stale_evidence", "Earlier evidence for this outcome is old enough to benefit from a fresh check.", "assessment", Some(form_id), events).await?;
             }
         }
         if result == "observed" && !used.is_empty() {
             insert_followup(
-                connection,
+                tx,
                 &facts.program_id,
                 Some(&outcome_id),
                 "assisted_success",
@@ -155,12 +149,12 @@ async fn record_evidence(
             .await?;
         }
         if uncertain && !overridden {
-            insert_followup(connection, &facts.program_id, Some(&outcome_id), "uncertain_grade", "This answer could not be graded with confidence; review it or answer another question on the same point.", "assessment", Some(form_id), events).await?;
+            insert_followup(tx, &facts.program_id, Some(&outcome_id), "uncertain_grade", "This answer could not be graded with confidence; review it or answer another question on the same point.", "assessment", Some(form_id), events).await?;
         } else if result == "not_observed" && dimension == "transfer" {
-            insert_followup(connection, &facts.program_id, Some(&outcome_id), "low_transfer", "The changed-context answer did not yet show this outcome; try a new transfer example.", "practice", Some(&outcome_id), events).await?;
+            insert_followup(tx, &facts.program_id, Some(&outcome_id), "low_transfer", "The changed-context answer did not yet show this outcome; try a new transfer example.", "practice", Some(&outcome_id), events).await?;
         } else if result == "not_observed" {
             insert_followup(
-                connection,
+                tx,
                 &facts.program_id,
                 Some(&outcome_id),
                 "missed_outcome",
@@ -186,8 +180,7 @@ impl LearningAssessmentRepository {
         uuid(&req.operation_id, "operation")?;
         uuid(&req.program_id, "program")?;
         uuid(&req.form_id, "form")?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &req.program_id).await?;
+        let mut tx = self.db.begin_write().await?;
         let operation = assessment_operation(
             &req.operation_id,
             &req.program_id,
@@ -197,7 +190,7 @@ impl LearningAssessmentRepository {
             "Operation ID was reused with different quiz data.",
         );
         if operation.seen(&mut tx).await? {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok((self.get_form(&req.form_id).await?, None));
         }
         Self::active_program(&mut tx, &req.program_id).await?;
@@ -207,8 +200,7 @@ impl LearningAssessmentRepository {
         .bind(&req.form_id)
         .bind(&req.program_id)
         .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?
+        .await?
         .ok_or_else(|| AppError::NotFound("Quiz not found".into()))?;
         if h.get::<String, _>("status") == "submitted" {
             return Err(invalid("This quiz was already submitted."));
@@ -227,8 +219,7 @@ impl LearningAssessmentRepository {
             .bind(hash)
             .bind(timestamp)
             .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         let facts = form_facts(&mut tx, &req.form_id).await?;
         let mut pending = 0usize;
         for (ordinal, item) in form.items.iter().enumerate() {
@@ -240,8 +231,7 @@ impl LearningAssessmentRepository {
             .bind(&req.form_id)
             .bind(ordinal)
             .fetch_one(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
             let order: Vec<usize> = decode(drawn.get("option_order_json"))?;
             let stored = drawn_candidate(&bank, &drawn)?;
             let response = engine::LearningAssessmentResponse {
@@ -282,8 +272,7 @@ impl LearningAssessmentRepository {
                         .bind(item.points)
                         .bind(&grade.detail)
                         .execute(&mut *tx)
-                        .await
-                        .map_err(db)?;
+                        .await?;
                     record_evidence(
                         &mut tx,
                         &facts,
@@ -308,12 +297,11 @@ impl LearningAssessmentRepository {
                         .bind(ordinal)
                         .bind(item.points)
                         .execute(&mut *tx)
-                        .await
-                        .map_err(db)?;
+                        .await?;
                 }
             }
         }
-        let updated = sqlx::query("UPDATE learning_assessment_forms SET status='submitted',revision=revision+1,submitted_at=?,updated_at=? WHERE id=? AND program_id=? AND revision=? AND status IN ('active','interrupted')").bind(timestamp).bind(timestamp).bind(&req.form_id).bind(&req.program_id).bind(req.expected_revision).execute(&mut *tx).await.map_err(db)?;
+        let updated = sqlx::query("UPDATE learning_assessment_forms SET status='submitted',revision=revision+1,submitted_at=?,updated_at=? WHERE id=? AND program_id=? AND revision=? AND status IN ('active','interrupted')").bind(timestamp).bind(timestamp).bind(&req.form_id).bind(&req.program_id).bind(req.expected_revision).execute(&mut *tx).await?;
         if updated.rows_affected() != 1 {
             return Err(AppError::Conflict(
                 "This quiz changed; reload and retry.".into(),
@@ -335,7 +323,7 @@ impl LearningAssessmentRepository {
             None
         };
         operation.record(&mut tx, &()).await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok((self.get_form(&req.form_id).await?, job))
     }
 
@@ -347,9 +335,8 @@ impl LearningAssessmentRepository {
         grades: &[ItemGrade],
         grader_model: &str,
     ) -> Result<()> {
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let facts = form_facts(&mut tx, form_id).await?;
-        Self::writer_lock(&mut tx, &facts.program_id).await?;
         for grade in grades {
             match grade {
                 ItemGrade::Graded {
@@ -374,8 +361,7 @@ impl LearningAssessmentRepository {
                         .bind(form_id)
                         .bind(ordinal)
                         .execute(&mut *tx)
-                        .await
-                        .map_err(db)?;
+                        .await?;
                     if changed.rows_affected() == 1 {
                         let quote = rationale
                             .as_ref()
@@ -408,8 +394,7 @@ impl LearningAssessmentRepository {
                         .bind(form_id)
                         .bind(ordinal)
                         .execute(&mut *tx)
-                        .await
-                        .map_err(db)?;
+                        .await?;
                 }
             }
         }
@@ -417,29 +402,23 @@ impl LearningAssessmentRepository {
             .bind(grader_model)
             .bind(form_id)
             .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         Self::finalize_in(&mut tx, form_id).await?;
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     /// Recompute a submission from its item results: score (an overridden
     /// item counts as full credit), pending count, status and verdict.
-    pub(crate) async fn finalize_in(
-        connection: &mut SqliteConnection,
-        form_id: &str,
-    ) -> Result<()> {
+    pub(crate) async fn finalize_in(tx: &mut WriteTx, form_id: &str) -> Result<()> {
         let rows = sqlx::query("SELECT grade_status,points_earned,points_possible,learner_override FROM learning_assessment_item_results WHERE form_id=?")
             .bind(form_id)
-            .fetch_all(&mut *connection)
-            .await
-            .map_err(db)?;
+            .fetch_all(&mut **tx)
+            .await?;
         let passing: f64 =
             sqlx::query_scalar("SELECT passing_score FROM learning_assessment_forms WHERE id=?")
                 .bind(form_id)
-                .fetch_one(&mut *connection)
-                .await
-                .map_err(db)?;
+                .fetch_one(&mut **tx)
+                .await?;
         let mut earned = 0.0;
         let mut earned_without = 0.0;
         let mut possible = 0.0;
@@ -497,9 +476,8 @@ impl LearningAssessmentRepository {
             .bind(feedback)
             .bind(json(&disagreement)?)
             .bind(form_id)
-            .execute(&mut *connection)
-            .await
-            .map_err(db)?;
+            .execute(&mut **tx)
+            .await?;
         Ok(())
     }
 
@@ -512,13 +490,12 @@ impl LearningAssessmentRepository {
         uuid(&req.operation_id, "operation")?;
         uuid(&req.program_id, "program")?;
         uuid(&req.form_id, "form")?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_assessment_item_results r JOIN learning_assessment_forms f ON f.id=r.form_id WHERE r.form_id=? AND f.program_id=? AND r.grade_status='pending'")
             .bind(&req.form_id)
             .bind(&req.program_id)
             .fetch_one(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         if pending == 0 {
             return Ok(None);
         }
@@ -530,7 +507,7 @@ impl LearningAssessmentRepository {
             &format!("resume:{}", req.operation_id),
         )
         .await?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(Some(job))
     }
 
@@ -543,8 +520,7 @@ impl LearningAssessmentRepository {
         uuid(&req.program_id, "program")?;
         uuid(&req.follow_up_id, "follow-up")?;
         uuid(&req.operation_id, "operation")?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &req.program_id).await?;
+        let mut tx = self.db.begin_write().await?;
         let operation = assessment_operation(
             &req.operation_id,
             &req.program_id,
@@ -554,27 +530,27 @@ impl LearningAssessmentRepository {
             "Operation ID was reused with different follow-up data.",
         );
         if operation.seen(&mut tx).await? {
-            return tx.commit().await.map_err(db);
+            return tx.commit().await.map_err(AppError::from);
         }
         Self::active_program(&mut tx, &req.program_id).await?;
         let status = if accept { "accepted" } else { "dismissed" };
-        let result = sqlx::query("UPDATE learning_follow_up_recommendations SET status=?,decided_at=? WHERE id=? AND program_id=? AND status='pending'").bind(status).bind(now()).bind(&req.follow_up_id).bind(&req.program_id).execute(&mut *tx).await.map_err(db)?;
+        let result = sqlx::query("UPDATE learning_follow_up_recommendations SET status=?,decided_at=? WHERE id=? AND program_id=? AND status='pending'").bind(status).bind(now()).bind(&req.follow_up_id).bind(&req.program_id).execute(&mut *tx).await?;
         if result.rows_affected() != 1 {
             return Err(AppError::NotFound("Pending follow-up not found".into()));
         }
         operation.record(&mut tx, &req.follow_up_id).await?;
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     /// Evidence for an item the learner overrode: never `observed`.
     pub(crate) async fn record_override_evidence_in(
-        connection: &mut SqliteConnection,
+        tx: &mut WriteTx,
         form_id: &str,
         ordinal: i64,
     ) -> Result<()> {
-        let facts = form_facts(connection, form_id).await?;
+        let facts = form_facts(tx, form_id).await?;
         record_evidence(
-            connection,
+            tx,
             &facts,
             form_id,
             ordinal,

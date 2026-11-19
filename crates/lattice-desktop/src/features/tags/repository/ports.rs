@@ -7,7 +7,6 @@ use crate::features::tags::persistence_mapper::{TagMapper, TagModel};
 use lattice_core::application::ports::RepositoryPort;
 use lattice_core::domain::entities::Tag as TagEntity;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
 
 use super::TagRepository;
 
@@ -32,6 +31,7 @@ impl TagRepository {
 #[async_trait]
 impl RepositoryPort<TagEntity> for TagRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<TagEntity>> {
+        let mut read = self.db.begin_read().await?;
         let db_model = sqlx::query_as!(
             TagModel,
             r#"
@@ -41,9 +41,10 @@ impl RepositoryPort<TagEntity> for TagRepository {
             "#,
             id
         )
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *read)
         .await
         .map_err(|e| AppError::Database(format!("Failed to find tag by id: {}", e)))?;
+        read.commit().await?;
 
         match db_model {
             Some(model) => Ok(Some(TagMapper::to_entity(&model)?)),
@@ -52,17 +53,20 @@ impl RepositoryPort<TagEntity> for TagRepository {
     }
 
     async fn find_all(&self) -> Result<Vec<TagEntity>> {
-        let mut connection = self
-            .pool
-            .acquire()
+        let mut read = self
+            .db
+            .begin_read()
             .await
             .map_err(|e| AppError::Database(format!("Failed to get all tags: {}", e)))?;
-        Self::all_in(&mut connection).await
+        let tags = Self::all_in(&mut read).await?;
+        read.commit().await?;
+        Ok(tags)
     }
 
     async fn save(&self, entity: &TagEntity) -> Result<()> {
         let model = TagMapper::to_model(entity);
 
+        let mut tx = self.db.begin_write().await?;
         sqlx::query!(
             r#"
             INSERT INTO tags (id, name, color, created_at, updated_at)
@@ -78,9 +82,10 @@ impl RepositoryPort<TagEntity> for TagRepository {
             model.created_at,
             model.updated_at
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to save tag: {}", e)))?;
+        tx.commit().await?;
 
         Ok(())
     }
@@ -91,7 +96,7 @@ impl RepositoryPort<TagEntity> for TagRepository {
         }
 
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -127,10 +132,12 @@ impl RepositoryPort<TagEntity> for TagRepository {
     }
 
     async fn delete(&self, id: &str) -> Result<()> {
+        let mut tx = self.db.begin_write().await?;
         sqlx::query!("DELETE FROM tags WHERE id = ?", id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| AppError::Database(format!("Failed to delete tag: {}", e)))?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -140,7 +147,7 @@ impl RepositoryPort<TagEntity> for TagRepository {
         }
 
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -160,19 +167,25 @@ impl RepositoryPort<TagEntity> for TagRepository {
     }
 
     async fn count(&self) -> Result<usize> {
+        let mut read = self.db.begin_read().await?;
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tags")
-            .fetch_one(&self.pool)
+            .fetch_one(&mut *read)
             .await
             .map_err(|e| AppError::Database(format!("Failed to count tags: {}", e)))?;
+        read.commit().await?;
         Ok(count as usize)
     }
 
     async fn exists(&self, id: &str) -> Result<bool> {
-        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM tags WHERE id = ?)")
-            .bind(id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| AppError::Database(format!("Failed to check tag existence: {}", e)))
+        let mut read = self.db.begin_read().await?;
+        let exists =
+            sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM tags WHERE id = ?)")
+                .bind(id)
+                .fetch_one(&mut *read)
+                .await
+                .map_err(|e| AppError::Database(format!("Failed to check tag existence: {}", e)))?;
+        read.commit().await?;
+        Ok(exists)
     }
 }
 

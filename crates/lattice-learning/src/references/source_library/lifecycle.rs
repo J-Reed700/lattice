@@ -3,7 +3,6 @@ use super::repository::{self, lifecycle as stored, SourceVersionInsert};
 use super::*;
 use crate::references::trust;
 use lattice_core::shared::hash::sha256_hex;
-use lattice_core::shared::persistence::Transactions;
 
 impl LearningSourceLibraryRepository {
     pub async fn adopt(&self, req: &AdoptLearningSourceVersionRequestDto) -> Result<()> {
@@ -20,7 +19,7 @@ impl LearningSourceLibraryRepository {
             }
         }
         let hash = hash(req)?;
-        let mut tx = self.database.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await?;
         lock_program(&mut tx, &req.program_id).await?;
         if source_operation(
             &req.operation_id,
@@ -77,7 +76,7 @@ impl LearningSourceLibraryRepository {
             },
         )
         .await?;
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     pub async fn update_policy(&self, req: &UpdateLearningSourcePolicyRequestDto) -> Result<()> {
@@ -93,7 +92,7 @@ impl LearningSourceLibraryRepository {
             }
         }
         let hash = hash(req)?;
-        let mut tx = self.database.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await?;
         lock_program(&mut tx, &req.program_id).await?;
         if source_operation(
             &req.operation_id,
@@ -150,7 +149,7 @@ impl LearningSourceLibraryRepository {
             },
         )
         .await?;
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     pub async fn delete_source(&self, req: &DeleteLearningSourceRequestDto) -> Result<()> {
@@ -166,11 +165,11 @@ impl LearningSourceLibraryRepository {
             }
         }
         let reason = req.reason.trim();
-        if reason.is_empty() || reason.chars().count() > 500 {
-            return Err(invalid("Deletion reason must contain 1–500 characters."));
+        if reason.is_empty() {
+            return Err(invalid("Deletion reason must not be empty."));
         }
         let hash = hash(req)?;
-        let mut tx = self.database.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await?;
         lock_program(&mut tx, &req.program_id).await?;
         if portability_operation(&req.operation_id, &req.program_id, "delete_source", &hash)
             .seen(&mut tx)
@@ -209,7 +208,7 @@ impl LearningSourceLibraryRepository {
         portability_operation(&req.operation_id, &req.program_id, "delete_source", &hash)
             .record(&mut tx, &Some(&req.source_id))
             .await?;
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     pub async fn reimport_source(&self, req: &ReimportLearningSourceRequestDto) -> Result<()> {
@@ -233,10 +232,10 @@ impl LearningSourceLibraryRepository {
             return Err(invalid("Replacement source text must not be empty."));
         }
         let hash = hash(req)?;
-        let mut read = self.database.begin_read().await.map_err(db)?;
+        let mut read = self.database.begin_read().await?;
         let saved_text = stored::active_text_in(&mut read, &req.program_id, &req.source_id).await?;
         let saved = trust::capture::saved_texts(&mut read, &req.program_id).await?;
-        read.commit().await.map_err(db)?;
+        read.commit().await?;
         let comparison = trust::capture::compare_saved(
             saved,
             trust::capture::VersionText {
@@ -251,7 +250,7 @@ impl LearningSourceLibraryRepository {
             },
         )
         .await?;
-        let mut tx = self.database.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await?;
         lock_program(&mut tx, &req.program_id).await?;
         if portability_operation(&req.operation_id, &req.program_id, "reimport_source", &hash)
             .seen(&mut tx)
@@ -371,6 +370,6 @@ impl LearningSourceLibraryRepository {
         portability_operation(&req.operation_id, &req.program_id, "reimport_source", &hash)
             .record(&mut tx, &Some(&active_version))
             .await?;
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 }

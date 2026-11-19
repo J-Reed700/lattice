@@ -20,6 +20,7 @@ pub(super) struct ConversationListRow {
     pub(super) pinned_at: Option<String>,
     pub(super) archived_at: Option<String>,
     pub(super) last_message_preview: Option<String>,
+    pub(super) last_message_metadata: Option<String>,
     pub(super) forked_from_conversation_id: Option<String>,
     pub(super) forked_from_message_id: Option<String>,
     pub(super) explorer_root: Option<String>,
@@ -50,7 +51,13 @@ impl ConversationListRow {
             bookmarked_at: self.bookmarked_at,
             pinned_at: self.pinned_at,
             archived_at: self.archived_at,
-            last_message_preview: self.last_message_preview,
+            last_message_preview: self.last_message_preview.map(|content| {
+                lattice_core::shared::stored_references::text_without_references(
+                    &content,
+                    self.last_message_metadata.as_deref(),
+                )
+                .into_owned()
+            }),
             compaction: None,
             forked_from_conversation_id: self.forked_from_conversation_id,
             forked_from_message_id: self.forked_from_message_id,
@@ -77,7 +84,7 @@ pub(super) fn build_fts_query(raw: &str) -> Option<String> {
 }
 
 /// `rank` rather than `bm25()`: an auxiliary function cannot run inside `MIN`.
-fn push_conversation_matches(qb: &mut QueryBuilder<'_, Sqlite>, fts: &str) {
+fn push_conversation_matches(qb: &mut QueryBuilder<Sqlite>, fts: &str) {
     qb.push(
         " FROM conversation_search_fts fts
         WHERE fts.conversation_id = c.id
@@ -98,19 +105,11 @@ pub(super) struct ConversationListing<'a> {
     pub(super) has_message_bookmarks: bool,
     pub(super) include_archived: bool,
     pub(super) search: Option<&'a str>,
-    pub(super) limit: i64,
-    pub(super) offset: i64,
+    pub(super) page: Page,
 }
 
 impl<'a> ConversationListing<'a> {
-    pub(super) fn page(limit: Option<i64>, offset: Option<i64>, default_limit: i64) -> (i64, i64) {
-        (
-            limit.unwrap_or(default_limit).clamp(1, 200),
-            offset.unwrap_or(0).max(0),
-        )
-    }
-
-    pub(super) fn query(&self) -> QueryBuilder<'a, Sqlite> {
+    pub(super) fn query(&self) -> QueryBuilder<Sqlite> {
         let fts_query = self.search.and_then(build_fts_query);
 
         let mut qb = QueryBuilder::<Sqlite>::new(
@@ -144,7 +143,14 @@ impl<'a> ConversationListing<'a> {
                 WHERE m.conversation_id = c.id
                 ORDER BY m.created_at DESC
                 LIMIT 1
-            ) AS last_message_preview
+            ) AS last_message_preview,
+            (
+                SELECT m.metadata
+                FROM conversation_messages m
+                WHERE m.conversation_id = c.id
+                ORDER BY m.created_at DESC
+                LIMIT 1
+            ) AS last_message_metadata
         FROM conversations c
         WHERE c.tangent_parent_id IS NULL
         "#,
@@ -202,9 +208,9 @@ impl<'a> ConversationListing<'a> {
         }
 
         qb.push(" LIMIT ")
-            .push_bind(self.limit)
+            .push_bind(self.page.sql_limit())
             .push(" OFFSET ")
-            .push_bind(self.offset);
+            .push_bind(self.page.offset());
         qb
     }
 }

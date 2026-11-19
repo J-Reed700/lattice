@@ -21,7 +21,7 @@ function conversation(id: string, title: string, spaceId: string, updatedDaysAgo
 function document(id: string, fileName: string, fileType: string, indexedDaysAgo: number): Fixture<DocumentMetadataDto> {
   return {
     id, fileName, filePath: `${FILES}/${id}/${fileName}`, fileType, category: 'Document', language: 'en',
-    wordCount: 2400, modifiedAt: daysAgo(indexedDaysAgo), indexedAt: daysAgo(indexedDaysAgo),
+    wordCount: 2400, web: false, typeBucket: fileType === 'pdf' ? 'PDF' : 'Markdown', modifiedAt: daysAgo(indexedDaysAgo), indexedAt: daysAgo(indexedDaysAgo),
   };
 }
 
@@ -69,7 +69,13 @@ export async function installHomeFixture(page: Page) {
       const entries = state.conversations.filter(item => item.spaceId === FIELD_JOURNAL.id);
       return { conversations: entries };
     },
-    get_corpus_shape: () => ({ total: state.documents.length, byType: [{ type: 'md', count: 2 }, { type: 'pdf', count: 1 }], grownLast7Days: state.documents.length }),
+    get_corpus_shape: () => ({
+      total: state.documents.length,
+      byType: state.documents.length ? [{ type: 'Markdown', count: 2 }, { type: 'PDF', count: 1 }] : [],
+      grownLast7Days: state.documents.length,
+      grownToday: state.documents.length ? 1 : 0,
+      lastIndexedAt: state.documents[0]?.indexedAt ?? null,
+    }),
   }));
   return { ...references, state };
 }

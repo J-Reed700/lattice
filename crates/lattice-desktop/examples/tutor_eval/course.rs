@@ -19,7 +19,7 @@ use lattice::infrastructure::persistence::repositories::workspace_notes::DailyNo
 use lattice_core::shared::persistence::Database;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sqlx::{Row, SqlitePool};
+use sqlx::Row;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -152,9 +152,9 @@ fn program_of(course: &Course) -> (LearningProgramDto, HashMap<String, String>) 
     (program, lesson_ids)
 }
 
-async fn add_source(pool: &SqlitePool, program_id: &str, source: &Source) -> Res<String> {
+async fn add_source(db: &Database, program_id: &str, source: &Source) -> Res<String> {
     let version = id();
-    LearningSourceLibraryRepository::new(Database::from(pool.clone()))
+    LearningSourceLibraryRepository::new(db.clone())
         .add(
             NewLearningSource {
                 operation_id: &id(),
@@ -186,14 +186,15 @@ async fn add_source(pool: &SqlitePool, program_id: &str, source: &Source) -> Res
 /// A lesson as lesson preparation leaves it: ready, its blocks citing their
 /// sources, so its passages are labelled module › lesson › source.
 async fn prepare_lesson(
-    pool: &SqlitePool,
+    db: &Database,
     lesson_id: &str,
     lesson: &Lesson,
     versions: &HashMap<String, String>,
 ) -> Res<()> {
+    let mut tx = db.begin_write().await?;
     sqlx::query("UPDATE learning_lessons SET preparation='ready' WHERE id=?")
         .bind(lesson_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
     for (ordinal, block) in lesson.blocks.iter().enumerate() {
         let cited: Vec<&String> = block
@@ -207,22 +208,23 @@ async fn prepare_lesson(
             .bind(&block.title)
             .bind(&block.body)
             .bind(json!(cited).to_string())
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
     }
+    tx.commit().await?;
     Ok(())
 }
 
 /// A card as a learner accepts it from a lesson: drafted, then accepted, so it
 /// joins the deck with its lesson as its origin.
 async fn add_card(
-    pool: &SqlitePool,
+    db: &Database,
     program_id: &str,
     lesson_id: &str,
     card: &Card,
     version: &str,
 ) -> Res<String> {
-    let repo = LearningRepository::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     repo.save_generated_drafts(
         program_id,
         lesson_id,
@@ -234,20 +236,22 @@ async fn add_card(
         }],
     )
     .await?;
+    let mut read = db.begin_read().await?;
     let draft: String = sqlx::query_scalar(
         "SELECT id FROM learning_card_drafts WHERE program_id=? AND lesson_id=? AND status='pending'",
     )
     .bind(program_id)
     .bind(lesson_id)
-    .fetch_one(pool)
+    .fetch_one(&mut *read)
     .await?;
+    read.commit().await?;
     Ok(repo.accept_card_draft(program_id, &draft).await?)
 }
 
-pub async fn seed(pool: &SqlitePool, course: &Course) -> Res<Seeded> {
+pub async fn seed(db: &Database, course: &Course) -> Res<Seeded> {
     let (program, lessons) = program_of(course);
     let program_id = program.summary.id.clone();
-    let repo = LearningRepository::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     repo.create(&program).await?;
     repo.accept(&AcceptLearningProgramRequestDto {
         program_id: program_id.clone(),
@@ -258,19 +262,19 @@ pub async fn seed(pool: &SqlitePool, course: &Course) -> Res<Seeded> {
     let mut versions = HashMap::new();
     let mut source_keys = HashMap::new();
     for source in &course.sources {
-        let version = add_source(pool, &program_id, source).await?;
+        let version = add_source(db, &program_id, source).await?;
         versions.insert(source.key.clone(), version.clone());
         source_keys.insert(version, source.key.clone());
     }
     for lesson in course.modules.iter().flat_map(|module| &module.lessons) {
         let lesson_id = lessons.get(&lesson.key).ok_or("a lesson with no id")?;
-        prepare_lesson(pool, lesson_id, lesson, &versions).await?;
+        prepare_lesson(db, lesson_id, lesson, &versions).await?;
     }
     let mut card_keys = HashMap::new();
     for card in &course.cards {
         let lesson = lessons.get(&card.lesson).ok_or("a card with no lesson")?;
         let version = versions.get(&card.source).ok_or("a card with no source")?;
-        let card_id = add_card(pool, &program_id, lesson, card, version).await?;
+        let card_id = add_card(db, &program_id, lesson, card, version).await?;
         card_keys.insert(card_id, card.key.clone());
     }
     Ok(Seeded {
@@ -283,17 +287,18 @@ pub async fn seed(pool: &SqlitePool, course: &Course) -> Res<Seeded> {
 
 /// What Recall and the Notebook hold now, read as those tabs read it. Ids the
 /// course file knows are shown as its keys, so two runs read alike.
-pub async fn read_back(pool: &SqlitePool, seeded: &Seeded) -> Res<Value> {
-    let workspace = LearningRecallRepository::new(pool.clone())
+pub async fn read_back(db: &Database, seeded: &Seeded) -> Res<Value> {
+    let workspace = LearningRecallRepository::new(db.clone())
         .workspace(&seeded.program_id)
         .await?;
     let now = chrono::Utc::now().timestamp_millis();
     let mut cards = Vec::new();
+    let mut read = db.begin_read().await?;
     for card in &workspace.cards {
         let ratings: Vec<String> =
             sqlx::query("SELECT rating FROM study_reviews WHERE card_id=? ORDER BY rowid")
                 .bind(&card.id)
-                .fetch_all(pool)
+                .fetch_all(&mut *read)
                 .await?
                 .iter()
                 .map(|row| row.get("rating"))
@@ -314,10 +319,11 @@ pub async fn read_back(pool: &SqlitePool, seeded: &Seeded) -> Res<Value> {
                 .collect::<Vec<_>>(),
         }));
     }
-    let memory = LearningRepository::new(pool.clone())
+    read.commit().await?;
+    let memory = LearningRepository::new(db.clone())
         .memory_state(&seeded.program_id)
         .await?;
-    let notes = DailyNotesRepository::new(pool.clone());
+    let notes = DailyNotesRepository::new(db.clone());
     let mut lesson_notes = Vec::new();
     for (lesson_id, note_id) in &memory.lesson_notes {
         let lesson = seeded

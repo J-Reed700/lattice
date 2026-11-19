@@ -5,9 +5,9 @@
  * to break the cycle between api/models.ts and modelCatalog.ts.
  */
 
-export type ModelCategory = 'LLM' | 'Embedding' | 'OCR' | 'Transcription' | 'Speech';
+export type ModelCategory = import('../lib/bindings').ModelCategoryDto;
 
-export type PerformanceTier = 'Fast' | 'Balanced' | 'Accurate';
+export type PerformanceTier = import('../lib/bindings').PerformanceTierDto;
 
 export type GpuType = 'AppleSilicon' | 'Nvidia' | 'AMD' | 'Intel' | 'None';
 
@@ -15,6 +15,6 @@ export type GpuAcceleration = 'Metal' | 'CUDA' | 'ROCm' | 'Vulkan' | 'None';
 
 export type CpuArchitecture = 'ARM64' | 'X86_64';
 
-export type ModelSource = 'Curated' | 'External';
+export type ModelSource = import('../lib/bindings').ModelSourceDto;
 
 export type ModelSortBy = 'recommended' | 'popularity' | 'likes' | 'size_asc' | 'size_desc' | 'name';

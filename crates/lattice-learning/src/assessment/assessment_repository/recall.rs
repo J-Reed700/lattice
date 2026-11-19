@@ -3,13 +3,11 @@
 use super::{assessment_operation, candidate_in, invalid, uuid, LearningAssessmentRepository};
 use crate::assessment_engine::{self as engine, LearningItemFormat};
 use crate::dto::*;
-use crate::persistence::db;
 use crate::portability_dto::{
     LearningRecallCardFormat, LearningRecallContentDto, SaveLearningRecallCardRequestDto,
 };
 use crate::recall_repository::LearningRecallRepository;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
 use sha2::{Digest, Sha256};
 
 /// A UUID derived from text, so a repeated request writes the same cards.
@@ -128,8 +126,8 @@ impl LearningAssessmentRepository {
         uuid(&req.operation_id, "operation")?;
         uuid(&req.program_id, "program")?;
         uuid(&req.form_id, "form")?;
-        if req.item_ids.is_empty() || req.item_ids.len() > 200 {
-            return Err(invalid("Choose between one and 200 questions."));
+        if req.item_ids.is_empty() {
+            return Err(invalid("Choose at least one question."));
         }
         let operation = assessment_operation(
             &req.operation_id,
@@ -139,23 +137,21 @@ impl LearningAssessmentRepository {
             hash,
             "Operation ID was reused with different questions.",
         );
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        let replayed = operation
-            .replay::<LearningQuizMissesToRecallDto>(&mut connection)
-            .await?;
-        drop(connection);
-        if let Some(done) = replayed {
+        let mut read = self.db.begin_read().await?;
+        if let Some(done) = operation
+            .replay::<LearningQuizMissesToRecallDto>(&mut read)
+            .await?
+        {
+            read.commit().await?;
             return Ok(done);
         }
-        let mut read = self.pool.begin_read().await.map_err(db)?;
         let status: Option<String> = sqlx::query_scalar(
             "SELECT status FROM learning_assessment_forms WHERE id=? AND program_id=?",
         )
         .bind(&req.form_id)
         .bind(&req.program_id)
         .fetch_optional(&mut *read)
-        .await
-        .map_err(db)?;
+        .await?;
         if status.as_deref() != Some("submitted") {
             return Err(invalid("Add questions to Recall from a submitted quiz."));
         }
@@ -167,8 +163,7 @@ impl LearningAssessmentRepository {
             .bind(&req.form_id)
             .bind(item_id)
             .fetch_optional(&mut *read)
-            .await
-            .map_err(db)?;
+            .await?;
             if in_form.is_none() {
                 return Err(invalid("That question is not part of this quiz."));
             }
@@ -181,11 +176,10 @@ impl LearningAssessmentRepository {
             sqlx::query_scalar("SELECT deck_id FROM learning_memory WHERE program_id=?")
                 .bind(&req.program_id)
                 .fetch_optional(&mut *read)
-                .await
-                .map_err(db)?
+                .await?
                 .ok_or_else(|| AppError::NotFound("This course has no recall deck yet.".into()))?;
-        read.commit().await.map_err(db)?;
-        let recall = LearningRecallRepository::new(self.pool.clone());
+        read.commit().await?;
+        let recall = LearningRecallRepository::new(self.db.clone());
         let mut created = 0i64;
         for (item_id, sources, (format, content)) in cards {
             let seed = format!("{}:{item_id}", req.operation_id);
@@ -207,8 +201,9 @@ impl LearningAssessmentRepository {
             cards_created: created,
             deck_id,
         };
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        operation.record(&mut connection, &done).await?;
+        let mut tx = self.db.begin_write().await?;
+        operation.record(&mut tx, &done).await?;
+        tx.commit().await?;
         Ok(done)
     }
 }

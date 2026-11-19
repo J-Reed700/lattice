@@ -24,7 +24,7 @@ use crate::quiz_bank_jobs::ModelLoader;
 use async_trait::async_trait;
 use lattice_core::domain::learning::practice::work::{Form, KindId};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{
     Backoff, JobContext, JobHandler, JobKindConfig, JobOutcome, JobStore, NewJob, RecoveryPolicy,
 };
@@ -96,10 +96,7 @@ pub async fn queue_coding_build(
     let requested = serde_json::to_value(practice_build_request(request)?)
         .map_err(|error| AppError::Serialization(error.to_string()))?;
     let payload_hash = hash(&requested)?;
-    let mut transaction = database
-        .begin_write()
-        .await
-        .map_err(|error| AppError::Database(error.to_string()))?;
+    let mut transaction = database.begin_write().await?;
     let admitted = JobStore::submit_in(
         &mut transaction,
         &NewJob {
@@ -117,10 +114,7 @@ pub async fn queue_coding_build(
         },
     )
     .await?;
-    transaction
-        .commit()
-        .await
-        .map_err(|error| AppError::Database(error.to_string()))?;
+    transaction.commit().await?;
     Ok(admitted.id)
 }
 

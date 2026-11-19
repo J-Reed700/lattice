@@ -9,12 +9,10 @@ use lattice_core::shared::persistence::Database;
 use std::sync::Arc;
 
 async fn saga_with_downloading_file() -> (DownloadSaga, sqlx::SqlitePool) {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(":memory:")
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let db = Database::new(pool.clone());
     sqlx::query(
         "INSERT INTO models (id, model_name, model_id, base_path, model_type, architecture, status)
          VALUES ('row-1', 'embed', 'embed', '/tmp/embed', 'embedding', 'bert', 'downloading')",
@@ -33,8 +31,8 @@ async fn saga_with_downloading_file() -> (DownloadSaga, sqlx::SqlitePool) {
     .unwrap();
     let saga = DownloadSaga::new(
         Arc::new(EventBus::new()),
-        Database::from(pool.clone()),
-        Arc::new(DownloadedModelRepository::new(pool.clone())),
+        db.clone(),
+        Arc::new(DownloadedModelRepository::new(db)),
     );
     (saga, pool)
 }

@@ -52,9 +52,13 @@ impl ConversationRepository {
         let page = (SCAN_PAGE_BYTES / (vector.len().max(1) * 4)).max(1);
         let mut before = i64::MAX;
         let mut semantic = Vec::new();
+        let Ok(mut tx) = self.db.begin_read().await else {
+            lexical.index_error = Some("semantic_index_unavailable".into());
+            return Ok(lexical);
+        };
         loop {
             let rows = sqlx::query_as::<_, Row>("SELECT m.id AS message_id, m.sequence, m.role, substr(m.content, 1, 2400) AS content, v.embedding FROM conversation_memory_vectors v JOIN conversation_messages m ON m.id=v.message_id AND m.conversation_id=v.conversation_id WHERE m.conversation_id=? AND v.embedding_model=? AND v.dimension=? AND v.content=m.content AND (m.role='user' OR m.status='completed') AND m.sequence < ? ORDER BY m.sequence DESC LIMIT ?")
-                .bind(conversation).bind(embedder.model_identity()).bind(vector.len() as i64).bind(before).bind(page as i64).fetch_all(&self.pool).await;
+                .bind(conversation).bind(embedder.model_identity()).bind(vector.len() as i64).bind(before).bind(page as i64).fetch_all(&mut *tx).await;
             let rows = match rows {
                 Ok(rows) => rows,
                 Err(_) => {
@@ -90,6 +94,7 @@ impl ConversationRepository {
                 break;
             }
         }
+        tx.commit().await?;
         lexical.candidates = fuse(lexical.candidates, semantic, limit);
         Ok(lexical)
     }

@@ -7,7 +7,6 @@ use crate::features::conversation::repository::mapper::{
 use chrono::Utc;
 use lattice_core::domain::conversation::DocumentReference;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
 use sqlx::SqliteConnection;
 
 impl ConversationRepository {
@@ -22,7 +21,7 @@ impl ConversationRepository {
 
         // Both inserts commit together, so a document linked to the conversation
         // is always also a member of its space.
-        let mut tx = self.pool.begin_write().await.map_err(|e| {
+        let mut tx = self.db.begin_write().await.map_err(|e| {
             AppError::Database(format!(
                 "Failed to open tx for add_document_reference: {}",
                 e
@@ -80,11 +79,13 @@ impl ConversationRepository {
         &self,
         conversation_id: &str,
     ) -> Result<Vec<DocumentReference>> {
-        let mut connection =
-            self.pool.acquire().await.map_err(|e| {
+        let mut read =
+            self.db.begin_read().await.map_err(|e| {
                 AppError::Database(format!("Failed to get document references: {}", e))
             })?;
-        document_references_of(&mut connection, conversation_id).await
+        let references = document_references_of(&mut read, conversation_id).await?;
+        read.commit().await?;
+        Ok(references)
     }
 }
 

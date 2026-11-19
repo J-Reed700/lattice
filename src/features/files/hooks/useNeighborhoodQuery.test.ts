@@ -29,6 +29,8 @@ const doc = (id: string, fileName: string): DocumentMetadata => ({
   modifiedAt: '2026-01-01',
   indexedAt: '2026-01-01',
   wordCount: 10,
+  web: false,
+  typeBucket: 'Markdown',
 });
 
 const subject = doc('doc-subject', 'Subject.md');
@@ -111,6 +113,11 @@ describe('loadNeighborhood', () => {
     expect(data.similar).toEqual([]);
     expect(data.links).toHaveLength(1);
     expect(data.citedIn).toEqual([{ conversationId: 'conv-1', title: 'Where it came up' }]);
+  });
+
+  it('asks for the ten conversations the panel shows', async () => {
+    await loadNeighborhood(subject.id, subject.fileName, documentsById);
+    expect(listConversationsCitingDocument).toHaveBeenCalledWith(subject.id, 10);
   });
 
   it('looks backlinks up by the title, not the file name', async () => {

@@ -20,6 +20,9 @@ use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
 use lattice_core::application::ports::turn_source::{
     SourcePassage, SourcePassages, TurnSourcePort,
 };
+use lattice_core::application::services::model_contract::kept::{
+    KeptNames, MemoryNames, TurnNames,
+};
 use lattice_core::shared::persistence::Database;
 use lattice_store::workspace_notes::DailyNotesRepository;
 use serde_json::{json, Value};
@@ -41,6 +44,8 @@ struct Course {
     conversation: String,
     version: String,
     notes_written: Arc<AtomicUsize>,
+    /// What the chat's turns have named, kept between them as the app keeps it.
+    names: Arc<KeptNames>,
 }
 
 impl Course {
@@ -53,9 +58,20 @@ impl Course {
         let note_written: NoteWritten = Arc::new(move || {
             written.fetch_add(1, Ordering::SeqCst);
         });
-        CourseTurn::resolve(&self.database, None, &self.conversation, note_written)
+        let names = self
+            .names
+            .open(&self.conversation)
             .await
-            .expect("the chat is bound to the course")
+            .expect("the chat's names are readable");
+        CourseTurn::resolve(
+            &self.database,
+            None,
+            &self.conversation,
+            note_written,
+            names,
+        )
+        .await
+        .expect("the chat is bound to the course")
     }
 
     async fn call(&self, tool: &str, arguments: Value) -> FunctionResult {
@@ -85,7 +101,7 @@ impl Course {
 
     async fn save_card(&self, front: &str) -> String {
         let card_id = id();
-        LearningRecallRepository::new(self.pool.clone())
+        LearningRecallRepository::new(self.database.clone())
             .save_card(&SaveLearningRecallCardRequestDto {
                 operation_id: id(),
                 program_id: self.program.summary.id.clone(),
@@ -109,6 +125,60 @@ impl Course {
         card_id
     }
 
+    /// The name a card is shown under in `due_reviews`.
+    async fn card_name(&self, front: &str) -> String {
+        let due = self.text("due_reviews", json!({})).await;
+        let mut lines = due.lines();
+        while let Some(line) = lines.next() {
+            let next = lines.clone().next().map(str::trim);
+            if let (Some(name), true) = (line.strip_prefix("- "), next == Some(front)) {
+                return name.to_string();
+            }
+        }
+        panic!("{front} is not among the due cards: {due}")
+    }
+
+    /// Asks a due card through `ask_card` and returns its name.
+    async fn ask(&self, front: &str) -> String {
+        let name = self.card_name(front).await;
+        self.text("ask_card", json!({ "card": name })).await;
+        name
+    }
+
+    async fn save_choice_card(&self, front: &str, options: &[&str], correct: usize) -> String {
+        let card = id();
+        LearningRecallRepository::new(self.database.clone())
+            .save_card(&SaveLearningRecallCardRequestDto {
+                operation_id: id(),
+                program_id: self.program.summary.id.clone(),
+                card_id: card.clone(),
+                expected_content_revision: None,
+                format: LearningRecallCardFormat::MultipleChoice,
+                content: LearningRecallContentDto {
+                    prompt: front.into(),
+                    answer: options[correct].into(),
+                    explanation: String::new(),
+                    options: options.iter().map(|option| option.to_string()).collect(),
+                    correct_option_index: Some(correct),
+                    language: None,
+                    cloze_deletions: vec![],
+                },
+                source_version_ids: vec![],
+                change_reason: "Test".into(),
+            })
+            .await
+            .expect("the card saves");
+        card
+    }
+
+    async fn rating_of(&self, card_id: &str) -> String {
+        sqlx::query_scalar("SELECT rating FROM study_reviews WHERE card_id=?")
+            .bind(card_id)
+            .fetch_one(&self.pool)
+            .await
+            .expect("the review")
+    }
+
     async fn schedule(&self, card_id: &str) -> (i64, i64) {
         let row = sqlx::query("SELECT review_count, due_at FROM study_cards WHERE id=?")
             .bind(card_id)
@@ -119,9 +189,27 @@ impl Course {
     }
 }
 
-async fn add_source(pool: &SqlitePool, program_id: &str, title: &str, text: &str) -> String {
+/// The bracketed name that follows `marker` in `text`.
+fn named_after(text: &str, marker: &str) -> String {
+    let from = text.find(marker).expect("the marker is in the text") + marker.len();
+    let rest = &text[from..];
+    let end = rest.find(']').expect("a bracketed name follows") + 1;
+    rest[..end].to_string()
+}
+
+/// The bracketed name written just before `text` in `shown`.
+fn name_before(shown: &str, text: &str) -> String {
+    let at = shown.find(&format!(" {text}")).expect("the text is shown");
+    shown[..at]
+        .rsplit(char::is_whitespace)
+        .next()
+        .expect("a name comes first")
+        .to_string()
+}
+
+async fn add_source(db: &Database, program_id: &str, title: &str, text: &str) -> String {
     let version = id();
-    LearningSourceLibraryRepository::new(Database::from(pool.clone()))
+    LearningSourceLibraryRepository::new(db.clone())
         .add(
             NewLearningSource {
                 operation_id: &id(),
@@ -155,7 +243,8 @@ async fn add_source(pool: &SqlitePool, program_id: &str, title: &str, text: &str
 /// bound to it.
 async fn course() -> Course {
     let pool = tests::pool().await.expect("a database");
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let program = tests::fixture();
     repo.create(&program).await.expect("the course saves");
     repo.accept(&AcceptLearningProgramRequestDto {
@@ -165,7 +254,7 @@ async fn course() -> Course {
     })
     .await
     .expect("the course is accepted");
-    let version = add_source(&pool, &program.summary.id, "Search notes", SOURCE_TEXT).await;
+    let version = add_source(&db, &program.summary.id, "Search notes", SOURCE_TEXT).await;
     let lesson = program.modules[0].lessons[0].id.clone();
     sqlx::query("INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json) VALUES(?,0,'explanation','Fusion','Body',?)")
         .bind(&lesson)
@@ -180,7 +269,7 @@ async fn course() -> Course {
         .await
         .expect("the chat saves");
     bind_conversation(
-        &Database::from(pool.clone()),
+        &db,
         &SetConversationCourseRequestDto {
             conversation_id: conversation.clone(),
             program_id: program.summary.id.clone(),
@@ -191,12 +280,13 @@ async fn course() -> Course {
     .expect("the chat binds");
     let program = repo.get(&program.summary.id).await.expect("the course");
     Course {
-        database: Database::from(pool.clone()),
+        database: db,
         pool,
         program,
         conversation,
         version,
         notes_written: Arc::default(),
+        names: Arc::new(KeptNames::new(Arc::new(MemoryNames::new()))),
     }
 }
 
@@ -228,7 +318,7 @@ async fn deleting_a_course_leaves_its_tutor_chats_as_ordinary_chats() {
         (Some(course.program.summary.id.clone()), Some(lesson))
     );
 
-    LearningRepository::new(course.pool.clone())
+    LearningRepository::new(course.database.clone())
         .delete(&course.program.summary.id)
         .await
         .expect("the course is deleted");
@@ -239,9 +329,15 @@ async fn deleting_a_course_leaves_its_tutor_chats_as_ordinary_chats() {
     );
     let note_written: NoteWritten = Arc::new(|| {});
     assert!(
-        CourseTurn::resolve(&course.database, None, &course.conversation, note_written)
-            .await
-            .is_none(),
+        CourseTurn::resolve(
+            &course.database,
+            None,
+            &course.conversation,
+            note_written,
+            Arc::new(TurnNames::unstored()),
+        )
+        .await
+        .is_none(),
         "its turns run as a plain chat's"
     );
 }
@@ -267,7 +363,7 @@ async fn a_chat_binds_only_to_an_accepted_course_a_lesson_of_it_and_no_folder() 
     assert!(bind_conversation(&course.database, &gone).await.is_err());
 
     let draft = tests::fixture();
-    let repo = LearningRepository::new(course.pool.clone());
+    let repo = LearningRepository::new(course.database.clone());
     repo.create(&draft).await.expect("the draft saves");
     let unaccepted = request(&course.conversation, &draft.summary.id, None);
     assert!(bind_conversation(&course.database, &unaccepted)
@@ -307,7 +403,12 @@ async fn search_course_labels_each_passage_module_lesson_source_as_a_citation() 
         "{}",
         passage.label
     );
-    assert!(passage.label.contains(&course.version), "{}", passage.label);
+    assert!(passage.label.ends_with(" [r1]"), "{}", passage.label);
+    assert!(
+        !passage.label.contains(&course.version),
+        "{}",
+        passage.label
+    );
     assert!(passage.source.content.contains("sums one over k plus rank"));
     assert_eq!(
         passage.source.document_id,
@@ -349,22 +450,25 @@ async fn read_course_source_reads_on_from_where_it_stopped() {
         .await
         .expect("it reads")
         .expect("the course has the source");
-    let passage = first.passages.first().expect("a stretch");
+    let passage = first.passages.passages.first().expect("a stretch");
     assert_eq!(passage.source.content.chars().count(), 20);
-    let note = first.note.expect("a note");
-    assert!(note.contains("offset=20"), "{note}");
+    assert_eq!(first.next, Some(20));
+    let note = first.passages.note.expect("a note");
+    assert!(!note.contains("offset"), "{note}");
 
     let rest = turn
         .read_source(&course.version, 20, 20_000)
         .await
         .expect("it reads")
         .expect("the course has the source");
-    let passage = rest.passages.first().expect("the rest");
+    let passage = rest.passages.passages.first().expect("the rest");
     assert!(passage
         .source
         .content
         .ends_with("term frequency and rarity."));
+    assert_eq!(rest.next, None);
     assert!(rest
+        .passages
         .note
         .expect("a note")
         .contains("the end of this source"));
@@ -374,24 +478,83 @@ async fn read_course_source_reads_on_from_where_it_stopped() {
         .await
         .expect("it reads")
         .expect("the course has the source");
-    assert!(past.passages.is_empty());
+    assert!(past.passages.passages.is_empty());
 
-    let other = course
-        .call("read_course_source", json!({ "source_id": id() }))
+    let nothing = course
+        .call("read_course_source", json!({ "source": "[r9]" }))
         .await;
-    assert!(!other.success, "a source outside the course is refused");
+    assert!(!nothing.success, "a name that names nothing is refused");
+    assert!(
+        nothing
+            .error_message
+            .expect("why")
+            .contains("names nothing shown"),
+        "the model is told how to get a valid name"
+    );
+    let raw = course
+        .call("read_course_source", json!({ "source": id() }))
+        .await;
+    assert!(!raw.success, "an id is not a name");
 }
 
 #[tokio::test]
-async fn read_course_source_takes_the_id_a_retained_passage_shows() {
+async fn read_course_source_takes_the_name_a_passage_label_shows() {
     let course = course().await;
+    let found = course
+        .passages("search_course", json!({ "query": "rank fusion" }))
+        .await;
+    let label = &found.passages.first().expect("a passage").label;
+    let name = label.rsplit(' ').next().expect("the name closes the label");
     let read = course
-        .passages(
-            "read_course_source",
-            json!({ "source_id": format!("{COURSE_SOURCE_PREFIX}{}", course.version) }),
-        )
+        .passages("read_course_source", json!({ "source": name }))
         .await;
     assert_eq!(read.passages.len(), 1);
+    let bare = course
+        .passages(
+            "read_course_source",
+            json!({ "source": name.trim_matches(['[', ']']) }),
+        )
+        .await;
+    assert_eq!(bare.passages.len(), 1, "the brackets are optional");
+}
+
+#[tokio::test]
+async fn a_cut_read_carries_the_call_that_reads_on() {
+    let course = course().await;
+    let outline = course.text("course_outline", json!({})).await;
+    let name = named_after(&outline, "Search notes ");
+    let turn = course.turn().await;
+    let cut = turn
+        .execute_tool(
+            FunctionCall::new(id(), "read_course_source", json!({ "source": name })),
+            640,
+        )
+        .await
+        .expect("it runs")
+        .data
+        .expect("a result");
+    let read_on = cut.get("read_on").expect("where to read on");
+    assert_eq!(read_on["tool"], "read_course_source");
+    assert_eq!(read_on["arguments"]["source"], name);
+    assert_eq!(read_on["arguments"]["offset"], 40);
+
+    let rest = turn
+        .execute_tool(
+            FunctionCall::new(id(), "read_course_source", read_on["arguments"].clone()),
+            20_000,
+        )
+        .await
+        .expect("it runs")
+        .data
+        .expect("a result");
+    let rest: SourcePassages = serde_json::from_value(rest).expect("passages");
+    assert!(rest
+        .passages
+        .first()
+        .expect("the rest")
+        .source
+        .content
+        .ends_with("term frequency and rarity."));
 }
 
 #[tokio::test]
@@ -407,12 +570,14 @@ async fn the_outline_names_what_the_learner_finished_and_the_sources() {
     let outline = course.text("course_outline", json!({})).await;
 
     assert!(outline.contains("Module 1: Module 0"), "{outline}");
-    assert!(outline.contains("1.1 Lesson 0-0 [finished]"), "{outline}");
-    assert!(outline.contains("1.2 Lesson 0-1 (lesson_id:"), "{outline}");
     assert!(
-        outline.contains(&format!("Search notes (source_id: {})", course.version)),
+        outline.contains("1.1 Lesson 0-0 [finished] [l1]"),
         "{outline}"
     );
+    assert!(outline.contains("1.2 Lesson 0-1 [l2]"), "{outline}");
+    assert!(outline.contains("Search notes [r2]"), "{outline}");
+    assert!(!outline.contains(&lesson), "{outline}");
+    assert!(!outline.contains(&course.version), "{outline}");
 }
 
 #[tokio::test]
@@ -422,15 +587,18 @@ async fn due_reviews_shows_fronts_and_never_answers() {
 
     let due = course.text("due_reviews", json!({})).await;
 
-    assert!(due.contains(&card), "{due}");
-    assert!(due.contains("What does k flatten?"), "{due}");
+    assert!(due.contains("- [c1]\n  What does k flatten?"), "{due}");
+    assert!(
+        !due.contains(&card),
+        "a card is shown by its name only: {due}"
+    );
     assert!(!due.contains("The hidden answer"), "{due}");
 }
 
 #[tokio::test]
 async fn due_reviews_says_how_many_it_had_no_room_for() {
     let course = course().await;
-    for number in 0..4 {
+    for number in 0..12 {
         course.save_card(&format!("Question {number}")).await;
     }
     let result = course
@@ -470,25 +638,16 @@ fn due_reviews_come_from_across_modules() {
 async fn a_card_answered_in_the_tutor_is_a_review_in_recall() {
     let course = course().await;
     let card = course.save_card("What does k flatten?").await;
-    let recall = LearningRecallRepository::new(course.pool.clone());
+    let recall = LearningRecallRepository::new(course.database.clone());
     let program = course.program.summary.id.clone();
     assert_eq!(
         recall.workspace(&program).await.expect("cards").due_count,
         1
     );
-    reply(
-        &course.pool,
-        &course.conversation,
-        1,
-        "What does k flatten?",
-    )
-    .await;
+    let name = course.ask("What does k flatten?").await;
 
     let recorded = course
-        .text(
-            "record_recall",
-            json!({ "card_id": card, "rating": "good" }),
-        )
+        .text("record_recall", json!({ "card": name, "rating": "good" }))
         .await;
 
     assert!(recorded.contains("Cards still due: 0"), "{recorded}");
@@ -512,14 +671,8 @@ async fn a_card_answered_in_the_tutor_is_a_review_in_recall() {
 async fn a_card_that_is_not_due_keeps_its_schedule() {
     let course = course().await;
     let card = course.save_card("What does k flatten?").await;
-    reply(
-        &course.pool,
-        &course.conversation,
-        1,
-        "What does k flatten?",
-    )
-    .await;
-    let rate = json!({ "card_id": card, "rating": "good" });
+    let name = course.ask("What does k flatten?").await;
+    let rate = json!({ "card": name, "rating": "good" });
     course.text("record_recall", rate.clone()).await;
     let reviewed = course.schedule(&card).await;
 
@@ -534,195 +687,261 @@ async fn a_card_that_is_not_due_keeps_its_schedule() {
 }
 
 /// A review is an answer to a question: a rating for a card nobody asked is a
-/// guess, and it would move the card as a real answer does.
+/// guess, and it would move the card as a real answer does. What a reply says
+/// is the tutor's own prose: only `ask_card` records an asking.
 #[tokio::test]
-async fn a_card_the_tutor_never_asked_keeps_its_schedule() {
+async fn a_card_the_tutor_never_asked_with_ask_card_keeps_its_schedule() {
     let course = course().await;
     let card = course.save_card("What does k flatten?").await;
+    let name = course.card_name("What does k flatten?").await;
     let before = course.schedule(&card).await;
     reply(
         &course.pool,
         &course.conversation,
         1,
-        "Fusion sums ranks [1].
-
-What does BM25 score?",
+        "What does k flatten?",
     )
     .await;
 
     let result = course
-        .call(
-            "record_recall",
-            json!({ "card_id": card, "rating": "good" }),
-        )
+        .call("record_recall", json!({ "card": name, "rating": "good" }))
         .await;
 
     assert!(!result.success);
     assert!(
-        result.error_message.expect("why").contains("as written"),
+        result.error_message.expect("why").contains("ask_card"),
         "the model is told how to ask it"
     );
     assert_eq!(course.schedule(&card).await, before);
 }
 
-/// Replies dress a card up; its words are what count.
+/// A card asked in one turn is rated in the next by the name it had, and it
+/// has that name in the next turn's facts.
 #[tokio::test]
-async fn a_card_asked_in_a_reply_s_own_emphasis_counts_as_asked() {
+async fn a_card_asked_in_one_turn_is_rated_in_the_next_by_the_name_it_had() {
     let course = course().await;
     let card = course.save_card("What does k flatten?").await;
-    reply(
-        &course.pool,
-        &course.conversation,
-        1,
-        "Card 1 of 6:
+    course.save_card("What does BM25 score?").await;
+    let name = course.ask("What does BM25 score?").await;
 
-**What does *k*   flatten?**",
-    )
-    .await;
-
+    let block = course.turn().await.context_block(4_000, true, None).await;
+    assert!(
+        block.contains(&format!("- {name}\n  What does BM25 score?")),
+        "{block}"
+    );
     course
-        .text(
-            "record_recall",
-            json!({ "card_id": card, "rating": "good" }),
-        )
+        .text("record_recall", json!({ "card": name, "rating": "easy" }))
         .await;
 
-    assert_eq!(course.schedule(&card).await.0, 1);
+    assert_eq!(course.schedule(&card).await.0, 0, "the other card waits");
+}
+
+/// An asking counts for the card as it was then: after a review the card has
+/// to be asked again.
+#[tokio::test]
+async fn a_card_must_be_asked_again_after_its_review() {
+    let course = course().await;
+    let card = course.save_card("What does k flatten?").await;
+    let name = course.ask("What does k flatten?").await;
+    let rate = json!({ "card": name, "rating": "good" });
+    course.text("record_recall", rate.clone()).await;
+    sqlx::query("UPDATE study_cards SET due_at=0 WHERE id=?")
+        .bind(&card)
+        .execute(&course.pool)
+        .await
+        .expect("the card falls due again");
+    let before = course.schedule(&card).await;
+
+    let result = course.call("record_recall", rate.clone()).await;
+
+    assert!(!result.success);
+    assert!(result.error_message.expect("why").contains("ask_card"));
+    assert_eq!(course.schedule(&card).await, before);
+    course.text("ask_card", json!({ "card": name })).await;
+    course.text("record_recall", rate).await;
+    assert_eq!(course.schedule(&card).await.0, 2);
 }
 
 #[tokio::test]
-async fn record_recall_refuses_a_card_of_another_course() {
+async fn ask_card_gives_the_card_as_written_and_never_its_answer() {
     let course = course().await;
-    let foreign = id();
-    let result = course
-        .call(
-            "record_recall",
-            json!({ "card_id": foreign, "rating": "good" }),
-        )
+    course.save_card("What does k flatten?").await;
+    let name = course.card_name("What does k flatten?").await;
+
+    let asked = course.text("ask_card", json!({ "card": name })).await;
+
+    assert!(asked.contains("What does k flatten?"), "{asked}");
+    assert!(asked.contains(&name), "{asked}");
+    assert!(!asked.contains("The hidden answer"), "{asked}");
+}
+
+#[tokio::test]
+async fn ask_card_refuses_a_card_that_is_not_due() {
+    let course = course().await;
+    let card = course.save_card("What does k flatten?").await;
+    let name = course.ask("What does k flatten?").await;
+    course
+        .text("record_recall", json!({ "card": name, "rating": "good" }))
         .await;
-    assert!(!result.success);
-    assert!(result
-        .error_message
-        .expect("why")
-        .contains("not in this course"));
+    let before = course.schedule(&card).await;
+
+    let again = course.call("ask_card", json!({ "card": name })).await;
+
+    assert!(!again.success);
+    assert!(again.error_message.expect("why").contains("not due"));
+    assert_eq!(course.schedule(&card).await, before);
+}
+
+#[tokio::test]
+async fn record_recall_refuses_a_name_that_names_nothing() {
+    let course = course().await;
+    for card in [json!("[c9]"), json!(id())] {
+        let result = course
+            .call("record_recall", json!({ "card": card, "rating": "good" }))
+            .await;
+        assert!(!result.success);
+        assert!(result
+            .error_message
+            .expect("why")
+            .contains("names nothing shown"));
+    }
 }
 
 #[tokio::test]
 async fn record_recall_refuses_a_rating_it_cannot_read() {
     let course = course().await;
     let card = course.save_card("What does k flatten?").await;
+    let name = course.ask("What does k flatten?").await;
     let before = course.schedule(&card).await;
     let result = course
         .call(
             "record_recall",
-            json!({ "card_id": card, "rating": "pretty good" }),
+            json!({ "card": name, "rating": "pretty good" }),
         )
         .await;
     assert!(!result.success);
+    assert!(result.error_message.expect("why").contains("again, hard"));
+    let missing = course.call("record_recall", json!({ "card": name })).await;
+    assert!(!missing.success, "a flashcard needs its rating");
     assert_eq!(course.schedule(&card).await, before);
 }
 
 #[tokio::test]
 async fn a_multiple_choice_card_is_rated_by_the_option_the_learner_chose() {
     let course = course().await;
-    let card = id();
-    LearningRecallRepository::new(course.pool.clone())
-        .save_card(&SaveLearningRecallCardRequestDto {
-            operation_id: id(),
-            program_id: course.program.summary.id.clone(),
-            card_id: card.clone(),
-            expected_content_revision: None,
-            format: LearningRecallCardFormat::MultipleChoice,
-            content: LearningRecallContentDto {
-                prompt: "Which flattens the top ranks?".into(),
-                answer: "A larger k".into(),
-                explanation: String::new(),
-                options: vec!["A smaller k".into(), "A larger k".into()],
-                correct_option_index: Some(1),
-                language: None,
-                cloze_deletions: vec![],
-            },
-            source_version_ids: vec![],
-            change_reason: "Test".into(),
-        })
-        .await
-        .expect("the card saves");
+    let card = course
+        .save_choice_card(
+            "Which flattens the top ranks?",
+            &["A smaller k", "A larger k"],
+            1,
+        )
+        .await;
 
     let due = course.text("due_reviews", json!({})).await;
-    assert!(due.contains("1. A larger k"), "{due}");
-    reply(
-        &course.pool,
-        &course.conversation,
-        1,
-        "Which flattens the top ranks?",
-    )
-    .await;
+    assert!(due.contains("[o1] A smaller k"), "{due}");
+    assert!(due.contains("[o2] A larger k"), "{due}");
+    let name = course.ask("Which flattens the top ranks?").await;
 
     let unsaid = course
-        .call(
-            "record_recall",
-            json!({ "card_id": card, "rating": "good" }),
-        )
+        .call("record_recall", json!({ "card": name, "rating": "good" }))
         .await;
     assert!(!unsaid.success, "the option decides the rating");
 
     course
         .text(
             "record_recall",
-            json!({ "card_id": card, "rating": "easy", "selected_option": 0 }),
+            json!({ "card": name, "rating": "easy", "option": "[o1]" }),
         )
         .await;
-    let rating: String = sqlx::query_scalar("SELECT rating FROM study_reviews WHERE card_id=?")
-        .bind(&card)
-        .fetch_one(&course.pool)
-        .await
-        .expect("the review");
-    assert_eq!(rating, "again", "a wrong choice is a miss");
+    assert_eq!(
+        course.rating_of(&card).await,
+        "again",
+        "a wrong choice is a miss"
+    );
+}
+
+/// The option is named, not counted: the one the learner chose is the one
+/// whose name is written, however the card's list is numbered.
+#[tokio::test]
+async fn a_multiple_choice_option_names_the_option_and_not_its_position() {
+    let course = course().await;
+    let card = course
+        .save_choice_card(
+            "Which flattens the top ranks?",
+            &["A smaller k", "A larger k"],
+            1,
+        )
+        .await;
+    let name = course.card_name("Which flattens the top ranks?").await;
+    let asked = course.text("ask_card", json!({ "card": name })).await;
+    let option = name_before(&asked, "A larger k");
+
+    course
+        .text("record_recall", json!({ "card": name, "option": option }))
+        .await;
+
+    assert_eq!(course.rating_of(&card).await, "good");
+}
+
+#[tokio::test]
+async fn an_option_of_another_card_is_refused() {
+    let course = course().await;
+    course
+        .save_choice_card("Which is larger?", &["Ten", "Two"], 0)
+        .await;
+    course
+        .save_choice_card("Which is smaller?", &["Seven", "Three"], 1)
+        .await;
+    let larger = course.card_name("Which is larger?").await;
+    course.text("ask_card", json!({ "card": larger })).await;
+    let smaller = course.card_name("Which is smaller?").await;
+    let asked = course.text("ask_card", json!({ "card": smaller })).await;
+    let foreign = name_before(&asked, "Seven");
+
+    let result = course
+        .call(
+            "record_recall",
+            json!({ "card": larger, "option": foreign }),
+        )
+        .await;
+
+    assert!(!result.success);
+    assert!(result.error_message.expect("why").contains("another card"));
 }
 
 #[tokio::test]
 async fn save_card_cites_its_source_and_joins_the_recall_deck() {
     let course = course().await;
+    let outline = course.text("course_outline", json!({})).await;
+    let source = named_after(&outline, "Search notes ");
     let saved = course
         .text(
             "save_card",
             json!({
                 "question": "What does a larger k do?",
                 "answer": "It flattens the weight of the top ranks.",
-                "source_ids": [format!("{COURSE_SOURCE_PREFIX}{}", course.version)],
+                "sources": [source],
             }),
         )
         .await;
-    let card_id = saved
-        .rsplit(' ')
-        .next()
-        .expect("the card's id")
-        .trim_end_matches('.');
+    let name = named_after(&saved, "as card ");
+    assert!(!saved.contains(&course.version), "{saved}");
 
-    let workspace = LearningRecallRepository::new(course.pool.clone())
+    let workspace = LearningRecallRepository::new(course.database.clone())
         .workspace(&course.program.summary.id)
         .await
         .expect("cards");
     let card = workspace.cards.first().expect("the card");
-    assert_eq!(card.id, card_id);
     assert_eq!(
         card.source_version_ids,
         std::slice::from_ref(&course.version)
     );
     assert_eq!(workspace.due_count, 1, "the tutor can ask it at once");
-    reply(
-        &course.pool,
-        &course.conversation,
-        1,
-        "What does a larger k do?",
-    )
-    .await;
+    course.text("ask_card", json!({ "card": name })).await;
     course
-        .text(
-            "record_recall",
-            json!({ "card_id": card_id, "rating": "hard" }),
-        )
+        .text("record_recall", json!({ "card": name, "rating": "hard" }))
         .await;
+    assert_eq!(course.schedule(&card.id).await.0, 1);
 }
 
 #[tokio::test]
@@ -731,16 +950,16 @@ async fn save_card_refuses_a_card_with_no_citation_when_the_course_has_sources()
     let result = course
         .call(
             "save_card",
-            json!({ "question": "Q?", "answer": "A.", "source_ids": [] }),
+            json!({ "question": "Q?", "answer": "A.", "sources": [] }),
         )
         .await;
     assert!(!result.success);
-    assert!(result.error_message.expect("why").contains("source_id"));
+    assert!(result.error_message.expect("why").contains("source"));
 
     let outside = course
         .call(
             "save_card",
-            json!({ "question": "Q?", "answer": "A.", "source_ids": [id()] }),
+            json!({ "question": "Q?", "answer": "A.", "sources": [id()] }),
         )
         .await;
     assert!(!outside.success, "a source outside the course is refused");
@@ -750,29 +969,31 @@ async fn save_card_refuses_a_card_with_no_citation_when_the_course_has_sources()
 async fn save_note_adds_the_summary_to_the_lesson_s_note() {
     let course = course().await;
     let lesson = course.lesson(0, 1);
+    let outline = course.text("course_outline", json!({})).await;
+    let name = named_after(&outline, "Lesson 0-1 ");
     let saved = course
         .text(
             "save_note",
-            json!({ "summary": "Fusion adds up reciprocal ranks.", "lesson_id": lesson }),
+            json!({ "summary": "Fusion adds up reciprocal ranks.", "lesson": name }),
         )
         .await;
     assert!(saved.contains("Lesson 0-1"), "{saved}");
     assert_eq!(course.notes_written.load(Ordering::SeqCst), 1);
 
-    let memory = LearningRepository::new(course.pool.clone())
+    let memory = LearningRepository::new(course.database.clone())
         .memory_state(&course.program.summary.id)
         .await
         .expect("the notebook");
     let (noted, note_id) = memory.lesson_notes.first().expect("the note");
     assert_eq!(noted, &lesson);
-    let notes = DailyNotesRepository::new(course.pool.clone());
+    let notes = DailyNotesRepository::new(course.database.clone());
     let note = notes.get(note_id).await.expect("the note");
     assert!(note.content.contains("Fusion adds up reciprocal ranks."));
 
     course
         .text(
             "save_note",
-            json!({ "summary": "And k flattens them.", "lesson_id": lesson }),
+            json!({ "summary": "And k flattens them.", "lesson": name }),
         )
         .await;
     let note = notes.get(note_id).await.expect("the note");
@@ -790,7 +1011,7 @@ async fn save_note_without_a_lesson_uses_the_lesson_the_learner_is_on() {
     course
         .text("save_note", json!({ "summary": "In my own words." }))
         .await;
-    let memory = LearningRepository::new(course.pool.clone())
+    let memory = LearningRepository::new(course.database.clone())
         .memory_state(&course.program.summary.id)
         .await
         .expect("the notebook");
@@ -822,7 +1043,7 @@ async fn a_turn_s_first_passages_carry_the_course_label_and_fit_their_room() {
 async fn a_chat_on_a_lesson_reads_the_sources_it_cites_first() {
     let course = course().await;
     let other = add_source(
-        &course.pool,
+        &course.database,
         &course.program.summary.id,
         "Other notes",
         "Rank fusion also appears in this other source.",
@@ -925,17 +1146,17 @@ async fn each_turn_carries_the_cards_due_and_the_replies_since_the_last_check() 
     );
 }
 
-/// Tool results are gone by the next turn, so the id a card is rated by has to
-/// come with the turn that rates it.
+/// Tool results are gone by the next turn, so the name a card is rated by has
+/// to come with the turn that rates it.
 #[tokio::test]
-async fn each_turn_shows_the_next_due_cards_by_id_and_never_their_answers() {
+async fn each_turn_shows_the_next_due_cards_by_name_and_never_their_answers() {
     let course = course().await;
     let card = course.save_card("What does k flatten?").await;
 
     let block = course.turn().await.context_block(4_000, true, None).await;
 
-    assert!(block.contains(&format!("card_id: {card}")), "{block}");
-    assert!(block.contains("What does k flatten?"), "{block}");
+    assert!(block.contains("- [c1]\n  What does k flatten?"), "{block}");
+    assert!(!block.contains(&card), "{block}");
     assert!(!block.contains("The hidden answer"), "{block}");
     assert!(
         !course
@@ -943,7 +1164,7 @@ async fn each_turn_shows_the_next_due_cards_by_id_and_never_their_answers() {
             .await
             .context_block(4_000, false, None)
             .await
-            .contains("card_id"),
+            .contains("- [c1]"),
         "a turn without tools cannot rate one"
     );
 }
@@ -958,7 +1179,7 @@ async fn a_turn_shows_a_few_due_cards_and_counts_them_all() {
     let block = course.turn().await.context_block(4_000, true, None).await;
 
     assert!(block.contains("Cards due now: 7."), "{block}");
-    assert_eq!(block.matches("card_id:").count(), 5, "{block}");
+    assert_eq!(block.matches("- [c").count(), 5, "{block}");
 }
 
 #[test]
@@ -991,7 +1212,7 @@ async fn the_tutor_s_reads_run_together_and_its_writes_run_alone() {
     ] {
         assert!(turn.owns_tool(tool) && turn.reads_only(tool), "{tool}");
     }
-    for tool in ["record_recall", "save_card", "save_note"] {
+    for tool in ["ask_card", "record_recall", "save_card", "save_note"] {
         assert!(turn.owns_tool(tool) && !turn.reads_only(tool), "{tool}");
     }
     assert!(!turn.owns_tool("read_file"));
@@ -999,7 +1220,68 @@ async fn the_tutor_s_reads_run_together_and_its_writes_run_alone() {
     let mut offered = Vec::new();
     turn.add_tools(&mut offered);
     turn.add_tools(&mut offered);
-    assert_eq!(offered.len(), 7, "each tool once");
+    assert_eq!(offered.len(), 8, "each tool once");
+}
+
+/// The model writes names it was shown and its own words: never an id, an
+/// offset or a position.
+#[test]
+fn no_tool_asks_the_model_for_an_id_an_offset_or_a_position() {
+    for definition in super::tools::definitions() {
+        let properties = definition.parameters["properties"]
+            .as_object()
+            .expect("properties");
+        for key in properties.keys() {
+            assert!(
+                ![
+                    "card_id",
+                    "source_id",
+                    "source_ids",
+                    "lesson_id",
+                    "offset",
+                    "selected_option"
+                ]
+                .contains(&key.as_str()),
+                "{} takes {key}",
+                definition.name
+            );
+        }
+    }
+}
+
+/// Nothing a tool shows holds an id of the app.
+#[tokio::test]
+async fn no_tool_result_shows_an_id() {
+    let course = course().await;
+    let card = course.save_card("What does k flatten?").await;
+    let shown = [
+        course.text("course_outline", json!({})).await,
+        course.text("due_reviews", json!({})).await,
+        course.ask("What does k flatten?").await,
+        serde_json::to_string(
+            &course
+                .passages("search_course", json!({ "query": "rank fusion" }))
+                .await
+                .passages
+                .iter()
+                .map(|passage| passage.label.clone())
+                .collect::<Vec<_>>(),
+        )
+        .expect("labels"),
+        course.turn().await.context_block(4_000, true, None).await,
+    ]
+    .join(
+        "
+",
+    );
+    for id in [
+        card,
+        course.version.clone(),
+        course.lesson(0, 0),
+        course.program.summary.id.clone(),
+    ] {
+        assert!(!shown.contains(&id), "{id} is shown: {shown}");
+    }
 }
 
 /// What the model reads, byte for byte. The digest moves only when one of them
@@ -1011,7 +1293,7 @@ fn the_tutor_s_prompt_and_tool_schemas_are_pinned() {
     let digest = Sha256::digest(format!("{TUTOR_TEMPLATE}\u{0}{schemas}"));
     assert_eq!(
         format!("{digest:x}"),
-        "7c1ad1b16bc3d71fc5ce655b87daeada6345cdfd5b427709031621e4a15a7d3d"
+        "192d1a5ad20cd7d6892122f00e787780658989b5c34534a70326600cd289df3a"
     );
 }
 
@@ -1029,6 +1311,7 @@ fn a_tutor_turn_cites_and_is_checked_as_a_chat_turn_is() {
     assert!(TUTOR_TEMPLATE.contains("put the bracket number of the passage"));
     for method in [
         "due_reviews",
+        "ask_card",
         "record_recall",
         "save_card",
         "save_note",

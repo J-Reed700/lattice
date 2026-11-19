@@ -4,7 +4,6 @@
 use super::class_checks_tests::Classes;
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 
 /// Practice that states nothing to check and shares no word with the
 /// statements below.
@@ -59,22 +58,51 @@ impl Rounds {
                 return Ok(fault(prompt, section, sentence));
             }
             if prompt.starts_with("Check whether proposed lesson-review findings are justified") {
-                return Ok(json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"internal_conflict","evidenceIds":[format!("blocks-{section}")],"partId":format!("blocks-{section}"),"requirementId":null,"reason":"The step asks for something the explanation beside it never set up."}]}).to_string());
+                return Ok(crate::review_evidence::scripted_entries(prompt, |shows| {
+                    let part = shows.part(&format!("Section {}", section + 1));
+                    let mut decision = crate::review_evidence::decided(
+                        "actionable",
+                        "internal_conflict",
+                        std::slice::from_ref(&part),
+                        &[],
+                        &part,
+                        "none",
+                    );
+                    decision["reason"] = json!(
+                        "The step promises that the tutor runs the learner's code and reports whether the tests pass."
+                    );
+                    Some(decision)
+                }));
             }
             if prompt.starts_with("You are editing a rejected draft.") {
-                return Ok(json!({"edits":[{"path":format!("/blocks/{section}/body"),"before":sentence,"after":written}]}).to_string());
+                // The repair writes over the sentence once; after that it has nothing to change.
+                let path = format!("/blocks/{section}/body");
+                let there = fixture_task(prompt).is_some_and(|task| {
+                    task["candidate"]
+                        .pointer(&path)
+                        .and_then(Value::as_str)
+                        .is_some_and(|body| unmarked(body).contains(sentence))
+                });
+                let edits = if there {
+                    json!([{"path":path,"before":sentence,"after":written}])
+                } else {
+                    json!([])
+                };
+                return Ok(json!({ "edits": edits }).to_string());
             }
         }
         if prompt.starts_with("Repair verified lesson defects.") {
             self.repairs.fetch_add(1, Ordering::Relaxed);
-            let data = context(prompt);
+            let data = fixture_task(prompt).unwrap();
             let body = data["candidate"]["blocks"][0]["body"].as_str().unwrap();
             let (from, to) = self
                 .rewrites
                 .iter()
                 .find(|(from, _)| body.contains(*from))
                 .unwrap_or_else(|| panic!("no rewrite is scripted for {body}"));
-            return Ok(json!({"edits":[{"path":"/blocks/0/body","before":body,"after":body.replace(from, to)}]}).to_string());
+            return Ok(
+                json!({"edits":[{"path":"/blocks/0/body","before":from,"after":to}]}).to_string(),
+            );
         }
         if prompt.starts_with("You decide whether one statement is standard knowledge") {
             let statement = prompt.rsplit("\n\nStatement: ").next().unwrap_or_default();
@@ -87,30 +115,20 @@ impl Rounds {
 /// A teaching review that finds a defect in the passage of section `section`
 /// holding `sentence`, and none elsewhere.
 fn fault(prompt: &str, section: usize, sentence: &str) -> String {
-    let data = context(prompt);
-    let checks: Vec<Value> = data["candidate"]["blocks"]
+    let data = fixture_task(prompt).unwrap();
+    let passage = data["candidate"]["blocks"][section]["bodyPassages"]
         .as_array()
         .unwrap()
         .iter()
-        .enumerate()
-        .map(|(index, block)| {
-            let passages = block["bodyPassages"].as_array().unwrap();
-            if index == section {
-                let passage = passages
-                    .iter()
-                    .find(|passage| {
-                        passage["text"]
-                            .as_str()
-                            .is_some_and(|text| text.contains(sentence))
-                    })
-                    .unwrap();
-                json!({"index":index,"passageId":passage["id"],"finding":"This step asks the learner for something the explanation beside it never set up.","hasDefect":true})
-            } else {
-                json!({"index":index,"passageId":passages[0]["id"],"finding":"The section explains its point and asks nothing it has not set up.","hasDefect":false})
-            }
+        .position(|passage| {
+            passage["text"]
+                .as_str()
+                .is_some_and(|text| text.contains(sentence))
         })
-        .collect();
-    json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)}).to_string()
+        .unwrap();
+    let defect = json!({"passageId":format!("section-{section}-passage-{passage}"),"finding":"This step promises that the tutor runs the learner's code and reports whether the tests pass.","concerns":["promise"]});
+    let legacy = json!({"issues":[],"sectionDefects":[defect]}).to_string();
+    crate::teaching_review::scripted::reply(prompt, &legacy).unwrap_or(legacy)
 }
 
 #[async_trait::async_trait]
@@ -134,39 +152,25 @@ impl LLMPort for Rounds {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 fn block(index: usize, body: &str) -> Value {
-    json!({"kind":"explanation","title":format!("Section {index}"),"body":body,"rubric":[]})
+    json!({"kind":"explanation","title":format!("Section {index}"),"body":body,"rubric":[],"quote":""})
 }
 
-/// What a test logs, every level.
-#[derive(Clone, Default)]
-struct Captured(Arc<Mutex<Vec<u8>>>);
-
-impl std::io::Write for Captured {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-impl Captured {
-    /// The lines of the call plan's log.
-    fn plan_lines(&self) -> Vec<String> {
-        let logs =
-            String::from_utf8_lossy(&self.0.lock().unwrap_or_else(|e| e.into_inner())).into_owned();
-        logs.lines()
-            .filter(|line| line.contains("claim.plan"))
-            .map(str::to_owned)
-            .collect()
-    }
+/// The lines of the call plan's log.
+fn plan_lines(logs: &lattice_core::shared::testing::logs::CapturedLogs) -> Vec<String> {
+    logs.text()
+        .lines()
+        .filter(|line| line.contains("claim.plan"))
+        .map(str::to_owned)
+        .collect()
 }
 
 const ROWS: &str = "Parsing the header row turns each later record into a list of positions.";
@@ -180,19 +184,11 @@ const HEADER_FIRST: &str = "A CSV file keeps its header row before its first rec
 #[tokio::test]
 async fn a_statement_the_teaching_review_writes_after_the_sort_is_held_by_the_plan_and_every_rise_of_the_ceiling_names_its_cause(
 ) -> Result<()> {
-    let captured = Captured::default();
-    let writer = captured.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::TRACE)
-        .with_ansi(false)
-        .with_writer(move || writer.clone())
-        .finish();
-    let _logs = tracing::subscriber::set_default(subscriber);
-    tracing::callsite::rebuild_interest_cache();
+    let logs = lattice_core::shared::testing::logs::capture_logs(tracing::Level::TRACE);
     // The first section's statement is contradicted and rewritten; the
     // teaching review after that repair writes a statement into the second
     // section, in a sentence no claim stood on. It is new to the ledger, sorted
-    // after the plan was made, refuted by most samples and rewritten itself.
+    // after the plan was made, refuted by every sample and rewritten itself.
     let model = Rounds::new(
         Classes::new(&[ROWS, MAPPED, DELIMITER, HEADER_LAST, HEADER_FIRST])
             .classed(&[
@@ -201,15 +197,15 @@ async fn a_statement_the_teaching_review_writes_after_the_sort_is_held_by_the_pl
                 (HEADER_LAST, "common"),
             ])
             .consistent(&[(ROWS, "contradicted")])
-            .knows(&[(HEADER_LAST, ["false", "false", "true_common"])]),
+            .knows(&[(HEADER_LAST, ["false"; 3])]),
     )
     .rewriting(&[(ROWS, MAPPED), (HEADER_LAST, HEADER_FIRST)])
     .teaching(1, ALOUD, HEADER_LAST);
-    // The line break makes the review read the second section as two
-    // passages, so its finding names the one no claim stands on.
+    // The blank line makes the review read the second section as two
+    // paragraphs, so its finding names the one no claim stands on.
     let lesson = json!({"blocks":[
         block(0, &format!("{ROWS}{}", PRACTICE.repeat(3))),
-        block(1, &format!("{DELIMITER}{}\n{ALOUD}{PRACTICE}{PRACTICE}", PRACTICE.repeat(3))),
+        block(1, &format!("{DELIMITER}{}\n\n{ALOUD}{PRACTICE}{PRACTICE}", PRACTICE.repeat(3))),
     ],"questions":[]});
 
     let (finished, trace) = crate::lesson_progress::traced(verify_and_repair(
@@ -241,7 +237,7 @@ async fn a_statement_the_teaching_review_writes_after_the_sort_is_held_by_the_pl
     // The ceiling may rise where the plan takes in a statement it was not
     // made for, and the log says so; it never rises for calls no slot held,
     // which is how the run rose twice with no line of the plan's log.
-    let lines = captured.plan_lines();
+    let lines = plan_lines(&logs);
     let rises = trace
         .ceilings
         .windows(2)
@@ -278,7 +274,7 @@ async fn the_statements_beside_a_rewritten_one_are_read_again_and_its_narrowing_
     // Three Reasoning statements stand on one sentence. The first is
     // contradicted and rewritten, which gives the other two successors read
     // from the post-rewrite node in the same pass; its rewrite is refuted by
-    // most samples and grounded by no passage, so its cut narrows the sentence,
+    // every sample and grounded by no passage, so its cut narrows the sentence,
     // and the other two are read again after that.
     let model = Rounds::new(
         Classes::new(&[ALPHA, BETA, GAMMA, ALPHA_AGAIN, BETA_AGAIN, GAMMA_AGAIN])
@@ -288,7 +284,7 @@ async fn the_statements_beside_a_rewritten_one_are_read_again_and_its_narrowing_
                 (GAMMA, "reasoning"),
             ])
             .consistent(&[(ALPHA, "contradicted")])
-            .knows(&[(ALPHA_AGAIN, ["false", "false", "true_common"])]),
+            .knows(&[(ALPHA_AGAIN, ["false"; 3])]),
     )
     .rewriting(&[(SENTENCE, REWRITTEN), (REWRITTEN, NARROWED)]);
     let lesson =

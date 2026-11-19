@@ -130,21 +130,6 @@ pub async fn promote_conversation_tangent_impl(
         .map_err(ApiError::from)
 }
 
-fn to_message_dto(
-    message: &lattice_core::domain::conversation::ConversationMessage,
-) -> crate::features::conversation::dto::MessageDto {
-    crate::features::conversation::dto::MessageDto {
-        id: message.id.to_string(),
-        conversation_id: message.conversation_id.to_string(),
-        role: message.role.to_string(),
-        content: message.content.clone(),
-        tokens: message.tokens,
-        created_at: message.created_at.to_rfc3339(),
-        metadata: message.metadata.clone(),
-        status: message.status.clone(),
-    }
-}
-
 /// Free the picture files of messages a truncate or regenerate deleted.
 /// Their rows went with the messages by cascade, which recorded the files as
 /// let go of; they go now rather than at the next start's sweep. A failure is
@@ -176,15 +161,18 @@ pub async fn truncate_conversation_after_impl(
         remove_unclaimed_pictures(runtime);
     }
 
-    let messages = branches
-        .get_messages(&request.conversation_id)
-        .await
-        .map_err(ApiError::from)?;
+    let messages = crate::features::conversation::chat::transcript::shown_messages(
+        runtime,
+        &runtime.conversation_service(),
+        &request.conversation_id,
+    )
+    .await
+    .map_err(ApiError::from)?;
 
     Ok(TruncateConversationAfterResponseDto {
         conversation_id: request.conversation_id,
         deleted_count: deleted as u32,
-        messages: messages.iter().map(to_message_dto).collect(),
+        messages,
     })
 }
 
@@ -205,10 +193,7 @@ pub async fn fork_conversation_impl(
             )))
         })?;
 
-    let mut new_title = format!("{} · branch", source.title);
-    if new_title.chars().count() > 200 {
-        new_title = new_title.chars().take(200).collect();
-    }
+    let new_title = format!("{} · branch", source.title);
     let new_id = uuid::Uuid::new_v4().to_string();
 
     let (new_id, copied) = branches
@@ -490,14 +475,83 @@ async fn insert_failed_question(
 mod tests {
     use super::*;
     use crate::features::conversation::repository::ConversationRepository;
-    use sqlx::sqlite::SqlitePoolOptions;
+    use lattice_core::shared::persistence::Database;
 
     async fn thread() -> (ConversationRepository, String) {
-        let pool = SqlitePoolOptions::new().connect(":memory:").await.unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-        let repo = ConversationRepository::new(pool);
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+            .await
+            .unwrap();
+        let repo = ConversationRepository::new(Database::new(pool));
         let id = repo.create("Thread", None).await.unwrap().id.to_string();
         (repo, id)
+    }
+
+    #[tokio::test]
+    async fn a_truncate_hands_back_an_answer_saved_before_references_with_its_references() {
+        use crate::features::conversation::chat::ports::ChatStorage;
+        use crate::features::conversation::chat::test_runtime::FakeRuntime;
+        use lattice_core::application::contracts::replies::ReplyPieceDto;
+        use lattice_core::domain::conversation::MessageRole;
+
+        let runtime = FakeRuntime::default();
+        let service = runtime.conversation_service();
+        let id = service
+            .create_conversation("Thread".to_owned(), None)
+            .await
+            .unwrap()
+            .id
+            .to_string();
+        service
+            .add_user_message(&id, "Why is the valley colder?".to_owned(), 0)
+            .await
+            .unwrap();
+        let sources = serde_json::json!({ "sources": [{
+            "documentId": "doc-weather", "chunkId": "doc-weather-chunk", "content": "Cold air sinks.",
+            "score": 0.5, "fileName": "weather.txt", "filePath": "/notes/weather.txt",
+            "mimeType": "text/plain", "category": "Text File", "fileSizeBytes": 10,
+            "modifiedAt": "2025-01-01T00:00:00Z", "citationId": 1,
+        }] });
+        let answer = service
+            .add_message_with_metadata(
+                &id,
+                MessageRole::Assistant,
+                "Cold air sinks [1].".to_owned(),
+                0,
+                "completed".to_owned(),
+                Some(sources.to_string()),
+            )
+            .await
+            .unwrap();
+        service
+            .add_user_message(&id, "And at noon?".to_owned(), 0)
+            .await
+            .unwrap();
+
+        let truncated = truncate_conversation_after_impl(
+            TruncateConversationAfterRequestDto {
+                conversation_id: id,
+                message_id: answer.id.to_string(),
+                inclusive: false,
+            },
+            &runtime,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(truncated.deleted_count, 1);
+        let [question, answer] = truncated.messages.as_slice() else {
+            panic!("two messages stay, got {}", truncated.messages.len());
+        };
+        assert_eq!(question.reply, None);
+        let Some(
+            [ReplyPieceDto::Text { text }, ReplyPieceDto::Reference { reference }, ReplyPieceDto::Text { text: end }],
+        ) = answer.reply.as_deref()
+        else {
+            panic!("the answer's pieces: {:?}", answer.reply);
+        };
+        assert_eq!(text, "Cold air sinks ");
+        assert_eq!(reference.kind, "source");
+        assert_eq!(end, ".");
     }
 
     #[tokio::test]

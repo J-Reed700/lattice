@@ -99,6 +99,12 @@ impl LLMPort for Supporting {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.figures.enforces(schema)
+    }
 }
 
 /// The page the user links.
@@ -173,7 +179,7 @@ impl LibraryPassagesPort for NoLibrary {
 /// A course whose lesson waits for the user's review, its job completed: the
 /// Verifier disputes the one claim the local checker verified (§14.5).
 pub(super) struct Waiting {
-    pub(super) pool: sqlx::SqlitePool,
+    pub(super) db: Database,
     pub(super) jobs: LearningCurriculumRepository,
     pub(super) program_id: String,
     pub(super) lesson_id: String,
@@ -194,12 +200,12 @@ impl Waiting {
 
     /// The course, its lesson not prepared yet.
     pub(super) async fn course() -> Result<Self> {
-        let pool = crate::tests::pool().await?;
-        let (jobs, job_id, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+        let db = Database::new(crate::tests::pool().await?);
+        let (jobs, job_id, lesson_id) = batch_scheduler_tests::setup(&db).await?;
         let program_id = jobs.job(&job_id).await?.program_id;
-        install_source(&pool, &program_id, SOURCE).await?;
+        install_source(&db, &program_id, SOURCE).await?;
         Ok(Self {
-            pool,
+            db,
             jobs,
             program_id,
             lesson_id,
@@ -216,7 +222,7 @@ impl Waiting {
         let error = lesson::scope(
             Some(FakeVerifier::local(&verifier)),
             prepare(
-                &Database::from(self.pool.clone()),
+                &self.db,
                 &self.jobs,
                 &self.job_id,
                 &self.lesson_id,
@@ -233,16 +239,12 @@ impl Waiting {
             error.starts_with("Needs your review: 1 statement"),
             "{error}"
         );
-        let held = held_for_review(
-            &Database::from(self.pool.clone()),
-            &self.lesson_id,
-            &self.job_id,
-        )
-        .await?
-        .unwrap();
+        let held = held_for_review(&self.db, &self.lesson_id, &self.job_id)
+            .await?
+            .unwrap();
         let (result_ref, message) = review_outcome(&[held]);
         assert!(
-            JobStore::new(self.pool.clone())
+            JobStore::new(self.db.clone())
                 .complete(&self.job_id, &result_ref, &message)
                 .await?
         );
@@ -250,13 +252,13 @@ impl Waiting {
     }
 
     pub(super) async fn references(&self) -> Result<Vec<LearningSourceDto>> {
-        LearningRepository::new(self.pool.clone())
+        LearningRepository::new(self.db.clone())
             .verification_sources(&self.program_id)
             .await
     }
 
     pub(super) async fn revision(&self) -> Result<i64> {
-        Ok(LearningRepository::new(self.pool.clone())
+        Ok(LearningRepository::new(self.db.clone())
             .get(&self.program_id)
             .await?
             .summary
@@ -264,7 +266,7 @@ impl Waiting {
     }
 
     pub(super) fn service(&self) -> ClaimReviewService {
-        ClaimReviewService::new(Database::from(self.pool.clone()))
+        ClaimReviewService::new(self.db.clone())
     }
 
     pub(super) async fn resume(&self) -> Result<crate::curriculum::LearningGenerationJob> {
@@ -285,12 +287,12 @@ impl Waiting {
         model: &Supporting,
         job_id: &str,
     ) -> Result<PreparedLearningLesson> {
-        assert!(JobStore::new(self.pool.clone())
+        assert!(JobStore::new(self.db.clone())
             .claim(job_id)
             .await?
             .is_some());
         let (raw, report) = prepare(
-            &Database::from(self.pool.clone()),
+            &self.db,
             &self.jobs,
             job_id,
             &self.lesson_id,
@@ -306,12 +308,14 @@ impl Waiting {
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|block| LearningBlockDto {
-                    kind: LearningBlockKind::Explanation,
-                    title: block["title"].as_str().unwrap().into(),
-                    body: block["body"].as_str().unwrap().into(),
-                    source_ids: Vec::new(),
-                    rubric: Vec::new(),
+                .map(|block| {
+                    LearningBlockDto::new(
+                        LearningBlockKind::Explanation,
+                        block["title"].as_str().unwrap().into(),
+                        block["body"].as_str().unwrap().into(),
+                        Vec::new(),
+                        Vec::new(),
+                    )
                 })
                 .collect(),
             questions: Vec::new(),
@@ -349,7 +353,7 @@ impl Waiting {
     }
 
     pub(super) async fn assert_published(&self, job_id: &str) -> Result<()> {
-        let program = LearningRepository::new(self.pool.clone())
+        let program = LearningRepository::new(self.db.clone())
             .get(&self.program_id)
             .await?;
         let lesson = program
@@ -363,7 +367,7 @@ impl Waiting {
             self.jobs.job(job_id).await?.status,
             LearningGenerationJobStatus::Completed
         );
-        let review = ClaimReviewRepository::new(self.pool.clone())
+        let review = ClaimReviewRepository::new(self.db.clone())
             .load(&self.lesson_id)
             .await?
             .review
@@ -386,7 +390,7 @@ async fn evidence_the_user_links_resolves_the_claim_and_resume_publishes_the_les
     assert_eq!(stopped.status, LearningGenerationJobStatus::Completed);
     let held_ref = format!("needs_review:{}", course.lesson_id);
     assert_eq!(stopped.result_id.as_deref(), Some(held_ref.as_str()));
-    let store = ClaimReviewRepository::new(course.pool.clone());
+    let store = ClaimReviewRepository::new(course.db.clone());
     let ledger = store.load(&course.lesson_id).await?;
     assert_eq!(
         ledger.review.as_ref().unwrap().state,
@@ -404,7 +408,7 @@ async fn evidence_the_user_links_resolves_the_claim_and_resume_publishes_the_les
     };
     let report = attach(
         &AttachDeps {
-            database: &Database::from(course.pool.clone()),
+            database: &course.db,
             store: &store,
             web: &page,
             snapshots: &Frozen,
@@ -442,9 +446,7 @@ async fn evidence_the_user_links_resolves_the_claim_and_resume_publishes_the_les
     assert!(shown[&claim_id]
         .iter()
         .any(|passage| passage.source_version_id == version));
-    let examples = CheckerExamples::new(Database::from(course.pool.clone()))
-        .list(None)
-        .await?;
+    let examples = CheckerExamples::new(course.db.clone()).list(None).await?;
     assert!(examples.is_empty(), "{examples:?}");
     assert!(
         course
@@ -479,7 +481,7 @@ async fn evidence_the_user_links_resolves_the_claim_and_resume_publishes_the_les
 async fn a_confirmed_claim_publishes_on_resume_without_a_check() -> Result<()> {
     let model = Supporting::new();
     let course = Waiting::new(&model).await?;
-    let ledger = ClaimReviewRepository::new(course.pool.clone())
+    let ledger = ClaimReviewRepository::new(course.db.clone())
         .load(&course.lesson_id)
         .await?;
     let claim = waiting(&ledger.claims)[0].claim_id().0.clone();
@@ -497,9 +499,7 @@ async fn a_confirmed_claim_publishes_on_resume_without_a_check() -> Result<()> {
         .await?;
     // The Verifier flagged it, the local checker passed it: no example of the
     // local checker's.
-    let examples = CheckerExamples::new(Database::from(course.pool.clone()))
-        .list(None)
-        .await?;
+    let examples = CheckerExamples::new(course.db.clone()).list(None).await?;
     assert!(examples.is_empty(), "{examples:?}");
 
     let next = course.resume().await?;
@@ -590,7 +590,7 @@ async fn changing_the_checker_unlocks_the_held_review_and_continues_its_job() ->
         next.retry_of_job_id.as_deref(),
         Some(course.job_id.as_str())
     );
-    let ledger = ClaimReviewRepository::new(course.pool.clone())
+    let ledger = ClaimReviewRepository::new(course.db.clone())
         .load(&course.lesson_id)
         .await?;
     assert!(
@@ -695,9 +695,11 @@ mod loop_bound {
 
     #[tokio::test]
     async fn a_repair_pass_touches_only_the_failed_sentences() -> Result<()> {
+        use super::super::acceptance_switch_tests::{node_of, walk, REWRITING};
         use super::super::claim_ledger_tests::{
-            check_findings, identify_findings, only_passage, pass_report, passage_finding,
+            check_findings, identify_findings, only_passage, pass_report, passage_finding, sourced,
         };
+        use lattice_core::domain::learning::claim_review::Class;
         const SOURCE: &str = "Pure water boils at 100 °C at sea level; ice melts at 0 °C.";
         const BOILS: &str = "At sea level, water boils at 100 °C.";
         let lesson = |body: &str| json!({"blocks":[{"kind":"explanation","title":"Boiling","body":body,"rubric":[]}],"questions":[]});
@@ -709,7 +711,7 @@ mod loop_bound {
         let model = Model::new();
         let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
         let before = lesson(&body);
-        let report = pass_report(vec![
+        let report = pass_report(sourced(vec![
             passage_finding(&body, BOILS, true, SOURCE),
             passage_finding(&body, ALSO_VERIFIED, true, SOURCE),
             passage_finding(
@@ -718,9 +720,10 @@ mod loop_bound {
                 false,
                 SOURCE,
             ),
-        ]);
+        ]));
         let ids = identify_findings(&mut ledger, &before, &report).await?;
         check_findings(&mut ledger, &ids, &report.findings).await?;
+        walk(&mut ledger, &ids[2], Class::Sourced, &REWRITING).await?;
         let quotes: Vec<String> = ids
             .iter()
             .map(|id| ledger.entry(id).unwrap().location().quote.clone())
@@ -788,8 +791,8 @@ mod loop_bound {
         check_findings(&mut ledger, &ids_after[2..], &report.findings[2..]).await?;
 
         // The verified claims keep their ids, states and bases, and nothing
-        // is recorded for them; the target continues with one attempt fewer,
-        // and its check is the pass's only one.
+        // is recorded for them; the target continues at its class's post-rewrite
+        // node, and its check is the pass's only one.
         assert_eq!(ledger.finding_claims(), ids.as_slice());
         for entry in &verified {
             assert_eq!(ledger.entry(entry.claim_id()).unwrap(), entry);
@@ -797,7 +800,7 @@ mod loop_bound {
         assert_eq!(checks(&ledger), checked + 1, "one model check in the pass");
         let target = ledger.entry(&target).unwrap();
         assert_eq!(target.location().quote, FIXED);
-        assert_eq!(left(target), MACHINE_ATTEMPTS - 1);
+        assert_eq!(node_of(&ledger, &ids[2]), Some("s.final"));
         Ok(())
     }
 

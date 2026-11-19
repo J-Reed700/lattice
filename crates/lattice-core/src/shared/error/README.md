@@ -11,7 +11,7 @@ shared/error/
 ├── mod.rs          # Re-exports the shared contracts and result helpers
 ├── domain.rs       # DomainError and its unit tests
 ├── application.rs  # ApplicationError and its unit tests
-└── types.rs        # AppError, ErrorResponse, ResultExt, and their unit tests
+└── types.rs        # AppError, ResultExt, and their unit tests
 ```
 
 ## The types
@@ -19,15 +19,15 @@ shared/error/
 - **`AppError`** (`types.rs`): a `Serialize` + `specta::Type` enum with
   semantic variants such as `Io { message, kind }`, `Database`, `NotFound`,
   `InvalidInput`, `Network`, `FileNotFound { path }`, `EmbeddingFailed`,
-  `QueueFull`, `RateLimitExceeded`, `KeyringError`, `Backup*`, `Migration`,
+  `RateLimitExceeded`, `KeyringError`, `Backup*`, `Migration`,
   `AiModelsNotInstalled`, `ModelLoadFailed`, `ConcurrentModification`, and
   wrappers `Domain(Box<DomainError>)` (from this module's `domain.rs`) and
   `Application(Box<ApplicationError>)` (from this module's `application.rs`).
 - **`Result<T>`** = `std::result::Result<T, AppError>`.
 - **`ResultExt`**: `.context("...")` and `.with_context(|| ...)` on any
   `Result<T, E>` where `E: Into<AppError>`.
-- **`ErrorResponse`**: `{ code, message, context, suggestions, recoverable,
-  status_code, type }`, built with `ErrorResponse::from(app_error)`.
+- **`ErrorCode::from(&app_error)`** (`ipc/conversions.rs`): the one code of an
+  error, for the frontend, the logs and the audit records.
 
 `From` conversions exist for `io::Error`, `serde_json::Error`, `sqlx::Error`,
 `anyhow::Error`, `String`/`&str`, `DomainTypeError`, `LLMError`,
@@ -39,8 +39,12 @@ those types. The shared contracts do not import infrastructure or features.
 Helpers on `AppError`: constructors (`not_found`, `validation_failed`,
 `rate_limited`, `file_not_found`, `service_unavailable`, `invalid_input`,
 `database`, `network`, `internal`), `with_context`, `with_suggestion`, and
-classifiers `error_code()`, `to_user_friendly_message()`, `is_recoverable()`,
-`is_user_fixable()`, `is_fatal()`, `get_context()`, `get_suggestions()`.
+classifiers `to_user_friendly_message()` and `is_fatal()`.
+
+`ErrorClass::of(&error)` (`class.rs`) is the one classification every caller
+uses: `Outage` (waiting can change the outcome), `Unusable` (a model answered
+unusably or refused), `DoesNotFit` (the request exceeds the context window) or
+`Fault` (a retry meets the same error).
 
 ## What crosses IPC
 

@@ -13,6 +13,7 @@ use lattice_core::domain::learning::claim_review::{
     new_information, reopen_cause, Check, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState,
     EvidenceFingerprint, Observation,
 };
+use lattice_core::shared::text::same_text;
 
 impl ClaimLedger {
     /// The reopenings a claim `identify` carried on needs no check for, made
@@ -56,7 +57,7 @@ impl ClaimLedger {
     ) -> Observation {
         let location = before.location();
         let stands = field_text(candidate, location.unit_index, &location.field)
-            .is_some_and(|text| text.contains(&location.quote));
+            .is_some_and(|text| same_text::stands(&text, &location.quote));
         Observation {
             quote: if stands {
                 location.quote.clone()
@@ -64,7 +65,7 @@ impl ClaimLedger {
                 quote
             },
             fingerprint: before.basis().map_or_else(
-                || EvidenceFingerprint::of(POLICY, &self.checker_model, &[]),
+                || EvidenceFingerprint::of(Judged::Passages.policy(), &self.checker_model, &[]),
                 |basis| basis.fingerprint.clone(),
             ),
             checker_model: self.checker_model.clone(),
@@ -107,13 +108,7 @@ impl ClaimLedger {
             )
             .quote;
             let check = self.example_check(observation);
-            let passages = [ShownPassage {
-                source_version_id: format!("execution:{}", observation.id),
-                start_byte: 0,
-                end_byte: check.reason.len(),
-                text: check.reason.clone(),
-                retrieval_kind: "execution".into(),
-            }];
+            let passages = [shown(&observation.passage())];
             self.check_claim(&id, candidate, quote, check, active)
                 .await?;
             self.show(&id, &passages).await?;
@@ -151,7 +146,7 @@ impl ClaimLedger {
             before.location().unit_index,
             &before.location().field,
         )
-        .is_some_and(|text| text.contains(&before.location().quote));
+        .is_some_and(|text| same_text::stands(&text, &before.location().quote));
         let observation = Observation {
             quote: if stands {
                 before.location().quote.clone()

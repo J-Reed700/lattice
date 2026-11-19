@@ -13,11 +13,14 @@ mod standard;
 mod tests;
 mod walk;
 
-pub use ceiling::{after_rewrite_calls, most_calls};
+pub use ceiling::most_calls;
 pub use graph::{Graph, Node};
 pub use invariants::{violations, Violation};
-pub use standard::{StandardPolicy, STANDARD_POLICY};
-pub use walk::{check_record, decide, rewrite_ahead, walk, walk_from, RecordFault};
+pub use standard::{StandardPolicy, KNOWLEDGE_SAMPLES, STANDARD_POLICY};
+pub use walk::{
+    born, check_record, decide, next_rewrite, repair_at, repair_attempt, rewrite_ahead,
+    rewrites_given, start, stepped, successor, walk, walk_from, RecordFault, RepairStep,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -59,7 +62,7 @@ pub enum Reading {
     Consistency,
     /// The knowledge judge's closed-book samples, passing on unanimity.
     Knowledge,
-    /// The same samples, failing only on a majority `false`.
+    /// The same samples, failing only when every sample says `false`.
     Veto,
 }
 
@@ -75,6 +78,8 @@ pub enum Goal {
     AsTheFieldHasIt,
     /// Narrow the sentence to what its other statements say.
     KeepTheOthers,
+    /// Correct what a veto found wrong in the sentence; keep the rest of it.
+    CorrectWhatWasFound,
 }
 
 /// One thing done to a statement.
@@ -135,9 +140,9 @@ pub enum Outcome {
     AllCommon,
     /// It asserts a specific nothing states.
     Unproven,
-    /// A passage, or most samples, say otherwise.
+    /// A passage, or every sample, says otherwise.
     Refuted,
-    /// It needs a source: a `needs_source`, a lone `false`, or an unfounded
+    /// It needs a source: a `needs_source`, a split with a `false`, or an unfounded
     /// specific.
     NeedsSource,
     /// The answer could not be read, after the judge's own second asking.
@@ -166,6 +171,9 @@ pub enum End {
     Consistent,
     GeneralKnowledge,
     NotAClaim,
+    /// The sources are silent, or the sentence cannot be cut: it stays in the
+    /// lesson as written, published not verified.
+    Unverified,
     Removed {
         /// The sentence could not be cut, so its section goes.
         section_goes: bool,
@@ -180,8 +188,8 @@ pub struct NodeId(pub &'static str);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
     Node(NodeId),
-    /// Another class's graph, at its entry: the statement changes class by
-    /// evidence.
+    /// Another class's graph, at its entry: the statement enters the class by
+    /// evidence, once.
     Enter(Class),
     /// Another class's graph, at its post-rewrite node: a rewrite's successor
     /// changes class, and is never rewritten again.
@@ -195,15 +203,36 @@ impl Target {
     }
 }
 
+/// What a statement that has been in a class already does where a first entry
+/// would move it into that class again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Otherwise {
+    Node(NodeId),
+    End(End),
+}
+
+impl From<&'static str> for Otherwise {
+    fn from(name: &'static str) -> Self {
+        Self::Node(NodeId(name))
+    }
+}
+
+impl From<End> for Otherwise {
+    fn from(end: End) -> Self {
+        Self::End(end)
+    }
+}
+
 /// What follows an outcome.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Next {
     Go(Target),
-    /// `change` the first time the evidence moves the statement; `otherwise`
-    /// once it has changed class (no class changes twice).
-    FirstChange {
-        change: Target,
-        otherwise: NodeId,
+    /// `by` unless the statement has been in `into`; `otherwise` once it has
+    /// (a statement enters each class at most once).
+    FirstEntry {
+        into: Class,
+        by: Target,
+        otherwise: Otherwise,
     },
     End(End),
 }
@@ -224,11 +253,54 @@ impl Next {
         Self::Go(Target::EnterAfterRewrite(class))
     }
 
-    /// `change` the first time, then the node named `otherwise`.
-    pub fn first_change(change: Target, otherwise: &'static str) -> Self {
-        Self::FirstChange {
-            change,
-            otherwise: NodeId(otherwise),
+    /// Change to `class`, at its graph's entry, unless the statement has been
+    /// in it: then the node named `otherwise` or the end given.
+    pub fn first_entry(class: Class, otherwise: impl Into<Otherwise>) -> Self {
+        Self::FirstEntry {
+            into: class,
+            by: Target::Enter(class),
+            otherwise: otherwise.into(),
+        }
+    }
+
+    /// As `first_entry`, by the node named `by` of the same graph, whose step
+    /// leads into `class`.
+    pub fn first_entry_by(by: &'static str, class: Class, otherwise: impl Into<Otherwise>) -> Self {
+        Self::FirstEntry {
+            into: class,
+            by: Target::node(by),
+            otherwise: otherwise.into(),
+        }
+    }
+}
+
+/// A set of classes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Classes(u8);
+
+impl Classes {
+    /// The set of `class` alone.
+    pub const fn of(class: Class) -> Self {
+        Self(Self::bit(class))
+    }
+
+    /// This set and `class`.
+    pub const fn with(self, class: Class) -> Self {
+        Self(self.0 | Self::bit(class))
+    }
+
+    /// Whether `class` is in the set.
+    pub const fn has(self, class: Class) -> bool {
+        self.0 & Self::bit(class) != 0
+    }
+
+    /// The bit of `class` in the set.
+    const fn bit(class: Class) -> u8 {
+        match class {
+            Class::Sourced => 1,
+            Class::Reasoning => 2,
+            Class::Common => 4,
+            Class::Internal => 8,
         }
     }
 }
@@ -237,11 +309,16 @@ impl Next {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Position {
     pub class: Class,
-    /// The evidence has moved the statement to this class.
-    pub changed_class: bool,
+    /// The classes the statement has been in, its current one included: it
+    /// enters each at most once.
+    pub visited: Classes,
     /// The statement's one re-ask of an unreadable answer is spent.
     pub reasked: bool,
     pub node: NodeId,
+    /// The rewrites its sentence can still be given: a rewrite step it takes
+    /// spends one, and so does each machine change of its sentence it
+    /// continues after.
+    pub rewrites_left: u8,
 }
 
 /// One step a statement took and what came of it.

@@ -20,15 +20,15 @@ fn chosen_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<ChosenVersion> {
 }
 
 pub(in super::super) async fn live_sources(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: &str,
 ) -> Result<Vec<LiveSource>> {
-    let pool = pool.sqlx_pool();
+    let mut read = database.begin_read().await?;
     let rows = sqlx::query("SELECT s.id AS source_id,s.kind,s.origin,s.requested_url AS source_url,s.added_by,v.id AS version_id,v.title,v.requested_url,v.resolved_url,v.content_sha256,v.snapshot_hash FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL ORDER BY s.created_at,s.id")
         .bind(program_id)
-        .fetch_all(pool)
-        .await
-        .map_err(db)?;
+        .fetch_all(&mut *read)
+        .await?;
+    read.commit().await?;
     rows.into_iter()
         .map(|row| {
             let requested_url: Option<String> = row
@@ -54,49 +54,46 @@ pub(in super::super) async fn live_sources(
 }
 
 pub(in super::super) async fn chosen_versions(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: &str,
 ) -> Result<Vec<ChosenVersion>> {
-    let pool = pool.sqlx_pool();
-    sqlx::query("SELECT s.id AS source_id,v.id AS version_id,v.full_text,s.added_by,s.selection_note FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL ORDER BY s.created_at,s.id")
+    let mut read = database.begin_read().await?;
+    let rows = sqlx::query("SELECT s.id AS source_id,v.id AS version_id,v.full_text,s.added_by,s.selection_note FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL ORDER BY s.created_at,s.id")
         .bind(program_id)
-        .fetch_all(pool)
-        .await
-        .map_err(db)?
-        .iter()
-        .map(chosen_from_row)
-        .collect()
+        .fetch_all(&mut *read)
+        .await?;
+    read.commit().await?;
+    rows.iter().map(chosen_from_row).collect()
 }
 
 pub(in super::super) async fn chosen_version(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: &str,
     version_id: &str,
 ) -> Result<Option<ChosenVersion>> {
-    let pool = pool.sqlx_pool();
-    sqlx::query("SELECT l.id AS source_id,v.id AS version_id,v.full_text,l.added_by,l.selection_note FROM learning_source_versions v JOIN learning_source_library l ON l.id=v.source_id AND l.program_id=v.program_id WHERE v.program_id=? AND v.id=?")
+    let mut read = database.begin_read().await?;
+    let row = sqlx::query("SELECT l.id AS source_id,v.id AS version_id,v.full_text,l.added_by,l.selection_note FROM learning_source_versions v JOIN learning_source_library l ON l.id=v.source_id AND l.program_id=v.program_id WHERE v.program_id=? AND v.id=?")
         .bind(program_id)
         .bind(version_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(db)?
-        .map(|row| chosen_from_row(&row))
-        .transpose()
+        .fetch_optional(&mut *read)
+        .await?;
+    read.commit().await?;
+    row.map(|row| chosen_from_row(&row)).transpose()
 }
 
 pub(in super::super) async fn set_snapshot_hash(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: &str,
     version_id: &str,
     sha256: &str,
 ) -> Result<()> {
-    let pool = pool.sqlx_pool();
+    let mut tx = database.begin_write().await?;
     sqlx::query("UPDATE learning_source_versions SET snapshot_hash=? WHERE program_id=? AND id=?")
         .bind(sha256)
         .bind(program_id)
         .bind(version_id)
-        .execute(pool)
-        .await
-        .map_err(db)?;
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     Ok(())
 }

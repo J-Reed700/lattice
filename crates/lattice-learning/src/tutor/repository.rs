@@ -2,11 +2,10 @@
 
 use super::binding::CourseBinding;
 use super::cards::DueCard;
-use crate::persistence::db;
 use futures::stream::BoxStream;
 use futures::{StreamExt, TryStreamExt};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::{Database, WriteTx};
 use sqlx::{Row, SqliteConnection};
 
 pub(super) async fn program_status(
@@ -17,7 +16,7 @@ pub(super) async fn program_status(
         .bind(program_id)
         .fetch_optional(&mut *conn)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 pub(super) async fn lesson_in_program(
@@ -30,15 +29,14 @@ pub(super) async fn lesson_in_program(
             .bind(lesson_id)
             .bind(program_id)
             .fetch_optional(&mut *conn)
-            .await
-            .map_err(db)?;
+            .await?;
     Ok(owned.is_some())
 }
 
 /// Binds a conversation to a course; `false` when there is no such chat or it
 /// is a folder's thread.
 pub(super) async fn bind_course(
-    conn: &mut SqliteConnection,
+    tx: &mut WriteTx,
     conversation_id: &str,
     program_id: &str,
     lesson_id: Option<&str>,
@@ -49,22 +47,21 @@ pub(super) async fn bind_course(
     .bind(program_id)
     .bind(lesson_id)
     .bind(conversation_id)
-    .execute(&mut *conn)
-    .await
-    .map_err(db)?;
+    .execute(&mut **tx)
+    .await?;
     Ok(bound.rows_affected() > 0)
 }
 
 pub(super) async fn conversation_course(
-    pool: &impl DriverPool,
+    database: &Database,
     conversation_id: &str,
 ) -> Result<Option<CourseBinding>> {
-    let pool = pool.sqlx_pool();
+    let mut read = database.begin_read().await?;
     let row = sqlx::query("SELECT program_id, lesson_id FROM conversations WHERE id=?")
         .bind(conversation_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(db)?;
+        .fetch_optional(&mut *read)
+        .await?;
+    read.commit().await?;
     Ok(row.and_then(|row| {
         let program_id: Option<String> = row.get("program_id");
         program_id.map(|program_id| CourseBinding {
@@ -76,46 +73,46 @@ pub(super) async fn conversation_course(
 
 /// The completed tutor replies of a chat, newest first.
 pub(super) fn assistant_replies<'a>(
-    pool: &'a impl DriverPool,
+    conn: &'a mut SqliteConnection,
     conversation_id: &'a str,
 ) -> BoxStream<'a, Result<String>> {
-    let pool = pool.sqlx_pool();
     sqlx::query_scalar::<_, String>(
         "SELECT content FROM conversation_messages WHERE conversation_id=? AND role='assistant' AND status='completed' ORDER BY sequence DESC",
     )
     .bind(conversation_id)
-    .fetch(pool)
-    .map_err(db)
+    .fetch(conn)
+    .map_err(AppError::from)
     .boxed()
 }
 
-pub(super) async fn due_count(pool: &impl DriverPool, program_id: &str, at: i64) -> Result<i64> {
-    let pool = pool.sqlx_pool();
-    sqlx::query_scalar(
+pub(super) async fn due_count(database: &Database, program_id: &str, at: i64) -> Result<i64> {
+    let mut read = database.begin_read().await?;
+    let due = sqlx::query_scalar(
         "SELECT count(*) FROM study_cards c JOIN learning_memory m ON m.deck_id=c.deck_id WHERE m.program_id=? AND c.due_at<=?",
     )
     .bind(program_id)
     .bind(at)
-    .fetch_one(pool)
-    .await
-    .map_err(db)
+    .fetch_one(&mut *read)
+    .await?;
+    read.commit().await?;
+    Ok(due)
 }
 
 /// The deck's cards due at `at`, soonest first.
 pub(super) async fn due_cards(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: &str,
     at: i64,
 ) -> Result<Vec<DueCard>> {
-    let pool = pool.sqlx_pool();
+    let mut read = database.begin_read().await?;
     let rows = sqlx::query(
         "SELECT c.id,c.question,c.options_json,COALESCE(l.module_id,c.topic) group_key FROM study_cards c JOIN learning_memory m ON m.deck_id=c.deck_id LEFT JOIN learning_card_origins o ON o.card_id=c.id AND o.program_id=m.program_id LEFT JOIN learning_lessons l ON l.id=o.lesson_id WHERE m.program_id=? AND c.due_at<=? ORDER BY c.due_at,c.id",
     )
     .bind(program_id)
     .bind(at)
-    .fetch_all(pool)
-    .await
-    .map_err(db)?;
+    .fetch_all(&mut *read)
+    .await?;
+    read.commit().await?;
     rows.iter()
         .map(|row| {
             Ok(DueCard {
@@ -136,53 +133,102 @@ pub(super) struct CardToRate {
     pub review_count: i64,
     pub format: String,
     pub question: String,
+    pub options: Vec<String>,
 }
 
 pub(super) async fn card_to_rate(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: &str,
     card_id: &str,
 ) -> Result<Option<CardToRate>> {
-    let pool = pool.sqlx_pool();
+    let mut read = database.begin_read().await?;
     let row = sqlx::query(
-        "SELECT c.due_at,c.review_count,c.format,c.question FROM study_cards c JOIN learning_memory m ON m.deck_id=c.deck_id WHERE c.id=? AND m.program_id=?",
+        "SELECT c.due_at,c.review_count,c.format,c.question,c.options_json FROM study_cards c JOIN learning_memory m ON m.deck_id=c.deck_id WHERE c.id=? AND m.program_id=?",
     )
     .bind(card_id)
     .bind(program_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(db)?;
-    Ok(row.map(|row| CardToRate {
-        due_at: row.get("due_at"),
-        review_count: row.get("review_count"),
-        format: row.get("format"),
-        question: row.get("question"),
-    }))
+    .fetch_optional(&mut *read)
+    .await?;
+    read.commit().await?;
+    row.map(|row| {
+        Ok(CardToRate {
+            due_at: row.get("due_at"),
+            review_count: row.get("review_count"),
+            format: row.get("format"),
+            question: row.get("question"),
+            options: serde_json::from_str(row.get("options_json")).map_err(|error| {
+                AppError::InvalidState(format!("Invalid recall options: {error}"))
+            })?,
+        })
+    })
+    .transpose()
 }
 
-pub(super) async fn card_due_at(pool: &impl DriverPool, card_id: &str) -> Result<i64> {
-    let pool = pool.sqlx_pool();
-    sqlx::query_scalar("SELECT due_at FROM study_cards WHERE id=?")
+pub(super) async fn card_due_at(database: &Database, card_id: &str) -> Result<i64> {
+    let mut read = database.begin_read().await?;
+    let due_at = sqlx::query_scalar("SELECT due_at FROM study_cards WHERE id=?")
         .bind(card_id)
-        .fetch_one(pool)
-        .await
-        .map_err(db)
+        .fetch_one(&mut *read)
+        .await?;
+    read.commit().await?;
+    Ok(due_at)
 }
 
 /// A source version's title and saved text.
 pub(super) async fn source_text(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: &str,
     version_id: &str,
 ) -> Result<Option<(String, String)>> {
-    let pool = pool.sqlx_pool();
+    let mut read = database.begin_read().await?;
     let row = sqlx::query(
         "SELECT title, full_text FROM learning_source_versions WHERE program_id=? AND id=?",
     )
     .bind(program_id)
     .bind(version_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(db)?;
+    .fetch_optional(&mut *read)
+    .await?;
+    read.commit().await?;
     Ok(row.map(|row| (row.get("title"), row.get("full_text"))))
+}
+
+/// Records that the tutor asked `card_id` at the review count it had.
+pub(super) async fn record_asking(
+    database: &Database,
+    conversation_id: &str,
+    card_id: &str,
+    review_count: i64,
+    at: i64,
+) -> Result<()> {
+    let mut tx = database.begin_write().await?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO tutor_card_askings(conversation_id, card_id, review_count, asked_at) VALUES(?,?,?,?)",
+    )
+    .bind(conversation_id)
+    .bind(card_id)
+    .bind(review_count)
+    .bind(at)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await.map_err(AppError::from)
+}
+
+/// Whether the tutor asked `card_id` in this chat since the card's last review.
+pub(super) async fn was_asked(
+    database: &Database,
+    conversation_id: &str,
+    card_id: &str,
+    review_count: i64,
+) -> Result<bool> {
+    let mut read = database.begin_read().await?;
+    let asked: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM tutor_card_askings WHERE conversation_id=? AND card_id=? AND review_count=?",
+    )
+    .bind(conversation_id)
+    .bind(card_id)
+    .bind(review_count)
+    .fetch_optional(&mut *read)
+    .await?;
+    read.commit().await?;
+    Ok(asked.is_some())
 }

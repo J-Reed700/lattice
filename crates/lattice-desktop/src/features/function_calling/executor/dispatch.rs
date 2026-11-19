@@ -50,6 +50,66 @@ impl FunctionExecutor {
         normalized
     }
 
+    /// A number outside the range its property declares is brought to the
+    /// nearest end of it: a count the model asked too much of is a smaller
+    /// count, not a refused call.
+    pub(super) fn clamp_to_declared_ranges(
+        schema: &serde_json::Value,
+        arguments: serde_json::Value,
+    ) -> serde_json::Value {
+        let mut clamped = arguments;
+        if let (Some(properties), Some(object)) = (
+            schema
+                .get("properties")
+                .and_then(serde_json::Value::as_object),
+            clamped.as_object_mut(),
+        ) {
+            for (name, spec) in properties {
+                let Some(value) = object.get_mut(name) else {
+                    continue;
+                };
+                let Some(number) = value.as_f64() else {
+                    continue;
+                };
+                let mut limited = number;
+                if let Some(lowest) = spec.get("minimum").and_then(serde_json::Value::as_f64) {
+                    limited = limited.max(lowest);
+                }
+                if let Some(highest) = spec.get("maximum").and_then(serde_json::Value::as_f64) {
+                    limited = limited.min(highest);
+                }
+                if (limited - number).abs() > 0.0 {
+                    let integer =
+                        spec.get("type").and_then(serde_json::Value::as_str) == Some("integer");
+                    *value = if integer {
+                        serde_json::json!(limited as i64)
+                    } else {
+                        serde_json::json!(limited)
+                    };
+                }
+            }
+        }
+        clamped
+    }
+
+    /// The schema without the numeric ranges, for the shape check: a range is
+    /// applied by [`Self::clamp_to_declared_ranges`], not enforced by refusal.
+    pub(super) fn without_declared_ranges(schema: &serde_json::Value) -> serde_json::Value {
+        let mut relaxed = schema.clone();
+        if let Some(properties) = relaxed
+            .get_mut("properties")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            for spec in properties.values_mut() {
+                if let Some(spec) = spec.as_object_mut() {
+                    spec.remove("minimum");
+                    spec.remove("maximum");
+                }
+            }
+        }
+        relaxed
+    }
+
     /// A call from an older conversation may name a provider the tool no
     /// longer offers. Dropping the name leaves a search with the providers
     /// still named, or the router's own choice when none is.

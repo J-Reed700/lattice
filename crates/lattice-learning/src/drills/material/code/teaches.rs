@@ -60,7 +60,7 @@ pub(super) async fn ask(llm: &dyn LLMPort, context: &LessonContext) -> Result<Ta
             "lessonTeachesWhatCodeCanShow": {"type": "boolean"}
         }
     });
-    let request = model_call::structured(SYSTEM, prompt, schema, budget::judgement(), "low");
+    let request = model_call::structured(SYSTEM, prompt, schema, budget::judgement());
     let asked = ask_request(llm, request, |raw| {
         let judgement: Judgement = parse_json(raw)?;
         if judgement.reason.trim().is_empty() {

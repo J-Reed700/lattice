@@ -21,7 +21,6 @@ pub(super) async fn execute_read(
         .iter()
         .map(|id| id.trim().to_string())
         .filter(|id| !id.is_empty())
-        .take(MAX_READ_MESSAGES)
         .collect();
     let by_id = !wanted_ids.is_empty();
     let by_range = args.from_sequence.is_some();
@@ -90,7 +89,8 @@ pub(super) async fn execute_read(
     let limits = SourceReadLimits::new(MAX_READ_MESSAGES, SourceReadLimits::DEFAULT.max_bytes);
 
     let mut messages = if by_id {
-        port.read_messages(scope.conversation_id(), &wanted_ids, limits)
+        let fetched: Vec<String> = wanted_ids.iter().take(MAX_READ_MESSAGES).cloned().collect();
+        port.read_messages(scope.conversation_id(), &fetched, limits)
             .await?
     } else {
         let from = resume
@@ -105,7 +105,7 @@ pub(super) async fn execute_read(
     // The port cap bound the fetch, so more of this range probably exists. An
     // observation, not a guess: the alternative is comparing against a
     // requested end that may be past the end of the conversation.
-    let port_capped = messages.len() >= MAX_READ_MESSAGES;
+    let port_capped = !by_id && messages.len() >= MAX_READ_MESSAGES;
     if let Some(cursor) = resume.filter(|_| by_id) {
         messages.retain(|message| message.sequence >= cursor.from_sequence);
     }
@@ -205,7 +205,8 @@ pub(super) async fn execute_read(
         "not_readable_message_ids": not_readable,
         "omitted_failed_outputs": omitted_failed_outputs,
         "note": "Exact source text from this conversation. Ids listed as not readable are \
-                 either outside this conversation or did not fit this response.",
+                 outside this conversation, did not fit this response, or were more than \
+                 one read takes: ask for those in another read.",
     })))
 }
 

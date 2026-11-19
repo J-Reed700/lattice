@@ -1,17 +1,8 @@
 import type { SearchResultMetadata } from './metadata';
+import type { SearchResultDto } from '../lib/bindings';
 
-export interface SearchResult {
-  id: string;
-  title: string;
-  content: string;
+/** `metadata` is sent but skipped by the generator; `highlights` is added by the UI. */
+export type SearchResult = SearchResultDto & {
   highlights?: string[];
-  score: number;
-  path: string | null | undefined;
-  documentId: string | null | undefined;
-  position: number | null | undefined;
-  vectorScore: number | null | undefined;
-  bm25Score: number | null | undefined;
-  vectorRank: number | null | undefined;
-  bm25Rank: number | null | undefined;
   metadata: Partial<SearchResultMetadata> & Record<string, unknown>;
-}
+};

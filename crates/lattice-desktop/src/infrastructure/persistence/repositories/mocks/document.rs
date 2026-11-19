@@ -334,11 +334,17 @@ impl DocumentRepositoryPort for MockDocumentRepository {
         Ok(total as i64)
     }
 
-    async fn find_all_paginated(&self, limit: usize) -> Result<Vec<Document>> {
+    async fn find_all_paginated(
+        &self,
+        page: lattice_core::shared::persistence::Page,
+    ) -> Result<Vec<Document>> {
         let mut docs: Vec<_> = self.documents.read().values().cloned().collect();
         docs.sort_by(|a, b| a.file_path().cmp(b.file_path()));
-        docs.truncate(limit);
-        Ok(docs)
+        Ok(docs
+            .into_iter()
+            .skip(page.offset() as usize)
+            .take(page.limit().map_or(usize::MAX, |limit| limit as usize))
+            .collect())
     }
 
     async fn count_by_checksum(&self, checksum: &str) -> Result<u64> {

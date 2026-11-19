@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { describeFailure, learnerError, parseApiError, waitingSentence } from './errorHandling';
+import { describeFailure, learnerError, parseApiError, waitingSentence, waitsOnModel } from './errorHandling';
 import { ErrorCode } from '../types/api/errorCodes';
 
 describe('parseApiError', () => {
@@ -77,5 +77,25 @@ describe('what a wait is on', () => {
     for (const code of [undefined, 'UNKNOWN', 'temporarily_unavailable']) {
       expect(waitingSentence(code as ErrorCode | undefined)).toBe('Lattice is waiting to try again.');
     }
+  });
+});
+
+describe('the codes of the model, cancellation and lesson errors', () => {
+  const messages: Record<string, string> = {
+    WINDOW_TOO_SMALL: 'This needs a larger context window than the model has. Choose a model with a larger context window in Settings.',
+    MODEL_REJECTED: 'The model server turned the request down.',
+    MODEL_ANSWER_UNUSABLE: "The model's answer could not be used.",
+    ANSWER_CUT_OFF: "The model's answer was cut off before it finished.",
+    CANCELLED: 'Stopped on request.',
+    LESSON_HELD: 'The lesson was held back for review.',
+  };
+
+  it.each(Object.entries(messages))('%s has a message of its own', (code, message) => {
+    expect(learnerError(parseApiError({ code, message: 'raw' })).headline).toBe(message);
+  });
+
+  it.each(Object.keys(messages))('%s is not waited out', code => {
+    expect(waitingSentence(code as ErrorCode)).toBe('Lattice is waiting to try again.');
+    expect(waitsOnModel(code as ErrorCode)).toBe(false);
   });
 });

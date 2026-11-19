@@ -11,8 +11,14 @@ use crate::repository::LearningRepository;
 use lattice_core::application::contracts::web::{
     FetchUrlContentOutput, WebSearchOutput, WebSearchResult,
 };
-use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse,
+};
 use lattice_core::application::ports::MockWebService;
+use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
+use lattice_core::application::services::model_contract::test_support::{
+    ScriptedModel as Scripted, Sent,
+};
 use lattice_core::shared::persistence::Database;
 
 pub(crate) const CAPTURE: &str =
@@ -88,7 +94,7 @@ fn model() -> ScriptedModel {
     ScriptedModel {
         outputs: Mutex::new(
             [
-                json!({"needs":[{"gap":0,"query":"random assignment confounding official guidance","kind":"web"}]}).to_string(),
+                crate::references::web_research::needs_answer(json!([{"gap":0,"query":"random assignment confounding official guidance","kind":"web"}])).to_string(),
                 selection(&[0]),
             ]
             .into(),
@@ -110,11 +116,11 @@ fn found(results: Vec<WebSearchResult>) -> Vec<web_research::Candidate> {
 }
 
 pub(crate) fn selection(indices: &[usize]) -> String {
-    json!({"decisions":indices.iter().map(|i|json!({"id":format!("result-{i}"),"useForGap":true,"reason":"Directly relevant primary reference for the requested concept."})).collect::<Vec<_>>()}).to_string()
+    json!({"marks":indices.iter().map(|i|json!({"at":format!("r{}", i + 1),"reason":"Directly relevant primary reference for the requested concept."})).collect::<Vec<_>>()}).to_string()
 }
 
-#[test]
-fn a_long_reason_for_a_reference_is_read_not_refused() {
+#[tokio::test]
+async fn a_long_reason_for_a_reference_is_read_not_refused() -> Result<()> {
     let results = vec![WebSearchResult {
         title: "Relevant reference".into(),
         url: "https://example.org/reference".into(),
@@ -123,17 +129,21 @@ fn a_long_reason_for_a_reference_is_read_not_refused() {
         source: None,
     }];
     let reason = "It states the scoped point in its own words. ".repeat(20);
-    let raw = json!({"decisions":[{"id":"result-0","useForGap":true,"reason":reason}]}).to_string();
-    let selected = super::selection(&raw, &results);
-    assert!(selected.is_ok(), "{:?}", selected.as_ref().err());
-    assert_eq!(selected.unwrap()[0].1, reason.trim());
-}
-
-#[test]
-fn the_selection_schema_bounds_no_text_but_a_blank() {
-    let ids = [json!("result-0"), json!("result-1")];
-    let bounds = crate::lessons::course_generation_tests::length_bounds(&selection_schema(&ids));
-    assert!(bounds.is_empty(), "{bounds:?}");
+    let llm = ScriptedModel {
+        outputs: Mutex::new([json!({"marks":[{"at":"r1","reason":reason}]}).to_string()].into()),
+        prompts: Mutex::new(vec![]),
+    };
+    let selected = select_noted(
+        &llm,
+        "Research methods",
+        "random assignment",
+        &[],
+        found(results),
+    )
+    .await?;
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].1, reason.trim());
+    Ok(())
 }
 
 #[tokio::test]
@@ -165,7 +175,32 @@ async fn reference_selection_accepts_all_valid_selected_results_past_four() -> R
 }
 
 #[tokio::test]
-async fn reference_selection_reads_the_results_its_window_holds_in_order() -> Result<()> {
+async fn prompt_snapshot_research_query() -> Result<()> {
+    let results: Vec<_> = (0..2)
+        .map(|i| WebSearchResult {
+            title: format!("Kiln firing guide {i}"),
+            url: format!("https://example.org/kiln-{i}"),
+            snippet: "How a kiln is brought up to temperature.".into(),
+            published_date: None,
+            source: Some("crossref".into()),
+        })
+        .collect();
+    let gaps = [json!({"statement":"A kiln heats in stages.","ownerOriginHints":["example.org"]})];
+    let inner = ScriptedModel {
+        outputs: Mutex::new([selection(&[0, 1])].into()),
+        prompts: Mutex::new(vec![]),
+    };
+    let llm = crate::lessons::course_generation_tests::RequestLog::new(&inner);
+
+    select_references(&llm, "Pottery", "kiln firing stages", &gaps, found(results)).await?;
+
+    llm.assert_snapshot::<ResearchQuery>();
+    Ok(())
+}
+
+#[tokio::test]
+async fn reference_selection_asks_about_every_result_in_as_many_requests_as_the_window_needs(
+) -> Result<()> {
     // Far more than a 128k window holds, as a paged catalog search brings.
     let results: Vec<_> = (0..3000)
         .map(|i| WebSearchResult {
@@ -176,31 +211,24 @@ async fn reference_selection_reads_the_results_its_window_holds_in_order() -> Re
             source: Some("crossref".into()),
         })
         .collect();
-    let llm = ScriptedModel {
-        outputs: Mutex::new([selection(&[0])].into()),
-        prompts: Mutex::new(vec![]),
-    };
+    let llm = selector(
+        |shown, _| json!({"marks":[marked(&shown[0], "Directly relevant primary reference for the requested concept.")]}),
+    );
     let candidates = found(results);
-    let room = selection_room(&llm, "Tonality", "tonal centre", &[]);
-    let cost = selection_cost(&llm, &[]);
     let selected =
         select_references(&llm, "Tonality", "tonal centre", &[], candidates.clone()).await?;
     assert_eq!(selected[0].url, "https://doi.org/10.1000/paper.0");
 
-    let prompts = llm.prompts.lock().unwrap();
-    let sent = prompts[0].matches("\"id\":\"result-").count();
-    assert!(sent > 0 && sent < candidates.len(), "sent {sent}");
-    assert!(prompts[0].contains("\"id\":\"result-0\""));
-    assert!(!prompts[0].contains("paper.2999"));
-    // The ones left out are the ones the room could not hold.
-    let held: usize = candidates[..sent].iter().map(&cost).sum();
-    assert!(held <= room);
-    assert!(held + cost(&candidates[sent]) > room - room / 100);
+    let asked: Vec<Vec<String>> = llm.sent().iter().map(results_of).collect();
+    assert!(asked.len() > 1, "no one request holds every result");
+    let shown: usize = asked.iter().map(Vec::len).sum();
+    assert_eq!(shown, candidates.len(), "every result is read once");
+    assert_eq!(selected.len(), asked.len(), "each request marks its first");
     Ok(())
 }
 
 #[tokio::test]
-async fn reference_selection_can_reject_unrelated_hits_without_inventing_pages() -> Result<()> {
+async fn reference_selection_selects_only_what_it_marks_and_never_invents_pages() -> Result<()> {
     let results = [
         ("Cargo definition", "https://dictionary.example/cargo"),
         ("Cargo build manual", "https://docs.example/cargo/build"),
@@ -214,55 +242,245 @@ async fn reference_selection_can_reject_unrelated_hits_without_inventing_pages()
         source: None,
     })
     .collect::<Vec<_>>();
-    let llm = ScriptedModel {
-        outputs: Mutex::new(
-            [
-                json!({"decisions":[
-                    {"id":"result-0","useForGap":false,"reason":"A dictionary meaning does not address the software behavior."},
-                    {"id":"result-1","useForGap":true,"reason":"The manual addresses the command's behavior."}
-                ]}).to_string(),
-                selection(&[]),
-                selection(&[2]),
-                selection(&[1, 1]),
-            ]
-            .into(),
-        ),
-        prompts: Mutex::new(vec![]),
+    let ask = |llm: Scripted| {
+        let results = results.clone();
+        async move {
+            select_references(&llm, "Rust programming", "cargo build", &[], found(results)).await
+        }
     };
-    let chosen = select_references(
-        &llm,
-        "Rust programming",
-        "cargo build",
-        &[],
-        found(results.clone()),
-    )
+    let chosen = ask(selector(
+        |_, _| json!({"marks":[marked("r2", "The manual addresses the command's behavior.")]}),
+    ))
     .await?;
     assert_eq!(chosen.len(), 1);
     assert_eq!(chosen[0].url, results[1].url);
-    assert!(select_references(
-        &llm,
-        "Rust programming",
-        "cargo build",
-        &[],
-        found(results.clone())
+    assert!(ask(selector(|_, _| json!({"marks":[]}))).await?.is_empty());
+    // A mark that names nothing shown is no mark; it spoils nothing.
+    let unplaced = selector(|_, _| json!({"marks":[marked("r3", "Directly relevant.")]}));
+    assert!(ask(unplaced).await?.is_empty());
+    // Two equal marks for one result are one.
+    let chosen = ask(selector(|_, _| {
+        json!({"marks":[marked("r2", "Directly relevant."), marked("r2", "Directly relevant.")]})
+    }))
+    .await?;
+    assert_eq!(chosen.len(), 1);
+    assert_eq!(chosen[0].url, results[1].url);
+    Ok(())
+}
+
+fn replying(text: String) -> futures::future::BoxFuture<'static, Result<CompletionResponse>> {
+    Box::pin(std::future::ready(Ok(CompletionResponse::from_text(text))))
+}
+
+/// The names the results of a selection request are shown under.
+fn results_of(sent: &Sent) -> Vec<String> {
+    let prompt = sent
+        .request
+        .input()
+        .iter()
+        .filter_map(|item| match item {
+            CompletionInput::Message { content, .. } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    prompt
+        .split("\n\n")
+        .find_map(|chunk| {
+            serde_json::from_str::<Value>(chunk)
+                .ok()
+                .filter(|task| task.get("results").is_some())
+        })
+        .map(|task| {
+            task["results"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|result| result["id"].as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn marked(at: &str, reason: &str) -> Value {
+    json!({"at": at, "reason": reason})
+}
+
+/// A model that answers each selection with `answer(the names shown, number of earlier asks)`.
+fn selector(answer: impl Fn(&[String], usize) -> Value + Send + Sync + 'static) -> Scripted {
+    Scripted::new().on_request::<ResearchQuery>(move |sent, nth| {
+        replying(answer(&results_of(sent), nth).to_string())
+    })
+}
+
+fn kiln_guides(count: usize) -> Vec<web_research::Candidate> {
+    found(
+        (0..count)
+            .map(|i| WebSearchResult {
+                title: format!("Kiln firing guide {i}"),
+                url: format!("https://example.org/kiln-{i}"),
+                snippet: "How a kiln is brought up to temperature.".into(),
+                published_date: None,
+                source: None,
+            })
+            .collect(),
     )
-    .await?
-    .is_empty());
-    assert!(select_references(
-        &llm,
-        "Rust programming",
-        "cargo build",
-        &[],
-        found(results.clone())
-    )
-    .await
-    .is_err());
-    assert!(
-        select_references(&llm, "Rust programming", "cargo build", &[], found(results))
-            .await
-            .is_err()
+}
+
+fn urls(selected: &[(WebSearchResult, String)]) -> Vec<&str> {
+    selected
+        .iter()
+        .map(|(result, _)| result.url.as_str())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_result_marked_twice_differently_is_asked_again_alone_and_the_others_stand() -> Result<()>
+{
+    let llm = selector(|_, nth| match nth {
+        0 => json!({"marks":[
+            marked("r1", "States the stages."),
+            marked("r2", "A guide."),
+            marked("r2", "A manual.")
+        ]}),
+        _ => json!({"marks":[marked("r2", "A manual.")]}),
+    });
+
+    let selected = select_noted(&llm, "Pottery", "kiln firing", &[], kiln_guides(3)).await?;
+
+    assert_eq!(
+        urls(&selected),
+        ["https://example.org/kiln-0", "https://example.org/kiln-1"]
+    );
+    assert_eq!(selected[1].1, "A manual.");
+    let asked: Vec<Vec<String>> = llm.sent().iter().map(results_of).collect();
+    assert_eq!(asked, [vec!["r1", "r2", "r3"], vec!["r2"]]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_blank_reason_is_corrected_for_its_result_alone() -> Result<()> {
+    let llm = selector(|_, nth| match nth {
+        0 => json!({"marks":[marked("r1", "   "), marked("r2", "Primary source.")]}),
+        _ => json!({"marks":[marked("r1", "States the stages.")]}),
+    });
+
+    let selected = select_noted(&llm, "Pottery", "kiln firing", &[], kiln_guides(2)).await?;
+
+    assert_eq!(
+        urls(&selected),
+        ["https://example.org/kiln-1", "https://example.org/kiln-0"]
+    );
+    assert_eq!(selected[1].1, "States the stages.");
+    let asked: Vec<Vec<String>> = llm.sent().iter().map(results_of).collect();
+    assert_eq!(asked, [vec!["r1", "r2"], vec!["r1"]]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_result_settled_in_a_later_request_comes_after_those_of_the_earlier_one() -> Result<()> {
+    let llm = selector(|_, nth| match nth {
+        0 => json!({"marks":[
+            marked("r3", "The strongest reference."),
+            marked("r2", "   "),
+            marked("r1", "A weaker reference.")
+        ]}),
+        _ => json!({"marks":[marked("r2", "A manual.")]}),
+    });
+
+    let selected = select_noted(&llm, "Pottery", "kiln firing", &[], kiln_guides(3)).await?;
+
+    assert_eq!(
+        urls(&selected),
+        [
+            "https://example.org/kiln-2",
+            "https://example.org/kiln-0",
+            "https://example.org/kiln-1"
+        ]
     );
     Ok(())
+}
+
+#[tokio::test]
+async fn selected_results_come_in_the_order_the_model_marked_them() -> Result<()> {
+    let llm = selector(|_, _| {
+        json!({"marks":[
+            marked("r3", "The strongest reference."),
+            marked("r1", "A weaker reference.")
+        ]})
+    });
+
+    let selected = select_noted(&llm, "Pottery", "kiln firing", &[], kiln_guides(3)).await?;
+
+    assert_eq!(
+        urls(&selected),
+        ["https://example.org/kiln-2", "https://example.org/kiln-0"]
+    );
+    assert_eq!(selected[0].1, "The strongest reference.");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_result_marked_twice_alike_is_placed_where_it_was_first_marked() -> Result<()> {
+    let llm = selector(|_, _| {
+        json!({"marks":[
+            marked("r3", "The strongest reference."),
+            marked("r1", "A weaker reference."),
+            marked("r3", "The strongest reference.")
+        ]})
+    });
+
+    let selected = select_noted(&llm, "Pottery", "kiln firing", &[], kiln_guides(3)).await?;
+
+    assert_eq!(
+        urls(&selected),
+        ["https://example.org/kiln-2", "https://example.org/kiln-0"]
+    );
+    Ok(())
+}
+
+#[test]
+fn the_selector_is_told_to_select_in_preference_order() {
+    assert!(SELECT_SYSTEM
+        .contains("Select, in preference order, every result that is both directly relevant"));
+}
+
+#[tokio::test]
+async fn a_result_that_stays_unanswered_is_not_selected_and_spoils_no_other() -> Result<()> {
+    let llm = selector(|_, nth| match nth {
+        0 => json!({"marks":[
+            marked("r1", "States the stages."),
+            marked("r2", "A guide."),
+            marked("r2", "A manual.")
+        ]}),
+        _ => json!({"marks":[marked("r2", "A guide."), marked("r2", "A manual.")]}),
+    });
+
+    let selected = select_noted(&llm, "Pottery", "kiln firing", &[], kiln_guides(3)).await?;
+
+    assert_eq!(urls(&selected), ["https://example.org/kiln-0"]);
+    Ok(())
+}
+
+#[test]
+fn the_selection_request_shows_what_the_model_is_told_and_nothing_internal() {
+    let mut marks = Marks::new();
+    let input = Input {
+        topic: marks.told("Harbour tides".to_owned()),
+        query: marks.told("tide table sources".to_owned()),
+        gaps: marks.told(vec![
+            json!({"claim":"The harbour gate opens at first light."}),
+        ]),
+        hits: vec![Hit {
+            at: marks.reference(100_001_usize),
+            card: marks.told(json!({
+                "title": "Harbour almanac",
+                "url": "https://example.test/almanac",
+                "snippet": "Tide tables are revised each spring."
+            })),
+        }],
+    };
+    holds::<ResearchQuery>(&input, &marks);
 }
 
 /// The planner wrote its scope into the query; research searches the site
@@ -273,7 +491,8 @@ async fn reference_selection_can_reject_unrelated_hits_without_inventing_pages()
 async fn research_searches_the_site_the_planner_named_and_reads_a_page_where_it_moved() -> Result<()>
 {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
@@ -298,7 +517,7 @@ async fn research_searches_the_site_the_planner_named_and_reads_a_page_where_it_
     let llm = ScriptedModel {
         outputs: Mutex::new(
             [
-                json!({"needs":[{"gap":0,"query":"site:docs.example.org/manual random assignment","kind":"web"}]}).to_string(),
+                crate::references::web_research::needs_answer(json!([{"gap":0,"query":"site:docs.example.org/manual random assignment","kind":"web"}])).to_string(),
                 selection(&[0]),
             ]
             .into(),
@@ -306,7 +525,7 @@ async fn research_searches_the_site_the_planner_named_and_reads_a_page_where_it_
         prompts: Mutex::new(vec![]),
     };
     run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web.clone()),
@@ -339,7 +558,8 @@ async fn research_searches_the_site_the_planner_named_and_reads_a_page_where_it_
 #[tokio::test]
 async fn research_can_save_evidence_after_one_hundred_sources() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     program.sources = (0..100)
@@ -352,8 +572,7 @@ async fn research_can_save_evidence_after_one_hundred_sources() -> Result<()> {
         })
         .collect();
     repo.create(&program).await?;
-    let library =
-        crate::source_library::LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let library = crate::source_library::LearningSourceLibraryRepository::new(db.clone());
     library
         .preflight_new_source(
             &program.summary.id,
@@ -365,7 +584,7 @@ async fn research_can_save_evidence_after_one_hundred_sources() -> Result<()> {
     let references = ReferenceCollection::lexical(&sources)?;
     let llm = model();
     run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web(false)),
@@ -392,7 +611,8 @@ async fn research_can_save_evidence_after_one_hundred_sources() -> Result<()> {
 #[tokio::test]
 async fn research_persists_full_capture_and_deduplicates_without_approving_claims() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
@@ -401,7 +621,7 @@ async fn research_persists_full_capture_and_deduplicates_without_approving_claim
     let llm = model();
     let findings = vec![gap()];
     run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web(false)),
@@ -453,20 +673,20 @@ fn saved_page(url: &str, text: &str) -> crate::source_library::CapturedLearningS
 /// before the other saved anything: how many saves returned a new source, and
 /// how many sources the course gained.
 async fn save_together(pages: [(&str, &str); 2]) -> Result<(usize, usize)> {
-    let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(crate::tests::pool().await?);
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
     let before = repo.verification_sources(&program.summary.id).await?.len();
     let context = Context {
-        database: pool.clone().into(),
+        database: db.clone(),
         program_id: program.summary.id.clone(),
         topic: program.summary.goal.clone(),
         web: web(false),
         searched: Default::default(),
     };
-    let library = crate::source_library::LearningSourceLibraryRepository::new(Database::from(pool));
+    let library = crate::source_library::LearningSourceLibraryRepository::new(db.clone());
     let saving = Saving {
         context: &context,
         program_repo: &repo,
@@ -535,14 +755,15 @@ async fn two_lessons_saving_different_pages_leave_two_sources() -> Result<()> {
 #[tokio::test]
 async fn research_rejects_truncated_pages_and_does_not_search_for_judge_failures() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
     let sources = repo.verification_sources(&program.summary.id).await?;
     let references = ReferenceCollection::lexical(&sources)?;
     run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web(true)),
@@ -576,20 +797,21 @@ async fn research_rejects_truncated_pages_and_does_not_search_for_judge_failures
 #[tokio::test]
 async fn an_empty_claim_plan_ends_research_honestly_instead_of_failing() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
     let sources = repo.verification_sources(&program.summary.id).await?;
     let references = ReferenceCollection::lexical(&sources)?;
     run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web(false)),
         async {
             let llm = ScriptedModel {
-                outputs: Mutex::new([json!({"needs":[]}).to_string()].into()),
+                outputs: Mutex::new([crate::references::web_research::needs_answer(json!([])).to_string()].into()),
                 prompts: Mutex::new(vec![]),
             };
             let outcome = expand(&llm, &references, &[gap()], &[], &ClaimChecks::default()).await?;
@@ -618,50 +840,27 @@ async fn an_empty_claim_plan_ends_research_honestly_instead_of_failing() -> Resu
     .await
 }
 
-#[derive(Clone, Default)]
-struct Captured(Arc<Mutex<Vec<u8>>>);
-
-impl std::io::Write for Captured {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
 #[tokio::test]
 async fn a_hint_with_no_terms_besides_its_sites_is_not_searched_and_the_log_says_so() -> Result<()>
 {
-    let captured = Captured::default();
-    let writer = captured.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::TRACE)
-        .with_ansi(false)
-        .with_writer(move || writer.clone())
-        .finish();
-    let _logs = tracing::subscriber::set_default(subscriber);
-    tracing::callsite::rebuild_interest_cache();
+    let logs = lattice_core::shared::testing::logs::capture_logs(tracing::Level::TRACE);
 
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
     let sources = repo.verification_sources(&program.summary.id).await?;
     let references = ReferenceCollection::lexical(&sources)?;
     run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web(false)),
         async {
             let llm = ScriptedModel {
-                outputs: Mutex::new([json!({"needs":[]}).to_string()].into()),
+                outputs: Mutex::new([crate::references::web_research::needs_answer(json!([])).to_string()].into()),
                 prompts: Mutex::new(vec![]),
             };
             let hints = [(0, "site:docs.python.org".to_owned())];
@@ -672,7 +871,7 @@ async fn a_hint_with_no_terms_besides_its_sites_is_not_searched_and_the_log_says
                 "a hint that is not a search adds none"
             );
             assert_eq!(llm.prompts.lock().unwrap().len(), 1, "only the planner ran");
-            let logs = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
+            let logs = logs.text();
             assert!(
                 logs.contains(
                     "A research hint is not a search: no terms are left once any site: operators are lifted out"
@@ -742,6 +941,12 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
+        }
     }
     impl Model {
         async fn respond(&self, prompt: &str) -> Result<String> {
@@ -758,10 +963,10 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
                     "A claim is researched once: one round serves every gap"
                 );
                 return Ok(
-                    json!({"needs":[
+                    crate::references::web_research::needs_answer(json!([
                         {"gap":0,"kind":"web","query":"random assignment confounding official guidance"},
                         {"gap":1,"kind":"web","query":"allocation concealment official guidance"}
-                    ]})
+                    ]))
                     .to_string(),
                 );
             }
@@ -788,7 +993,8 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
     }
 
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
@@ -801,29 +1007,42 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
     let candidate = json!({"blocks":[{"kind":"explanation","body":original},{"kind":"explanation","body":CAPTURE},{"kind":"explanation","body":SECOND_CAPTURE}],"questions":[]});
     let references = ReferenceCollection::lexical(&sources)?;
     let runtimes = crate::embedded_runtime::BuiltinRuntimes::for_tests();
-    let (_, report, owned) = run(
-        Database::from(pool.clone()),
+    let (_, report) = run(
+        db.clone(),
         program.summary.id,
         program.summary.goal,
         Some(Arc::new(ResearchRounds {
             first: web(false),
             second: web_capture(false, "https://example.org/concealment", SECOND_CAPTURE),
         })),
-        super::super::verify_and_repair_with_references(
-            &llm,
-            &runtimes,
-            "{}",
-            &json!({"type":"object"}),
-            candidate.to_string(),
-            &references,
-            (3000, &mut sources.clone()),
-        ),
+        async {
+            let shape = crate::lessons::shape::FixedSchema(json!({"type":"object"}));
+            let mut numbered = sources.clone();
+            let started = super::super::restart(
+                &llm,
+                "{}",
+                &shape,
+                &candidate.to_string(),
+                &references,
+                &mut numbered,
+            )
+            .await?;
+            super::super::verify_and_repair_with_references(
+                &llm,
+                &runtimes,
+                "{}",
+                &shape,
+                candidate.to_string(),
+                &references,
+                (3000, &mut numbered),
+                started,
+            )
+            .await
+        },
     )
     .await?;
     assert!(report.issues.is_empty());
     assert_eq!(report.sources.len(), 3);
-    assert_eq!(owned.len(), sources.len() + 2);
-    assert!(sources.iter().all(|source| owned.contains(&source.id)));
     assert_eq!(*llm.plans.lock().unwrap(), 1);
     let checks = llm.claims.lock().unwrap();
     assert_eq!(
@@ -859,7 +1078,8 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
 #[tokio::test]
 async fn a_planned_official_docs_need_is_searched_with_its_subject_and_site() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
@@ -909,11 +1129,11 @@ async fn a_planned_official_docs_need_is_searched_with_its_subject_and_site() ->
     let llm = ScriptedModel {
         outputs: Mutex::new(
             [
-                json!({"needs":[{"gap":0,"query":"AsyncLocal value flow across await","kind":"official_docs","subject":".NET","site":"learn.microsoft.com"}]}).to_string(),
+                crate::references::web_research::needs_answer(json!([{"gap":0,"query":"AsyncLocal value flow across await","kind":"official_docs","subject":".NET","site":"learn.microsoft.com"}])).to_string(),
                 selection(&[0]),
-                json!({"needs":[{"gap":0,"query":"AsyncLocal flow","kind":"official_docs","subject":".NET","site":"learn.microsoft.com"}]}).to_string(),
+                crate::references::web_research::needs_answer(json!([{"gap":0,"query":"AsyncLocal flow","kind":"official_docs","subject":".NET","site":"learn.microsoft.com"}])).to_string(),
                 selection(&[0]),
-                json!({"needs":[]}).to_string(),
+                crate::references::web_research::needs_answer(json!([])).to_string(),
             ]
             .into(),
         ),
@@ -921,7 +1141,7 @@ async fn a_planned_official_docs_need_is_searched_with_its_subject_and_site() ->
     };
 
     run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id,
         program.summary.goal,
         Some(web.clone()),
@@ -982,7 +1202,7 @@ impl LLMPort for Notation {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         use lattice_core::application::ports::llm_port::CompletionInput;
         let rendered = request
-            .input
+            .input()
             .iter()
             .filter_map(|item| match item {
                 CompletionInput::Message { role, content } => Some(format!("{role}\n{content}")),
@@ -1001,8 +1221,16 @@ impl LLMPort for Notation {
                 message: "It was not sent.".into(),
             });
         }
+        let first = rendered
+            .split("\"id\":\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .unwrap_or("r1")
+            .to_owned();
         self.prompts.lock().unwrap().push(rendered);
-        Ok(CompletionResponse::from_text(selection(&[0])))
+        Ok(CompletionResponse::from_text(
+            json!({"marks":[marked(&first, "Directly relevant primary reference for the requested concept.")]}).to_string(),
+        ))
     }
     fn model_name(&self) -> &str {
         "notation"
@@ -1024,10 +1252,16 @@ impl LLMPort for Notation {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[tokio::test]
-async fn reference_selection_reads_fewer_dense_results_instead_of_refusing() -> Result<()> {
+async fn reference_selection_splits_dense_results_instead_of_refusing() -> Result<()> {
     // Music notation: the estimate reads it as prose, the tokenizer at about
     // twice that.
     let candidates = found(
@@ -1052,24 +1286,21 @@ async fn reference_selection_reads_fewer_dense_results_instead_of_refusing() -> 
         window += 1024;
     }
     let llm = notation(window);
-    let all: Vec<Value> = candidates
-        .iter()
-        .enumerate()
-        .map(|(i, candidate)| shown(i, candidate, &[]))
-        .collect();
-    assert!(
-        !model_call::fits(&llm, &selection_request(topic, query, &[], &all)).await,
-        "counted exactly, every candidate is over the window"
-    );
 
     let selected = select_references(&llm, topic, query, &[], candidates).await?;
 
     assert_eq!(selected[0].url, "https://music.example.edu/harmony/0");
     let prompts = llm.prompts.lock().unwrap();
-    assert_eq!(prompts.len(), 1, "one selection, sent once");
-    let read = prompts[0].matches("\"id\":\"result-").count();
-    assert!(read > 0 && read < 40, "read {read}");
-    assert!(exact_tokens(&prompts[0]) < window);
+    assert!(
+        prompts.len() > 1,
+        "counted exactly, no one request holds every candidate"
+    );
+    let read: usize = prompts
+        .iter()
+        .map(|prompt| prompt.matches("\"id\":\"r").count())
+        .sum();
+    assert_eq!(read, 40, "every candidate is read once");
+    assert!(prompts.iter().all(|prompt| exact_tokens(prompt) < window));
     assert_eq!(
         llm.refusals.load(std::sync::atomic::Ordering::SeqCst),
         0,
@@ -1081,7 +1312,7 @@ async fn reference_selection_reads_fewer_dense_results_instead_of_refusing() -> 
 #[tokio::test]
 async fn reference_selection_leaves_the_gap_open_when_no_dense_result_fits() -> Result<()> {
     // Chemistry formulas: every subscript and arrow is a token of its own.
-    let llm = notation(8192);
+    let llm = notation(16_384);
     let (topic, query) = ("Fermentation", "glucose to ethanol");
     let room = selection_room(&llm, topic, query, &[]);
     let formula = "C₆H₁₂O₆→2C₂H₅OH+2CO₂ ";
@@ -1101,8 +1332,6 @@ async fn reference_selection_leaves_the_gap_open_when_no_dense_result_fits() -> 
 
     assert!(selected.is_empty(), "the gap stays open");
     assert!(llm.prompts.lock().unwrap().is_empty(), "nothing was sent");
-    assert!(llm.counts.load(std::sync::atomic::Ordering::SeqCst) > 0);
-    assert_eq!(llm.refusals.load(std::sync::atomic::Ordering::SeqCst), 0);
     Ok(())
 }
 
@@ -1116,8 +1345,8 @@ struct Failing {
 #[async_trait::async_trait]
 impl LLMPort for Failing {
     async fn complete(&self, _: &CompletionRequest) -> Result<CompletionResponse> {
-        Err(if self.refused {
-            AppError::PromptExceedsWindow {
+        if self.refused {
+            return Err(AppError::PromptExceedsWindow {
                 prompt_tokens: 35_569,
                 window: 32_768,
                 counted_exactly: true,
@@ -1125,13 +1354,11 @@ impl LLMPort for Failing {
                           no room for an answer; the configured context window is 32768. It \
                           was not sent."
                     .into(),
-            }
-        } else {
-            AppError::InvalidInput(
-                "Reference selection returned invalid evidence candidates; no pages were saved."
-                    .into(),
-            )
-        })
+            });
+        }
+        Ok(CompletionResponse::from_text(
+            r#"{"marks":[{"at":"r99","reason":"A page."}]}"#,
+        ))
     }
     fn model_name(&self) -> &str {
         "failing"
@@ -1145,19 +1372,26 @@ impl LLMPort for Failing {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 #[tokio::test]
 async fn a_research_round_that_fails_leaves_the_claims_held_and_the_lesson_going() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
     let sources = repo.verification_sources(&program.summary.id).await?;
     let references = ReferenceCollection::lexical(&sources)?;
     run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web(false)),
@@ -1192,7 +1426,8 @@ async fn a_research_round_that_fails_leaves_the_claims_held_and_the_lesson_going
 #[tokio::test]
 async fn a_round_whose_searches_found_nothing_did_reach_a_search_engine() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
@@ -1201,7 +1436,7 @@ async fn a_round_whose_searches_found_nothing_did_reach_a_search_engine() -> Res
     let empty = web(false);
     empty.0.set_search_results(Vec::new());
     run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(empty),
@@ -1218,7 +1453,10 @@ async fn a_round_whose_searches_found_nothing_did_reach_a_search_engine() -> Res
                 panic!("a search that found nothing adds nothing");
             };
             assert!(!searched.queries.is_empty(), "the search ran");
-            assert!(!searched.unreached, "an answer of nothing was an answer");
+            assert!(
+                searched.unresearched.is_none(),
+                "an answer of nothing was an answer"
+            );
             Ok(())
         },
     )
@@ -1297,7 +1535,8 @@ fn a_round_fetches_at_most_two_pages_for_a_statement_and_twice_the_statements_in
 async fn a_round_fetches_the_selectors_first_choice_and_one_page_on_the_owners_site_and_no_more(
 ) -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
@@ -1319,10 +1558,10 @@ async fn a_round_fetches_the_selectors_first_choice_and_one_page_on_the_owners_s
     let llm = ScriptedModel {
         outputs: Mutex::new(
             [
-                json!({"needs":[
+                crate::references::web_research::needs_answer(json!([
                     {"gap":0,"query":"random assignment confounding","kind":"web"},
                     {"gap":0,"query":"random assignment guidance","kind":"official_docs","subject":"Example","site":"docs.example.org"}
-                ]})
+                ]))
                 .to_string(),
                 selection(&[0, 1, 2]),
                 selection(&[0, 1]),
@@ -1332,7 +1571,7 @@ async fn a_round_fetches_the_selectors_first_choice_and_one_page_on_the_owners_s
         prompts: Mutex::new(vec![]),
     };
     run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web),
@@ -1356,10 +1595,85 @@ async fn a_round_fetches_the_selectors_first_choice_and_one_page_on_the_owners_s
 }
 
 #[tokio::test]
+async fn the_page_a_round_keeps_for_a_statement_is_the_one_the_selector_marked_first() -> Result<()>
+{
+    let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
+    let mut program = crate::tests::fixture();
+    program.summary.status = crate::dto::LearningProgramStatus::Active;
+    repo.create(&program).await?;
+    let sources = repo.verification_sources(&program.summary.id).await?;
+    let references = ReferenceCollection::lexical(&sources)?;
+    let pages = [
+        ("https://docs.example.org/guide", "Random assignment guide"),
+        (
+            "https://docs.example.org/reference",
+            "Random assignment reference",
+        ),
+        ("https://docs.example.org/notes", "Random assignment notes"),
+    ];
+    let web = serving(&pages);
+    for (index, (url, title)) in pages.iter().enumerate() {
+        web.0.set_url_content(
+            *url,
+            FetchUrlContentOutput {
+                url: (*url).into(),
+                title: Some((*title).into()),
+                content: format!("Page {index}. {CAPTURE}"),
+                content_truncated: false,
+                word_count: 170,
+                fetch_time_ms: 1.,
+                content_type: None,
+                from_cache: false,
+                read_via: Default::default(),
+            },
+        );
+    }
+    let llm = ScriptedModel {
+        outputs: Mutex::new(
+            [
+                crate::references::web_research::needs_answer(json!([
+                    {"gap":0,"query":"random assignment confounding","kind":"web"}
+                ]))
+                .to_string(),
+                selection(&[2, 0, 1]),
+            ]
+            .into(),
+        ),
+        prompts: Mutex::new(vec![]),
+    };
+    run(
+        db.clone(),
+        program.summary.id.clone(),
+        program.summary.goal.clone(),
+        Some(web),
+        async {
+            let outcome = expand(&llm, &references, &[gap()], &[], &ClaimChecks::default()).await?;
+            let Expansion::Saved(expanded, searched) = outcome else {
+                panic!("the page is a source");
+            };
+            assert_eq!(searched.sources_added.len(), 1);
+            assert!(expanded
+                .sources
+                .iter()
+                .any(|source| source.excerpt.contains("Page 2.")));
+            assert!(!expanded
+                .sources
+                .iter()
+                .any(|source| source.excerpt.contains("Page 0.")));
+            Ok(())
+        },
+    )
+    .await
+}
+
+#[tokio::test]
 async fn a_fetched_page_that_is_not_a_source_counts_against_the_pages_and_is_not_saved(
 ) -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
@@ -1371,7 +1685,7 @@ async fn a_fetched_page_that_is_not_a_source_counts_against_the_pages_and_is_not
         "Please sign in to continue to the library.",
     );
     run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web),
@@ -1407,7 +1721,8 @@ async fn a_claim_research_round_records_what_it_cost_a_claim_on_each_researched_
     };
     const CLAIM: &str = "Mineral alpha shows property beta under pressure.";
     let pool = crate::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
     let mut program = crate::tests::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
     repo.create(&program).await?;
@@ -1435,11 +1750,13 @@ async fn a_claim_research_round_records_what_it_cost_a_claim_on_each_researched_
     // A planner that finds nothing public to search: the round ends
     // exhausted, and is timed all the same.
     let llm = ScriptedModel {
-        outputs: Mutex::new([json!({"needs":[]}).to_string()].into()),
+        outputs: Mutex::new(
+            [crate::references::web_research::needs_answer(json!([])).to_string()].into(),
+        ),
         prompts: Mutex::new(vec![]),
     };
     let expansion = run(
-        Database::from(pool.clone()),
+        db.clone(),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(web(false)),

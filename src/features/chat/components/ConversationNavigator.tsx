@@ -5,6 +5,7 @@ import { ArrowDownToLine, ChevronDown, ChevronUp, List, PanelRightClose } from '
 
 import { useChatNavigationStore } from '@/features/chat/stores/chatNavigationStore';
 import type { ConversationMessage, OptimisticMessage } from '@/types/conversation';
+import { plainTextOf } from '@/utils/replyPieces';
 
 import '@/features/chat/components/conversation-navigator.css';
 
@@ -26,7 +27,7 @@ function roleLabel(role: string): string {
 
 function preview(message: NavigableMessage): string {
   // Bound the work even for a large answer streaming on every token.
-  const text = message.content.slice(0, 500)
+  const text = plainTextOf(message).slice(0, 500)
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .replace(/[#*`_>~]/g, '')

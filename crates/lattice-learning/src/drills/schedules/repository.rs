@@ -1,9 +1,10 @@
 //! The schedules' statements: the pattern and lesson schedule rows, what is waiting for a grade, what the lessons
 //! stand at, and the records of which lessons fit which material.
 
-use crate::persistence::db;
 use crate::recall::schedule::CardSchedule;
+use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::WriteTx;
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 
 /// The columns of a schedule row, after its key.
@@ -59,31 +60,30 @@ pub(super) async fn schedule_in(
     table: &Table,
     key: (&str, &str),
 ) -> Result<Option<CardSchedule>> {
-    let row = sqlx::query(&format!(
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {SCHEDULE_COLUMNS} FROM {} WHERE ({}) = (?,?)",
         table.name, table.keys
-    ))
+    )))
     .bind(key.0)
     .bind(key.1)
     .fetch_optional(&mut *connection)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok(row.as_ref().map(schedule_of))
 }
 
 /// Writes a reviewed schedule at `key`, replacing the one there.
 pub(super) async fn write_schedule_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     table: &Table,
     key: (&str, &str),
     memory: &Memory,
     schedule: &CardSchedule,
 ) -> Result<()> {
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO {name}({keys},{SCHEDULE_COLUMNS}) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT({keys}) DO UPDATE SET stability=excluded.stability,difficulty=excluded.difficulty,last_reviewed_at=excluded.last_reviewed_at,due_at=excluded.due_at,interval_days=excluded.interval_days,review_count=excluded.review_count,lapses=excluded.lapses",
         name = table.name,
         keys = table.keys
-    ))
+    )))
     .bind(key.0)
     .bind(key.1)
     .bind(memory.stability)
@@ -93,10 +93,10 @@ pub(super) async fn write_schedule_in(
     .bind(schedule.interval_days)
     .bind(schedule.review_count)
     .bind(schedule.lapses)
-    .execute(&mut *connection)
+    .execute(&mut **tx)
     .await
     .map(drop)
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// The patterns of a material that have a schedule, as (pattern id, due at), by pattern id.
@@ -110,7 +110,7 @@ pub(super) async fn scheduled_patterns_in(
     .bind(material)
     .fetch_all(&mut *connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// The patterns planted by a drill of the material that is ready and built from a lesson, or whose attempt is submitted
@@ -127,7 +127,7 @@ pub(super) async fn held_patterns_in(
     .bind(language)
     .fetch_all(&mut *connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// The course's lessons other than replaced or skipped ones, in course order, as (lesson id, completed, current,
@@ -142,7 +142,7 @@ pub(super) async fn lesson_rows_in(
     .bind(program_id)
     .fetch_all(&mut *connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// The lessons of the course a drill built from them is ready for, or whose attempt is submitted and not yet graded.
@@ -156,7 +156,7 @@ pub(super) async fn held_lessons_in(
     .bind(program_id)
     .fetch_all(&mut *connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// Whether the course drills the lesson: it is one of the course's, and not replaced or skipped.
@@ -172,7 +172,7 @@ pub(crate) async fn drills_lesson_in(
     .bind(lesson_id)
     .fetch_one(connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// What is recorded about whether the lesson fits the material, as (fits, basis).
@@ -190,7 +190,7 @@ pub(super) async fn recorded_fit_in(
     .bind(material)
     .fetch_optional(&mut *connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// The lesson's module title, lesson title and objective, when it is one of the course's.
@@ -206,7 +206,7 @@ pub(super) async fn lesson_facts_in(
     .bind(program_id)
     .fetch_optional(&mut *connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// Whether the code fit check turned the lesson down on `basis`.
@@ -224,7 +224,7 @@ pub(super) async fn code_turned_down_in(
     .bind(basis)
     .fetch_one(&mut *connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// The lesson's blocks as (ordinal, kind, title, body, source ids as stored), in order.
@@ -238,7 +238,7 @@ pub(super) async fn blocks_in(
     .bind(lesson_id)
     .fetch_all(&mut *connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// The active version of each of the course's sources that is a source, by version id.
@@ -252,13 +252,13 @@ pub(super) async fn active_source_versions_in(
     .bind(program_id)
     .fetch_all(&mut *connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// Records whether the lesson fits `material` (`code` or `passage`), and the basis the decision rests on, replacing an
 /// earlier record; nothing, when the lesson is no longer one of the course's.
 pub(super) async fn record_fit_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     lesson_id: &str,
     material: &str,
@@ -273,8 +273,8 @@ pub(super) async fn record_fit_in(
         .bind(i64::from(fits))
         .bind(basis)
         .bind(now)
-        .execute(&mut *connection)
+        .execute(&mut **tx)
         .await
         .map(drop)
-        .map_err(db)
+        .map_err(AppError::from)
 }

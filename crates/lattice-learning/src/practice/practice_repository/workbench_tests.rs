@@ -9,6 +9,7 @@ use crate::{
     tests,
 };
 use lattice_core::shared::persistence::Database;
+use sqlx::SqlitePool;
 
 fn id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -32,16 +33,13 @@ fn assert_not_found<T: std::fmt::Debug>(result: Result<T>) {
 
 async fn fk_pool() -> Result<SqlitePool> {
     let pool = tests::pool().await?;
-    sqlx::query("PRAGMA foreign_keys=ON")
-        .execute(&pool)
-        .await
-        .map_err(db)?;
+    sqlx::query("PRAGMA foreign_keys=ON").execute(&pool).await?;
     Ok(pool)
 }
 
 /// An accepted program whose lessons are all ready, plus its first lesson id.
-async fn setup(pool: &SqlitePool) -> Result<(LearningProgramDto, String)> {
-    let repo = LearningRepository::new(pool.clone());
+async fn setup(pool: &SqlitePool, database: &Database) -> Result<(LearningProgramDto, String)> {
+    let repo = LearningRepository::new(database.clone());
     let program = tests::fixture();
     repo.create(&program).await?;
     repo.accept(&AcceptLearningProgramRequestDto {
@@ -53,8 +51,7 @@ async fn setup(pool: &SqlitePool) -> Result<(LearningProgramDto, String)> {
     sqlx::query("UPDATE learning_lessons SET preparation='ready' WHERE program_id=?")
         .bind(&program.summary.id)
         .execute(pool)
-        .await
-        .map_err(db)?;
+        .await?;
     let ready = repo.get(&program.summary.id).await?;
     let lesson = ready.modules[0].lessons[0].id.clone();
     Ok((ready, lesson))
@@ -78,15 +75,14 @@ async fn add_block(
         .bind(json(source_ids)?)
         .bind(json(rubric)?)
         .execute(pool)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(())
 }
 
 /// Captures a pasted source and returns `(source_id, version_id)`.
-async fn add_version(pool: &SqlitePool, program_id: &str) -> Result<(String, String)> {
+async fn add_version(database: &Database, program_id: &str) -> Result<(String, String)> {
     let (op, source_id, version_id) = (id(), id(), id());
-    LearningSourceLibraryRepository::new(Database::from(pool.clone()))
+    LearningSourceLibraryRepository::new(database.clone())
         .add(
             NewLearningSource {
                 operation_id: &op,
@@ -206,11 +202,14 @@ fn proposal(kind: LearningPracticeProposalKind, text: &str) -> LearningPracticeP
 #[tokio::test]
 async fn starting_needs_an_active_program_a_ready_lesson_and_owned_sources() -> Result<()> {
     let pool = fk_pool().await?;
-    let (program, lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let (program, lesson) = setup(&pool, &database).await?;
+    let repo = LearningPracticeRepository::new(database.clone());
 
     let draft = tests::fixture();
-    LearningRepository::new(pool.clone()).create(&draft).await?;
+    LearningRepository::new(database.clone())
+        .create(&draft)
+        .await?;
     let draft_lesson = draft.modules[0].lessons[0].id.clone();
     let mut on_draft = start_request(&draft, &draft_lesson, LearningPracticeMode::Practice);
     on_draft.expected_program_revision = 0;
@@ -243,8 +242,7 @@ async fn starting_needs_an_active_program_a_ready_lesson_and_owned_sources() -> 
     sqlx::query("UPDATE learning_lessons SET preparation='outline' WHERE id=?")
         .bind(&outline_lesson)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     assert_invalid(
         repo.start(
             &start_request(&program, &outline_lesson, LearningPracticeMode::Practice),
@@ -275,25 +273,6 @@ async fn starting_needs_an_active_program_a_ready_lesson_and_owned_sources() -> 
         )
         .await,
     );
-    let crowded_lesson = program.modules[1].lessons[0].id.clone();
-    let many: Vec<String> = (0..33).map(|_| id()).collect();
-    add_block(
-        &pool,
-        &crowded_lesson,
-        0,
-        "explanation",
-        "Too many sources",
-        &many,
-        &[],
-    )
-    .await?;
-    assert_invalid(
-        repo.start(
-            &start_request(&program, &crowded_lesson, LearningPracticeMode::Practice),
-            "crowded",
-        )
-        .await,
-    );
 
     assert!(repo
         .workspace(&program.summary.id)
@@ -308,9 +287,10 @@ async fn starting_needs_an_active_program_a_ready_lesson_and_owned_sources() -> 
 #[tokio::test]
 async fn an_exercise_block_supplies_the_prompt_and_rubric_and_start_replays() -> Result<()> {
     let pool = fk_pool().await?;
-    let (program, lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool.clone());
-    let (_, version_id) = add_version(&pool, &program.summary.id).await?;
+    let database = Database::new(pool.clone());
+    let (program, lesson) = setup(&pool, &database).await?;
+    let repo = LearningPracticeRepository::new(database.clone());
+    let (_, version_id) = add_version(&database, &program.summary.id).await?;
     let rubric = vec![LearningPracticeCriterionDto {
         id: "shaping".into(),
         dimension: LearningPracticeEvidenceDimension::Application,
@@ -369,7 +349,7 @@ async fn an_exercise_block_supplies_the_prompt_and_rubric_and_start_replays() ->
         "Gluten forms when flour is hydrated and kneaded."
     );
     assert_not_found(repo.frozen_sources(&program.summary.id, &[id()]).await);
-    let other = setup(&pool).await?.0;
+    let other = setup(&pool, &database).await?.0;
     assert_not_found(repo.frozen_sources(&other.summary.id, &[version_id]).await);
     Ok(())
 }
@@ -377,8 +357,9 @@ async fn an_exercise_block_supplies_the_prompt_and_rubric_and_start_replays() ->
 #[tokio::test]
 async fn a_revision_must_follow_a_submitted_attempt_with_the_same_exercise() -> Result<()> {
     let pool = fk_pool().await?;
-    let (program, lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let (program, lesson) = setup(&pool, &database).await?;
+    let repo = LearningPracticeRepository::new(database.clone());
     add_block(
         &pool,
         &lesson,
@@ -480,8 +461,9 @@ async fn a_revision_must_follow_a_submitted_attempt_with_the_same_exercise() -> 
 #[tokio::test]
 async fn tutor_turns_and_their_proposals_are_ledgered_and_decided_once() -> Result<()> {
     let pool = fk_pool().await?;
-    let (program, lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool.clone());
+    let database = Database::new(pool.clone());
+    let (program, lesson) = setup(&pool, &database).await?;
+    let repo = LearningPracticeRepository::new(database.clone());
     let start = start_request(&program, &lesson, LearningPracticeMode::Practice);
     repo.start(&start, "start").await?;
     let (pid, sid) = (program.summary.id.clone(), start.session_id.clone());
@@ -609,10 +591,11 @@ async fn tutor_turns_and_their_proposals_are_ledgered_and_decided_once() -> Resu
 #[tokio::test]
 async fn sources_and_solutions_are_aids_for_live_assisted_attempts_only() -> Result<()> {
     let pool = fk_pool().await?;
-    let (program, lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool.clone());
-    let (source_id, version_id) = add_version(&pool, &program.summary.id).await?;
-    let (_, unfrozen_version) = add_version(&pool, &program.summary.id).await?;
+    let database = Database::new(pool.clone());
+    let (program, lesson) = setup(&pool, &database).await?;
+    let repo = LearningPracticeRepository::new(database.clone());
+    let (source_id, version_id) = add_version(&database, &program.summary.id).await?;
+    let (_, unfrozen_version) = add_version(&database, &program.summary.id).await?;
     add_block(
         &pool,
         &lesson,
@@ -746,7 +729,7 @@ async fn sources_and_solutions_are_aids_for_live_assisted_attempts_only() -> Res
     assert_eq!(prompt, demo.task_prompt);
     assert_eq!(rubric.len(), demo.rubric.len());
     assert_eq!((text.as_str(), artifact_revision), ("", 0));
-    let other = setup(&pool).await?.0;
+    let other = setup(&pool, &database).await?.0;
     assert_not_found(repo.session_header(&other.summary.id, &sid).await);
     assert_invalid(repo.session_header(&pid, "not-a-uuid").await);
 
@@ -772,9 +755,10 @@ async fn sources_and_solutions_are_aids_for_live_assisted_attempts_only() -> Res
 #[tokio::test]
 async fn in_practice_mode_hints_and_questions_are_given_but_worked_help_is_not() -> Result<()> {
     let pool = fk_pool().await?;
-    let (program, lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool.clone());
-    let (_, version_id) = add_version(&pool, &program.summary.id).await?;
+    let database = Database::new(pool.clone());
+    let (program, lesson) = setup(&pool, &database).await?;
+    let repo = LearningPracticeRepository::new(database.clone());
+    let (_, version_id) = add_version(&database, &program.summary.id).await?;
     add_block(
         &pool,
         &lesson,

@@ -66,7 +66,6 @@ fn initialize_security_layer() -> Arc<crate::security::SecurityContext> {
 /// AI-dependent features return helpful error messages guiding users to download models.
 async fn create_container(
     database: Database,
-    db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
     _security_context: Arc<crate::security::SecurityContext>,
     data_dir: PathBuf,
     ollama_endpoint: String,
@@ -80,10 +79,9 @@ async fn create_container(
 
     // Create container (always succeeds, AI optional). Builder-style
     // `with_app_handle` attaches the Tauri AppHandle so the sidecar
-    // dispatch path can spawn `llama-server` via tauri-plugin-shell.
+    // dispatch path can reach the sidecar registry it manages.
     Container::new(
         database,
-        db_conn,
         Some(app_handle.clone()),
         &ollama_endpoint,
         &ollama_model,
@@ -195,7 +193,6 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
 
         let container = create_container(
             conn.database().clone(),
-            Arc::new(conn),
             security_context,
             app_dir.clone(),
             ollama_endpoint,
@@ -235,7 +232,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
         dyn crate::features::download::download_repository::DownloadRepository,
     > = Arc::new(
         crate::features::download::download_repository::SqliteDownloadRepository::new(
-            container.db_conn().clone(),
+            container.database().clone(),
         ),
     );
     // IMPORTANT: Use the same DownloadManager instance the container/use-cases use.

@@ -23,6 +23,7 @@ vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({
   useSettingsQuery: () => ({ data: h.settings }),
   useUpdateSettingsMutation: () => ({ mutateAsync: h.updateSettings }),
 }));
+vi.mock('@/features/model/hooks/useActiveModels', () => ({ useActiveModels: () => ({ activeModels: null }) }));
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => h.models }));
 vi.mock('@/stores/toastStore', () => ({ toast: h.toast }));
 

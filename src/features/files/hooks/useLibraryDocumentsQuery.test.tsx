@@ -7,7 +7,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import VaultAPI from '@/lib/api';
 import type { DocumentMetadata } from '@/types/fileBrowser';
 
-import { LIBRARY_DOCUMENTS_QUERY_KEY, useLibraryDocumentsQuery } from './useLibraryDocumentsQuery';
+import { fetchLibraryDocuments, LIBRARY_DOCUMENTS_QUERY_KEY, useLibraryDocumentsQuery } from './useLibraryDocumentsQuery';
 
 vi.mock('@/lib/api', () => ({ default: { listAllDocuments: vi.fn() } }));
 vi.mock('@/features/files/hooks/useClustersQuery', () => ({ useClustersQuery: () => ({ data: [] }) }));
@@ -18,7 +18,14 @@ const imported: DocumentMetadata = {
   id: 'imported', fileName: 'TR83ICSI.pdf', filePath: '/library/TR83ICSI.pdf',
   fileType: 'pdf', category: 'document', language: 'en',
   modifiedAt: '2026-09-16', indexedAt: '2026-09-16', wordCount: 100,
+  web: false, typeBucket: 'PDF',
 };
+
+it('asks for every document, with no limit', async () => {
+  vi.mocked(VaultAPI.listAllDocuments).mockResolvedValue({ ok: true, data: [imported] });
+  await expect(fetchLibraryDocuments()).resolves.toEqual([imported]);
+  expect(VaultAPI.listAllDocuments).toHaveBeenCalledWith();
+});
 
 it('shows a completed import when returning to a still-fresh library cache', async () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

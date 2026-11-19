@@ -1,10 +1,10 @@
 //! Why a model-graded answer earned what it did (docs/design/2026-10-23-
 //! quizzes-and-tests.md, section 4.3a), checked in code before anyone sees it.
 //!
-//! The grader returns, per rubric criterion, a verdict, the points, what was
+//! The grader returns, per rubric criterion, a verdict, what was
 //! missing, the learner's own words it rests on, what full credit includes and
-//! a source quote. Quotes must be verbatim; points must agree with the
-//! verdict; and a grade that loses points without saying why is not a grade:
+//! a source quote. Quotes must be verbatim; the app computes the points from
+//! the verdict; and a grade that loses points without saying why is not a grade:
 //! it is a grader failure, which reads "Couldn't grade yet" and never "Not
 //! correct".
 use crate::assessment_engine::LearningRubricCriterion;
@@ -17,6 +17,7 @@ use serde::Deserialize;
 
 /// A grader's verdict on one criterion, before any check.
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[cfg_attr(any(test, feature = "test-support"), derive(serde::Serialize))]
 #[serde(rename_all = "snake_case")]
 pub enum GraderVerdict {
     Met,
@@ -24,9 +25,12 @@ pub enum GraderVerdict {
     Missed,
 }
 
-/// One criterion as the grader returned it. Field order in the schema puts
-/// the reasoning first and the points last.
+/// One criterion as the grader returned it.
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(
+    any(test, feature = "test-support"),
+    derive(serde::Serialize, PartialEq)
+)]
 #[serde(rename_all = "camelCase")]
 pub struct GraderCriterion {
     pub criterion_id: String,
@@ -39,7 +43,6 @@ pub struct GraderCriterion {
     #[serde(default)]
     pub source_quote: Option<String>,
     pub verdict: GraderVerdict,
-    pub points: f64,
 }
 
 /// One item as the grader returned it.
@@ -123,12 +126,9 @@ pub fn check(
             return Checked::Unexplained(UNEXPLAINED.into());
         };
         let max = f64::from(criterion.max_points);
-        // The verdict is trusted over the points; points that disagree with
-        // it are recomputed, never shown as returned.
         let points = match graded.verdict {
             GraderVerdict::Met => max,
             GraderVerdict::Missed => 0.0,
-            GraderVerdict::PartlyMet if graded.points > 0.0 && graded.points < max => graded.points,
             GraderVerdict::PartlyMet => max / 2.0,
         };
         let missing = graded.what_was_missing.trim().to_string();

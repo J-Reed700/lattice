@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { EntryEditor } from '@/features/journal/components/EntryEditor';
-import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
+import { useReaderStore } from '@/features/reading/stores/readerStore';
 
 
 vi.mock('@/components/TiptapEditor', () => ({
@@ -19,7 +19,6 @@ vi.mock('@/features/journal/components/EntryHeader', () => ({ EntryHeader: () =>
 vi.mock('@/features/journal/components/EntryFromConversation', () => ({ EntryFromConversation: () => <div>Conversation panel</div> }));
 vi.mock('@/features/journal/components/EntryHighlightsStrip', () => ({
   EntryHighlightsStrip: () => <div>Highlights panel</div>,
-  HIGHLIGHT_CHAR_LIMIT: 500,
 }));
 vi.mock('@/features/journal/components/EntryActionRail', () => ({ EntryActionRail: () => <div>Actions</div> }));
 vi.mock('@/features/reading/components/FilePreviewModal', () => ({
@@ -66,7 +65,7 @@ function renderEditor(sources = [source]) {
 
 describe('EntryEditor source citations', () => {
   beforeEach(() => {
-    useChatReaderStore.setState({ session: null });
+    useReaderStore.setState({ session: null });
   });
 
   it('names the writing surface so it can be found and announced', () => {

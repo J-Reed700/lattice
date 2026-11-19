@@ -4,16 +4,16 @@ use super::claim_ledger::{self, ClaimLedger, StepKind};
 use super::passes;
 use super::readings::Readers;
 use super::repair::Cited;
-use super::repair_request::{repair_context, repair_fingerprint, PendingRepair};
+use super::repair_request::{repair_context, repair_fingerprint, PendingRepair, Restart};
 use super::round::{self, Audit, Researched, Review, Settled, Unsettled, Verdict};
 use super::*;
+use crate::lessons::shape::{LessonSchema, LessonShape, Phase, ShapePolicy};
+use crate::lessons::trace::{self, Cause, Stage};
 use async_trait::async_trait;
 use lattice_core::domain::learning::acceptance::{
     AcceptancePolicy, Outcome, Position, StandardPolicy, Step, Taken,
 };
-use lattice_core::domain::learning::claim_review::{
-    ClaimEvent, ClaimId, ClaimState, StopReason, UnverifiedReason,
-};
+use lattice_core::domain::learning::claim_review::{ClaimEvent, ClaimId, ClaimState, StopReason};
 
 /// [`verify_and_repair_with_references`] over lexical references, for tests.
 #[cfg(test)]
@@ -26,32 +26,35 @@ pub(crate) async fn verify_and_repair(
     output_tokens: usize,
 ) -> Result<(String, LessonVerificationReport)> {
     let references = ReferenceCollection::lexical(sources)?;
-    let (raw, report, _) = verify_and_repair_with_references(
+    let shape = crate::lessons::shape::FixedSchema(schema.clone());
+    let mut numbered = sources.to_vec();
+    let started = restart(llm, prompt, &shape, &raw, &references, &mut numbered).await?;
+    verify_and_repair_with_references(
         llm,
         &BuiltinRuntimes::for_tests(),
         prompt,
-        schema,
+        &shape,
         raw,
         &references,
-        (output_tokens, &mut sources.to_vec()),
+        (output_tokens, &mut numbered),
+        started,
     )
-    .await?;
-    Ok((raw, report))
+    .await
 }
 
 /// The checkpoint holding the sources this lesson's verification numbered to
 /// cite them, by version id, in the order it numbered them.
-const NUMBERED_KEY: &str = "lesson-numbered-sources-v1";
+const NUMBERED_KEY: Protocol = lattice_core::protocol!("lesson-numbered-sources", 1);
 
 /// `numbered` with the sources an earlier run of this preparation numbered
 /// to cite them appended, in their order, so the draft's source indices name
 /// the same sources after a restart. A source no longer in `references` is
 /// left out.
-async fn renumber(
+pub(super) async fn renumber(
     numbered: &mut Vec<LearningSourceDto>,
     references: &ReferenceCollection<'_>,
 ) -> Result<()> {
-    let Some(saved) = crate::lesson_drafts::checkpoint(NUMBERED_KEY)
+    let Some(saved) = crate::lesson_drafts::checkpoint(NUMBERED_KEY.as_str())
         .await?
         .and_then(|value| serde_json::from_value::<Vec<String>>(value).ok())
     else {
@@ -78,37 +81,63 @@ async fn renumber(
 /// author to rewrite valid content.
 ///
 /// `numbered` is the lesson's numbered sources, what its `sourceIndex`es
-/// name; the lesson is parsed against it and `writer_schema`'s indices are
-/// widened to it.
+/// name; the lesson is parsed against it and the kept schema's indices are
+/// widened to it. Verification holds the lesson to what it is kept with
+/// (`Phase::Kept`), so it builds that schema from `shape` itself.
 ///
-/// Gives, with the lesson and its report, the ids of the program's references
-/// as they stand once verification is done: those of the collection research
-/// grew when it saved any, else of `references`.
+/// `restart` is what [`restart`] made of an earlier attempt: the writer's
+/// source count and the repair it saved.
 pub(crate) async fn verify_and_repair_with_references(
     llm: &dyn LLMPort,
     runtimes: &BuiltinRuntimes,
     prompt: &str,
-    writer_schema: &Value,
+    shape: &dyn ShapePolicy,
     raw: String,
     references: &ReferenceCollection<'_>,
     (output_tokens, numbered): (usize, &mut Vec<LearningSourceDto>),
-) -> Result<(String, LessonVerificationReport, HashSet<String>)> {
+    restart: Restart,
+) -> Result<(String, LessonVerificationReport)> {
     let policy = StandardPolicy::new();
+    let mut review = open(
+        llm,
+        runtimes,
+        prompt,
+        shape,
+        raw,
+        references,
+        (output_tokens, numbered),
+        restart,
+    )
+    .await?;
+    round::run(&mut review, &policy).await
+}
+
+/// The review of `raw`, held to the kept lesson's schema: the one choice of
+/// the promise verification holds a lesson to.
+async fn open<'a, 'r>(
+    llm: &'a dyn LLMPort,
+    runtimes: &'a BuiltinRuntimes,
+    prompt: &'a str,
+    shape: &'a dyn ShapePolicy,
+    raw: String,
+    references: &'a ReferenceCollection<'r>,
+    (output_tokens, numbered): (usize, &'a mut Vec<LearningSourceDto>),
+    restart: Restart,
+) -> Result<PreparationReview<'a, 'r>> {
     let readers = Readers::standard();
-    let writers = numbered.len();
-    renumber(numbered, references).await?;
-    let mut numbered_schema = writer_schema.clone();
-    repair::number_sources(&mut numbered_schema, numbered.len());
+    let schema = shape.schema(Phase::Kept, numbered.len());
     let ledger = ClaimLedger::open(llm, &raw).await?;
-    let mut review = PreparationReview {
+    Ok(PreparationReview {
         llm,
         runtimes,
         prompt,
         output_tokens,
         references,
         numbered,
-        writers,
-        schema: numbered_schema,
+        writers: restart.writers,
+        saved: restart.saved,
+        shape,
+        schema,
         readers,
         ledger,
         raw,
@@ -120,15 +149,41 @@ pub(crate) async fn verify_and_repair_with_references(
         extraction: None,
         pass: None,
         report: None,
-    };
-    let (raw, report) = round::run(&mut review, &policy).await?;
-    let held = review.expanded.as_ref().unwrap_or(review.references);
-    let owned = held
-        .sources
-        .iter()
-        .map(|source| source.id.clone())
-        .collect();
-    Ok((raw, report, owned))
+    })
+}
+
+/// The step that settles the sections after cuts, on a review opened as
+/// `verify_and_repair_with_references` opens it, with each of `going` sent
+/// out first: whether the lesson was settled.
+#[cfg(test)]
+pub(crate) async fn settle_after_cuts(
+    llm: &dyn LLMPort,
+    prompt: &str,
+    shape: &dyn ShapePolicy,
+    raw: String,
+    references: &ReferenceCollection<'_>,
+    going: &[(usize, &str)],
+) -> Result<bool> {
+    let runtimes = BuiltinRuntimes::for_tests();
+    let mut numbered = Vec::new();
+    let mut review = open(
+        llm,
+        &runtimes,
+        prompt,
+        shape,
+        raw,
+        references,
+        (4_000, &mut numbered),
+        Restart {
+            writers: 0,
+            saved: None,
+        },
+    )
+    .await?;
+    for (unit, label) in going {
+        review.ledger.cuts.go(*unit, (*label).to_owned());
+    }
+    Ok(matches!(review.settle().await?, Settled::Done))
 }
 
 /// The preparation job's review of a lesson (acceptance design §2.7): the
@@ -143,8 +198,11 @@ struct PreparationReview<'a, 'r> {
     numbered: &'a mut Vec<LearningSourceDto>,
     /// How many of `numbered` the writer was given.
     writers: usize,
-    /// The writer's schema, its source indices widened to `numbered`.
-    schema: Value,
+    /// The repair an earlier attempt saved for this draft, until it resumes.
+    saved: Option<PendingRepair>,
+    shape: &'a dyn ShapePolicy,
+    /// The kept schema, its source indices widened to `numbered`.
+    schema: LessonSchema,
     readers: Readers,
     ledger: ClaimLedger,
     raw: String,
@@ -153,7 +211,7 @@ struct PreparationReview<'a, 'r> {
     checks: ClaimChecks,
     verified: Option<String>,
     /// Citations this job repaired to where a claim's support was found.
-    cited_where_supported: HashSet<(usize, String)>,
+    cited_where_supported: HashSet<(usize, String, String)>,
     /// The draft as this round parsed it, and what its extraction,
     /// identification and readings left.
     candidate: Value,
@@ -180,21 +238,26 @@ impl Review for PreparationReview<'_, '_> {
         self.ledger.sync().await?;
         let active = self.expanded.as_ref().unwrap_or(self.references);
         self.checks.settled = self.ledger.user_evidence(active);
-        self.checks.rewrites = self.ledger.rewrites(policy);
+        self.checks.rewrites = self.ledger.rewrites();
         self.checks.removed = self.ledger.cuts.units();
         if review_pass::apply_user_changes(&mut self.ledger, &mut self.candidate).await? {
-            self.raw = self.candidate.to_string();
+            let edited = self.candidate.to_string();
+            trace::changed(Stage::UserEdit, &Cause::none(), &self.raw, &edited);
+            self.raw = edited;
+            self.saved = None;
             crate::lesson_drafts::save(&self.raw).await?;
             // The user's text gets the teaching review a rewrite gets (§6.2).
+            let protected =
+                repair::teaching_protected(&mut self.ledger, policy, &self.candidate, &[]).await?;
             self.raw = crate::teaching::review_lesson(
                 self.llm,
                 crate::teaching::LESSON_REPAIR_SYSTEM,
                 self.prompt,
-                &self.schema,
+                LessonShape::new(&self.schema, self.shape),
                 std::mem::take(&mut self.raw),
                 self.output_tokens,
-                active,
-                &repair::Protected::of_ledger(&self.ledger, &[]),
+                (active, &*self.numbered),
+                &protected,
             )
             .await?;
             self.candidate = crate::generation::parse_json(&self.raw)?;
@@ -204,32 +267,32 @@ impl Review for PreparationReview<'_, '_> {
 
     async fn resume(&mut self, policy: &dyn AcceptancePolicy) -> Result<bool> {
         let active = self.expanded.as_ref().unwrap_or(self.references);
-        let saved = crate::lesson_drafts::pending_repair(&self.candidate.to_string())
-            .await?
-            .and_then(|raw| serde_json::from_str::<PendingRepair>(&raw).ok())
-            .filter(|saved| {
-                saved.matches(self.llm, self.prompt, &self.schema, &self.candidate, active)
-            });
-        let left = saved.map(|saved| still_repairable(&self.ledger, policy, saved.context));
-        if matches!(left, Some(None)) {
+        let Some(saved) = self.saved.take() else {
+            return Ok(false);
+        };
+        let Some(context) = still_repairable(&self.ledger, policy, saved.context) else {
             // Everything the saved repair was for was resolved meanwhile.
             crate::lesson_drafts::save_repair(&self.raw, None).await?;
-        }
-        let Some(context) = left.flatten() else {
             return Ok(false);
         };
         crate::lesson_progress::phase(
             crate::lesson_progress::Phase::Repair,
             "Resuming the saved evidence-based repair",
         );
+        trace::decided(
+            Stage::ClaimRepair,
+            "lesson",
+            "resuming a saved repair",
+            "the repair an earlier attempt saved for this draft still has claims to repair",
+        );
         self.raw = crate::lesson_progress::checks(repair::candidate(
             self.llm,
             policy,
             self.prompt,
-            &self.schema,
+            LessonShape::new(&self.schema, self.shape),
             context,
             self.output_tokens,
-            active,
+            (active, &*self.numbered),
             &mut self.ledger,
         ))
         .await?;
@@ -253,24 +316,6 @@ impl Review for PreparationReview<'_, '_> {
             passes::extract(self.llm, self.runtimes, &self.candidate, &self.checks).await?;
         self.extraction = Some(extraction);
         Ok(())
-    }
-
-    async fn take_back(&mut self, policy: &dyn AcceptancePolicy) -> Result<Option<String>> {
-        // A rewrite that wrote a statement is taken back before the pass
-        // records anything, as a flow repair is after the readings (acceptance
-        // design §2.6).
-        let extraction = self
-            .extraction
-            .as_ref()
-            .ok_or_else(|| out_of_order("extraction"))?;
-        let statements = passes::statements(extraction, &self.checks);
-        self.ledger
-            .unwrite(
-                policy,
-                &self.candidate,
-                (statements.as_slice(), extraction.executions.as_slice()),
-            )
-            .await
     }
 
     async fn identify(&mut self, policy: &dyn AcceptancePolicy) -> Result<()> {
@@ -334,6 +379,7 @@ impl Review for PreparationReview<'_, '_> {
     }
 
     async fn restore(&mut self, draft: String) -> Result<()> {
+        trace::changed(Stage::FlowRepair, &Cause::none(), &self.raw, &draft);
         self.raw = draft;
         crate::lesson_drafts::save(&self.raw).await
     }
@@ -360,15 +406,31 @@ impl Review for PreparationReview<'_, '_> {
                 self.expanded = Some(*additional);
                 (searched, true)
             }
-            research::Expansion::Unchanged(searched) if searched.unreached => {
+            research::Expansion::Unchanged(research::Searched {
+                unresearched: Some(cause),
+                ..
+            }) => {
                 tracing::info!(
-                    "claim.state: research reached nothing; the claims stay at their node"
+                    ?cause,
+                    "claim.state: research could not run; the claims stay at their node"
                 );
-                return Ok(Researched::Unreached);
+                trace::decided(
+                    Stage::Research,
+                    "research round",
+                    "could not run",
+                    &format!("{cause:?}; the claims stay at their node"),
+                );
+                return Ok(Researched::Unresearched(cause));
             }
             research::Expansion::Unchanged(searched) => (searched, false),
             research::Expansion::Exhausted(exhausted, searched) => {
                 tracing::info!(%exhausted, "claim.state: research found nothing new for these claims");
+                trace::decided(
+                    Stage::Research,
+                    "research round",
+                    "found nothing new",
+                    &exhausted.to_string(),
+                );
                 (searched, false)
             }
         };
@@ -431,12 +493,12 @@ impl Review for PreparationReview<'_, '_> {
                 .iter()
                 .find(|(read, _)| read == id)
                 .and_then(|(_, walk)| walk.steps.first())
-                .map(|step| &step.read.finding)
+                .map(|step| step.read.finding())
                 .or_else(|| {
                     hinted
                         .iter()
                         .find(|(read, _)| read == id)
-                        .map(|(_, read)| &read.finding)
+                        .map(|(_, read)| read.finding())
                 });
             finding.map_or(0, |finding| {
                 finding
@@ -490,9 +552,11 @@ impl Review for PreparationReview<'_, '_> {
                 .skip(self.writers)
                 .map(|source| source.id.as_str())
                 .collect();
-            crate::lesson_drafts::record_checkpoint(NUMBERED_KEY, json!(added)).await?;
-            repair::number_sources(&mut self.schema, self.numbered.len());
-            self.raw = self.candidate.to_string();
+            crate::lesson_drafts::record_checkpoint(NUMBERED_KEY.as_str(), json!(added)).await?;
+            self.schema = self.schema.numbered(self.shape, self.numbered.len());
+            let cited = self.candidate.to_string();
+            trace::changed(Stage::ClaimRepair, &Cause::none(), &self.raw, &cited);
+            self.raw = cited;
             crate::lesson_drafts::save(&self.raw).await?;
         }
         Ok(recited)
@@ -503,7 +567,9 @@ impl Review for PreparationReview<'_, '_> {
         if !uncite(&mut self.ledger, policy, &mut self.candidate, active).await? {
             return Ok(false);
         }
-        self.raw = self.candidate.to_string();
+        let uncited = self.candidate.to_string();
+        trace::changed(Stage::ClaimRepair, &Cause::none(), &self.raw, &uncited);
+        self.raw = uncited;
         crate::lesson_drafts::save(&self.raw).await?;
         Ok(true)
     }
@@ -539,6 +605,19 @@ impl Review for PreparationReview<'_, '_> {
                 "Correcting defects found by evidence checks"
             },
         );
+        trace::decided(
+            Stage::ClaimRepair,
+            "lesson",
+            if escalated {
+                "repair escalated to a cut"
+            } else {
+                "repair started"
+            },
+            &format!(
+                "claims {:?}",
+                targets.iter().map(|id| id.0.as_str()).collect::<Vec<_>>()
+            ),
+        );
         let mut context = repair_context(
             self.prompt,
             &self.candidate,
@@ -547,6 +626,9 @@ impl Review for PreparationReview<'_, '_> {
             targets,
             active,
         )?;
+        if let Some(requirements) = context.get_mut("requirements") {
+            LessonShape::new(&self.schema, self.shape).state_in(requirements);
+        }
         repair::number_evidence(&mut context, self.numbered);
         self.ledger
             .begin_repairs(policy, &self.candidate, targets)
@@ -555,7 +637,7 @@ impl Review for PreparationReview<'_, '_> {
             fingerprint: repair_fingerprint(
                 self.llm,
                 self.prompt,
-                &self.schema,
+                self.schema.value(),
                 &self.candidate,
                 active,
             ),
@@ -571,10 +653,10 @@ impl Review for PreparationReview<'_, '_> {
             self.llm,
             policy,
             self.prompt,
-            &self.schema,
+            LessonShape::new(&self.schema, self.shape),
             context,
             self.output_tokens,
-            active,
+            (active, &*self.numbered),
             &mut self.ledger,
         ))
         .await?;
@@ -596,8 +678,12 @@ impl Review for PreparationReview<'_, '_> {
         let active = self.expanded.as_ref().unwrap_or(self.references);
         let settled = crate::lesson_progress::checks(sections::settle(
             self.llm,
-            (self.prompt, &self.schema, self.output_tokens),
-            active,
+            (
+                self.prompt,
+                LessonShape::new(&self.schema, self.shape),
+                self.output_tokens,
+            ),
+            (active, &*self.numbered),
             &self.raw,
             &mut self.ledger,
         ))
@@ -612,22 +698,11 @@ impl Review for PreparationReview<'_, '_> {
         }
     }
 
-    async fn publish_unverified(
-        &mut self,
-        _policy: &dyn AcceptancePolicy,
-        unsettled: Unsettled,
-    ) -> Result<usize> {
+    async fn publish_unsettled(&mut self, unsettled: Unsettled) -> Result<usize> {
         self.ledger.sync().await?;
-        let (claims, reason) = match unsettled {
-            Unsettled::Waiting(claims) | Unsettled::Unreadable(claims) => {
-                (claims, Some(UnverifiedReason::Unchecked))
-            }
-            // A dispute is the Verifier audit's hold, which stays.
-            Unsettled::AwaitingUser if self.ledger.disputed() => return Ok(0),
-            Unsettled::AwaitingUser => (self.ledger.unsettled(), Some(UnverifiedReason::Unchecked)),
-            Unsettled::Ended => (self.ledger.ended_standing(&self.candidate), None),
-        };
-        self.ledger.publish_unverified(&claims, reason).await
+        self.ledger
+            .publish_unsettled(unsettled, &self.candidate)
+            .await
     }
 
     fn ended_but_standing(&self) -> Option<(StopReason, usize)> {
@@ -636,14 +711,16 @@ impl Review for PreparationReview<'_, '_> {
 
     async fn excise(&mut self) -> Result<()> {
         let report = self.report.take().ok_or_else(|| out_of_order("report"))?;
+        let before = std::mem::take(&mut self.raw);
         let (raw, candidate, report) = sections::excise(
             self.llm,
             &mut self.ledger,
-            std::mem::take(&mut self.raw),
+            before.clone(),
             std::mem::take(&mut self.candidate),
             report,
         )
         .await?;
+        trace::changed(Stage::ClaimRepair, &Cause::none(), &before, &raw);
         self.raw = raw;
         self.candidate = candidate;
         self.report = Some(report);
@@ -653,10 +730,29 @@ impl Review for PreparationReview<'_, '_> {
     async fn audit(&mut self) -> Result<Audit> {
         Ok(match self.ledger.audit(&self.raw, &self.candidate).await? {
             claim_ledger::Audited::Off => Audit::Off,
-            claim_ledger::Audited::Agreed => Audit::Agreed,
+            claim_ledger::Audited::Agreed => {
+                trace::decided(
+                    Stage::Audit,
+                    "lesson",
+                    "agreed",
+                    "the Verifier agrees with every claim",
+                );
+                Audit::Agreed
+            }
             claim_ledger::Audited::Hold(reason) => {
                 self.ledger.sync().await?;
                 let claims = self.ledger.awaiting_user();
+                trace::decided(
+                    Stage::Audit,
+                    "lesson",
+                    "held for the user",
+                    &format!(
+                        "{claims} claims wait; {}",
+                        reason
+                            .as_ref()
+                            .map_or("the audit could not finish", |stop| stop.message.as_str())
+                    ),
+                );
                 Audit::Hold { claims, reason }
             }
         })
@@ -665,6 +761,12 @@ impl Review for PreparationReview<'_, '_> {
     async fn finish(&mut self, verdict: Verdict) -> Result<(String, LessonVerificationReport)> {
         match verdict {
             Verdict::Publish => {
+                trace::decided(
+                    Stage::ClaimVerification,
+                    "lesson",
+                    "every claim is resolved",
+                    "the lesson's verification is complete and it goes on to publish",
+                );
                 let report = self.report.take().ok_or_else(|| out_of_order("report"))?;
                 Ok((std::mem::take(&mut self.raw), self.ledger.bind(report)))
             }
@@ -672,10 +774,19 @@ impl Review for PreparationReview<'_, '_> {
                 Err(hold(&mut self.ledger, &self.raw, claims, reason).await?)
             }
             Verdict::Stop(reason) => Err(stop(&mut self.ledger, &self.raw, reason).await?),
-            Verdict::NoProgress { waiting, unreached } => {
+            Verdict::NoProgress {
+                waiting,
+                unresearched,
+            } => {
+                trace::decided(
+                    Stage::ClaimVerification,
+                    "lesson",
+                    "a round moved nothing",
+                    &format!("{} claims wait at their nodes", waiting.len()),
+                );
                 let error = self
                     .ledger
-                    .stop_no_progress(&self.raw, &waiting, unreached)
+                    .stop_no_progress(&self.raw, &waiting, unresearched)
                     .await?;
                 crate::lesson_progress::phase(
                     crate::lesson_progress::Phase::Evidence,
@@ -709,7 +820,10 @@ pub(super) async fn recite(
     ledger: &mut ClaimLedger,
     policy: &dyn AcceptancePolicy,
     (candidate, report): (&mut Value, &LessonVerificationReport),
-    (numbered, tried): (&mut Vec<LearningSourceDto>, &mut HashSet<(usize, String)>),
+    (numbered, tried): (
+        &mut Vec<LearningSourceDto>,
+        &mut HashSet<(usize, String, String)>,
+    ),
     references: &ReferenceCollection<'_>,
 ) -> Result<bool> {
     let waiting = ledger.at(policy, StepKind::Recite);
@@ -743,16 +857,18 @@ pub(super) async fn recite(
         })
         .collect();
     let reciting: Vec<ClaimId> = findings.iter().map(|(id, _)| id.clone()).collect();
-    let kept = ledger.live_statements_but(&reciting);
+    let kept = ledger.live_sentences_but(&reciting);
     let cited = repair::cite_where_supported(candidate, &sent, &kept, numbered, references, tried)?;
     let mut moved = false;
-    for ((id, _), cited) in findings.iter().zip(cited) {
+    for ((id, finding), cited) in findings.iter().zip(cited) {
         match cited {
             Cited::Recited(event) => {
                 ledger.append(id, *event).await?;
                 moved |= !waiting.contains(id);
             }
-            Cited::Cannot => {}
+            Cited::Cannot(unwritten) => {
+                trace::citation_kept(id, &finding.statement, unwritten.why());
+            }
             Cited::Deferred => continue,
         }
         if waiting.contains(id) {
@@ -783,17 +899,17 @@ async fn uncite(
     if waiting.is_empty() {
         return Ok(false);
     }
-    let statements: Vec<(usize, String)> = waiting
+    let sentences: Vec<(usize, String)> = waiting
         .iter()
         .filter_map(|id| ledger.entry(id))
-        .map(|entry| (entry.location().unit_index, entry.statement().to_owned()))
+        .map(|entry| (entry.location().unit_index, entry.location().quote.clone()))
         .collect();
-    let kept = ledger.live_statements_but(&waiting);
+    let kept = ledger.live_sentences_but(&waiting);
     crate::lesson_progress::phase(
         crate::lesson_progress::Phase::Repair,
         "Dropping the citation of statements whose every part is common knowledge",
     );
-    let dropped = repair::uncite(candidate, &statements, &kept, references)?;
+    let dropped = repair::uncite(candidate, &sentences, &kept, references)?;
     let mut moved = false;
     for (id, cited) in waiting.iter().zip(dropped) {
         ledger
@@ -808,20 +924,23 @@ async fn uncite(
 
 /// Tells the call plan where the ledger has its statements now in
 /// `candidate`, and takes into it the claims of the latest pass that continue
-/// none of its own. Its own are the claims of the pass it was made for, in its
-/// order, and those it took in, each followed to the claim that carries its
-/// sentence on.
+/// none of its own; a job with no plan makes it from them. Its own are the
+/// claims it took in, in its order, each followed to the claim that carries
+/// its sentence on.
 pub(super) fn plan_moved(policy: &dyn AcceptancePolicy, ledger: &ClaimLedger, candidate: &Value) {
     let Some(mut claims) = crate::lesson_progress::plan_claims() else {
         return;
     };
-    if claims.is_empty() {
-        claims.extend_from_slice(ledger.finding_claims());
-    }
     let held = claims.len();
     let joining = ledger.unplanned(policy, candidate, &mut claims);
     let moved = ledger.planned(policy, candidate, claims.get(..held).unwrap_or_default());
-    crate::lesson_progress::statements_moved(policy, &claims, &moved, &joining);
+    crate::lesson_progress::statements_moved(
+        policy,
+        ledger.finding_sections(),
+        &claims,
+        &moved,
+        &joining,
+    );
 }
 
 /// The lesson waits for the user's review (§6.1): the draft is saved, the

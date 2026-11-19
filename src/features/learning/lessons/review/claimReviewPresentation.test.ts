@@ -16,7 +16,6 @@ import {
   confirmNeedsNote,
   defaultGroupMode,
   describeEvent,
-  excerptAround,
   groupBySection,
   groupBySource,
   heldLessonIds,
@@ -32,7 +31,7 @@ import type { CheckerVerdictDto, ClaimAttachReportDto, ClaimEventDto, ClaimRevie
 const job = (overrides: Partial<LearningGenerationJob>): LearningGenerationJob => ({
   id: 'job-1', programId: 'program-1', operationId: 'op', kind: 'lesson_preparation', payloadSha256: 'hash', baseRevisionNumber: 1,
   status: 'completed', progressCompleted: 1, progressTotal: 1, progressMessage: 'Needs your review: 2 statements', activity: null,
-  resultId: 'needs_review:lesson-1,lesson-2', error: null, retryOfJobId: null, createdAt: 1, startedAt: 1, finishedAt: STOPPED_AT,
+  resultId: 'result-1', heldLessonIds: ['lesson-1', 'lesson-2'], error: null, retryOfJobId: null, createdAt: 1, startedAt: 1, finishedAt: STOPPED_AT,
   ...overrides,
 });
 
@@ -77,15 +76,15 @@ describe('claim review presentation', () => {
 
   it('finds the lessons a completed job holds, ignoring superseded and unfinished attempts', () => {
     expect(heldLessonIds(job({}))).toEqual(['lesson-1', 'lesson-2']);
-    expect(heldLessonIds(job({ status: 'running' }))).toEqual([]);
-    expect(heldLessonIds(job({ resultId: 'lesson-1' }))).toEqual([]);
-    const retry = job({ id: 'job-2', status: 'pending', resultId: null, retryOfJobId: 'job-1' });
+    expect(heldLessonIds(job({ status: 'running', heldLessonIds: [] }))).toEqual([]);
+    expect(heldLessonIds(job({ heldLessonIds: [] }))).toEqual([]);
+    const retry = job({ id: 'job-2', status: 'pending', resultId: null, retryOfJobId: 'job-1', heldLessonIds: [] });
     expect(jobHoldingLesson([job({}), retry], 'lesson-1')).toBeNull();
     expect(jobHoldingLesson([job({})], 'lesson-2')?.id).toBe('job-1');
   });
 
   it('puts the first check and the independent check side by side', () => {
-    const passage = claimItem().evidence[0] ?? { passage: support().passage, addedBy: 'research' as const };
+    const passage = claimItem().evidence[0] ?? { passage: support().passage, addedBy: 'research' as const, opening: { before: '', quote: 'Monarchs breed across the northern range in summer.', after: ' Each autumn the eastern population migrates up to 3,000 miles to wintering sites in central Mexico.', clippedStart: false, clippedEnd: true } };
     const local: CheckerVerdictDto = { checker: { role: 'local', model: 'qwen' }, result: { verdict: 'supported', sourceVersionId: 'v1', supportingQuote: 'migrates up to 3,000 miles' }, reason: 'Entailed.', quotedSource: null, passages: [passage], at: 1 };
     const verifier: CheckerVerdictDto = { checker: { role: 'verifier', model: 'claude' }, result: { verdict: 'failed', kind: { kind: 'contradicted' } }, reason: 'The guide says 2,500 miles.', quotedSource: null, passages: [passage], at: 2 };
     expect(checkerColumns(claimItem({ localCheck: local, verifierCheck: verifier }))).toMatchObject({
@@ -99,7 +98,7 @@ describe('claim review presentation', () => {
   });
 
   it('tells a hold by claims from a hold by the Verifier audit, so nothing reads "0 statements"', () => {
-    const auditStop = { code: 'verifier_turned_off', message: 'Audit stopped: you turned the Verifier off.', fix: 'Resume to publish without the audit.', at: 1, request: null };
+    const auditStop = { code: 'verifier_turned_off', audit: true, message: 'Audit stopped: you turned the Verifier off.', fix: 'Resume to publish without the audit.', at: 1, request: null };
     expect(reviewHold(review([claimItem()], { changedSinceStop: true }), 1)).toBe('claims');
     expect(reviewHold(review([], { stopReason: auditStop }), 0)).toBe('audit_stop');
     expect(reviewHold(review([]), 0)).toBe('audit');
@@ -137,13 +136,6 @@ describe('claim review presentation', () => {
     expect(triedLine(tried())).toBe('Searched the web 9 times and read 214 pages; none stated it.');
     expect(triedLine(tried({ pagesMentioning: 2 }))).toBe('Searched the web 9 times and read 214 pages; 2 pages mention it but do not state it.');
     expect(triedLine(tried({ searches: 0, pagesRead: 0 }))).toBeNull();
-  });
-
-  it('cuts the excerpt at one sentence either side of the quote, from a byte span', () => {
-    const evidence = support();
-    const excerpt = excerptAround(evidence.passage.text, evidence.quoteSpan, evidence.quote);
-    expect(excerpt).toMatchObject({ before: 'Monarchs breed across the northern range in summer. ', quote: evidence.quote, after: ' The return trip takes several generations.' });
-    expect(excerptAround('Nothing here.', null, 'Absent sentence.')).toMatchObject({ before: '', quote: 'Absent sentence.', after: '' });
   });
 
   it('sums an attach for a group into one line', () => {

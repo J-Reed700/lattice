@@ -9,8 +9,8 @@ export const cacheApi = {
    *
    * @returns Void on success
    */
-  clearSearchCache: async (): Promise<ApiResult<void>> =>
-    apiCall<void>('clear_search_cache'),
+  clearSearchCache: async (): Promise<ApiResult<null>> =>
+    apiCall('clear_search_cache'),
 
   /**
    * Clears all caches (search, embeddings, etc.).
@@ -18,8 +18,8 @@ export const cacheApi = {
    *
    * @returns Void on success
    */
-  clearCache: async (): Promise<ApiResult<void>> =>
-    apiCall<void>('clear_cache'),
+  clearCache: async (): Promise<ApiResult<null>> =>
+    apiCall('clear_cache'),
 
   /**
    * Retrieves cache statistics.
@@ -28,7 +28,7 @@ export const cacheApi = {
    * @returns Cache statistics object
    */
   getCacheStats: async (): Promise<ApiResult<Wire.SearchCacheStats>> =>
-    apiCall<Wire.SearchCacheStats>('get_cache_stats'),
+    apiCall('get_cache_stats'),
 
   /**
    * Gets detailed cache performance metrics.
@@ -37,5 +37,5 @@ export const cacheApi = {
    * @returns Cache metrics object with detailed statistics
    */
   getCacheMetrics: async (): Promise<ApiResult<CacheMetrics>> =>
-    apiCall<Wire.CacheMetrics>('get_cache_metrics'),
+    apiCall('get_cache_metrics'),
 };

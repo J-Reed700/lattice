@@ -10,12 +10,15 @@ use std::sync::Arc;
 
 use futures::future::BoxFuture;
 use futures::{FutureExt, StreamExt};
+use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
 use lattice_core::application::contracts::settings::LLMVerificationSettingsDto;
 use lattice_core::application::contracts::sources::SourceDto;
+#[cfg(test)]
+use lattice_core::application::ports::llm_port::CompletionInput;
 use lattice_core::application::ports::llm_port::{
-    chars_within_tokens, CompletionInput, CompletionRequest, InferencePriority, SamplingOverride,
+    chars_within_tokens, InferencePriority, SamplingOverride,
 };
 use lattice_core::application::ports::LLMPort;
 #[cfg(test)]
@@ -32,7 +35,15 @@ use lattice_core::application::services::evidence_retrieval::extract_normalized_
 use lattice_core::application::services::evidence_retrieval::{
     join_windows, scored_windows, WINDOW_OVERLAP_CHARS,
 };
-#[cfg(test)]
+use lattice_core::application::services::grounded_generation::CallOptions;
+use lattice_core::application::services::model_contract::ask::{
+    ask_each, Alone, Answered, Plain, Says, Settled,
+};
+use lattice_core::application::services::model_contract::shape::{Authored, Fields, Flagged, Form};
+use lattice_core::application::services::model_contract::shown::{
+    Drawn, Kind, Scope, Showing, Told,
+};
+use lattice_core::application::services::model_contract::{Contract, ContractId};
 use lattice_core::shared::error::Result;
 
 use super::lexical::{best_sentence, best_windows, passage_text, LexicalClaim, ScoredWindow};
@@ -42,32 +53,77 @@ use super::lexical::{best_sentence, best_windows, passage_text, LexicalClaim, Sc
 /// the provider's output budget even though they are not shown in the verdict.
 const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 4096;
 
-const MAX_QUOTE_CHARS: usize = 400;
-
 /// Between two windows of one page: the text in between was left out.
 const WINDOW_SEPARATOR: &str = "\n[…]\n";
 
 /// Sorts the sentences of a tutor's reply that cite nothing. A sentence that
 /// does both goes with the claims, so a false one stays flagged whatever
 /// surrounds it. See evals/tutor/2026-11-02-FIRST-RUNS.md.
-const SESSION_TALK_SYSTEM: &str = "A tutor's reply is being checked against its course. Below are sentences from its replies, each with its number. Some state something about the subject being taught; those must be checked. Others only run the session: greeting, praising or correcting the learner's words in general terms, saying what comes next, what was saved or how many cards are left, asking the learner to do something. Reply with a JSON array of the numbers of the sentences that state something about the subject, and nothing else. When a sentence does both, include it.";
+const SESSION_TALK_INSTRUCTIONS: &str = "A tutor's reply is being checked against its course. Below are sentences from its replies, each with its name. Some state something about the subject being taught; those must be checked. Others only run the session: greeting, praising or correcting the learner's words in general terms, saying what comes next, what was saved or how many cards are left, asking the learner to do something. Mark the sentences that only run the session: write {\"marks\": [{\"at\": \"<name>\"}]} with one entry for each, naming the sentence in `at`, and an empty list when none does. Leave out every sentence that states something about the subject. When a sentence does both, leave it out.";
 
-/// The numbers of `reply`, each less one, when the reply is one JSON array of
-/// numbers and nothing else.
-fn listed_positions(reply: &str) -> Option<HashSet<usize>> {
-    let text = reply.trim();
-    let text = text
-        .strip_prefix("```json")
-        .or_else(|| text.strip_prefix("```"))
-        .and_then(|rest| rest.strip_suffix("```"))
-        .unwrap_or(text);
-    let numbers: Vec<usize> = serde_json::from_str(text.trim()).ok()?;
-    Some(
-        numbers
-            .into_iter()
-            .filter_map(|number| number.checked_sub(1))
-            .collect(),
-    )
+struct SessionTalk;
+
+impl Contract for SessionTalk {
+    const ID: ContractId = ContractId::new("session-talk");
+    type Input = SessionTalkInput;
+}
+
+/// An uncited sentence of a reply, named by its place among them.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Sentence {
+    at: usize,
+    text: Told<String>,
+}
+
+impl Kind for Sentence {
+    const PREFIX: &'static str = "s";
+    const DRAWN: Drawn = Drawn::Itself;
+    type Ref = usize;
+
+    fn reference(&self) -> usize {
+        self.at
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SessionTalkInput {
+    sentences: Vec<Sentence>,
+}
+
+/// A sentence that only runs the session.
+#[derive(Debug, Clone, PartialEq)]
+struct Marked;
+
+impl Authored for Marked {
+    fn form() -> Form {
+        Form::new()
+    }
+
+    fn read(_fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(Self)
+    }
+}
+
+impl Answered for SessionTalk {
+    type Answer = Flagged<Sentence, Marked>;
+    const ALONE: Alone = Alone::Pending;
+
+    fn says(input: &SessionTalkInput, showing: &mut Showing<'_>) -> Result<Says> {
+        let shown = showing.show(&input.sentences)?;
+        let listed: Vec<String> = shown
+            .iter()
+            .map(|(handle, sentence)| format!("{} {}", handle.bracketed(), sentence.text.0))
+            .collect();
+        let mut says = Says::new(
+            SESSION_TALK_INSTRUCTIONS,
+            listed.join(
+                "
+",
+            ),
+        );
+        says.output_tokens = DEFAULT_MAX_OUTPUT_TOKENS as usize;
+        Ok(says)
+    }
 }
 
 /// Whether a claim has anything to be judged against.
@@ -141,40 +197,45 @@ impl ClaimJudge {
     }
 
     /// The positions in `sentences` of those that say something about the
-    /// subject. `None` when the model could not say: nothing is settled then.
+    /// subject: every one the model did not mark as only running the session.
+    /// `None` when the model could not be asked: nothing is settled then.
     pub(super) async fn about_the_subject(&self, sentences: &[&str]) -> Option<HashSet<usize>> {
-        let listed: Vec<String> = sentences
+        let asked: Vec<Sentence> = sentences
             .iter()
             .enumerate()
-            .map(|(position, sentence)| format!("{}. {sentence}", position + 1))
-            .collect();
-        let reply = self
-            .llm
-            .complete(&CompletionRequest {
-                input: vec![
-                    CompletionInput::Message {
-                        role: "system".into(),
-                        content: SESSION_TALK_SYSTEM.into(),
-                    },
-                    CompletionInput::Message {
-                        role: "user".into(),
-                        content: listed.join("\n"),
-                    },
-                ],
-                sampling: Some(self.sampling),
-                max_output_tokens: Some(self.max_output_tokens),
-                no_time_limit: true,
-                priority: InferencePriority::Verification,
-                ..Default::default()
+            .map(|(at, sentence)| Sentence {
+                at,
+                text: Told((*sentence).to_owned()),
             })
-            .await
-            .inspect_err(|error| warn!(%error, "Could not sort a reply's uncited sentences"))
-            .ok()?;
-        let positions = listed_positions(&reply.text);
-        if positions.is_none() {
-            warn!("The judge's list of claims could not be read; every sentence stays a claim");
-        }
-        positions
+            .collect();
+        let call = CallOptions {
+            priority: InferencePriority::Verification,
+            sampling: Some(self.sampling),
+            no_time_limit: true,
+            ..Default::default()
+        };
+        let mut scope = Scope::for_question();
+        let settled = ask_each::<SessionTalk>(
+            self.llm.as_ref(),
+            &Plain,
+            &mut scope,
+            &asked,
+            |open, _| SessionTalkInput {
+                sentences: open.iter().map(|sentence| (*sentence).clone()).collect(),
+            },
+            &call,
+        )
+        .await
+        .inspect_err(|error| warn!(%error, "Could not sort a reply's uncited sentences"))
+        .ok()?;
+        Some(
+            settled
+                .iter()
+                .enumerate()
+                .filter(|(_, settled)| !matches!(settled, Settled::Answered(Some(_))))
+                .map(|(position, _)| position)
+                .collect(),
+        )
     }
 
     /// Judges each `(claim index, claim text, evidence)`, keyed back by index.
@@ -385,8 +446,7 @@ pub(super) fn evidence_for(claim: &LexicalClaim, sources: &[SourceDto], room: us
             .iter()
             .filter_map(|(_, body)| best_windows(&claim.claim_text, body, 1).into_iter().next())
             .max_by_key(|window| window.score)
-            .and_then(|window| best_sentence(&claim.claim_text, &window.text))
-            .map(|sentence| truncate_chars(&sentence, MAX_QUOTE_CHARS));
+            .and_then(|window| best_sentence(&claim.claim_text, &window.text));
         return Evidence::Found(vec![ClaimEvidence {
             text: blocks.join(BLOCK_SEPARATOR),
             quote,
@@ -507,21 +567,11 @@ fn render_part(
         .iter()
         .flatten()
         .max_by_key(|window| window.score)
-        .and_then(|window| best_sentence(claim, &window.text))
-        .map(|sentence| truncate_chars(&sentence, MAX_QUOTE_CHARS));
+        .and_then(|window| best_sentence(claim, &window.text));
     ClaimEvidence {
         text: blocks.join(BLOCK_SEPARATOR),
         quote,
     }
-}
-
-fn truncate_chars(text: &str, limit: usize) -> String {
-    if text.chars().count() <= limit {
-        return text.to_string();
-    }
-    let mut out: String = text.chars().take(limit).collect();
-    out.push('…');
-    out
 }
 
 #[cfg(test)]

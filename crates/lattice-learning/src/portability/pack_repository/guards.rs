@@ -1,7 +1,7 @@
 //! Preconditions for moving a course: no generation job may be running under
 //! an export or a replacement, an export needs a course worth importing, and
 //! a pack only imports into the same database schema that wrote it.
-use super::{db, invalid, validation::validate_program};
+use super::{invalid, validation::validate_program};
 use crate::{dto::LearningProgramDto, repository::LearningRepository};
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqliteConnection;
@@ -17,7 +17,7 @@ pub(super) async fn active_job_exists(
         .bind(program_id)
         .fetch_one(&mut *connection)
         .await
-        .map_err(db)
+        .map_err(AppError::from)
 }
 
 pub(super) const PREPARING: &str =
@@ -47,8 +47,7 @@ pub(super) async fn require_exportable(
 pub(super) async fn schema_version(connection: &mut SqliteConnection) -> Result<i64> {
     let version: Option<i64> = sqlx::query_scalar("SELECT MAX(version) FROM _sqlx_migrations")
         .fetch_one(&mut *connection)
-        .await
-        .map_err(db)?;
+        .await?;
     version
         .ok_or_else(|| AppError::Database("This database has no recorded schema version.".into()))
 }

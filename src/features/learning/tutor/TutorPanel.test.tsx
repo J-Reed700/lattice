@@ -95,7 +95,10 @@ describe('TutorPanel', () => {
     expect(await screen.findByRole('button', { name: 'Fusion · Nov 1' })).toHaveAttribute('aria-current', 'true');
     expect(screen.getByRole('button', { name: 'Search · Oct 30' })).toBeInTheDocument();
     expect(screen.getByText('The shared chat')).toBeInTheDocument();
-    expect(mocks.api.listConversationsExplorer).toHaveBeenCalledWith({ programId: 'course-1' });
+    expect(mocks.api.listConversationsExplorer).toHaveBeenCalledWith({
+      spaceId: null, programId: 'course-1', query: null, savedOnly: null, bookmarkedOnly: null, pinnedOnly: null,
+      hasMessageBookmarks: null, includeArchived: null, limit: null, offset: null,
+    });
   });
 
   it('starts an empty chat from the lesson and the reviews, not the library', async () => {

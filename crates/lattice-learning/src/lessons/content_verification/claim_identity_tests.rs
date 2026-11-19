@@ -1,14 +1,15 @@
 //! A pass identified with the ledger: `identify` records which claim each
 //! statement is and what is new about it, and records no check (acceptance
 //! design §2.10).
-use super::acceptance_switch_tests::{claim, walk, SOURCED};
+use super::acceptance_switch_tests::{claim, walk, REWRITING, SOURCED};
 use super::claim_ledger_tests::{
-    check_findings, identify_findings, pass_report, passage_finding, CELL,
+    check_findings, identify_findings, pass_report, passage_finding, sourced, CELL,
 };
 use super::*;
 use lattice_core::domain::learning::acceptance::Step;
 use lattice_core::domain::learning::claim_review::{
-    Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState, RepairOutcome,
+    Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation, ClaimState, RepairOutcome,
+    UnitKind, UnverifiedReason,
 };
 
 const ATP_SENTENCE: &str =
@@ -34,19 +35,49 @@ fn added(entry: &ClaimLedgerEntry, from: usize) -> Vec<&ClaimEvent> {
         .collect()
 }
 
+#[tokio::test]
+async fn a_statement_the_user_wrote_that_no_pass_continues_is_not_ended_while_its_sentence_stands(
+) -> Result<()> {
+    let mut ledger = claim_ledger::ClaimLedger::open(&Model::new(), "{}").await?;
+    let lesson = cell_lesson(CELL);
+    let id = ClaimId("written".into());
+    let extracted = ClaimEvent::Extracted {
+        location: ClaimLocation::locate(0, UnitKind::Block, "body", ATP_SENTENCE, CELL),
+        statement: ATP_SENTENCE.into(),
+    };
+    ledger.append(&id, extracted).await?;
+    let published = ClaimEvent::PublishedUnverified {
+        reason: UnverifiedReason::Unchecked,
+    };
+    ledger.append(&id, published).await?;
+    let from = ledger.entry(&id).unwrap().events().len();
+
+    identify_findings(&mut ledger, &lesson, &pass_report(vec![])).await?;
+
+    let entry = ledger.entry(&id).unwrap();
+    assert!(added(entry, from).is_empty(), "{:?}", added(entry, from));
+    assert!(
+        matches!(entry.state(), ClaimState::Unverified { .. }),
+        "{:?}",
+        entry.state()
+    );
+    Ok(())
+}
+
 /// A ledger that found a verified claim and a failed one on the first
 /// sentence of `CELL`, with a repair of the failed one sent: the two claims,
 /// the verified one first.
 async fn repair_sent() -> Result<(claim_ledger::ClaimLedger, ClaimId, ClaimId)> {
     let mut ledger = claim_ledger::ClaimLedger::open(&Model::new(), "{}").await?;
     let before = cell_lesson(CELL);
-    let report = pass_report(vec![
+    let report = pass_report(sourced(vec![
         passage_finding(CELL, ATP, true, CELL_SOURCE),
         passage_finding(CELL, OVERSTATED, false, CELL_SOURCE),
-    ]);
+    ]));
     let claims = identify_findings(&mut ledger, &before, &report).await?;
     check_findings(&mut ledger, &claims, &report.findings).await?;
     let (verified, failed) = (claims[0].clone(), claims[1].clone());
+    walk(&mut ledger, &failed, Class::Sourced, &REWRITING).await?;
     ledger
         .begin_repairs(
             &StandardPolicy::new(),
@@ -146,26 +177,49 @@ async fn identifying_a_repaired_claim_that_continues_records_its_repair_and_no_c
 
     let ids = identify_findings(&mut ledger, &lesson, &report).await?;
 
-    assert_eq!(ids, vec![verified.clone(), failed.clone()]);
+    assert_eq!(ids.len(), 2);
+    assert_eq!(ids[1], failed);
+    assert_ne!(ids[0], verified);
     assert_eq!(ledger.finding_claims(), ids.as_slice());
-    for (id, from) in [&verified, &failed].into_iter().zip(from) {
-        let events = added(ledger.entry(id).unwrap(), from);
-        assert!(
-            matches!(
-                events.as_slice(),
-                [
-                    ClaimEvent::Extracted { .. },
-                    ClaimEvent::RepairAttempted {
-                        attempt: 1,
-                        escalated: false,
-                        outcome: RepairOutcome::Rewritten,
-                        ..
-                    }
-                ]
-            ),
-            "{events:?}"
-        );
-    }
+    // The verified claim shares the rewritten sentence: a machine successor
+    // replaces it, and the failed target continues.
+    assert!(matches!(
+        ledger.entry(&verified).unwrap().state(),
+        ClaimState::Edited {
+            successor: Some(next),
+            by: Actor::Machine,
+            ..
+        } if *next == ids[0]
+    ));
+    let events = added(ledger.entry(&failed).unwrap(), from[1]);
+    assert!(
+        matches!(
+            events.as_slice(),
+            [
+                ClaimEvent::Extracted { .. },
+                ClaimEvent::RepairAttempted {
+                    attempt: 1,
+                    escalated: false,
+                    outcome: RepairOutcome::Rewritten,
+                    ..
+                },
+                ClaimEvent::Stepped {
+                    step: Step::Rewrite(_),
+                    outcome: Outcome::Rewritten,
+                    ..
+                }
+            ]
+        ),
+        "{events:?}"
+    );
+    let checked = |entry: &ClaimLedgerEntry, from: usize| {
+        added(entry, from)
+            .iter()
+            .any(|event| matches!(event, ClaimEvent::Checked(_)))
+    };
+    assert!(!checked(ledger.entry(&verified).unwrap(), from[0]));
+    assert!(!checked(ledger.entry(&failed).unwrap(), from[1]));
+    assert!(!checked(ledger.entry(&ids[0]).unwrap(), 0));
     // The pass took the repairs it decided, and the lesson before them.
     assert!(ledger.pending.repairs.is_empty());
     assert!(ledger.pending.previous.is_none());
@@ -289,7 +343,7 @@ async fn a_claim_a_repair_awaits_is_decided_by_the_pass_that_finds_no_statement_
     let to_rewrite = [
         (Step::Read(Reading::Parts), Outcome::Unproven),
         (Step::Research, Outcome::FoundNothing),
-        (Step::Read(Reading::Page), Outcome::Unproven),
+        (Step::Read(Reading::Page), Outcome::Refuted),
     ];
     walk(&mut ledger, &id, Class::Sourced, &to_rewrite).await?;
     ledger

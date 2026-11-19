@@ -1,0 +1,187 @@
+######## request 1 of 1 ########
+=== input 1: message (system) ===
+Answer with one list of bullets for each section: `highlights` (Entry Highlights), `practical_details` (Practical Details), `decisions_constraints` (Decisions & Constraints), `open_questions_risks` (Open Questions & Risks) and `evidence_notes` (Evidence Notes). Each bullet has `text` and `from`, the handles of the bullets it merges.
+
+=== input 2: message (user) ===
+Merge these chunk syntheses into one chunk synthesis (group 1 of 1).
+Use only the chunk syntheses below; keep every concrete detail, decision, open question and evidence note.
+Write notes in exactly these sections:
+Entry Highlights
+Practical Details
+Decisions & Constraints
+Open Questions & Risks
+Evidence Notes
+Rules:
+- Give each merged bullet, in `from`, the handles of the bullets it merges; name only bullets shown.
+- Merge duplicates; drop nothing else.
+- If a section has no data, leave its list empty.
+
+CHUNK SYNTHESIS 1
+### Entry Highlights
+- [n1] [Entry: Harbour log] High tide is at six
+### Practical Details
+- None identified.
+### Decisions & Constraints
+- None identified.
+### Open Questions & Risks
+- None identified.
+### Evidence Notes
+- None identified.
+
+---
+
+CHUNK SYNTHESIS 2
+### Entry Highlights
+- [n2] [Entry: Kiln notes] The kiln holds heat
+### Practical Details
+- None identified.
+### Decisions & Constraints
+- None identified.
+### Open Questions & Risks
+- None identified.
+### Evidence Notes
+- None identified.
+
+=== schema ===
+{
+  "type": "object",
+  "properties": {
+    "highlights": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "from": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "One of the names the request shows, such as n1."
+            }
+          }
+        },
+        "required": [
+          "text",
+          "from"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "practical_details": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "from": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "One of the names the request shows, such as n1."
+            }
+          }
+        },
+        "required": [
+          "text",
+          "from"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "decisions_constraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "from": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "One of the names the request shows, such as n1."
+            }
+          }
+        },
+        "required": [
+          "text",
+          "from"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "open_questions_risks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "from": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "One of the names the request shows, such as n1."
+            }
+          }
+        },
+        "required": [
+          "text",
+          "from"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "evidence_notes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "from": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "One of the names the request shows, such as n1."
+            }
+          }
+        },
+        "required": [
+          "text",
+          "from"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "highlights",
+    "practical_details",
+    "decisions_constraints",
+    "open_questions_risks",
+    "evidence_notes"
+  ],
+  "additionalProperties": false
+}
+
+=== sent with ===
+{
+  "reasoning_effort": null,
+  "tool_choice": null,
+  "include_reasoning": false,
+  "sampling": null,
+  "thinking": "off",
+  "max_output_tokens": 8192,
+  "stop": [],
+  "want_logprobs": false,
+  "priority": "background",
+  "cache_key": null
+}

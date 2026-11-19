@@ -3,11 +3,11 @@
 //! only an endpoint. `LlamaCppLlm` is its HTTP client.
 //!
 //! Starting preflights the binary once per process (`--version`), picks a
-//! free port, spawns it through `tauri-plugin-shell`, and waits for `/health`
+//! free port, starts it through `BoundCommand`, and waits for `/health`
 //! (the "listening on" log line is a fast path); the wait bounds silence, not
 //! duration. On failure it walks the fallback policy (`next_attempt`): GPU
-//! off, then the CPU-only build on Windows/Linux. Stopping kills the child,
-//! with Windows Job Objects cleaning up the process tree.
+//! off, then the CPU-only build on Windows/Linux. Stopping kills the child;
+//! the kernel ends it with Lattice however Lattice ends.
 
 use crate::features::llm::engine::sidecar_pool::{Liveness, Origin, SharedProcesses};
 use crate::features::llm::engine::system::SystemCapabilities;
@@ -21,8 +21,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
-use tauri_plugin_shell::ShellExt;
 use tokio::sync::mpsc::Receiver;
 use tokio::time::timeout;
 
@@ -32,9 +30,9 @@ use tokio::time::timeout;
 // (`binaries/llama-server`, resolved to `binaries/llama-server-<triple>`).
 // tauri-build (dev) and the bundler (release) copy each one next to the app
 // executable under its bare file stem, triple stripped: `<exe dir>/llama-server`.
-// `tauri-plugin-shell`'s `sidecar(name)` looks for `<exe dir>/<name>` (plus
-// `.exe` on Windows), so the name passed to it must be that stem. A test
-// below pins these to the conf files.
+// `SidecarBinary::installed_path` looks for `<exe dir>/<name>` (plus `.exe`
+// on Windows), so the name must be that stem. A test below pins these to the
+// conf files.
 
 /// The primary llama-server build (Metal on Apple Silicon, CPU on Intel Macs,
 /// Vulkan on Windows/Linux).
@@ -90,6 +88,7 @@ const OUTPUT_LINE_MAX_BYTES: usize = 2 * 1024;
 const ERROR_TAIL_LINES: usize = 12;
 const ERROR_LINE_MAX_BYTES: usize = 400;
 
+mod child;
 mod config;
 mod failure;
 mod preflight;
@@ -107,9 +106,10 @@ pub use preflight::spawn_binary_preflight;
 pub use process::SidecarHandle;
 pub(super) use process::SpawnedChild;
 pub(crate) use readiness::{build_server_args, new_api_token};
-pub use registry::{kill_registered_sidecars, reap_orphan_sidecars, Admission, SidecarRegistry};
+pub use registry::{kill_registered_sidecars, Admission, SidecarRegistry};
 pub use startup::SidecarManager;
 
+use child::{ServerEvent, ServerProcess};
 use failure::*;
 use preflight::*;
 use readiness::*;

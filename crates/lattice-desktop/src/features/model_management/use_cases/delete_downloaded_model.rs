@@ -282,22 +282,16 @@ mod tests {
     use super::*;
     use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
     use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
+    use lattice_core::shared::persistence::Database;
     use serde_json::json;
-    use sqlx::sqlite::SqlitePoolOptions;
     use std::path::PathBuf;
     use tempfile::{tempdir, TempDir};
 
     async fn setup_repo() -> Arc<DownloadedModelRepository> {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
-            .await
-            .expect("create in-memory pool");
-        sqlx::migrate!("./migrations")
-            .run(&pool)
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
             .expect("run migrations");
-        Arc::new(DownloadedModelRepository::new(pool))
+        Arc::new(DownloadedModelRepository::new(Database::new(pool)))
     }
 
     /// Builds a realistic on-disk layout: `<tmp>/models/<model_id>/model.gguf`.

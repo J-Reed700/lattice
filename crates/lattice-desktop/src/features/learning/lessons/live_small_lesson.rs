@@ -152,9 +152,10 @@ async fn live_review_schema_preserves_grounding() -> Result<()> {
         let issues: Vec<crate::features::learning::review_findings::ReviewFinding> =
             serde_json::from_value::<Vec<String>>(case["issues"].clone())?
                 .into_iter()
-                .map(|issue| {
-                    crate::features::learning::review_findings::ReviewFinding::new(
-                        crate::features::learning::review_findings::FindingKind::Teaching,
+                .enumerate()
+                .map(|(index, issue)| {
+                    crate::features::learning::review_findings::ReviewFinding::reviewer(
+                        u32::try_from(index).unwrap(),
                         None,
                         issue,
                     )
@@ -163,12 +164,14 @@ async fn live_review_schema_preserves_grounding() -> Result<()> {
         let accepted = crate::features::learning::review_evidence::check(
             &model,
             &issues,
+            crate::features::learning::review_evidence::Beside::NONE,
             &case["requirements"],
             &case["candidate"],
             &references,
             Some(&progress),
         )
-        .await?;
+        .await?
+        .established;
         std::fs::write(
             directory.join(format!("case-{index}.json")),
             serde_json::to_vec_pretty(&accepted)?,
@@ -229,18 +232,8 @@ async fn live_small_lesson_reaches_ready() -> Result<()> {
         .write(true)
         .create_new(true)
         .open(&database)?;
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(&database)
-        .foreign_keys(true);
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect_with(options.clone())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+    let connection = open_app_database(&database, false).await?;
+    let db = connection.database().clone();
     let model = Arc::new(ObservedModel::new(&config, directory.clone(), 0).await?);
     let fixture: serde_json::Value = serde_json::from_slice(&std::fs::read(
         std::env::var("LATTICE_LESSON_FIXTURE").unwrap(),
@@ -275,7 +268,7 @@ async fn live_small_lesson_reaches_ready() -> Result<()> {
             acquired_at: chrono::Utc::now().timestamp_millis(),
         })
         .collect();
-    let programs = LearningRepository::new(pool.clone());
+    let programs = LearningRepository::new(db.clone());
     let references: Vec<_> = program
         .sources
         .iter()
@@ -310,7 +303,7 @@ async fn live_small_lesson_reaches_ready() -> Result<()> {
         })
         .await?;
     let program = programs.get(&program.summary.id).await?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let repo = LearningCurriculumRepository::new(db.clone());
     let job = repo
         .start_job(&StartLearningGenerationJobRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),
@@ -324,23 +317,51 @@ async fn live_small_lesson_reaches_ready() -> Result<()> {
     std::fs::write(directory.join("job-id.txt"), &job.id)?;
     drop(repo);
     drop(programs);
-    run_and_confirm(pool, options, model, &job.id, &directory).await
+    run_and_confirm(connection, &database, model, &job.id, &directory).await
+}
+
+/// Opens and initializes the database as the app does at startup. An eval never
+/// starts over silently: a missing file (when `must_exist`) or a corrupt one
+/// moved aside is an error.
+pub(super) async fn open_app_database(
+    path: &std::path::Path,
+    must_exist: bool,
+) -> Result<crate::infrastructure::persistence::database::DatabaseConnection> {
+    if must_exist && !path.exists() {
+        return Err(lattice_core::shared::error::AppError::Database(format!(
+            "the database {} does not exist",
+            path.display()
+        )));
+    }
+    let connection =
+        crate::infrastructure::persistence::database::DatabaseConnection::new(path.to_path_buf())
+            .await?;
+    if let Some(moved) = connection.recovered_from() {
+        return Err(lattice_core::shared::error::AppError::Database(format!(
+            "the database {} was corrupt and was moved to {}",
+            path.display(),
+            moved.display()
+        )));
+    }
+    crate::infrastructure::persistence::database::initialize_database(connection.database())
+        .await?;
+    Ok(connection)
 }
 
 pub(super) async fn run_and_confirm(
-    pool: sqlx::SqlitePool,
-    options: sqlx::sqlite::SqliteConnectOptions,
+    connection: crate::infrastructure::persistence::database::DatabaseConnection,
+    database_path: &std::path::Path,
     model: Arc<ObservedModel>,
     job_id: &str,
     directory: &std::path::Path,
 ) -> Result<()> {
+    let db = connection.database().clone();
     let web_dir = tempfile::tempdir()?;
     let web: Arc<dyn lattice_core::application::ports::WebServiceTrait> = Arc::new(
         crate::features::web::services::web::WebService::new(web_dir.path())?,
     );
-    let runtime =
-        lattice_core::shared::runtime::jobs::JobRuntime::new(Database::from(pool.clone()));
-    let worker = worker(&pool, model, web, None);
+    let runtime = lattice_core::shared::runtime::jobs::JobRuntime::new(db.clone());
+    let worker = worker(&db, model, web, None);
     let result = run_job(runtime, worker, job_id, directory, &|_| Ok(())).await?;
     let job = &result;
     assert_eq!(
@@ -348,13 +369,10 @@ pub(super) async fn run_and_confirm(
         LearningGenerationJobStatus::Completed,
         "Production worker did not publish; see result.json"
     );
-    pool.close().await;
+    connection.close().await?;
     // Read readiness from a new connection after closing the worker's pool.
-    let reopened = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(options)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
+    let reopened_connection = open_app_database(database_path, true).await?;
+    let reopened = reopened_connection.database().clone();
     let published = LearningRepository::new(reopened.clone())
         .get(&job.program_id)
         .await?;
@@ -389,14 +407,14 @@ pub(super) async fn run_and_confirm(
         serde_json::to_vec_pretty(&summary)?,
     )?;
     println!("LIVE PUBLICATION CONFIRMED: {summary}");
-    reopened.close().await;
+    reopened_connection.close().await?;
     Ok(())
 }
 
 /// The production lesson worker on `model`, reading the web through
 /// `research_web` and searching evidence through `courses`.
 pub(super) fn worker(
-    pool: &sqlx::SqlitePool,
+    db: &Database,
     model: Arc<ObservedModel>,
     research_web: Arc<dyn lattice_core::application::ports::WebServiceTrait>,
     courses: Option<Arc<crate::features::learning::references::course_index::CourseIndexes>>,
@@ -404,7 +422,7 @@ pub(super) fn worker(
     LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::features::learning::tests::runtimes(),
-        database: pool.clone().into(),
+        database: db.clone(),
         load_llm: Arc::new(move || {
             let llm: Arc<dyn LLMPort> = model.clone();
             Box::pin(async move { Ok(pinned_for_test(llm)) })
@@ -468,16 +486,10 @@ async fn live_small_lesson_resumes_to_ready() -> Result<()> {
         .try_init();
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     let mut job_id = std::fs::read_to_string(directory.join("job-id.txt"))?;
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(directory.join("lesson.sqlite"))
-        .foreign_keys(true)
-        .create_if_missing(false);
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect_with(options.clone())
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    let repo = LearningCurriculumRepository::new(pool.clone());
+    let database = directory.join("lesson.sqlite");
+    let connection = open_app_database(&database, true).await?;
+    let db = connection.database().clone();
+    let repo = LearningCurriculumRepository::new(db.clone());
     let job = repo.job(&job_id).await?;
     assert!(
         matches!(
@@ -500,7 +512,7 @@ async fn live_small_lesson_resumes_to_ready() -> Result<()> {
                 )),
             "Another test worker is active"
         );
-        let program = LearningRepository::new(pool.clone())
+        let program = LearningRepository::new(db.clone())
             .get(&job.program_id)
             .await?;
         // Use the same retry operation as the UI. It copies durable work but
@@ -530,7 +542,7 @@ async fn live_small_lesson_resumes_to_ready() -> Result<()> {
         .map_or(0, |n| n + 1);
     let model = Arc::new(ObservedModel::new(&config, directory.clone(), next_call).await?);
     // Exercise the same recovery the job runtime runs at native startup.
-    lattice_core::shared::runtime::jobs::JobStore::new(pool.clone())
+    lattice_core::shared::runtime::jobs::JobStore::new(db.clone())
         .recover(
             crate::features::learning::curriculum_repository::LESSON_PREPARATION,
             lattice_core::shared::runtime::jobs::RecoveryPolicy::Requeue,
@@ -541,5 +553,5 @@ async fn live_small_lesson_resumes_to_ready() -> Result<()> {
         LearningGenerationJobStatus::Pending
     );
     drop(repo);
-    run_and_confirm(pool, options, model, &job_id, &directory).await
+    run_and_confirm(connection, &database, model, &job_id, &directory).await
 }

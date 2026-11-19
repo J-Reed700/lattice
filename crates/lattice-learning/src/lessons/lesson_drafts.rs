@@ -1,12 +1,14 @@
 //! Unpublished candidate checkpoints for durable lesson jobs. A checkpoint is
-//! never publication approval. Completed teaching checks may be reused only
-//! for identical content and inputs; factual verification remains required.
+//! never publication approval. A completed teaching check is reused only for
+//! identical content and inputs; what a teaching review judged follows the
+//! job's inputs, so a later review of a changed draft starts from it. Factual
+//! verification remains required.
 use crate::curriculum_repository::LearningCurriculumRepository;
 use crate::dto::LearningSourceDto;
+use crate::teaching::{references_hold, versions};
 use lattice_core::shared::error::Result;
-use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::Database;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
@@ -30,7 +32,8 @@ pub struct Draft {
     /// Failed checks and evidence for a pending rewrite, never approval.
     #[serde(default)]
     pub pending_repair: Option<String>,
-    /// What decides when a teaching review that repairs this draft stops.
+    /// What a teaching review of this job judged and what decides when it
+    /// stops; it carries to the job's later drafts.
     #[serde(default)]
     pub teaching_passes: Option<String>,
 }
@@ -49,11 +52,7 @@ pub struct AuthoringContext {
 impl AuthoringContext {
     fn matches(&self, scope_hash: &str, references: &[LearningSourceDto]) -> bool {
         self.scope_hash == scope_hash
-            && self.reference_hashes.iter().all(|(id, hash)| {
-                references
-                    .iter()
-                    .any(|source| &source.id == id && sha256_hex(&source.excerpt) == *hash)
-            })
+            && references_hold(&self.reference_hashes, &versions(references))
     }
 }
 
@@ -69,8 +68,9 @@ struct Context {
 }
 tokio::task_local! { static CURRENT: Context; }
 
-pub(crate) fn active() -> bool {
-    CURRENT.try_with(|_| ()).is_ok()
+/// The lesson a running preparation is writing, for logs.
+pub(crate) fn lesson_id() -> Option<String> {
+    CURRENT.try_with(|context| context.lesson_id.clone()).ok()
 }
 
 /// The job and lesson a running preparation writes its drafts for, and the
@@ -109,6 +109,21 @@ pub(crate) async fn checkpoint(key: &str) -> Result<Option<serde_json::Value>> {
         .repo
         .lesson_checkpoint(&context.job_id, &context.lesson_id, key)
         .await
+}
+
+/// A saved value read as `T`: one whose shape no longer reads is `None`, as if
+/// nothing had been saved.
+pub async fn saved<T: DeserializeOwned>(key: &str) -> Result<Option<T>> {
+    Ok(checkpoint(key)
+        .await?
+        .and_then(|value| parse_saved(&value.to_string())))
+}
+
+/// Saved text read as `T`; text that does not read is `None` and a warning.
+pub fn parse_saved<T: DeserializeOwned>(raw: &str) -> Option<T> {
+    serde_json::from_str(raw)
+        .map_err(|error| tracing::warn!(%error, "A saved value could not be read; ignoring it"))
+        .ok()
 }
 
 pub(crate) async fn record_checkpoint(key: &str, value: serde_json::Value) -> Result<()> {
@@ -213,22 +228,22 @@ async fn save_checkpoint(
         .unwrap_or_else(|e| e.into_inner())
         .clone();
     if let Some(input_hash) = hash {
-        let previous = context
+        let same_input = context
             .repo
             .lesson_draft(&context.job_id, &context.lesson_id)
             .await?
-            .filter(|draft| draft.input_hash == input_hash && draft.candidate == candidate);
+            .filter(|draft| draft.input_hash == input_hash);
+        let teaching_state = same_input
+            .as_ref()
+            .and_then(|draft| draft.teaching_passes.clone());
+        let previous = same_input.filter(|draft| same_draft(&draft.candidate, candidate));
         let teaching_receipt = previous
             .as_ref()
             .and_then(|draft| draft.teaching_receipt.clone());
         let claim_inventory = previous
             .as_ref()
             .and_then(|draft| draft.claim_inventory.clone());
-        let teaching_passes = passes_override.or_else(|| {
-            previous
-                .as_ref()
-                .and_then(|draft| draft.teaching_passes.clone())
-        });
+        let teaching_passes = passes_override.or(teaching_state);
         let pending_repair =
             repair_override.unwrap_or_else(|| previous.and_then(|draft| draft.pending_repair));
         let authoring = context
@@ -271,14 +286,19 @@ async fn current(candidate: &str) -> Result<Option<(Context, Draft)>> {
         .lesson_draft(&context.job_id, &context.lesson_id)
         .await?
         .filter(|draft| {
-            Some(&draft.input_hash) == hash.as_ref()
-                && (draft.candidate == candidate
-                    || serde_json::from_str::<serde_json::Value>(&draft.candidate)
-                        .ok()
-                        .zip(serde_json::from_str::<serde_json::Value>(candidate).ok())
-                        .is_some_and(|(saved, requested)| saved == requested))
+            Some(&draft.input_hash) == hash.as_ref() && same_draft(&draft.candidate, candidate)
         });
     Ok(draft.map(|draft| (context, draft)))
+}
+
+/// Whether `saved` and `candidate` are one draft: the same text, or the same
+/// JSON written another way.
+fn same_draft(saved: &str, candidate: &str) -> bool {
+    saved == candidate
+        || serde_json::from_str::<serde_json::Value>(saved)
+            .ok()
+            .zip(serde_json::from_str::<serde_json::Value>(candidate).ok())
+            .is_some_and(|(saved, requested)| saved == requested)
 }
 
 /// This is the source-independent claim inventory and its coverage audit,
@@ -307,12 +327,22 @@ pub(crate) async fn pending_repair(candidate: &str) -> Result<Option<String>> {
         .and_then(|(_, draft)| draft.pending_repair))
 }
 
-/// The stopping state a teaching review cut short saved with this exact
-/// draft.
-pub(crate) async fn teaching_passes(candidate: &str) -> Result<Option<String>> {
-    Ok(current(candidate)
+/// What the job's teaching reviews saved, whichever draft they saved it with.
+pub(crate) async fn teaching_passes() -> Result<Option<String>> {
+    let Ok(context) = CURRENT.try_with(Clone::clone) else {
+        return Ok(None);
+    };
+    let hash = context
+        .input_hash
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    Ok(context
+        .repo
+        .lesson_draft(&context.job_id, &context.lesson_id)
         .await?
-        .and_then(|(_, draft)| draft.teaching_passes))
+        .filter(|draft| Some(&draft.input_hash) == hash.as_ref())
+        .and_then(|draft| draft.teaching_passes))
 }
 
 pub(crate) async fn record_pending_repair(candidate: &str, repair: String) -> Result<()> {
@@ -348,3 +378,7 @@ pub(crate) async fn record_teaching(candidate: &str, receipt: String) -> Result<
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "lesson_drafts_tests.rs"]
+pub(crate) mod tests;

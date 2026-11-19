@@ -27,7 +27,7 @@ const cases: Case[] = [
   ['resetSettings', () => settingsApi.resetSettings(), 'reset_settings', {}],
   ['exportSettings', () => settingsApi.exportSettings(), 'export_settings', {}],
   ['importSettings merging', () => settingsApi.importSettings('{"a":1}', true), 'import_settings', { request: { settings: '{"a":1}', merge: true } }],
-  ['importSettings replacing', () => settingsApi.importSettings('{"a":1}'), 'import_settings', { request: { settings: '{"a":1}', merge: undefined } }],
+  ['importSettings replacing', () => settingsApi.importSettings('{"a":1}'), 'import_settings', { request: { settings: '{"a":1}', merge: null } }],
   ['saveTextFile', () => settingsApi.saveTextFile('lattice-logs.json', jsonFilters, '{"a":1}'), 'save_text_file', { suggestedName: 'lattice-logs.json', filters: jsonFilters, contents: '{"a":1}' }],
   ['openTextFile', () => settingsApi.openTextFile(jsonFilters), 'open_text_file', { filters: jsonFilters }],
   ['getSystemTheme', () => settingsApi.getSystemTheme(), 'get_system_theme', {}],
@@ -41,6 +41,7 @@ const cases: Case[] = [
   ['getSourcesStatus', () => settingsApi.getSourcesStatus(), 'get_sources_status', {}],
   ['saveSourceKey', () => settingsApi.saveSourceKey('brave' as never, 'k'), 'save_source_key', { service: 'brave', key: 'k' }],
   ['removeSourceKey', () => settingsApi.removeSourceKey('brave' as never), 'remove_source_key', { service: 'brave' }],
+  ['checkSourcingAddress', () => settingsApi.checkSourcingAddress('contact', 'me@example.org'), 'check_sourcing_address', { field: 'contact', value: 'me@example.org' }],
 ];
 
 describe('settingsApi', () => {

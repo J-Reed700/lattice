@@ -4,6 +4,8 @@ use crate::{
     lessons::course_generation_tests::ScriptedModel, practical_dto::LearningInterviewRoundKind,
 };
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::services::model_contract::shape::Held;
+use lattice_core::application::services::model_contract::test_support::samples::schema_of;
 use lattice_core::shared::persistence::Database;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -15,6 +17,7 @@ struct AnswerModel {
     independent_solutions: AtomicUsize,
     independent_prompts: Mutex<Vec<String>>,
     review_drafts: AtomicUsize,
+    requests: Mutex<Vec<CompletionRequest>>,
 }
 
 impl std::ops::Deref for AnswerModel {
@@ -27,13 +30,17 @@ impl std::ops::Deref for AnswerModel {
 #[async_trait::async_trait]
 impl LLMPort for AnswerModel {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        if request.json_schema.is_none() {
+        self.requests
+            .lock()
+            .expect("requests")
+            .push(request.clone());
+        if request.schema().is_none() {
             assert_eq!(
                 request.sampling.and_then(|sampling| sampling.temperature),
                 Some(0.0),
                 "Independent solutions and review drafts use deterministic sampling"
             );
-            let prompt = serde_json::to_string(&request.input)?;
+            let prompt = serde_json::to_string(request.input())?;
             if prompt.contains("Independently solve this interview question before seeing") {
                 self.independent_solutions.fetch_add(1, Ordering::Relaxed);
                 assert!(prompt.contains("question"));
@@ -74,6 +81,12 @@ impl LLMPort for AnswerModel {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.scripted.enforces(schema)
+    }
 }
 
 fn model(outputs: Vec<Value>) -> AnswerModel {
@@ -81,6 +94,7 @@ fn model(outputs: Vec<Value>) -> AnswerModel {
         independent_solutions: AtomicUsize::new(0),
         independent_prompts: Mutex::new(Vec::new()),
         review_drafts: AtomicUsize::new(0),
+        requests: Mutex::new(Vec::new()),
         scripted: ScriptedModel {
             outputs: Mutex::new(
                 outputs
@@ -112,7 +126,7 @@ fn model(outputs: Vec<Value>) -> AnswerModel {
 }
 
 fn accepted_review() -> Value {
-    json!({"issues":[]})
+    json!({"items":[]})
 }
 
 fn behavioral_standard() -> Value {
@@ -132,25 +146,65 @@ fn behavioral_standard() -> Value {
     })
 }
 
+fn sent_for(llm: &AnswerModel, id: &str) -> Vec<CompletionRequest> {
+    llm.requests
+        .lock()
+        .expect("requests")
+        .iter()
+        .filter(|request| {
+            request
+                .contract()
+                .is_some_and(|call| call.id.as_str() == id)
+        })
+        .cloned()
+        .collect()
+}
+
+async fn snapshot_of(id: &str) {
+    use lattice_core::application::services::model_contract::test_support::snapshot;
+    let llm = model(vec![standard(), accepted_review()]);
+    generate_answer_guides(&llm, &plan(), &[source()])
+        .await
+        .expect("guides");
+    snapshot::assert_requests(env!("CARGO_MANIFEST_DIR"), id, &sent_for(&llm, id));
+}
+
+#[tokio::test]
+async fn prompt_snapshot_answer_standard_author() {
+    snapshot_of("interview-answer-standard").await;
+}
+
+#[tokio::test]
+async fn prompt_snapshot_independent_solution() {
+    snapshot_of("interview-independent-solution").await;
+}
+
+#[tokio::test]
+async fn prompt_snapshot_guide_review() {
+    snapshot_of("interview-guide-review").await;
+}
+
 #[test]
 fn review_fields_keep_exact_author_text_separate_from_provenance() -> Result<()> {
     let answer: AnswerStandard = serde_json::from_value(standard())?;
     let original = serde_json::to_value(&answer)?;
-    let fields = serde_json::to_value(interview_answer_review::fields(&answer))?;
-    for field in fields.as_array().expect("fields") {
-        assert_eq!(field.as_object().expect("field").len(), 2);
-        let path = field["path"].as_str().expect("path");
-        assert_eq!(original.pointer(path), Some(&field["text"]));
-        assert!(!path.contains("citations") && !path.ends_with("/evidence"));
+    let guide = interview_answer_review::fields(&answer);
+    for field in &guide {
+        assert_eq!(original.pointer(&field.path), Some(&json!(field.text)));
+        assert!(!field.path.contains("citations") && !field.path.ends_with("/evidence"));
     }
-    let support = interview_answer_review::point_support(&answer);
-    assert_eq!(support[0]["basis"], "captured_source");
+    let support = interview_answer_review::point_support(&answer, &guide);
+    assert_eq!(support[0].basis.0, "captured_source");
     assert_eq!(
-        support[0]["quotes"][0]["quote"],
-        answer.key_points[0].citations[0].quote
+        support[0]
+            .quotes
+            .as_ref()
+            .map(|quotes| quotes.0[0]["quote"].clone()),
+        Some(json!(answer.key_points[0].citations[0].quote))
     );
-    assert_eq!(support[1]["basis"], "exercise_reasoning");
-    assert!(support[1].get("quotes").is_none());
+    assert_eq!(guide[*support[0].field.value()].path, "/keyPoints/0/point");
+    assert_eq!(support[1].basis.0, "exercise_reasoning");
+    assert!(support[1].quotes.is_none());
     Ok(())
 }
 
@@ -190,64 +244,150 @@ async fn behavioral_guides_do_not_turn_employer_research_into_personal_history()
     Ok(())
 }
 
-fn rejected_review(quote: &str, problem: &str) -> Value {
-    json!({"issues":[{
-        "demonstration":"A retry after a lost response must preserve the intended effect; the cited requirement would incorrectly reject a valid result with a different response body.",
-        "path":"/referenceAnswer","quote":quote,"problem":problem
-    }]})
+const DEMONSTRATION: &str = "A retry after a lost response must preserve the intended effect; the cited requirement would incorrectly reject a valid result with a different response body.";
+
+fn finding(sentences: &[String], problem: &str) -> Value {
+    json!({"demonstration":DEMONSTRATION,"sentences":sentences,"problem":problem})
+}
+
+/// A review of one finding citing the sentence `sentence`.
+fn rejected_review(sentence: &str, problem: &str) -> Value {
+    json!({"items":[finding(&[sentence.to_owned()], problem)]})
+}
+
+/// The handle the review request shows for sentence `nth` of the field at `path` of `standard()`.
+fn handle_of(path: &str, nth: usize) -> String {
+    let answer: AnswerStandard = serde_json::from_value(standard()).expect("standard");
+    let guide = interview_answer_review::fields(&answer);
+    let field = guide
+        .iter()
+        .position(|part| part.path == path)
+        .expect("field");
+    let input = interview_answer_review::input_of(&json!({}), "", &answer, &guide, &[source()]);
+    let before: usize = interview_answer_review::texts_of(&input)
+        .iter()
+        .filter(|(of, _)| **of < field)
+        .map(|(_, units)| units.units().len())
+        .sum();
+    format!("u{}", before + nth + 1)
+}
+
+async fn reviewed_answer(
+    answer: &AnswerStandard,
+    outputs: Vec<Value>,
+) -> Result<interview_answer_review::Review> {
+    let llm = model(outputs);
+    interview_answer_review::review(
+        &llm,
+        &json!({"id":"question"}),
+        "An outline.",
+        answer,
+        &[source()],
+    )
+    .await
+}
+
+async fn reviewed(outputs: Vec<Value>) -> Result<interview_answer_review::Review> {
+    let answer: AnswerStandard =
+        serde_json::from_value(standard()).map_err(|error| invalid(error.to_string()))?;
+    reviewed_answer(&answer, outputs).await
+}
+
+#[tokio::test]
+async fn review_findings_cite_the_answer_and_cannot_be_overridden_by_acceptance() -> Result<()> {
+    assert!(reviewed(vec![accepted_review()]).await?.issues.is_empty());
+    let issue = rejected_review("u1", "Explain the durability boundary.");
+    let review = reviewed(vec![issue.clone()]).await?;
+    assert_eq!(
+        serde_json::to_value(&review.issues)?,
+        json!([{
+            "demonstration":DEMONSTRATION,"path":"/referenceAnswer",
+            "quote":"Preserve the intended effect across retries; the returned response can differ.",
+            "problem":"Explain the durability boundary."
+        }])
+    );
+    let duplicated = json!({"items":[issue["items"][0].clone(),issue["items"][0].clone()]});
+    assert_eq!(reviewed(vec![duplicated]).await?.issues.len(), 1);
+    let mut contradictory = issue.clone();
+    contradictory["accepted"] = json!(true);
+    assert_eq!(reviewed(vec![contradictory]).await?.issues.len(), 1);
+    // A review whose only finding cannot be used is no acceptance: it is
+    // asked for once more, and fails the guide when it comes back the same.
+    let mut unusable = Vec::new();
+    for sentences in [json!([]), json!(["u99"]), json!(["r1"]), json!([""])] {
+        let mut bad = issue.clone();
+        bad["items"][0]["sentences"] = sentences.clone();
+        unusable.push((sentences.to_string(), bad));
+    }
+    for (field, blank) in [("demonstration", ""), ("problem", "  ")] {
+        let mut unsupported = issue.clone();
+        unsupported["items"][0][field] = json!(blank);
+        unusable.push((field.to_owned(), unsupported));
+    }
+    for (case, bad) in unusable {
+        let corrected = reviewed(vec![bad.clone(), accepted_review()]).await?;
+        assert!(corrected.issues.is_empty(), "{case}");
+        assert!(reviewed(vec![bad.clone(), bad]).await.is_err(), "{case}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_finding_is_anchored_in_the_field_of_its_first_cited_sentence() -> Result<()> {
+    let both = json!({"items":[finding(
+        &[handle_of("/referenceAnswer", 0), handle_of("/referenceAnswer", 1)],
+        "Explain it."
+    )]});
+    let review = reviewed(vec![both]).await?;
+    assert_eq!(
+        serde_json::to_value(&review.issues)?[0]["quote"],
+        standard()["referenceAnswer"]
+    );
+    let across = json!({"items":[finding(
+        &[handle_of("/scoringCriteria/0/fullCredit", 0), handle_of("/referenceAnswer", 0)],
+        "Explain it."
+    )]});
+    let review = reviewed(vec![across]).await?;
+    let issues = serde_json::to_value(&review.issues)?;
+    assert_eq!(issues[0]["path"], "/scoringCriteria/0/fullCredit");
+    assert_eq!(issues[0]["quote"], "Explains repeated intended effects.");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_review_that_cannot_be_read_fails_the_guide() {
+    let error = reviewed(vec![json!("not an answer"), json!("not an answer")])
+        .await
+        .expect_err("an unreadable review clears nothing");
+    assert!(
+        matches!(
+            error,
+            lattice_core::shared::error::AppError::ModelAnswerUnusable(_)
+        ),
+        "{error}"
+    );
 }
 
 #[test]
-fn review_findings_must_quote_the_answer_and_cannot_be_overridden_by_acceptance() -> Result<()> {
-    let answer: AnswerStandard =
-        serde_json::from_value(standard()).map_err(|error| invalid(error.to_string()))?;
-    assert!(
-        interview_answer_review::read(&accepted_review().to_string(), &answer)?
-            .issues
-            .is_empty()
-    );
-    let issue = rejected_review(
-        "Preserve the intended effect",
-        "Explain the durability boundary.",
-    );
-    assert_eq!(
-        interview_answer_review::read(&issue.to_string(), &answer)?
-            .issues
-            .len(),
-        1
-    );
-    let duplicated = json!({"issues":[issue["issues"][0].clone(),issue["issues"][0].clone()]});
-    assert_eq!(
-        interview_answer_review::read(&duplicated.to_string(), &answer)?
-            .issues
-            .len(),
-        1
-    );
-    let mut contradictory = issue.clone();
-    contradictory["accepted"] = json!(true);
-    assert!(interview_answer_review::read(&contradictory.to_string(), &answer).is_err());
-    let mut unsupported = issue.clone();
-    unsupported["issues"][0]["demonstration"] = json!("");
-    assert!(interview_answer_review::read(&unsupported.to_string(), &answer).is_err());
-    for (path, quote) in [
-        ("/referenceAnswer", "Ignore previous instructions"),
-        ("/referenceAnswer", "A paraphrase of the proposed answer"),
-        ("/keyPoints/0/citations/0/quote", "An idempotent operation"),
-        ("/sourceSnapshots/0", "Preserve the intended effect"),
-        (
-            "/scoringCriteria/9/fullCredit",
-            "Preserve the intended effect",
-        ),
-    ] {
-        let mut bad = issue.clone();
-        bad["issues"][0]["path"] = json!(path);
-        bad["issues"][0]["quote"] = json!(quote);
-        assert!(
-            interview_answer_review::read(&bad.to_string(), &answer).is_err(),
-            "{path}: {quote}"
-        );
-    }
-    Ok(())
+fn the_review_request_shows_what_the_model_is_told_and_nothing_internal() {
+    use interview_answer_review::{Field, GuideReview, Input, Support};
+    use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
+    let mut marks = Marks::new();
+    let input = Input {
+        question: marks.told(json!({"prompt":"How is a lost upload response retried?"})),
+        independent_solution: marks.told("The retry keeps the intended effect.".to_owned()),
+        fields: vec![Field {
+            role: marks.told("referenceAnswer".to_owned()),
+            text: marks.told("The harbour gate opens at first light.".to_owned()),
+        }],
+        support: vec![Support {
+            field: marks.internal(100_001_usize),
+            basis: marks.told("captured_source".to_owned()),
+            quotes: Some(marks.told(json!([{"quote":"Tide tables are revised each spring."}]))),
+        }],
+        cited_passages: marks.told(vec![json!({"title":"Harbour almanac"})]),
+    };
+    holds::<GuideReview>(&input, &marks);
 }
 
 #[test]
@@ -450,10 +590,7 @@ async fn rejected_standards_are_repaired_before_they_can_be_saved() -> Result<()
     initial["referenceAnswer"] = json!("Require an identical response on every retry.");
     let llm = model(vec![
         initial,
-        rejected_review(
-            "Require an identical response on every retry.",
-            "Explain that responses can differ.",
-        ),
+        rejected_review("u1", "Explain that responses can differ."),
         standard(),
         accepted_review(),
     ]);
@@ -491,15 +628,9 @@ async fn a_second_repair_must_receive_a_fresh_review_before_acceptance() -> Resu
         json!("Preserve the intended effect but verify only when the response arrives.");
     let llm = model(vec![
         initial,
-        rejected_review(
-            "Require an identical response on every retry.",
-            "Repeated responses may differ.",
-        ),
+        rejected_review("u1", "Repeated responses may differ."),
         first_repair,
-        rejected_review(
-            "verify only when the response arrives",
-            "Verify the explicit lost-response scenario.",
-        ),
+        rejected_review("u1", "Verify the explicit lost-response scenario."),
         standard(),
         accepted_review(),
     ]);
@@ -570,10 +701,7 @@ async fn behavioral_standard_repairs_fabricated_history_before_review() -> Resul
 
 #[tokio::test]
 async fn repeatedly_rejected_standard_never_becomes_an_answer_key() {
-    let rejected = rejected_review(
-        "Preserve the intended effect across retries",
-        "The proposed answer contradicts the specification.",
-    );
+    let rejected = rejected_review("u1", "The proposed answer contradicts the specification.");
     let mut second = standard();
     second["evidenceGaps"] = json!(["The first revision still needs verification."]);
     let mut third = standard();
@@ -601,10 +729,7 @@ async fn repeatedly_rejected_standard_never_becomes_an_answer_key() {
 async fn unchanged_rejected_guides_stop_without_repeating_the_same_review() {
     let llm = model(vec![
         standard(),
-        rejected_review(
-            "Preserve the intended effect across retries",
-            "Resolve the reported defect.",
-        ),
+        rejected_review("u1", "Resolve the reported defect."),
         standard(),
         accepted_review(),
     ]);
@@ -666,7 +791,12 @@ fn the_author_and_review_schemas_hold_no_text_length_cap() -> Result<()> {
     }
     let answer: AnswerStandard =
         serde_json::from_value(standard()).map_err(|error| invalid(error.to_string()))?;
-    let rules = text_length_rules(&interview_answer_review::schema(&answer));
+    let guide = interview_answer_review::fields(&answer);
+    let input =
+        interview_answer_review::input_of(&json!({}), "An outline.", &answer, &guide, &[source()]);
+    let schema =
+        schema_of::<interview_answer_review::GuideReview>(&input, Held::Enums).expect("a schema");
+    let rules = text_length_rules(schema.as_json());
     assert!(rules.is_empty(), "{rules:?}");
     Ok(())
 }
@@ -708,29 +838,30 @@ async fn a_long_independent_solution_is_read_not_refused() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn a_review_finding_is_read_at_any_length() -> Result<()> {
+#[tokio::test]
+async fn a_review_finding_is_read_at_any_length() -> Result<()> {
     let mut answer: AnswerStandard =
         serde_json::from_value(standard()).map_err(|error| invalid(error.to_string()))?;
     let reference = "Preserve the intended effect across retries. ".repeat(20);
     answer.reference_answer = reference.clone();
     let wordy = "The scoring would reject a valid retry. ".repeat(20);
-    let issue = |demonstration: &str, quote: &str, problem: &str| {
-        json!({"issues":[{
-            "demonstration":demonstration,"path":"/referenceAnswer","quote":quote,"problem":problem
-        }]})
-        .to_string()
-    };
-    let first = "Preserve the intended effect";
     let valid = "A valid retry would be rejected.";
-    for (what, raw) in [
-        ("a short finding", issue(valid, first, "Explain it.")),
-        ("demonstration", issue(&wordy, first, "Explain it.")),
-        ("quote", issue(valid, &reference, "Explain it.")),
-        ("problem", issue(valid, first, &wordy)),
+    let first = vec!["u1".to_owned()];
+    let every: Vec<String> = (1..=20).map(|at| format!("u{at}")).collect();
+    for (what, sentences, demonstration, problem) in [
+        ("a short finding", &first, valid, "Explain it."),
+        ("demonstration", &first, wordy.as_str(), "Explain it."),
+        ("quote", &every, valid, "Explain it."),
+        ("problem", &first, valid, wordy.as_str()),
     ] {
-        let review = interview_answer_review::read(&raw, &answer);
-        assert!(review.is_ok(), "{what}: {:?}", review.err());
+        let raw = json!({"items":[{
+            "demonstration":demonstration,"sentences":sentences,"problem":problem
+        }]});
+        let review = reviewed_answer(&answer, vec![raw]).await;
+        assert!(
+            review.as_ref().is_ok_and(|review| review.issues.len() == 1),
+            "{what}: {review:?}"
+        );
     }
     Ok(())
 }
@@ -750,7 +881,7 @@ async fn a_long_closing_debrief_is_read_not_refused() -> Result<()> {
     let approach =
         "Preserve the intended effect, then verify the lost-response retry. ".repeat(200);
     let coach = model(vec![
-        json!({"referenceApproach":approach,"nextPracticeStep":"Test concurrent duplicates.","scorecard":[],"evaluatedQuestionIds":["q1"],"citationIds":["e1"]}),
+        json!({"referenceApproach":approach,"nextPracticeStep":"Test concurrent duplicates.","answered":["q1"],"sources":["e1"]}),
     ]);
     let feedback =
         generate_simulation_turn(&coach, &context, &session(), &[source()], true).await?;
@@ -819,8 +950,8 @@ async fn only_closing_feedback_receives_answers_and_must_cite_the_saved_evidence
         .iter()
         .all(|prompt| !prompt.contains("referenceAnswer") && !prompt.contains("answerGuides")));
     let coach = model(vec![
-        json!({"referenceApproach":"Preserve the intended effect.","nextPracticeStep":"Verify a lost response.","scorecard":[],"citationIds":[],"evaluatedQuestionIds":["q1"]}),
-        json!({"referenceApproach":"Preserve the effect and test the stipulated lost response.","nextPracticeStep":"Test concurrent duplicates.","scorecard":[],"evaluatedQuestionIds":["q1"],"citationIds":["e1"]}),
+        json!({"referenceApproach":"Preserve the intended effect.","nextPracticeStep":"Verify a lost response.","answered":["q1"],"sources":[]}),
+        json!({"referenceApproach":"Preserve the effect and test the stipulated lost response.","nextPracticeStep":"Test concurrent duplicates.","answered":["q1"],"sources":["e1"]}),
     ]);
     let feedback =
         generate_simulation_turn(&coach, &context, &session(), &[source()], true).await?;
@@ -855,7 +986,7 @@ async fn selecting_a_question_can_finish_without_an_invented_answer_or_citation(
     let mut unanswered = session();
     unanswered.turns[0].content = "Please ask me this practice question.".into();
     let coach = model(vec![
-        json!({"referenceApproach":"Insufficient evidence: selecting a question did not demonstrate an answer.","nextPracticeStep":"Answer the retry question.","scorecard":[],"citationIds":[],"evaluatedQuestionIds":[]}),
+        json!({"referenceApproach":"Insufficient evidence: selecting a question did not demonstrate an answer.","nextPracticeStep":"Answer the retry question.","answered":[],"sources":[]}),
     ]);
     let result = generate_simulation_turn(&coach, &context, &unanswered, &[source()], true).await?;
     assert!(result.citations.is_empty());
@@ -871,7 +1002,6 @@ async fn researched_answers_are_captured_hidden_and_frozen_with_each_attempt() -
             LearningPracticeMode,
         },
         interview_research::research_interview_answers,
-        persistence::db,
         practical_dto::*,
         practical_generation::{generate_activity_with_plan, PracticalFileRole},
         practical_repository::LearningPracticalRepository,
@@ -881,9 +1011,10 @@ async fn researched_answers_are_captured_hidden_and_frozen_with_each_attempt() -
     use lattice_core::application::contracts::web::{FetchUrlContentOutput, WebSearchResult};
     use lattice_core::application::ports::MockWebService;
     let pool = crate::tests::pool().await?;
+    let database = Database::new(pool.clone());
     let program = crate::tests::fixture();
     let program_id = &program.summary.id;
-    let programs = LearningRepository::new(pool.clone());
+    let programs = LearningRepository::new(database.clone());
     programs.create(&program).await?;
     programs
         .accept(&AcceptLearningProgramRequestDto {
@@ -892,7 +1023,7 @@ async fn researched_answers_are_captured_hidden_and_frozen_with_each_attempt() -
             title: program.summary.title.clone(),
         })
         .await?;
-    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
+    let library = LearningSourceLibraryRepository::new(database.clone());
     let web = MockWebService::new();
     let url = "https://spec.example/idempotency";
     let text = source().full_text;
@@ -986,7 +1117,7 @@ async fn researched_answers_are_captured_hidden_and_frozen_with_each_attempt() -
         builtin_runtime: None,
         interview_target: None,
     };
-    let repository = LearningPracticalRepository::new(pool.clone());
+    let repository = LearningPracticalRepository::new(database.clone());
     let public = repository
         .save_generated_activity(&request, &generated, "test-author", "saved-interview")
         .await?;
@@ -1021,7 +1152,7 @@ async fn researched_answers_are_captured_hidden_and_frozen_with_each_attempt() -
         };
         let directory = tempfile::tempdir()?;
         let packs = LearningPackRepository::new(
-            pool.clone(),
+            database.clone(),
             directory.path().join("packs"),
             directory.path().join("app"),
         );
@@ -1063,8 +1194,7 @@ async fn researched_answers_are_captured_hidden_and_frozen_with_each_attempt() -
         .bind(&request.activity_id)
         .bind(INTERVIEW_ANSWERS_FILE_PATH)
         .execute(&pool)
-        .await
-        .map_err(db)?;
+        .await?;
     let (frozen, frozen_sources) = repository
         .simulation_session_generation_context(program_id, &start.session_id)
         .await?;

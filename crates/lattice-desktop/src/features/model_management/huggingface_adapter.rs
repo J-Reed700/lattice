@@ -147,12 +147,19 @@ impl HuggingFaceModel {
             && !lower.contains("ptq1_0")
     }
 
+    /// The architecture of the repository's model files; None when Hugging
+    /// Face's summary describes a projector or control vector.
     fn gguf_architecture(&self) -> Option<&str> {
         self.gguf
             .as_ref()?
             .get("architecture")?
             .as_str()
             .filter(|arch| !arch.trim().is_empty())
+            .filter(|arch| {
+                !lattice_core::domain::models::llm_architecture::is_accompanying_file_architecture(
+                    arch,
+                )
+            })
     }
 
     /// Repositories whose checkpoints are Hadamard-rotated for the PrismML fork
@@ -196,19 +203,13 @@ impl HuggingFaceModel {
         if !Self::is_standalone_gguf(filename) {
             return false;
         }
-        if !self.is_embedding_model() {
-            if let Some(arch) = self.gguf_architecture() {
-                if !lattice_core::domain::models::llm_architecture::is_supported_llm_architecture(
-                    arch,
-                ) {
-                    return false;
-                }
+        if let Some(arch) = self.gguf_architecture() {
+            if !lattice_core::domain::models::llm_architecture::is_supported_llm_architecture(arch)
+            {
+                return false;
             }
         }
-        if self.requires_fork_hadamard_runtime() || self.is_fork_g128_q2_0(filename) {
-            return false;
-        }
-        true
+        !(self.requires_fork_hadamard_runtime() || self.is_fork_g128_q2_0(filename))
     }
 
     fn gguf_variants(&self) -> Vec<ExternalModelMetadata> {
@@ -304,36 +305,32 @@ impl HuggingFaceModel {
         Some((chosen.filename.clone(), chosen.size))
     }
 
-    /// Whether the bundled llama.cpp can run this embedding repository: it
-    /// needs a single-file GGUF, of an architecture the pinned engine lists.
-    /// When Hugging Face has not indexed the GGUF header, the download's own
-    /// header check decides.
+    /// Whether Lattice can run this embedding repository: a single-file GGUF of
+    /// an architecture the pinned engine lists. When Hugging Face has not
+    /// indexed the GGUF header, the download's own header check decides.
     fn embedding_compatibility(&self, has_gguf: bool) -> EmbeddingCompatibility {
         let architecture = self
             .gguf_architecture()
             .or_else(|| self.config_model_type())
             .unwrap_or("unknown")
             .to_ascii_lowercase();
+        let unsupported = self.gguf_architecture().is_some_and(|arch| {
+            !lattice_core::domain::models::llm_architecture::is_supported_llm_architecture(arch)
+        });
+        if unsupported {
+            return EmbeddingCompatibility::Incompatible {
+                architecture,
+                reason: "Lattice's bundled llama.cpp does not support this architecture."
+                    .to_string(),
+            };
+        }
         if !has_gguf {
             return EmbeddingCompatibility::Incompatible {
                 architecture,
                 reason: "The repository ships no single-file GGUF. Lattice runs embedding models from GGUF files in its bundled llama.cpp; look for a GGUF conversion of this model.".to_string(),
             };
         }
-        match self.gguf_architecture() {
-            Some(arch)
-                if !lattice_core::domain::models::llm_architecture::is_supported_llm_architecture(
-                    arch,
-                ) =>
-            {
-                EmbeddingCompatibility::Incompatible {
-                    architecture,
-                    reason: "Lattice's bundled llama.cpp does not support this architecture."
-                        .to_string(),
-                }
-            }
-            _ => EmbeddingCompatibility::Compatible { architecture },
-        }
+        EmbeddingCompatibility::Compatible { architecture }
     }
 
     fn compact_text(text: &str, max_chars: usize) -> String {

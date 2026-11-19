@@ -208,7 +208,7 @@ export function TrustOverrideMenu({
             </fieldset>
           )}
           <label className="block font-medium text-text-secondary">Note <span className="font-normal text-text-muted">(optional)</span>
-            <input value={note} onChange={(event) => setNote(event.target.value)} maxLength={280} className={FIELD} />
+            <input value={note} onChange={(event) => setNote(event.target.value)} className={FIELD} />
           </label>
           {preview && <p className="font-medium text-text-primary">{preview}</p>}
           {impact

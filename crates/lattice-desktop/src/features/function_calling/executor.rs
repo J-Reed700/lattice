@@ -192,6 +192,10 @@ impl FunctionExecutorTrait for FunctionExecutor {
         }
 
         let normalized_arguments = Self::normalize_tool_arguments(&call.name, &call.arguments);
+        let normalized_arguments = match self.registry.get_tool(&call.name) {
+            Some(tool) => Self::clamp_to_declared_ranges(&tool.input_schema, normalized_arguments),
+            None => normalized_arguments,
+        };
 
         if let Err(e) = self.validate_arguments(&call.name, &normalized_arguments) {
             error!("Invalid arguments for '{}': {}", call.name, e);
@@ -301,9 +305,10 @@ impl FunctionExecutorTrait for FunctionExecutor {
                 arguments
             };
 
-            let schema = JSONSchema::compile(&tool.input_schema).map_err(|e| {
-                AppError::InvalidInput(format!("Invalid schema for '{}': {}", function_name, e))
-            })?;
+            let schema = JSONSchema::compile(&Self::without_declared_ranges(&tool.input_schema))
+                .map_err(|e| {
+                    AppError::InvalidInput(format!("Invalid schema for '{}': {}", function_name, e))
+                })?;
 
             if let Err(errors) = schema.validate(arguments) {
                 let message = errors

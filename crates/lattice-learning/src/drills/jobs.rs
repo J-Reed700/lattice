@@ -12,12 +12,11 @@ use super::material::{material_for, ClaimSourceCheck};
 use super::runner::runner_for;
 use super::spec::DrillSpec;
 use crate::embedded_runtime::BuiltinRuntimes;
-use crate::persistence::db;
 use crate::quiz_bank_jobs::ModelLoader;
 use async_trait::async_trait;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{
     Backoff, JobContext, JobHandler, JobKindConfig, JobOutcome, JobRecord, RecoveryPolicy,
 };
@@ -126,9 +125,9 @@ impl JobHandler for DrillGradingWorker {
         let Ok(id) = attempt_of(job) else { return };
         let message = job.error_message.as_deref().unwrap_or_default();
         let recorded = async {
-            let mut tx = self.database.begin_write().await.map_err(db)?;
+            let mut tx = self.database.begin_write().await?;
             attempts::repository::record_ungraded_in(&mut tx, &id, None, message).await?;
-            tx.commit().await.map_err(db)
+            tx.commit().await.map_err(AppError::from)
         };
         if let Err(error) = recorded.await {
             tracing::warn!(attempt = id, %error, "Could not mark a review not graded");

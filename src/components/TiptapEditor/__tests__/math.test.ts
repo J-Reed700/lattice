@@ -2,6 +2,9 @@ import { Editor } from '@tiptap/core';
 import { Markdown } from 'tiptap-markdown';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { reply } from '@/tests/replyFixtures';
+import { drawReply, findReplyMarks, markFor } from '@/utils/replyPieces';
+
 import { createExtensions } from '../extensions';
 import { CitationMarks, citationMarksKey } from '../extensions/citationMarks';
 import { ClaimMarks, claimMarksKey, type ClaimMark } from '../extensions/claimMarks';
@@ -17,7 +20,7 @@ afterEach(() => {
   editors.splice(0).forEach((editor) => editor.destroy());
 });
 
-function viewer(markdown: string, claims: readonly ClaimMark[] = []): Editor {
+function viewer(markdown: string, claims: readonly ClaimMark[] = [], marks: readonly number[] = []): Editor {
   const element = document.createElement('div');
   document.body.append(element);
   const editor = new Editor({
@@ -25,7 +28,7 @@ function viewer(markdown: string, claims: readonly ClaimMark[] = []): Editor {
     extensions: [
       ...createExtensions(),
       ...ViewerMath,
-      CitationMarks.configure({ isCitation: () => true, isVisible: () => true }),
+      CitationMarks.configure({ isCitation: () => true, findMarks: (text) => findReplyMarks(text, marks), isVisible: () => true }),
       ClaimMarks.configure({ getClaims: () => claims }),
       Markdown.configure({ html: false }),
     ],
@@ -100,14 +103,19 @@ describe('math in the viewer', () => {
   });
 
   it('draws no citation chip for brackets inside a formula', () => {
-    const editor = viewer('The sequence $a[1] + a[2]$ grows [3].');
+    const drawn = drawReply(reply('The sequence $a[1] + a[2]$ grows ', 3, '.'));
+    const editor = viewer(drawn.markdown, [], drawn.numbers);
     const chips = decorations(editor, citationMarksKey);
-    expect(chips.map((chip) => editor.state.doc.textBetween(chip.from, chip.to))).toEqual(['[3]']);
+    expect(chips).toHaveLength(1);
+    expect(chips.map((chip) => editor.state.doc.textBetween(chip.from, chip.to))).toEqual([markFor(0)]);
   });
 
   it('finds a checked sentence that holds a formula', () => {
-    const sentence = 'Precision is $\\frac{TP}{TP + FP}$ over every retrieved passage [1].';
-    const editor = viewer(`Intro line here.\n\n${sentence} Next one.`, [{ sentence, verdict: 'supported' }]);
+    const sentence = 'Precision is $\\frac{TP}{TP + FP}$ over every retrieved passage.';
+    const drawn = drawReply(reply(
+      'Intro line here.\n\nPrecision is $\\frac{TP}{TP + FP}$ over every retrieved passage ', 1, '. Next one.',
+    ));
+    const editor = viewer(drawn.markdown, [{ sentence, verdict: 'supported' }], drawn.numbers);
     const [mark] = decorations(editor, claimMarksKey);
     expect(mark).toBeDefined();
     const covered: string[] = [];

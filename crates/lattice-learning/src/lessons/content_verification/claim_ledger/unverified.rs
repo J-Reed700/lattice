@@ -3,24 +3,24 @@
 //! claim-by-claim review (design 2026-11-06, a lesson publishes what
 //! verification could not settle).
 
-use super::stops::standing_ended;
+use super::super::round::Unsettled;
 use super::*;
-use lattice_core::domain::learning::claim_review::{ReopenCause, UnverifiedReason, VerdictKind};
+use lattice_core::domain::learning::acceptance::{End, Then};
+use lattice_core::domain::learning::claim_review::UnverifiedReason;
 
-/// What the claim's last reading found: a contradiction, or else that the
-/// sources do not state it.
+/// What the claim's last judged reading found; a claim no reading judged was
+/// not checked.
 fn last_reading(entry: &ClaimLedgerEntry) -> UnverifiedReason {
-    match entry.latest_failure() {
-        Some(kind) if kind.is_contradiction() => UnverifiedReason::Contradicted,
-        _ => UnverifiedReason::Unsupported,
-    }
+    entry
+        .latest_failure()
+        .map_or(UnverifiedReason::Unchecked, UnverifiedReason::of)
 }
 
 impl ClaimLedger {
     /// The statements nobody has settled: not verified, not confirmed and not
     /// gone. A code example's claim is none of them: its run is no sentence,
     /// and one that did not complete stays an issue until the user confirms it.
-    pub(in crate::lessons::content_verification) fn unsettled(&self) -> Vec<ClaimId> {
+    fn unsettled(&self) -> Vec<ClaimId> {
         self.entries
             .iter()
             .filter(|entry| !is_example(entry) && !entry.state().is_resolved())
@@ -30,30 +30,15 @@ impl ClaimLedger {
 
     /// Whether the Verifier disputes a claim the user has not resolved: a
     /// lesson held for that is the course's own stricter policy.
-    pub(in crate::lessons::content_verification) fn disputed(&self) -> bool {
-        self.entries.iter().any(|entry| {
-            matches!(
-                entry.state(),
-                ClaimState::Open {
-                    kind: VerdictKind::Disputed { .. },
-                    ..
-                } | ClaimState::Queued {
-                    kind: VerdictKind::Disputed { .. },
-                    ..
-                } | ClaimState::Reopened {
-                    cause: ReopenCause::VerifierDispute,
-                    ..
-                }
-            )
-        })
+    fn disputed(&self) -> bool {
+        self.entries
+            .iter()
+            .any(|entry| entry.state().verifier_disputed())
     }
 
     /// The claims the machine ended whose sentences `candidate` still holds.
-    pub(in crate::lessons::content_verification) fn ended_standing(
-        &self,
-        candidate: &Value,
-    ) -> Vec<ClaimId> {
-        standing_ended(&self.entries, &self.cuts, candidate)
+    fn ended_standing(&self, candidate: &Value) -> Vec<ClaimId> {
+        self.standing_ended(candidate)
             .into_iter()
             .map(|entry| entry.claim_id().clone())
             .collect()
@@ -62,7 +47,7 @@ impl ClaimLedger {
     /// Publishes `claims` not verified, each for `reason`, or for what its
     /// last reading found when none is given; a claim whose state refuses the
     /// event (the user acted first) is left as it is. How many were marked.
-    pub(in crate::lessons::content_verification) async fn publish_unverified(
+    async fn publish_unverified(
         &mut self,
         claims: &[ClaimId],
         reason: Option<UnverifiedReason>,
@@ -83,22 +68,37 @@ impl ClaimLedger {
         Ok(marked)
     }
 
-    /// Drops the repairs waiting for these claims: they are published not
-    /// verified instead, and nothing is charged.
-    pub(in crate::lessons::content_verification) async fn drop_repairs(
+    /// A step ended `id` at `End::Unverified`: it is published not verified,
+    /// for what its last reading found.
+    pub(in crate::lessons::content_verification) async fn publish_if_unverified(
         &mut self,
-        claims: &[ClaimId],
+        id: &ClaimId,
+        then: &Then,
     ) -> Result<()> {
-        self.pending
-            .repairs
-            .retain(|record| !claims.contains(&record.claim_id));
-        self.pending.cuts.retain(|claim, _| !claims.contains(claim));
-        self.pending.repairs.retain(|record| {
-            !record
-                .rides_on
-                .as_ref()
-                .is_some_and(|target| claims.contains(target))
-        });
-        self.save_pending().await
+        if *then == Then::End(End::Unverified) {
+            self.publish_unverified(std::slice::from_ref(id), None)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Publishes not verified what a round left unsettled (§6.1): the claims
+    /// it waited on or could not read; those waiting for the user, unless the
+    /// Verifier's dispute holds the lesson; the machine's ended claims whose
+    /// sentences `candidate` still holds. How many it published.
+    pub(in crate::lessons::content_verification) async fn publish_unsettled(
+        &mut self,
+        unsettled: Unsettled,
+        candidate: &Value,
+    ) -> Result<usize> {
+        let (claims, reason) = match unsettled {
+            Unsettled::Waiting(claims) | Unsettled::Unreadable(claims) => {
+                (claims, Some(UnverifiedReason::Unchecked))
+            }
+            Unsettled::AwaitingUser if self.disputed() => return Ok(0),
+            Unsettled::AwaitingUser => (self.unsettled(), Some(UnverifiedReason::Unchecked)),
+            Unsettled::Ended => (self.ended_standing(candidate), None),
+        };
+        self.publish_unverified(&claims, reason).await
     }
 }

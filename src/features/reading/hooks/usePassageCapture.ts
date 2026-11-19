@@ -34,7 +34,7 @@ export function usePassageCapture({
   const [captureDraft, setCaptureDraft] = useState<string | null>(null);
 
   const captureLocator = useCallback(
-    (text: string) => text.trim().slice(0, 4000),
+    (text: string) => text.trim(),
     []
   );
 
@@ -47,8 +47,10 @@ export function usePassageCapture({
         chunkId: initialLocator?.chunkId ?? source.chunkId,
         filePath: source.filePath,
         fileName: source.fileName,
-        locator: resolvedLabel ?? formatSourceLocation(source) ?? undefined,
+        locator: resolvedLabel ?? formatSourceLocation(source) ?? null,
         text: trimmed,
+        title: null,
+        note: null,
       });
       if (!result.ok) {
         // Say what actually went wrong. "Not available yet" was true while the
@@ -86,10 +88,9 @@ export function usePassageCapture({
       const trimmed = captureLocator(text);
       if (!trimmed) return;
       onClose();
-      navigate(
-        `/chat?new=1&documentId=${encodeURIComponent(source.documentId)}` +
-          `&quote=${encodeURIComponent(trimmed)}`
-      );
+      navigate(`/chat?new=1&documentId=${encodeURIComponent(source.documentId)}`, {
+        state: { quote: trimmed },
+      });
     },
     [source, captureLocator, navigate, onClose]
   );

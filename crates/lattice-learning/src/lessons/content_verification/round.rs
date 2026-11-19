@@ -3,19 +3,20 @@
 //! the ends; a review supplies the steps. The preparation job is one review
 //! (`repair_loop`); a scripted one in the tests is another, so the loop's end
 //! and its stop are tested without a model.
-use super::claim_ledger::{self, Decision, Waiting};
+use super::claim_ledger::{Decision, Waiting};
+use super::research::Unresearched;
 use super::*;
 use async_trait::async_trait;
 use lattice_core::domain::learning::acceptance::AcceptancePolicy;
-use lattice_core::domain::learning::claim_review::StopReason;
+use lattice_core::domain::learning::claim_review::{StopCode, StopReason};
 
 /// What a round of research came to.
 pub(super) enum Researched {
     /// No statement waits for research and no hint names a claim.
     Nothing,
-    /// It reached no search engine or page, so it recorded nothing and the
-    /// statements stay where they are.
-    Unreached,
+    /// It could not research, so it recorded nothing and the statements stay
+    /// where they are.
+    Unresearched(Unresearched),
     /// It searched and read what it saved: whether it saved a source, and the
     /// statements whose reading of it stopped.
     Searched { saved: bool, stopped: Vec<ClaimId> },
@@ -71,10 +72,10 @@ pub(super) enum Verdict {
     /// The lesson stops for this reason.
     Stop(StopReason),
     /// A round moved no statement and left the draft as it was: the
-    /// statements that wait, and whether the round's research reached nothing.
+    /// statements that wait, and why the round's research could not run.
     NoProgress {
         waiting: Vec<Waiting>,
-        unreached: bool,
+        unresearched: Option<Unresearched>,
     },
 }
 
@@ -98,11 +99,6 @@ pub(super) trait Review: Send {
     fn draft(&self) -> &str;
     /// The draft's statements and its examples' runs, before anything is read.
     async fn extract(&mut self) -> Result<()>;
-    /// The draft with a repair that wrote a new statement taken back, before
-    /// the statement is identified: one the fresh extraction holds that
-    /// continues neither the repair's target nor a statement on its sentence
-    /// (acceptance design §2.6).
-    async fn take_back(&mut self, policy: &dyn AcceptancePolicy) -> Result<Option<String>>;
     /// Which claim of the ledger each extracted statement is.
     async fn identify(&mut self, policy: &dyn AcceptancePolicy) -> Result<()>;
     /// Why the policy cannot walk a statement, which stops the lesson.
@@ -145,11 +141,7 @@ pub(super) trait Review: Send {
     /// Publishes `unsettled` not verified, with the reason each carries: how
     /// many statements it marked. None means nothing was left to mark and the
     /// lesson ends as it did before.
-    async fn publish_unverified(
-        &mut self,
-        policy: &dyn AcceptancePolicy,
-        unsettled: Unsettled,
-    ) -> Result<usize>;
+    async fn publish_unsettled(&mut self, unsettled: Unsettled) -> Result<usize>;
     /// The last guard (acceptance design §2.9): the stop for a sentence the
     /// lesson still holds that a claim the machine ended stood on, and how
     /// many such claims there are.
@@ -165,14 +157,13 @@ pub(super) trait Review: Send {
 
 /// Takes `review`'s lesson round by round until it publishes, waits for the
 /// user or stops (acceptance design §2.7, §2.10). A round syncs what the user
-/// did, resumes a saved repair the first time, extracts, takes back a repair
-/// that wrote a statement and identifies, and stops on a fault; then it reads,
-/// takes back a flow repair that wrote a statement, researches and reads what
-/// research saved, recites or uncites, and repairs the statements at rewrite
-/// and cut nodes. A round that records no step and leaves the draft as it was
-/// stops the lesson with what was pending. Once nothing is left for the
-/// machine, the sections are settled and the lesson publishes or waits for the
-/// user.
+/// did, resumes a saved repair the first time, extracts and identifies, and
+/// stops on a fault; then it reads, takes back a flow repair that wrote a
+/// statement, researches and reads what research saved, recites or uncites,
+/// and repairs the statements at rewrite and cut nodes. A round that records
+/// no step and leaves the draft as it was stops the lesson with what was
+/// pending. Once nothing is left for the machine, the sections are settled
+/// and the lesson publishes or waits for the user.
 pub(super) async fn run<F>(
     review: &mut dyn Review<Finished = F>,
     policy: &dyn AcceptancePolicy,
@@ -188,10 +179,6 @@ pub(super) async fn run<F>(
         // What this iteration starts from, to know whether it moved anything.
         let (stepped, draft) = (review.stepped(), review.draft().to_owned());
         review.extract().await?;
-        if let Some(restored) = review.take_back(policy).await? {
-            review.restore(restored).await?;
-            continue;
-        }
         review.identify(policy).await?;
         if let Some(reason) = review.fault(policy) {
             return review.finish(Verdict::Stop(reason)).await;
@@ -209,12 +196,12 @@ pub(super) async fn run<F>(
         // user's: it takes no step, and the page that reads what the round
         // saved answers the hint. A round that reaches nothing records
         // nothing, and the claims stay where they are.
-        let mut unreached = false;
+        let mut unresearched = None;
         while stopped.is_empty() {
             match review.research(policy).await? {
                 Researched::Nothing => break,
-                Researched::Unreached => {
-                    unreached = true;
+                Researched::Unresearched(cause) => {
+                    unresearched = Some(cause);
                     break;
                 }
                 Researched::Searched {
@@ -238,11 +225,9 @@ pub(super) async fn run<F>(
                 if review.stepped() == stepped && review.draft() == draft {
                     // An outage is a stop; a round that reached the web and
                     // moved nothing publishes what waits, not verified.
-                    if !unreached {
+                    if unresearched.is_none() {
                         let claims = waiting.iter().map(|waits| waits.claim.clone()).collect();
-                        let marked = review
-                            .publish_unverified(policy, Unsettled::Waiting(claims))
-                            .await?;
+                        let marked = review.publish_unsettled(Unsettled::Waiting(claims)).await?;
                         if marked > 0 {
                             if let Some(finished) = publish(review, policy).await? {
                                 return Ok(finished);
@@ -250,15 +235,18 @@ pub(super) async fn run<F>(
                             continue;
                         }
                     }
-                    let verdict = Verdict::NoProgress { waiting, unreached };
+                    let verdict = Verdict::NoProgress {
+                        waiting,
+                        unresearched,
+                    };
                     return review.finish(verdict).await;
                 }
                 review.again(&waiting);
             }
             Decision::Stop(reason) => {
-                if reason.code == claim_ledger::UNREADABLE && !stopped.is_empty() {
+                if reason.code == StopCode::CheckerUnreadable && !stopped.is_empty() {
                     let marked = review
-                        .publish_unverified(policy, Unsettled::Unreadable(stopped.clone()))
+                        .publish_unsettled(Unsettled::Unreadable(stopped.clone()))
                         .await?;
                     if marked > 0 {
                         if let Some(finished) = publish(review, policy).await? {
@@ -278,16 +266,15 @@ pub(super) async fn run<F>(
                 // An outage passes: a hint the round could not search stays
                 // pending for the next run, as a machine statement's does.
                 let waiting = review.hinted_waiting();
-                if unreached && !waiting.is_empty() {
+                if unresearched.is_some() && !waiting.is_empty() {
                     return review
-                        .finish(Verdict::NoProgress { waiting, unreached })
+                        .finish(Verdict::NoProgress {
+                            waiting,
+                            unresearched,
+                        })
                         .await;
                 }
-                if review
-                    .publish_unverified(policy, Unsettled::AwaitingUser)
-                    .await?
-                    > 0
-                {
+                if review.publish_unsettled(Unsettled::AwaitingUser).await? > 0 {
                     if let Some(finished) = publish(review, policy).await? {
                         return Ok(finished);
                     }
@@ -324,7 +311,7 @@ async fn publish<F>(
     // that a claim the machine ended stood on, or the claim is marked not
     // verified.
     if let Some((reason, claims)) = review.ended_but_standing() {
-        if review.publish_unverified(policy, Unsettled::Ended).await? == 0 {
+        if review.publish_unsettled(Unsettled::Ended).await? == 0 {
             let reason = Some(reason);
             return review
                 .finish(Verdict::Hold { claims, reason })

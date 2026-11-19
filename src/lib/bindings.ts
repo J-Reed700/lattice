@@ -456,6 +456,54 @@ async prepareLearningModule(request: PrepareLearningModuleRequestDto) : Promise<
     else return { status: "error", error: e  as any };
 }
 },
+async getLearningCoursePlan(programId: string) : Promise<Result<CoursePlanViewDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_course_plan", { programId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async planLearningCourse(request: PlanLearningCourseRequestDto) : Promise<Result<CoursePlanViewDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|plan_learning_course", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async editLearningCoursePlanEntry(request: EditCoursePlanEntryRequestDto) : Promise<Result<CoursePlanViewDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|edit_learning_course_plan_entry", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeLearningCoursePlanEntries(request: ChangeCoursePlanEntriesRequestDto) : Promise<Result<CoursePlanViewDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|change_learning_course_plan_entries", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async undoLearningCoursePlanEntry(request: UndoCoursePlanEntryRequestDto) : Promise<Result<CoursePlanViewDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|undo_learning_course_plan_entry", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async prepareLearningAhead(request: PrepareLearningAheadRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|prepare_learning_ahead", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async completeLearningLesson(request: CompleteLearningLessonRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|complete_learning_lesson", { request }) };
@@ -1813,7 +1861,7 @@ async getActiveEmbeddingModel() : Promise<Result<DownloadedModelResponse | null,
 }
 },
 /**
- * Get active models (both chat and embedding)
+ * What a chat on the Settings default and utility work run on now.
  */
 async getActiveModels() : Promise<Result<ActiveModels, ApiError>> {
     try {
@@ -2623,7 +2671,7 @@ async listIndexedFiles(limit: number | null) : Promise<Result<string[], ApiError
     else return { status: "error", error: e  as any };
 }
 },
-async listAllDocuments(limit: number) : Promise<Result<DocumentMetadataDto[], ApiError>> {
+async listAllDocuments(limit: number | null) : Promise<Result<DocumentMetadataDto[], ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:file|list_all_documents", { limit }) };
 } catch (e) {
@@ -2776,8 +2824,8 @@ async initializeDatabase() : Promise<Result<string, ApiError>> {
 }
 },
 /**
- * The newest lines of the backend's log file, oldest first. `limit` defaults
- * to 300 and is capped at 1000; no log file yet gives an empty list.
+ * The newest lines of the backend's log file, oldest first. No `limit`
+ * returns every line the log files hold; no log file yet gives an empty list.
  */
 async getBackendLogs(limit: number | null) : Promise<Result<BackendLogEntry[], ApiError>> {
     try {
@@ -4206,6 +4254,30 @@ async removeSourceKey(service: KeyServiceDto) : Promise<Result<SourcesStatusDto,
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * The saved web article whose text file is `path`, with its page, title,
+ * address and links, or nothing when `path` is not one.
+ */
+async savedWebArticle(path: string) : Promise<Result<SavedWebArticleDto | null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:web|saved_web_article", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Settings → Sources: whether `value` is an address the setting `field`
+ * accepts, by the rule the settings check applies on save.
+ */
+async checkSourcingAddress(field: SourcingAddress, value: string) : Promise<Result<boolean, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:web|check_sourcing_address", { field, value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async rescanVault() : Promise<Result<RescanSummary, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:vault|rescan_vault") };
@@ -4371,7 +4443,35 @@ export const FILE_TYPES = [{"extension":"txt","mimeType":"text/plain","category"
 /** user-defined types **/
 
 export type AcceptLearningProgramRequestDto = { programId: string; expectedRevision: number; title: string }
-export type ActiveModels = { chat_model: DownloadedModelResponse | null; embedding_model: DownloadedModelResponse | null }
+/**
+ * What a chat on the Settings default and utility work run on now, worked
+ * out by the functions the model loader uses. Nothing is probed.
+ */
+export type ActiveModels = {
+/**
+ * The models a chat on the Settings default tries, in order. Empty when none is set.
+ */
+chat: ModelRef[];
+/**
+ * Why `chat` is empty, in the words the refusal uses.
+ */
+chat_unset: string | null;
+/**
+ * The models utility work tries, in order. Empty when none is set.
+ */
+utility: ModelRef[];
+/**
+ * The model the llama.cpp connection serves, when Settings names its server URL and model.
+ */
+llama_cpp: ModelRef | null;
+/**
+ * The chat model the Ollama connection serves, when the connection is saved and names a chat tag.
+ */
+ollama: ModelRef | null;
+/**
+ * The tag utility work asks the Ollama connection for: its utility tag, else its chat tag.
+ */
+ollama_utility_tag: string | null }
 /**
  * One live item, with why it waits and what it holds put into words.
  */
@@ -4486,9 +4586,26 @@ export type AppError =
  */
 { Database: string } |
 /**
+ * Another connection kept the work out of the database; a later attempt
+ * gets the lock.
+ */
+{ DatabaseBusy: string } |
+/**
  * Configuration file errors
  */
 { InvalidConfig: string } |
+/**
+ * The configured context window cannot hold what the work needs.
+ */
+{ WindowTooSmall: string } |
+/**
+ * The work was stopped on request.
+ */
+{ Cancelled: string } |
+/**
+ * A lesson was held back for review; the text says why.
+ */
+{ LessonHeld: string } |
 /**
  * No Learning model is set; the text says where to choose one
  */
@@ -4540,10 +4657,6 @@ export type AppError =
  * Embedding generation failed
  */
 { EmbeddingFailed: { reason: string } } |
-/**
- * Queue is full
- */
-"QueueFull" |
 /**
  * Unsupported file type
  */
@@ -4597,6 +4710,11 @@ export type AppError =
  * checks. The text says what was wrong with the answer.
  */
 { ModelAnswerUnusable: string } |
+/**
+ * A model's answer ended before it was complete and was not asked for again;
+ * the same work may succeed in smaller parts.
+ */
+{ AnswerCutOff: string } |
 /**
  * A request whose prompt alone fills the configured context window, so
  * it leaves no room for an answer and was never sent. The numbers let a
@@ -4701,10 +4819,6 @@ export type ApplicationError =
  * Required service is not available.
  */
 { ServiceNotAvailable: { service: string; reason: string } } |
-/**
- * Processing queue is full (backpressure).
- */
-{ QueueFull: { queue_name: string } } |
 /**
  * Serialization failed.
  */
@@ -5107,6 +5221,7 @@ export type CaseVisibility =
  * Run on submit; a setting decides how much of a failure the learner sees.
  */
 "hidden"
+export type ChangeCoursePlanEntriesRequestDto = { programId: string; outlineRevision: number; lessons: CoursePlanEntryRefDto[]; instruction: string }
 export type ChangeLearningPracticeModeRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; mode: LearningPracticeMode }
 /**
  * What the window needs to show a stored picture. Travels in the stream
@@ -5228,7 +5343,12 @@ captured?: CapturedSourcesDto | null;
  * lines to resolve against while it streams. Merged by `ref`; the saved
  * message carries the attached ones in `metadata.images`.
  */
-images?: ChatImageDto[] | null }
+images?: ChatImageDto[] | null;
+/**
+ * One reference the reply made, in reply order between the text deltas of
+ * `content`: an event carries a text delta or one reference, never both.
+ */
+reference?: ReplyReferenceDto | null }
 export type CheckCodingExampleRequestDto = { operationId: string; programId: string; sessionId: string;
 /**
  * Some edits that example.
@@ -5409,7 +5529,31 @@ export type ClaimEventPayloadDto = { kind: "extracted"; field: string; quote: st
  * A compared passage and who added its source; `addedBy` is null for an
  * execution, which has no source.
  */
-export type ClaimEvidencePassageDto = { passage: LearningEvidencePassageDto; addedBy: SourceAddedByDto | null }
+export type ClaimEvidencePassageDto = { passage: LearningEvidencePassageDto; addedBy: SourceAddedByDto | null;
+/**
+ * The passage's first sentence in its excerpt: what the review marks in
+ * a passage the user added that does not state the claim.
+ */
+opening: ClaimExcerptDto }
+/**
+ * A quote in its passage as the review shows it (UI design §3.4): the
+ * sentences that hold it, with the sentence before and after them when it
+ * is prose, never code.
+ */
+export type ClaimExcerptDto = { before: string;
+/**
+ * The quote as the passage words it; the quote as given when the
+ * passage does not hold it.
+ */
+quote: string; after: string;
+/**
+ * More of the passage comes before `before`.
+ */
+clippedStart: boolean;
+/**
+ * More of the passage comes after `after`.
+ */
+clippedEnd: boolean }
 export type ClaimLocationDto = { unitIndex: number; unitKind: UnitKindDto; unitTitle: string; field: string; quote: string;
 /**
  * Byte span of `quote` in the field; null when it occurs more than once.
@@ -5493,6 +5637,12 @@ place: PutBackPlaceDto | null;
  */
 putBackUnit: number | null;
 /**
+ * For a sentence the machine took out whose place is known: the
+ * sentence of that unit it goes back beside, as the unit's text has it;
+ * null when it goes at the end.
+ */
+putBackBeside: string | null;
+/**
  * For a claim the machine rewrote: what it said and what it says now.
  */
 rewritten: RewrittenDto | null }
@@ -5532,10 +5682,9 @@ standing: LearningTrustLevel | null; counts: ClaimSupportCountsDto;
  */
 quote: string;
 /**
- * Byte span of `quote` inside `passage.text`; null when it is not found
- * there verbatim.
+ * `quote` in its passage.
  */
-quoteSpan: [number, number] | null; passage: LearningEvidencePassageDto }
+excerpt: ClaimExcerptDto; passage: LearningEvidencePassageDto }
 export type ClaimSupportRoleDto = "supports" | "contradicts"
 export type ClassDto = "sourced" | "reasoning" | "common" | "internal"
 export type ClassifiedByDto = "model" | "rule" | "writer" | "evidence"
@@ -6063,9 +6212,9 @@ export type ConversationTangentDto = { conversationId: string; parentConversatio
 contextMessageCount: number }
 export type ConversationWebSourceDto = { id: string; url: string; normalizedUrl: string; title: string | null; excerpt: string | null; relevanceScore: number | null; addedAt: string }
 /**
- * Vault-wide type mix and recent growth.
+ * Library-wide type mix, recent growth and the newest indexing time.
  */
-export type CorpusShapeDto = { total: number; byType: CorpusTypeCountDto[]; grownLast7Days: number }
+export type CorpusShapeDto = { total: number; byType: CorpusTypeCountDto[]; grownLast7Days: number; grownToday: number; lastIndexedAt: string | null }
 /**
  * One row of the vault's type mix.
  */
@@ -6142,6 +6291,10 @@ export type CourseIndexStatusDto =
  * course is searched by its words meanwhile.
  */
 { state: "unavailable"; reason: string }
+export type CoursePlanEntryDto = { topics: PlannedLesson; entryRevision: number; editable: boolean; previous: PlannedLesson | null }
+export type CoursePlanEntryRefDto = { lessonId: string; expectedEntryRevision: number }
+export type CoursePlanStateDto = "none" | "planning" | "planned" | "failed"
+export type CoursePlanViewDto = { programId: string; outlineRevision: number; state: CoursePlanStateDto; error: string | null; entries: CoursePlanEntryDto[] }
 export type CreateBackupRequestDto = { backupPath: string | null }
 export type CreateBackupResultDto = { backupPath: string; size: number; createdAt: string }
 export type CreateConversationJournalRequestDto = { name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null }
@@ -6348,7 +6501,15 @@ indexedAt: string;
 /**
  * Word count for document
  */
-wordCount: number }
+wordCount: number;
+/**
+ * True when the file is a saved web article's text in the web archive
+ */
+web: boolean;
+/**
+ * The type bucket the document counts in, as the Library's facets and the corpus shape count it
+ */
+typeBucket: string }
 export type DocumentRefDto = { documentId: string; filePath: string; title: string | null }
 export type DocumentSpaceMembershipDto = { spaceId: string; spaceName: string; isArchived: boolean; createdAt: string | null }
 /**
@@ -6518,6 +6679,7 @@ export type DueItemDto = { kind: DueKind;
  */
 label: string; count: number; dueAt: number; lessonId: string | null; material: string | null }
 export type DueKind = "coding_patterns" | "drill_lesson" | "drill_patterns"
+export type EditCoursePlanEntryRequestDto = { programId: string; outlineRevision: number; expectedEntryRevision: number; topics: PlannedLesson }
 /**
  * A published lesson's question as the user rewrote it, with the question
  * they opened.
@@ -6640,6 +6802,14 @@ export type ErrorCode =
  */
 "CONSTRAINT_VIOLATION" |
 /**
+ * The work was stopped on request
+ */
+"CANCELLED" |
+/**
+ * A lesson was held back for review
+ */
+"LESSON_HELD" |
+/**
  * File not found
  */
 "FILE_NOT_FOUND" |
@@ -6716,9 +6886,25 @@ export type ErrorCode =
  */
 "PROMPT_EXCEEDS_WINDOW" |
 /**
+ * The configured context window cannot hold what the work needs
+ */
+"WINDOW_TOO_SMALL" |
+/**
  * No Learning model is set
  */
 "LEARNING_MODEL_NOT_SET" |
+/**
+ * The model server turned the request down
+ */
+"MODEL_REJECTED" |
+/**
+ * A model answered, but the answer could not be used
+ */
+"MODEL_ANSWER_UNUSABLE" |
+/**
+ * A model's answer ended before it was complete
+ */
+"ANSWER_CUT_OFF" |
 /**
  * Data processing failed
  */
@@ -6755,10 +6941,6 @@ export type ErrorCode =
  * Conflict detected (e.g. revision mismatch)
  */
 "CONFLICT" |
-/**
- * Processing queue is full
- */
-"QUEUE_FULL" |
 /**
  * Backup creation failed
  */
@@ -7959,7 +8141,7 @@ movesBar: boolean;
  * Who gave the verdict (`user_confirm`, `verifier_agree`, …).
  */
 labelSource: string; lessonId: string; claimId: string; reason: LearningTrustReasonDto }
-export type LearningBlockDto = { kind: LearningBlockKind; title: string; body: string; sourceIds: string[]; rubric?: LearningPracticeCriterionDto[] }
+export type LearningBlockDto = { kind: LearningBlockKind; title: string; body: string; sourceIds: string[]; rubric?: LearningPracticeCriterionDto[]; check?: LearningCheckDto | null }
 export type LearningBlockKind =
 /**
  * One core idea's mental model, in plain language.
@@ -7992,6 +8174,25 @@ export type LearningCardDraftActionRequestDto = { programId: string; draftId: st
 export type LearningCardDraftDto = { id: string; lessonId: string; question: string; answer: string; explanation: string; sourceIds: string[]; origin: LearningCardDraftOrigin; createdAt: number }
 export type LearningCardDraftOrigin = "generated" | "manual"
 export type LearningCardOriginDto = { cardId: string; lessonId: string; origin: LearningCardDraftOrigin; sourceIds: string[]; acceptedAt: number }
+/**
+ * A check section's two halves: the case the learner reasons through, and
+ * what is revealed once they commit an answer.
+ */
+export type LearningCheckDto = { question: string; reveal: string }
+/**
+ * A passage a citation chip of the lesson opens, numbered down the lesson.
+ */
+export type LearningCitationDto = { number: number;
+/**
+ * The saved source the passage's version belongs to; none for an
+ * executed example.
+ */
+sourceId: string | null;
+/**
+ * Its trust is always none: a level belongs to each statement a passage
+ * supports, on that statement's own passages.
+ */
+passage: LearningEvidencePassageDto }
 export type LearningClaimEvidenceDto = { sectionIndex: number;
 /**
  * Exact lesson text selected by the claim inventory. This anchors the
@@ -8030,7 +8231,12 @@ parts?: LearningClaimPartDto[]; unverifiedReason?: UnverifiedReasonDto | null;
  * The claim behind this statement, for acting on it; none in a report
  * from before findings named theirs.
  */
-claimId?: string | null }
+claimId?: string | null;
+/**
+ * The numbers, in the lesson's `citations`, of the passages this
+ * statement stands on; empty when it cites none.
+ */
+cites?: number[] }
 /**
  * One part of a statement as the part-wise check read it.
  */
@@ -8051,6 +8257,10 @@ export type LearningClaimPartKindDto =
  * No passage states it, and it is standard knowledge of the field.
  */
 "common" |
+/**
+ * No passage states it and none needs to: one of the lesson's own figures.
+ */
+"own" |
 /**
  * No passage gives a specific it states.
  */
@@ -8201,7 +8411,11 @@ export type LearningGenerationActivity = { phase: LearningGenerationPhase;
  * The furthest phase this lesson's preparation has reached. A repaired
  * draft goes back through earlier phases; its progress stays here.
  */
-reached?: LearningGenerationPhase; phaseStartedAt: number; lastActivityAt: number; lastCheckpointAt: number | null; lessonTitle: string | null; modelName: string | null; modelRunning: boolean; responseCharacters: number; modelAttempt: number; verificationPass: number;
+reached?: LearningGenerationPhase; phaseStartedAt: number; lastActivityAt: number; lastCheckpointAt: number | null; lessonTitle: string | null; modelName: string | null; modelRunning: boolean; responseCharacters: number; modelAttempt: number;
+/**
+ * Set while the lesson has model requests queued for a slot and none holding one.
+ */
+waitingForModel?: boolean; verificationPass: number;
 /**
  * Claims of this pass with a finished first check. Each claim counts once.
  */
@@ -8251,7 +8465,11 @@ endedByUpdate?: boolean;
 /**
  * The lessons the job prepares, in course order.
  */
-lessonIds?: string[]; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
+lessonIds?: string[];
+/**
+ * The lessons the job finished by holding them for review.
+ */
+heldLessonIds?: string[]; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
 export type LearningGenerationJobActionRequestDto = { operationId: string; programId: string; jobId: string; expectedRevision: number }
 export type LearningGenerationJobKind = "program_outline" | "lesson_preparation" | "assessment_variant" | "adaptive_follow_up" | "practical_activity" |
 /**
@@ -8261,7 +8479,11 @@ export type LearningGenerationJobKind = "program_outline" | "lesson_preparation"
 /**
  * Grades a submitted quiz's written answers and near-miss short answers.
  */
-"quiz_grading"
+"quiz_grading" |
+/**
+ * Plans what each lesson of the outline teaches.
+ */
+"course_plan"
 export type LearningGenerationJobStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "interrupted"
 export type LearningGenerationPhase = "references" | "writing" | "review" | "inventory" | "coverage" | "examples" | "evidence" | "research" | "repair" | "questions" | "publishing"
 export type LearningGenerationStep = { phase: LearningGenerationPhase; startedAt: number }
@@ -8359,7 +8581,15 @@ export type LearningLessonEvidenceDto = { policy: string; checkedAt: number; che
  * Of `claim_count`, the claims the user confirmed without a supporting
  * passage; shown apart from the machine-verified ones (§5.6).
  */
-confirmedCount: number; executedExamples: number; unexecutedLanguages: string[]; sourcesCurrent: boolean; teachingClaims: LearningClaimEvidenceDto[] }
+confirmedCount: number; executedExamples: number; unexecutedLanguages: string[]; sourcesCurrent: boolean; teachingClaims: LearningClaimEvidenceDto[];
+/**
+ * Every passage of the report, numbered from 1.
+ */
+citations: LearningCitationDto[];
+/**
+ * One per lesson block, in block order.
+ */
+sections: LearningSectionTextDto[] }
 export type LearningLessonNoteDto = { lessonId: string; note: WorkspaceNoteDto }
 export type LearningLessonQuizDto = { lessonId: string; quiz: LearningQuizStatusDto }
 /**
@@ -8727,6 +8957,11 @@ command: string[]; limits: LearningLabLimits;
 entrypointContract: string }
 export type LearningRuntimePresetId = "csharp" | "rust" | "node" | "python"
 export type LearningRuntimeProfileDto = { id: string; name: string; engine: LearningContainerEngine; imageId: string; command: string[]; limits: LearningLabLimits; enabled: boolean; revision: number; createdAt: number; updatedAt: number }
+/**
+ * One lesson block's body as the frontend draws it: text between citation
+ * chips.
+ */
+export type LearningSectionTextDto = { sectionIndex: number; pieces: ReplyPieceDto[] }
 export type LearningSimulationSessionDto = { id: string; programId: string; activityId: string; activityRevision: number; practiceSessionId: string | null; learnerRole: string; counterpartRole: string; status: LearningSimulationStatus; revision: number; turns: LearningSimulationTurnDto[]; createdAt: number; updatedAt: number; submittedAt: number | null }
 export type LearningSimulationSpeaker = "learner" | "counterpart" | "coach"
 export type LearningSimulationStatus = "active" | "submitted" | "cancelled"
@@ -9200,13 +9435,17 @@ checkedStatementsAffected: number;
  * a lesson without a review.
  */
 revision: number | null }
+/**
+ * A line range a reference names inside what it points at.
+ */
+export type LinesDto = { first: number; last: number }
 export type ListBackupsResultDto = { backups: BackupInfoDto[] }
 /**
  * Request to list batch jobs (paginated).
  */
 export type ListBatchJobsRequestDto = {
 /**
- * Maximum number of jobs to return (default: 50, max: 100)
+ * Maximum number of jobs to return; omitted returns every job
  */
 limit?: number | null;
 /**
@@ -9225,17 +9464,21 @@ export type ListConversationsExplorerQueryDto = { spaceId: string | null;
 /**
  * Only the tutor chats of this course.
  */
-programId?: string | null; query: string | null; savedOnly: boolean | null; bookmarkedOnly: boolean | null; pinnedOnly: boolean | null; hasMessageBookmarks: boolean | null; includeArchived: boolean | null; limit: number | null; offset: number | null }
+programId?: string | null; query: string | null; savedOnly: boolean | null; bookmarkedOnly: boolean | null; pinnedOnly: boolean | null; hasMessageBookmarks: boolean | null; includeArchived: boolean | null;
+/**
+ * At most this many conversations; none means every matching one.
+ */
+limit: number | null; offset: number | null }
 /**
  * Query parameters for listing conversations.
  */
 export type ListConversationsQuery = {
 /**
- * Maximum number of conversations to return
+ * At most this many conversations; none means every conversation
  */
 limit: number | null;
 /**
- * Offset for pagination
+ * Rows to skip
  */
 offset: number | null }
 /**
@@ -9246,9 +9489,17 @@ export type ListConversationsResponseDto = {
  * List of conversations
  */
 conversations: ConversationDto[] }
-export type ListJournalConversationsQueryDto = { journalSpaceId: string; query: string | null; includeArchived: boolean | null; limit: number | null; offset: number | null }
+export type ListJournalConversationsQueryDto = { journalSpaceId: string; query: string | null; includeArchived: boolean | null;
+/**
+ * At most this many conversations; none means every matching one.
+ */
+limit: number | null; offset: number | null }
 export type ListLearningTangentsRequestDto = { programId?: string | null }
-export type ListMessageBookmarksQueryDto = { conversationId: string | null; query: string | null; limit: number | null; offset: number | null }
+export type ListMessageBookmarksQueryDto = { conversationId: string | null; query: string | null;
+/**
+ * At most this many bookmarks; none means every matching bookmark.
+ */
+limit: number | null; offset: number | null }
 export type ListMessageBookmarksResponseDto = { bookmarks: ConversationMessageBookmarkDto[] }
 export type ListPracticeSessionsRequestDto = { programId: string }
 export type ListWorkspaceNotesRequestDto = {
@@ -9363,7 +9614,11 @@ metadata: string | null;
 /**
  * Message status (pending/completed/failed)
  */
-status: string }
+status: string;
+/**
+ * An assistant message as text between references; absent for any other message.
+ */
+reply?: ReplyPieceDto[] | null }
 /**
  * How many of the exercise's misreadings the learner's right cases catch.
  */
@@ -9753,6 +10008,11 @@ export type PerformanceTierDto =
  * One state of the work: a draft, a reference, a misreading. The engine stores it and never reads inside it.
  */
 export type Piece = JsonValue
+export type PlanLearningCourseRequestDto = { programId: string }
+/**
+ * What one lesson teaches, as topics.
+ */
+export type PlannedLesson = { lessonId: string; ideas: string[]; terms: string[]; actions: string[]; contrast: string }
 /**
  * One check as every kind has it. What it found is in the kind's `work`, under the same id.
  */
@@ -9813,6 +10073,7 @@ export type PracticeSessionSummaryDto = { sessionId: string; activityId: string;
  * Cases passed on the last submit.
  */
 passed: number | null; total: number | null; createdAt: number; finishedAt: number | null }
+export type PrepareLearningAheadRequestDto = { programId: string; lessonId: string }
 export type PrepareLearningLessonRequestDto = { programId: string; lessonId: string; expectedRevision: number }
 export type PrepareLearningModuleRequestDto = { programId: string; moduleId: string; expectedRevision: number }
 export type PrepareLearningQuizBankRequestDto = { operationId: string; programId: string; scope: LearningQuizScopeDto;
@@ -10081,6 +10342,30 @@ export type ReopenCauseDto = { cause: "sentence_changed" } | { cause: "source_de
 export type RepairAttemptDto = { attempt: number; escalated: boolean; before: string; after: string | null; outcome: RepairOutcomeDto; at: number }
 export type RepairLearningOutlineRequestDto = { programId: string; expectedRevision: number }
 export type RepairOutcomeDto = { outcome: "rewritten" } | { outcome: "removed" } | { outcome: "rejected"; reason: string } | { outcome: "superseded_by_user" }
+/**
+ * One piece of a reply, in order.
+ */
+export type ReplyPieceDto = { type: "text"; text: string } | { type: "reference"; reference: ReplyReferenceDto }
+/**
+ * A marker of a reply that resolved, as the frontend draws it.
+ */
+export type ReplyReferenceDto = {
+/**
+ * The handle as written, `[s12]` or `[f2:10-20]`.
+ */
+written: string;
+/**
+ * `source` or `file`.
+ */
+kind: string;
+/**
+ * The handle's own number.
+ */
+number: number; lines?: LinesDto | null;
+/**
+ * What a kind drawn by name shows: a file's path.
+ */
+name?: string | null }
 export type ReportLearningQuizItemRequestDto = { operationId: string; programId: string; formId: string; itemId: string; note: string }
 export type ReprofileLearningClaimRequestDto = { programId: string;
 /**
@@ -10500,6 +10785,26 @@ expectedRevision: number }
 export type SaveLearningRecallCardRequestDto = { operationId: string; programId: string; cardId: string; expectedContentRevision: number | null; format: LearningRecallCardFormat; content: LearningRecallContentDto; sourceVersionIds: string[]; changeReason: string }
 export type SaveLearningRuntimeProfileRequestDto = { operationId: string; programId: string; profileId: string; expectedRevision: number | null; name: string; engine: LearningContainerEngine; imageId: string; command: string[]; limits: LearningLabLimits }
 /**
+ * A saved web article's files and the facts the archive keeps about it.
+ */
+export type SavedWebArticleDto = {
+/**
+ * The article's text (`article.md`).
+ */
+textPath: string;
+/**
+ * The saved page (`page.html`), when it is still on disk.
+ */
+pagePath: string | null; title: string | null;
+/**
+ * The address the article was saved from.
+ */
+url: string | null;
+/**
+ * Outgoing links captured from the page.
+ */
+links: string[] }
+/**
  * Whether a row was scored.
  */
 export type ScoreStatus = "observed" | "insufficient_evidence"
@@ -10798,7 +11103,11 @@ annotation: string }
  */
 export type SimilarDocumentDto = { documentId: string; title: string; filePath: string | null; score: number }
 export type SkipLearningDiagnosticRequestDto = { operationId: string; programId: string; expectedRevision: number }
-export type SnapshotMessageDto = { id: string; role: string; content: string; createdAt: string; metadata?: string | null }
+export type SnapshotMessageDto = { id: string; role: string; content: string; createdAt: string; metadata?: string | null;
+/**
+ * The message as text between references, when it was saved with them.
+ */
+reply?: ReplyPieceDto[] | null }
 /**
  * Where the frozen copy of an attached page stands.
  */
@@ -10968,6 +11277,11 @@ sourceId: string; sourceVersionId: string; title: string; url: string | null; ad
  * Everything Settings → Sources shows.
  */
 export type SourcesStatusDto = { finders: FinderStatusDto[]; keys: KeyStatusDto[] }
+/**
+ * A Sources setting that holds an address the user types: the SearXNG
+ * server, or the polite-pool contact.
+ */
+export type SourcingAddress = "searxngUrl" | "contact"
 /**
  * Source-finding settings.
  */
@@ -11186,7 +11500,11 @@ export type StickyItemDto = { id: string; text: string; color: string; createdAt
 /**
  * Why a lesson's preparation stopped, verbatim for "Copy details" (§8.4).
  */
-export type StopReasonDto = { code: string; message: string; fix: string; at: number; request: RequestFactsDto | null }
+export type StopReasonDto = { code: string;
+/**
+ * A stop of the Verifier audit, which holds a lesson its checks passed.
+ */
+audit: boolean; message: string; fix: string; at: number; request: RequestFactsDto | null }
 export type StrongAnswerDto = { approach: string; complexity: string; reference: string }
 export type StructureMode = "sections" | "pages"
 export type StudyCardDto = { id: string; format?: StudyCardFormat; deckId: string; question: string; answer: string; options: string[]; correctIndex: number; explanation: string; source: StudySourceDto;
@@ -11353,7 +11671,7 @@ findingKey: string; kind: TeachingFindingKindDto; site: TeachingFindingSiteDto;
  */
 unitIndex: number | null;
 /**
- * "Section 3: Loops", "Question 2" or "Whole lesson".
+ * "Section 3 · Loops", "Question 2" or "The whole lesson".
  */
 unitTitle: string;
 /**
@@ -11798,6 +12116,7 @@ resultsPerPage: number;
  */
 enableAnimations: boolean }
 export type UnbookmarkConversationMessageRequestDto = { conversationId: string; messageId: string }
+export type UndoCoursePlanEntryRequestDto = { programId: string; outlineRevision: number; lessonId: string; expectedEntryRevision: number }
 export type UnitKindDto = "block" | "question" | "answer_key"
 export type UnverifiedReasonDto = "unchecked" | "unsupported" | "contradicted"
 export type UpdateConversationJournalRequestDto = { journalId: string; name: string | null; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null; isArchived: boolean | null; sortOrder: number | null }
@@ -12196,3 +12515,939 @@ function __makeEvents__<T extends Record<string, any>>(
 		},
 	);
 }
+
+/** Each command's named arguments, keyed by command. `void` when none is required. */
+export type CommandArgs = {
+	accept_learning_card_draft: { request: LearningCardDraftActionRequestDto };
+	accept_learning_curriculum_revision: { request: LearningCurriculumRevisionActionRequestDto };
+	accept_learning_follow_up: { request: DecideLearningFollowUpRequestDto };
+	accept_learning_practice_proposal: { request: DecideLearningPracticeProposalRequestDto };
+	accept_learning_program: { request: AcceptLearningProgramRequestDto };
+	activity_snapshot: void;
+	add_conversation_to_journal: { request: AddConversationToJournalRequestDto };
+	add_conversation_web_source: { conversationId: string; url: string; title?: string | null; excerpt?: string | null; relevanceScore?: number | null };
+	add_documents_to_custom_collection: { collectionId: string; documentIds: string[] };
+	add_documents_to_library: { documentIds: string[] };
+	add_favorite: { documentId: string };
+	add_learning_document_source: { request: AddLearningDocumentSourceRequestDto; checkWaiting: boolean; onProgress: TAURI_CHANNEL<ClaimAttachProgressDto> };
+	add_learning_quiz_misses_to_recall: { request: AddLearningQuizMissesToRecallRequestDto };
+	add_learning_text_source: { request: AddLearningTextSourceRequestDto; checkWaiting: boolean; onProgress: TAURI_CHANNEL<ClaimAttachProgressDto> };
+	add_learning_web_source: { request: AddLearningWebSourceRequestDto; checkWaiting: boolean; onProgress: TAURI_CHANNEL<ClaimAttachProgressDto> };
+	add_watch_folder: { path: string };
+	adopt_learning_source_version: { request: AdoptLearningSourceVersionRequestDto };
+	apply_learning_pack_import: { request: ApplyLearningPackImportRequestDto };
+	apply_tags: { request: ApplyTagsRequestDto };
+	archive_conversation_space: { request: ArchiveConversationSpaceRequestDto };
+	archive_journal: { request: ArchiveConversationJournalRequestDto };
+	ask_practice_hint: { request: AskPracticeHintRequestDto };
+	attach_learning_claim_evidence: { request: AttachLearningClaimEvidenceRequestDto; onProgress: TAURI_CHANNEL<ClaimAttachProgressDto> };
+	attach_learning_lesson_source: { request: AttachLearningLessonSourceRequestDto; onProgress: TAURI_CHANNEL<ClaimAttachProgressDto> };
+	attach_message_images: { conversationId: string; paths: string[] };
+	audit_learning_lesson_now: { programId: string; lessonId: string; operationId: string };
+	batch_import_files: { request: StartBatchFileImportRequestDto };
+	batch_import_urls: { request: StartBatchUrlImportRequestDto };
+	batch_search: { queries: string[]; limit?: number | null; searchMode?: string | null };
+	bookmark_conversation_message: { request: BookmarkConversationMessageRequestDto };
+	cancel_batch: { request: CancelBatchJobRequestDto };
+	cancel_download: { id: string };
+	cancel_indexing: void;
+	cancel_learning_generation_job: { request: LearningGenerationJobActionRequestDto };
+	cancel_learning_outline: { requestId: string };
+	cancel_learning_pack_import_preview: { request: CancelLearningPackImportPreviewRequestDto };
+	cancel_learning_practical_run: { request: CancelLearningPracticalRunRequestDto };
+	capture_learning_source_snapshot: { request: CaptureLearningSourceSnapshotRequestDto };
+	capture_reference: { request: CaptureReferenceRequestDto };
+	capture_web_page_snapshot: { conversationId: string; url: string };
+	change_learning_course_plan_entries: { request: ChangeCoursePlanEntriesRequestDto };
+	change_learning_practice_mode: { request: ChangeLearningPracticeModeRequestDto };
+	chat_with_conversation: { conversationId?: string | null; message: string; toolPreferences?: ToolPreferences | null; cancelOnly?: boolean | null; requestId?: string | null; attachmentNames?: string[] | null; attachmentDocumentIds?: string[] | null; attachmentImageIds?: string[] | null };
+	check_coding_example: { request: CheckCodingExampleRequestDto };
+	check_first_run_status: void;
+	check_for_updates: void;
+	check_llm_health: void;
+	check_practice_fit: { request: PracticeFitRequestDto };
+	check_practice_piece: { request: CheckPracticePieceRequestDto };
+	check_sourcing_address: { field: SourcingAddress; value: string };
+	clear_active_chat_model: void;
+	clear_active_embedding_model: void;
+	clear_active_utility_model: void;
+	clear_cache: void;
+	clear_completed_downloads: void;
+	clear_indexing_failure: { path: string };
+	clear_model_catalog_cache: void;
+	clear_search_cache: void;
+	clear_source_trust_override: { scope: LearningTrustOverrideScopeDto };
+	cluster_vault_run: void;
+	code_review_languages: void;
+	code_review_result: { attemptId: string };
+	compact_conversation: { request: CompactConversationRequestDto };
+	compare_documents: { request: CompareDocumentsRequestDto };
+	complete_learning_lesson: { request: CompleteLearningLessonRequestDto };
+	contest_learning_quiz_grade: { request: ContestLearningQuizGradeRequestDto };
+	continue_in_new_conversation: { request: ContinueInNewConversationRequestDto };
+	course_drills: { programId: string; language?: string | null };
+	course_index_close: { programId: string };
+	course_index_open: { programId: string };
+	course_index_status: { programId: string };
+	create_conversation: { request: CreateConversationRequestDto };
+	create_conversation_space: { request: CreateConversationSpaceRequestDto };
+	create_conversation_tangent: { request: CreateTangentRequestDto };
+	create_custom_collection: { request: CreateCustomCollectionRequest };
+	create_interview_study_deck: { request: CreateInterviewStudyDeckRequestDto };
+	create_journal: { request: CreateConversationJournalRequestDto };
+	create_learning_canvas: { request: CreateLearningCanvasRequestDto };
+	create_learning_canvas_snapshot: { request: CreateLearningCanvasSnapshotRequestDto };
+	create_learning_source_selector: { request: CreateLearningSourceSelectorRequestDto };
+	create_learning_tangent: { request: CreateLearningTangentRequestDto };
+	create_mention: { name: string; mentionType: string; metadata?: string | null };
+	create_passage_reference: { request: CreatePassageReferenceRequestDto };
+	create_workspace_note: { request: CreateWorkspaceNoteRequestDto };
+	decide_learning_recall_duplicate: { request: DecideLearningRecallDuplicateRequestDto };
+	delete_batch_job: { jobId: string };
+	delete_conversation: { request: DeleteConversationRequestDto };
+	delete_conversation_message: { request: DeleteConversationMessageRequestDto };
+	delete_custom_collection: { collectionId: string };
+	delete_document: { documentId: string };
+	delete_huggingface_token: void;
+	delete_journal: { request: DeleteConversationJournalRequestDto };
+	delete_learning_program: { id: string };
+	delete_learning_source: { request: DeleteLearningSourceRequestDto };
+	delete_mention: { mentionId: string };
+	delete_model: { modelId: string; deleteFile: boolean };
+	delete_passage_reference: { id: string };
+	delete_study_deck: { id: string };
+	delete_workspace_note: { request: DeleteWorkspaceNoteRequestDto };
+	detect_system_capabilities: void;
+	discard_learning_card_draft: { request: LearningCardDraftActionRequestDto };
+	discard_learning_curriculum_revision: { request: DiscardLearningCurriculumRevisionRequestDto };
+	dismiss_journal_synthesis: { jobId: string };
+	dismiss_learning_follow_up: { request: DecideLearningFollowUpRequestDto };
+	download_default_embedding_model: void;
+	download_model: { modelId: string };
+	download_reranker: void;
+	edit_learning_course_plan_entry: { request: EditCoursePlanEntryRequestDto };
+	edit_learning_lesson_question: { request: EditLearningLessonQuestionRequestDto };
+	edit_learning_lesson_section: { request: EditLearningLessonSectionRequestDto };
+	ensure_learning_lesson_note: { request: EnsureLearningLessonNoteRequestDto };
+	execute_function: { call: FunctionCall };
+	explorer_folder_delete_index: { root: string };
+	explorer_folder_remove: { root: string; deleteThreads: boolean };
+	explorer_folder_rename: { root: string; name: string };
+	explorer_folder_set_last_thread: { root: string; conversationId: string };
+	explorer_folder_set_pinned: { root: string; pinned: boolean };
+	explorer_folder_set_settings: { root: string; instructions: string; spaceId: string };
+	explorer_folders_list: void;
+	explorer_index_close: void;
+	explorer_index_open: { root: string };
+	explorer_index_rebuild: { root: string };
+	explorer_index_status: { root: string };
+	explorer_list_dir: { root: string; path: string };
+	explorer_locate_file: { root: string; path: string };
+	explorer_read_file: { root: string; path: string };
+	explorer_resolve_root: { path: string };
+	explorer_search: { root: string; query: string; regex: boolean; pathPrefix?: string | null; maxResults?: number | null };
+	export_all_learning_packs: { request: ExportAllLearningPacksRequestDto };
+	export_learning_checker_examples: { request: ExportLearningCheckerExamplesRequestDto };
+	export_learning_pack: { request: ExportLearningPackRequestDto };
+	export_provenance_eval_examples: void;
+	export_settings: void;
+	extract_and_resolve_links: { documentId: string; content: string };
+	extract_article: { url: string };
+	extract_document_title: { content: string };
+	extract_mentions: { documentId: string; content: string };
+	fetch_url_preview: { url: string };
+	find_similar: { chunkId: string; limit?: number | null };
+	find_similar_documents: { documentId: string; limit?: number | null };
+	finish_learning_simulation: { request: FinishLearningSimulationRequestDto };
+	finish_practice_session: { request: FinishPracticeSessionRequestDto };
+	fork_conversation: { request: ForkConversationRequestDto };
+	generate_chat_starters: void | { spaceId?: string | null };
+	generate_conversation_study_deck: { request: GenerateConversationStudyDeckRequestDto };
+	generate_embedding: { text: string };
+	generate_embeddings_batch: { texts: string[] };
+	generate_learning_card_drafts: { request: GenerateLearningCardDraftsRequestDto };
+	generate_learning_practical_activity: { request: GenerateLearningPracticalActivityRequestDto };
+	generate_learning_program: { request: GenerateLearningProgramRequestDto; requestId?: string | null; onProgress: TAURI_CHANNEL<LearningOutlineProgressDto> };
+	generate_study_deck: { request: GenerateStudyDeckRequestDto };
+	generate_tags_for_document: { request: GenerateTagsRequestDto };
+	get_active_chat_model: void;
+	get_active_embedding_model: void;
+	get_active_models: void;
+	get_all_recommended_models: void;
+	get_all_tags_with_counts: void;
+	get_backend_logs: void | { limit?: number | null };
+	get_backlinks_for_mention: { mentionName: string };
+	get_batch_history: { request: ListBatchJobsRequestDto };
+	get_batch_status: { request: GetBatchJobStatusRequestDto };
+	get_cache_metrics: void;
+	get_cache_stats: void;
+	get_compatible_models: { category: string };
+	get_conversation: { request: GetConversationRequestDto };
+	get_conversation_memory: { request: GetConversationMemoryRequestDto };
+	get_conversation_messages: { request: GetConversationMessagesRequestDto };
+	get_corpus_shape: void;
+	get_daily_notes_range: { request: DailyNotesRangeRequestDto };
+	get_document: { documentId: string };
+	get_document_tags: { documentId: string };
+	get_download_status: { id: string };
+	get_embedding_model_info: void;
+	get_favorites: void;
+	get_file_metadata: { path: string };
+	get_file_path_by_id: { fileId: string };
+	get_function_stats: void;
+	get_huggingface_token_status: void;
+	get_index_progress: void;
+	get_indexed_folders: void;
+	get_indexing_activities: { limit: number };
+	get_indexing_stats: void;
+	get_indexing_status: void;
+	get_journal_synthesis_result: { jobId: string };
+	get_learning_assessment_form: { id: string };
+	get_learning_canvas_workspace: { id: string };
+	get_learning_checker_accuracy: void;
+	get_learning_course_plan: { programId: string };
+	get_learning_generation_job: { id: string };
+	get_learning_lesson_audit: { programId: string; lessonId: string };
+	get_learning_lesson_claim_review: { programId: string; lessonId: string };
+	get_learning_lesson_evidence: { programId: string; lessonId: string };
+	get_learning_lesson_question: { programId: string; lessonId: string; questionIndex: number };
+	get_learning_memory: { id: string };
+	get_learning_outline_evidence: { programId: string };
+	get_learning_plan: { id: string };
+	get_learning_portability_workspace: { programId: string };
+	get_learning_practical_draft: { request: GetLearningPracticalDraftRequestDto };
+	get_learning_practical_workspace: { programId: string };
+	get_learning_practice_profile: { request: GetLearningPracticeProfileRequestDto };
+	get_learning_practice_session: { id: string };
+	get_learning_practice_workspace: { id: string };
+	get_learning_program: { id: string };
+	get_learning_program_verifier_audit: { programId: string };
+	get_learning_quiz_overview: { programId: string };
+	get_learning_recall_workspace: { programId: string };
+	get_learning_runtime_catalog: void;
+	get_learning_source_selector: { programId: string; selectorId: string };
+	get_learning_source_trust: { request: GetLearningSourceTrustRequestDto };
+	get_learning_source_version: { request: GetLearningSourceVersionRequestDto };
+	get_learning_source_workspace: { id: string };
+	get_mentions_by_type: { mentionType: string };
+	get_mentions_for_document: { documentId: string };
+	get_model_catalog_stats: void;
+	get_model_download_path: void;
+	get_model_limits: { model: ModelRef };
+	get_model_variants: { repoId: string };
+	get_next_daily_note: { request: DailyNoteCursorRequestDto };
+	get_practice_fit: { request: PracticeFitRequestDto };
+	get_practice_session: { request: PracticeSessionRequestDto };
+	get_previous_daily_note: { request: DailyNoteCursorRequestDto };
+	get_recent_documents: { limit: number };
+	get_remote_auth_header_status: void;
+	get_settings: void;
+	get_settings_category: { category: string };
+	get_source_trust_calibration: void;
+	get_sources_status: void;
+	get_speech_status: void;
+	get_study_deck: { id: string };
+	get_system_stats: void;
+	get_system_theme: void;
+	get_today_note: void;
+	get_transcription_status: void;
+	get_version: void;
+	get_version_info: void;
+	get_web_page_snapshot: { conversationId: string; url: string };
+	health_check: void;
+	hybrid_search: { args: HybridSearchArgs };
+	import_settings: { request: ImportSettingsRequest };
+	index_directory: { path: string; recursive: boolean; spaceId?: string | null };
+	index_file: { path: string; spaceId?: string | null };
+	ingest_web_url: { url: string; spaceId?: string | null; conversationId?: string | null };
+	initialize_database: void;
+	interrupt_learning_assessment_form: { request: MutateLearningAssessmentFormRequestDto };
+	is_favorite: { documentId: string };
+	is_model_already_downloaded: { modelId: string };
+	last_learning_window_shortfall: void;
+	list_all_documents: void | { limit?: number | null };
+	list_available_functions: void;
+	list_cloud_models: { provider: CloudProvider };
+	list_clusters: void;
+	list_conversation_linked_documents: { conversationId: string };
+	list_conversation_space_members: { spaceId: string };
+	list_conversation_spaces: void;
+	list_conversation_tangents: { request: GetConversationRequestDto };
+	list_conversation_web_sources: { conversationId: string };
+	list_conversations: { query: ListConversationsQuery };
+	list_conversations_citing_document: { documentId: string; limit?: number | null };
+	list_conversations_explorer: { query: ListConversationsExplorerQueryDto };
+	list_custom_collections: void;
+	list_document_space_memberships: { documentId: string };
+	list_downloaded_models: void;
+	list_downloads: void;
+	list_indexed_files: void | { limit?: number | null };
+	list_jobs: { kinds: string[] };
+	list_journal_conversations: { query: ListJournalConversationsQueryDto };
+	list_journal_entry_pins: { journalSpaceId: string };
+	list_journal_syntheses: void;
+	list_journals: void;
+	list_learning_programs: void;
+	list_learning_tangents: { request: ListLearningTangentsRequestDto };
+	list_leftover_embedding_files: void;
+	list_loaded_models: void;
+	list_message_bookmarks: { query: ListMessageBookmarksQueryDto };
+	list_passage_references: void | { limit?: number | null };
+	list_practice_sessions: { request: ListPracticeSessionsRequestDto };
+	list_source_trust_overrides: void;
+	list_space_documents: void | { spaceId?: string | null; conversationId?: string | null; query?: string | null; limit?: number | null };
+	list_study_decks: void;
+	list_web_page_snapshots: { conversationId: string };
+	list_workspace_notes: void | { request?: ListWorkspaceNotesRequestDto | null };
+	manage_knowledge: { request: KnowledgeRequestDto };
+	mark_journal_synthesis_applied: { jobId: string };
+	match_learning_source_selector: { request: MatchLearningSourceSelectorRequestDto };
+	move_conversation_to_space: { request: MoveConversationToSpaceRequestDto };
+	move_custom_collection: { collectionId: string; parentId?: string | null };
+	move_practice_stage: { request: MovePracticeStageRequestDto };
+	observe_practice_draft: { request: ObservePracticeDraftRequestDto };
+	open_file: { path: string };
+	open_file_by_id: { fileId: string };
+	open_learning_practice_source: { request: OpenLearningPracticeSourceRequestDto };
+	open_text_file: { filters: FileFilterDto[] };
+	override_learning_quiz_grade: { request: OverrideLearningQuizGradeRequestDto };
+	parse_wikilinks: { text: string; sourcePath?: string | null };
+	pause_download: { id: string };
+	pause_indexing: void;
+	plan_learning_course: { request: PlanLearningCourseRequestDto };
+	plugin_begin_archive_setup: void;
+	plugin_choose_archive_destination: void;
+	plugin_confirm_archive_setup: { request: ConfirmArchiveSetupRequestDto };
+	plugin_create_archive_now: void;
+	plugin_create_backup: { request: CreateBackupRequestDto };
+	plugin_disable_archive: void;
+	plugin_export_json: { request: ExportJsonRequestDto };
+	plugin_export_markdown: { request: ExportMarkdownRequestDto };
+	plugin_get_archive_status: void;
+	plugin_list_backups: void;
+	plugin_restore_archive: { request: RestoreArchiveRequestDto };
+	plugin_restore_backup: { request: RestoreBackupRequestDto };
+	plugin_rotate_recovery_code: void;
+	plugin_set_archive_keep_count: { request: SetArchiveKeepCountRequestDto };
+	plugin_set_archive_passphrase: { request: SetArchivePassphraseRequestDto };
+	practice_due: { request: PracticeDueRequestDto };
+	prepare_learning_ahead: { request: PrepareLearningAheadRequestDto };
+	prepare_learning_lesson: { request: PrepareLearningLessonRequestDto };
+	prepare_learning_module: { request: PrepareLearningModuleRequestDto };
+	prepare_learning_quiz_bank: { request: PrepareLearningQuizBankRequestDto };
+	prepare_learning_runtime_preset: { request: PrepareLearningRuntimePresetRequestDto };
+	preview_learning_curriculum_revision: { request: PreviewLearningCurriculumRevisionRequestDto };
+	preview_learning_pack_import: { request: PreviewLearningPackImportRequestDto };
+	promote_conversation_tangent: { request: GetConversationRequestDto };
+	quick_capture: { content: string; sources?: SourceDto[] | null; conversationIds?: string[] | null };
+	read_file_bytes: { path: string };
+	read_file_content: { path: string };
+	read_model_fits: { files: ModelFileRefDto[] };
+	read_web_page: { url: string };
+	reassess_learning_source_trust: { request: ReassessLearningSourceTrustRequestDto };
+	recommend_chat_models: void;
+	refresh_learning_source: { request: RefreshLearningSourceRequestDto };
+	refresh_model_catalog: void;
+	regenerate_response: { conversationId: string; toolPreferences?: ToolPreferences | null; requestId?: string | null; model?: ModelRef | null };
+	regrade_code_review: { attemptId: string };
+	reimport_learning_source: { request: ReimportLearningSourceRequestDto };
+	reindex_file: { path: string };
+	reject_learning_practice_proposal: { request: DecideLearningPracticeProposalRequestDto };
+	release_message_images: { conversationId: string; imageIds: string[] };
+	remove_coding_example: { request: RemoveCodingExampleRequestDto };
+	remove_conversation_from_journal: { request: RemoveConversationFromJournalRequestDto };
+	remove_conversation_linked_document: { conversationId: string; documentId: string };
+	remove_conversation_space_member: { request: RemoveConversationSpaceMemberRequestDto };
+	remove_conversation_web_source: { conversationId: string; sourceId: string };
+	remove_documents_from_custom_collection: { collectionId: string; documentIds: string[] };
+	remove_download: { id: string };
+	remove_favorite: { documentId: string };
+	remove_indexed_file: { path: string };
+	remove_learning_teaching_sentences: { request: RemoveLearningTeachingSentencesRequestDto };
+	remove_leftover_embedding_files: void;
+	remove_source_key: { service: KeyServiceDto };
+	remove_tag_from_document: { request: RemoveTagRequestDto };
+	remove_watch_folder: { path: string };
+	rename_conversation: { request: RenameConversationRequestDto };
+	rename_custom_collection: { collectionId: string; name: string };
+	rename_document: { documentId: string; newName: string };
+	repair_learning_outline: { request: RepairLearningOutlineRequestDto; requestId?: string | null; onProgress: TAURI_CHANNEL<LearningOutlineProgressDto> };
+	report_learning_quiz_item: { request: ReportLearningQuizItemRequestDto };
+	reprofile_learning_claim: { request: ReprofileLearningClaimRequestDto };
+	request_learning_tutor_response: { request: RequestLearningTutorResponseRequestDto };
+	reranker_status: void;
+	rescan_vault: void;
+	reset_settings: void;
+	resolve_learning_claim: { request: ResolveLearningClaimRequestDto };
+	resolve_learning_claims: { request: ResolveLearningClaimsRequestDto };
+	resolve_wikilink: { target: string; sourcePath: string; availableDocuments: DocumentRefDto[] };
+	respond_practice_session: { request: PracticeSessionRequestDto };
+	restage_message_image: { conversationId: string; imageId: string };
+	restore_learning_canvas_snapshot: { request: RestoreLearningCanvasSnapshotRequestDto };
+	resume_download: { id: string };
+	resume_indexing: void;
+	resume_learning_lesson_review: { request: ResumeLearningLessonReviewRequestDto };
+	resume_learning_quiz_grading: { request: ResumeLearningQuizGradingRequestDto };
+	retry_download: { id: string };
+	retry_failed_items: { jobId: string; itemId?: string | null; replacementPath?: string | null };
+	retry_journal_synthesis: { jobId: string };
+	retry_learning_generation_job: { request: LearningGenerationJobActionRequestDto };
+	reveal_learning_practice_solution: { request: RevealLearningPracticeSolutionRequestDto };
+	reveal_practice_solution: { request: RevealPracticeSolutionRequestDto };
+	review_learning_recall_card: { request: ReviewLearningRecallCardRequestDto };
+	review_study_card: { request: ReviewStudyCardRequestDto };
+	run_coding_input: { request: RunCodingInputRequestDto };
+	save_learning_assessment_response: { request: SaveLearningAssessmentResponseRequestDto };
+	save_learning_canvas: { request: SaveLearningCanvasRequestDto };
+	save_learning_card_draft: { request: SaveLearningCardDraftRequestDto };
+	save_learning_pack_as: { request: ExportLearningPackRequestDto };
+	save_learning_practical_draft: { request: SaveLearningPracticalDraftRequestDto };
+	save_learning_practice_artifact: { request: SaveLearningPracticeArtifactRequestDto };
+	save_learning_practice_profile: { request: SaveLearningPracticeProfileRequestDto };
+	save_learning_recall_card: { request: SaveLearningRecallCardRequestDto };
+	save_learning_runtime_profile: { request: SaveLearningRuntimeProfileRequestDto };
+	save_remote_auth_header_value: { server: RemoteServer; value?: string | null };
+	save_source_key: { service: KeyServiceDto; key: string };
+	save_text_file: { suggestedName: string; filters: FileFilterDto[]; contents: string };
+	saved_web_article: { path: string };
+	search_documents: { options: SearchOptions };
+	search_fast: { query: string; limit: number };
+	search_learning_sources: { request: SearchLearningSourcesRequestDto };
+	search_learning_sources_semantically: { request: SearchLearningSourcesSemanticallyRequestDto };
+	search_mentions: { query: string; limit?: number | null };
+	search_model_catalog: { request: SearchModelCatalogRequest };
+	search_with_recency: { options: RecencySearchOptions };
+	semantic_search: { request: SearchRequestDto };
+	send_learning_simulation_turn: { request: SendLearningSimulationTurnRequestDto };
+	send_practice_turn: { request: SendPracticeTurnRequestDto };
+	set_active_chat_model: { modelId: string };
+	set_active_embedding_model: { modelId: string };
+	set_active_utility_model: { modelId: string };
+	set_cloud_api_key: { provider: string; key: string };
+	set_conversation_archived: { request: SetConversationStateRequestDto };
+	set_conversation_bookmarked: { request: SetConversationStateRequestDto };
+	set_conversation_course: { request: SetConversationCourseRequestDto };
+	set_conversation_explorer_root: { conversationId: string; root?: string | null };
+	set_conversation_model_choice: { conversationId: string; choice: ChatModelChoice };
+	set_conversation_pinned: { request: SetConversationStateRequestDto };
+	set_conversation_saved: { request: SetConversationStateRequestDto };
+	set_document_space_membership: { documentId: string; spaceId: string; assigned: boolean };
+	set_documents_space_membership: { documentIds: string[]; spaceId: string; assigned: boolean };
+	set_huggingface_token: { token: string };
+	set_journal_entry_pinned: { request: SetJournalEntryPinnedRequestDto };
+	set_learning_program_verifier_audit: { programId: string; on: boolean; webSearch: boolean; consentConfirmed: boolean };
+	set_practice_clock: { request: SetPracticeClockRequestDto };
+	set_practice_setting: { request: SetPracticeSettingRequestDto };
+	set_source_trust_override: { request: LearningTrustOverrideInputDto };
+	set_study_deck_target: { request: SetStudyDeckTargetRequestDto };
+	settle_learning_teaching_findings: { request: SettleLearningTeachingFindingsRequestDto };
+	show_in_folder: { path: string };
+	skip_learning_diagnostic: { request: SkipLearningDiagnosticRequestDto };
+	start_course_drill: { programId: string; lessonId?: string | null; material: DrillMaterialDto; mode: AttemptMode; lines: number; issues: number };
+	start_learning_diagnostic: { request: StartLearningDiagnosticRequestDto };
+	start_learning_generation_job: { request: StartLearningGenerationJobRequestDto };
+	start_learning_practical_run: { request: StartLearningPracticalRunRequestDto };
+	start_learning_practice_session: { request: StartLearningPracticeSessionRequestDto };
+	start_learning_quiz: { request: StartLearningQuizRequestDto };
+	start_learning_simulation: { request: StartLearningSimulationRequestDto };
+	start_model_download: { request: StartDownloadRequest };
+	start_practice_build: { request: StartPracticeBuildRequestDto };
+	start_practice_session: { request: StartPracticeSessionRequestDto };
+	start_vision_projector_download: { id: string };
+	submit_code_review: { attemptId: string; findings: CodeReviewFindingDto[]; fixFiles?: CodeReviewFileDto[] | null; timeSpentMs: number };
+	submit_learning_assessment_form: { request: MutateLearningAssessmentFormRequestDto };
+	submit_learning_diagnostic: { request: SubmitLearningDiagnosticRequestDto };
+	submit_learning_practice_attempt: { request: SubmitLearningPracticeAttemptRequestDto };
+	synthesize_journal_entries: { request: StartJournalSynthesisRequestDto };
+	synthesize_speech: { text: string; voice: string; speed: number };
+	test_custom_tool: { request: TestCustomToolRequest };
+	test_llama_cpp_connection: { request: TestLlamaCppConnectionRequest };
+	test_ollama_connection: { request: TestOllamaConnectionRequest };
+	transcribe_file: { path: string };
+	transcribe_speech: { pcm: string };
+	truncate_conversation_after: { request: TruncateConversationAfterRequestDto };
+	unbookmark_conversation_message: { request: UnbookmarkConversationMessageRequestDto };
+	undo_learning_course_plan_entry: { request: UndoCoursePlanEntryRequestDto };
+	update_conversation_space: { request: UpdateConversationSpaceRequestDto };
+	update_daily_note_content: { request: UpdateDailyNoteContentRequestDto };
+	update_journal: { request: UpdateConversationJournalRequestDto };
+	update_learning_quiz_settings: { request: UpdateLearningQuizSettingsRequestDto };
+	update_learning_source_policy: { request: UpdateLearningSourcePolicyRequestDto };
+	update_passage_reference: { request: UpdatePassageReferenceRequestDto };
+	update_settings: { settings: UpdateSettingsRequest };
+	update_study_card: { request: UpdateStudyCardRequestDto };
+	update_workspace_note: { note: WorkspaceNoteDto };
+	upsert_conversation_space_member: { request: UpsertConversationSpaceMemberRequestDto };
+	validate_folder_path: { path: string };
+	warm_up_active_chat_model: void;
+	warm_up_active_utility_model: void;
+	warm_up_learning_model: void;
+};
+
+/** What each command resolves with, keyed by command. */
+export type CommandResults = {
+	accept_learning_card_draft: LearningMemoryDto;
+	accept_learning_curriculum_revision: LearningPlanDto;
+	accept_learning_follow_up: LearningQuizOverviewDto;
+	accept_learning_practice_proposal: LearningPracticeWorkspaceDto;
+	accept_learning_program: LearningProgramDto;
+	activity_snapshot: ActivitySnapshotDto;
+	add_conversation_to_journal: RenameConversationResponseDto;
+	add_conversation_web_source: RenameConversationResponseDto;
+	add_documents_to_custom_collection: null;
+	add_documents_to_library: RenameConversationResponseDto;
+	add_favorite: null;
+	add_learning_document_source: LearningSourceWorkspaceDto;
+	add_learning_quiz_misses_to_recall: LearningQuizMissesToRecallDto;
+	add_learning_text_source: LearningSourceWorkspaceDto;
+	add_learning_web_source: LearningSourceWorkspaceDto;
+	add_watch_folder: null;
+	adopt_learning_source_version: LearningSourceWorkspaceDto;
+	apply_learning_pack_import: LearningPortabilityWorkspaceDto;
+	apply_tags: TagDto[];
+	archive_conversation_space: RenameConversationResponseDto;
+	archive_journal: RenameConversationResponseDto;
+	ask_practice_hint: PracticeSessionDto;
+	attach_learning_claim_evidence: ClaimAttachReportDto;
+	attach_learning_lesson_source: ClaimAttachReportDto;
+	attach_message_images: ChatImageDto[];
+	audit_learning_lesson_now: LearningLessonAuditResultDto;
+	batch_import_files: StartBatchFileImportResponseDto;
+	batch_import_urls: StartBatchUrlImportResponseDto;
+	batch_search: SearchResultDto[][];
+	bookmark_conversation_message: RenameConversationResponseDto;
+	cancel_batch: CancelBatchJobResponseDto;
+	cancel_download: null;
+	cancel_indexing: null;
+	cancel_learning_generation_job: LearningGenerationJob;
+	cancel_learning_outline: boolean;
+	cancel_learning_pack_import_preview: LearningPortabilityWorkspaceDto;
+	cancel_learning_practical_run: LearningPracticalRunDto;
+	capture_learning_source_snapshot: SnapshotNoteDto;
+	capture_reference: CaptureReferenceResultDto;
+	capture_web_page_snapshot: WebPageSnapshotDto;
+	change_learning_course_plan_entries: CoursePlanViewDto;
+	change_learning_practice_mode: LearningPracticeWorkspaceDto;
+	chat_with_conversation: ChatResponse;
+	check_coding_example: PracticeSessionDto;
+	check_first_run_status: string;
+	check_for_updates: UpdateInfoDto;
+	check_llm_health: LLMHealthStatusDto;
+	check_practice_fit: PracticeFitDto;
+	check_practice_piece: PracticeSessionDto;
+	check_sourcing_address: boolean;
+	clear_active_chat_model: null;
+	clear_active_embedding_model: null;
+	clear_active_utility_model: null;
+	clear_cache: null;
+	clear_completed_downloads: number;
+	clear_indexing_failure: null;
+	clear_model_catalog_cache: number;
+	clear_search_cache: null;
+	clear_source_trust_override: LearningTrustChangeResultDto | null;
+	cluster_vault_run: ClusterRunDto;
+	code_review_languages: string[];
+	code_review_result: CodeReviewResultDto;
+	compact_conversation: CompactConversationResponseDto;
+	compare_documents: CompareTableDto;
+	complete_learning_lesson: LearningProgramDto;
+	contest_learning_quiz_grade: LearningAssessmentFormDto;
+	continue_in_new_conversation: ContinueInNewConversationResponseDto;
+	course_drills: CourseDrillsDto;
+	course_index_close: null;
+	course_index_open: null;
+	course_index_status: CourseIndexStatusDto;
+	create_conversation: CreateConversationResponseDto;
+	create_conversation_space: ConversationSpaceDto;
+	create_conversation_tangent: ConversationTangentDto;
+	create_custom_collection: string;
+	create_interview_study_deck: StudyDeckDto;
+	create_journal: ConversationJournalDto;
+	create_learning_canvas: LearningCanvasWorkspaceDto;
+	create_learning_canvas_snapshot: LearningCanvasWorkspaceDto;
+	create_learning_source_selector: LearningSourceSelectorDto;
+	create_learning_tangent: LearningTangentDto;
+	create_mention: MentionDto;
+	create_passage_reference: PassageReferenceDto;
+	create_workspace_note: WorkspaceNoteDto;
+	decide_learning_recall_duplicate: LearningRecallWorkspaceDto;
+	delete_batch_job: DeleteBatchJobResponseDto;
+	delete_conversation: DeleteConversationResponseDto;
+	delete_conversation_message: RenameConversationResponseDto;
+	delete_custom_collection: null;
+	delete_document: null;
+	delete_huggingface_token: null;
+	delete_journal: RenameConversationResponseDto;
+	delete_learning_program: null;
+	delete_learning_source: LearningSourceWorkspaceDto;
+	delete_mention: null;
+	delete_model: null;
+	delete_passage_reference: null;
+	delete_study_deck: null;
+	delete_workspace_note: null;
+	detect_system_capabilities: SystemCapabilitiesResponse;
+	discard_learning_card_draft: LearningMemoryDto;
+	discard_learning_curriculum_revision: LearningPlanDto;
+	dismiss_journal_synthesis: null;
+	dismiss_learning_follow_up: LearningQuizOverviewDto;
+	download_default_embedding_model: string;
+	download_model: DownloadModelResponse;
+	download_reranker: RerankerStatusDto;
+	edit_learning_course_plan_entry: CoursePlanViewDto;
+	edit_learning_lesson_question: LessonQuestionEditDto;
+	edit_learning_lesson_section: LessonSectionEditDto;
+	ensure_learning_lesson_note: LearningMemoryDto;
+	execute_function: FunctionResult;
+	explorer_folder_delete_index: null;
+	explorer_folder_remove: number;
+	explorer_folder_rename: null;
+	explorer_folder_set_last_thread: null;
+	explorer_folder_set_pinned: null;
+	explorer_folder_set_settings: number;
+	explorer_folders_list: ExplorerFolderListDto;
+	explorer_index_close: null;
+	explorer_index_open: FolderIndexStatusDto;
+	explorer_index_rebuild: FolderIndexStatusDto;
+	explorer_index_status: FolderIndexStatusDto;
+	explorer_list_dir: ExplorerListingDto;
+	explorer_locate_file: string[];
+	explorer_read_file: ExplorerFileDto;
+	explorer_resolve_root: ExplorerRootDto;
+	explorer_search: ExplorerSearchResultDto;
+	export_all_learning_packs: ExportAllLearningPacksResultDto;
+	export_learning_checker_examples: ExportedLearningCheckerExamplesDto | null;
+	export_learning_pack: LearningPortabilityWorkspaceDto;
+	export_provenance_eval_examples: ExportedProvenanceEvalExamplesDto | null;
+	export_settings: string;
+	extract_and_resolve_links: ExtractAndResolveResponseDto;
+	extract_article: CleanArticle;
+	extract_document_title: string | null;
+	extract_mentions: ExtractMentionsResultDto;
+	fetch_url_preview: UrlPreview;
+	find_similar: SearchResultDto[];
+	find_similar_documents: SimilarDocumentDto[];
+	finish_learning_simulation: LearningSimulationSessionDto;
+	finish_practice_session: PracticeSessionDto;
+	fork_conversation: ForkConversationResponseDto;
+	generate_chat_starters: ChatStartersDto;
+	generate_conversation_study_deck: StudyDeckDto;
+	generate_embedding: number[];
+	generate_embeddings_batch: number[][];
+	generate_learning_card_drafts: LearningMemoryDto;
+	generate_learning_practical_activity: LearningPracticalWorkspaceDto;
+	generate_learning_program: LearningProgramDto;
+	generate_study_deck: StudyDeckDto;
+	generate_tags_for_document: string[];
+	get_active_chat_model: DownloadedModelResponse | null;
+	get_active_embedding_model: DownloadedModelResponse | null;
+	get_active_models: ActiveModels;
+	get_all_recommended_models: ModelRecommendationDto[];
+	get_all_tags_with_counts: TagWithCountDto[];
+	get_backend_logs: BackendLogEntry[];
+	get_backlinks_for_mention: BacklinksResultDto;
+	get_batch_history: ListBatchJobsResponseDto;
+	get_batch_status: BatchJobStatusDto;
+	get_cache_metrics: CacheMetrics;
+	get_cache_stats: SearchCacheStats;
+	get_compatible_models: ModelRecommendationDto[];
+	get_conversation: GetConversationResponseDto;
+	get_conversation_memory: ConversationMemoryDetailsDto;
+	get_conversation_messages: GetConversationMessagesResponseDto;
+	get_corpus_shape: CorpusShapeDto;
+	get_daily_notes_range: DailyNoteCompatDto[];
+	get_document: DocumentMetadataDto;
+	get_document_tags: TagDto[];
+	get_download_status: DownloadStatusResponse | null;
+	get_embedding_model_info: ModelInfo;
+	get_favorites: FavoriteDocument[];
+	get_file_metadata: FileMetadataDto;
+	get_file_path_by_id: string;
+	get_function_stats: RegistryStats;
+	get_huggingface_token_status: HfTokenStatus;
+	get_index_progress: IndexProgress;
+	get_indexed_folders: IndexedFolder[];
+	get_indexing_activities: IndexingActivity[];
+	get_indexing_stats: IndexingStatsDto;
+	get_indexing_status: IndexingStatus;
+	get_journal_synthesis_result: SynthesizeJournalEntriesResponseDto;
+	get_learning_assessment_form: LearningAssessmentFormDto;
+	get_learning_canvas_workspace: LearningCanvasWorkspaceDto;
+	get_learning_checker_accuracy: CheckerAccuracyDto[];
+	get_learning_course_plan: CoursePlanViewDto;
+	get_learning_generation_job: LearningGenerationJob;
+	get_learning_lesson_audit: LearningLessonAuditDto | null;
+	get_learning_lesson_claim_review: LessonClaimReviewDto | null;
+	get_learning_lesson_evidence: LearningLessonEvidenceDto | null;
+	get_learning_lesson_question: LessonQuestionDto;
+	get_learning_memory: LearningMemoryDto;
+	get_learning_outline_evidence: LearningOutlineEvidenceDto | null;
+	get_learning_plan: LearningPlanDto;
+	get_learning_portability_workspace: LearningPortabilityWorkspaceDto;
+	get_learning_practical_draft: LearningPracticalDraftDto;
+	get_learning_practical_workspace: LearningPracticalWorkspaceDto;
+	get_learning_practice_profile: LearningPracticeProfileDto;
+	get_learning_practice_session: LearningPracticeSessionDto;
+	get_learning_practice_workspace: LearningPracticeWorkspaceDto;
+	get_learning_program: LearningProgramDto;
+	get_learning_program_verifier_audit: LearningVerifierAuditDto;
+	get_learning_quiz_overview: LearningQuizOverviewDto;
+	get_learning_recall_workspace: LearningRecallWorkspaceDto;
+	get_learning_runtime_catalog: LearningRuntimePresetDto[];
+	get_learning_source_selector: LearningSourceSelectorDto;
+	get_learning_source_trust: LearningSourceTrustViewDto;
+	get_learning_source_version: LearningSourceVersionDto;
+	get_learning_source_workspace: LearningSourceWorkspaceDto;
+	get_mentions_by_type: MentionDto[];
+	get_mentions_for_document: GetMentionsForDocumentResultDto;
+	get_model_catalog_stats: ModelCatalogStats;
+	get_model_download_path: string;
+	get_model_limits: ModelWindowDto;
+	get_model_variants: ModelMetadataDto[];
+	get_next_daily_note: DailyNoteCompatDto | null;
+	get_practice_fit: PracticeFitDto;
+	get_practice_session: PracticeSessionDto;
+	get_previous_daily_note: DailyNoteCompatDto | null;
+	get_recent_documents: RecentDocument[];
+	get_remote_auth_header_status: RemoteAuthStatusDto;
+	get_settings: SettingsDto;
+	get_settings_category: { [key in string]: JsonValue };
+	get_source_trust_calibration: LearningSourceTrustCalibrationDto;
+	get_sources_status: SourcesStatusDto;
+	get_speech_status: SpeechStatusDto;
+	get_study_deck: StudyDeckDto;
+	get_system_stats: SystemStats;
+	get_system_theme: string;
+	get_today_note: DailyNoteCompatDto;
+	get_transcription_status: TranscriptionStatusDto;
+	get_version: string;
+	get_version_info: VersionInfoDto;
+	get_web_page_snapshot: WebPageSnapshotDto | null;
+	health_check: HealthStatus;
+	hybrid_search: SearchResultDto[];
+	import_settings: SettingsDto;
+	index_directory: null;
+	index_file: IndexFileResponseDto;
+	ingest_web_url: WebIngestResponse;
+	initialize_database: string;
+	interrupt_learning_assessment_form: LearningAssessmentFormDto;
+	is_favorite: boolean;
+	is_model_already_downloaded: boolean;
+	last_learning_window_shortfall: LearningWindowShortfallDto | null;
+	list_all_documents: DocumentMetadataDto[];
+	list_available_functions: ToolDefinition[];
+	list_cloud_models: CloudModelCatalogDto;
+	list_clusters: ClusterDto[];
+	list_conversation_linked_documents: ConversationLinkedDocumentDto[];
+	list_conversation_space_members: ConversationSpaceMemberDto[];
+	list_conversation_spaces: ConversationSpaceDto[];
+	list_conversation_tangents: ConversationTangentDto[];
+	list_conversation_web_sources: ConversationWebSourceDto[];
+	list_conversations: ListConversationsResponseDto;
+	list_conversations_citing_document: CitingConversationDto[];
+	list_conversations_explorer: ListConversationsResponseDto;
+	list_custom_collections: CustomCollectionDto[];
+	list_document_space_memberships: DocumentSpaceMembershipDto[];
+	list_downloaded_models: DownloadedModelResponse[];
+	list_downloads: DownloadStatusResponse[];
+	list_indexed_files: string[];
+	list_jobs: JobDto[];
+	list_journal_conversations: ListConversationsResponseDto;
+	list_journal_entry_pins: string[];
+	list_journal_syntheses: JournalSynthesisDto[];
+	list_journals: ConversationJournalDto[];
+	list_learning_programs: LearningProgramSummaryDto[];
+	list_learning_tangents: LearningTangentDto[];
+	list_leftover_embedding_files: LeftoverEmbeddingFilesDto;
+	list_loaded_models: LoadedModelDto[];
+	list_message_bookmarks: ListMessageBookmarksResponseDto;
+	list_passage_references: PassageReferenceDto[];
+	list_practice_sessions: PracticeSessionSummaryDto[];
+	list_source_trust_overrides: LearningSiteTrustOverrideDto[];
+	list_space_documents: SpaceDocumentDto[];
+	list_study_decks: StudyDeckSummaryDto[];
+	list_web_page_snapshots: WebPageSnapshotDto[];
+	list_workspace_notes: ListWorkspaceNotesResponseDto;
+	manage_knowledge: KnowledgeResponseDto;
+	mark_journal_synthesis_applied: boolean;
+	match_learning_source_selector: LearningQuoteMatch;
+	move_conversation_to_space: RenameConversationResponseDto;
+	move_custom_collection: null;
+	move_practice_stage: PracticeSessionDto;
+	observe_practice_draft: PracticeSessionDto;
+	open_file: OpenFileResponseDto;
+	open_file_by_id: OpenFileResponseDto;
+	open_learning_practice_source: LearningPracticeWorkspaceDto;
+	open_text_file: string | null;
+	override_learning_quiz_grade: LearningAssessmentFormDto;
+	parse_wikilinks: ParsedLinksResponse;
+	pause_download: null;
+	pause_indexing: null;
+	plan_learning_course: CoursePlanViewDto;
+	plugin_begin_archive_setup: ArchiveSetupDto;
+	plugin_choose_archive_destination: ArchiveStatusDto;
+	plugin_confirm_archive_setup: ArchiveStatusDto;
+	plugin_create_archive_now: ArchiveRunDto;
+	plugin_create_backup: CreateBackupResultDto;
+	plugin_disable_archive: ArchiveStatusDto;
+	plugin_export_json: ExportResultDto;
+	plugin_export_markdown: ExportResultDto;
+	plugin_get_archive_status: ArchiveStatusDto;
+	plugin_list_backups: ListBackupsResultDto;
+	plugin_restore_archive: RestoreArchiveResultDto;
+	plugin_restore_backup: RestoreBackupResultDto;
+	plugin_rotate_recovery_code: ArchiveSetupDto;
+	plugin_set_archive_keep_count: ArchiveStatusDto;
+	plugin_set_archive_passphrase: ArchiveStatusDto;
+	practice_due: PracticeDueDto;
+	prepare_learning_ahead: LearningProgramDto;
+	prepare_learning_lesson: LearningProgramDto;
+	prepare_learning_module: LearningProgramDto;
+	prepare_learning_quiz_bank: LearningGenerationJob;
+	prepare_learning_runtime_preset: LearningPracticalWorkspaceDto;
+	preview_learning_curriculum_revision: LearningPlanDto;
+	preview_learning_pack_import: LearningPortabilityWorkspaceDto;
+	promote_conversation_tangent: ConversationDto;
+	quick_capture: QuickCaptureResultDto;
+	read_file_bytes: number[];
+	read_file_content: string;
+	read_model_fits: (FitVerdictDto | null)[];
+	read_web_page: WebPageDto;
+	reassess_learning_source_trust: LearningSourceTrustViewDto;
+	recommend_chat_models: RecommendationDto[];
+	refresh_learning_source: LearningSourceWorkspaceDto;
+	refresh_model_catalog: null;
+	regenerate_response: ChatResponse;
+	regrade_code_review: CodeReviewResultDto;
+	reimport_learning_source: LearningSourceWorkspaceDto;
+	reindex_file: null;
+	reject_learning_practice_proposal: LearningPracticeWorkspaceDto;
+	release_message_images: null;
+	remove_coding_example: PracticeSessionDto;
+	remove_conversation_from_journal: RenameConversationResponseDto;
+	remove_conversation_linked_document: RenameConversationResponseDto;
+	remove_conversation_space_member: RenameConversationResponseDto;
+	remove_conversation_web_source: RenameConversationResponseDto;
+	remove_documents_from_custom_collection: null;
+	remove_download: null;
+	remove_favorite: null;
+	remove_indexed_file: null;
+	remove_learning_teaching_sentences: RemoveLearningTeachingSentencesResultDto;
+	remove_leftover_embedding_files: LeftoverEmbeddingFilesDto;
+	remove_source_key: SourcesStatusDto;
+	remove_tag_from_document: null;
+	remove_watch_folder: null;
+	rename_conversation: RenameConversationResponseDto;
+	rename_custom_collection: null;
+	rename_document: RenameDocumentResponseDto;
+	repair_learning_outline: LearningProgramDto;
+	report_learning_quiz_item: LearningAssessmentFormDto;
+	reprofile_learning_claim: LearningClaimProfileDto;
+	request_learning_tutor_response: LearningPracticeWorkspaceDto;
+	reranker_status: RerankerStatusDto;
+	rescan_vault: RescanSummary;
+	reset_settings: SettingsDto;
+	resolve_learning_claim: ResolveLearningClaimResultDto;
+	resolve_learning_claims: ResolveLearningClaimResultDto;
+	resolve_wikilink: ResolveLinkResponse;
+	respond_practice_session: PracticeSessionDto;
+	restage_message_image: ChatImageDto;
+	restore_learning_canvas_snapshot: LearningCanvasWorkspaceDto;
+	resume_download: null;
+	resume_indexing: null;
+	resume_learning_lesson_review: LearningGenerationJob;
+	resume_learning_quiz_grading: LearningAssessmentFormDto;
+	retry_download: null;
+	retry_failed_items: RetryFailedItemsResponseDto;
+	retry_journal_synthesis: JournalSynthesisDto;
+	retry_learning_generation_job: LearningGenerationJob;
+	reveal_learning_practice_solution: LearningPracticeWorkspaceDto;
+	reveal_practice_solution: PracticeSessionDto;
+	review_learning_recall_card: LearningRecallWorkspaceDto;
+	review_study_card: StudyCardDto;
+	run_coding_input: PracticeSessionDto;
+	save_learning_assessment_response: LearningAssessmentFormDto;
+	save_learning_canvas: LearningCanvasWorkspaceDto;
+	save_learning_card_draft: LearningMemoryDto;
+	save_learning_pack_as: SaveLearningPackAsResultDto;
+	save_learning_practical_draft: LearningPracticalDraftDto;
+	save_learning_practice_artifact: LearningPracticeWorkspaceDto;
+	save_learning_practice_profile: LearningPracticeProfileDto;
+	save_learning_recall_card: LearningRecallWorkspaceDto;
+	save_learning_runtime_profile: LearningPracticalWorkspaceDto;
+	save_remote_auth_header_value: null;
+	save_source_key: SourcesStatusDto;
+	save_text_file: boolean;
+	saved_web_article: SavedWebArticleDto | null;
+	search_documents: EnhancedSearchResponse;
+	search_fast: ([string, number])[];
+	search_learning_sources: LearningSourceSearchResultDto[];
+	search_learning_sources_semantically: LearningSourceSemanticSearchResultDto[];
+	search_mentions: SearchMentionsResultDto;
+	search_model_catalog: ModelSearchResultDto[];
+	search_with_recency: SearchResultDto[];
+	semantic_search: SearchResponseDto;
+	send_learning_simulation_turn: LearningSimulationSessionDto;
+	send_practice_turn: PracticeSessionDto;
+	set_active_chat_model: null;
+	set_active_embedding_model: null;
+	set_active_utility_model: null;
+	set_cloud_api_key: null;
+	set_conversation_archived: RenameConversationResponseDto;
+	set_conversation_bookmarked: RenameConversationResponseDto;
+	set_conversation_course: null;
+	set_conversation_explorer_root: null;
+	set_conversation_model_choice: ConversationDto;
+	set_conversation_pinned: RenameConversationResponseDto;
+	set_conversation_saved: RenameConversationResponseDto;
+	set_document_space_membership: RenameConversationResponseDto;
+	set_documents_space_membership: RenameConversationResponseDto;
+	set_huggingface_token: null;
+	set_journal_entry_pinned: null;
+	set_learning_program_verifier_audit: LearningVerifierAuditDto;
+	set_practice_clock: ClockDto;
+	set_practice_setting: PracticeSessionDto;
+	set_source_trust_override: LearningTrustChangeResultDto;
+	set_study_deck_target: StudyDeckDto;
+	settle_learning_teaching_findings: null;
+	show_in_folder: null;
+	skip_learning_diagnostic: LearningDiagnosticAttemptDto;
+	start_course_drill: StartedCodeReviewDto;
+	start_learning_diagnostic: LearningDiagnosticAttemptDto;
+	start_learning_generation_job: LearningGenerationJob;
+	start_learning_practical_run: LearningPracticalRunDto;
+	start_learning_practice_session: LearningPracticeWorkspaceDto;
+	start_learning_quiz: LearningAssessmentFormDto;
+	start_learning_simulation: LearningSimulationSessionDto;
+	start_model_download: string;
+	start_practice_build: StartPracticeBuildResultDto;
+	start_practice_session: PracticeSessionDto;
+	start_vision_projector_download: VisionProjectorDownloadDto;
+	submit_code_review: CodeReviewResultDto;
+	submit_learning_assessment_form: LearningAssessmentFormDto;
+	submit_learning_diagnostic: LearningDiagnosticAttemptDto;
+	submit_learning_practice_attempt: LearningPracticeWorkspaceDto;
+	synthesize_journal_entries: JournalSynthesisDto;
+	synthesize_speech: SpeechClipDto;
+	test_custom_tool: TestCustomToolResponse;
+	test_llama_cpp_connection: TestOllamaConnectionResponse;
+	test_ollama_connection: TestOllamaConnectionResponse;
+	transcribe_file: TranscriptDto;
+	transcribe_speech: TranscribedSpeechDto;
+	truncate_conversation_after: TruncateConversationAfterResponseDto;
+	unbookmark_conversation_message: RenameConversationResponseDto;
+	undo_learning_course_plan_entry: CoursePlanViewDto;
+	update_conversation_space: ConversationSpaceDto;
+	update_daily_note_content: null;
+	update_journal: ConversationJournalDto;
+	update_learning_quiz_settings: LearningQuizOverviewDto;
+	update_learning_source_policy: LearningSourceWorkspaceDto;
+	update_passage_reference: PassageReferenceDto;
+	update_settings: SettingsDto;
+	update_study_card: null;
+	update_workspace_note: WorkspaceNoteDto;
+	upsert_conversation_space_member: ConversationSpaceMemberDto;
+	validate_folder_path: boolean;
+	warm_up_active_chat_model: null;
+	warm_up_active_utility_model: null;
+	warm_up_learning_model: null;
+};

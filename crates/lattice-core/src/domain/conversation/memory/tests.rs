@@ -15,6 +15,8 @@ fn message(id: &str, sequence: i64, role: SourceRole, content: &str) -> SourceMe
         content_digest: compute_digest(content),
         status: "completed".into(),
         pictures: Vec::new(),
+        references: Vec::new(),
+        replayed: None,
     }
 }
 
@@ -1348,4 +1350,65 @@ fn the_summary_covers_through_its_boundary_or_trusts_the_watermark() {
     // A boundary that cannot be placed reads as the watermark.
     snapshot.summary_through_sequence = None;
     assert_eq!(snapshot.summary_covers_through(), 20);
+}
+
+fn quoted_span(source: &SourceMessage, quote: &str) -> EvidenceSpan {
+    let messages = vec![source.clone()];
+    let sources = SourceIndex::new(&messages);
+    let validated = validate_patch(
+        &patch(
+            vec![ProposedItem {
+                candidate_id: "c1".into(),
+                kind: "established_fact".into(),
+                label: "A rule".into(),
+                evidence: vec![evidence(&source.id, quote, "assertion")],
+            }],
+            vec![],
+        ),
+        &sources,
+        &[],
+        &[],
+    )
+    .expect("valid patch");
+    validated.additions[0].evidence[0].clone()
+}
+
+#[test]
+fn a_message_saved_before_references_is_read_by_memory_as_stored() {
+    let content = "Per the notes [1], keep the code 4471 private.";
+    let stored = message("m1", 1, SourceRole::Assistant, content);
+
+    let view = stored.memory_view();
+    assert_eq!(view, stored);
+
+    let span = quoted_span(&view, "Per the notes [1], keep");
+    assert_eq!(span.content_digest, compute_digest(content));
+    assert_eq!(span.resolve(content), Some("Per the notes [1], keep"));
+    assert_eq!(span.resolve(&view.content), Some("Per the notes [1], keep"));
+}
+
+#[test]
+fn an_item_from_an_answer_with_references_quotes_no_handle() {
+    let content = "Keep it short [s1] and plain [s2].";
+    let first = content.find("[s1]").expect("marker");
+    let second = content.find("[s2]").expect("marker");
+    let mut stored = message("m1", 1, SourceRole::Assistant, content);
+    stored.references = vec![first..first + 4, second..second + 4];
+
+    let view = stored.memory_view();
+    assert_eq!(view.content, "Keep it short and plain.");
+    assert_eq!(
+        view.content_digest,
+        compute_digest("Keep it short and plain.")
+    );
+    assert!(view.digest_matches());
+    assert!(view.references.is_empty());
+
+    let span = quoted_span(&view, "short and plain.");
+    assert_eq!(span.resolve(&view.content), Some("short and plain."));
+    assert_eq!(
+        span.resolve(content),
+        None,
+        "the stored text is not the text the span was cut on"
+    );
 }

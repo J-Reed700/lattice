@@ -112,10 +112,9 @@ describe('ClaimActionsPopover', () => {
     await userEvent.click(screen.getByText('Ask why'));
 
     expect(navigate).toHaveBeenCalledTimes(1);
-    const target = navigate.mock.calls[0]![0] as string;
-    expect(target.startsWith('/chat?quote=')).toBe(true);
-    // Read back exactly as ChatView reads it, through the search params.
-    const quote = new URLSearchParams(target.slice('/chat?'.length)).get('quote') ?? '';
+    expect(navigate.mock.calls[0]![0]).toBe('/chat');
+    // Read back exactly as ChatView reads it, from the router state.
+    const quote = (navigate.mock.calls[0]![1] as { state: { quote: string } }).state.quote;
     expect(quote).toContain('The pooled estimate was 1.2 °C per 10 points of canopy.');
     expect(quote).toContain('Where in my documents does this come from?');
   });

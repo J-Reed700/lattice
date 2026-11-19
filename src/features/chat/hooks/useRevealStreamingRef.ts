@@ -1,46 +1,28 @@
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 
-import { findCodeRefs } from '@/components/TiptapEditor/extensions/codeRefMarks';
 import { revealInFolder } from '@/features/chat/model/folderThreadHost';
-
-/** How often a streaming answer is checked for a new reference. */
-const CHECK_MS = 400;
+import type { FileTarget } from '@/utils/replyPieces';
 
 /**
- * While a folder thread's answer streams, show the newest line reference it has
- * written. Only a new reference moves the view; one already shown stays put
- * so the reader can scroll away from it.
- *
- * A timer rather than a debounce: tokens arrive faster than any debounce
- * window, so a debounced check would only ever run once the answer is done.
+ * While a folder thread's answer streams, show the newest file reference it
+ * has made. Only a new reference moves the view; one already shown stays put
+ * so the reader can scroll away from it. The pass after streaming ends still
+ * takes a reference that arrived with the last piece.
  */
-export function useRevealStreamingRef(content: string, active: boolean): void {
-  const contentRef = useRef(content);
+export function useRevealStreamingRef(files: readonly FileTarget[] | undefined, active: boolean): void {
   const shownRef = useRef<string | null>(null);
-
-  useLayoutEffect(() => {
-    contentRef.current = content;
-  }, [content]);
+  const wasActiveRef = useRef(false);
 
   useEffect(() => {
-    if (!active) return;
-    const check = (complete: boolean) => {
-      // A reference that runs to the end of the text may still be growing
-      // (`src/a.rs:1` on its way to `:12`), so mid-stream it waits for the
-      // next character; the last check, once the answer is done, takes it.
-      const refs = findCodeRefs(contentRef.current, { complete });
-      const newest = refs[refs.length - 1];
-      if (!newest) return;
-      const key = `${newest.path}:${newest.startLine}-${newest.endLine}`;
-      if (key === shownRef.current) return;
-      shownRef.current = key;
-      revealInFolder(newest.path, { startLine: newest.startLine, endLine: newest.endLine });
-    };
-    const timer = window.setInterval(() => check(false), CHECK_MS);
-    return () => {
-      window.clearInterval(timer);
-      // The last tokens can land between two checks.
-      check(true);
-    };
-  }, [active]);
+    const was = wasActiveRef.current;
+    wasActiveRef.current = active;
+    if (!active && !was) return;
+    const newest = files?.[files.length - 1];
+    if (!newest?.lines) return;
+    const { first, last } = newest.lines;
+    const key = `${newest.name}:${first}-${last}`;
+    if (key === shownRef.current) return;
+    shownRef.current = key;
+    revealInFolder(newest.name, { startLine: first, endLine: last });
+  }, [files, active]);
 }

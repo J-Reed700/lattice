@@ -16,6 +16,7 @@
 //!
 //! `--check` compares both against the committed files and writes neither.
 
+mod contracts;
 mod routes;
 mod settings;
 
@@ -122,6 +123,12 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::learning::plugin::accept_learning_program,
             lattice::features::learning::plugin::prepare_learning_lesson,
             lattice::features::learning::plugin::prepare_learning_module,
+            lattice::features::learning::plugin::get_learning_course_plan,
+            lattice::features::learning::plugin::plan_learning_course,
+            lattice::features::learning::plugin::edit_learning_course_plan_entry,
+            lattice::features::learning::plugin::change_learning_course_plan_entries,
+            lattice::features::learning::plugin::undo_learning_course_plan_entry,
+            lattice::features::learning::plugin::prepare_learning_ahead,
             lattice::features::learning::plugin::complete_learning_lesson,
             lattice::features::learning::plugin::delete_learning_program,
             lattice::features::learning::plugin::get_learning_memory,
@@ -533,6 +540,8 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::web::plugin::get_sources_status,
             lattice::features::web::plugin::save_source_key,
             lattice::features::web::plugin::remove_source_key,
+            lattice::features::web::plugin::saved_web_article,
+            lattice::features::web::plugin::check_sourcing_address,
             lattice::features::vault::plugin::rescan_vault,
             // Updates Plugin (2 commands)
             lattice::features::updates::plugin::check_for_updates,
@@ -599,6 +608,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
         .map_err(|error| format!("cannot read {}: {error}", capabilities_path.display()))?;
     let owners = routes::command_owners(&capabilities)?;
     let (bindings, command_routes) = routes::qualify_commands(&bindings, &owners)?;
+    let bindings = format!("{bindings}\n{}", contracts::render_contracts(&bindings)?);
 
     Ok(vec![
         (

@@ -13,17 +13,14 @@ pub(in super::super) struct SourceInsert<'a> {
     pub added_by: &'a str,
 }
 
-pub(in super::super) async fn insert_source(
-    connection: &mut SqliteConnection,
-    s: SourceInsert<'_>,
-) -> Result<()> {
+pub(in super::super) async fn insert_source(tx: &mut WriteTx, s: SourceInsert<'_>) -> Result<()> {
     sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,created_at,updated_at,added_by) VALUES(?,?,?,?,?,?,?,NULL,0,?,?,?)")
-        .bind(s.id).bind(s.program_id).bind(s.kind).bind(s.origin).bind(s.requested_url).bind(s.freshness_policy).bind(s.active_version_id).bind(s.created_at).bind(s.created_at).bind(s.added_by).execute(connection).await.map_err(db)?;
+        .bind(s.id).bind(s.program_id).bind(s.kind).bind(s.origin).bind(s.requested_url).bind(s.freshness_policy).bind(s.active_version_id).bind(s.created_at).bind(s.created_at).bind(s.added_by).execute(&mut **tx).await?;
     Ok(())
 }
 
 pub(in super::super) async fn set_selection_note(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     source_id: &str,
     note: &str,
@@ -32,9 +29,8 @@ pub(in super::super) async fn set_selection_note(
         .bind(note)
         .bind(program_id)
         .bind(source_id)
-        .execute(connection)
-        .await
-        .map_err(db)?;
+        .execute(&mut **tx)
+        .await?;
     Ok(())
 }
 
@@ -53,8 +49,7 @@ pub(in super::super) async fn active_pages(
     let rows = sqlx::query("SELECT v.id,v.resolved_url,v.requested_url,v.content_sha256 FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND v.not_a_source IS NULL ORDER BY s.created_at,s.id")
         .bind(program_id)
         .fetch_all(connection)
-        .await
-        .map_err(db)?;
+        .await?;
     Ok(rows
         .into_iter()
         .map(|row| ActivePage {
@@ -77,13 +72,14 @@ pub(in super::super) struct RefreshOffer {
 }
 
 pub(in super::super) async fn refresh_offer(
-    pool: &impl DriverPool,
+    database: &Database,
     program_id: &str,
     source_id: &str,
 ) -> Result<Option<RefreshOffer>> {
-    let pool = pool.sqlx_pool();
+    let mut read = database.begin_read().await?;
     let row = sqlx::query("SELECT s.revision,s.kind,s.requested_url,s.freshness_policy,s.deleted_at,p.status FROM learning_source_library s JOIN learning_programs p ON p.id=s.program_id WHERE s.program_id=? AND s.id=?")
-        .bind(program_id).bind(source_id).fetch_optional(pool).await.map_err(db)?;
+        .bind(program_id).bind(source_id).fetch_optional(&mut *read).await?;
+    read.commit().await?;
     Ok(row.map(|r| RefreshOffer {
         revision: r.get("revision"),
         kind: r.get("kind"),
@@ -110,7 +106,7 @@ pub(in super::super) async fn refresh_state(
     source_id: &str,
 ) -> Result<Option<RefreshState>> {
     let row = sqlx::query("SELECT revision,active_version_id,pending_version_id,kind,requested_url,freshness_policy FROM learning_source_library WHERE program_id=? AND id=?")
-        .bind(program_id).bind(source_id).fetch_optional(connection).await.map_err(db)?;
+        .bind(program_id).bind(source_id).fetch_optional(connection).await?;
     Ok(row.map(|r| RefreshState {
         revision: r.get("revision"),
         pending_version_id: r.get("pending_version_id"),
@@ -133,12 +129,12 @@ pub(in super::super) async fn version_digest(
     .bind(version_id)
     .fetch_optional(connection)
     .await
-    .map_err(db)
+    .map_err(AppError::from)
 }
 
 /// Whether the source still had `expected_revision` and took the new pending version.
 pub(in super::super) async fn set_pending_version(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     program_id: &str,
     source_id: &str,
     pending_version_id: &Option<String>,
@@ -146,7 +142,7 @@ pub(in super::super) async fn set_pending_version(
     updated_at: i64,
 ) -> Result<bool> {
     let result=sqlx::query("UPDATE learning_source_library SET pending_version_id=?,revision=?,updated_at=? WHERE program_id=? AND id=? AND revision=?")
-        .bind(pending_version_id).bind(revision).bind(updated_at).bind(program_id).bind(source_id).bind(expected_revision).execute(connection).await.map_err(db)?;
+        .bind(pending_version_id).bind(revision).bind(updated_at).bind(program_id).bind(source_id).bind(expected_revision).execute(&mut **tx).await?;
     Ok(result.rows_affected() == 1)
 }
 
@@ -163,10 +159,10 @@ pub(in super::super) struct RefreshCheckInsert<'a> {
 }
 
 pub(in super::super) async fn insert_refresh_check(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     c: RefreshCheckInsert<'_>,
 ) -> Result<()> {
     sqlx::query("INSERT INTO learning_source_refresh_checks(operation_id,program_id,source_id,status,checked_at,active_digest,pending_version_id,message) VALUES(?,?,?,?,?,?,?,?)")
-        .bind(c.operation_id).bind(c.program_id).bind(c.source_id).bind(c.status).bind(c.checked_at).bind(c.active_digest).bind(c.pending_version_id).bind(c.message).execute(connection).await.map_err(db)?;
+        .bind(c.operation_id).bind(c.program_id).bind(c.source_id).bind(c.status).bind(c.checked_at).bind(c.active_digest).bind(c.pending_version_id).bind(c.message).execute(&mut **tx).await?;
     Ok(())
 }

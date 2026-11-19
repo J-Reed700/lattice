@@ -6,13 +6,7 @@
  */
 
 
-import type { FitVerdictDto } from '@/lib/bindings';
-
-import type {
-  ModelCategory,
-  PerformanceTier,
-  ModelSource,
-} from './modelCatalogPrimitives';
+import type { ModelCategory } from './modelCatalogPrimitives';
 
 export type {
   ModelCategory,
@@ -25,101 +19,11 @@ export type {
 } from './modelCatalogPrimitives';
 
 
-/**
- * System hardware capabilities detected from the user's machine.
- *
-/**
- * Complete metadata for an AI model.
- *
- * Contains all information needed for compatibility scoring,
- * download management, performance estimation, and user presentation.
- */
-export interface ModelMetadata {
-  /** Unique model identifier (e.g., "phi-3-mini-4k-instruct-q4") */
-  id: string;
-  /** Human-readable name (e.g., "Phi-3 Mini") */
-  name: string;
-  /** Model category (LLM, Embedding, OCR) */
-  category: ModelCategory;
-  /** Detailed description of model capabilities */
-  description: string;
-  /** Model size in gigabytes (on disk) */
-  size_gb: number;
-  /** Maximum context length in tokens */
-  context_length: number;
-  /** Performance characteristic */
-  performance_tier: PerformanceTier;
-  /** Available quantization formats (e.g., Q4_K_M, Q5_K_M, F16) */
-  supported_quantizations: string[];
-  /** Model capabilities (e.g., "chat", "code", "reasoning") */
-  capabilities: string[];
-  /** Download URL if available */
-  download_url: string | null;
-  /** License (e.g., "MIT", "Apache-2.0") */
-  license: string;
-  /** Whether this model requires authentication to download */
-  requires_auth: boolean;
-  /** HuggingFace model ID (e.g., "microsoft/Phi-3-mini-4k-instruct-gguf") */
-  model_id: string | null;
-  /** Default GGUF filename for this model */
-  default_filename: string | null;
-  /** Files for multi-file models */
-  files: Array<{
-    filename: string;
-    size_bytes: number;
-    checksum: string | null;
-    url: string;
-    downloaded: boolean;
-  }>;
-  /** Total size in bytes */
-  total_size_bytes: number;
-  /** Output dimension for embedding models (e.g., 384, 768, 1024). Null for non-embedding models. */
-  embedding_dimensions: number | null;
-  /** Compatibility verdict for embedding models. Null for non-embedding models. */
-  embedding_compatibility: EmbeddingCompatibility | null;
-  /**
-   * On-disk storage format. Drives which mistralrs builder is used at
-   * load time. Backwards-compat default = 'gguf' if missing.
-   * - 'gguf': single-file quantized blob (llama.cpp ecosystem)
-   * - 'safetensors': HF directory with config.json + sharded weights;
-   *   loaded via mistralrs::ModelBuilder which auto-detects text vs
-   *   multimodal. Unquantized — significantly larger on disk + RAM.
-   */
-  format?: ModelFormat;
-  /** The backend's verdict for this machine; null while the file's size is being read. */
-  fit?: FitVerdictDto | null;
-}
+export type ModelMetadata = import('../lib/bindings').ModelMetadataDto;
 
-/**
- * On-disk model format. Matches Rust ModelFormat enum (lowercase serde
- * serialization).
- */
-export type ModelFormat = 'gguf' | 'safetensors';
+export type EmbeddingCompatibility = import('../lib/bindings').EmbeddingCompatibilityDto;
 
-/**
- * Whether the bundled llama-server can actually serve a given
- * embedding model. Threaded through from the backend so the catalog UI
- * can disable + badge incompatible rows before users start a multi-GB
- * download that would fail at model-load time.
- */
-export type EmbeddingCompatibility =
-  | { kind: 'compatible'; architecture: string }
-  | { kind: 'incompatible'; architecture: string; reason: string }
-  | { kind: 'unknown' };
-
-/**
- * A catalog model in the order the backend returned it.
- */
-export interface ModelRecommendation {
-  /** Model metadata */
-  model: ModelMetadata;
-  /** Upstream popularity metric (download count), when available */
-  popularity_downloads?: number | null;
-  /** Upstream popularity metric (like count), when available */
-  popularity_likes?: number | null;
-  /** The backend's verdict for this machine; null while its size is being read. */
-  fit?: FitVerdictDto | null;
-}
+export type ModelRecommendation = import('../lib/bindings').ModelRecommendationDto;
 
 
 /**
@@ -147,40 +51,10 @@ export interface SearchFilters {
 }
 
 
-/**
- * Model search result with relevance score.
- *
- * Combines model metadata with relevance score and source indicator.
- */
-export interface ModelSearchResult {
-  /** Model metadata */
-  model: ModelMetadata;
-  /** Relevance score (0-100) based on query match */
-  relevance_score: number;
-  /** Source of the model (Curated or External) */
-  source: ModelSource;
-  /** Upstream popularity metric (download count), when available */
-  popularity_downloads?: number | null;
-  /** Upstream popularity metric (like count), when available */
-  popularity_likes?: number | null;
-  /** The backend's verdict for this machine; null while its size is being read. */
-  fit?: FitVerdictDto | null;
-}
+export type ModelSearchResult = import('../lib/bindings').ModelSearchResultDto;
 
 
-/**
- * Cache statistics for model catalog.
- *
- * Tracks cache usage and effectiveness.
- */
-export interface CacheStats {
-  /** Total number of cache entries */
-  total_entries: number;
-  /** Number of valid (non-expired) entries */
-  valid_entries: number;
-  /** Number of expired entries */
-  expired_entries: number;
-}
+export type CacheStats = import('../lib/bindings').ModelCatalogStats;
 
 
 /**

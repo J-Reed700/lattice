@@ -17,7 +17,7 @@ const RESEARCH_HEADING = 'Added by research for a statement that no longer needs
 
 /** The removal's recorded reason: why the gate refused the page, else that research added it for nothing now. */
 function reasonFor(item: LearningRemovableSourceDto) {
-  return item.reason ? `Not a source: ${item.reason}`.slice(0, 500) : RESEARCH_HEADING;
+  return item.reason ? `Not a source: ${item.reason}` : RESEARCH_HEADING;
 }
 
 function RemovableGroup({ programId, heading, note, noun, items }: {

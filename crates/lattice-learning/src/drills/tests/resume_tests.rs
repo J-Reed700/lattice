@@ -11,10 +11,8 @@ use crate::drills::build::{CleanCode, DrillBuild, Evidence, LessonChecked, Model
 use crate::drills::material::CodeMaterial;
 use crate::drills::repository::StoredDrill;
 use crate::drills::runner::{CodeRunner, RunOutcome};
-use crate::persistence::db;
 use lattice_core::domain::learning::drills::{Origin, Proof};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobFailure, JobOutcome, JobStatus};
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -154,8 +152,7 @@ async fn progress_is_reported_for_each_stage() -> Result<()> {
     )
     .bind(&harness.job)
     .fetch_all(&harness.pool)
-    .await
-    .map_err(db)?;
+    .await?;
     assert_eq!(
         messages,
         [
@@ -340,8 +337,7 @@ async fn a_job_saved_after_the_prove_stage_resumes_at_the_lesson_check() -> Resu
     let fits: Vec<(i64, String)> =
         sqlx::query_as("SELECT fits,basis FROM learning_drill_lesson_fits WHERE material='code'")
             .fetch_all(&harness.pool)
-            .await
-            .map_err(db)?;
+            .await?;
     assert!(fits.is_empty(), "a code drill records no fit: {fits:?}");
     Ok(())
 }
@@ -387,7 +383,7 @@ async fn a_run_cancelled_under_the_builds_token_stops_the_job_and_saves_nothing_
         &model,
         Box::new(CodeMaterial::new(Some(&runner as &dyn CodeRunner))),
         &grader,
-        &Database::from(harness.pool.clone()),
+        &harness.db,
         cancel,
     )
     .run(&context, &spec)

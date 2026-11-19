@@ -15,19 +15,26 @@
 //! request is pinned back to the slot that last served its key, so the server
 //! reuses the cached prefix, and a held key's slot is kept for interactive
 //! work while the hold lasts ([`InferenceScheduler::hold`]).
+//!
+//! A cloud provider's capacity is not ours to know: its scheduler admits by
+//! a congestion window that the provider's own answers move
+//! ([`InferenceScheduler::accepted`], [`InferenceScheduler::throttled`]).
 
+mod congestion;
 mod estimator;
 mod registry;
 pub(crate) mod rejection;
 mod scheduled;
-mod tokenize;
 
 pub(crate) use estimator::{PaceEstimator, TokenEstimator};
 pub(crate) use registry::{llama_server_capacity, SchedulerRegistry};
 pub(crate) use scheduled::ScheduledLlm;
-pub(crate) use tokenize::ServerTokenizer;
 
 use std::cmp::Reverse;
+use std::time::Duration;
+use tokio::time::Instant;
+
+use congestion::CongestionWindow;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
@@ -37,7 +44,9 @@ use tokio_util::sync::CancellationToken;
 
 use lattice_core::application::ports::llm_port::{InferencePriority, RequestLoad};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::runtime::jobs::{RankTicket, RankWatcher};
+use lattice_core::shared::runtime::jobs::{
+    current_observer, HeldSlot, QueuedRequest, RankTicket, RankWatcher,
+};
 use std::sync::Weak;
 use tokio::sync::watch;
 
@@ -56,6 +65,9 @@ pub(crate) struct BackendCapacity {
     pub shared_window: Option<usize>,
     /// Whether admitted requests are pinned to a llama-server slot.
     pub pins_slots: bool,
+    /// Whether the slots follow a congestion window the backend's answers
+    /// move, which starts at one slot.
+    pub adaptive: bool,
 }
 
 impl BackendCapacity {
@@ -65,6 +77,16 @@ impl BackendCapacity {
             slots: slots.max(1),
             shared_window: None,
             pins_slots: false,
+            adaptive: false,
+        }
+    }
+
+    /// A backend whose capacity is learned from its answers: one request
+    /// until it has answered, then as many as it keeps accepting.
+    pub fn adaptive() -> Self {
+        Self {
+            adaptive: true,
+            ..Self::concurrent(1)
         }
     }
 
@@ -74,6 +96,7 @@ impl BackendCapacity {
             slots: slots.max(1),
             shared_window: Some(window.max(1)),
             pins_slots: true,
+            adaptive: false,
         }
     }
 }
@@ -136,10 +159,15 @@ struct State {
     held: HashMap<String, usize>,
     /// The ranks requests here have carried whose scopes may still be alive.
     ranks: Vec<RankTicket>,
+    /// What the provider's answers allow, for an adaptive backend.
+    congestion: Option<CongestionWindow>,
 }
 
 #[derive(Default)]
 struct Slot {
+    /// Cut by a shrinking window: never granted again, and gone once the
+    /// request still running here has finished.
+    retired: bool,
     /// Tokens the request running here reserved; `None` when the slot is free.
     running: Option<usize>,
     /// The rank of the request running here, if it has one.
@@ -170,6 +198,7 @@ struct Grant {
 pub(crate) struct Permit {
     scheduler: Arc<InferenceScheduler>,
     grant: Grant,
+    _held: Option<HeldSlot>,
 }
 
 impl Permit {
@@ -223,7 +252,7 @@ impl RankWatcher for InferenceScheduler {
 
 /// The error a cancelled request ends with, queued or in flight.
 pub(crate) fn cancelled_error() -> AppError {
-    AppError::InvalidState("The model request was cancelled.".into())
+    AppError::Cancelled("The model request was cancelled.".into())
 }
 
 impl InferenceScheduler {
@@ -243,6 +272,7 @@ impl InferenceScheduler {
                 reserved: 0,
                 held: HashMap::new(),
                 ranks: Vec::new(),
+                congestion: capacity.adaptive.then(CongestionWindow::new),
             }),
             changes: None,
         }
@@ -260,8 +290,13 @@ impl InferenceScheduler {
         }
     }
 
+    /// What this backend can run now; an adaptive one's slots are its window.
     pub fn capacity(&self) -> BackendCapacity {
-        self.capacity
+        let state = self.state.lock();
+        BackendCapacity {
+            slots: active_slots(&state.slots),
+            ..self.capacity
+        }
     }
 
     /// The requests running and waiting now.
@@ -269,7 +304,7 @@ impl InferenceScheduler {
         let state = self.state.lock();
         RequestLoad {
             backend: self.label.clone(),
-            slots: state.slots.len(),
+            slots: active_slots(&state.slots),
             running: state
                 .slots
                 .iter()
@@ -303,6 +338,7 @@ impl InferenceScheduler {
             None => request.tokens,
         };
         let queued_at = std::time::Instant::now();
+        let observer = current_observer();
         // Outside the lock: if the scope has just ended, this is where that is
         // announced, and the announcement takes the lock.
         if let Some(rank) = &request.rank {
@@ -310,7 +346,7 @@ impl InferenceScheduler {
             rank.watch(watcher);
         }
         let lane = Lane::of(request.priority, request.rank.as_ref());
-        let (key, woken) = {
+        let (key, woken, granted_at_once) = {
             let mut state = self.state.lock();
             let key = (lane, state.next_ticket);
             state.next_ticket += 1;
@@ -331,9 +367,14 @@ impl InferenceScheduler {
                 },
             );
             self.dispatch(&mut state);
-            (key, woken)
+            let granted_at_once = state.granted.contains_key(&key.1);
+            (key, woken, granted_at_once)
         };
         self.moved();
+        let queued = observer
+            .clone()
+            .filter(|_| !granted_at_once)
+            .map(QueuedRequest::new);
         let mut waiting = Waiting {
             scheduler: self,
             key,
@@ -349,6 +390,10 @@ impl InferenceScheduler {
         };
         match waiting.settle(admitted) {
             Some(grant) => {
+                let held = observer.map(HeldSlot::new);
+                if let Some(queued) = queued {
+                    queued.granted();
+                }
                 let waited = queued_at.elapsed();
                 if waited >= SLOW_ADMISSION {
                     tracing::info!(
@@ -361,6 +406,7 @@ impl InferenceScheduler {
                 Ok(Permit {
                     scheduler: Arc::clone(self),
                     grant,
+                    _held: held,
                 })
             }
             None => {
@@ -391,14 +437,29 @@ impl InferenceScheduler {
         state.ranks.retain(RankTicket::is_alive);
         let head_rank = state.ranks.iter().map(RankTicket::rank).min();
         loop {
+            if state
+                .congestion
+                .as_ref()
+                .is_some_and(|window| !window.is_open(Instant::now()))
+            {
+                return;
+            }
             let Some((&key, head)) = state.queue.iter().next() else {
                 return;
             };
+            let in_flight = running_slots(&state.slots);
+            if state
+                .congestion
+                .as_ref()
+                .is_some_and(|window| in_flight >= window.limit())
+            {
+                return;
+            }
             let free: Vec<usize> = state
                 .slots
                 .iter()
                 .enumerate()
-                .filter(|(_, slot)| slot.running.is_none())
+                .filter(|(_, slot)| slot.running.is_none() && !slot.retired)
                 .map(|(index, _)| index)
                 .collect();
             if free.is_empty() {
@@ -406,7 +467,7 @@ impl InferenceScheduler {
             }
             let interactive = head.priority == InferencePriority::Interactive;
             if !interactive {
-                let for_interactive = usize::from(state.slots.len() > 1);
+                let for_interactive = usize::from(active_slots(&state.slots) > 1);
                 let behind_the_head = head_rank
                     .zip(head.rank)
                     .is_some_and(|(lowest, rank)| rank > lowest);
@@ -433,7 +494,6 @@ impl InferenceScheduler {
             if open.is_empty() {
                 return;
             }
-            let in_flight = state.slots.len() - free.len();
             if let Some(window) = self.capacity.shared_window {
                 if in_flight > 0 && state.reserved.saturating_add(head.tokens) > window {
                     return;
@@ -478,14 +538,164 @@ impl InferenceScheduler {
         if let Some(slot) = state.slots.get_mut(grant.slot) {
             slot.running = None;
         }
+        drop_retired_tail(&mut state.slots);
         state.reserved = state.reserved.saturating_sub(grant.tokens);
         self.dispatch(state);
         self.moved();
     }
 
+    /// The provider accepted a request. The window grows when requests were
+    /// being held back by it: waiting, or every slot in use.
+    pub fn accepted(&self) {
+        let mut state = self.state.lock();
+        let in_flight = running_slots(&state.slots);
+        let queued = !state.queue.is_empty();
+        let Some(window) = state.congestion.as_mut() else {
+            return;
+        };
+        let before = window.limit();
+        window.accepted(queued || in_flight >= before);
+        let after = window.limit();
+        if after == before {
+            return;
+        }
+        tracing::debug!(backend = %self.label, before, after, "Provider accepted requests: window grew");
+        self.follow_window(&mut state);
+        self.dispatch(&mut state);
+        drop(state);
+        self.moved();
+    }
+
+    /// The provider refused a request for load. Admission closes for the
+    /// provider's `retry_after`, never less than the backoff consecutive
+    /// refusals have earned, and the window shrinks. Returns how long until
+    /// admission reopens.
+    pub fn throttled(self: &Arc<Self>, retry_after: Option<Duration>) -> Duration {
+        let now = Instant::now();
+        let mut state = self.state.lock();
+        let Some(window) = state.congestion.as_mut() else {
+            return Duration::ZERO;
+        };
+        let (before, closed_before) = (window.limit(), window.open_at());
+        let counted = window.is_open(now);
+        let reopen = window.throttled(now, retry_after);
+        let after = window.limit();
+        let delay = reopen.saturating_duration_since(now);
+        if counted {
+            tracing::info!(
+                backend = %self.label,
+                window_before = before,
+                window_after = after,
+                retry_after_ms = ?retry_after.map(|wait| wait.as_millis()),
+                reopen_in_ms = delay.as_millis(),
+                "Provider throttled requests: window shrunk and admission closed"
+            );
+        }
+        self.follow_window(&mut state);
+        drop(state);
+        self.moved();
+        if closed_before != Some(reopen) {
+            self.wake_at(reopen);
+        }
+        delay
+    }
+
+    /// Resolves when admission is open: at once for a backend that has not
+    /// been throttled.
+    pub async fn until_open(&self) {
+        loop {
+            let reopen = self
+                .state
+                .lock()
+                .congestion
+                .as_ref()
+                .and_then(CongestionWindow::open_at);
+            match reopen {
+                Some(at) if Instant::now() < at => tokio::time::sleep_until(at).await,
+                _ => return,
+            }
+        }
+    }
+
+    /// Runs admission again at `at`, when a throttle's closing ends. Holds the
+    /// scheduler weakly, so it keeps nothing alive.
+    fn wake_at(self: &Arc<Self>, at: Instant) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let scheduler: Weak<Self> = Arc::downgrade(self);
+        runtime.spawn(async move {
+            tokio::time::sleep_until(at).await;
+            if let Some(scheduler) = scheduler.upgrade() {
+                scheduler.rank_ended();
+            }
+        });
+    }
+
+    /// Make the slots as many as the window allows: free retired slots come
+    /// back or new ones are added, and surplus ones, free first, are retired.
+    fn follow_window(&self, state: &mut State) {
+        let Some(limit) = state.congestion.as_ref().map(CongestionWindow::limit) else {
+            return;
+        };
+        let mut active = active_slots(&state.slots);
+        for slot in state.slots.iter_mut() {
+            if active >= limit {
+                break;
+            }
+            if slot.retired && slot.running.is_none() {
+                slot.retired = false;
+                active += 1;
+            }
+        }
+        while active < limit {
+            state.slots.push(Slot::default());
+            active += 1;
+        }
+        for only_free in [true, false] {
+            for slot in state.slots.iter_mut().rev() {
+                if active <= limit {
+                    break;
+                }
+                if !slot.retired && (!only_free || slot.running.is_none()) {
+                    slot.retired = true;
+                    active -= 1;
+                }
+            }
+        }
+        drop_retired_tail(&mut state.slots);
+    }
+
     #[cfg(test)]
     fn queued(&self) -> usize {
         self.state.lock().queue.len()
+    }
+
+    /// How long until admission reopens, while a throttle keeps it closed.
+    #[cfg(test)]
+    pub(crate) fn reopens_in(&self) -> Option<Duration> {
+        let open_at = self.state.lock().congestion.as_ref()?.open_at()?;
+        let wait = open_at.saturating_duration_since(Instant::now());
+        (!wait.is_zero()).then_some(wait)
+    }
+}
+
+fn active_slots(slots: &[Slot]) -> usize {
+    slots.iter().filter(|slot| !slot.retired).count()
+}
+
+fn running_slots(slots: &[Slot]) -> usize {
+    slots.iter().filter(|slot| slot.running.is_some()).count()
+}
+
+/// A retired slot is gone once nothing runs on it; only the tail can go
+/// without moving the index a running request holds.
+fn drop_retired_tail(slots: &mut Vec<Slot>) {
+    while slots
+        .last()
+        .is_some_and(|slot| slot.retired && slot.running.is_none())
+    {
+        slots.pop();
     }
 }
 
@@ -571,7 +781,13 @@ impl Drop for Waiting<'_> {
 }
 
 #[cfg(test)]
+mod adaptive_tests;
+
+#[cfg(test)]
 mod tests;
 
 #[cfg(test)]
 mod vision_tests;
+
+#[cfg(test)]
+mod waiting_tests;

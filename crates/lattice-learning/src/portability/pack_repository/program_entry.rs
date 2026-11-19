@@ -17,6 +17,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::WriteTx;
 use sqlx::SqliteConnection;
 use std::collections::HashMap;
 
@@ -89,11 +90,7 @@ impl SectionRows for ProgramRows {
         }
         Ok(())
     }
-    async fn insert(
-        &self,
-        connection: &mut SqliteConnection,
-        scope: &ImportScope<'_>,
-    ) -> Result<()> {
-        importers::insert_program(connection, scope.program, scope.ids).await
+    async fn insert(&self, tx: &mut WriteTx, scope: &ImportScope<'_>) -> Result<()> {
+        importers::insert_program(tx, scope.program, scope.ids).await
     }
 }

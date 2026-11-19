@@ -2,6 +2,7 @@
 //! resumption after a restart, and durable redelivery after a temporary
 //! service or connection outage.
 use super::*;
+use lattice_core::shared::error::ErrorClass;
 use lattice_core::shared::runtime::jobs::{
     Backoff, Deferral, JobFailure, JobKindConfig, JobRecord, RecoveryPolicy,
 };
@@ -11,15 +12,12 @@ pub const LESSON_PREPARATION: &str = "learning.lesson_preparation";
 /// The outcome code of a lesson preparation attempt an update ended: it has no saved work to resume.
 pub(crate) const ENDED_BY_UPDATE: &str = "ended_by_update";
 
-/// Jobs for a course share its source snapshots and accepted outline: each one
-/// refreshes and re-embeds the same sources and seeds the same snapshot, and
-/// two at once would do that work twice over the same rows. Different courses
-/// are independent, and how their model calls share the backend is the
-/// inference scheduler's decision. A running preparation resumes from its
-/// checkpoints after a restart.
+/// Lessons of one course prepare side by side: the state they share is set up
+/// under the course's setup lock, and how their model calls share the backend
+/// is the inference scheduler's decision. A running preparation resumes from
+/// its checkpoints after a restart.
 pub fn lesson_job_config() -> JobKindConfig {
     JobKindConfig::new(RecoveryPolicy::Requeue)
-        .exclusive_per_subject()
         .ranked()
         .backoff(Backoff::default())
 }
@@ -30,7 +28,7 @@ pub fn lesson_job_config() -> JobKindConfig {
 /// and the job runtime ends a job whose other failure comes back with nothing
 /// saved in between, so a lesson never retries forever unseen.
 pub(crate) fn lesson_failure(job: &JobRecord, error: &AppError) -> JobFailure {
-    if !JobFailure::is_transient(error) {
+    if !ErrorClass::of(error).is_temporary() {
         return JobFailure::Fail {
             code: "generation_failed".into(),
             message: error.to_string(),
@@ -44,6 +42,7 @@ pub(crate) fn lesson_failure(job: &JobRecord, error: &AppError) -> JobFailure {
         })
         .map(|mut activity| {
             activity.model_running = false;
+            activity.waiting_for_model = false;
             activity.response_characters = 0;
             activity.model_attempt = 0;
             activity.last_activity_at = now();
@@ -56,7 +55,7 @@ pub(crate) fn lesson_failure(job: &JobRecord, error: &AppError) -> JobFailure {
         AppError::RateLimitExceeded(_) => {
             "The model service is rate limiting requests; preparation will retry automatically"
         }
-        error if JobFailure::is_database_busy(error) => {
+        AppError::DatabaseBusy(_) => {
             "Another task is using the database; preparation will retry automatically"
         }
         _ => "The model service could not finish the request; preparation will retry automatically",
@@ -68,21 +67,4 @@ pub(crate) fn lesson_failure(job: &JobRecord, error: &AppError) -> JobFailure {
         progress_message: message.into(),
         activity,
     })
-}
-
-#[cfg(test)]
-#[test]
-fn only_database_pool_admission_timeout_is_a_temporary_service_failure() {
-    assert!(matches!(
-        db(sqlx::Error::PoolTimedOut),
-        AppError::ServiceNotAvailable(_)
-    ));
-    assert!(matches!(
-        db(sqlx::Error::RowNotFound),
-        AppError::Database(_)
-    ));
-    assert!(matches!(
-        db(sqlx::Error::Protocol("invalid state".into())),
-        AppError::Database(_)
-    ));
 }

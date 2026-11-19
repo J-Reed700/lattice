@@ -45,8 +45,8 @@ beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   mocks.store.activeConversationId = null;
   mocks.api.explorerFoldersList.mockResolvedValue(folders());
-  mocks.api.explorerFolderSetLastThread.mockResolvedValue({ ok: true, data: undefined });
-  mocks.api.setConversationExplorerRoot.mockResolvedValue({ ok: true, data: undefined });
+  mocks.api.explorerFolderSetLastThread.mockResolvedValue({ ok: true, data: null });
+  mocks.api.setConversationExplorerRoot.mockResolvedValue({ ok: true, data: null });
   mocks.api.getConversation.mockResolvedValue({ ok: true, data: { conversation: null } });
 });
 afterEach(() => vi.useRealTimers());

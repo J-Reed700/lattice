@@ -38,6 +38,9 @@ mod recipe;
 #[allow(dead_code)]
 #[path = "../shipped_path_eval/record.rs"]
 mod record;
+#[allow(dead_code)]
+#[path = "../shipped_path_eval/reply.rs"]
+mod reply;
 
 use async_trait::async_trait;
 use lattice::features::conversation::chat::headless::run_headless_turn;
@@ -47,7 +50,6 @@ use lattice::features::learning::tutor::{bind_conversation, SetConversationCours
 use lattice::infrastructure::passage_index::EmbedderSource;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::error::AppError;
-use lattice_core::shared::persistence::driver::DriverPool;
 use learner::Turn;
 use parking_lot::Mutex;
 use serde::Deserialize;
@@ -148,10 +150,7 @@ fn main() -> Res<()> {
         )
         .with_writer(std::io::stderr)
         .init();
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .thread_stack_size(8 * 1024 * 1024)
-        .build()?;
+    let runtime = lattice::bootstrap::async_runtime::install()?;
     let result = runtime.block_on(run(&args, &real_home, workdir.path()));
     if args.keep_data {
         let kept = workdir.keep();
@@ -290,6 +289,7 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
     let proxy_url = proxy::start(
         server.url.clone(),
         recipe.thinking_off()?,
+        recipe.reported_ctx()?,
         auth.clone(),
         Arc::clone(&recorder),
     )
@@ -404,8 +404,8 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
 }
 
 async fn run_session(bench: &Bench<'_>, session: &Session) -> Res<(Value, Option<String>)> {
-    let pool = bench.container.database().sqlx_pool();
-    let seeded = course::seed(pool, bench.course).await?;
+    let db = bench.container.database();
+    let seeded = course::seed(db, bench.course).await?;
     let mode = bench
         .courses
         .ensure_current(&seeded.program_id, &CancellationToken::new(), &mut Quiet)
@@ -432,7 +432,7 @@ async fn run_session(bench: &Bench<'_>, session: &Session) -> Res<(Value, Option
     )
     .await?;
 
-    let course_before = course::read_back(pool, &seeded).await?;
+    let course_before = course::read_back(db, &seeded).await?;
     let mut turns = Vec::new();
     let mut session_error = None;
     let mut tutor_said = String::new();
@@ -460,10 +460,7 @@ async fn run_session(bench: &Bench<'_>, session: &Session) -> Res<(Value, Option
         let mut row = row;
         if let Some(row) = row.as_object_mut() {
             row.insert("played".into(), json!(played));
-            row.insert(
-                "course_after".into(),
-                course::read_back(pool, &seeded).await?,
-            );
+            row.insert("course_after".into(), course::read_back(db, &seeded).await?);
         }
         turns.push(row);
         if let Some(response) = response {
@@ -659,6 +656,9 @@ async fn run_turn(
         ask,
         conversation_id: Some(conversation_id),
         answer: response.as_ref().map(|r| r.message.as_str()),
+        reply: response
+            .as_ref()
+            .map_or_else(|| json!([]), |r| reply::shown(&r.messages)),
         error: error.clone(),
         answered_ms,
         verification_wait_ms,

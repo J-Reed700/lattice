@@ -20,6 +20,7 @@ impl ConversationRepository {
         embedding_model: &str,
         created_at: &str,
     ) -> Result<u64> {
+        let mut tx = self.db.begin_write().await?;
         let result = sqlx::query(
             r#"
             INSERT INTO conversation_memory_vectors (
@@ -50,7 +51,7 @@ impl ConversationRepository {
         .bind(message_id)
         .bind(role)
         .bind(content)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|error| {
             AppError::Database(format!(
@@ -58,6 +59,8 @@ impl ConversationRepository {
             ))
         })?;
 
-        Ok(result.rows_affected())
+        let affected = result.rows_affected();
+        tx.commit().await?;
+        Ok(affected)
     }
 }

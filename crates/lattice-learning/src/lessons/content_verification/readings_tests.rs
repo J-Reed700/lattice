@@ -14,7 +14,7 @@ use super::*;
 use crate::lesson_drafts;
 use lattice_core::application::services::claim_verification::PartKind;
 use lattice_core::domain::learning::acceptance::{
-    AcceptancePolicy, Outcome, Position, Reading, StandardPolicy,
+    start, Outcome, Position, Reading, StandardPolicy,
 };
 use std::collections::VecDeque;
 
@@ -43,6 +43,12 @@ impl LLMPort for Down {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(false)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -272,12 +278,7 @@ pub(super) async fn driven(
     .await?;
     let policy = StandardPolicy::new();
     let sorted = classed();
-    let entry = Position {
-        class: sorted.class,
-        changed_class: false,
-        reasked: false,
-        node: policy.graph(sorted.class).entry(),
-    };
+    let entry = start(&policy, sorted.class);
     let claims = claims_of(inventory);
     let statements: Vec<(Statement<'_>, Position)> = claims
         .iter()
@@ -312,8 +313,8 @@ async fn a_statement_its_citation_states_in_part_stands_with_the_rest_as_common_
 
     let read = read_one(Reading::Parts, &model, &world, STATEMENT).await?;
 
-    assert_eq!(read.outcome, Outcome::Stands);
-    let finding = &read.finding;
+    assert_eq!(read.outcome(), Outcome::Stands);
+    let finding = &read.finding();
     assert_eq!(finding.verdict, ClaimVerdict::Supported);
     assert_eq!(finding.two_pass.pass, Some(Pass::Attribution));
     assert!(finding
@@ -352,10 +353,10 @@ async fn a_statement_whose_every_part_is_common_reads_all_common() -> Result<()>
 
     let read = read_one(Reading::Parts, &model, &world, STATEMENT).await?;
 
-    assert_eq!(read.outcome, Outcome::AllCommon);
-    assert_eq!(read.finding.verdict, ClaimVerdict::Unsupported);
+    assert_eq!(read.outcome(), Outcome::AllCommon);
+    assert_eq!(read.finding().verdict, ClaimVerdict::Unsupported);
     assert!(read
-        .finding
+        .finding()
         .reason
         .contains("No passage states any part of it."));
     Ok(())
@@ -376,10 +377,10 @@ async fn a_specific_the_citation_lacks_leaves_the_statement_unproven() -> Result
 
     let read = read_one(Reading::Parts, &model, &world, STATEMENT).await?;
 
-    assert_eq!(read.outcome, Outcome::Unproven);
-    assert_eq!(read.finding.verdict, ClaimVerdict::Unsupported);
+    assert_eq!(read.outcome(), Outcome::Unproven);
+    assert_eq!(read.finding().verdict, ClaimVerdict::Unsupported);
     assert!(read
-        .finding
+        .finding()
         .reason
         .contains("Not given by the passages: it was written in 2004."));
     Ok(())
@@ -397,8 +398,8 @@ async fn a_part_a_passage_contradicts_refutes_the_statement() -> Result<()> {
 
     let read = read_one(Reading::Parts, &model, &world, STATEMENT).await?;
 
-    assert_eq!(read.outcome, Outcome::Refuted);
-    assert_eq!(read.finding.verdict, ClaimVerdict::Contradicted);
+    assert_eq!(read.outcome(), Outcome::Refuted);
+    assert_eq!(read.finding().verdict, ClaimVerdict::Contradicted);
     Ok(())
 }
 
@@ -412,10 +413,10 @@ async fn a_statement_with_no_passage_of_its_own_that_the_courses_page_does_not_s
 
     let read = read_one(Reading::Parts, &model, &world, STATEMENT).await?;
 
-    assert_eq!(read.outcome, Outcome::Unproven);
-    assert_eq!(read.finding.verdict, ClaimVerdict::Unsupported);
-    assert_ne!(read.finding.reason, evidence_checks::NO_PASSAGES);
-    assert_eq!(read.finding.class, Some(classed()));
+    assert_eq!(read.outcome(), Outcome::Unproven);
+    assert_eq!(read.finding().verdict, ClaimVerdict::Unsupported);
+    assert_ne!(read.finding().reason, evidence_checks::NO_PASSAGES);
+    assert_eq!(read.finding().class, Some(classed()));
     assert_eq!(
         model.requests(),
         (0, 1),
@@ -438,10 +439,10 @@ async fn a_statement_whose_section_cites_nothing_is_read_by_parts_on_the_courses
     )
     .await?;
 
-    assert_eq!(read.outcome, Outcome::Stands);
-    assert_eq!(read.finding.verdict, ClaimVerdict::Supported);
-    assert_eq!(read.finding.two_pass.pass, Some(Pass::Corroboration));
-    assert_eq!(read.finding.class, Some(classed()));
+    assert_eq!(read.outcome(), Outcome::Stands);
+    assert_eq!(read.finding().verdict, ClaimVerdict::Supported);
+    assert_eq!(read.finding().two_pass.pass, Some(Pass::Corroboration));
+    assert_eq!(read.finding().class, Some(classed()));
     assert_eq!(model.requests.load(std::sync::atomic::Ordering::SeqCst), 1);
     Ok(())
 }
@@ -473,12 +474,12 @@ async fn evidence_the_user_brought_settles_a_statement_whose_section_cites_nothi
 
     let read = read_one(Reading::Parts, &model, &world, CLAIM).await?;
 
-    assert_eq!(read.outcome, Outcome::Stands);
+    assert_eq!(read.outcome(), Outcome::Stands);
     assert_eq!(
-        read.finding.reason,
+        read.finding().reason,
         "The source the user attached states it."
     );
-    assert!(read.reused);
+    assert!(read.reused());
     assert_eq!(model.requests.load(std::sync::atomic::Ordering::SeqCst), 0);
     Ok(())
 }
@@ -508,10 +509,10 @@ async fn a_quotation_found_in_its_source_stands_in_code_without_a_call() -> Resu
 
     let read = read_one(Reading::Parts, &model, &world, quoted).await?;
 
-    assert_eq!(read.outcome, Outcome::Stands);
-    assert_eq!(read.finding.verdict, ClaimVerdict::Supported);
-    assert_eq!(read.finding.label, Some(Label::Attributed));
-    assert_eq!(read.finding.class, Some(classed()));
+    assert_eq!(read.outcome(), Outcome::Stands);
+    assert_eq!(read.finding().verdict, ClaimVerdict::Supported);
+    assert_eq!(read.finding().label, Some(Label::Attributed));
+    assert_eq!(read.finding().class, Some(classed()));
     assert_eq!(model.requests(), (0, 0));
     Ok(())
 }
@@ -525,9 +526,9 @@ async fn an_unreadable_answer_twice_leaves_the_statement_unjudged() -> Result<()
 
     let read = read_one(Reading::Parts, &model, &world, STATEMENT).await?;
 
-    assert_eq!(read.outcome, Outcome::Unjudged);
-    assert_eq!(read.finding.verdict, ClaimVerdict::Unverified);
-    assert!(read.finding.two_pass.parts.is_empty());
+    assert_eq!(read.outcome(), Outcome::Unjudged);
+    assert_eq!(read.finding().verdict, ClaimVerdict::Unverified);
+    assert!(read.finding().two_pass.parts.is_empty());
     assert_eq!(model.requests().0, 2, "asked once more, then left");
     Ok(())
 }
@@ -546,9 +547,9 @@ async fn the_sections_passed_example_runs_are_read_beside_its_citation() -> Resu
 
     let read = read_one(Reading::Parts, &model, &world, STATEMENT).await?;
 
-    assert_eq!(read.outcome, Outcome::Stands);
+    assert_eq!(read.outcome(), Outcome::Stands);
     let shown: Vec<&str> = read
-        .finding
+        .finding()
         .evidence
         .iter()
         .map(|passage| passage.retrieval_kind.as_str())
@@ -593,13 +594,13 @@ async fn a_claim_the_user_resolved_with_evidence_of_their_own_stands_without_a_c
 
     let read = read_one(Reading::Parts, &model, &world, STATEMENT).await?;
 
-    assert_eq!(read.outcome, Outcome::Stands);
+    assert_eq!(read.outcome(), Outcome::Stands);
     assert_eq!(
-        read.finding.reason,
+        read.finding().reason,
         "The source the user attached states it."
     );
-    assert_eq!(read.finding.evidence[0].retrieval_kind, "user_attached");
-    assert_eq!(read.finding.class, Some(classed()));
+    assert_eq!(read.finding().evidence[0].retrieval_kind, "user_attached");
+    assert_eq!(read.finding().class, Some(classed()));
     assert_eq!(model.requests(), (0, 0));
     Ok(())
 }
@@ -615,9 +616,9 @@ async fn a_page_of_example_runs_alone_is_asked_of_the_strict_judge() -> Result<(
     world.runs = vec![run_printing("3\n")];
     let model = ScriptedBridge::new(Vec::new());
     let read = read_one(Reading::Parts, &model, &world, STATEMENT).await?;
-    assert_eq!(read.outcome, Outcome::Unproven);
-    assert_eq!(read.finding.verdict, ClaimVerdict::Unsupported);
-    assert!(read.finding.two_pass.parts.is_empty());
+    assert_eq!(read.outcome(), Outcome::Unproven);
+    assert_eq!(read.finding().verdict, ClaimVerdict::Unsupported);
+    assert!(read.finding().two_pass.parts.is_empty());
     assert_eq!(
         model.requests(),
         (0, 1),
@@ -628,9 +629,9 @@ async fn a_page_of_example_runs_alone_is_asked_of_the_strict_judge() -> Result<(
     world.runs = vec![run_printing(&format!("{MARKER}\n"))];
     let model = PagingModel::new(32_000);
     let read = read_one(Reading::Parts, &model, &world, CLAIM).await?;
-    assert_eq!(read.outcome, Outcome::Stands);
-    assert_eq!(read.finding.verdict, ClaimVerdict::Supported);
-    assert_eq!(read.finding.evidence[0].retrieval_kind, "execution");
+    assert_eq!(read.outcome(), Outcome::Stands);
+    assert_eq!(read.finding().verdict, ClaimVerdict::Supported);
+    assert_eq!(read.finding().evidence[0].retrieval_kind, "execution");
     assert_eq!(model.requests.load(std::sync::atomic::Ordering::SeqCst), 1);
     Ok(())
 }
@@ -677,13 +678,13 @@ async fn the_guard_asks_the_rule_layers_test_with_the_sections_givens() -> Resul
     )
     .await?;
 
-    let outcomes: Vec<Outcome> = reads.iter().map(|read| read.outcome).collect();
+    let outcomes: Vec<Outcome> = reads.iter().map(|read| read.outcome()).collect();
     assert_eq!(
         outcomes,
         vec![Outcome::Unproven, Outcome::Stands, Outcome::Stands]
     );
     assert!(reads[0]
-        .finding
+        .finding()
         .reason
         .contains("Taken as specific, not as common knowledge: a batch of 8 rows"));
     Ok(())
@@ -693,12 +694,13 @@ async fn the_guard_asks_the_rule_layers_test_with_the_sections_givens() -> Resul
 async fn a_second_reading_restores_its_own_receipt_and_never_one_an_earlier_comparison_wrote(
 ) -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&db).await?;
     let sources = sources();
     let references = ReferenceCollection::lexical(&sources)?;
     let citations = citing(&references)?;
     let model = ScriptedBridge::new(vec![half_stated()]);
-    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+    lesson_drafts::run(&db, &repo, &job, &lesson, async {
         let mut page = citations.of(0).to_vec();
         canonicalize_evidence(&mut page);
         // The earlier part-wise comparison asked the specifics guard with no
@@ -714,7 +716,7 @@ async fn a_second_reading_restores_its_own_receipt_and_never_one_an_earlier_comp
             verdict: ClaimVerdict::Supported,
             reason: "The earlier comparison's.".into(),
             supporting_quote: Some(STATED.into()),
-            interpretation_policy: None,
+            parts: Vec::new(),
             shown: None,
         })?;
         lesson_drafts::record_checkpoint(&earlier_key, written).await?;
@@ -733,8 +735,11 @@ async fn a_second_reading_restores_its_own_receipt_and_never_one_an_earlier_comp
         );
         let again = read_one(Reading::Parts, &model, &world, STATEMENT).await?;
         assert_eq!(model.requests().0, 1, "restored, not asked");
-        assert_eq!(again.outcome, first.outcome);
-        assert_eq!(again.finding.two_pass.parts, first.finding.two_pass.parts);
+        assert_eq!(again.outcome(), first.outcome());
+        assert_eq!(
+            again.finding().two_pass.parts,
+            first.finding().two_pass.parts
+        );
         Ok(())
     })
     .await
@@ -745,13 +750,30 @@ async fn the_sections_passages_ground_a_statement_that_a_passage_states() -> Res
     let sources = sources();
     let references = ReferenceCollection::lexical(&sources)?;
     let world = world_of(&references, citing(&references)?);
+    let stated = parts_reply(
+        json!([{"part": "Quillet is a lexer", "kind": "stated", "passage": "passage-0"}]),
+        "supported",
+    );
+    let model = ScriptedBridge::new(vec![stated]);
+
+    let read = read_one(Reading::Ground, &model, &world, STATEMENT).await?;
+
+    assert_eq!(read.outcome(), Outcome::Stands);
+    assert_eq!(read.finding().verdict, ClaimVerdict::Supported);
+    assert_eq!(read.finding().class, Some(classed()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_common_part_beside_a_stated_one_does_not_ground_a_statement() -> Result<()> {
+    let sources = sources();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let world = world_of(&references, citing(&references)?);
     let model = ScriptedBridge::new(vec![half_stated()]);
 
     let read = read_one(Reading::Ground, &model, &world, STATEMENT).await?;
 
-    assert_eq!(read.outcome, Outcome::Stands);
-    assert_eq!(read.finding.verdict, ClaimVerdict::Supported);
-    assert_eq!(read.finding.class, Some(classed()));
+    assert_eq!(read.outcome(), Outcome::Refuted);
     Ok(())
 }
 
@@ -771,7 +793,7 @@ async fn common_knowledge_alone_does_not_ground_a_statement_the_veto_stands() ->
 
     let ground = read_one(Reading::Ground, &model, &world, STATEMENT).await?;
 
-    assert_eq!(ground.outcome, Outcome::Refuted);
+    assert_eq!(ground.outcome(), Outcome::Refuted);
     Ok(())
 }
 
@@ -790,8 +812,8 @@ async fn a_contradicting_passage_does_not_ground_a_statement() -> Result<()> {
 
     let read = read_one(Reading::Ground, &model, &world, STATEMENT).await?;
 
-    assert_eq!(read.outcome, Outcome::Refuted);
-    assert_eq!(read.finding.verdict, ClaimVerdict::Contradicted);
+    assert_eq!(read.outcome(), Outcome::Refuted);
+    assert_eq!(read.finding().verdict, ClaimVerdict::Contradicted);
     Ok(())
 }
 
@@ -804,14 +826,14 @@ async fn no_passage_of_the_section_leaves_the_veto_standing_and_nothing_is_asked
 
     let read = read_one(Reading::Ground, &model, &world, STATEMENT).await?;
 
-    assert_eq!(read.outcome, Outcome::Refuted);
-    assert_eq!(read.finding.reason, evidence_checks::NO_PASSAGES);
+    assert_eq!(read.outcome(), Outcome::Refuted);
+    assert_eq!(read.finding().reason, evidence_checks::NO_PASSAGES);
     assert_eq!(model.requests(), (0, 0));
     Ok(())
 }
 
 #[tokio::test]
-async fn ground_reads_the_sections_passages_and_parts_the_sentences() -> Result<()> {
+async fn ground_reads_the_passages_of_the_sentence_its_claim_stands_on() -> Result<()> {
     const SECOND: &str = "A parser consumes the tokens a lexer emits.";
     const SENTENCE: &str = "Quillet feeds a parser the tokens it lexes.";
     let sources = vec![
@@ -834,15 +856,15 @@ async fn ground_reads_the_sections_passages_and_parts_the_sentences() -> Result<
         )
     };
 
-    let model = ScriptedBridge::new(vec![stated_by("passage-1")]);
+    let model = ScriptedBridge::new(vec![stated_by("passage-0")]);
     let ground = read_one(Reading::Ground, &model, &world, SENTENCE).await?;
-    assert_eq!(ground.outcome, Outcome::Stands);
-    assert_eq!(sources_of(&ground.finding.evidence), vec!["alpha", "beta"]);
+    assert_eq!(ground.outcome(), Outcome::Stands);
+    assert_eq!(sources_of(&ground.finding().evidence), vec!["beta"]);
 
     let model = ScriptedBridge::new(vec![stated_by("passage-0")]);
     let parts = read_one(Reading::Parts, &model, &world, SENTENCE).await?;
-    assert_eq!(parts.outcome, Outcome::Stands);
-    assert_eq!(sources_of(&parts.finding.evidence), vec!["beta"]);
+    assert_eq!(parts.outcome(), Outcome::Stands);
+    assert_eq!(sources_of(&parts.finding().evidence), vec!["beta"]);
     Ok(())
 }
 
@@ -878,6 +900,12 @@ impl LLMPort for Windowed {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -939,18 +967,12 @@ async fn ground_takes_the_passages_the_part_wise_judge_holds_not_the_consistency
     let citations = Citations::new(HashMap::from([(0, three_passages())]), HashMap::new());
     let world = world_of(&references, citations);
     let model = Windowed::new(two_of_three(), vec![stated_by_the_second()]);
-    // The consistency judge's room takes all three, which overflow this
-    // judge's window.
-    assert_eq!(
-        class_checks::fitted(&model, FEEDS, &three_passages()).len(),
-        3
-    );
 
     let read = read_one(Reading::Ground, &model, &world, FEEDS).await?;
 
-    assert_eq!(read.outcome, Outcome::Stands);
+    assert_eq!(read.outcome(), Outcome::Stands);
     assert_eq!(
-        sources_of(&read.finding.evidence),
+        sources_of(&read.finding().evidence),
         vec!["source-0", "source-1"]
     );
     Ok(())
@@ -965,9 +987,9 @@ async fn parts_takes_the_cited_passages_the_part_wise_judge_holds() -> Result<()
 
     let read = read_one(Reading::Parts, &model, &world, FEEDS).await?;
 
-    assert_eq!(read.outcome, Outcome::Stands);
+    assert_eq!(read.outcome(), Outcome::Stands);
     assert_eq!(
-        sources_of(&read.finding.evidence),
+        sources_of(&read.finding().evidence),
         vec!["source-0", "source-1"]
     );
     Ok(())
@@ -1040,11 +1062,11 @@ async fn a_page_supported_on_a_source_the_sentence_cites_stands() -> Result<()> 
     )
     .await?;
 
-    assert_eq!(read.outcome, Outcome::Stands);
-    assert_eq!(read.finding.verdict, ClaimVerdict::Supported);
-    assert!(read.finding.two_pass.supported_by.is_none());
-    assert_eq!(read.finding.two_pass.pass, Some(Pass::Corroboration));
-    assert_eq!(read.finding.two_pass.page, Some(1));
+    assert_eq!(read.outcome(), Outcome::Stands);
+    assert_eq!(read.finding().verdict, ClaimVerdict::Supported);
+    assert!(read.finding().two_pass.supported_by.is_none());
+    assert_eq!(read.finding().two_pass.pass, Some(Pass::Corroboration));
+    assert_eq!(read.finding().two_pass.page, Some(1));
     Ok(())
 }
 
@@ -1061,12 +1083,12 @@ async fn a_page_supported_on_another_source_stands_elsewhere_and_names_it() -> R
     )
     .await?;
 
-    assert_eq!(read.outcome, Outcome::StandsElsewhere);
-    assert_eq!(read.finding.verdict, ClaimVerdict::Supported);
-    let found = read.finding.two_pass.supported_by.clone().unwrap();
+    assert_eq!(read.outcome(), Outcome::StandsElsewhere);
+    assert_eq!(read.finding().verdict, ClaimVerdict::Supported);
+    let found = read.finding().two_pass.supported_by.clone().unwrap();
     assert_eq!(found.source_id, "marker");
     assert_eq!(found.cited, vec!["related-3".to_owned()]);
-    assert_eq!(read.finding.class, Some(classed()));
+    assert_eq!(read.finding().class, Some(classed()));
     Ok(())
 }
 
@@ -1084,9 +1106,9 @@ async fn a_page_that_does_not_state_the_claim_leaves_it_unproven() -> Result<()>
     )
     .await?;
 
-    assert_eq!(read.outcome, Outcome::Unproven);
-    assert_eq!(read.finding.verdict, ClaimVerdict::Unsupported);
-    assert!(read.finding.wants_research());
+    assert_eq!(read.outcome(), Outcome::Unproven);
+    assert_eq!(read.finding().verdict, ClaimVerdict::Unsupported);
+    assert!(read.finding().wants_research());
     assert_eq!(
         model.checks.lock().unwrap().len(),
         1,
@@ -1117,8 +1139,8 @@ async fn a_page_that_contradicts_the_claim_refutes_it() -> Result<()> {
     )
     .await?;
 
-    assert_eq!(read.outcome, Outcome::Refuted);
-    assert_eq!(read.finding.verdict, ClaimVerdict::Contradicted);
+    assert_eq!(read.outcome(), Outcome::Refuted);
+    assert_eq!(read.finding().verdict, ClaimVerdict::Contradicted);
     Ok(())
 }
 
@@ -1126,10 +1148,11 @@ async fn a_page_that_contradicts_the_claim_refutes_it() -> Result<()> {
 async fn a_page_read_twice_is_asked_once_and_its_receipt_is_keyed_by_the_claim_and_its_page(
 ) -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&db).await?;
     let references = ReferenceCollection::lexical(&marker_collection())?;
     let model = PagingModel::new(32_000);
-    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+    lesson_drafts::run(&db, &repo, &job, &lesson, async {
         let world = world_of(&references, citing_the_wrong_passage(&references)?);
 
         let first = read_one(Reading::Page, &model, &world, CLAIM).await?;
@@ -1137,15 +1160,15 @@ async fn a_page_read_twice_is_asked_once_and_its_receipt_is_keyed_by_the_claim_a
         assert_eq!(model.requests.load(std::sync::atomic::Ordering::SeqCst), 1);
         let key = claim_receipt_key(
             &model,
-            &ClaimChecks::key(0, &claim(CLAIM), &first.finding.evidence),
+            &ClaimChecks::key(0, &claim(CLAIM), &first.finding().evidence),
         );
         assert!(lesson_drafts::checkpoint(&key).await?.is_some());
         let again = read_one(Reading::Page, &model, &world, CLAIM).await?;
         assert_eq!(model.requests.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert_eq!(again.outcome, first.outcome);
+        assert_eq!(again.outcome(), first.outcome());
         assert_eq!(
-            again.finding.two_pass.supported_by,
-            first.finding.two_pass.supported_by
+            again.finding().two_pass.supported_by,
+            first.finding().two_pass.supported_by
         );
         Ok(())
     })
@@ -1178,7 +1201,7 @@ async fn the_consistency_judges_each_verdict_is_an_outcome_over_the_sections_pas
 
     let seen: Vec<(Outcome, ClaimVerdict)> = reads
         .iter()
-        .map(|read| (read.outcome, read.finding.verdict))
+        .map(|read| (read.outcome(), read.finding().verdict))
         .collect();
     assert_eq!(
         seen,
@@ -1190,16 +1213,16 @@ async fn the_consistency_judges_each_verdict_is_an_outcome_over_the_sections_pas
         ]
     );
     assert_eq!(
-        reads[0].finding.reason,
+        reads[0].finding().reason,
         "The passages say nothing against it."
     );
-    assert_eq!(reads[1].finding.reason, "The passages say otherwise.");
+    assert_eq!(reads[1].finding().reason, "The passages say otherwise.");
     assert!(reads
         .iter()
-        .all(|read| sources_of(&read.finding.evidence) == vec!["quillet"]));
+        .all(|read| sources_of(&read.finding().evidence) == vec!["quillet"]));
     assert!(reads
         .iter()
-        .all(|read| read.finding.class == Some(classed())));
+        .all(|read| read.finding().class == Some(classed())));
     // One call each, and the unreadable one asked once more.
     assert_eq!(model.calls("consistency"), 5);
     assert_eq!(model.calls("knowledge"), 0);
@@ -1218,7 +1241,7 @@ fn closed_book() -> Classes {
             WANTS_A_SOURCE,
             ["true_common", "true_common", "needs_source"],
         ),
-        (FALSE, ["false", "false", "true_common"]),
+        (FALSE, ["false"; 3]),
         (UNSURE, ["maybe", "maybe", "maybe"]),
     ])
 }
@@ -1231,7 +1254,8 @@ fn samples() -> Vec<(usize, Claim)> {
 }
 
 #[tokio::test]
-async fn the_knowledge_reading_passes_on_unanimity_and_refutes_on_a_majority() -> Result<()> {
+async fn the_knowledge_reading_passes_on_unanimity_and_refutes_only_when_every_sample_calls_it_false(
+) -> Result<()> {
     let references = ReferenceCollection::lexical(&sources())?;
     let world = world_of(&references, Citations::default());
     let model = closed_book();
@@ -1240,7 +1264,7 @@ async fn the_knowledge_reading_passes_on_unanimity_and_refutes_on_a_majority() -
 
     let seen: Vec<(Outcome, ClaimVerdict)> = reads
         .iter()
-        .map(|read| (read.outcome, read.finding.verdict))
+        .map(|read| (read.outcome(), read.finding().verdict))
         .collect();
     assert_eq!(
         seen,
@@ -1251,11 +1275,11 @@ async fn the_knowledge_reading_passes_on_unanimity_and_refutes_on_a_majority() -
             (Outcome::Unjudged, ClaimVerdict::Unverified),
         ]
     );
-    assert!(reads[0].finding.reason.starts_with("Standard knowledge"));
-    assert!(reads[2].finding.reason.contains("(2 of 3)"));
+    assert!(reads[0].finding().reason.starts_with("Standard knowledge"));
+    assert!(reads[2].finding().reason.contains("(3 of 3)"));
     assert!(reads
         .iter()
-        .all(|read| read.finding.evidence.is_empty() && read.finding.class == Some(classed())));
+        .all(|read| read.finding().evidence.is_empty() && read.finding().class == Some(classed())));
     // Three samples each, the unreadable one stopping at its first.
     assert_eq!(model.calls("knowledge"), 3 + 3 + 3 + 2);
     assert_eq!(model.calls("consistency"), 0);
@@ -1263,7 +1287,7 @@ async fn the_knowledge_reading_passes_on_unanimity_and_refutes_on_a_majority() -
 }
 
 #[tokio::test]
-async fn the_veto_reading_fails_only_on_a_majority_that_calls_it_false() -> Result<()> {
+async fn the_veto_reading_fails_only_when_every_sample_calls_it_false() -> Result<()> {
     let references = ReferenceCollection::lexical(&sources())?;
     let world = world_of(&references, Citations::default());
     let model = closed_book();
@@ -1272,7 +1296,7 @@ async fn the_veto_reading_fails_only_on_a_majority_that_calls_it_false() -> Resu
 
     let seen: Vec<(Outcome, ClaimVerdict)> = reads
         .iter()
-        .map(|read| (read.outcome, read.finding.verdict))
+        .map(|read| (read.outcome(), read.finding().verdict))
         .collect();
     assert_eq!(
         seen,
@@ -1284,11 +1308,11 @@ async fn the_veto_reading_fails_only_on_a_majority_that_calls_it_false() -> Resu
         ]
     );
     assert!(
-        reads[1].finding.reason.contains("(0 of 3)"),
+        reads[1].finding().reason.contains("(0 of 3)"),
         "a request for a source is no falsity: {}",
-        reads[1].finding.reason
+        reads[1].finding().reason
     );
-    assert!(reads[2].finding.reason.contains("(2 of 3)"));
+    assert!(reads[2].finding().reason.contains("(3 of 3)"));
     Ok(())
 }
 
@@ -1314,17 +1338,18 @@ async fn an_outage_is_an_error_from_every_reader_and_never_an_outcome() -> Resul
 async fn parts_reads_only_what_its_section_cites_and_keys_its_receipt_by_the_claim_and_those_passages(
 ) -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&db).await?;
     let references = ReferenceCollection::lexical(&marker_collection())?;
     let model = PagingModel::new(6_000);
     let world = world_of(&references, citing_marker(&references)?);
-    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+    lesson_drafts::run(&db, &repo, &job, &lesson, async {
         let read = read_one(Reading::Parts, &model, &world, CLAIM).await?;
 
-        assert_eq!(read.outcome, Outcome::Stands);
-        assert_eq!(read.finding.verdict, ClaimVerdict::Supported);
-        assert_eq!(read.finding.two_pass.pass, Some(Pass::Attribution));
-        assert!(read.finding.two_pass.supported_by.is_none());
+        assert_eq!(read.outcome(), Outcome::Stands);
+        assert_eq!(read.finding().verdict, ClaimVerdict::Supported);
+        assert_eq!(read.finding().two_pass.pass, Some(Pass::Attribution));
+        assert!(read.finding().two_pass.supported_by.is_none());
         // It compared the cited passage and nothing else, in one request.
         let checks = model.checks.lock().unwrap().clone();
         assert_eq!(checks.len(), 1);
@@ -1456,10 +1481,11 @@ async fn the_answers_the_parts_reading_measured_size_the_pages_the_page_reading_
 async fn a_parts_receipt_survives_a_change_in_the_course_ranking_and_the_page_is_compared_again(
 ) -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&db).await?;
     let mut sources = marker_collection();
     let model = PagingModel::new(32_000);
-    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+    lesson_drafts::run(&db, &repo, &job, &lesson, async {
         let references = ReferenceCollection::lexical(&sources)?;
         let world = world_of(&references, citing_marker(&references)?);
         read_one(Reading::Parts, &model, &world, CLAIM).await?;
@@ -1473,12 +1499,12 @@ async fn a_parts_receipt_survives_a_change_in_the_course_ranking_and_the_page_is
         let parts = read_one(Reading::Parts, &model, &world, CLAIM).await?;
         let page = read_one(Reading::Page, &model, &world, CLAIM).await?;
 
-        assert_eq!(parts.outcome, Outcome::Stands);
-        assert!(parts.reused, "the citation's comparison was restored");
+        assert_eq!(parts.outcome(), Outcome::Stands);
+        assert!(parts.reused(), "the citation's comparison was restored");
         // The page leaves out the passage the citation shows, and nothing else
         // on it states the claim.
-        assert_eq!(page.outcome, Outcome::Unproven);
-        assert_eq!(page.finding.verdict, ClaimVerdict::Unsupported);
+        assert_eq!(page.outcome(), Outcome::Unproven);
+        assert_eq!(page.finding().verdict, ClaimVerdict::Unsupported);
         let checks = model.checks.lock().unwrap().clone();
         assert_eq!(checks.len(), 3, "the page alone is compared again");
         assert!(!read_marker(&checks[2]));
@@ -1508,7 +1534,7 @@ async fn another_sections_citations_are_not_the_statements_own() -> Result<()> {
         "no citation of its own: section 0 cites nothing"
     );
     assert!(!read_marker(&checks[0]));
-    assert_eq!(read.finding.verdict, ClaimVerdict::Unsupported);
+    assert_eq!(read.finding().verdict, ClaimVerdict::Unsupported);
     Ok(())
 }
 
@@ -1544,12 +1570,92 @@ async fn a_statement_is_read_against_the_passage_its_own_sentence_cites() -> Res
 
     let read = read_one(Reading::Parts, &model, &world, CLAIM).await?;
 
-    assert_eq!(read.finding.verdict, ClaimVerdict::Supported);
+    assert_eq!(read.finding().verdict, ClaimVerdict::Supported);
     assert_eq!(
-        read.finding.two_pass.pass,
+        read.finding().two_pass.pass,
         Some(Pass::Attribution),
         "the sentence's passage was read, not the section's"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_naming_context_its_sentence_leaves_implicit_is_read_against_its_sentences_passage(
+) -> Result<()> {
+    const STATEMENT: &str =
+        "Acme's analysis log for the sample lists the pressure at which the beta reading was taken.";
+    assert!(
+        lattice_core::shared::text::claim_sentence(CLAIM, (0, CLAIM.len()), STATEMENT).is_none()
+    );
+    let references = ReferenceCollection::lexical(&marker_collection())?;
+    let model = PagingModel::new(6_000);
+    let lesson = sentence_cited();
+    let citations = section_citations(&lesson, &references)?;
+    let mut world = world_of(&references, citations);
+    world.lesson = lesson;
+    let claim = Claim {
+        quote: CLAIM.into(),
+        statement: STATEMENT.into(),
+    };
+
+    let reads = read_all(Reading::Parts, &model, &world, &[(0, claim)]).await?;
+
+    assert_eq!(reads.len(), 1);
+    let checks = model.checks.lock().unwrap();
+    assert_eq!(checks.len(), 1);
+    assert!(read_marker(&checks[0]), "the sentence's passage was read");
+    assert!(
+        checks[0].iter().all(|text| !text.contains("notes 3:")),
+        "not the section's other passage"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_claim_is_read_against_the_entries_that_hold_its_sentence_and_no_other() -> Result<()> {
+    const SECOND: &str = "Tides rise twice a day on most coasts.";
+    const THIRD: &str = "Granite is an igneous rock.";
+    const ELSEWHERE: &str = "Something else entirely.";
+    let references = ReferenceCollection::lexical(&marker_collection())?;
+    let lesson = json!({"blocks":[{
+        "kind":"explanation","title":"Alpha","body":format!("{CLAIM} {SECOND} {THIRD}"),"rubric":[],
+        "quote":"Mineral alpha notes 3: property beta was measured, pressure varied.",
+        "sourceIndex":0,
+        "citations":[
+            {"sentence":CLAIM,"sourceIndex":1,"quote":MARKER},
+            {"sentence":format!("{SECOND} {THIRD}"),"sourceIndex":2,
+             "quote":"Mineral alpha notes 5: property beta was measured, pressure varied."},
+        ]
+    }],"questions":[]});
+    let citations = section_citations(&lesson, &references)?;
+    let sources = |unit: usize, sentence: &str| -> Vec<String> {
+        let mut ids: Vec<String> = citations
+            .of_claim(unit, sentence)
+            .into_iter()
+            .map(|passage| passage.source_id)
+            .collect();
+        ids.sort();
+        ids.dedup();
+        ids
+    };
+
+    assert_eq!(sources(0, CLAIM), vec!["marker"]);
+    assert_eq!(sources(0, SECOND), vec!["related-5"]);
+    assert_eq!(sources(0, THIRD), vec!["related-5"]);
+    assert_eq!(
+        sources(0, ELSEWHERE),
+        vec!["marker", "related-3", "related-5"],
+        "a sentence with no entry reads the section's passages"
+    );
+    assert!(
+        sources(1, CLAIM).is_empty(),
+        "another section's entries are not its own"
+    );
+    for sentence in [CLAIM, SECOND, THIRD] {
+        assert!(citations.is_cited(0, sentence));
+        assert!(!citations.is_cited(1, sentence));
+    }
+    assert!(!citations.is_cited(0, ELSEWHERE));
     Ok(())
 }
 
@@ -1565,8 +1671,9 @@ async fn told_after(
     (asked, saved): (&str, [&str; 2]),
 ) -> Result<Vec<(usize, bool, usize)>> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
-    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&db).await?;
+    lesson_drafts::run(&db, &repo, &job, &lesson, async {
         let saved = [(0, claim(saved[0])), (0, claim(saved[1]))];
         read_all(reading, model, world, &saved).await?;
         let before = requests();
@@ -1574,7 +1681,7 @@ async fn told_after(
         let record = |ordinal: usize, read: &Read| {
             told.lock()
                 .unwrap()
-                .push((ordinal, read.reused, requests() - before));
+                .push((ordinal, read.reused(), requests() - before));
         };
         let claims = [(0, claim(asked)), saved[0].clone(), saved[1].clone()];
         read_observed(reading, model, world, &claims, &record).await?;
@@ -1645,13 +1752,14 @@ async fn ground_tells_the_receipts_of_its_batch_before_its_first_request() -> Re
 async fn parts_tells_of_each_statement_of_its_batch_once_at_its_own_place_whoever_reads_it(
 ) -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    let db = Database::new(pool.clone());
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&db).await?;
     let references = ReferenceCollection::lexical(&sources())?;
     // Section 0 cites a passage that Parts reads; section 1 cites nothing, so
     // Parts hands its statements to the page.
     let world = world_of(&references, citing(&references)?);
     let model = ScriptedBridge::new(vec![half_stated(), half_stated()]);
-    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+    lesson_drafts::run(&db, &repo, &job, &lesson, async {
         let before = [
             (0, claim("Quillet is a lexer that reads characters.")),
             (1, claim("Quillet is a lexer that emits tokens.")),
@@ -1659,7 +1767,7 @@ async fn parts_tells_of_each_statement_of_its_batch_once_at_its_own_place_whoeve
         read_all(Reading::Parts, &model, &world, &before).await?;
         let told = Mutex::new(Vec::new());
         let record = |ordinal: usize, read: &Read| {
-            told.lock().unwrap().push((ordinal, read.reused));
+            told.lock().unwrap().push((ordinal, read.reused()));
         };
         let claims = [
             before[0].clone(),
@@ -1690,7 +1798,7 @@ struct HeldUntil {
 impl LLMPort for HeldUntil {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let prompt: String = request
-            .input
+            .input()
             .iter()
             .filter_map(|input| match input {
                 lattice_core::application::ports::llm_port::CompletionInput::Message {
@@ -1716,6 +1824,12 @@ impl LLMPort for HeldUntil {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -1806,6 +1920,12 @@ impl LLMPort for Overlap<'_> {
     async fn is_ready(&self) -> Result<bool> {
         self.inner.is_ready().await
     }
+    fn enforces(
+        &self,
+        schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        self.inner.enforces(schema)
+    }
 }
 
 #[tokio::test]
@@ -1853,5 +1973,117 @@ async fn knowledge_asks_two_statements_that_both_need_a_call_at_once() -> Result
 
     assert_eq!(reads.len(), 2);
     assert_eq!(model.most(), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn ground_reads_the_sections_passed_example_runs_as_parts_does() -> Result<()> {
+    let sources = sources();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let mut world = world_of(&references, Citations::default());
+    world.runs = vec![run_printing(&format!(
+        "{MARKER}
+"
+    ))];
+    let model = PagingModel::new(32_000);
+
+    let read = read_one(Reading::Ground, &model, &world, CLAIM).await?;
+
+    assert_eq!(read.outcome(), Outcome::Stands);
+    assert_eq!(read.finding().evidence[0].retrieval_kind, "execution");
+    assert_eq!(model.requests.load(std::sync::atomic::Ordering::SeqCst), 1);
+    Ok(())
+}
+
+/// A model with a window of its own that finds every statement consistent
+/// and keeps what each request asked.
+struct Recording {
+    window: usize,
+    asked: Mutex<Vec<String>>,
+}
+
+impl Recording {
+    fn new(window: usize) -> Self {
+        Self {
+            window,
+            asked: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Recording {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let (_, user) = fixture_messages(request);
+        self.asked.lock().unwrap().push(user.to_owned());
+        Ok(CompletionResponse::from_text(
+            json!({"verdict": "consistent", "reason": "Nothing says otherwise."}).to_string(),
+        ))
+    }
+    fn model_name(&self) -> &str {
+        "recording-fixture"
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len().div_ceil(4)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.window
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
+}
+
+#[tokio::test]
+async fn consistency_reads_the_sections_passed_example_runs() -> Result<()> {
+    let sources = sources();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let mut world = world_of(&references, Citations::default());
+    world.runs = vec![run_printing(&format!(
+        "{MARKER}
+"
+    ))];
+    let model = Recording::new(32_000);
+
+    read_one(Reading::Consistency, &model, &world, CLAIM).await?;
+
+    let asked = model.asked.lock().unwrap();
+    assert!(asked.iter().any(|user| user.contains(MARKER)), "{asked:?}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn consistency_shows_every_passage_its_judge_holds() -> Result<()> {
+    let three = three_passages();
+    let texts = texts_of(&three);
+    let window = (1..)
+        .find(|&window| {
+            ClaimChecker::for_policy(
+                &Windowed::new(window, Vec::new()),
+                SamplingOverride::deterministic(),
+                CheckPolicy::Consistency,
+            )
+            .consistency_fits(FEEDS, &texts)
+        })
+        .unwrap_or_default();
+    let references = ReferenceCollection::lexical(&sources())?;
+    let citations = Citations::new(HashMap::from([(0, three)]), HashMap::new());
+    let world = world_of(&references, citations);
+    let model = Recording::new(window);
+
+    read_one(Reading::Consistency, &model, &world, FEEDS).await?;
+
+    let asked = model.asked.lock().unwrap();
+    let shown: usize = asked
+        .iter()
+        .map(|user| user.matches("[passage-").count())
+        .sum();
+    assert_eq!(shown, 3, "{asked:?}");
     Ok(())
 }

@@ -1,19 +1,21 @@
-//! Vault-wide type mix and recent growth, read straight from the document table.
+//! Library-wide type mix, recent growth and newest indexing time, read straight
+//! from the document table. A chat's attachments are not part of the library.
 //!
 //! Deliberately its own narrow port rather than a method on the document
 //! repository: nothing else needs a grouped count, and the two queries here are
 //! the whole contract.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use async_trait::async_trait;
-use chrono::{Duration, Utc};
-use sqlx::{Row, SqlitePool};
+use chrono::{DateTime, Duration, Local, NaiveTime, Utc};
+use sqlx::Row;
 
-use crate::features::stats::type_label::type_label;
+use crate::features::stats::type_bucket::type_bucket;
+use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::Database;
 
 /// How far back "recently grown" looks.
 pub const GROWTH_WINDOW_DAYS: i64 = 7;
@@ -24,39 +26,49 @@ pub struct CorpusShape {
     /// Label, count — sorted count descending, then label ascending.
     pub by_type: Vec<(String, i64)>,
     pub grown_last_7_days: i64,
+    /// Documents indexed since local midnight.
+    pub grown_today: i64,
+    /// When the newest library document was indexed, if there is one.
+    pub last_indexed_at: Option<String>,
+}
+
+fn start_of_local_day(now: DateTime<Local>) -> DateTime<Local> {
+    now.date_naive()
+        .and_time(NaiveTime::MIN)
+        .and_local_timezone(Local)
+        .earliest()
+        .unwrap_or(now - now.time().signed_duration_since(NaiveTime::MIN))
 }
 
 #[async_trait]
 pub trait CorpusShapeRepositoryPort: Send + Sync {
-    async fn corpus_shape(&self) -> Result<CorpusShape>;
+    async fn corpus_shape(&self, archive: &dyn ArticleArchive) -> Result<CorpusShape>;
 }
 
 pub struct SqliteCorpusShapeRepository {
-    pool: SqlitePool,
+    db: Database,
 }
 
 impl SqliteCorpusShapeRepository {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 }
 
 #[async_trait]
 impl CorpusShapeRepositoryPort for SqliteCorpusShapeRepository {
-    async fn corpus_shape(&self) -> Result<CorpusShape> {
+    async fn corpus_shape(&self, archive: &dyn ArticleArchive) -> Result<CorpusShape> {
         let mut tx = self
-            .pool
+            .db
             .begin_read()
             .await
             .map_err(|e| AppError::Database(format!("corpus shape begin: {}", e)))?;
         let rows = sqlx::query(
             r#"
-            SELECT COALESCE(NULLIF(source_type, ''), 'local') AS source_type,
-                   LOWER(COALESCE(file_type, ''))             AS file_type,
-                   COUNT(*)                                   AS n
+            SELECT file_path,
+                   LOWER(COALESCE(file_type, '')) AS file_type
             FROM documents
-            GROUP BY source_type, file_type
+            WHERE owner_conversation_id IS NULL
             "#,
         )
         .fetch_all(&mut *tx)
@@ -66,27 +78,43 @@ impl CorpusShapeRepositoryPort for SqliteCorpusShapeRepository {
         let mut buckets: HashMap<String, i64> = HashMap::new();
         let mut total: i64 = 0;
         for row in rows {
-            let source_type: String = row.try_get("source_type").unwrap_or_default();
+            let file_path: String = row.try_get("file_path").unwrap_or_default();
             let file_type: String = row.try_get("file_type").unwrap_or_default();
-            let n: i64 = row.try_get("n").unwrap_or(0);
-            total += n;
+            total += 1;
             *buckets
-                .entry(type_label(&source_type, &file_type))
-                .or_insert(0) += n;
+                .entry(type_bucket(
+                    archive.is_saved_article(Path::new(&file_path)),
+                    &file_type,
+                ))
+                .or_insert(0) += 1;
         }
 
         let mut by_type: Vec<(String, i64)> = buckets.into_iter().collect();
         by_type.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
 
-        let cutoff = (Utc::now() - Duration::days(GROWTH_WINDOW_DAYS)).to_rfc3339();
-        let grown_last_7_days: i64 =
-            sqlx::query("SELECT COUNT(*) AS n FROM documents WHERE indexed_at >= ?")
-                .bind(&cutoff)
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(|e| AppError::Database(format!("corpus shape growth: {}", e)))?
-                .try_get("n")
-                .unwrap_or(0);
+        let week_cutoff = (Utc::now() - Duration::days(GROWTH_WINDOW_DAYS)).to_rfc3339();
+        let day_cutoff = start_of_local_day(Local::now())
+            .with_timezone(&Utc)
+            .to_rfc3339();
+        let growth = sqlx::query(
+            r#"
+            SELECT COUNT(CASE WHEN indexed_at >= ? THEN 1 END) AS week,
+                   COUNT(CASE WHEN indexed_at >= ? THEN 1 END) AS today,
+                   MAX(indexed_at)                             AS newest
+            FROM documents
+            WHERE owner_conversation_id IS NULL
+            "#,
+        )
+        .bind(&week_cutoff)
+        .bind(&day_cutoff)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| AppError::Database(format!("corpus shape growth: {}", e)))?;
+        let grown_last_7_days: i64 = growth.try_get("week").unwrap_or(0);
+        let grown_today: i64 = growth.try_get("today").unwrap_or(0);
+        let last_indexed_at: Option<String> = growth
+            .try_get("newest")
+            .map_err(|e| AppError::Database(format!("corpus shape newest: {}", e)))?;
         tx.commit()
             .await
             .map_err(|e| AppError::Database(format!("corpus shape commit: {}", e)))?;
@@ -95,6 +123,8 @@ impl CorpusShapeRepositoryPort for SqliteCorpusShapeRepository {
             total,
             by_type,
             grown_last_7_days,
+            grown_today,
+            last_indexed_at,
         })
     }
 }
@@ -103,38 +133,130 @@ impl CorpusShapeRepositoryPort for SqliteCorpusShapeRepository {
 mod tests {
     use super::*;
     use chrono::Utc;
+    use lattice_core::domain::ports::article_archive::{ArticleArchive, SavedArticle};
+    use sqlx::SqlitePool;
+    use std::path::Path;
+    use std::path::PathBuf;
+
+    struct ArchiveAt(PathBuf);
+
+    #[async_trait::async_trait]
+    impl ArticleArchive for ArchiveAt {
+        async fn delete_article(&self, _path: &Path) -> Result<()> {
+            Ok(())
+        }
+
+        fn owns(&self, path: &Path) -> bool {
+            path.starts_with(&self.0)
+        }
+
+        fn is_saved_article(&self, path: &Path) -> bool {
+            path.file_name() == Some(std::ffi::OsStr::new("article.md")) && self.owns(path)
+        }
+
+        async fn saved_article(&self, _path: &Path) -> Option<SavedArticle> {
+            None
+        }
+    }
+
+    fn archive() -> ArchiveAt {
+        ArchiveAt(PathBuf::from("/archive"))
+    }
+
+    fn outside(id: &str, file_type: &str) -> String {
+        format!("/tmp/{}.{}", id, file_type)
+    }
+
+    fn inside(id: &str) -> String {
+        format!("/archive/{}/article.md", id)
+    }
 
     async fn pool() -> SqlitePool {
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-        pool
+        lattice_core::shared::testing::sqlite::migrated_in_memory()
+            .await
+            .unwrap()
     }
 
     async fn insert_doc(
         pool: &SqlitePool,
         id: &str,
         file_type: &str,
-        source_type: &str,
+        file_path: &str,
         indexed_at: &str,
     ) {
         sqlx::query(
             r#"
             INSERT INTO documents
                 (id, file_path, file_name, file_type, size_bytes, modified_at,
-                 indexed_at, checksum, status, source_type)
-            VALUES (?, ?, ?, ?, 0, ?, ?, 'sum', 'indexed', ?)
+                 indexed_at, checksum, status)
+            VALUES (?, ?, ?, ?, 0, ?, ?, 'sum', 'indexed')
             "#,
         )
         .bind(id)
-        .bind(format!("/tmp/{}.{}", id, file_type))
+        .bind(file_path)
         .bind(format!("{}.{}", id, file_type))
         .bind(file_type)
         .bind(indexed_at)
         .bind(indexed_at)
-        .bind(source_type)
         .execute(pool)
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_file_inside_the_archive_counts_as_web() {
+        let pool = pool().await;
+        let now = Utc::now().to_rfc3339();
+        insert_doc(&pool, "saved", "md", &inside("saved"), &now).await;
+        insert_doc(&pool, "own", "md", &outside("own", "md"), &now).await;
+
+        let repo = SqliteCorpusShapeRepository::new(Database::new(pool));
+        let shape = repo.corpus_shape(&archive()).await.unwrap();
+
+        assert_eq!(shape.total, 2);
+        assert_eq!(
+            shape.by_type,
+            vec![("Markdown".to_string(), 1), ("Web".to_string(), 1)]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_file_the_archive_owns_that_is_not_an_article_text_counts_by_its_file_type() {
+        let pool = pool().await;
+        let now = Utc::now().to_rfc3339();
+        insert_doc(&pool, "saved", "md", &inside("saved"), &now).await;
+        insert_doc(
+            &pool,
+            "legacy",
+            "md",
+            "/archive/example.com/old-article-1.md",
+            &now,
+        )
+        .await;
+
+        let repo = SqliteCorpusShapeRepository::new(Database::new(pool));
+        let shape = repo.corpus_shape(&archive()).await.unwrap();
+
+        assert_eq!(
+            shape.by_type,
+            vec![("Markdown".to_string(), 1), ("Web".to_string(), 1)]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_web_source_type_outside_the_archive_counts_by_its_file_type() {
+        let pool = pool().await;
+        let now = Utc::now().to_rfc3339();
+        insert_doc(&pool, "odd", "pdf", &outside("odd", "pdf"), &now).await;
+        sqlx::query("UPDATE documents SET source_type = 'web' WHERE id = 'odd'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let repo = SqliteCorpusShapeRepository::new(Database::new(pool));
+        let shape = repo.corpus_shape(&archive()).await.unwrap();
+
+        assert_eq!(shape.by_type, vec![("PDF".to_string(), 1)]);
     }
 
     #[tokio::test]
@@ -142,15 +264,17 @@ mod tests {
         let pool = pool().await;
         let now = Utc::now().to_rfc3339();
         for i in 0..3 {
-            insert_doc(&pool, &format!("pdf{i}"), "pdf", "local", &now).await;
+            let id = format!("pdf{i}");
+            insert_doc(&pool, &id, "pdf", &outside(&id, "pdf"), &now).await;
         }
         for i in 0..2 {
-            insert_doc(&pool, &format!("md{i}"), "md", "local", &now).await;
+            let id = format!("md{i}");
+            insert_doc(&pool, &id, "md", &outside(&id, "md"), &now).await;
         }
-        insert_doc(&pool, "web0", "html", "web", &now).await;
+        insert_doc(&pool, "web0", "html", &inside("web0"), &now).await;
 
-        let repo = SqliteCorpusShapeRepository::new(pool);
-        let shape = repo.corpus_shape().await.unwrap();
+        let repo = SqliteCorpusShapeRepository::new(Database::new(pool));
+        let shape = repo.corpus_shape(&archive()).await.unwrap();
 
         assert_eq!(shape.total, 6);
         assert_eq!(
@@ -168,22 +292,82 @@ mod tests {
         let pool = pool().await;
         let recent = (Utc::now() - Duration::days(3)).to_rfc3339();
         let old = (Utc::now() - Duration::days(30)).to_rfc3339();
-        insert_doc(&pool, "recent", "pdf", "local", &recent).await;
-        insert_doc(&pool, "old", "pdf", "local", &old).await;
+        insert_doc(&pool, "recent", "pdf", &outside("recent", "pdf"), &recent).await;
+        insert_doc(&pool, "old", "pdf", &outside("old", "pdf"), &old).await;
 
-        let repo = SqliteCorpusShapeRepository::new(pool);
-        let shape = repo.corpus_shape().await.unwrap();
+        let repo = SqliteCorpusShapeRepository::new(Database::new(pool));
+        let shape = repo.corpus_shape(&archive()).await.unwrap();
 
         assert_eq!(shape.total, 2);
         assert_eq!(shape.grown_last_7_days, 1);
     }
 
     #[tokio::test]
+    async fn a_chat_attachment_is_not_part_of_the_library_summary() {
+        let pool = pool().await;
+        let now = Utc::now().to_rfc3339();
+        insert_doc(&pool, "kept", "pdf", &outside("kept", "pdf"), &now).await;
+        insert_doc(&pool, "attached", "pdf", &outside("attached", "pdf"), &now).await;
+        sqlx::query("UPDATE documents SET owner_conversation_id = 'chat-1' WHERE id = 'attached'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let repo = SqliteCorpusShapeRepository::new(Database::new(pool));
+        let shape = repo.corpus_shape(&archive()).await.unwrap();
+
+        assert_eq!(shape.total, 1);
+        assert_eq!(shape.by_type, vec![("PDF".to_string(), 1)]);
+        assert_eq!(shape.grown_last_7_days, 1);
+    }
+
+    #[tokio::test]
+    async fn today_starts_at_local_midnight_and_the_newest_indexing_time_is_reported() {
+        let pool = pool().await;
+        let now = Local::now();
+        let midnight = start_of_local_day(now);
+        let stamp = |at: DateTime<Local>| at.with_timezone(&Utc).to_rfc3339();
+        let before_midnight = stamp(midnight - Duration::minutes(1));
+        let just_now = stamp(now);
+        insert_doc(&pool, "today", "pdf", &outside("today", "pdf"), &just_now).await;
+        insert_doc(
+            &pool,
+            "yesterday",
+            "pdf",
+            &outside("yesterday", "pdf"),
+            &before_midnight,
+        )
+        .await;
+        insert_doc(
+            &pool,
+            "chat",
+            "pdf",
+            &outside("chat", "pdf"),
+            &stamp(now + Duration::hours(1)),
+        )
+        .await;
+        sqlx::query("UPDATE documents SET owner_conversation_id = 'chat-1' WHERE id = 'chat'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let repo = SqliteCorpusShapeRepository::new(Database::new(pool));
+        let shape = repo.corpus_shape(&archive()).await.unwrap();
+
+        assert_eq!(shape.total, 2);
+        assert_eq!(shape.grown_today, 1);
+        assert_eq!(shape.grown_last_7_days, 2);
+        assert_eq!(shape.last_indexed_at, Some(just_now));
+    }
+
+    #[tokio::test]
     async fn empty_vault_reports_zeroes() {
-        let repo = SqliteCorpusShapeRepository::new(pool().await);
-        let shape = repo.corpus_shape().await.unwrap();
+        let repo = SqliteCorpusShapeRepository::new(Database::new(pool().await));
+        let shape = repo.corpus_shape(&archive()).await.unwrap();
         assert_eq!(shape.total, 0);
         assert!(shape.by_type.is_empty());
         assert_eq!(shape.grown_last_7_days, 0);
+        assert_eq!(shape.grown_today, 0);
+        assert_eq!(shape.last_indexed_at, None);
     }
 }

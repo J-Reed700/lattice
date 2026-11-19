@@ -231,13 +231,16 @@ fn a_catalog_file_in_the_version_list_is_the_catalog_entry() {
 #[test]
 fn catalog_search_matches_every_term() {
     let ids = |query: &str| -> Vec<String> {
-        curated_chat_models_matching(query)
+        curated_models_matching(query)
             .into_iter()
             .map(|model| model.id)
             .collect()
     };
-    assert_eq!(ids("").len(), CURATED_CHAT_MODELS.len());
-    assert_eq!(ids("gguf").len(), CURATED_CHAT_MODELS.len());
+    let listed = CURATED_CHAT_MODELS.len() + get_curated_embedding_models().len();
+    assert_eq!(ids("").len(), listed);
+    assert_eq!(ids("gguf").len(), listed);
+    assert_eq!(ids("qwen embedding"), ["qwen3-embedding-0.6b".to_string()]);
+    assert!(ids("Qwen").contains(&"qwen3-embedding-0.6b".to_string()));
     assert_eq!(
         ids("gemma 12b"),
         [
@@ -512,20 +515,19 @@ fn test_lookup_nonexistent_model() {
     assert_eq!(category, None);
 }
 
-/// The embedding runtime is the bundled llama-server: one F16 GGUF, plus the
-/// `tokenizer.json` passages are cut with, each pinned to a commit and a
-/// digest so the engine verifies it and the GGUF's digest is the identity.
+/// The embedding runtime is the bundled llama-server: one F16 GGUF, pinned
+/// to a commit and a digest so the engine verifies it and the GGUF's digest
+/// is the identity. Passages are counted with the GGUF's own tokenizer, so
+/// nothing else is downloaded.
 #[test]
-fn every_embedding_entry_downloads_one_pinned_gguf_and_its_tokenizer() {
-    use crate::domain::models::checkpoint::TOKENIZER_JSON;
+fn every_embedding_entry_downloads_one_pinned_gguf() {
     use crate::domain::models::selection::ModelFormat;
     for model in get_curated_embedding_models() {
         assert_eq!(model.format, ModelFormat::Gguf, "{}", model.id);
         assert_eq!(model.supported_quantizations, ["F16"], "{}", model.id);
         let names: Vec<&str> = model.files.iter().map(|f| f.filename.as_str()).collect();
-        assert_eq!(names.len(), 2, "{}", model.id);
+        assert_eq!(names.len(), 1, "{}: {names:?}", model.id);
         assert!(names[0].ends_with(".gguf"), "{}", model.id);
-        assert_eq!(names[1], TOKENIZER_JSON, "{}", model.id);
         for file in &model.files {
             assert!(file.size_bytes > 0, "{} has no size", file.filename);
             let digest = file.checksum.as_deref().unwrap_or_default();
@@ -542,10 +544,7 @@ fn every_embedding_entry_downloads_one_pinned_gguf_and_its_tokenizer() {
                 file.url
             );
         }
-        assert_eq!(
-            model.total_size_bytes,
-            model.files.iter().map(|f| f.size_bytes).sum::<u64>()
-        );
+        assert_eq!(model.total_size_bytes, model.files[0].size_bytes);
     }
 }
 

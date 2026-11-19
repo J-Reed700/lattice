@@ -15,6 +15,7 @@ use crate::drills::spec::{check_language, DrillSpec};
 use crate::tests::pool;
 use lattice_core::domain::learning::drills::{Material, Pattern, LANGUAGES};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use serde_json::json;
 
 const CLEAN_SYSTEM: &str = include_str!("golden/clean_system.txt");
@@ -53,15 +54,14 @@ async fn first_request_of_clean_code(
     runner: Option<&FakeRunner>,
 ) -> Result<(String, String)> {
     let pool = pool().await?;
-    let mut spec = code_spec(&pool).await?;
+    let db = Database::new(pool.clone());
+    let mut spec = code_spec(&pool, &db).await?;
     if !patterns.is_empty() {
         spec.patterns = patterns.iter().map(|id| (*id).to_owned()).collect();
     }
     let model = ScriptedModel::new([code_check_answer(true), "{}".to_owned()]);
     let grader = idle_grader();
-    let _ = build(&pool, &model, runner, &grader)
-        .clean_code(&spec)
-        .await;
+    let _ = build(&db, &model, runner, &grader).clean_code(&spec).await;
     let request = model.requests().remove(1);
     Ok((system(&request), last(&request)))
 }
@@ -123,19 +123,39 @@ async fn the_clean_code_request_for_a_testing_pattern_asks_for_a_test_file() -> 
 
 #[tokio::test]
 async fn the_clean_review_request_is_what_it_was() -> Result<()> {
-    let pool = pool().await?;
+    let db = Database::new(pool().await?);
     let model = ScriptedModel::new([review_answer(vec![])]);
     let grader = idle_grader();
     let code = code();
-    let reviewed = build(&pool, &model, None, &grader)
+    let reviewed = build(&db, &model, None, &grader)
         .clean_review(&spec(), &code)
         .await?;
     assert!(reviewed.repairs.is_empty());
     let request = model.requests().remove(0);
     assert_eq!(system(&request), golden(REVIEW_SYSTEM));
+    let mut named = 0;
+    let shown: Vec<String> = code
+        .files
+        .iter()
+        .map(|file| {
+            let lines: Vec<String> = file
+                .text
+                .lines()
+                .map(|line| {
+                    named += 1;
+                    format!("[u{named}] {line}")
+                })
+                .collect();
+            format!(
+                "<file path=\"{}\">\n{}\n</file>",
+                file.path,
+                lines.join("\n")
+            )
+        })
+        .collect();
     assert_eq!(
         last(&request),
-        format!("Language: python\n\n{}", render_files(&code.files))
+        format!("Language: python\n\n{}", shown.join("\n\n"))
     );
     Ok(())
 }

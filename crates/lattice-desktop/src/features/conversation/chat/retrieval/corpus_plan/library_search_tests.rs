@@ -1,6 +1,7 @@
 use super::*;
 use crate::features::conversation::repository::ConversationRepository;
 use lattice_core::application::services::context_assembler::EvidenceBudget;
+use lattice_core::shared::persistence::Database;
 
 /// One chunk of a fixture library: id, document, chunk index, section, text.
 type Chunk = (
@@ -180,7 +181,7 @@ async fn library(chunks: &[Chunk]) -> ConversationRepository {
         .await
         .unwrap();
     }
-    ConversationRepository::new(pool)
+    ConversationRepository::new(Database::new(pool))
 }
 
 /// `hits` in the order search ranked them, as `append_context` leaves them
@@ -548,7 +549,7 @@ async fn records(
         .await
         .expect("chunk");
     }
-    crate::features::conversation::repository::ConversationRepository::new(pool)
+    crate::features::conversation::repository::ConversationRepository::new(Database::new(pool))
 }
 
 #[tokio::test]

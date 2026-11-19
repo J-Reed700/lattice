@@ -6,10 +6,8 @@
 //! Runtime-checked `sqlx::query_as` rather than the `query!` macros, so the
 //! offline `.sqlx` cache stays valid (see `features/corpus_shape/repository.rs`).
 
-use sqlx::SqlitePool;
-
 use lattice_core::shared::error::AppError;
-use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Database;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ExportConversationRow {
@@ -59,34 +57,39 @@ pub struct ExportImageRow {
 }
 
 pub struct ExportRepository {
-    pool: SqlitePool,
+    db: Database,
 }
 
 impl ExportRepository {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 
     /// All conversations, newest first.
     pub async fn list_conversations(&self) -> Result<Vec<ExportConversationRow>, AppError> {
-        sqlx::query_as::<_, ExportConversationRow>(
+        let mut read = self.db.begin_read().await?;
+        let rows = sqlx::query_as::<_, ExportConversationRow>(
             r#"
             SELECT id, title, model_choice, created_at, updated_at
               FROM conversations
              ORDER BY updated_at DESC
             "#,
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
-        .map_err(|e| AppError::Database(format!("Failed to read conversations for export: {}", e)))
+        .map_err(|e| {
+            AppError::Database(format!("Failed to read conversations for export: {}", e))
+        })?;
+        read.commit().await?;
+        Ok(rows)
     }
 
     /// Every completed message across all conversations, ordered by conversation
     /// then time. One query, not N — a vault with 500 conversations must not fire
     /// 500 round trips.
     pub async fn list_messages(&self) -> Result<Vec<ExportMessageRow>, AppError> {
-        sqlx::query_as::<_, ExportMessageRow>(
+        let mut read = self.db.begin_read().await?;
+        let rows = sqlx::query_as::<_, ExportMessageRow>(
             r#"
             SELECT id, conversation_id, role, content, created_at, metadata
               FROM conversation_messages
@@ -94,14 +97,17 @@ impl ExportRepository {
              ORDER BY conversation_id, created_at ASC
             "#,
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
-        .map_err(|e| AppError::Database(format!("Failed to read messages for export: {}", e)))
+        .map_err(|e| AppError::Database(format!("Failed to read messages for export: {}", e)))?;
+        read.commit().await?;
+        Ok(rows)
     }
 
     /// Every picture an answer holds, in one query like the messages.
     pub async fn list_chat_images(&self) -> Result<Vec<ExportImageRow>, AppError> {
-        sqlx::query_as::<_, ExportImageRow>(
+        let mut read = self.db.begin_read().await?;
+        let rows = sqlx::query_as::<_, ExportImageRow>(
             r#"
             SELECT message_id, ref AS image_ref, id, ext, source_url, source_title, license,
                    original_name
@@ -109,22 +115,29 @@ impl ExportRepository {
              WHERE message_id IS NOT NULL
             "#,
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
-        .map_err(|e| AppError::Database(format!("Failed to read chat images for export: {}", e)))
+        .map_err(|e| AppError::Database(format!("Failed to read chat images for export: {}", e)))?;
+        read.commit().await?;
+        Ok(rows)
     }
 
     /// Journal pages (workspace notes), newest first.
     pub async fn list_journal_pages(&self) -> Result<Vec<ExportNoteRow>, AppError> {
-        sqlx::query_as::<_, ExportNoteRow>(
+        let mut read = self.db.begin_read().await?;
+        let rows = sqlx::query_as::<_, ExportNoteRow>(
             r#"
             SELECT id, title, content, created_at, updated_at
               FROM daily_notes_workspace
              ORDER BY updated_at DESC
             "#,
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *read)
         .await
-        .map_err(|e| AppError::Database(format!("Failed to read journal pages for export: {}", e)))
+        .map_err(|e| {
+            AppError::Database(format!("Failed to read journal pages for export: {}", e))
+        })?;
+        read.commit().await?;
+        Ok(rows)
     }
 }

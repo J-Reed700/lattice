@@ -1,5 +1,16 @@
-use super::super::test_support::source;
+use super::super::test_support::{reply, source};
 use super::*;
+use crate::features::conversation::chat::reply_text::markers;
+use crate::features::conversation::chat::retrieval::source_names::name_sources;
+use crate::features::explorer::file_refs::FileNames;
+use lattice_core::application::services::model_contract::kept::TurnNames;
+use lattice_core::application::services::model_contract::reply::Place;
+use lattice_core::application::services::tool_handles::FolderFile;
+use std::sync::Arc;
+
+fn lexical_pass(text: &str, sources: &[SourceDto]) -> Vec<LexicalClaim> {
+    super::lexical_pass(&reply(text, sources), sources)
+}
 
 #[test]
 fn a_claim_deep_in_a_whole_cited_page_is_found_but_a_scattered_one_is_not() {
@@ -12,7 +23,7 @@ fn a_claim_deep_in_a_whole_cited_page_is_found_but_a_scattered_one_is_not() {
         "Pollination needs wind or hand shaking for corn. ".repeat(10),
     );
     let claims = lexical_pass(
-        "Bush beans mature within sixty days in shallow window boxes [1].",
+        "Bush beans mature within sixty days in shallow window boxes [s1].",
         &[source(&page)],
     );
     assert!(claims[0].supported);
@@ -20,7 +31,7 @@ fn a_claim_deep_in_a_whole_cited_page_is_found_but_a_scattered_one_is_not() {
     // Every word appears somewhere on the page, but no one stretch of it
     // says this; a single token set over the whole article would pass it.
     let claims = lexical_pass(
-        "Compost pollination needs trellis irrigation seed windows [1].",
+        "Compost pollination needs trellis irrigation seed windows [s1].",
         &[source(&page)],
     );
     assert!(claims[0].overlap_ratio < 1.0);
@@ -33,22 +44,22 @@ fn a_follow_on_sentence_answers_to_the_marker_of_its_own_point() {
         source("Thyme is tough indoors while rosemary wants direct sunlight."),
     ];
     let claims = lexical_pass(
-        "- Fruiting crops need 6–8 hours of strong light, and LED grow lights are the workaround [1]. \
+        "- Fruiting crops need 6–8 hours of strong light, and LED grow lights are the workaround [s1]. \
              So needing a lot of sun really means needing strong light for hours.\n\
-             - Thyme copes indoors but rosemary wants direct sunlight [2].\n\
+             - Thyme copes indoors but rosemary wants direct sunlight [s2].\n\
              ## A heading that says something about peanut pods underground\n\
              Peanuts develop pods underground, which is my inference and cites nothing at all.",
         &sources,
     );
     let follow_on = claims
         .iter()
-        .find(|claim| claim.sentence.starts_with("So needing"))
+        .find(|claim| claim.claim_text.starts_with("So needing"))
         .expect("follow-on sentence is a claim");
     // The next marker is on another line, so it cannot claim this one.
     assert_eq!(follow_on.citation_ids, vec![1]);
     let aside = claims
         .iter()
-        .find(|claim| claim.sentence.starts_with("Peanuts"))
+        .find(|claim| claim.claim_text.starts_with("Peanuts"))
         .expect("uncited paragraph is a claim");
     assert!(aside.citation_ids.is_empty());
 }
@@ -59,15 +70,18 @@ fn a_heading_names_what_follows_and_is_no_claim() {
     // the sources do not back.
     let claims = lexical_pass(
         "## Why the distinction matters\n\
-         OCR mistakes flow into the downstream model and get amplified [1].",
+         OCR mistakes flow into the downstream model and get amplified [s1].",
         &[source(
             "OCR errors propagate to the downstream model and are amplified during prediction.",
         )],
     );
-    let sentences: Vec<&str> = claims.iter().map(|claim| claim.sentence.as_str()).collect();
+    let sentences: Vec<&str> = claims
+        .iter()
+        .map(|claim| claim.claim_text.as_str())
+        .collect();
     assert_eq!(
         sentences,
-        ["OCR mistakes flow into the downstream model and get amplified [1]."]
+        ["OCR mistakes flow into the downstream model and get amplified ."]
     );
 }
 
@@ -84,19 +98,19 @@ fn a_list_item_answers_to_the_citations_of_the_line_that_introduces_it() {
         ),
     ];
     let claims = lexical_pass(
-        "The OCR-based approach has three well-documented problems [1]:\n\
+        "The OCR-based approach has three well-documented problems [s1]:\n\
          \n\
          1. High computational cost of running a separate OCR engine on every page\n\
          2. Errors in the recognised text flow into the downstream model and grow\n\
          \n\
-         Kafka keeps the order of records within one partition [2].\n\
+         Kafka keeps the order of records within one partition [s2].\n\
          - Consumers in one group split the partitions of a topic between them",
         &sources,
     );
     let cites = |words: &str| {
         claims
             .iter()
-            .find(|claim| claim.sentence.contains(words))
+            .find(|claim| claim.claim_text.contains(words))
             .map(|claim| claim.citation_ids.clone())
             .unwrap_or_else(|| panic!("no claim holds {words:?}"))
     };
@@ -109,7 +123,7 @@ fn a_list_item_answers_to_the_citations_of_the_line_that_introduces_it() {
 #[test]
 fn a_list_item_takes_each_source_of_its_introducing_line_once() {
     let claims = lexical_pass(
-        "OCR adds a separate engine to every page [1]. Its errors then reach the model [2][1]:\n\
+        "OCR adds a separate engine to every page [s1]. Its errors then reach the model [s2][s1]:\n\
          - Misread characters change the words the model sees",
         &[
             source("OCR-dependent pipelines run a separate OCR engine on every page."),
@@ -118,7 +132,7 @@ fn a_list_item_takes_each_source_of_its_introducing_line_once() {
     );
     let item = claims
         .iter()
-        .find(|claim| claim.sentence.contains("Misread characters"))
+        .find(|claim| claim.claim_text.contains("Misread characters"))
         .expect("the list item is a claim");
     assert_eq!(item.citation_ids, vec![1, 2]);
 }
@@ -130,7 +144,7 @@ fn a_bolded_opening_sentence_does_not_split_inside_its_emphasis() {
     // judge — and the user — reading "** The ideal initial planting depth".
     let claims = lexical_pass(
         "**Bury it all the way — you don't leave the top sticking out.** The ideal initial \
-             planting depth is 4–6 inches of soil above the seed potato [1].",
+             planting depth is 4–6 inches of soil above the seed potato [s1].",
         &[source(
             "The ideal initial planting depth for potatoes is 4 to 6 inches. This initial 4- \
                  to 6-inch soil covering provides the seed potato with insulation and moisture.",
@@ -139,13 +153,13 @@ fn a_bolded_opening_sentence_does_not_split_inside_its_emphasis() {
 
     assert_eq!(claims.len(), 2);
     assert!(
-        claims.iter().all(|claim| !claim.sentence.contains('*')),
+        claims.iter().all(|claim| !claim.claim_text.contains('*')),
         "emphasis markers reached the claim text: {:?}",
-        claims.iter().map(|c| &c.sentence).collect::<Vec<_>>()
+        claims.iter().map(|c| &c.claim_text).collect::<Vec<_>>()
     );
-    assert!(claims[0].sentence.starts_with("Bury it all the way"));
+    assert!(claims[0].claim_text.starts_with("Bury it all the way"));
     assert!(claims[1]
-        .sentence
+        .claim_text
         .starts_with("The ideal initial planting depth"));
 }
 
@@ -166,7 +180,7 @@ fn a_sentence_with_no_citation_is_never_sent_to_the_judge() {
     // Its only possible evidence would be whichever sources ranked first, which
     // it never claimed anything about.
     let claims = lexical_pass(
-        "Potatoes want 4–6 inches of cover [1].\n\
+        "Potatoes want 4–6 inches of cover [s1].\n\
              So: fully buried at first, then buried deeper as the plant grows.",
         &[source(
             "The ideal initial planting depth for potatoes is 4 to 6 inches of soil cover.",
@@ -175,7 +189,7 @@ fn a_sentence_with_no_citation_is_never_sent_to_the_judge() {
 
     let summary = claims
         .iter()
-        .find(|claim| claim.sentence.starts_with("So:"))
+        .find(|claim| claim.claim_text.starts_with("So:"))
         .expect("the uncited closing line is still a claim");
     assert!(summary.citation_ids.is_empty());
     assert!(!needs_judge(summary));
@@ -207,7 +221,7 @@ fn a_sentence_with_no_citation_is_never_backed_on_shared_words() {
 #[test]
 fn grounded_claim_scores_above_threshold() {
     let claims = lexical_pass(
-        "Blueberry plants showed improved cold tolerance after salicylic acid treatment [1].",
+        "Blueberry plants showed improved cold tolerance after salicylic acid treatment [s1].",
         &[source(
             "Salicylic acid treatment improved cold tolerance in blueberry plants during low temperature stress.",
         )],
@@ -221,7 +235,7 @@ fn grounded_claim_scores_above_threshold() {
 #[test]
 fn unsupported_claim_scores_below_threshold() {
     let claims = lexical_pass(
-        "Blueberry plants tripled yield after lunar-cycle irrigation [1].",
+        "Blueberry plants tripled yield after lunar-cycle irrigation [s1].",
         &[source(
             "The study measured antioxidant enzyme response under low-temperature stress.",
         )],
@@ -240,7 +254,7 @@ fn short_or_question_sentences_are_skipped() {
 #[test]
 fn the_cut_short_note_is_not_a_claim() {
     let answer = format!(
-        "Bush beans mature within sixty days in shallow window boxes [1].{}",
+        "Bush beans mature within sixty days in shallow window boxes [s1].{}",
         super::super::super::tool_loop::CUT_SHORT_NOTE
     );
     let claims = lexical_pass(
@@ -262,7 +276,7 @@ fn the_out_of_rounds_note_is_not_a_claim() {
         super::super::super::tool_loop::OUT_OF_TIME_NOTE,
     ] {
         let answer =
-            format!("Bush beans mature within sixty days in shallow window boxes [1].{note}");
+            format!("Bush beans mature within sixty days in shallow window boxes [s1].{note}");
         let claims = lexical_pass(
             &answer,
             &[source(
@@ -277,7 +291,7 @@ fn the_out_of_rounds_note_is_not_a_claim() {
 #[test]
 fn citation_index_selects_the_referenced_source() {
     let claims = lexical_pass(
-        "Blueberry anthocyanins support vascular function and endothelial health [2].",
+        "Blueberry anthocyanins support vascular function and endothelial health [s2].",
         &[
             source("Irrigation protocol and frost timing notes for greenhouse control."),
             source("Anthocyanins from blueberries were associated with improved vascular endothelial function in adults."),
@@ -293,7 +307,7 @@ fn citation_index_selects_the_referenced_source() {
 #[test]
 fn mismatched_citation_index_is_flagged_even_if_another_source_matches() {
     let claims = lexical_pass(
-        "Blueberry anthocyanins support vascular function and endothelial health [1].",
+        "Blueberry anthocyanins support vascular function and endothelial health [s1].",
         &[
             source("Irrigation protocol and frost timing notes for greenhouse control."),
             source("Anthocyanins from blueberries were associated with improved vascular endothelial function in adults."),
@@ -307,7 +321,7 @@ fn mismatched_citation_index_is_flagged_even_if_another_source_matches() {
 #[test]
 fn short_cited_numeric_answers_are_not_skipped() {
     let claims = lexical_pass(
-        "Retention is 14 days [1].",
+        "Retention is 14 days [s1].",
         &[source("Retention is 30 days.")],
     );
     assert_eq!(claims.len(), 1);
@@ -315,18 +329,41 @@ fn short_cited_numeric_answers_are_not_skipped() {
 }
 
 #[test]
-fn invalid_citation_cannot_borrow_support_from_another_source() {
-    for citation in ["[99]", "[0]", "[1][99]"] {
-        let claims = lexical_pass(
+fn a_name_the_app_never_gave_is_no_citation() {
+    let passage = "Blueberry plants showed improved cold tolerance after salicylic acid treatment.";
+    let cited = |citation: &str| {
+        lexical_pass(
             &format!("Blueberry plants showed improved cold tolerance after salicylic acid treatment {citation}."),
-            &[source("Blueberry plants showed improved cold tolerance after salicylic acid treatment.")],
-        );
+            &[source(passage)],
+        )
+    };
+    for citation in ["[s99]", "[s0]"] {
+        let claims = cited(citation);
         assert_eq!(claims.len(), 1);
-        assert!(
-            !claims[0].supported,
-            "invalid citation {citation} must fail closed"
-        );
+        assert!(claims[0].citation_ids.is_empty(), "{citation}");
+        assert!(!claims[0].supported, "{citation} backs nothing");
     }
+
+    // Beside a citation that resolves it costs only itself.
+    let claims = cited("[s1][s99]");
+    assert_eq!(claims[0].citation_ids, vec![1]);
+    assert!(claims[0].supported);
+}
+
+#[test]
+fn a_citation_of_a_source_the_check_was_not_given_backs_nothing() {
+    let passage = "Blueberry plants showed improved cold tolerance after salicylic acid treatment.";
+    let named = [source(passage), source(passage)];
+    let claims = super::lexical_pass(
+        &reply(
+            "Blueberry plants showed improved cold tolerance after salicylic acid treatment [s1][s2].",
+            &named,
+        ),
+        &named[..1],
+    );
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0].citation_ids, vec![1, 2]);
+    assert!(!claims[0].supported);
 }
 
 #[test]
@@ -335,7 +372,7 @@ fn empty_source_does_not_shift_citation_evidence() {
     empty.file_name.clear();
     empty.file_path.clear();
     let claims = lexical_pass(
-        "Blueberry plants showed improved cold tolerance after salicylic acid treatment [2].",
+        "Blueberry plants showed improved cold tolerance after salicylic acid treatment [s2].",
         &[
             empty,
             source(
@@ -351,15 +388,16 @@ fn empty_source_does_not_shift_citation_evidence() {
 fn assigned_citation_ids_survive_source_reordering() {
     let mut matching =
         source("Blueberry plants showed improved cold tolerance after salicylic acid treatment.");
-    matching.citation_id = Some(7);
+    matching.citation_id = Some(1);
     let mut unrelated =
         source("Irrigation protocol and frost timing notes for greenhouse control.");
     unrelated.citation_id = Some(2);
-    let claims = lexical_pass(
-        "Blueberry plants showed improved cold tolerance after salicylic acid treatment [7].",
-        &[unrelated, matching],
+    let answer = reply(
+        "Blueberry plants showed improved cold tolerance after salicylic acid treatment [s1].",
+        &[matching.clone(), unrelated.clone()],
     );
-    assert_eq!(claims[0].citation_ids, vec![7]);
+    let claims = super::lexical_pass(&answer, &[unrelated, matching]);
+    assert_eq!(claims[0].citation_ids, vec![1]);
     assert_eq!(claims[0].cited_source_indices, vec![1]);
     assert!(claims[0].supported);
 }
@@ -367,7 +405,7 @@ fn assigned_citation_ids_survive_source_reordering() {
 #[test]
 fn claim_text_keeps_the_full_sentence() {
     let claims = lexical_pass(
-        "The same epigenetic shifts are linked to altered expression of genes that control meristem activity, suggesting a mechanistic link between methylation dynamics and developmental transitions [1][2].",
+        "The same epigenetic shifts are linked to altered expression of genes that control meristem activity, suggesting a mechanistic link between methylation dynamics and developmental transitions [s1][s2].",
         &[source("The study discusses WOX family structure and stress response without this meristem claim.")],
     );
 
@@ -384,13 +422,13 @@ fn claim_text_keeps_the_full_sentence() {
 #[test]
 fn a_decimal_point_does_not_end_a_sentence() {
     let sentences = split_sentences(
-        "The pooled effect was 1.2 °C per 10 points [1]. Surface readings ran 8.5 °C apart!\nSee example.com for v2.1.",
+        "The pooled effect was 1.2 °C per 10 points [s1]. Surface readings ran 8.5 °C apart!\nSee example.com for v2.1.",
     );
 
     assert_eq!(
         sentences,
         vec![
-            "The pooled effect was 1.2 °C per 10 points [1].",
+            "The pooled effect was 1.2 °C per 10 points [s1].",
             "Surface readings ran 8.5 °C apart!",
             "See example.com for v2.1.",
         ]
@@ -416,7 +454,6 @@ fn numbers_dates_and_negations_are_contradiction_prone() {
 #[test]
 fn a_near_verbatim_copy_skips_the_judge_but_strong_overlap_or_a_number_does_not() {
     let copy = LexicalClaim {
-        sentence: "s".into(),
         claim_text: "s".into(),
         citation_ids: vec![1],
         cited_source_indices: vec![0],
@@ -472,7 +509,7 @@ fn a_copy_is_only_a_copy_when_its_words_keep_their_order() {
     let passage = "The Sepwick field crew owns the pager for ingest-fanout. \
                        The Halloway reliability bench owns the underlying storage.";
     let copied = lexical_pass(
-        "The Sepwick field crew owns the pager for ingest-fanout [1].",
+        "The Sepwick field crew owns the pager for ingest-fanout [s1].",
         &[source(passage)],
     );
     assert!(copied[0].near_verbatim);
@@ -481,7 +518,7 @@ fn a_copy_is_only_a_copy_when_its_words_keep_their_order() {
     // The same words, every one of them in the passage, with the owners
     // swapped. Overlap is total; the runs of four words are not there.
     let swapped = lexical_pass(
-        "The Halloway reliability bench owns the pager for ingest-fanout [1].",
+        "The Halloway reliability bench owns the pager for ingest-fanout [s1].",
         &[source(passage)],
     );
     assert!((swapped[0].overlap_ratio - 1.0).abs() < f32::EPSILON);
@@ -521,20 +558,51 @@ fn a_copied_sentence_is_read_for_what_the_claim_left_out() {
     }
 }
 
+/// `text` read with the sources named in order and the folder's `files` named after them.
+fn reply_with_files(text: &str, sources: &[SourceDto], files: &[&str]) -> ReplyText {
+    let names = Arc::new(TurnNames::unstored());
+    let mut named = sources.to_vec();
+    for (index, source) in named.iter_mut().enumerate() {
+        source.chunk_id = format!("passage-{index}");
+        source.citation_id = None;
+    }
+    name_sources(&names, &mut named);
+    let file_names = FileNames::new(Arc::clone(&names));
+    for file in files {
+        file_names.name(file).unwrap();
+    }
+    let markers = markers(None).of_lines::<FolderFile>(Place::Inline);
+    ReplyText::read(&names, markers, text)
+}
+
 /// Explorer answers point at lines in the folder. Those sentences are
 /// about the file on screen, so the sources this turn retrieved cannot
 /// judge them, even when one happens to share their words.
 #[test]
-fn a_sentence_with_a_line_reference_is_not_judged_against_sources() {
+fn a_sentence_with_a_file_reference_is_not_judged_against_sources() {
+    let passage =
+        source("The main function prints a greeting and exits with status zero after setup.");
+    let reply = reply_with_files(
+        "The main function prints a greeting and exits with status zero, see [f1:1-3] [s1]. \
+             The main function prints a greeting and exits with status zero after setup [s1].",
+        std::slice::from_ref(&passage),
+        &["src/main.rs"],
+    );
+    let claims = super::lexical_pass(&reply, std::slice::from_ref(&passage));
+    assert_eq!(claims.len(), 1, "{claims:?}");
+    assert!(!claims[0].claim_text.contains("see"));
+}
+
+#[test]
+fn inline_code_that_looks_like_a_line_reference_exempts_nothing() {
     let passage =
         source("The main function prints a greeting and exits with status zero after setup.");
     let claims = lexical_pass(
-        "The main function prints a greeting and exits with status zero, see `src/main.rs:1-3` [1]. \
-             The main function prints a greeting and exits with status zero after setup [1].",
+        "The main function prints a greeting and exits with status zero, see `src/main.rs:1-3` [s1]. \
+             The main function prints a greeting and exits with status zero after setup [s1].",
         std::slice::from_ref(&passage),
     );
-    assert_eq!(claims.len(), 1, "{claims:?}");
-    assert!(!claims[0].sentence.contains("src/main.rs"));
+    assert_eq!(claims.len(), 2, "{claims:?}");
 }
 
 /// A diagram's labels and a picture's caption are not claims: a `[1]` inside
@@ -546,13 +614,13 @@ fn fenced_diagrams_and_picture_lines_make_no_claims() {
         "The Saturn V launched Apollo 11 from Kennedy Space Center on 16 July 1969.",
     )];
     let claims = lexical_pass(
-        "```mermaid\nflowchart LR\n  A[\"Launch pad cleared for the rocket [1]\"] --> B[Orbit]\n```\n\n\
-         ![Saturn V lifting off from the launch pad [1]](img-1)\n\n\
-         The Saturn V launched Apollo 11 from Kennedy Space Center in July 1969 [1].",
+        "```mermaid\nflowchart LR\n  A[\"Launch pad cleared for the rocket [s1]\"] --> B[Orbit]\n```\n\n\
+         ![Saturn V lifting off from the launch pad [s1]](img-1)\n\n\
+         The Saturn V launched Apollo 11 from Kennedy Space Center in July 1969 [s1].",
         &sources,
     );
     assert_eq!(claims.len(), 1, "{claims:?}");
-    assert!(claims[0].sentence.contains("Kennedy Space Center"));
+    assert!(claims[0].claim_text.contains("Kennedy Space Center"));
     assert!(claims[0].supported);
 }
 
@@ -566,15 +634,15 @@ fn formulas_make_no_claims_markers_or_missing_words() {
     )];
     let claims = lexical_pass(
         "$$\n\\text{precision} = \\frac{a[1]}{b}\n$$\n\n\
-         Precision $\\frac{TP}{TP + FP}$ is the share of retrieved passages that are relevant [1].\n\n\
+         Precision $\\frac{TP}{TP + FP}$ is the share of retrieved passages that are relevant [s1].\n\n\
          The ordered list $a[2]$ of retrieved passages that are relevant to the query is sorted.",
         &sources,
     );
     assert_eq!(claims.len(), 2, "{claims:?}");
     assert!(claims
         .iter()
-        .all(|claim| !claim.sentence.contains("\\text")));
-    assert!(claims[0].sentence.contains("$\\frac{TP}{TP + FP}$"));
+        .all(|claim| !claim.claim_text.contains("\\text")));
+    assert!(claims[0].claim_text.contains("$\\frac{TP}{TP + FP}$"));
     assert_eq!(claims[0].citation_ids, vec![1]);
     assert_eq!(claims[0].overlap_ratio, 1.0, "{claims:?}");
     assert!(claims[1].citation_ids.is_empty(), "{claims:?}");
@@ -582,15 +650,52 @@ fn formulas_make_no_claims_markers_or_missing_words() {
 
 #[test]
 fn a_formula_is_one_piece_of_its_sentence() {
-    let sentences = sentences_with_citations(
-        "Orderings number $n! \\cdot k_{i}$ for each run of passages [1]. Next one [2].",
+    let held = [source("First passage."), source("Second passage.")];
+    let answer = reply(
+        "Orderings number $n! \\cdot k_{i}$ for each run of passages [s1]. Next one [s2].",
+        &held,
     );
+    let sentences = sentences_with_citations(&marked::marked(&answer));
     assert_eq!(sentences.len(), 2, "{sentences:?}");
     assert_eq!(
-        sentences[0],
-        (
-            "Orderings number $n! \\cdot k_{i}$ for each run of passages [1].".to_string(),
-            vec![1]
-        )
+        marked::without(&sentences[0].0),
+        "Orderings number $n! \\cdot k_{i}$ for each run of passages ."
     );
+    assert_eq!(sentences[0].1, vec![1]);
+}
+
+#[test]
+fn a_marker_in_code_is_no_citation() {
+    let held = [source(
+        "The kiln was fired every Friday at dawn by the keeper.",
+    )];
+    let in_span = lexical_pass(
+        "The kiln was fired every Friday at dawn by the keeper, as `[s1]` shows.",
+        &held,
+    );
+    assert!(in_span[0].citation_ids.is_empty(), "{in_span:?}");
+    let in_fence = lexical_pass(
+        "```\n[s1]\n```\n\nThe kiln was fired every Friday at dawn by the keeper.",
+        &held,
+    );
+    assert!(in_fence[0].citation_ids.is_empty(), "{in_fence:?}");
+    let beside = lexical_pass(
+        "```\n[s1]\n```\n\nThe kiln was fired every Friday at dawn by the keeper [s1].",
+        &held,
+    );
+    assert_eq!(beside[0].citation_ids, vec![1], "{beside:?}");
+}
+
+#[test]
+fn a_marker_that_names_nothing_cites_nothing() {
+    let held = [source(
+        "The kiln was fired every Friday at dawn by the keeper.",
+    )];
+    let claims = lexical_pass(
+        "The kiln was fired every Friday at dawn by the keeper [s9].",
+        &held,
+    );
+    assert!(claims[0].citation_ids.is_empty(), "{claims:?}");
+    assert!(!claims[0].supported);
+    assert!(claims[0].claim_text.contains("[s9]"));
 }

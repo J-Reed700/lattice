@@ -5,6 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::shape::Schema;
 use lattice_core::shared::error::Result;
 
 use super::{Holder, LoadedLlm};
@@ -101,6 +102,10 @@ impl LLMPort for PinnedLlm {
 
     fn keeps_read_prompts(&self) -> bool {
         self.inner().keeps_read_prompts()
+    }
+
+    fn enforces(&self, schema: &Schema) -> bool {
+        self.inner().enforces(schema)
     }
 
     fn count_tokens(&self, text: &str) -> usize {

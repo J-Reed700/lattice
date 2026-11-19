@@ -5,9 +5,7 @@ use async_trait::async_trait;
 use lattice_core::application::ports::{ChunkRepositoryPort, RepositoryPort};
 use lattice_core::domain::entities::chunk::Chunk as ChunkEntity;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 use std::collections::HashMap;
 
 use super::ops;
@@ -15,46 +13,57 @@ use super::ops;
 /// SQLite chunk persistence behind `RepositoryPort<ChunkEntity>` and `ChunkRepositoryPort`.
 #[derive(Debug, Clone)]
 pub struct ChunkRepository {
-    pool: SqlitePool,
+    db: Database,
 }
 
 impl ChunkRepository {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 
     pub async fn find_by_document(&self, document_id: &str) -> Result<Vec<ChunkEntity>> {
-        let mut conn = self.pool.acquire().await?;
-        ops::find_by_document(&mut conn, document_id).await
+        let mut read = self.db.begin_read().await?;
+        let result = ops::find_by_document(&mut read, document_id).await?;
+        read.commit().await?;
+        Ok(result)
     }
 
     pub async fn delete_by_document(&self, document_id: &str) -> Result<()> {
-        let mut conn = self.pool.acquire().await?;
-        ops::delete_by_document(&mut conn, document_id).await
+        let mut tx = self.db.begin_write().await?;
+        ops::delete_by_document(&mut tx, document_id).await?;
+        tx.commit().await?;
+        Ok(())
     }
 
     pub async fn count_by_document(&self, document_id: &str) -> Result<usize> {
-        let mut conn = self.pool.acquire().await?;
-        ops::count_by_document(&mut conn, document_id).await
+        let mut read = self.db.begin_read().await?;
+        let result = ops::count_by_document(&mut read, document_id).await?;
+        read.commit().await?;
+        Ok(result)
     }
 }
 
 #[async_trait]
 impl RepositoryPort<ChunkEntity> for ChunkRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<ChunkEntity>> {
-        let mut conn = self.pool.acquire().await?;
-        ops::find_by_id(&mut conn, id).await
+        let mut read = self.db.begin_read().await?;
+        let result = ops::find_by_id(&mut read, id).await?;
+        read.commit().await?;
+        Ok(result)
     }
 
     async fn find_all(&self) -> Result<Vec<ChunkEntity>> {
-        let mut conn = self.pool.acquire().await?;
-        ops::find_all(&mut conn).await
+        let mut read = self.db.begin_read().await?;
+        let result = ops::find_all(&mut read).await?;
+        read.commit().await?;
+        Ok(result)
     }
 
     async fn save(&self, entity: &ChunkEntity) -> Result<()> {
-        let mut conn = self.pool.acquire().await?;
-        ops::save(&mut conn, entity).await
+        let mut tx = self.db.begin_write().await?;
+        ops::save(&mut tx, entity).await?;
+        tx.commit().await?;
+        Ok(())
     }
 
     async fn save_batch(&self, entities: &[ChunkEntity]) -> Result<()> {
@@ -63,7 +72,7 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
         }
 
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -78,8 +87,10 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
     }
 
     async fn delete(&self, id: &str) -> Result<()> {
-        let mut conn = self.pool.acquire().await?;
-        ops::delete(&mut conn, id).await
+        let mut tx = self.db.begin_write().await?;
+        ops::delete(&mut tx, id).await?;
+        tx.commit().await?;
+        Ok(())
     }
 
     async fn delete_batch(&self, ids: &[&str]) -> Result<()> {
@@ -88,7 +99,7 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
         }
 
         let mut tx = self
-            .pool
+            .db
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
@@ -105,13 +116,17 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
     }
 
     async fn count(&self) -> Result<usize> {
-        let mut conn = self.pool.acquire().await?;
-        ops::count(&mut conn).await
+        let mut read = self.db.begin_read().await?;
+        let result = ops::count(&mut read).await?;
+        read.commit().await?;
+        Ok(result)
     }
 
     async fn exists(&self, id: &str) -> Result<bool> {
-        let mut conn = self.pool.acquire().await?;
-        ops::exists(&mut conn, id).await
+        let mut read = self.db.begin_read().await?;
+        let result = ops::exists(&mut read, id).await?;
+        read.commit().await?;
+        Ok(result)
     }
 }
 
@@ -143,23 +158,31 @@ impl ChunkRepositoryPort for ChunkRepository {
         document_id: &str,
         limit: usize,
     ) -> Result<Vec<ChunkEntity>> {
-        let mut conn = self.pool.acquire().await?;
-        ops::find_by_document_limit(&mut conn, document_id, Some(limit)).await
+        let mut read = self.db.begin_read().await?;
+        let result = ops::find_by_document_limit(&mut read, document_id, Some(limit)).await?;
+        read.commit().await?;
+        Ok(result)
     }
 
     async fn find_by_ids(&self, chunk_ids: &[String]) -> Result<Vec<ChunkEntity>> {
-        let mut conn = self.pool.acquire().await?;
-        ops::find_by_ids(&mut conn, chunk_ids).await
+        let mut read = self.db.begin_read().await?;
+        let result = ops::find_by_ids(&mut read, chunk_ids).await?;
+        read.commit().await?;
+        Ok(result)
     }
 
     async fn find_content_by_ids(&self, chunk_ids: &[String]) -> Result<HashMap<String, String>> {
-        let mut conn = self.pool.acquire().await?;
-        ops::find_content_by_ids(&mut conn, chunk_ids).await
+        let mut read = self.db.begin_read().await?;
+        let result = ops::find_content_by_ids(&mut read, chunk_ids).await?;
+        read.commit().await?;
+        Ok(result)
     }
 
     async fn find_conversation_attached_chunk_ids(&self) -> Result<Vec<String>> {
-        let mut conn = self.pool.acquire().await?;
-        ops::find_conversation_attached_chunk_ids(&mut conn).await
+        let mut read = self.db.begin_read().await?;
+        let result = ops::find_conversation_attached_chunk_ids(&mut read).await?;
+        read.commit().await?;
+        Ok(result)
     }
 
     async fn delete_by_document(&self, document_id: &str) -> Result<()> {
@@ -167,15 +190,19 @@ impl ChunkRepositoryPort for ChunkRepository {
     }
 
     async fn count_all(&self) -> Result<i64> {
-        let mut conn = self.pool.acquire().await?;
-        ops::count_all(&mut conn).await
+        let mut read = self.db.begin_read().await?;
+        let result = ops::count_all(&mut read).await?;
+        read.commit().await?;
+        Ok(result)
     }
 
     async fn count_by_document(&self, document_id: &str) -> Result<i64> {
-        let mut conn = self.pool.acquire().await?;
-        ops::count_by_document(&mut conn, document_id)
+        let mut read = self.db.begin_read().await?;
+        let result = ops::count_by_document(&mut read, document_id)
             .await
-            .map(|c| c as i64)
+            .map(|c| c as i64)?;
+        read.commit().await?;
+        Ok(result)
     }
 
     async fn create_batch(&self, chunks: Vec<ChunkEntity>) -> Result<Vec<ChunkEntity>> {

@@ -15,8 +15,8 @@ pub use history::{
     ClaimEventPayloadDto, EvidenceSeenDto, ProvenanceDto, UserActionDto,
 };
 pub use presentation::{
-    ClaimPresentationDto, ClaimSupportCountsDto, ClaimSupportDto, ClaimSupportRoleDto,
-    ResearchSummaryDto,
+    ClaimExcerptDto, ClaimPresentationDto, ClaimSupportCountsDto, ClaimSupportDto,
+    ClaimSupportRoleDto, ResearchSummaryDto,
 };
 pub use trust::{
     source_kind, CountedSupportDto, SourceKindDto, StandingAssessedDto, TrustCauseDto,
@@ -150,6 +150,10 @@ pub struct ClaimReviewItemDto {
     /// For a sentence the machine took out whose place is known: the unit it goes
     /// back into, as the lesson stands now.
     pub put_back_unit: Option<usize>,
+    /// For a sentence the machine took out whose place is known: the
+    /// sentence of that unit it goes back beside, as the unit's text has it;
+    /// null when it goes at the end.
+    pub put_back_beside: Option<String>,
     /// For a claim the machine rewrote: what it said and what it says now.
     pub rewritten: Option<RewrittenDto>,
 }
@@ -442,6 +446,9 @@ impl From<&ReopenCause> for ReopenCauseDto {
 pub struct ClaimEvidencePassageDto {
     pub passage: LearningEvidencePassageDto,
     pub added_by: Option<SourceAddedByDto>,
+    /// The passage's first sentence in its excerpt: what the review marks in
+    /// a passage the user added that does not state the claim.
+    pub opening: ClaimExcerptDto,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type)]
@@ -616,6 +623,8 @@ pub enum ClaimActionRequestDto {
 #[serde(rename_all = "camelCase")]
 pub struct StopReasonDto {
     pub code: String,
+    /// A stop of the Verifier audit, which holds a lesson its checks passed.
+    pub audit: bool,
     pub message: String,
     pub fix: String,
     pub at: i64,
@@ -638,7 +647,8 @@ pub struct RequestFactsDto {
 impl From<&StopReason> for StopReasonDto {
     fn from(reason: &StopReason) -> Self {
         Self {
-            code: reason.code.clone(),
+            code: reason.code.as_str().to_owned(),
+            audit: reason.code.is_audit(),
             message: reason.message.clone(),
             fix: reason.fix.clone(),
             at: reason.at,

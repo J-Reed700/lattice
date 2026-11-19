@@ -1,14 +1,11 @@
 //! Durable attempt/session storage for the Grounded Practice Workbench.
 use crate::dto::*;
-use crate::{
-    operations::Operation,
-    persistence::{db, now},
-};
+use crate::{operations::Operation, persistence::now};
 use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::{Database, WriteTx};
 use serde::{de::DeserializeOwned, Serialize};
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use sqlx::{Row, SqliteConnection};
 
 mod assistance;
 mod fits;
@@ -134,7 +131,7 @@ fn proposal_status(value: &str) -> Result<LearningPracticeProposalStatus> {
 
 #[derive(Clone)]
 pub struct LearningPracticeRepository {
-    pool: SqlitePool,
+    db: Database,
 }
 
 #[derive(Debug, Clone)]
@@ -162,9 +159,8 @@ pub struct SubmissionWrite {
 }
 
 impl LearningPracticeRepository {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 
     fn validate_ids(program_id: &str, session_id: &str, operation_id: Option<&str>) -> Result<()> {
@@ -176,21 +172,12 @@ impl LearningPracticeRepository {
         Ok(())
     }
 
-    async fn writer_lock(tx: &mut SqliteConnection, program_id: &str) -> Result<()> {
-        sqlx::query("UPDATE learning_programs SET revision=revision WHERE id=?")
-            .bind(program_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-        Ok(())
-    }
     async fn verify_active(tx: &mut SqliteConnection, program_id: &str) -> Result<()> {
         let status: Option<String> =
             sqlx::query_scalar("SELECT status FROM learning_programs WHERE id=?")
                 .bind(program_id)
                 .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
         match status.as_deref() {
             Some("active") => Ok(()),
             Some(_) => Err(invalid("Accept this program before starting practice.")),
@@ -208,14 +195,13 @@ impl LearningPracticeRepository {
             sqlx::query_scalar("SELECT status FROM learning_programs WHERE id=?")
                 .bind(program_id)
                 .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
         if program_status.as_deref() != Some("active") {
             return Err(invalid(
                 "Practice actions require an active learning program.",
             ));
         }
-        let row=sqlx::query("SELECT s.*, (SELECT max(revision) FROM learning_practice_artifact_revisions a WHERE a.session_id=s.id) artifact_revision, sub.grade_status FROM learning_practice_sessions s LEFT JOIN learning_practice_submissions sub ON sub.session_id=s.id WHERE s.program_id=? AND s.id=?").bind(program_id).bind(session_id).fetch_optional(&mut *tx).await.map_err(db)?.ok_or_else(||AppError::NotFound("Practice session not found".into()))?;
+        let row=sqlx::query("SELECT s.*, (SELECT max(revision) FROM learning_practice_artifact_revisions a WHERE a.session_id=s.id) artifact_revision, sub.grade_status FROM learning_practice_sessions s LEFT JOIN learning_practice_submissions sub ON sub.session_id=s.id WHERE s.program_id=? AND s.id=?").bind(program_id).bind(session_id).fetch_optional(&mut *tx).await?.ok_or_else(||AppError::NotFound("Practice session not found".into()))?;
         let summary = LearningPracticeSessionSummaryDto {
             task_kind: parse_task_kind(row.get("task_kind"))?,
             revises_session_id: row.get("revises_session_id"),
@@ -244,7 +230,7 @@ impl LearningPracticeRepository {
     }
 
     async fn insert_assistance(
-        tx: &mut SqliteConnection,
+        tx: &mut WriteTx,
         id: &str,
         program_id: &str,
         session_id: &str,
@@ -254,7 +240,7 @@ impl LearningPracticeRepository {
         details: &serde_json::Value,
         timestamp: i64,
     ) -> Result<()> {
-        sqlx::query("INSERT INTO learning_practice_assistance(id,program_id,session_id,operation_id,kind,mode,artifact_revision,details_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(uuid::Uuid::new_v4().to_string()).bind(program_id).bind(session_id).bind(id).bind(kind).bind(mode).bind(artifact_revision).bind(json(details)?).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO learning_practice_assistance(id,program_id,session_id,operation_id,kind,mode,artifact_revision,details_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(uuid::Uuid::new_v4().to_string()).bind(program_id).bind(session_id).bind(id).bind(kind).bind(mode).bind(artifact_revision).bind(json(details)?).bind(timestamp).execute(&mut **tx).await?;
         Ok(())
     }
 }

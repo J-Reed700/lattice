@@ -3,11 +3,11 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { CalendarClock, Eye, RotateCcw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { checkCardContent, checkCardId, type CheckParts } from '@/features/learning/lessons/active/checkReveal';
+import { checkCardContent, checkCardId } from '@/features/learning/lessons/active/checkReveal';
 import { useLessonDraft } from '@/features/learning/lessons/active/useLessonDraft';
 import { useLearningRecallV2, useReviewLearningRecallCard, useSaveLearningRecallCard } from '@/features/learning/portability/useLearningPortability';
 import { MarkdownViewer } from '@/features/reading/components/viewers/MarkdownViewer';
-import type { StudyRating } from '@/lib/bindings';
+import type { LearningCheckDto, StudyRating } from '@/lib/bindings';
 
 /**
  * How close the learner's own answer came decides the card's first review:
@@ -49,7 +49,7 @@ export function LessonCheck({ programId, lessonId, lessonTitle, section, body, p
   section: number;
   /** The check's whole body: a rewritten check names a new card. */
   body: string;
-  parts: CheckParts;
+  parts: LearningCheckDto;
   /** The section's cited source versions; the card cites them too. */
   sourceIds: string[];
   /** Whether the course is active: only an active course schedules reviews. */
@@ -97,8 +97,8 @@ export function LessonCheck({ programId, lessonId, lessonTitle, section, body, p
           expectedContentRevision: null,
           format: 'question_answer',
           content: checkCardContent(parts),
-          sourceVersionIds: [...new Set(sourceIds.filter((id) => UUID.test(id)))].slice(0, 20),
-          changeReason: `From the check in “${lessonTitle}”`.slice(0, 500),
+          sourceVersionIds: [...new Set(sourceIds.filter((id) => UUID.test(id)))],
+          changeReason: `From the check in “${lessonTitle}”`,
         });
       }
       const reviewId = ids.current.review[rating] ?? newId();
@@ -120,7 +120,6 @@ export function LessonCheck({ programId, lessonId, lessonTitle, section, body, p
           value={answer}
           onChange={(event) => setAnswer(event.target.value)}
           rows={4}
-          maxLength={4000}
           placeholder="What happens, and why?"
           className="mt-3 block w-full min-w-0 rounded-md border border-border bg-surface px-3 py-2 text-sm leading-6 text-text-primary"
         />

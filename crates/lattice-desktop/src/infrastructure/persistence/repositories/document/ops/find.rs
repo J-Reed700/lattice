@@ -7,6 +7,7 @@ use crate::infrastructure::persistence::mappers::{DocumentMapper, DocumentModel}
 use lattice_core::domain::entities::Document as DocumentEntity;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::bind_limit::rows_per_statement;
+use lattice_core::shared::persistence::Page;
 use sqlx::SqliteConnection;
 
 pub async fn find_by_id(conn: &mut SqliteConnection, id: &str) -> Result<Option<DocumentEntity>> {
@@ -208,7 +209,7 @@ pub async fn list_metadata(conn: &mut SqliteConnection) -> Result<Vec<DocumentEn
 
 pub async fn find_all_paginated(
     conn: &mut SqliteConnection,
-    limit: usize,
+    page: Page,
 ) -> Result<Vec<DocumentEntity>> {
     let db_models: Vec<DocumentModel> = sqlx::query_as::<_, DocumentModel>(
         r#"
@@ -235,10 +236,11 @@ pub async fn find_all_paginated(
         -- not part of the library listing.
         WHERE owner_conversation_id IS NULL
         ORDER BY indexed_at DESC
-        LIMIT ?
+        LIMIT ? OFFSET ?
         "#,
     )
-    .bind(limit as i64)
+    .bind(page.sql_limit())
+    .bind(page.offset())
     .fetch_all(conn)
     .await
     .map_err(|e| AppError::Database(format!("Failed to list documents (paginated): {}", e)))?;

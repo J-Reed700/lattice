@@ -7,12 +7,13 @@ import { useEffect, useState } from "react";
 
 import { PageHeader, SettingsRow, SettingsSection, Switch } from "@/components/ui";
 import { useApi } from '@/contexts/ApiContext';
+import { useActiveModels } from "@/features/model/hooks/useActiveModels";
 import { useDownloadedModels } from "@/features/model/hooks/useDownloadedModels";
 import { probeOllamaServer } from "@/features/settings/hooks/connectionProbes";
 import { cn } from "@/lib/utils";
 import { toast } from "@/stores/toastStore";
 import type { LLMSettings as ApiLLMSettings } from "@/types/api/settings";
-import { isCloudProvider } from '@/utils/chatModelSelection';
+import { isCloudProvider, modelRefKey, modelRefLabel } from '@/utils/chatModelSelection';
 import { handleAsyncEvent, voidAsync } from '@/utils/promiseHandlers';
 
 import { CloudConnection } from './CloudConnection';
@@ -54,9 +55,9 @@ export function ChatTab() {
   const [isSavingOllamaConnection, setIsSavingOllamaConnection] = useState(false);
   const [showOllamaAuth, setShowOllamaAuth] = useState(false);
 
-  // The active models come from the downloaded-models query, which model
-  // changes invalidate.
-  const { activeModel: activeChatModel, activeEmbeddingModel } = useDownloadedModels();
+  const { downloadedModels, activeEmbeddingModel } = useDownloadedModels();
+  const { activeModels } = useActiveModels();
+  const chatRef = activeModels?.chat[0] ?? null;
 
   useEffect(() => {
     if (!llmSettings) return;
@@ -480,24 +481,8 @@ export function ChatTab() {
       <SettingsSection title="Active models">
         <SettingsRow label="Chat">
           <ModelValue
-            name={
-              provider === "llamacpp" ? llmSettings?.llamaCpp?.model || null :
-              provider === "ollama" ||
-              provider === "openai" ||
-              provider === "anthropic" ||
-              provider === "google"
-                ? llmSettings?.model || null
-                : (activeChatModel?.model_name ?? null)
-            }
-            id={
-              provider === "llamacpp" ||
-              provider === "ollama" ||
-              provider === "openai" ||
-              provider === "anthropic" ||
-              provider === "google"
-                ? provider
-                : (activeChatModel?.model_id ?? null)
-            }
+            name={chatRef ? modelRefLabel(chatRef, downloadedModels) : null}
+            id={chatRef ? modelRefKey(chatRef) : null}
           />
         </SettingsRow>
         <SettingsRow label="Router">

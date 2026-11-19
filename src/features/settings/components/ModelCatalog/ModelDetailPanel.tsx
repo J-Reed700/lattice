@@ -463,7 +463,7 @@ function ModelDetailContent({
         {modelQuantization(metadata) ? (
           <DetailRow label="Selected precision" value={modelQuantization(metadata)} />
         ) : null}
-        <DetailRow label="Format" value={metadata.format === 'safetensors' ? 'Safetensors' : 'GGUF'} />
+        <DetailRow label="Format" value="GGUF" />
         <DetailRow label="License" value={metadata.license} />
         {fitSummary ? <DetailRow label="Fit" value={fitSummary} /> : null}
         {metadata.requires_auth ? (

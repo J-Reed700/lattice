@@ -12,12 +12,12 @@ struct Overlap {
     runs: AtomicUsize,
 }
 
-fn worker(pool: &SqlitePool, overlap: &Arc<Overlap>) -> LessonGenerationWorker {
+fn worker(db: &Database, overlap: &Arc<Overlap>) -> LessonGenerationWorker {
     let overlap = overlap.clone();
     LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        database: pool.clone().into(),
+        database: db.clone(),
         load_llm: Arc::new(|| Box::pin(async { Err(AppError::InvalidState("unused".into())) })),
         courses: None,
         refresh_sources: Arc::new(move |_| {
@@ -39,9 +39,10 @@ fn worker(pool: &SqlitePool, overlap: &Arc<Overlap>) -> LessonGenerationWorker {
 #[tokio::test]
 async fn two_setups_of_one_course_run_one_after_the_other() {
     let pool = crate::tests::pool().await.unwrap();
-    let (repo, job) = repository_tests::queued_job(&pool).await;
+    let db = Database::new(pool.clone());
+    let (repo, job) = repository_tests::queued_job(&db).await;
     let overlap = Arc::new(Overlap::default());
-    let worker = worker(&pool, &overlap);
+    let worker = worker(&db, &overlap);
 
     let (first, second) = tokio::join!(
         worker.set_up_course(&repo, &job.program_id),

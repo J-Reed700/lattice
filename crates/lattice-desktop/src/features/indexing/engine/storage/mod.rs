@@ -29,26 +29,26 @@ use crate::features::indexing::engine::error::Result;
 use crate::features::indexing::IndexStorageTrait;
 use async_trait::async_trait;
 use lattice_core::application::ports::IngestedDocumentStorePort;
+use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::domain::value_objects::ContextualizedChunk;
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
-use sqlx::{SqliteConnection, SqlitePool};
+use lattice_core::shared::persistence::{Database, WriteTx};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Main storage interface for indexed documents.
 ///
 /// Provides methods for storing, retrieving, and managing documents
 /// with their associated text chunks and embeddings.
 pub struct IndexStorage {
-    pool: SqlitePool,
+    db: Database,
+    archive: Arc<dyn ArticleArchive>,
 }
 
 impl IndexStorage {
-    /// Create a new storage instance.
-    pub fn new(pool: impl DriverPool) -> Self {
-        Self {
-            pool: pool.sqlx_pool().clone(),
-        }
+    /// Create a new storage instance. Documents the archive holds are named
+    /// by the titles it saved them under.
+    pub fn new(db: Database, archive: Arc<dyn ArticleArchive>) -> Self {
+        Self { db, archive }
     }
 
     // Document operations
@@ -61,54 +61,44 @@ impl IndexStorage {
         chunks: Vec<TextChunk>,
         embeddings: Vec<Vec<f32>>,
     ) -> Result<String> {
-        chunks::store_document(&self.pool, path, mime_type, chunks, embeddings).await
+        chunks::store_document(&self.db, path, mime_type, chunks, embeddings).await
     }
 
     /// Check if a document exists by path.
     pub async fn document_exists(&self, path: &Path) -> Result<bool> {
-        documents::document_exists(&self.pool, path).await
+        documents::document_exists(&self.db, path).await
     }
 
     /// Get document record by path.
     pub async fn get_document_by_path(&self, path: &Path) -> Result<Option<DocumentRecord>> {
-        documents::get_document_by_path(&self.pool, path).await
+        documents::get_document_by_path(&self.db, path).await
     }
 
     /// Check if document needs reindexing.
     pub async fn needs_reindex(&self, path: &Path) -> Result<bool> {
-        documents::needs_reindex(&self.pool, path).await
+        documents::needs_reindex(&self.db, path).await
     }
 
     /// Update document status.
     pub async fn mark_document_status(&self, path: &Path, status: &str) -> Result<()> {
-        documents::mark_document_status(&self.pool, path, status).await
+        documents::mark_document_status(&self.db, path, status).await
     }
 
     /// Remove a document.
     pub async fn remove_document(&self, path: &Path) -> Result<()> {
-        documents::remove_document(&self.pool, path).await
-    }
-
-    /// Store file metadata only.
-    pub async fn store_file_metadata_only(
-        &self,
-        path: &Path,
-        file_id: &str,
-        mime_type: &str,
-    ) -> Result<String> {
-        documents::store_file_metadata_only(&self.pool, path, file_id, mime_type).await
+        documents::remove_document(&self.db, path).await
     }
 
     // Statistics
 
     /// Get count of indexed documents.
     pub async fn get_indexed_count(&self) -> Result<i64> {
-        stats::get_indexed_count(&self.pool).await
+        stats::get_indexed_count(&self.db).await
     }
 
     /// Get total number of chunks.
     pub async fn get_total_chunks(&self) -> Result<i64> {
-        stats::get_total_chunks(&self.pool).await
+        stats::get_total_chunks(&self.db).await
     }
 
     // Batch operations
@@ -118,7 +108,7 @@ impl IndexStorage {
         &self,
         documents: chunks::ChunkedDocuments,
     ) -> Result<Vec<String>> {
-        chunks::batch_store_documents(&self.pool, documents).await
+        chunks::batch_store_documents(&self.db, documents).await
     }
 
     // Contextualized storage
@@ -131,7 +121,15 @@ impl IndexStorage {
         chunks: Vec<ContextualizedChunk>,
         embeddings: Vec<Vec<f32>>,
     ) -> Result<String> {
-        context::store_document_with_context(&self.pool, path, mime_type, chunks, embeddings).await
+        context::store_document_with_context(
+            &self.db,
+            self.archive.as_ref(),
+            path,
+            mime_type,
+            chunks,
+            embeddings,
+        )
+        .await
     }
 
     /// Store document with context and file ID.
@@ -144,7 +142,13 @@ impl IndexStorage {
         embeddings: Vec<Vec<f32>>,
     ) -> Result<String> {
         context::store_document_with_context_and_file(
-            &self.pool, path, file_id, mime_type, chunks, embeddings,
+            &self.db,
+            self.archive.as_ref(),
+            path,
+            file_id,
+            mime_type,
+            chunks,
+            embeddings,
         )
         .await
     }
@@ -152,7 +156,7 @@ impl IndexStorage {
     /// Store document with context using external transaction.
     pub async fn store_document_with_context_and_file_tx(
         &self,
-        tx: &mut SqliteConnection,
+        tx: &mut WriteTx,
         facts: &context::DocumentFacts,
         file_id: &str,
         mime_type: &str,
@@ -199,16 +203,6 @@ impl IndexStorageTrait for IndexStorage {
         self.remove_document(path).await
     }
 
-    async fn store_file_metadata_only(
-        &self,
-        path: &Path,
-        file_id: &str,
-        mime_type: &str,
-    ) -> Result<String> {
-        self.store_file_metadata_only(path, file_id, mime_type)
-            .await
-    }
-
     async fn get_indexed_count(&self) -> Result<i64> {
         self.get_indexed_count().await
     }
@@ -228,12 +222,15 @@ impl IndexStorageTrait for IndexStorage {
         &self,
         document_id: &str,
     ) -> lattice_core::shared::error::Result<Vec<String>> {
-        Ok(sqlx::query_scalar(
+        let mut read = self.db.begin_read().await?;
+        let ids = sqlx::query_scalar(
             "SELECT id FROM text_chunks WHERE document_id = ? ORDER BY chunk_index",
         )
         .bind(document_id)
-        .fetch_all(&self.pool)
-        .await?)
+        .fetch_all(&mut *read)
+        .await?;
+        read.commit().await?;
+        Ok(ids)
     }
 
     async fn store_document_with_context_for_model(
@@ -244,8 +241,8 @@ impl IndexStorageTrait for IndexStorage {
         embeddings: Vec<Vec<f32>>,
         model_identity: &str,
     ) -> Result<String> {
-        let facts = context::read_document_facts(path).await?;
-        let mut tx = self.pool.begin_write().await?;
+        let facts = context::read_document_facts(self.archive.as_ref(), path).await?;
+        let mut tx = self.db.begin_write().await?;
         let id = context::store_document_with_context_and_file_tx(
             &mut tx, &facts, "", mime_type, chunks, embeddings,
         )

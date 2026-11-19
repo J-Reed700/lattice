@@ -3,7 +3,7 @@ use crate::tests::common::query_counts::count_reads;
 use lattice_core::application::ports::EmbeddingRepositoryPort;
 use lattice_core::domain::entities::Embedding;
 use lattice_core::shared::persistence::embedding_encoding::encode_embedding;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::types::ChunkId;
 
 #[tokio::test]
@@ -33,14 +33,15 @@ async fn vector_batches_are_scoped_ordered_and_shared_by_the_pool_and_a_unit_of_
             .unwrap();
     }
     let ids = ["b", "a", "a", "missing"].map(str::to_owned);
-    let repo = EmbeddingRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = EmbeddingRepository::new(db.clone());
     let (vectors, reads) = count_reads(repo.vectors_by_document_ids(&ids)).await;
     let vectors = vectors.unwrap();
     assert_eq!(reads, 1);
     assert_eq!(vectors.len(), 2);
     assert_eq!(vectors["a"], [vec![1.0, 2.0], vec![2.0, 3.0]]);
     assert_eq!(vectors["b"], [vec![4.0, 5.0]]);
-    let mut tx = pool.begin_read().await.unwrap();
+    let mut tx = db.begin_read().await.unwrap();
     let (loaded, reads) = count_reads(super::vectors_by_document_ids(&mut tx, &ids)).await;
     assert_eq!(loaded.unwrap(), vectors);
     assert_eq!(reads, 1);
@@ -64,6 +65,7 @@ async fn save_batch_validates_every_vector_before_writing() {
         .unwrap();
     sqlx::query("CREATE TABLE text_embeddings (id TEXT PRIMARY KEY, chunk_id TEXT UNIQUE, embedding BLOB, model_name TEXT, dimension INTEGER, created_at TEXT)")
         .execute(&pool).await.unwrap();
+    let db = Database::new(pool.clone());
     let mut entries = (0..150)
         .map(|index| {
             (
@@ -80,18 +82,18 @@ async fn save_batch_validates_every_vector_before_writing() {
         ),
         vec![0.0, 1.0],
     ));
-    let mut conn = pool.acquire().await.unwrap();
+    let mut tx = db.begin_write().await.unwrap();
 
-    assert!(super::save_batch(&mut conn, entries).await.is_err());
+    assert!(super::save_batch(&mut tx, entries).await.is_err());
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM text_embeddings")
-        .fetch_one(&mut *conn)
+        .fetch_one(&mut *tx)
         .await
         .unwrap();
     assert_eq!(count, 0, "invalid input must be rejected before any write");
 
     let non_finite = Embedding::new(ChunkId::new(), "model".into(), 2);
     assert!(
-        super::save_batch(&mut conn, vec![(non_finite, vec![f32::NAN, 0.0])])
+        super::save_batch(&mut tx, vec![(non_finite, vec![f32::NAN, 0.0])])
             .await
             .is_err()
     );
@@ -104,17 +106,18 @@ async fn save_batch_validates_every_vector_before_writing() {
             )
         })
         .collect();
-    super::save_batch(&mut conn, valid_entries).await.unwrap();
+    super::save_batch(&mut tx, valid_entries).await.unwrap();
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM text_embeddings")
-        .fetch_one(&mut *conn)
+        .fetch_one(&mut *tx)
         .await
         .unwrap();
     assert_eq!(count, 301);
-    let (_, vector) = super::find_by_chunk_id(&mut conn, "saved-300")
+    let (_, vector) = super::find_by_chunk_id(&mut tx, "saved-300")
         .await
         .unwrap()
         .unwrap();
     assert_eq!(vector, [300.0, 0.0]);
+    tx.commit().await.unwrap();
 }
 
 #[tokio::test]
@@ -137,7 +140,8 @@ async fn repository_reads_reject_wrong_dimension_and_non_finite_vectors() {
         .execute(&pool)
         .await
         .unwrap();
-    let repo = EmbeddingRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = EmbeddingRepository::new(db.clone());
 
     assert!(repo.find_by_chunk_id("chunk").await.is_err());
     assert!(repo.find_by_document_id("document").await.is_err());

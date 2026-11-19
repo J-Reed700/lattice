@@ -8,7 +8,7 @@ use crate::features::conversation::memory_dto::MemoryEvidenceDto;
 use lattice_core::application::ports::conversation_memory::SHARED_RELEVANCE_FLOOR;
 use lattice_core::domain::conversation::memory::compute_digest;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::stored_references::text_without_references;
 use lattice_core::shared::text::informative_terms;
 use sqlx::SqliteConnection;
 use std::collections::HashMap;
@@ -49,7 +49,7 @@ impl ConversationRepository {
         offset: i64,
         for_prompt: bool,
     ) -> Result<KnowledgeResponseDto> {
-        let mut tx = self.pool.begin_read().await?;
+        let mut tx = self.db.begin_read().await?;
         let response = Self::list_knowledge_on(&mut tx, conversation, offset, for_prompt).await?;
         tx.commit().await?;
         Ok(response)
@@ -67,7 +67,8 @@ impl ConversationRepository {
             "SELECT i.id,i.conversation_id,c.title AS conversation_title,i.label,i.kind,i.state,COALESCE(a.scope_kind,CASE WHEN i.kind IN ({SHARED_KINDS}) THEN ? ELSE 'conversation' END) AS scope,i.created_at AS learned_at,a.valid_from,a.valid_until,a.verified_at,COALESCE(a.forgotten,0) AS forgotten,i.superseded_by FROM conversation_memory_items i JOIN conversations c ON c.id=i.conversation_id LEFT JOIN conversation_memory_attributes a ON a.item_id=i.id LEFT JOIN conversation_memory_state s ON s.conversation_id=i.conversation_id WHERE {} AND (?=0 OR (i.state='active' AND COALESCE(a.forgotten,0)=0 AND s.validity='ready' AND s.schema_version=1 AND (a.valid_from IS NULL OR julianday(a.valid_from)<=julianday('now')) AND (a.valid_until IS NULL OR julianday(a.valid_until)>julianday('now')))) ORDER BY i.created_at DESC,i.id LIMIT ? OFFSET ?",
             chat_pool.readable_by_sql(),
         );
-        let mut rows = sqlx::query_as::<_, Row>(&sql).bind(chat_pool.kind.name());
+        let mut rows =
+            sqlx::query_as::<_, Row>(sqlx::AssertSqlSafe(sql.as_str())).bind(chat_pool.kind.name());
         for value in chat_pool.bind_values(conversation)? {
             rows = rows.bind(value);
         }
@@ -108,20 +109,21 @@ impl ConversationRepository {
         // evidence span would multiply both I/O and memory for shared sources.
         let message_ids: std::collections::HashSet<_> =
             evidence.iter().map(|e| &e.message_id).collect();
-        let messages: Vec<(String, String)> = if message_ids.is_empty() {
+        let messages: Vec<(String, String, Option<String>)> = if message_ids.is_empty() {
             Vec::new()
         } else {
             sqlx::query_as(
-            "SELECT id,content FROM conversation_messages WHERE id IN (SELECT value FROM json_each(?))",
+            "SELECT id,content,metadata FROM conversation_messages WHERE id IN (SELECT value FROM json_each(?))",
         )
         .bind(serde_json::to_string(&message_ids)?)
         .fetch_all(&mut *conn).await?
         };
         let messages: HashMap<_, _> = messages
             .into_iter()
-            .map(|(id, content)| {
-                let digest = compute_digest(&content);
-                (id, (content, digest))
+            .map(|(id, content, metadata)| {
+                let text = text_without_references(&content, metadata.as_deref()).into_owned();
+                let digest = compute_digest(&text);
+                (id, (text, digest))
             })
             .collect();
         let mut evidence_by_item: HashMap<String, Vec<MemoryEvidenceDto>> = HashMap::new();
@@ -204,7 +206,7 @@ impl ConversationRepository {
                 ));
             }
         }
-        let mut tx = self.pool.begin_write().await?;
+        let mut tx = self.db.begin_write().await?;
         let chat_pool = Self::chat_pool(&mut tx, &r.conversation_id).await?;
         let mut source = r.conversation_id.clone();
         let (scope_kind, scope_key) = match r.scope.as_deref() {
@@ -229,7 +231,8 @@ impl ConversationRepository {
             let sql = format!(
                 "SELECT i.conversation_id FROM conversation_memory_items i JOIN conversations c ON c.id=i.conversation_id LEFT JOIN conversation_memory_attributes a ON a.item_id=i.id WHERE i.id=? AND i.state='active' AND {reach}"
             );
-            let mut owner = sqlx::query_scalar::<_, String>(&sql).bind(id);
+            let mut owner =
+                sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str())).bind(id);
             if across_chats {
                 for value in chat_pool.bind_values(&r.conversation_id)? {
                     owner = owner.bind(value);
@@ -382,7 +385,7 @@ impl ConversationRepository {
         query: &str,
     ) -> Result<lattice_core::application::ports::conversation_memory::PreparedMemory> {
         let vector = self.embed_knowledge_query(query).await;
-        let mut tx = self.pool.begin_read().await?;
+        let mut tx = self.db.begin_read().await?;
         let revisions = Self::knowledge_revisions(&mut tx, conversation).await?;
         let mut applicable = Vec::new();
         let mut offset = 0;
@@ -398,7 +401,8 @@ impl ConversationRepository {
             .semantic_scores_on(&mut tx, conversation, vector.as_deref())
             .await;
         tx.commit().await?;
-        let terms: Vec<_> = informative_terms(query).into_iter().take(32).collect();
+        let terms = informative_terms(query);
+        let finder = aho_corasick::AhoCorasick::new(&terms).ok();
         let mut prepared =
             lattice_core::application::ports::conversation_memory::PreparedMemory::default();
         let mut optional = Vec::new();
@@ -421,10 +425,7 @@ impl ConversationRepository {
                         .join(" ")
                 )
                 .to_lowercase();
-                let matches = terms
-                    .iter()
-                    .filter(|term| haystack.contains(term.as_str()))
-                    .count();
+                let matches = terms_contained(finder.as_ref(), &terms, &haystack);
                 let meaning = semantic.get(&item.id).copied().unwrap_or(0.0);
                 if own || words_shared(&terms, &haystack) > 0 || meaning >= SHARED_RELEVANCE_FLOOR {
                     optional.push((matches as f32 + meaning, item.label.to_lowercase(), text));
@@ -442,6 +443,28 @@ impl ConversationRepository {
         prepared.revisions = Some(revisions);
         Ok(prepared)
     }
+}
+
+/// How many distinct `terms` the lowercased `text` contains as substrings, in
+/// one pass over `text` whatever the number of terms.
+fn terms_contained(
+    finder: Option<&aho_corasick::AhoCorasick>,
+    terms: &[String],
+    text: &str,
+) -> usize {
+    let Some(finder) = finder else {
+        return terms
+            .iter()
+            .filter(|term| text.contains(term.as_str()))
+            .count();
+    };
+    let mut found = vec![false; terms.len()];
+    for hit in finder.find_overlapping_iter(text) {
+        if let Some(slot) = found.get_mut(hit.pattern().as_usize()) {
+            *slot = true;
+        }
+    }
+    found.into_iter().filter(|seen| *seen).count()
 }
 
 /// How many of `terms` are whole words of the lowercased `text`.
@@ -464,7 +487,7 @@ impl ConversationRepository {
     ) -> Result<Vec<lattice_core::domain::conversation::memory::MemoryItem>> {
         let terms = informative_terms(text);
         let vector = self.embed_knowledge_query(text).await;
-        let mut tx = self.pool.begin_read().await?;
+        let mut tx = self.db.begin_read().await?;
         let semantic = self
             .semantic_scores_on(&mut tx, conversation, vector.as_deref())
             .await;
@@ -514,11 +537,7 @@ impl ConversationRepository {
         history: bool,
         max_bytes: usize,
     ) -> Result<serde_json::Value> {
-        let terms: Vec<_> = query
-            .split_whitespace()
-            .take(32)
-            .map(str::to_lowercase)
-            .collect();
+        let terms: Vec<_> = query.split_whitespace().map(str::to_lowercase).collect();
         let mut ranked = Vec::new();
         let mut more = false;
         for page in 0..20 {
@@ -605,7 +624,7 @@ impl ConversationRepository {
         query: &str,
     ) -> std::collections::HashMap<String, f32> {
         let vector = self.embed_knowledge_query(query).await;
-        let Ok(mut tx) = self.pool.begin_read().await else {
+        let Ok(mut tx) = self.db.begin_read().await else {
             return std::collections::HashMap::new();
         };
         let scores = self
@@ -659,7 +678,7 @@ impl ConversationRepository {
         let mut offset = 0i64;
         loop {
             let sql = format!("SELECT e.item_id,v.embedding FROM conversation_memory_evidence e JOIN conversation_memory_items i ON i.id=e.item_id JOIN conversations c ON c.id=i.conversation_id JOIN conversation_messages m ON m.id=e.message_id AND m.conversation_id=i.conversation_id JOIN conversation_memory_vectors v ON v.message_id=m.id AND v.content=m.content LEFT JOIN conversation_memory_attributes a ON a.item_id=i.id WHERE {readable} AND i.state='active' AND COALESCE(a.forgotten,0)=0 AND v.embedding_model=? AND v.dimension=? ORDER BY i.updated_at DESC, e.item_id, e.ordinal LIMIT ? OFFSET ?");
-            let mut rows = sqlx::query_as::<_, VectorRow>(&sql);
+            let mut rows = sqlx::query_as::<_, VectorRow>(sqlx::AssertSqlSafe(sql.as_str()));
             for value in &values {
                 rows = rows.bind(value);
             }
@@ -695,8 +714,11 @@ impl ConversationRepository {
 
 impl ConversationRepository {
     pub(super) async fn suppressed_memory_ids(&self, conversation: &str) -> Result<Vec<String>> {
-        Ok(sqlx::query_scalar("SELECT a.item_id FROM conversation_memory_attributes a JOIN conversation_memory_items i ON i.id=a.item_id WHERE i.conversation_id=? AND (a.forgotten=1 OR julianday(a.valid_from)>julianday('now') OR julianday(a.valid_until)<=julianday('now'))")
-            .bind(conversation).fetch_all(&self.pool).await?)
+        let mut read = self.db.begin_read().await?;
+        let ids = sqlx::query_scalar("SELECT a.item_id FROM conversation_memory_attributes a JOIN conversation_memory_items i ON i.id=a.item_id WHERE i.conversation_id=? AND (a.forgotten=1 OR julianday(a.valid_from)>julianday('now') OR julianday(a.valid_until)<=julianday('now'))")
+            .bind(conversation).fetch_all(&mut *read).await?;
+        read.commit().await?;
+        Ok(ids)
     }
 }
 

@@ -44,8 +44,8 @@ async fn facts_of(
 
 #[tokio::test]
 async fn an_easy_problem_calls_for_one_pattern_in_the_language_asked_for() {
-    let (pool, program_id, _, _) = fixture().await.unwrap();
-    let builds = builds(Database::from(pool));
+    let (_, db, program_id, _, _) = fixture().await.unwrap();
+    let builds = builds(db);
     let facts = facts_of(
         &builds,
         &program_id,
@@ -64,8 +64,8 @@ async fn an_easy_problem_calls_for_one_pattern_in_the_language_asked_for() {
 
 #[tokio::test]
 async fn a_harder_problem_calls_for_two_patterns_of_different_families() {
-    let (pool, program_id, _, _) = fixture().await.unwrap();
-    let builds = builds(Database::from(pool));
+    let (_, db, program_id, _, _) = fixture().await.unwrap();
+    let builds = builds(db);
     let facts = facts_of(
         &builds,
         &program_id,
@@ -84,8 +84,8 @@ async fn a_harder_problem_calls_for_two_patterns_of_different_families() {
 
 #[tokio::test]
 async fn a_build_naming_no_language_when_the_profile_names_none_is_refused() {
-    let (pool, program_id, _, _) = fixture().await.unwrap();
-    let builds = builds(Database::from(pool));
+    let (_, db, program_id, _, _) = fixture().await.unwrap();
+    let builds = builds(db);
     let refused = facts_of(
         &builds,
         &program_id,
@@ -100,8 +100,8 @@ async fn a_build_naming_no_language_when_the_profile_names_none_is_refused() {
 
 #[tokio::test]
 async fn a_proven_exercise_is_saved_as_the_activity_its_problem_was() {
-    let (pool, program_id, lesson_id, _) = fixture().await.unwrap();
-    let builds = builds(Database::from(pool.clone()));
+    let (_, db, program_id, lesson_id, _) = fixture().await.unwrap();
+    let builds = builds(db.clone());
     let job_id = Uuid::new_v4().to_string();
     let exercise = exercise_of(&sample_problem()).unwrap();
     let activity_id = builds
@@ -117,7 +117,7 @@ async fn a_proven_exercise_is_saved_as_the_activity_its_problem_was() {
         )
         .await
         .unwrap();
-    let stored = LearningPracticalRepository::new(pool)
+    let stored = LearningPracticalRepository::new(db)
         .stored_problem(&program_id, &activity_id)
         .await
         .unwrap();
@@ -127,8 +127,8 @@ async fn a_proven_exercise_is_saved_as_the_activity_its_problem_was() {
 
 #[tokio::test]
 async fn a_repair_is_saved_with_the_planted_code_as_the_starter_file() {
-    let (pool, program_id, lesson_id, _) = fixture().await.unwrap();
-    let builds = builds(Database::from(pool.clone()));
+    let (_, db, program_id, lesson_id, _) = fixture().await.unwrap();
+    let builds = builds(db.clone());
     let job_id = Uuid::new_v4().to_string();
     let mut repair = sample_problem();
     repair.bug = Some("misreading-2".into());
@@ -147,7 +147,7 @@ async fn a_repair_is_saved_with_the_planted_code_as_the_starter_file() {
         .await
         .unwrap();
     let planted = repair.misreadings[1].code.clone();
-    let repository = LearningPracticalRepository::new(pool);
+    let repository = LearningPracticalRepository::new(db);
     let stored = repository
         .stored_problem(&program_id, &activity_id)
         .await
@@ -169,8 +169,8 @@ async fn a_repair_is_saved_with_the_planted_code_as_the_starter_file() {
 
 #[tokio::test]
 async fn a_program_remembers_no_lesson_with_nothing_to_make_because_it_always_has_something() {
-    let (pool, program_id, lesson_id, _) = fixture().await.unwrap();
-    let builds = builds(Database::from(pool));
+    let (_, db, program_id, lesson_id, _) = fixture().await.unwrap();
+    let builds = builds(db);
     let kind = KindId::new(KIND);
     let target = Target {
         program_id: &program_id,

@@ -14,7 +14,7 @@ use crate::practice_repository::profile_in;
 use async_trait::async_trait;
 use lattice_core::domain::learning::practice::work::{Exercise, Form, KindId};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::Database;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -31,10 +31,6 @@ fn options_of(value: &Value) -> Result<ProgramOptions> {
     serde_json::from_value(value.clone()).map_err(|error| {
         AppError::InvalidInput(format!("The build options are not a program's: {error}."))
     })
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }
 
 #[async_trait]
@@ -66,7 +62,7 @@ impl Exercises for CodingBuilds {
             )));
         }
         let options = options_of(options)?;
-        let mut transaction = self.database.begin_read().await.map_err(database_error)?;
+        let mut transaction = self.database.begin_read().await?;
         let profile = profile_in(&mut transaction, program_id).await?;
         let language = Some(options.language.trim())
             .filter(|language| !language.is_empty())
@@ -91,7 +87,7 @@ impl Exercises for CodingBuilds {
             .into_iter()
             .take(wanted)
             .collect();
-        transaction.commit().await.map_err(database_error)?;
+        transaction.commit().await?;
         serde_json::to_value(ProgramFacts {
             language,
             patterns,

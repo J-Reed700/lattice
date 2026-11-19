@@ -1,5 +1,6 @@
 //! GPU detection and capabilities.
 
+use lattice_core::shared::process::BoundCommand;
 use serde::{Deserialize, Serialize};
 use sysinfo::{Components, System};
 
@@ -71,7 +72,7 @@ pub struct GPUInfo {
 /// no sidecar to ask, so it uses the heuristics below. Falls back to CPU-only
 /// if GPU cannot be detected.
 pub async fn detect_gpu() -> Option<GPUInfo> {
-    detect_apple_silicon().or_else(detect_gpu_sysinfo)
+    detect_apple_silicon().await.or_else(detect_gpu_sysinfo)
 }
 
 /// The authoritative form: asks the sidecar that will do the offloading,
@@ -81,9 +82,10 @@ pub async fn detect_gpu_with_sidecar(
     app: &tauri::AppHandle,
     devices: &super::backend_devices::BackendDevices,
 ) -> Option<GPUInfo> {
-    gpu_from_devices(devices.detect(app).await)
-        .or_else(detect_apple_silicon)
-        .or_else(detect_gpu_sysinfo)
+    if let Some(gpu) = gpu_from_devices(devices.detect(app).await) {
+        return Some(gpu);
+    }
+    detect_apple_silicon().await.or_else(detect_gpu_sysinfo)
 }
 
 /// The device a server offloads to decides.
@@ -104,14 +106,14 @@ fn gpu_from_devices(devices: &[super::backend_devices::BackendDevice]) -> Option
 /// Every Apple Silicon Mac has a Metal GPU, known at compile time. Probing
 /// fails there: `sysinfo` names the sensors `PMU tdieN` and returns an empty
 /// CPU brand string, which the heuristics below cannot read.
-fn detect_apple_silicon() -> Option<GPUInfo> {
+async fn detect_apple_silicon() -> Option<GPUInfo> {
     if !cfg!(all(target_os = "macos", target_arch = "aarch64")) {
         return None;
     }
 
     Some(GPUInfo {
         vendor: GPUVendor::Apple,
-        name: apple_silicon_name(),
+        name: apple_silicon_name().await,
         vram_gb: None,
         free_vram_gb: None,
         compute_capability: None,
@@ -120,10 +122,11 @@ fn detect_apple_silicon() -> Option<GPUInfo> {
 
 /// The chip name is cosmetic — it reaches logs and the settings screen, never a
 /// decision — so an unreadable one falls back to a generic label.
-fn apple_silicon_name() -> String {
-    std::process::Command::new("/usr/sbin/sysctl")
+async fn apple_silicon_name() -> String {
+    BoundCommand::new("/usr/sbin/sysctl")
         .args(["-n", "machdep.cpu.brand_string"])
         .output()
+        .await
         .ok()
         .filter(|out| out.status.success())
         .and_then(|out| String::from_utf8(out.stdout).ok())
@@ -262,12 +265,12 @@ mod tests {
 
     /// Thermal sensors on macOS are named `PMU tdieN` and the CPU brand comes
     /// back empty, which is exactly the input that produced the bug.
-    #[test]
-    fn sensorless_machine_does_not_decide_there_is_no_gpu_on_apple_silicon() {
+    #[tokio::test]
+    async fn sensorless_machine_does_not_decide_there_is_no_gpu_on_apple_silicon() {
         assert_eq!(map_vendor_from_name("PMU tdie8"), GPUVendor::Unknown);
         assert_eq!(map_vendor_from_name(""), GPUVendor::Unknown);
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-        assert!(detect_apple_silicon().is_some());
+        assert!(detect_apple_silicon().await.is_some());
     }
 
     /// A vendorless "GPU" sensor label does not abort detection.

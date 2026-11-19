@@ -1,6 +1,6 @@
 //! Ranking a collection's passages: the course index's hybrid search when its
 //! passages are embedded, otherwise FTS5 `bm25` over all the queries' words,
-//! then each hit widened to paragraph edges. Words match whole either way, so
+//! then each hit widened to sentence edges. Words match whole either way, so
 //! a source never enters a claim's evidence on a shared prefix.
 
 use super::*;
@@ -45,7 +45,7 @@ impl<'a> ReferenceCollection<'a> {
     }
 
     /// The best passages for `queries` together, at most `depth`, over the
-    /// sources `scope` keeps: each hit widened to paragraph edges, a source's
+    /// sources `scope` keeps: each hit widened to sentence edges, a source's
     /// bytes shown at most once. Searches deeper while overlaps keep the list
     /// short of `depth` and more passages exist.
     pub(crate) async fn rank(
@@ -181,10 +181,8 @@ impl<'a> ReferenceCollection<'a> {
             .filter_map(|(id, score, dense, lexical)| {
                 let row = rows.get(&id)?;
                 let source = *sources.get(row.document.as_str())?;
-                // A passage is the source's own bytes; one that is not (a
-                // version the index holds differently) is no evidence.
-                let text = self.sources.get(source)?.excerpt.get(row.start..row.end)?;
-                (text == row.text).then_some(Hit {
+                self.sources.get(source)?.excerpt.get(row.start..row.end)?;
+                Some(Hit {
                     source,
                     start: row.start,
                     end: row.end,
@@ -197,48 +195,34 @@ impl<'a> ReferenceCollection<'a> {
         Ok((hits, found))
     }
 
-    /// Widens each hit to adjacent paragraph edges, each source byte at most
-    /// once, up to `limit`.
+    /// Widens each hit to sentence edges, each source byte at most once, up
+    /// to `limit`.
     fn widened(&self, hits: Vec<Hit>, limit: usize) -> Result<Vec<Ranked>> {
-        let retrieval_kind = self.mode().label();
+        let kind = PassageKind::Retrieved(self.mode());
         let mut selected: Vec<Ranked> = Vec::new();
         for hit in hits {
             let source = self
                 .sources
                 .get(hit.source)
                 .ok_or_else(|| invalid("Reference index contains an unknown source."))?;
-            // Expand to adjacent paragraph boundaries where practical. Evidence
-            // is always an exact substring, including significant whitespace.
-            let mut start = hit.start.saturating_sub(WIDEN_BYTES);
-            while !source.excerpt.is_char_boundary(start) {
-                start += 1;
-            }
-            let mut end = (hit.end + WIDEN_BYTES).min(source.excerpt.len());
-            while !source.excerpt.is_char_boundary(end) {
-                end -= 1;
-            }
-            if let Some(i) = source.excerpt[start..hit.start].find('\n') {
-                start += i + 1;
-            }
-            if let Some(i) = source.excerpt[hit.end..end].rfind('\n') {
-                end = hit.end + i;
-            }
-            if selected.iter().any(|ranked| {
-                ranked.passage.source_id == source.id
-                    && ranked.passage.start_byte < end
-                    && start < ranked.passage.end_byte
-            }) {
+            let span = widen(
+                &source.excerpt,
+                &Prose,
+                hit.start..hit.end,
+                WIDEN_CHARS,
+                &LADDER,
+            );
+            let Some(passage) = ReferencePassage::of(source, span, kind, hit.score) else {
+                continue;
+            };
+            if selected
+                .iter()
+                .any(|ranked| ranked.passage.overlaps(&passage))
+            {
                 continue;
             }
             selected.push(Ranked {
-                passage: ReferencePassage {
-                    source_id: source.id.clone(),
-                    text: source.excerpt[start..end].to_owned(),
-                    start_byte: start,
-                    end_byte: end,
-                    retrieval_kind: retrieval_kind.into(),
-                    score: hit.score,
-                },
+                passage,
                 dense: hit.dense,
                 lexical: hit.lexical,
             });

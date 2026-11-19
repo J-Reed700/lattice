@@ -56,21 +56,25 @@ impl CompletionProtocol for OpenAi {
         }
     }
 
+    fn enforces(&self, _schema: &Value) -> bool {
+        false
+    }
+
     fn body(&self, model: &str, fitted: &Fitted<'_>, stream: bool) -> Result<Value> {
         let request = fitted.request();
         let reasons = fitted.thinking().is_on();
-        let input = input_items(&request.input)?;
+        let input = input_items(request.input())?;
         let mut body = json!({"model":model,"input":input,"stream":stream,"store":false,"include":["reasoning.encrypted_content"]});
         if let Some(max_output) = fitted.ceiling() {
             set_field(&mut body, "max_output_tokens", json!(max_output))?;
         }
-        if !request.tools.is_empty() {
-            set_field(&mut body, "tools", json!(request.tools.iter().map(|t| json!({"type":"function","name":t.name,"description":t.description,"parameters":t.parameters,"strict":false})).collect::<Vec<_>>()))?;
-            if let Some(choice) = request.tool_choice {
+        if !request.tools().is_empty() {
+            set_field(&mut body, "tools", json!(request.tools().iter().map(|t| json!({"type":"function","name":t.name,"description":t.description,"parameters":t.parameters,"strict":false})).collect::<Vec<_>>()))?;
+            if let Some(choice) = request.tool_choice() {
                 set_field(&mut body, "tool_choice", json!(choice.as_str()))?;
             }
         }
-        if let Some(schema) = &request.json_schema {
+        if let Some(schema) = request.schema().map(|schema| schema.as_json()) {
             set_field(
                 &mut body,
                 "text",

@@ -42,10 +42,10 @@ it.each(['sources', 'sourceReferences', 'source_references'])('reads %s without 
   expect(parseMessageSources(JSON.stringify({ [key]: [source] }))).toEqual([{ ...source, category: 'Document', mimeType: '' }]);
 });
 
-it('normalizes legacy field names, finite scores and bounded excerpts', () => {
+it('normalizes legacy field names, finite scores and whole excerpts', () => {
   const [parsed] = parseMessageSources(JSON.stringify({ sources: [{ document_id: ' doc-a ', file_path: ' https://example.org/page ', file_name: ' Page ', mime_type: 'text/html', content: 'x'.repeat(700), score: '0.9' }] }));
   expect(parsed).toMatchObject({ documentId: 'doc-a', filePath: 'https://example.org/page', fileName: 'Page', mimeType: 'text/html', category: 'Web Source', score: 0 });
-  expect(parsed.excerpt).toHaveLength(600);
+  expect(parsed.excerpt).toHaveLength(700);
 });
 
 it('preserves sparse citation IDs independently of source order', () => {

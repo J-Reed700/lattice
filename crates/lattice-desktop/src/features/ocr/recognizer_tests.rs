@@ -76,11 +76,41 @@ async fn without_a_model_nothing_is_rendered_or_started() {
     let (ocr, launcher) = ocr(None, "http://127.0.0.1:1");
 
     let error = ocr
+        .recognize_page(Path::new("/missing.png"), 1)
+        .await
+        .unwrap_err();
+
+    assert_eq!(error, OcrError::NotConfigured);
+    assert_eq!(launcher.launches.load(Ordering::SeqCst), 0);
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn a_pdf_without_a_model_asks_for_the_model() {
+    let (ocr, launcher) = ocr(None, "http://127.0.0.1:1");
+
+    let error = ocr
         .recognize_page(Path::new("/missing.pdf"), 1)
         .await
         .unwrap_err();
 
     assert_eq!(error, OcrError::NotConfigured);
+    assert_eq!(launcher.launches.load(Ordering::SeqCst), 0);
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tokio::test]
+async fn a_pdf_page_this_platform_cannot_render_is_unavailable_before_any_model_is_asked() {
+    let (ocr, launcher) = ocr(None, "http://127.0.0.1:1");
+
+    let result = ocr.recognize_page(Path::new("/missing.pdf"), 1).await;
+
+    match result {
+        Err(OcrError::Unavailable { reason }) => {
+            assert!(reason.contains("only available on macOS"), "{reason}");
+        }
+        other => panic!("expected Unavailable, got {other:?}"),
+    }
     assert_eq!(launcher.launches.load(Ordering::SeqCst), 0);
 }
 

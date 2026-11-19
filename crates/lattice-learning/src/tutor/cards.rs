@@ -2,7 +2,10 @@
 //! here goes through the Recall tab's own review, into the same FSRS schedule.
 
 use super::course_turn::CourseTurn;
-use super::repository::{assistant_replies, card_due_at, card_to_rate, due_cards, due_count};
+use super::names::{Card, Choice, Chosen};
+use super::repository::{
+    card_due_at, card_to_rate, due_cards, due_count, record_asking, was_asked, CardToRate,
+};
 use crate::persistence::now;
 use crate::portability_dto::{
     LearningRecallCardFormat, LearningRecallContentDto, ReviewLearningRecallCardRequestDto,
@@ -12,9 +15,7 @@ use crate::recall::schedule::DAY_MS;
 use crate::recall::study_dto::StudyRating;
 use crate::recall_repository::LearningRecallRepository;
 use crate::source_library::LearningSourceLibraryRepository;
-use futures::TryStreamExt;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Database;
 use std::collections::VecDeque;
 use std::fmt::Write as _;
 
@@ -28,18 +29,6 @@ pub(super) struct DueCard {
     /// The module its lesson sits in, or the card's own topic: what a session
     /// mixes across.
     pub group: String,
-}
-
-impl DueCard {
-    /// The card as the model reads it: the id to rate it by, its front and any
-    /// options.
-    pub(super) fn entry(&self) -> String {
-        let mut entry = format!("- card_id: {}\n  {}\n", self.id, self.front);
-        for (index, option) in self.options.iter().enumerate() {
-            let _ = writeln!(entry, "  {index}. {option}");
-        }
-        entry
-    }
 }
 
 /// The cards, soonest due first within each group, one group after another in
@@ -61,35 +50,14 @@ pub(super) fn interleaved(cards: Vec<DueCard>) -> Vec<DueCard> {
     mixed
 }
 
-/// `text` without the emphasis a reply puts on it, its spacing or its case.
-fn plain_words(text: &str) -> String {
-    text.replace(['*', '_', '`'], "")
-        .replace('’', "'")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
-}
-
-/// Whether a reply of the chat put `front` to the learner. Newest first, as the
-/// card asked last is the one answered.
-async fn asked_in(database: &Database, conversation_id: &str, front: &str) -> Result<bool> {
-    let front = plain_words(front);
-    let mut replies = assistant_replies(database, conversation_id);
-    while let Some(reply) = replies.try_next().await? {
-        if plain_words(&reply).contains(&front) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
 pub(super) struct NewCard<'a> {
     pub question: &'a str,
     pub answer: &'a str,
     pub explanation: &'a str,
     pub source_ids: Vec<String>,
 }
+
+const NOT_DUE: &str = "That card is not due: it was already reviewed, or it did not come from due_reviews or save_card. Nothing was recorded.";
 
 fn invalid(message: &str) -> AppError {
     AppError::InvalidInput(message.to_string())
@@ -101,40 +69,102 @@ impl CourseTurn {
         Ok(interleaved(cards))
     }
 
-    /// Rates the learner's answer to a due card into its schedule, as the
-    /// Recall tab does. A card that is not due was rated already, and one no
-    /// reply of this chat asked has no answer to rate: either way its schedule
-    /// stays as it is.
-    pub(super) async fn rate_card(
-        &self,
-        card_id: &str,
-        rating: StudyRating,
-        selected_option: Option<usize>,
-    ) -> Result<String> {
+    /// The card as the model reads it: its name, its front and its options, each
+    /// under a name of its own.
+    pub(super) fn card_entry(&self, id: &str, front: &str, options: &[String]) -> Result<String> {
+        let mut entry = format!("- {}\n  {front}\n", self.name(Card(id.to_string()))?);
+        for (index, option) in options.iter().enumerate() {
+            let chosen = Chosen {
+                card: id.to_string(),
+                index,
+            };
+            let _ = writeln!(entry, "  {} {option}", self.name(Choice(chosen))?);
+        }
+        Ok(entry)
+    }
+
+    /// Records that the tutor asks a due card now, and gives the card as the
+    /// learner is to be asked it.
+    pub(super) async fn ask_card(&self, card_id: &str) -> Result<String> {
         let at = now();
-        let card = card_to_rate(&self.database, &self.program_id, card_id)
+        let card = self.card_in_deck(card_id).await?;
+        if card.due_at > at {
+            return Err(invalid(NOT_DUE));
+        }
+        record_asking(
+            &self.database,
+            &self.conversation_id,
+            card_id,
+            card.review_count,
+            at,
+        )
+        .await?;
+        let entry = self.card_entry(card_id, &card.question, &card.options)?;
+        Ok(format!(
+            "Put this card to the learner now, as written, and wait for their answer. Rate it with record_recall once they have answered.\n{entry}"
+        ))
+    }
+
+    async fn card_in_deck(&self, card_id: &str) -> Result<CardToRate> {
+        card_to_rate(&self.database, &self.program_id, card_id)
             .await?
             .ok_or_else(|| {
                 invalid(
-                    "That card is not in this course's deck. The turn's facts and due_reviews give \
-                     each card's card_id.",
+                    "That card is not in this course's deck. The turn's facts and due_reviews give each card's name.",
                 )
-            })?;
+            })
+    }
+
+    /// Rates the learner's answer to a due card into its schedule, as the
+    /// Recall tab does. A card that is not due was rated already, and one the
+    /// tutor did not ask with `ask_card` has no answer to rate: either way its
+    /// schedule stays as it is.
+    pub(super) async fn rate_card(
+        &self,
+        card_id: &str,
+        rating: Option<StudyRating>,
+        chosen: Option<Chosen>,
+    ) -> Result<String> {
+        let at = now();
+        let card = self.card_in_deck(card_id).await?;
         if card.due_at > at {
+            return Err(invalid(NOT_DUE));
+        }
+        if !was_asked(
+            &self.database,
+            &self.conversation_id,
+            card_id,
+            card.review_count,
+        )
+        .await?
+        {
             return Err(invalid(
-                "That card is not due: it was already reviewed, or it did not come from due_reviews or save_card. Nothing was recorded.",
+                "That card was not asked with ask_card, so there is no answer to rate. Nothing was recorded. Call ask_card with it, put it to the learner as written, then rate the learner's answer.",
             ));
         }
-        if !asked_in(&self.database, &self.conversation_id, &card.question).await? {
-            return Err(invalid(
-                "That card was not asked in this chat, so there is no answer to rate. Nothing was recorded. Ask it as written, then rate the learner's answer.",
-            ));
-        }
-        if card.format == "multiple_choice" && selected_option.is_none() {
-            return Err(invalid(
-                "That card is multiple choice: pass the learner's selected_option.",
-            ));
-        }
+        let multiple_choice = card.format == "multiple_choice";
+        let selected_option =
+            match (multiple_choice, chosen) {
+                (true, Some(chosen)) if chosen.card == card_id => Some(chosen.index),
+                (true, Some(_)) => return Err(invalid(
+                    "That option belongs to another card. Give an option listed under this card.",
+                )),
+                (true, None) => {
+                    return Err(invalid(
+                        "That card is multiple choice: pass the option the learner chose.",
+                    ))
+                }
+                (false, _) => None,
+            };
+        let rating = match (rating, multiple_choice) {
+            (Some(rating), _) => rating,
+            (None, true) => StudyRating::Good,
+            (None, false) => {
+                return Err(invalid(
+                    "Give `rating`: again, hard, good or easy, from the learner's answer.",
+                ))
+            }
+        };
         let recall = LearningRecallRepository::new(self.database.clone());
         recall
             .record_card_review(&ReviewLearningRecallCardRequestDto {
@@ -164,7 +194,7 @@ impl CourseTurn {
                 .is_empty()
         {
             return Err(invalid(
-                "A card cites where it comes from: pass the source_id of the passage it was taught from.",
+                "A card cites where it comes from: pass the source of the passage it was taught from.",
             ));
         }
         let card_id = uuid::Uuid::new_v4().to_string();
@@ -189,7 +219,8 @@ impl CourseTurn {
             })
             .await?;
         Ok(format!(
-            "Saved to the course's recall deck as card {card_id}."
+            "Saved to the course's recall deck as card {}.",
+            self.name(Card(card_id))?
         ))
     }
 }

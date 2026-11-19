@@ -27,9 +27,6 @@ import type {
   VerdictKindDto,
 } from '@/lib/bindings';
 
-/** The job's result reference for lessons held for review (§6.1). */
-export const NEEDS_REVIEW_RESULT_PREFIX = 'needs_review:';
-
 /** Where a claim stands for the user: theirs to act on, the machine's, or settled. */
 export function claimFilterOf(item: ClaimReviewItemDto): 'needs_you' | 'repairing' | 'machine' | 'confirmed' | 'changed' {
   const state = item.state;
@@ -86,9 +83,6 @@ export type TakenOutSentence = {
   /** Whether the ledger knows where the sentence was. */
   place: 'known' | 'choose';
 };
-
-/** The last sentence of the plain text before a sentence, or '' when it does not end in one. */
-export const sentenceBefore = (contextBefore: string) => contextBefore.trim().match(/[^.!?]*[.!?]+["'’”)\]]*$/)?.[0].trim() ?? '';
 
 /** A sentence the machine rewrote, with the claim its original is restored on. */
 export type RewrittenSentence = { claimId: string; original: string; rewrite: string; why: string | null };
@@ -199,95 +193,6 @@ export function defaultGroupMode(claims: ClaimReviewItemDto[]): GroupMode {
 }
 
 export const groupCountLabel = (group: ClaimGroup) => claimsCount(group.claims.length);
-
-// ── The evidence excerpt (§3.4) ─────────────────────────────────────────────
-
-/** A UTF-8 byte offset into `text` as a string index. */
-export function byteToIndex(text: string, byte: number): number {
-  const encoder = new TextEncoder();
-  let bytes = 0;
-  let index = 0;
-  for (const char of text) {
-    if (bytes >= byte) break;
-    bytes += encoder.encode(char).length;
-    index += char.length;
-  }
-  return index;
-}
-
-/**
- * Sentence bounds as the backend finds them: a sentence ends at a line
- * break, or at '.', '!' or '?' before whitespace or the end.
- */
-export function sentenceBounds(text: string): Array<[number, number]> {
-  const bounds: Array<[number, number]> = [];
-  let start = 0;
-  const push = (from: number, to: number) => {
-    const piece = text.slice(from, to);
-    const lead = piece.length - piece.trimStart().length;
-    const trimmed = piece.trim();
-    if (trimmed) bounds.push([from + lead, from + lead + trimmed.length]);
-  };
-  for (let at = 0; at < text.length; at += 1) {
-    const ch = text[at];
-    const next = text[at + 1];
-    if (ch === '\n' || ('.!?'.includes(ch) && (next === undefined || /\s/.test(next)))) {
-      push(start, at + 1);
-      start = at + 1;
-    }
-  }
-  push(start, text.length);
-  return bounds;
-}
-
-export type Excerpt = { before: string; quote: string; after: string; clippedStart: boolean; clippedEnd: boolean };
-
-/** The spans of fenced code blocks (``` or ~~~), fences included; an unclosed fence runs to the end. */
-function fencedRanges(text: string): Array<[number, number]> {
-  const ranges: Array<[number, number]> = [];
-  let open = -1;
-  for (const match of text.matchAll(/^[ \t]*(?:```|~~~)/gm)) {
-    if (open < 0) { open = match.index; continue; }
-    const lineEnd = text.indexOf('\n', match.index);
-    ranges.push([open, lineEnd < 0 ? text.length : lineEnd]);
-    open = -1;
-  }
-  if (open >= 0) ranges.push([open, text.length]);
-  return ranges;
-}
-
-/**
- * The quoted sentence with up to one sentence of context on each side, from
- * the passage. Falls back to the quote alone when it is not found there.
- */
-export function excerptAround(text: string, span: [number, number] | null, quote: string): Excerpt {
-  let from = -1;
-  let to = -1;
-  if (span) { from = byteToIndex(text, span[0]); to = byteToIndex(text, span[1]); }
-  if (from < 0 || to <= from || text.slice(from, to).trim() !== quote.trim()) {
-    from = text.indexOf(quote);
-    to = from + quote.length;
-  }
-  if (from < 0) return { before: '', quote, after: '', clippedStart: false, clippedEnd: false };
-  // Context is the neighbouring sentence when it is prose: never code, a fence
-  // or a rule line, which stay behind Full passage.
-  const code = fencedRanges(text);
-  const prose = ([start, end]: [number, number]) => /\w+\W+\w+/.test(text.slice(start, end)) && !code.some(([open, close]) => start < close && end > open);
-  const bounds = sentenceBounds(text);
-  const first = bounds.findIndex(([, end]) => end > from);
-  const last = bounds.findIndex(([, end]) => end >= to);
-  const previous = first > 0 ? bounds[first - 1] : null;
-  const next = last >= 0 && last + 1 < bounds.length ? bounds[last + 1] : null;
-  const startAt = previous && prose(previous) ? previous[0] : first >= 0 ? bounds[first][0] : from;
-  const endAt = next && prose(next) ? next[1] : last >= 0 ? bounds[last][1] : to;
-  return {
-    before: text.slice(Math.min(startAt, from), from),
-    quote: text.slice(from, to),
-    after: text.slice(to, Math.max(endAt, to)),
-    clippedStart: Math.min(startAt, from) > 0,
-    clippedEnd: Math.max(endAt, to) < text.length,
-  };
-}
 
 // ── Actions and history ─────────────────────────────────────────────────────
 
@@ -444,9 +349,6 @@ export function checkerColumns(item: ClaimReviewItemDto): { local: CheckerSide |
 
 // ── Holds and jobs ──────────────────────────────────────────────────────────
 
-/** The code every Verifier audit stop starts with (`verifier_unset`, `verifier_turned_off`…). */
-export const AUDIT_STOP_PREFIX = 'verifier_';
-
 /** What holds a waiting lesson besides its claims: the audit stop, if any. */
 export type ReviewHold = 'claims' | 'audit_stop' | 'audit' | 'resolved';
 
@@ -457,16 +359,15 @@ export type ReviewHold = 'claims' | 'audit_stop' | 'audit' | 'resolved';
  */
 export function reviewHold(review: LessonClaimReviewDto, waiting: number): ReviewHold {
   if (waiting > 0) return 'claims';
-  if (review.stopReason?.code.startsWith(AUDIT_STOP_PREFIX)) return 'audit_stop';
+  if (review.stopReason?.audit) return 'audit_stop';
   return review.changedSinceStop ? 'resolved' : 'audit';
 }
 
 export const NOTHING_CHANGED = 'Nothing changed since the last check. Resolve a statement or add a source first.';
 
-/** Lessons a completed job held for review, from its result reference. */
-export function heldLessonIds(job: Pick<LearningGenerationJob, 'status' | 'resultId'> | null | undefined): string[] {
-  if (job?.status !== 'completed' || !job.resultId?.startsWith(NEEDS_REVIEW_RESULT_PREFIX)) return [];
-  return job.resultId.slice(NEEDS_REVIEW_RESULT_PREFIX.length).split(',').filter(Boolean);
+/** The lessons a job holds for review (§6.1). */
+export function heldLessonIds(job: Pick<LearningGenerationJob, 'heldLessonIds'> | null | undefined): string[] {
+  return job?.heldLessonIds ?? [];
 }
 
 /** The latest attempt of each lesson preparation job (a retry supersedes its parent). */

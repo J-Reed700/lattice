@@ -270,7 +270,6 @@ pub(super) async fn resolve_router_decision(
         query: validated_message.to_string(),
         has_recent_document,
         recent_document_title: recent_doc_meta.as_ref().map(|m| m.title.clone()),
-        recent_document_id: recent_doc_meta.as_ref().map(|m| m.document_id.clone()),
     };
     let step = recorder.begin(TurnStepKind::Route, "Deciding how to answer", None);
     let router_llm = container.get_or_load_router_llm().await?;

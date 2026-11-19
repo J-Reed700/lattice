@@ -17,13 +17,13 @@ const PROFILE_FIELDS: {
   label: string;
   id: string;
   min: number;
-  max: number;
+  max?: number;
   step: number;
   integer?: boolean;
 }[] = [
   { key: 'temperature', label: 'Thinking temperature', id: 'thinking-temperature', min: 0, max: 2, step: 0.05 },
   { key: 'topP', label: 'Thinking top P', id: 'thinking-top-p', min: 0, max: 1, step: 0.01 },
-  { key: 'topK', label: 'Thinking top K', id: 'thinking-top-k', min: 0, max: 500, step: 1, integer: true },
+  { key: 'topK', label: 'Thinking top K', id: 'thinking-top-k', min: 0, step: 1, integer: true },
   {
     key: 'presencePenalty',
     label: 'Thinking presence penalty',
@@ -36,15 +36,13 @@ const PROFILE_FIELDS: {
     key: 'repeatPenalty',
     label: 'Thinking repeat penalty',
     id: 'thinking-repeat-penalty',
-    min: 0.5,
-    max: 2,
+    min: 0.05,
     step: 0.05,
   },
 ];
 
-/** Mirror DEFAULT_MTP_DRAFT_N_MAX and MAX_MTP_DRAFT_N_MAX in the settings contract. */
+/** Mirrors DEFAULT_MTP_DRAFT_N_MAX in the settings contract. */
 const MTP_DRAFT_DEFAULT = 3;
-const MTP_DRAFT_MAX = 8;
 
 type Props = {
   llmSettings: ApiLLMSettings;
@@ -66,7 +64,7 @@ export function ThinkingSection({ llmSettings, saveLlmUpdates }: Props) {
   }, [speculative]);
 
   const saveProfileField = (field: (typeof PROFILE_FIELDS)[number]) => {
-    const raw = clamp(profileDraft[field.key], field.min, field.max);
+    const raw = clamp(profileDraft[field.key], field.min, field.max ?? Infinity);
     const value = field.integer ? Math.round(raw) : raw;
     setProfileDraft((previous) => ({ ...previous, [field.key]: value }));
     if (llmSettings.thinkingSampling[field.key] === value) return;
@@ -153,7 +151,6 @@ export function ThinkingSection({ llmSettings, saveLlmUpdates }: Props) {
             id="speculative-draft-tokens"
             type="number"
             min={1}
-            max={MTP_DRAFT_MAX}
             step={1}
             disabled={speculative.mode !== 'mtpDraft'}
             value={draftTokens}
@@ -161,7 +158,7 @@ export function ThinkingSection({ llmSettings, saveLlmUpdates }: Props) {
               setDraftTokens((previous) => Math.round(toFinite(event.target.value, previous)))
             }
             onBlur={() => {
-              const nMax = Math.round(clamp(draftTokens, 1, MTP_DRAFT_MAX));
+              const nMax = Math.max(1, Math.round(draftTokens));
               setDraftTokens(nMax);
               if (speculative.mode !== 'mtpDraft' || speculative.nMax === nMax) return;
               void saveLlmUpdates({ speculativeDecoding: { mode: 'mtpDraft', nMax } });

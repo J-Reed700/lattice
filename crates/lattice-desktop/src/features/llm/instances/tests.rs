@@ -4,6 +4,7 @@ use lattice_core::application::contracts::settings::LocalModelConfigDto;
 use lattice_core::application::ports::llm_port::{
     CompletionRequest, CompletionResponse, ModelOrigin, Pace,
 };
+use lattice_core::application::services::model_contract::legacy;
 use lattice_core::domain::models::fit::Footprint;
 use lattice_core::domain::models::model_ref::CloudProvider;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -44,6 +45,12 @@ impl LLMPort for FakeLlm {
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -660,7 +667,7 @@ async fn a_pinned_model_counts_its_holder_until_the_last_clone_drops() {
     assert_eq!(in_use(&instances), (1, vec!["chat: Notes".to_owned()]));
     assert_eq!(
         pinned
-            .complete(&CompletionRequest::default())
+            .complete(&legacy::completion(legacy::Completion::default()))
             .await
             .unwrap()
             .text,
@@ -974,7 +981,9 @@ fn changing_only_a_remote_servers_auth_value_drops_only_that_servers_models() {
 fn refusals_say_what_is_wrong_with_the_numbers_and_the_fix() {
     use refusal::{no_tools, not_downloaded, window_too_small, Window};
     let message = |error: AppError| match error {
-        AppError::InvalidConfig(message) | AppError::AiModelsNotInstalled(message) => message,
+        AppError::InvalidConfig(message)
+        | AppError::WindowTooSmall(message)
+        | AppError::AiModelsNotInstalled(message) => message,
         other => panic!("unexpected refusal {other:?}"),
     };
 

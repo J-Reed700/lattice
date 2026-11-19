@@ -3,9 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Message } from '@/features/chat/components/Message';
 import { setFolderThreadHost } from '@/features/chat/model/folderThreadHost';
-import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
+import { useReaderStore } from '@/features/reading/stores/readerStore';
 import { render } from '@/tests/renderWithQueryClient';
+import { reply } from '@/tests/replyFixtures';
 import type { MessageVerificationSummary, SourceWithMetadata } from '@/types/conversation';
 
 
@@ -44,13 +45,14 @@ vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({
   useUpdateSettingsMutation: () => ({ mutateAsync: vi.fn() }),
 }));
 vi.mock('@/features/reading/hooks/usePassageReferencesQuery', () => ({ usePassageReferenceIds: () => [] }));
+vi.mock('@/features/model/hooks/useActiveModels', () => ({ useActiveModels: () => ({ activeModels: null }) }));
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => ({ downloadedModels: [] }) }));
 vi.mock('@/features/model/hooks/useLoadedModels', () => ({ useLoadedModels: () => [], degradedReasonFor: () => null }));
 // The chips the answer body draws are what the reader is opened from, so the
 // viewer stands in for tiptap by drawing them.
 vi.mock('@/components/TiptapEditor', () => ({
-  TiptapViewer: ({ citationNumbers, claims, showEvidence = true, codeRefs }: { citationNumbers?: number[]; claims?: { sentence: string }[]; showEvidence?: boolean; codeRefs?: boolean }) => (
-    <div>
+  TiptapViewer: ({ content, marks, citationNumbers, claims, showEvidence = true, codeRefs }: { content?: string; marks?: number[]; citationNumbers?: number[]; claims?: { sentence: string }[]; showEvidence?: boolean; codeRefs?: boolean }) => (
+    <div data-content={content} data-marks={JSON.stringify(marks ?? [])}>
       Answer body
       {codeRefs && <span data-code-ref="src/example.ts" data-code-ref-start="12" data-code-ref-end="14">src/example.ts:12-14</span>}
       {/* Each source is cited twice, as a long answer cites it: two marks, two sentences. */}
@@ -99,7 +101,7 @@ function renderAnswer(sources?: SourceWithMetadata[]) {
 beforeEach(() => {
   verificationSummary = DEFAULT_SUMMARY;
   explorerRoot = null;
-  useChatReaderStore.setState({ session: null, resolvedLocations: new Map() });
+  useReaderStore.setState({ session: null, resolvedLocations: new Map() });
   useCitationDisplayStore.setState({ visible: true });
 });
 
@@ -254,7 +256,7 @@ describe('a checked sentence of the answer', () => {
 
     expect(screen.getByRole('dialog', { name: 'Claim actions' })).toHaveTextContent('Canopy cools streets');
     // A sentence is not a citation: the reader stays shut.
-    expect(useChatReaderStore.getState().session).toBeNull();
+    expect(useReaderStore.getState().session).toBeNull();
   });
 
   it('is not drawn when verification was off for the turn', () => {
@@ -271,7 +273,7 @@ describe('opening the source reader from an answer', () => {
 
     fireEvent.click(document.querySelector('[data-cite="2"]')!);
 
-    const session = useChatReaderStore.getState().session;
+    const session = useReaderStore.getState().session;
     expect(session?.ownerKey).toBe('answer');
     expect(session?.index).toBe(1);
     // All of them, so `[` / `]` can travel the whole answer from here.
@@ -283,18 +285,18 @@ describe('opening the source reader from an answer', () => {
     const chip = () => document.querySelector('[data-cite="2"]')!;
 
     act(() => {
-      useChatReaderStore.getState().open('another-answer', [source(2)], 0);
+      useReaderStore.getState().open('another-answer', [source(2)], 0);
     });
     // Same number, different answer: that is a different passage.
     expect(chip().classList.contains('is-lit')).toBe(false);
 
     act(() => {
-      useChatReaderStore.getState().open('answer', [source(1), source(2)], 1);
+      useReaderStore.getState().open('answer', [source(1), source(2)], 1);
     });
     expect(chip().classList.contains('is-lit')).toBe(true);
 
     act(() => {
-      useChatReaderStore.getState().close();
+      useReaderStore.getState().close();
     });
     expect(chip().classList.contains('is-lit')).toBe(false);
   });
@@ -306,13 +308,37 @@ describe('opening the source reader from an answer', () => {
     fireEvent.click(marks()[1]!);
 
     // The same source further down the answer stands for a different sentence.
-    expect(useChatReaderStore.getState().session?.occurrence).toBe(1);
+    expect(useReaderStore.getState().session?.occurrence).toBe(1);
     expect(marks().map((mark) => mark.classList.contains('is-lit'))).toEqual([false, true]);
 
     fireEvent.click(marks()[0]!);
 
-    expect(useChatReaderStore.getState().session?.occurrence).toBe(0);
+    expect(useReaderStore.getState().session?.occurrence).toBe(0);
     expect(marks().map((mark) => mark.classList.contains('is-lit'))).toEqual([true, false]);
+  });
+});
+
+describe('drawing a reply', () => {
+  const pieces = reply('Kale bolts in heat ', 3, '. Chard does not.');
+  const body = () => document.querySelector<HTMLElement>('[data-content]')!;
+  const drawn = () => ({ content: body().dataset.content, marks: body().dataset.marks });
+
+  it('draws a loaded message and a streamed one alike from the same pieces', () => {
+    const base = { role: 'assistant', content: 'Kale bolts in heat [s3]. Chard does not.', reply: pieces, createdAt: new Date().toISOString(), conversationId: 'conversation' };
+    const loaded = render(<Message message={{ ...base, id: 'answer', status: 'completed' } as Parameters<typeof Message>[0]['message']} />);
+    const fromLoaded = drawn();
+    loaded.unmount();
+    render(<Message message={{ ...base, tempId: 'streaming', status: 'pending' } as Parameters<typeof Message>[0]['message']} />);
+
+    expect(drawn()).toEqual(fromLoaded);
+    expect(fromLoaded.marks).toBe('[3]');
+  });
+
+  it('draws bracketed text that is not a reference as the text it is', () => {
+    render(<Message message={{ id: 'answer', role: 'assistant', content: 'Step [3] is ordinary text.', status: 'completed', createdAt: new Date().toISOString(), conversationId: 'conversation' } as Parameters<typeof Message>[0]['message']} />);
+
+    expect(body().dataset.content).toBe('Step [3] is ordinary text.');
+    expect(body().dataset.marks).toBe('[]');
   });
 });
 

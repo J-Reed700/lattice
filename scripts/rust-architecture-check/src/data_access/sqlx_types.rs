@@ -1,4 +1,4 @@
-//! Rule 4: sqlx and the driver trait are named only in data modules; everything else
+//! Rule 4: sqlx and `sqlx_pool` are named only in data modules; everything else
 //! holds a `Database` or takes `WriteTx` or `ReadTx`.
 use super::{handouts::import_leaves, Violation};
 use crate::{
@@ -12,14 +12,9 @@ use syn::{
     ImplItem, Item, TraitItem,
 };
 
-/// Whether a path names the driver trait: `DriverPool`, the `persistence::driver` module,
-/// or a `sqlx_pool` item.
+/// Whether a path names a `sqlx_pool` item: the door to a driver pool.
 fn driver_path(segments: &[String]) -> bool {
-    segments.iter().any(|segment| segment == "DriverPool")
-        || segments
-            .windows(2)
-            .any(|pair| matches!(pair, [a, b] if a == "persistence" && b == "driver"))
-        || (segments.len() >= 2 && segments.last().is_some_and(|last| last == "sqlx_pool"))
+    segments.len() >= 2 && segments.last().is_some_and(|last| last == "sqlx_pool")
 }
 
 struct Scan<'a> {

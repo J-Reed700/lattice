@@ -5,6 +5,7 @@ use super::protocol::{CompletionProtocol, EventDecoder};
 use super::timing::StreamClock;
 use super::{field, CompletionResponse};
 use futures::{Stream, StreamExt};
+use lattice_core::shared::error::WithCauses;
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,8 +14,9 @@ use std::time::{Duration, Instant};
 pub(super) type Callback<'a> = &'a (dyn Fn(String) -> Result<()> + Send + Sync);
 
 /// Read a stream to its completion. The request went out at `sent`; unless
-/// the completion carries the server's own timings, the first streamed delta
-/// splits the time since into reading the prompt and writing the answer.
+/// the completion carries the server's own timings, the model's first output,
+/// shown or not, splits the time since into reading the prompt and writing
+/// the answer.
 pub(super) async fn drain<S, B, E>(
     protocol: &'static dyn CompletionProtocol,
     mut bytes: S,
@@ -26,28 +28,26 @@ pub(super) async fn drain<S, B, E>(
 where
     S: Stream<Item = std::result::Result<B, E>> + Unpin,
     B: AsRef<[u8]>,
-    E: std::fmt::Display,
+    E: std::error::Error + 'static,
 {
     let clock = StreamClock::started(sent);
     let generating = AtomicBool::new(false);
     let timed_text = |text: String| {
-        clock.delta();
         generating.store(true, Ordering::Relaxed);
         on_text(text)
     };
     let timed_reasoning = |text: String| {
-        clock.delta();
         generating.store(true, Ordering::Relaxed);
         on_reasoning(text)
     };
     let (on_text, on_reasoning): (Callback<'_>, Callback<'_>) = (&timed_text, &timed_reasoning);
     let mut decoder = Decoder::new(protocol);
     loop {
-        // Silence before the first delta is the model reading the prompt or
-        // thinking, which a reasoning model can do for minutes with nothing to
-        // send: Claude streams no thinking unless asked to, and an OpenAI
-        // reasoning model without a summary sends only keepalives. That wait
-        // is bounded by the turn's deadline, Stop and shutdown. Once the
+        // Silence before the first displayed delta is the model reading the
+        // prompt or thinking, which a reasoning model can do for minutes with
+        // nothing to send: Claude streams no thinking unless asked to, and an
+        // OpenAI reasoning model without a summary sends only keepalives. That
+        // wait is bounded by the turn's deadline, Stop and shutdown. Once the
         // answer is streaming, a silence this long is a stall.
         let armed = generating.load(Ordering::Relaxed) || decoder.events.has_tool_output();
         let next = if armed {
@@ -63,9 +63,13 @@ where
             bytes.next().await
         };
         let Some(chunk) = next else { break };
-        let chunk = chunk
-            .map_err(|error| AppError::Network(format!("Cloud stream interrupted: {error}")))?;
+        let chunk = chunk.map_err(|error| {
+            AppError::Network(format!("Cloud stream interrupted: {}", WithCauses(&error)))
+        })?;
         decoder.push(chunk.as_ref(), on_text, on_reasoning)?;
+        if decoder.events.answer_begun() {
+            clock.began();
+        }
         if decoder.events.is_complete() {
             break;
         }

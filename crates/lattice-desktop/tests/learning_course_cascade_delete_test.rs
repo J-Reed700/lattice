@@ -7,6 +7,7 @@
 )]
 
 use lattice::features::learning::repository::LearningRepository;
+use lattice_core::shared::persistence::Database;
 use sqlx::migrate::Migrate;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use sqlx::Row;
@@ -36,15 +37,7 @@ enum Schema {
 #[tokio::test]
 async fn test_course_cascade_deletion_with_all_assessment_and_revisions_data(
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let options = SqliteConnectOptions::from_str("sqlite::memory:")?.pragma("foreign_keys", "ON");
-
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(options)
-        .await?;
-
-    // Run all migrations including the cascade fix migration
-    sqlx::migrate!("./migrations").run(&pool).await?;
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory().await?;
 
     // Ensure foreign keys are active
     let fk_status: i64 = sqlx::query_scalar("PRAGMA foreign_keys;")
@@ -67,7 +60,8 @@ async fn test_course_cascade_deletion_with_all_assessment_and_revisions_data(
     assert_eq!(course_count, 2);
 
     // Delete Course A via production LearningRepository
-    let repo = LearningRepository::new(pool.clone());
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db);
     repo.delete("course_a").await?;
 
     // 1. Verify Course A is gone and Course B remains
@@ -161,11 +155,11 @@ async fn test_delete_cascades_migration_preserves_existing_rows(
     // Bring the database to the schema just before the migration under test.
     {
         let mut conn = pool.acquire().await?;
-        conn.ensure_migrations_table().await?;
+        conn.ensure_migrations_table("_sqlx_migrations").await?;
         for migration in migrator.iter().filter(|m| {
             m.version < DELETE_CASCADES_VERSION && !m.migration_type.is_down_migration()
         }) {
-            conn.apply(migration).await?;
+            conn.apply("_sqlx_migrations", migration).await?;
         }
     }
 
@@ -215,9 +209,11 @@ async fn test_delete_cascades_migration_preserves_existing_rows(
         "learning_assessment_candidates",
         "learning_assessment_form_items",
     ] {
-        let formats: Vec<String> = sqlx::query_scalar(&format!("SELECT format FROM \"{table}\";"))
-            .fetch_all(&pool)
-            .await?;
+        let formats: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT format FROM \"{table}\";"
+        )))
+        .fetch_all(&pool)
+        .await?;
         assert_eq!(formats, ["single_choice", "single_choice"], "{table}");
     }
     let keys: Vec<String> = sqlx::query_scalar(
@@ -256,7 +252,7 @@ async fn test_delete_cascades_migration_preserves_existing_rows(
     .fetch_one(&pool)
     .await?;
     assert_eq!(predecessor_action, "SET NULL");
-    LearningRepository::new(pool.clone())
+    LearningRepository::new(Database::new(pool.clone()))
         .delete("course_a")
         .await?;
     let after_delete = learning_row_counts(&pool).await?;
@@ -279,9 +275,11 @@ async fn learning_row_counts(
     .await?;
     let mut counts = BTreeMap::new();
     for table in tables {
-        let count: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM \"{table}\";"))
-            .fetch_one(pool)
-            .await?;
+        let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM \"{table}\";"
+        )))
+        .fetch_one(pool)
+        .await?;
         counts.insert(table, count);
     }
     Ok(counts)

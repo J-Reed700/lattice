@@ -7,6 +7,7 @@
 use crate::application::ports::repository_port::RepositoryPort;
 use crate::domain::entities::Document;
 use crate::shared::error::Result;
+use crate::shared::persistence::Page;
 use async_trait::async_trait;
 
 /// Port for document-specific repository operations.
@@ -198,15 +199,13 @@ pub trait DocumentRepositoryPort: RepositoryPort<Document> {
             })
     }
 
-    /// Find documents with a SQL-level LIMIT applied.
+    /// Find library documents, most recently indexed first, one page at a time.
     ///
-    /// Preferred over `find_all` when the caller doesn't need the entire table;
-    /// the LIMIT is applied at the SQL level so the database doesn't materialize
-    /// rows that will be discarded. Documents are returned in the same order as
-    /// `find_all` (most recently indexed first).
+    /// The page is applied in SQL, so rows outside it are never materialized;
+    /// no limit returns every row. A chat's attachments are not listed.
     ///
     /// # Errors
     ///
     /// - `AppError::Database` if query fails
-    async fn find_all_paginated(&self, limit: usize) -> Result<Vec<Document>>;
+    async fn find_all_paginated(&self, page: Page) -> Result<Vec<Document>>;
 }

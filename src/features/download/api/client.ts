@@ -37,7 +37,7 @@ export const downloadApi = {
   startModelDownload: async (
     request: StartDownloadRequest,
   ): Promise<ApiResult<string>> =>
-    apiCall<string>('start_model_download', { request }),
+    apiCall('start_model_download', { request }),
 
   /**
    * Pauses an ongoing download.
@@ -46,8 +46,8 @@ export const downloadApi = {
    * @param downloadId - Unique download identifier
    * @returns Void on success
    */
-  pauseDownload: async (downloadId: string): Promise<ApiResult<void>> =>
-    apiCall<void>('pause_download', { id: downloadId }),
+  pauseDownload: async (downloadId: string): Promise<ApiResult<null>> =>
+    apiCall('pause_download', { id: downloadId }),
 
   /**
    * Resumes a paused download.
@@ -56,8 +56,8 @@ export const downloadApi = {
    * @param downloadId - Unique download identifier
    * @returns Void on success
    */
-  resumeDownload: async (downloadId: string): Promise<ApiResult<void>> =>
-    apiCall<void>('resume_download', { id: downloadId }),
+  resumeDownload: async (downloadId: string): Promise<ApiResult<null>> =>
+    apiCall('resume_download', { id: downloadId }),
 
   /**
    * Starts fetching a downloaded catalog chat model's vision projector into
@@ -67,7 +67,7 @@ export const downloadApi = {
    * @param id - The downloaded model's own id, as `deleteModel` takes
    */
   startVisionProjectorDownload: async (id: string): Promise<ApiResult<Wire.VisionProjectorDownloadDto>> =>
-    apiCall<Wire.VisionProjectorDownloadDto>('start_vision_projector_download', { id }),
+    apiCall('start_vision_projector_download', { id }),
 
   /**
    * Cancels an ongoing or paused download.
@@ -76,8 +76,8 @@ export const downloadApi = {
    * @param downloadId - Unique download identifier
    * @returns Void on success
    */
-  cancelDownload: async (downloadId: string): Promise<ApiResult<void>> =>
-    apiCall<void>('cancel_download', { id: downloadId }),
+  cancelDownload: async (downloadId: string): Promise<ApiResult<null>> =>
+    apiCall('cancel_download', { id: downloadId }),
 
   /**
    * Retries a failed download.
@@ -86,8 +86,8 @@ export const downloadApi = {
    * @param downloadId - Unique download identifier
    * @returns Void on success
    */
-  retryDownload: async (downloadId: string): Promise<ApiResult<void>> =>
-    apiCall<void>('retry_download', { id: downloadId }),
+  retryDownload: async (downloadId: string): Promise<ApiResult<null>> =>
+    apiCall('retry_download', { id: downloadId }),
 
   /**
    * Removes a download from the download list.
@@ -96,8 +96,8 @@ export const downloadApi = {
    * @param downloadId - Unique download identifier
    * @returns Void on success
    */
-  removeDownload: async (downloadId: string): Promise<ApiResult<void>> =>
-    apiCall<void>('remove_download', { id: downloadId }),
+  removeDownload: async (downloadId: string): Promise<ApiResult<null>> =>
+    apiCall('remove_download', { id: downloadId }),
 
   /**
    * Clears all completed downloads from the download list.
@@ -106,7 +106,7 @@ export const downloadApi = {
    * @returns Number of downloads cleared
    */
   clearCompletedDownloads: async (): Promise<ApiResult<number>> =>
-    apiCall<number>('clear_completed_downloads'),
+    apiCall('clear_completed_downloads'),
 
   /**
    * Gets the current status and progress of a download.
@@ -118,7 +118,7 @@ export const downloadApi = {
   getDownloadStatus: async (
     downloadId: string,
   ): Promise<ApiResult<DownloadStatus | null>> =>
-    apiCall<Wire.DownloadStatusResponse | null>('get_download_status', {
+    apiCall('get_download_status', {
       id: downloadId,
     }).then((result) =>
       result.ok
@@ -139,7 +139,7 @@ export const downloadApi = {
    * @returns Array of all download statuses
    */
   listDownloads: async (): Promise<ApiResult<DownloadStatus[]>> =>
-    apiCall<Wire.DownloadStatusResponse[]>('list_downloads').then((result) =>
+    apiCall('list_downloads').then((result) =>
       result.ok
         ? { ok: true, data: result.data.map(normalizeDownloadStatus) }
         : result,

@@ -2,9 +2,7 @@
 use lattice_core::application::contracts::file_library::{IndexedFolder, IndexingActivity};
 use lattice_core::application::ports::file_library::FileLibraryPort;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::{Database, Page};
 
 const FOLDER_COUNTS: &str = "SELECT json_extract(folder.value,'$[0]'), (
     SELECT COUNT(*) FROM documents d
@@ -31,22 +29,21 @@ fn folder_scope(path: &str) -> (&str, String, String) {
     (path, prefix, end)
 }
 
-pub async fn watch_folder_paths(pool: &impl DriverPool) -> Result<Vec<String>> {
-    let pool = pool.sqlx_pool();
-    Ok(
-        sqlx::query_scalar::<_, String>("SELECT path FROM watch_folders")
-            .fetch_all(pool)
-            .await?,
-    )
+pub async fn watch_folder_paths(db: &Database) -> Result<Vec<String>> {
+    let mut read = db.begin_read().await?;
+    let paths = sqlx::query_scalar::<_, String>("SELECT path FROM watch_folders")
+        .fetch_all(&mut *read)
+        .await?;
+    read.commit().await?;
+    Ok(paths)
 }
 
 pub struct SqliteFileLibrary {
-    pool: SqlitePool,
+    db: Database,
 }
 impl SqliteFileLibrary {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 }
 
@@ -69,7 +66,7 @@ struct ActivityRow {
 #[async_trait::async_trait]
 impl FileLibraryPort for SqliteFileLibrary {
     async fn indexed_folders(&self) -> Result<Vec<IndexedFolder>> {
-        let mut tx = self.pool.begin_read().await?;
+        let mut tx = self.db.begin_read().await?;
         let rows = sqlx::query_as::<_, FolderRow>("SELECT path, recursive, enabled, last_scan, created_at FROM watch_folders ORDER BY created_at DESC")
             .fetch_all(&mut *tx).await?;
         if rows.is_empty() {
@@ -101,8 +98,10 @@ impl FileLibraryPort for SqliteFileLibrary {
         Ok(folders)
     }
     async fn indexing_activities(&self, limit: usize) -> Result<Vec<IndexingActivity>> {
+        let mut read = self.db.begin_read().await?;
         let rows = sqlx::query_as::<_, ActivityRow>("SELECT d.id, d.file_path as file_path, d.status, d.indexed_at as timestamp FROM documents d ORDER BY d.indexed_at DESC LIMIT ?")
-            .bind(limit.min(10000) as i64).fetch_all(&self.pool).await?;
+            .bind(Page::first(limit)?.sql_limit()).fetch_all(&mut *read).await?;
+        read.commit().await?;
         Ok(rows
             .into_iter()
             .map(|row| IndexingActivity {
@@ -120,12 +119,15 @@ impl FileLibraryPort for SqliteFileLibrary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lattice_core::shared::error::AppError;
+    use sqlx::SqlitePool;
     // Stored paths and prefix bounds use the host's separator.
     use lattice_core::shared::testing::paths::abs_str;
 
     async fn fixture() -> (SqlitePool, SqliteFileLibrary) {
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+            .await
+            .unwrap();
         sqlx::query(
             "INSERT INTO watch_folders (id, path, recursive, enabled, last_scan, created_at)
                 VALUES ('watch', ?1, 1, 1, NULL, '2026-01-01')",
@@ -177,7 +179,7 @@ mod tests {
             .await
             .unwrap();
         }
-        let repo = SqliteFileLibrary::new(pool.clone());
+        let repo = SqliteFileLibrary::new(Database::new(pool.clone()));
         (pool, repo)
     }
 
@@ -267,11 +269,13 @@ mod tests {
             .await
             .unwrap();
             assert_eq!(count, expected, "prefix range changed counts for {path}");
-            let plan = sqlx::query(&format!("EXPLAIN QUERY PLAN {FOLDER_COUNTS}"))
-                .bind(&scope)
-                .fetch_all(&pool)
-                .await
-                .unwrap();
+            let plan = sqlx::query(sqlx::AssertSqlSafe(format!(
+                "EXPLAIN QUERY PLAN {FOLDER_COUNTS}"
+            )))
+            .bind(&scope)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
             let details: Vec<String> = plan.iter().map(|row| row.get("detail")).collect();
             assert!(
                 details.iter().any(|detail| detail
@@ -288,11 +292,31 @@ mod tests {
     #[tokio::test]
     async fn activities_use_document_paths_and_handle_pending_documents() {
         let (_, repo) = fixture().await;
-        assert!(repo.indexing_activities(0).await.unwrap().is_empty());
+        assert!(matches!(
+            repo.indexing_activities(0).await,
+            Err(AppError::InvalidInput(_))
+        ));
         let activities = repo.indexing_activities(usize::MAX).await.unwrap();
         assert_eq!(activities.len(), 3);
         assert_eq!(activities[0].file_path, inside_document());
         assert_eq!(activities[2].status, "pending");
         assert_eq!(activities[2].timestamp, "");
+    }
+
+    #[tokio::test]
+    async fn an_activity_limit_above_ten_thousand_is_honoured() {
+        let (pool, repo) = fixture().await;
+        sqlx::raw_sql(
+            "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<10001)
+             INSERT INTO documents (id, file_path, file_name, size_bytes, modified_at, indexed_at, checksum, status)
+             SELECT 'bulk-'||x, '/bulk/'||x, 'bulk', 1, '2026-01-01', '2026-01-01', 'checksum', 'indexed' FROM n",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            repo.indexing_activities(10_001).await.unwrap().len(),
+            10_001
+        );
     }
 }

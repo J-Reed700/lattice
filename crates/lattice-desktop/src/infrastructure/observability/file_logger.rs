@@ -177,11 +177,10 @@ impl Logger {
         };
 
         let message = format!(
-            "{}\nUser message: {}\nRecoverable: {}, User fixable: {}, Fatal: {}",
+            "{}\nUser message: {}\nClass: {:?}, Fatal: {}",
             error,
             error.to_user_friendly_message(),
-            error.is_recoverable(),
-            error.is_user_fixable(),
+            lattice_core::shared::error::ErrorClass::of(error),
             error.is_fatal()
         );
 

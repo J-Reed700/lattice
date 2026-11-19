@@ -44,6 +44,7 @@ pub(super) async fn generate_answer(
         memory_usage,
         summary_refold,
     } = request;
+    turn.names.save().await?;
     let generation_start = Instant::now();
     let mut tokens = TurnTokensDto::default();
     let response = match short_circuit_response {

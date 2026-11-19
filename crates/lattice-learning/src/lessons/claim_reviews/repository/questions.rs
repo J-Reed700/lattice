@@ -1,9 +1,8 @@
 //! A lesson's own questions in the quiz bank.
 
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::WriteTx;
 use sqlx::SqliteConnection;
-
-use crate::persistence::db;
 
 /// A question and its answer key as stored.
 pub(in crate::lessons::claim_reviews) struct QuestionRow {
@@ -37,8 +36,7 @@ pub(in crate::lessons::claim_reviews) async fn question_at(
     .bind(lesson_id)
     .bind(i64::try_from(index).unwrap_or(i64::MAX))
     .fetch_optional(&mut *connection)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok(row.map(
         |(id, format, prompt, options_json, key_json, explanation, rationales_json)| QuestionRow {
             id,
@@ -66,13 +64,12 @@ pub(in crate::lessons::claim_reviews) async fn token_taken_by_another(
     .bind(token)
     .bind(candidate_id)
     .fetch_optional(&mut *connection)
-    .await
-    .map_err(db)?;
+    .await?;
     Ok(other.is_some())
 }
 
 pub(in crate::lessons::claim_reviews) async fn write_question(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     candidate_id: &str,
     prompt: &str,
     options_json: Option<&str>,
@@ -85,14 +82,13 @@ pub(in crate::lessons::claim_reviews) async fn write_question(
     .bind(options_json)
     .bind(token)
     .bind(candidate_id)
-    .execute(&mut *connection)
-    .await
-    .map_err(db)?;
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }
 
 pub(in crate::lessons::claim_reviews) async fn write_answer_key(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     candidate_id: &str,
     explanation: &str,
     key_json: Option<&str>,
@@ -106,8 +102,7 @@ pub(in crate::lessons::claim_reviews) async fn write_answer_key(
     .bind(key_json)
     .bind(rationales_json)
     .bind(candidate_id)
-    .execute(&mut *connection)
-    .await
-    .map_err(db)?;
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }

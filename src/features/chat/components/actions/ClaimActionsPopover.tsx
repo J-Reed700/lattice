@@ -147,11 +147,12 @@ export function ClaimActionsPopover({
   }, [citationMap, conversationTitle, navigate, onClose, quickCapture, verdict]);
 
   const handleAskWhy = useCallback(() => {
-    // `?quote=` is the composer prefill contract the reading surfaces already
-    // use; ChatView turns it into a quoted draft and leaves the cursor below.
-    const params = new URLSearchParams({ quote: askWhyPrefill(verdict) });
+    // The quote in router state is the composer prefill contract the reading
+    // surfaces already use; ChatView turns it into a quoted draft and leaves
+    // the cursor below.
+    const quote = askWhyPrefill(verdict);
     onClose();
-    navigate(`/chat?${params.toString()}`);
+    navigate('/chat', { state: { quote } });
   }, [navigate, onClose, verdict]);
 
   const citedDocuments = vaultDocumentIds(

@@ -7,16 +7,15 @@ use super::{
 };
 use crate::{
     operations::Operation,
-    persistence::{db, encode as json, hash as payload_hash, now},
+    persistence::{encode as json, hash as payload_hash, now},
     portability_dto::*,
     references::course_index::CourseIndexes,
     source_library::LearningSourceLibraryRepository,
     source_selector::{create_quote_selector, match_quote_selector, LearningQuoteMatch},
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use lattice_core::shared::persistence::{Database, WriteTx};
+use sqlx::{Row, SqliteConnection};
 use std::collections::HashSet;
 
 mod cards;
@@ -26,8 +25,6 @@ pub(super) mod interview;
 mod selectors;
 mod workspace;
 
-const MAX_CARDS: i64 = 2_000;
-const MAX_QUERY_CHARS: usize = 240;
 const SCHEDULER_DISCLOSURE: &str = "Cards are scheduled with FSRS 6 and its default parameters. A review interval is not a promise or measurement of retention.";
 
 fn invalid(message: impl Into<String>) -> AppError {
@@ -68,34 +65,31 @@ fn parse_format(value: &str) -> Result<LearningRecallCardFormat> {
 
 #[derive(Clone)]
 pub struct LearningRecallRepository {
-    pool: SqlitePool,
+    db: Database,
 }
 impl LearningRecallRepository {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 
     /// Give cards accepted into the program deck their recall profile and
     /// first content version.
     async fn bootstrap_deck_cards(&self, program_id: &str) -> Result<()> {
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.db.begin_write().await?;
         let deck_id: Option<String> =
             sqlx::query_scalar("SELECT deck_id FROM learning_memory WHERE program_id=?")
                 .bind(program_id)
                 .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?
+                .await?
                 .flatten();
         let Some(deck_id) = deck_id else {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok(());
         };
         let rows = sqlx::query("SELECT c.* FROM study_cards c LEFT JOIN learning_recall_card_profiles p ON p.card_id=c.id WHERE c.deck_id=? AND p.card_id IS NULL ORDER BY c.id")
             .bind(&deck_id)
             .fetch_all(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         for row in rows {
             let card_id: String = row.get("id");
             let study_format = super::study_repository::parse_card_format(row.get("format"))?;
@@ -132,8 +126,7 @@ impl LearningRecallRepository {
                 .bind(timestamp)
                 .bind(timestamp)
                 .execute(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
             sqlx::query("INSERT INTO learning_recall_card_versions(card_id,revision,format,prompt_json,answer_json,source_version_ids_json,change_reason,created_at) VALUES(?,1,?,?,?,?,?,?)")
                 .bind(&card_id)
                 .bind(format_name(format))
@@ -143,10 +136,9 @@ impl LearningRecallRepository {
                 .bind("Accepted into the program's recall deck")
                 .bind(timestamp)
                 .execute(&mut *tx)
-                .await
-                .map_err(db)?;
+                .await?;
         }
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(AppError::from)
     }
 
     async fn card_source_versions(
@@ -161,8 +153,7 @@ impl LearningRecallRepository {
         .bind(program_id)
         .bind(card_id)
         .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
         let ids: Vec<String> = if let Some(value) = origin {
             serde_json::from_str(&value).map_err(|error| {
                 AppError::InvalidState(format!("Invalid card source links: {error}"))
@@ -178,8 +169,7 @@ impl LearningRecallRepository {
             .bind(program_id)
             .bind(&id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
             if version_exists.is_some() {
                 result.push(id);
             }
@@ -188,13 +178,12 @@ impl LearningRecallRepository {
     }
 }
 
-async fn lock_active_program(tx: &mut SqliteConnection, program_id: &str) -> Result<()> {
+async fn lock_active_program(tx: &mut WriteTx, program_id: &str) -> Result<()> {
     let result =
         sqlx::query("UPDATE learning_programs SET status=status WHERE id=? AND status='active'")
             .bind(program_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+            .execute(&mut **tx)
+            .await?;
     if result.rows_affected() != 1 {
         return Err(AppError::NotFound(
             "Active learning program not found.".into(),
@@ -219,7 +208,7 @@ fn recall_operation<'a>(
     }
 }
 
-async fn memory_deck(tx: &mut SqliteConnection, program_id: &str) -> Result<String> {
+async fn memory_deck(tx: &mut WriteTx, program_id: &str) -> Result<String> {
     crate::repository::ensure_memory_resources(tx, program_id)
         .await
         .map(|(_, deck_id)| deck_id)

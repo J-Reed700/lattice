@@ -4,6 +4,7 @@ use super::run::{Indexer, Limits, Outcome, Pace, StatusCell};
 use super::search::FolderHit;
 use super::store;
 use super::tool;
+use crate::features::explorer::file_refs::FileNames;
 use crate::features::explorer::prompt::{self, ExplorerTurn, FolderPassages};
 use crate::features::explorer::scope::Scope;
 use crate::features::explorer::tools;
@@ -22,13 +23,12 @@ use lattice_core::application::ports::hybrid_search::{HybridSearchFactory, Hybri
 use lattice_core::application::ports::vector_search_port::VectorSearchPort;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::application::ports::TextSearchPort;
+use lattice_core::application::services::model_contract::kept::TurnNames;
 use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobRecord, JobRuntime, JobStatus};
 use lattice_core::shared::Result;
 use parking_lot::Mutex;
 use serde_json::json;
-use sqlx::sqlite::SqlitePoolOptions;
-use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -44,6 +44,14 @@ impl EmbedderSource for Source {
             .clone()
             .map(|embedder| embedder as Arc<dyn EmbeddingPort>)
     }
+}
+
+fn names() -> Arc<TurnNames> {
+    Arc::new(TurnNames::unstored())
+}
+
+fn file_names() -> FileNames {
+    FileNames::new(names())
 }
 
 fn write(root: &Path, relative: &str, contents: &str) {
@@ -98,16 +106,16 @@ impl Rig {
             .await
     }
 
-    /// A manager over `pool`'s jobs, as the app is after a start: its builds
+    /// A manager over `db`'s jobs, as the app is after a start: its builds
     /// registered, saved ones resuming. Every status a build saves is
     /// collected in `events`.
     async fn manager_on(
         &self,
         config: ManagerConfig,
         embedder: Option<Arc<FakeEmbedder>>,
-        pool: SqlitePool,
+        db: Database,
     ) -> Arc<FolderIndexManager> {
-        self.manager_searching(config, embedder, pool, Arc::new(HybridSearchUseCaseFactory))
+        self.manager_searching(config, embedder, db, Arc::new(HybridSearchUseCaseFactory))
             .await
     }
 
@@ -116,10 +124,10 @@ impl Rig {
         &self,
         config: ManagerConfig,
         embedder: Option<Arc<FakeEmbedder>>,
-        pool: SqlitePool,
+        db: Database,
         searches: Arc<dyn HybridSearchFactory>,
     ) -> Arc<FolderIndexManager> {
-        let jobs = JobRuntime::with_poll_interval(Database::from(pool), Duration::from_millis(50));
+        let jobs = JobRuntime::with_poll_interval(db, Duration::from_millis(50));
         let events = Arc::clone(&self.events);
         jobs.observe(move |job| {
             let status = job
@@ -168,16 +176,11 @@ impl Rig {
 }
 
 /// The app database's job tables, in memory and kept for the test's length.
-async fn jobs_database() -> SqlitePool {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .idle_timeout(None)
-        .max_lifetime(None)
-        .connect(":memory:")
+async fn jobs_database() -> Database {
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    pool
+    Database::new(pool)
 }
 
 fn text(root: &Path) -> String {
@@ -837,10 +840,16 @@ mod search {
             Some("src/parser.rs")
         );
 
-        let out = tool::run(&search, &json!({"query": "parse tokens"}), 2_000)
-            .await
-            .unwrap();
-        assert!(out.contains("`src/parser.rs:1-"), "{out}");
+        let out = tool::run(
+            &search,
+            &file_names(),
+            &json!({"query": "parse tokens"}),
+            2_000,
+        )
+        .await
+        .unwrap();
+        assert!(out.contains("[f1:1-"), "{out}");
+        assert!(out.contains("] src/parser.rs\n"), "{out}");
         let recorded = calls.lock().clone();
         assert_eq!(recorded.len(), 2, "search_folder asked the hybrid search");
         assert_eq!(recorded[1].scope, None, "no path searches the whole folder");
@@ -1225,18 +1234,17 @@ mod model {
     }
 
     #[test]
-    fn passages_are_headed_by_line_references_and_fit_the_budget() {
+    fn passages_are_headed_by_the_files_name_with_its_lines_and_fit_the_budget() {
         let hits = vec![
             hit("src/a.rs", 3, &["fn a() {", "    b();", "}"]),
             hit("src/b.rs", 10, &["fn b() {}"]),
         ];
-        let out = tool::render_passages(&hits, 10_000);
+        let out = tool::render_passages(&hits, 10_000, &file_names()).unwrap();
         assert!(
-            out.starts_with("`src/a.rs:3-5`\n   3│ fn a() {\n   4│     b();\n   5│ }\n"),
+            out.starts_with("[f1:3-5] src/a.rs\n   3│ fn a() {\n   4│     b();\n   5│ }\n"),
             "{out}"
         );
-        assert!(out.contains("`src/b.rs:10-10`\n  10│ fn b() {}\n"), "{out}");
-        assert!(lattice_core::shared::text::contains_line_reference(&out));
+        assert!(out.contains("[f2:10] src/b.rs\n  10│ fn b() {}\n"), "{out}");
 
         let long: Vec<String> = (0..200).map(|n| format!("let line_{n} = {n};")).collect();
         let long_refs: Vec<&str> = long.iter().map(String::as_str).collect();
@@ -1244,7 +1252,7 @@ mod model {
             hit("src/long.rs", 1, &long_refs),
             hit("src/b.rs", 10, &["fn b() {}"]),
         ];
-        let cut = tool::render_passages(&many, 600);
+        let cut = tool::render_passages(&many, 600, &file_names()).unwrap();
         assert!(cut.len() <= 600, "{}", cut.len());
         assert!(cut.contains("passage cut for length"));
         assert!(cut.contains("1 more passage not shown"));
@@ -1270,23 +1278,31 @@ mod model {
         );
         open_settled(&manager, &root).await;
         let search = manager.search_for(&root).await.unwrap();
-        let out = tool::run(&search, &json!({"query": "retry loop"}), 1_000)
+        let file_names = file_names();
+        let out = tool::run(&search, &file_names, &json!({"query": "retry loop"}), 1_000)
             .await
             .unwrap();
         assert!(out.len() <= 1_000, "{}", out.len());
         assert!(out.contains("for \"retry loop\""), "{out}");
-        assert!(out.contains("`src/retry.rs:1-"), "{out}");
+        assert!(out.contains("[f1:1-"), "{out}");
         assert!(out.contains("   1│ pub fn retry_loop() {"), "{out}");
 
         // Dense search always has a nearest neighbour; an empty scope does not.
-        let none = tool::run(&search, &json!({"query": "retry", "path": "docs"}), 1_000)
-            .await
-            .unwrap();
+        let none = tool::run(
+            &search,
+            &file_names,
+            &json!({"query": "retry", "path": "docs"}),
+            1_000,
+        )
+        .await
+        .unwrap();
         assert!(
             none.starts_with("No passages for \"retry\" in docs"),
             "{none}"
         );
-        assert!(tool::run(&search, &json!({}), 1_000).await.is_err());
+        assert!(tool::run(&search, &file_names, &json!({}), 1_000)
+            .await
+            .is_err());
         assert_eq!(
             explorer_tools::activity_label("search_folder", &json!({"query": "retry"})),
             "Searched the folder for \"retry\""
@@ -1320,7 +1336,8 @@ mod model {
             open_path: Some("open.txt".into()),
             selection: None,
         };
-        let turn = ExplorerTurn::with_index(scope.clone(), Some(focus.clone()), Some(search));
+        let turn =
+            ExplorerTurn::with_index(scope.clone(), Some(focus.clone()), Some(search), names());
         assert!(turn.has_folder_index());
         let block = turn
             .context_block(4_000, true, Some("where is the retry backoff scheduled?"))
@@ -1329,13 +1346,13 @@ mod model {
         assert!(!closed_book.contains("Passages from the folder"));
         assert!(block.len() <= 4_000, "{}", block.len());
         assert!(block.contains("Passages from the folder"), "{block}");
-        assert!(block.contains("`src/retry.rs:1-3`"), "{block}");
+        assert!(block.contains("[f1:1-3] src/retry.rs"), "{block}");
         assert!(
             block.contains("search_folder"),
             "the rules mention the tool"
         );
         assert!(
-            block.contains("Open file: open.txt"),
+            block.contains("] open.txt ("),
             "the open file keeps its place"
         );
         let passages_at = block.find("Passages from the folder").unwrap();
@@ -1361,7 +1378,8 @@ mod model {
         assert_eq!(status.state, FolderIndexState::Ready);
         let search = manager.search_for(&root).await;
         assert!(search.is_none(), "nothing indexed, nothing to search");
-        let turn = ExplorerTurn::with_index(Scope::open(&text(&root)).unwrap(), None, search);
+        let turn =
+            ExplorerTurn::with_index(Scope::open(&text(&root)).unwrap(), None, search, names());
         let block = turn.context_block(4_000, true, Some("anything")).await;
         assert!(!block.contains("Passages from the folder"), "{block}");
         assert!(!block.contains("search_folder"));
@@ -1370,12 +1388,14 @@ mod model {
         assert!(tool_list.iter().all(|t| t.name != "search_folder"));
         let empty = prompt::render_context(
             &Scope::open(&text(&root)).unwrap(),
+            &file_names(),
             None,
             4_000,
             true,
             false,
             &FolderPassages::default(),
-        );
+        )
+        .unwrap();
         assert!(!empty.contains("Passages from the folder"));
         manager.close().await;
     }
@@ -1427,12 +1447,16 @@ mod builds {
         panic!("{} never finished its build", root.display());
     }
 
-    async fn job_messages(pool: &SqlitePool, id: &str) -> Vec<String> {
-        sqlx::query_scalar("SELECT message FROM job_events WHERE job_id=? ORDER BY ordinal")
-            .bind(id)
-            .fetch_all(pool)
-            .await
-            .unwrap()
+    async fn job_messages(db: &Database, id: &str) -> Vec<String> {
+        let mut read = db.begin_read().await.unwrap();
+        let messages =
+            sqlx::query_scalar("SELECT message FROM job_events WHERE job_id=? ORDER BY ordinal")
+                .bind(id)
+                .fetch_all(&mut *read)
+                .await
+                .unwrap();
+        read.commit().await.unwrap();
+        messages
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1470,17 +1494,17 @@ mod builds {
 
     /// A job database holding a build of `root` that the runtime failed for
     /// stopping the app, and that build's id.
-    async fn stopped_build(root: &Path) -> (SqlitePool, String) {
-        let pool = jobs_database().await;
-        let id = stopped_build_on(&pool, root).await;
-        (pool, id)
+    async fn stopped_build(root: &Path) -> (Database, String) {
+        let db = jobs_database().await;
+        let id = stopped_build_on(&db, root).await;
+        (db, id)
     }
 
-    /// Fails a build of `root` for stopping the app, in `pool`'s jobs, with
+    /// Fails a build of `root` for stopping the app, in `db`'s jobs, with
     /// no runtime registered to run it. Returns its id.
-    async fn stopped_build_on(pool: &SqlitePool, root: &Path) -> String {
+    async fn stopped_build_on(db: &Database, root: &Path) -> String {
         use lattice_core::shared::runtime::jobs::{JobStore, NewJob, RecoveryPolicy};
-        let store = JobStore::new(pool.clone());
+        let store = JobStore::new(db.clone());
         let id = store
             .submit(&NewJob {
                 kind: FOLDER_INDEX.into(),
@@ -1531,18 +1555,18 @@ mod builds {
                 ),
             ],
         );
-        let pool = jobs_database().await;
+        let db = jobs_database().await;
         let before = rig
-            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool.clone())
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), db.clone())
             .await;
         open_settled(&before, &parent).await;
         before.close().await;
         before.jobs.close();
         before.jobs.drain().await;
-        let id = stopped_build_on(&pool, &parent).await;
+        let id = stopped_build_on(&db, &parent).await;
 
         let manager = rig
-            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool)
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), db)
             .await;
         let child = parent.join("crates/net");
         open_only(&manager, &child).await;
@@ -1564,9 +1588,9 @@ mod builds {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
         let root = rig.project("project", &[("src/retry.rs", RETRY_RS)]);
-        let (pool, id) = stopped_build(&root).await;
+        let (db, id) = stopped_build(&root).await;
         let manager = rig
-            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool)
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), db)
             .await;
         open_only(&manager, &root).await;
         manager.close().await;
@@ -1593,9 +1617,9 @@ mod builds {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
         let root = rig.project("project", &[("src/retry.rs", RETRY_RS)]);
-        let (pool, id) = stopped_build(&root).await;
+        let (db, id) = stopped_build(&root).await;
         let manager = rig
-            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool)
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), db)
             .await;
         open_only(&manager, &root).await;
         manager.close().await;
@@ -1657,9 +1681,9 @@ mod builds {
     async fn opening_a_folder_puts_its_build_ahead_of_the_one_running() {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
-        let pool = jobs_database().await;
+        let db = jobs_database().await;
         let manager = rig
-            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool.clone())
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), db.clone())
             .await;
         let first = many_files(&rig, "first", 40);
         let second = many_files(&rig, "second", 8);
@@ -1695,7 +1719,7 @@ mod builds {
         );
         assert!(firsts[0] < seconds[0] && firsts[39] > seconds[7]);
         assert!(
-            job_messages(&pool, &first_build.id)
+            job_messages(&db, &first_build.id)
                 .await
                 .iter()
                 .any(|message| message == "Waiting for its turn"),
@@ -1708,11 +1732,11 @@ mod builds {
     async fn stopped_part_way(
         rig: &Rig,
         embedder: &Arc<FakeEmbedder>,
-        pool: &SqlitePool,
+        db: &Database,
         root: &Path,
     ) -> JobRecord {
         let manager = rig
-            .manager_on(rig.config(), Some(Arc::clone(embedder)), pool.clone())
+            .manager_on(rig.config(), Some(Arc::clone(embedder)), db.clone())
             .await;
         let gate = BatchGate::new(2);
         *embedder.batch_gate.lock() = Some(Arc::clone(&gate));
@@ -1733,14 +1757,14 @@ mod builds {
     async fn a_build_stopped_by_a_restart_resumes_at_the_next_start() {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
-        let pool = jobs_database().await;
+        let db = jobs_database().await;
         let root = many_files(&rig, "resumed", 40);
-        let stopped = stopped_part_way(&rig, &embedder, &pool, &root).await;
+        let stopped = stopped_part_way(&rig, &embedder, &db, &root).await;
         let before = embedder.embedded().len();
         embedder.forget_calls();
 
         let manager = rig
-            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool.clone())
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), db.clone())
             .await;
         let job = finished(&manager, &root).await;
         assert_eq!(job.id, stopped.id);
@@ -1756,14 +1780,14 @@ mod builds {
     async fn a_build_whose_folder_is_gone_fails_at_the_next_start() {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");
-        let pool = jobs_database().await;
+        let db = jobs_database().await;
         let root = many_files(&rig, "gone", 40);
-        stopped_part_way(&rig, &embedder, &pool, &root).await;
+        stopped_part_way(&rig, &embedder, &db, &root).await;
         std::fs::remove_dir_all(&root).unwrap();
         embedder.forget_calls();
 
         let manager = rig
-            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool.clone())
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), db.clone())
             .await;
         let job = finished(&manager, &root).await;
         assert_eq!(job.status, JobStatus::Failed);

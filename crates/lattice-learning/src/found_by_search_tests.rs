@@ -66,16 +66,19 @@ async fn outline_source(
 async fn an_outline_page_saved_from_the_web_before_the_mark_stays_under_the_sweep_and_a_document_does_not(
 ) {
     let pool = memory_pool().await;
+    let db = Database::new(pool.clone());
     let migrator = migrator();
     assert!(migrator.iter().any(|m| m.version == FOUND_BY_SEARCH));
     {
         let mut conn = pool.acquire().await.unwrap();
-        conn.ensure_migrations_table().await.unwrap();
+        conn.ensure_migrations_table("_sqlx_migrations")
+            .await
+            .unwrap();
         for migration in migrator
             .iter()
             .filter(|m| m.version < FOUND_BY_SEARCH && !m.migration_type.is_down_migration())
         {
-            conn.apply(migration).await.unwrap();
+            conn.apply("_sqlx_migrations", migration).await.unwrap();
         }
     }
     sqlx::query("INSERT INTO learning_programs (id, title, goal, status, revision, prior_knowledge, minutes_per_session, model_name, created_at) VALUES ('p1', 'Retrieval', 'Understand retrieval-augmented generation', 'active', 1, 'none', 30, 'qwen', 1000)")
@@ -113,7 +116,7 @@ async fn an_outline_page_saved_from_the_web_before_the_mark_stays_under_the_swee
             .await
             .unwrap();
     assert_eq!(marks, [("s-doc".to_owned(), 0), ("s-web".to_owned(), 1)]);
-    let refused = LearningSourceLibraryRepository::new(Database::from(pool.clone()))
+    let refused = LearningSourceLibraryRepository::new(db.clone())
         .sweep_admission("p1")
         .await
         .unwrap();

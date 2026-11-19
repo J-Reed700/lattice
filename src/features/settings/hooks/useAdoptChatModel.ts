@@ -1,3 +1,4 @@
+import { useActiveModels } from '@/features/model/hooks/useActiveModels';
 import { useUpdateSettingsMutation } from '@/features/settings/hooks/useSettingsQuery';
 import { toast } from '@/stores/toastStore';
 import type { LLMSettings } from '@/types/api/settings';
@@ -10,7 +11,8 @@ import { resolveDefaultChatOption } from '@/utils/chatModelSelection';
  */
 export function useAdoptChatModel(settings: LLMSettings | undefined, models: DownloadedModel[]) {
   const { mutateAsync: updateSettings, isPending } = useUpdateSettingsMutation();
-  const chatModel = settings ? resolveDefaultChatOption(settings, models) : null;
+  const { activeModels } = useActiveModels();
+  const chatModel = settings ? resolveDefaultChatOption(settings, models, {}, activeModels) : null;
   const adopt = async () => {
     if (!chatModel) return;
     try {

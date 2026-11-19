@@ -1,5 +1,6 @@
 use super::config::BESIDE_GPU_THREADS;
 use super::*;
+use lattice_core::shared::error::WithCauses;
 
 /// Ports handed out and not yet released: binding `127.0.0.1:0` gives the
 /// port back at once, so two racing spawns could be handed the same number.
@@ -228,16 +229,17 @@ pub(crate) fn new_api_token() -> String {
 }
 
 /// Spawns the long-lived event-drain task for a sidecar. It reads every
-/// `CommandEvent` for the sidecar's life (tauri-plugin-shell's pipes are
-/// bounded, so an unread receiver would stop the output), logs each line
+/// `ServerEvent` for the sidecar's life (the event channel is bounded, so an
+/// unread receiver would stop the output), logs each line
 /// under `target = "llama_server"`, keeps the startup `tail`, clears the child
-/// slot on `Terminated`, and fires the returned oneshot once: `Ok(())` at the
-/// readiness needle, or how the sidecar ended before it.
+/// slot on `Terminated` (an error if it was still occupied, a stop if not),
+/// and fires the returned oneshot once: `Ok(())` at the readiness needle, or
+/// how the sidecar ended before it.
 pub(super) fn spawn_event_drain(
     background: &lattice_core::shared::runtime::background::BackgroundTasks,
-    rx: Receiver<CommandEvent>,
+    rx: Receiver<ServerEvent>,
     endpoint: String,
-    child_arc: Arc<SyncMutex<Option<CommandChild>>>,
+    child_arc: Arc<SyncMutex<Option<ServerProcess>>>,
     tail: Arc<SyncMutex<OutputTail>>,
     signals: Arc<StartupSignals>,
 ) -> tokio::sync::oneshot::Receiver<Result<(), StartupEnd>> {
@@ -276,21 +278,21 @@ pub(super) fn spawn_event_drain(
                 false
             };
             match event {
-                CommandEvent::Stderr(line_bytes) => {
+                ServerEvent::Stderr(line_bytes) => {
                     let line = String::from_utf8_lossy(&line_bytes);
                     if on_line(line.trim_end(), "") {
                         tracing::info!("llama-server sidecar ready on {endpoint}");
                         signal_ready(&mut ready_tx, Ok(()));
                     }
                 }
-                CommandEvent::Stdout(line_bytes) => {
+                ServerEvent::Stdout(line_bytes) => {
                     let line = String::from_utf8_lossy(&line_bytes);
                     if on_line(line.trim_end(), "stdout: ") {
                         tracing::info!("llama-server sidecar ready on {endpoint}");
                         signal_ready(&mut ready_tx, Ok(()));
                     }
                 }
-                CommandEvent::Error(err) => {
+                ServerEvent::Error(err) => {
                     if readiness_pending {
                         signal_ready(&mut ready_tx, Err(StartupEnd::EventError(err)));
                     } else {
@@ -304,7 +306,8 @@ pub(super) fn spawn_event_drain(
                         );
                     }
                 }
-                CommandEvent::Terminated(payload) => {
+                ServerEvent::Terminated(payload) => {
+                    let died_on_its_own = child_arc.lock().take().is_some();
                     if readiness_pending {
                         signal_ready(
                             &mut ready_tx,
@@ -313,7 +316,7 @@ pub(super) fn spawn_event_drain(
                                 signal: payload.signal,
                             }),
                         );
-                    } else {
+                    } else if died_on_its_own {
                         tracing::error!(
                             target: "llama_server",
                             endpoint = %endpoint,
@@ -321,18 +324,19 @@ pub(super) fn spawn_event_drain(
                             signal = ?payload.signal,
                             "llama-server sidecar terminated unexpectedly"
                         );
+                    } else {
+                        tracing::debug!(
+                            target: "llama_server",
+                            endpoint = %endpoint,
+                            code = ?payload.code,
+                            signal = ?payload.signal,
+                            "llama-server sidecar exited after a stop"
+                        );
                     }
-                    // Clear the child slot so kill_all at shutdown
-                    // doesn't try to kill a dead PID. The Arc itself
-                    // stays alive — owned by SidecarHandle — but the
-                    // CommandChild inside is gone. An empty slot is also
-                    // what `is_running` reads, so the role caches treat the
-                    // cached port as a miss and the next request starts a
-                    // new server instead of failing against this dead one.
-                    let _ = child_arc.lock().take();
+                    // The slot is empty now, so kill_all skips a dead PID and
+                    // `is_running` reads false.
                     // Channel will close after this; loop exits.
                 }
-                _ => {}
             }
         }
 
@@ -401,7 +405,7 @@ pub(super) async fn await_ready(
         Err(err) => {
             tracing::warn!(
                 endpoint = %endpoint,
-                error = %err,
+                error = %WithCauses(&err),
                 "No HTTP client for readiness polling; falling back to the log line alone"
             );
             None

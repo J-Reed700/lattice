@@ -1,10 +1,14 @@
 //! Tests for the claim judge: verdict parsing, evidence assembly and the
 //! sequential judging of evidence split over calls.
 
-use super::super::lexical::lexical_pass;
-use super::super::test_support::source;
+use super::super::lexical::{lexical_pass as lexical_pass_over, LexicalClaim};
+use super::super::test_support::{reply, source};
 use super::*;
-use lattice_core::application::ports::llm_port::CompletionResponse;
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+
+fn lexical_pass(text: &str, sources: &[SourceDto]) -> Vec<LexicalClaim> {
+    lexical_pass_over(&reply(text, sources), sources)
+}
 
 /// Room enough for any test page in one call.
 const WIDE: usize = 1_000_000;
@@ -109,6 +113,23 @@ fn explanation_keeps_the_reason_and_only_accepts_an_exact_source_quote() {
 }
 
 #[test]
+fn a_typographic_copy_of_the_evidence_is_kept_as_its_bytes() {
+    let evidence = ClaimEvidence {
+        text: "[1]\nIt’s the borrow checker’s job.".into(),
+        quote: None,
+    };
+    let parsed = parse_judge_explanation(
+        "supported\nReason: r\nSource quote: \"It's the borrow checker's job\"",
+        &evidence,
+        ClaimVerdict::Supported,
+    );
+    assert_eq!(
+        parsed.quote.as_deref(),
+        Some("It’s the borrow checker’s job")
+    );
+}
+
+#[test]
 fn a_reason_past_600_characters_is_kept_whole() {
     let evidence = ClaimEvidence {
         text: "[1]\nThe mill closed in 1887.".into(),
@@ -147,7 +168,7 @@ fn a_claim_joining_two_far_apart_facts_is_shown_both() {
 
     let sources = [source(&page)];
     let claims = lexical_pass(
-        "Tomatoes need 6-8 hours of direct sunlight, so plant them in a south-facing bed [1].",
+        "Tomatoes need 6-8 hours of direct sunlight, so plant them in a south-facing bed [s1].",
         &sources,
     );
     let evidence = found(evidence_for(&claims[0], &sources, WIDE));
@@ -185,7 +206,10 @@ fn support_deep_in_a_long_page_reaches_the_judge_in_a_later_part() {
         "Closing prose. ".repeat(50),
     );
     let sources = [source(&page)];
-    let claims = lexical_pass("The valley harvest begins in late September [1].", &sources);
+    let claims = lexical_pass(
+        "The valley harvest begins in late September [s1].",
+        &sources,
+    );
     let parts = found_parts(evidence_for(&claims[0], &sources, 2_500));
     assert!(parts.len() > 1, "the page needs more than one call");
     assert!(parts.iter().all(|part| part.text.chars().count() <= 2_500));
@@ -215,7 +239,7 @@ fn a_fourth_cited_source_is_judged_too() {
         sources.push(cited);
     }
     let claims = lexical_pass(
-        "Basil wilts below ten degrees, prefers drained soil, flowers late and its leaves darken when frozen [1][2][3][4].",
+        "Basil wilts below ten degrees, prefers drained soil, flowers late and its leaves darken when frozen [s1][s2][s3][s4].",
         &sources,
     );
     let evidence = found(evidence_for(&claims[0], &sources, WIDE));
@@ -243,7 +267,7 @@ fn several_cited_pages_each_get_their_best_window_in_the_first_call() {
     c.citation_id = Some(3);
     let sources = [a, b, c];
     let claims = lexical_pass(
-        "Basil wilts below ten degrees, prefers well drained soil and flowers in late summer [1][2][3].",
+        "Basil wilts below ten degrees, prefers well drained soil and flowers in late summer [s1][s2][s3].",
         &sources,
     );
     // A judge call with room for about one page: every page's best window
@@ -281,7 +305,7 @@ fn a_claim_that_cites_nothing_is_offered_no_evidence() {
 fn a_cited_page_with_no_text_is_not_evidence_of_anything() {
     let sources = [source("")];
     let claims = lexical_pass(
-        "The ideal initial planting depth is 4 to 6 inches of soil above the seed potato [1].",
+        "The ideal initial planting depth is 4 to 6 inches of soil above the seed potato [s1].",
         &sources,
     );
     assert!(matches!(
@@ -340,6 +364,12 @@ impl LLMPort for RecordingLlm {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 fn one_request() -> (Vec<LexicalClaim>, [SourceDto; 1]) {
@@ -347,7 +377,7 @@ fn one_request() -> (Vec<LexicalClaim>, [SourceDto; 1]) {
         "The ideal initial planting depth for potatoes is 4 to 6 inches of soil cover.",
     )];
     let claims = lexical_pass(
-        "The ideal initial planting depth is 4 to 6 inches of soil above the seed potato [1].",
+        "The ideal initial planting depth is 4 to 6 inches of soil above the seed potato [s1].",
         &sources,
     );
     (claims, sources)
@@ -370,7 +400,7 @@ async fn the_judge_starts_with_a_label_and_puts_document_first() {
     assert_eq!(sent.len(), 1);
     let request = &sent[0];
     assert!(request.want_logprobs);
-    assert!(request.json_schema.is_none());
+    assert!(request.schema().is_none());
     assert!(request.reasoning_effort.is_none());
     // No clock cuts a judge call off: stall detection and shutdown do.
     assert!(request.no_time_limit);
@@ -379,9 +409,9 @@ async fn the_judge_starts_with_a_label_and_puts_document_first() {
     let sampling = request.sampling.expect("the judge sets its own sampling");
     assert_eq!(sampling.temperature, Some(0.0));
     assert_eq!(sampling.top_k, Some(1));
-    assert_eq!(request.max_output_tokens, Some(DEFAULT_MAX_OUTPUT_TOKENS));
+    assert_eq!(request.max_output_tokens(), Some(DEFAULT_MAX_OUTPUT_TOKENS));
 
-    let CompletionInput::Message { content, .. } = &request.input[1] else {
+    let CompletionInput::Message { content, .. } = &request.input()[1] else {
         panic!("user message expected");
     };
     let document = content.find("4 to 6 inches of soil cover").unwrap();
@@ -407,7 +437,7 @@ async fn verification_settings_reach_the_request() {
     assert_eq!(sampling.temperature, Some(0.4));
     assert_eq!(sampling.top_p, Some(0.8));
     assert_eq!(sampling.top_k, Some(20));
-    assert_eq!(sent[0].max_output_tokens, Some(DEFAULT_MAX_OUTPUT_TOKENS));
+    assert_eq!(sent[0].max_output_tokens(), Some(DEFAULT_MAX_OUTPUT_TOKENS));
 }
 
 #[tokio::test]
@@ -442,7 +472,7 @@ struct PartAwareLlm {
 impl LLMPort for PartAwareLlm {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         *self.calls.lock().unwrap() += 1;
-        let holds_marker = request.input.iter().any(|input| {
+        let holds_marker = request.input().iter().any(|input| {
             matches!(input, CompletionInput::Message { content, .. } if content.contains(self.marker))
         });
         Ok(CompletionResponse {
@@ -469,6 +499,12 @@ impl LLMPort for PartAwareLlm {
 
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -550,7 +586,7 @@ fn a_paraphrase_with_no_shared_words_still_reaches_the_judge() {
         "Consectetur adipiscing elit. ".repeat(80),
     );
     let sources = [source(&page)];
-    let claims = lexical_pass("Harvest happens in fall [1].", &sources);
+    let claims = lexical_pass("Harvest happens in fall [s1].", &sources);
     let parts = found_parts(evidence_for(&claims[0], &sources, 2_500));
     assert!(parts
         .iter()
@@ -564,7 +600,7 @@ fn a_paraphrase_with_no_shared_words_still_reaches_the_judge() {
 fn a_long_page_is_split_into_as_few_parts_as_its_rendered_text_needs() {
     let page = "The harvest begins in late September. ".repeat(1_000);
     let sources = [source(&page)];
-    let claims = lexical_pass("The harvest begins in late September [1].", &sources);
+    let claims = lexical_pass("The harvest begins in late September [s1].", &sources);
     let parts = found_parts(evidence_for(&claims[0], &sources, 10_000));
     let total: usize = parts.iter().map(|part| part.text.chars().count()).sum();
     assert!(parts.iter().all(|part| part.text.chars().count() <= 10_000));
@@ -612,6 +648,12 @@ impl LLMPort for OrderingLlm {
 
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
     }
 }
 
@@ -691,6 +733,12 @@ impl LLMPort for LargeWindow {
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
 }
 
 /// A part is what the judge's window holds beside the claim and the answer.
@@ -705,4 +753,167 @@ fn a_part_is_sized_from_the_judges_window() {
         judge.evidence_room_chars("claim"),
         chars_within_tokens(window_room, LargeWindow.chars_per_token())
     );
+}
+
+/// The quote is the sentence a verdict rests on, and `founded` reads the
+/// claim's words in it: a long sentence is quoted whole, never cut.
+#[test]
+fn a_long_best_sentence_is_quoted_whole() {
+    let sentence = format!(
+        "In the long trial {}the treated plants showed reduced measured cold tolerance.",
+        "across many sites and seasons ".repeat(20)
+    );
+    assert!(sentence.chars().count() > 600);
+    let sources = [source(&format!(
+        "Unrelated opening line. {sentence} Unrelated closing line."
+    ))];
+    let claims = lexical_pass(
+        "The treated plants showed reduced measured cold tolerance [s1].",
+        &sources,
+    );
+
+    let evidence = found(evidence_for(&claims[0], &sources, WIDE));
+
+    assert_eq!(evidence.quote.as_deref(), Some(sentence.as_str()));
+}
+
+mod session_talk {
+    use super::*;
+    use lattice_core::application::ports::llm_port::CompletionResponse;
+    use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
+    use lattice_core::application::services::model_contract::test_support::{ScriptedModel, Sent};
+
+    const GREETING: &str = "Good work, you named that part exactly.";
+    const FACT: &str = "The tide table has six rows in total.";
+    const NEXT: &str = "Let's move on to the next card in your deck.";
+
+    fn prompt_of(sent: &Sent) -> String {
+        sent.request
+            .input()
+            .iter()
+            .filter_map(|item| match item {
+                CompletionInput::Message { content, .. } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The handle the request shows for each sentence line holding `text`.
+    fn handle_of(sent: &Sent, text: &str) -> Option<String> {
+        prompt_of(sent).lines().find_map(|line| {
+            let rest = line.strip_prefix('[')?;
+            let (handle, said) = rest.split_once("] ")?;
+            (said == text).then(|| handle.to_owned())
+        })
+    }
+
+    fn marks_of(sent: &Sent, texts: &[&str]) -> String {
+        let marks: Vec<serde_json::Value> = texts
+            .iter()
+            .filter_map(|text| handle_of(sent, text))
+            .map(|handle| serde_json::json!({ "at": handle }))
+            .collect();
+        serde_json::json!({ "marks": marks }).to_string()
+    }
+
+    fn said(text: String) -> BoxFuture<'static, Result<CompletionResponse>> {
+        Box::pin(std::future::ready(Ok(CompletionResponse::from_text(text))))
+    }
+
+    fn judge(model: ScriptedModel) -> (ClaimJudge, Arc<ScriptedModel>) {
+        let model = Arc::new(model);
+        (ClaimJudge::new(model.clone()), model)
+    }
+
+    #[test]
+    fn the_session_talk_request_shows_the_sentences_and_no_position() {
+        let mut marks = Marks::new();
+        let input = SessionTalkInput {
+            sentences: vec![
+                Sentence {
+                    at: marks.reference(4_000_123_usize),
+                    text: marks.told("Good work, you named that part exactly.".to_owned()),
+                },
+                Sentence {
+                    at: marks.reference(4_000_124_usize),
+                    text: marks.told("The tide table has six rows in total.".to_owned()),
+                },
+            ],
+        };
+        holds::<SessionTalk>(&input, &marks);
+    }
+
+    #[tokio::test]
+    async fn the_sentences_marked_as_session_talk_are_the_only_ones_left_out() {
+        let (judge, _) = judge(
+            ScriptedModel::new()
+                .on_request::<SessionTalk>(|sent, _| said(marks_of(sent, &[GREETING, NEXT]))),
+        );
+
+        let about = judge.about_the_subject(&[GREETING, FACT, NEXT]).await;
+
+        assert_eq!(about, Some(HashSet::from([1])));
+    }
+
+    #[tokio::test]
+    async fn a_sentence_the_answer_does_not_mark_stays_a_claim() {
+        let (judge, model) = judge(
+            ScriptedModel::new().on_request::<SessionTalk>(|sent, _| said(marks_of(sent, &[]))),
+        );
+
+        let about = judge.about_the_subject(&[GREETING, FACT, NEXT]).await;
+
+        assert_eq!(about, Some(HashSet::from([0, 1, 2])));
+        assert_eq!(model.count::<SessionTalk>(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_answer_of_numbers_drops_nothing() {
+        let (judge, _) =
+            judge(ScriptedModel::new().on_request::<SessionTalk>(|_, _| {
+                said(r#"{"marks":[{"at":"1"},{"at":"3"}]}"#.into())
+            }));
+
+        let about = judge.about_the_subject(&[GREETING, FACT, NEXT]).await;
+
+        assert_eq!(about, Some(HashSet::from([0, 1, 2])));
+    }
+
+    #[tokio::test]
+    async fn an_answer_that_cannot_be_read_leaves_every_sentence_a_claim() {
+        let (judge, _) =
+            judge(ScriptedModel::new().on_request::<SessionTalk>(|_, _| {
+                said("I could not tell which are which.".into())
+            }));
+
+        let about = judge.about_the_subject(&[GREETING, FACT, NEXT]).await;
+
+        assert_eq!(about, Some(HashSet::from([0, 1, 2])));
+    }
+
+    #[tokio::test]
+    async fn a_mark_that_points_at_nothing_shown_is_asked_for_again() {
+        let (judge, model) = judge(ScriptedModel::new().on_request::<SessionTalk>(|sent, nth| {
+            if nth == 0 {
+                said(r#"{"marks":[{"at":"s9"}]}"#.into())
+            } else {
+                said(marks_of(sent, &[NEXT]))
+            }
+        }));
+
+        let about = judge.about_the_subject(&[GREETING, FACT, NEXT]).await;
+
+        assert_eq!(about, Some(HashSet::from([0, 1])));
+        assert!(model.count::<SessionTalk>() > 1);
+    }
+
+    #[tokio::test]
+    async fn a_backend_that_fails_settles_nothing() {
+        let (judge, _) = judge(ScriptedModel::new().failing_every_request(|_| {
+            lattice_core::shared::error::AppError::InternalError("down".into())
+        }));
+
+        assert_eq!(judge.about_the_subject(&[GREETING, FACT]).await, None);
+    }
 }

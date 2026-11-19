@@ -1,7 +1,6 @@
 //! Curated embedding models, and which of them support Matryoshka truncation.
 
 use super::pins::{pinned_for, unpinned};
-use crate::domain::models::checkpoint::TOKENIZER_JSON;
 use crate::domain::models::fit::PinnedModel;
 use crate::domain::models::metadata::ModelFileMetadata;
 use crate::domain::models::selection::ModelFormat;
@@ -12,11 +11,11 @@ use crate::domain::models::selection::{ModelCategory, ModelMetadata, Performance
 /// One entry: **Qwen3 Embedding 0.6B**, multilingual instruction-aware
 /// retrieval at 1024 dimensions, the first-run default on every machine. It
 /// runs in the bundled `llama-server` from an F16 GGUF, the only precision that
-/// keeps the vectors Candle produced. `tokenizer.json` comes from the base
-/// repository and cuts passages with the model's own tokenizer.
+/// keeps the vectors Candle produced. The GGUF is the whole model: passages
+/// are counted with its own tokenizer through the server.
 ///
-/// Both files are pinned to a commit and carry their SHA-256, so the download
-/// engine verifies them and the GGUF's digest is the model's identity.
+/// The file is pinned to a commit and carries its SHA-256, so the download
+/// engine verifies it and the GGUF's digest is the model's identity.
 pub fn get_curated_embedding_models() -> Vec<ModelMetadata> {
     vec![ModelMetadata {
         id: "qwen3-embedding-0.6b".into(),
@@ -40,14 +39,8 @@ pub fn get_curated_embedding_models() -> Vec<ModelMetadata> {
                 QWEN3_EMBEDDING_GGUF_BYTES,
                 "421a27e58d165478cc7acb984a688c2aa41404968b0203e7cd743ece44c54340".into(),
             ),
-            ModelFileMetadata::with_checksum(
-                TOKENIZER_JSON.into(),
-                "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B/resolve/97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3/tokenizer.json".into(),
-                QWEN3_EMBEDDING_TOKENIZER_BYTES,
-                "def76fb086971c7867b829c23a26261e38d9d74e02139253b38aeb9df8b4b50a".into(),
-            ),
         ],
-        total_size_bytes: QWEN3_EMBEDDING_GGUF_BYTES + QWEN3_EMBEDDING_TOKENIZER_BYTES,
+        total_size_bytes: QWEN3_EMBEDDING_GGUF_BYTES,
         embedding_dimensions: Some(1024),
         embedding_compatibility: None,
         format: ModelFormat::Gguf,
@@ -64,7 +57,6 @@ const QWEN3_EMBEDDING_REPO: &str = "Qwen/Qwen3-Embedding-0.6B-GGUF";
 const QWEN3_EMBEDDING_FILE: &str = "Qwen3-Embedding-0.6B-f16.gguf";
 
 const QWEN3_EMBEDDING_GGUF_BYTES: u64 = 1_197_629_632;
-const QWEN3_EMBEDDING_TOKENIZER_BYTES: u64 = 11_423_705;
 
 /// Curated embedding entries whose training documents Matryoshka Representation
 /// Learning, i.e. whose leading coordinates are individually usable as a

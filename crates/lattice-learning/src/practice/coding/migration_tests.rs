@@ -42,7 +42,7 @@ async fn memory_pool() -> SqlitePool {
 
 async fn exec(pool: &SqlitePool, statements: &[String]) {
     for statement in statements {
-        sqlx::query(statement)
+        sqlx::query(sqlx::AssertSqlSafe(statement.as_str()))
             .execute(pool)
             .await
             .unwrap_or_else(|e| panic!("{statement}: {e}"));
@@ -50,7 +50,7 @@ async fn exec(pool: &SqlitePool, statements: &[String]) {
 }
 
 async fn count(pool: &SqlitePool, table: &str) -> i64 {
-    sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {table}")))
         .fetch_one(pool)
         .await
         .unwrap()
@@ -86,12 +86,14 @@ async fn database_before_the_migration() -> SqlitePool {
     let migrator = migrator();
     assert!(migrator.iter().any(|m| m.version == CODING_SESSIONS));
     let mut conn = pool.acquire().await.unwrap();
-    conn.ensure_migrations_table().await.unwrap();
+    conn.ensure_migrations_table("_sqlx_migrations")
+        .await
+        .unwrap();
     for migration in migrator
         .iter()
         .filter(|m| m.version < CODING_SESSIONS && !m.migration_type.is_down_migration())
     {
-        conn.apply(migration).await.unwrap();
+        conn.apply("_sqlx_migrations", migration).await.unwrap();
     }
     drop(conn);
     pool
@@ -108,7 +110,7 @@ async fn the_migration_keeps_every_existing_practical_kind_and_accepts_exercise(
         .collect::<Vec<_>>();
     exec(&pool, &kinds).await;
     assert!(
-        sqlx::query(&activity("early", "exercise"))
+        sqlx::query(sqlx::AssertSqlSafe(activity("early", "exercise")))
             .execute(&pool)
             .await
             .is_err(),
@@ -130,7 +132,7 @@ async fn the_migration_keeps_every_existing_practical_kind_and_accepts_exercise(
     }
     exec(&pool, &[activity("coding", "exercise")]).await;
     assert!(
-        sqlx::query(&activity("bogus", "not_a_kind"))
+        sqlx::query(sqlx::AssertSqlSafe(activity("bogus", "not_a_kind")))
             .execute(&pool)
             .await
             .is_err(),
@@ -179,7 +181,7 @@ async fn problem_pattern_schedules_are_accepted_beside_the_drills_and_other_mate
     let pool = database_before_the_migration().await;
     exec(&pool, &[schedule("code:python"), schedule("passage")]).await;
     assert!(
-        sqlx::query(&schedule("problem:python"))
+        sqlx::query(sqlx::AssertSqlSafe(schedule("problem:python")))
             .execute(&pool)
             .await
             .is_err(),
@@ -196,7 +198,7 @@ async fn problem_pattern_schedules_are_accepted_beside_the_drills_and_other_mate
     exec(&pool, &[schedule("problem:python")]).await;
     for refused in ["bogus", "problem:", "problem", "code:"] {
         assert!(
-            sqlx::query(&schedule(refused))
+            sqlx::query(sqlx::AssertSqlSafe(schedule(refused)))
                 .execute(&pool)
                 .await
                 .is_err(),

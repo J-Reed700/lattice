@@ -33,6 +33,9 @@ mod focus;
 // Public so the shipped-path evaluation can drive the desktop's own turn.
 pub mod headless;
 mod prior_evidence;
+pub(crate) mod replay;
+// Public so the claim-checker evaluation can build the reply it checks.
+pub mod reply_text;
 // Public so the no-tools retrieval path and the turn's tool-selection wiring can
 // reach it without this module re-exporting its whole surface.
 pub mod history_tools;
@@ -42,6 +45,7 @@ mod persistence;
 pub(crate) use persistence::index_memory_note;
 mod prompting;
 pub(crate) mod source_snapshots;
+pub(crate) mod transcript;
 // Public so the retrieval evaluation harness can reuse the pipeline's own
 // sufficiency judgement instead of reimplementing it.
 mod research_job;
@@ -75,7 +79,7 @@ use self::persistence::{
 use self::prompting::PromptMessageBuilder;
 pub use self::retrieval::RetrievalSubTimingMetrics;
 use self::retrieval::{
-    assign_citation_ids, citation_ids_by_chunk, confine_document_context, deduplicate_sources,
+    citation_ids_by_chunk, confine_document_context, deduplicate_sources,
     load_recent_document_metadata, run_retrieval_pipeline, RouterDecisionOutcome,
 };
 pub use self::source_snapshots::CapturedSourcesDto;
@@ -149,6 +153,8 @@ struct ChatTurn<'a> {
     highlight_terms: &'a [String],
     focus: &'a FocusScope,
     recorder: &'a TurnRecorder,
+    /// The conversation's scope for this turn: everything the turn shows or reads is named in it.
+    names: &'a Arc<lattice_core::application::services::model_contract::kept::TurnNames>,
 }
 
 mod dto;
@@ -167,28 +173,6 @@ use routing::*;
 use tools::*;
 use turn::run_turn;
 pub use turn::MessageAttachments;
-
-/// Runs a turn no window watches, such as a part of a journal synthesis: its
-/// stream goes nowhere and only its answer is used.
-pub(crate) async fn run_unwatched_turn(
-    container: &dyn ChatRuntime,
-    conversation_id: String,
-    message: String,
-    tool_preferences: ToolPreferences,
-) -> Result<ChatResponse> {
-    run_turn(
-        container,
-        Some(conversation_id),
-        message,
-        Some(tool_preferences),
-        None,
-        None,
-        MessageAttachments::default(),
-        None,
-        Arc::new(|_| Ok(())),
-    )
-    .await
-}
 
 fn elapsed_ms(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)

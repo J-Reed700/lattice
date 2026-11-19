@@ -12,9 +12,10 @@ use lattice_core::application::contracts::sources::SourceDto;
 use unicode_normalization::UnicodeNormalization;
 
 use super::lexical::{
-    cited_labels, lowercase_words, passage_text, prose_lines, source_index, split_sentences,
-    LexicalClaim,
+    lowercase_words, passage_text, prose_lines, source_index, split_sentences, LexicalClaim,
 };
+use super::marked;
+use crate::features::conversation::chat::reply_text::ReplyText;
 
 /// Below this a quoted stretch is more often a term than a quotation.
 const MIN_QUOTE_WORDS: usize = 5;
@@ -30,12 +31,12 @@ struct Quotation<'a> {
 
 /// The claims that quote words the passages they cite do not hold.
 pub(super) fn misquoted_claims(
-    response: &str,
+    reply: &ReplyText,
     sources: &[SourceDto],
     claims: &[LexicalClaim],
 ) -> HashSet<usize> {
     let mut misquoted = HashSet::new();
-    for line in prose_lines(response) {
+    for line in prose_lines(&marked::marked(reply)) {
         for quotation in quotations(&line) {
             let Some(passages) = cited_passages(&quotation.cited, sources) else {
                 continue;
@@ -105,12 +106,8 @@ fn markers_behind(text: &str) -> BTreeSet<u32> {
         .unwrap_or(text)
         .trim_start();
     let mut cited = BTreeSet::new();
-    while let Some((label, tail)) = rest.strip_prefix('[').and_then(|r| r.split_once(']')) {
-        let marker = cited_labels(&format!("[{label}]"));
-        if marker.is_empty() {
-            break;
-        }
-        cited.extend(marker);
+    while let Some((number, tail)) = marked::leading(rest) {
+        cited.insert(number);
         rest = tail.trim_start();
     }
     cited
@@ -119,12 +116,8 @@ fn markers_behind(text: &str) -> BTreeSet<u32> {
 fn markers_before(text: &str) -> BTreeSet<u32> {
     let mut rest = text.trim_end();
     let mut cited = BTreeSet::new();
-    while let Some((head, label)) = rest.strip_suffix(']').and_then(|r| r.rsplit_once('[')) {
-        let marker = cited_labels(&format!("[{label}]"));
-        if marker.is_empty() {
-            break;
-        }
-        cited.extend(marker);
+    while let Some((head, number)) = marked::trailing(rest) {
+        cited.insert(number);
         rest = head.trim_end();
     }
     cited
@@ -145,7 +138,8 @@ fn cited_passages(cited: &BTreeSet<u32>, sources: &[SourceDto]) -> Option<Vec<St
 /// What a quotation gives word for word, a sentence at a time, so that where
 /// it runs over a sentence's end only the sentence that is wrong is marked.
 fn quoted_sentences(text: &str) -> Vec<String> {
-    let mut parts = vec![text];
+    let text = marked::without(text);
+    let mut parts = vec![text.as_str()];
     for ellipsis in ELLIPSES {
         parts = parts
             .into_iter()

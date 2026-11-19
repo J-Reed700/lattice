@@ -7,6 +7,7 @@
 //! deterministic tests on every target, including hosts without Docker.
 
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::process::BoundCommand;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
@@ -14,7 +15,6 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt};
-use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
 mod command;
@@ -61,7 +61,7 @@ impl LearningContainerEngine {
 
     /// Build an engine command that works both from a login shell and from a
     /// desktop launch whose PATH omits common package-manager/app locations.
-    pub(crate) fn command(self) -> Command {
+    pub(crate) fn command(self) -> BoundCommand {
         let path = std::env::var_os("PATH");
         let home = engine_home_dir();
         let candidates = known_engine_locations(self, home.as_deref());
@@ -69,9 +69,7 @@ impl LearningContainerEngine {
         let executable = resolve_engine_executable(&filename, path.as_deref(), &candidates)
             .unwrap_or_else(|| unresolved_engine_path(self));
         let child_path = extended_engine_path(path.as_deref(), &candidates);
-        let mut command = Command::new(executable);
-        command.env("PATH", child_path);
-        command
+        BoundCommand::new(executable).env("PATH", child_path)
     }
 }
 

@@ -1,4 +1,5 @@
 use super::*;
+use lattice_core::shared::fs::plainly_spelled;
 
 /// Why a bundled build cannot run, at the granularity the user can act on: a
 /// missing Vulkan runtime is not fixed by reinstalling.
@@ -616,14 +617,10 @@ pub(super) fn binary_unusable_message(
     )
 }
 
-/// `tauri-plugin-shell` could not start the sidecar at all.
-pub(super) fn spawn_failure(
-    binary: SidecarBinary,
-    err: &tauri_plugin_shell::Error,
-) -> AttemptError {
+/// The sidecar could not be started at all.
+pub(super) fn spawn_failure(binary: SidecarBinary, err: &std::io::Error) -> AttemptError {
     let path = resolved_sidecar_path(binary);
-    let missing = matches!(err, tauri_plugin_shell::Error::Io(io) if io.kind() == std::io::ErrorKind::NotFound)
-        && !path.exists();
+    let missing = err.kind() == std::io::ErrorKind::NotFound && !path.exists();
     let detail = if missing {
         format!("{} does not exist", path.display())
     } else {
@@ -640,51 +637,14 @@ pub(super) fn spawn_failure(
     }
 }
 
-/// Where tauri-plugin-shell looks for a sidecar: next to the app
-/// executable, with `.exe` on Windows.
-///
-/// The result is only ever shown to somebody — it goes into the "reinstall
-/// Lattice" error text and the preflight log line — so it is deliberately
+/// Where the sidecar is installed, spelled for people: it goes into the
+/// "reinstall Lattice" error text and the preflight log line, so it is
 /// [`plainly_spelled`], never Windows' verbatim form.
 pub(super) fn resolved_sidecar_path(binary: SidecarBinary) -> PathBuf {
-    let file_name = format!(
-        "{}{}",
-        binary.label(),
-        if cfg!(windows) { ".exe" } else { "" }
-    );
-    tauri::utils::platform::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join(&file_name)))
+    binary
+        .installed_path()
         .map(plainly_spelled)
-        .unwrap_or_else(|| PathBuf::from(file_name))
-}
-
-/// A path spelled the way a person writes it, for messages and logs: Windows
-/// canonicalisation yields a verbatim `\\?\` path, which nobody should have to
-/// read and many Win32 programs reject.
-#[cfg(not(windows))]
-pub(super) fn plainly_spelled(path: PathBuf) -> PathBuf {
-    path
-}
-
-#[cfg(windows)]
-pub(super) fn plainly_spelled(path: PathBuf) -> PathBuf {
-    use std::path::{Component, Prefix};
-
-    let mut components = path.components();
-    let Some(Component::Prefix(prefix)) = components.next() else {
-        return path;
-    };
-    // Only the drive form is safe to simplify. Verbatim UNC (`\\?\UNC\…`) and
-    // device paths (`\\?\PIPE\…`) are not the same path without their prefix,
-    // so they keep it even though they read badly.
-    let Prefix::VerbatimDisk(letter) = prefix.kind() else {
-        return path;
-    };
-    // The prefix is consumed; `RootDir` is the separator we just rewrote.
-    let mut plain = PathBuf::from(format!("{}:\\", letter as char));
-    plain.extend(components.filter(|component| !matches!(component, Component::RootDir)));
-    plain
+        .unwrap_or_else(|_| PathBuf::from(binary.file_name()))
 }
 
 pub(super) fn describe_exit(code: Option<i32>, signal: Option<i32>) -> String {

@@ -86,7 +86,7 @@ impl AIModule {
         let model_catalog = model_catalog_cache.clone() as Arc<dyn ModelCatalogPort>;
 
         // Download wiring
-        let download_repository = Arc::new(SqliteDownloadRepository::new(core.db_conn().clone()));
+        let download_repository = Arc::new(SqliteDownloadRepository::new(core.database().clone()));
         let download_engine = Arc::new(HttpDownloadEngine::new()?);
         let download_manager = Arc::new(DownloadManagerService::new(
             download_repository,
@@ -201,6 +201,12 @@ impl AIModule {
         &self,
     ) -> &Arc<crate::features::conversation::handoff::HandoffsInFlight> {
         &self.conversation.handoffs_in_flight
+    }
+
+    pub(crate) fn kept_names(
+        &self,
+    ) -> &Arc<lattice_core::application::services::model_contract::kept::KeptNames> {
+        &self.conversation.kept_names
     }
 
     pub(crate) fn planner_health(

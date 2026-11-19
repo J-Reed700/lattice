@@ -2,6 +2,7 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use lattice_core::domain::entities::model_file::ModelFile;
 use lattice_core::domain::value_objects::model_status::FileStatus;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::WriteTx;
 use sqlx::SqliteConnection;
 use std::str::FromStr;
 use tracing::{debug, error, info};
@@ -24,7 +25,7 @@ struct ModelFileRow {
     updated_at: String,
 }
 
-pub async fn create(conn: &mut SqliteConnection, model_file: &ModelFile) -> Result<()> {
+pub async fn create(tx: &mut WriteTx, model_file: &ModelFile) -> Result<()> {
     let status_str = model_file.status.to_string();
     let downloaded_at_str = model_file.downloaded_at.map(|dt| dt.to_rfc3339());
     let created_at_str = model_file.created_at.to_rfc3339();
@@ -63,7 +64,7 @@ pub async fn create(conn: &mut SqliteConnection, model_file: &ModelFile) -> Resu
     .bind(&created_at_str)
     .bind(&updated_at_str)
     .bind(&downloaded_at_str)
-    .execute(conn)
+    .execute(&mut **tx)
     .await
     .map_err(|e| {
         error!(
@@ -144,11 +145,7 @@ pub async fn find_by_model_id(
     Ok(files)
 }
 
-pub async fn update_file_status(
-    conn: &mut SqliteConnection,
-    file_id: &str,
-    status: FileStatus,
-) -> Result<()> {
+pub async fn update_file_status(tx: &mut WriteTx, file_id: &str, status: FileStatus) -> Result<()> {
     let status_str = status.to_string();
 
     if status == FileStatus::Completed {
@@ -161,7 +158,7 @@ pub async fn update_file_status(
             status_str,
             file_id
         )
-        .execute(conn)
+        .execute(&mut **tx)
         .await
         .map_err(|e| {
             error!(error = %e, file_id = %file_id, "Failed to update file status to completed");
@@ -184,7 +181,7 @@ pub async fn update_file_status(
             status_str,
             file_id
         )
-        .execute(conn)
+        .execute(&mut **tx)
         .await
         .map_err(|e| {
             error!(error = %e, file_id = %file_id, "Failed to update file status");
@@ -236,7 +233,7 @@ pub async fn count_total_files(conn: &mut SqliteConnection, model_id: &str) -> R
 }
 
 pub async fn update_file_status_by_model_and_name(
-    conn: &mut SqliteConnection,
+    tx: &mut WriteTx,
     model_id: &str,
     file_name: &str,
     status: FileStatus,
@@ -257,7 +254,7 @@ pub async fn update_file_status_by_model_and_name(
             model_id,
             file_name
         )
-        .execute(conn)
+        .execute(&mut **tx)
         .await
         .map_err(|e| {
             error!(error = %e, model_id = %model_id, file_name = %file_name, "Failed to update file status to completed");
@@ -281,7 +278,7 @@ pub async fn update_file_status_by_model_and_name(
             model_id,
             file_name
         )
-        .execute(conn)
+        .execute(&mut **tx)
         .await
         .map_err(|e| {
             error!(error = %e, model_id = %model_id, file_name = %file_name, "Failed to update file status");

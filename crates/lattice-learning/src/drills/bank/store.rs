@@ -9,21 +9,18 @@ use crate::drills::spec::DrillSpec;
 use crate::persistence::{hash, now};
 use lattice_core::domain::learning::drills::{next_lessons, targets};
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::WriteTx;
 use lattice_core::shared::runtime::jobs::{JobStatus, JobStore, NewJob};
 use serde_json::json;
 use sqlx::SqliteConnection;
 
 /// Queues the drill build inside the caller's transaction; `queue_build` is the unit of work of its own.
-pub async fn queue_build_in(
-    connection: &mut SqliteConnection,
-    spec: &DrillSpec,
-    seed: &str,
-) -> Result<String> {
+pub async fn queue_build_in(tx: &mut WriteTx, spec: &DrillSpec, seed: &str) -> Result<String> {
     spec.validate()?;
     let requested = json!({"spec": spec});
     let payload_hash = hash(&requested)?;
     let admitted = JobStore::submit_in(
-        connection,
+        tx,
         &NewJob {
             kind: DRILL_BUILD.into(),
             subject_id: Some(Shelf::of(spec)?.subject()),
@@ -144,29 +141,27 @@ pub(crate) async fn next_up_in(
 
 /// `take` inside the caller's transaction: what it took and queued is the caller's to commit.
 pub(crate) async fn take_in(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     shelf: Shelf<'_>,
     lesson: Option<&str>,
 ) -> Result<Option<Taken>> {
-    let Some(mut drill) = repository::oldest_ready_on(connection, shelf, lesson).await? else {
+    let Some(mut drill) = repository::oldest_ready_on(tx, shelf, lesson).await? else {
         return Ok(None);
     };
     let at = now();
-    if !repository::mark_taken_in(connection, &drill.drill.id, at).await? {
+    if !repository::mark_taken_in(tx, &drill.drill.id, at).await? {
         return Ok(None);
     }
     drill.status = DrillStatus::Taken;
     drill.taken_at = Some(at);
-    if repository::any_ready_in(connection, shelf).await?
-        || under_way_in(connection, shelf, None).await?.is_some()
+    if repository::any_ready_in(tx, shelf).await? || under_way_in(tx, shelf, None).await?.is_some()
     {
         return Ok(Some(Taken {
             drill,
             next_build: None,
         }));
     }
-    let Some(next) = next_lesson_in(connection, shelf, drill.lesson_id.as_deref(), at).await?
-    else {
+    let Some(next) = next_lesson_in(tx, shelf, drill.lesson_id.as_deref(), at).await? else {
         return Ok(Some(Taken {
             drill,
             next_build: None,
@@ -179,7 +174,7 @@ pub(crate) async fn take_in(
         }
     }
     let spec = spec_in(
-        connection,
+        tx,
         shelf,
         next,
         drill.spec.lines,
@@ -188,7 +183,7 @@ pub(crate) async fn take_in(
         at,
     )
     .await?;
-    let next_build = queue_build_in(connection, &spec, &format!("next:{}", drill.drill.id)).await?;
+    let next_build = queue_build_in(tx, &spec, &format!("next:{}", drill.drill.id)).await?;
     Ok(Some(Taken {
         drill,
         next_build: Some(next_build),

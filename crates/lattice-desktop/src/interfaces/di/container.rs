@@ -183,8 +183,8 @@ pub struct Container {
 
     /// Tauri AppHandle, populated at app boot via
     /// `with_app_handle()`. Required by the LLM factory's sidecar
-    /// dispatch — `tauri-plugin-shell` needs it to spawn the bundled
-    /// `llama-server` child process. `None` only in test fixtures
+    /// dispatch, which registers the bundled `llama-server` child
+    /// process with the shutdown sweep. `None` only in test fixtures
     /// (MockAppContainer covers most test paths); LLM-load-time
     /// `InvalidConfig` errors fire if a real path tries to use the
     /// LLM with no handle attached.
@@ -196,6 +196,10 @@ pub struct Container {
     /// methods. The long-term cleanup is to split Container into a
     /// wiring layer + a runtime-state layer (audit P1-2).
     pub(crate) app_handle: Option<tauri::AppHandle>,
+
+    /// The readable-folder policy; same `Arc` as the one in
+    /// `ContainerSettingsSideEffects`.
+    pub(crate) allowed_roots: Arc<super::allowed_roots::AllowedRoots>,
 }
 
 impl Container {
@@ -210,7 +214,6 @@ impl Container {
     /// **Architecture**: Layer 0 (raw params) → Layer 1 (CoreModule) → Layer 2 (Features)
     pub async fn new(
         database: Database,
-        db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
         app_handle: Option<tauri::AppHandle>,
         llm_endpoint: &str,
         llm_model: &str,
@@ -270,13 +273,7 @@ impl Container {
         // CoreModule builds shared singletons (security, runtime, credentials)
         // Stack frame for this construction is freed before Layer 2 begins
         let core = Arc::new(
-            super::modules::CoreModule::new(
-                database.clone(),
-                db_conn.clone(),
-                data_dir.clone(),
-                background,
-            )
-            .await?,
+            super::modules::CoreModule::new(database.clone(), data_dir.clone(), background).await?,
         );
 
         tracing::debug!("CoreModule initialized");
@@ -312,12 +309,14 @@ impl Container {
         );
         tracing::debug!("LibraryModule initialized");
 
+        let web_archive = crate::features::web::di::build_archive()?;
         let file_ops = Arc::new(
             super::modules::FileOpsModule::new(
                 database.clone(),
                 core.clone(),
                 extraction_workers.clone(),
                 tag_service.clone(),
+                web_archive.clone(),
             )
             .await?,
         );
@@ -344,6 +343,7 @@ impl Container {
                 core.clone(),
                 embedding_runtime.clone(),
                 search.vector_search().clone(),
+                web_archive,
                 crate::features::indexing::di::IndexingShared {
                     query_cache: query_cache.clone(),
                     index_observer: summary_tier.trigger().clone(),
@@ -421,8 +421,16 @@ impl Container {
             core.background(),
         );
 
+        let allowed_roots = Arc::new(super::allowed_roots::AllowedRoots::new(
+            system.settings_repo().clone(),
+            core.database().clone(),
+            core.app_owned_roots().to_vec(),
+            Arc::clone(core.file_access_config()),
+        ));
+
         let settings_side_effects: Arc<dyn SettingsSideEffectsPort> =
             Arc::new(ContainerSettingsSideEffects {
+                allowed_roots: Arc::clone(&allowed_roots),
                 llm_instances: llm_instances.clone(),
                 function_executor: function_executor.clone(),
                 settings_repository: system.settings_repo().clone(),
@@ -496,6 +504,7 @@ impl Container {
             course_indexes: None,
             index_turns: None,
             app_handle: None,
+            allowed_roots,
         })
     }
 
@@ -531,6 +540,7 @@ impl Container {
     /// `.with_app_handle(handle)`; tests skip it.
     pub fn with_app_handle(mut self, handle: tauri::AppHandle) -> Self {
         self.vault_writer.set_app_handle(handle.clone());
+        self.allowed_roots.set_app_handle(handle.clone());
         self.web_snapshot_events.attach(handle.clone());
         // A page that refuses the HTTP client is read in a hidden window of
         // the app's own browser engine, which exists only from here on.

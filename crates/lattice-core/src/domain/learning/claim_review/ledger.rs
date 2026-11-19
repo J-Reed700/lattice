@@ -30,6 +30,17 @@ pub struct EventProvenance {
     pub checker_model: Option<String>,
 }
 
+impl EventProvenance {
+    /// The same provenance with the machine acting: what it records because
+    /// of the user's action.
+    pub fn as_machine(&self) -> Self {
+        Self {
+            actor: Actor::Machine,
+            ..self.clone()
+        }
+    }
+}
+
 /// An event as stored: its ordinal in the claim's log (0, 1, 2, ...).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordedEvent {
@@ -107,6 +118,22 @@ pub enum LedgerError {
     ResolvedWithoutSupport { claim: String },
 }
 
+/// A failed code example's next repair: its attempt and whether it is the
+/// last, which takes its sentence out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MachineRepair {
+    pub attempt: u8,
+    pub last: bool,
+}
+
+/// The repair with `left` machine attempts left.
+fn machine_repair(left: u8) -> MachineRepair {
+    MachineRepair {
+        attempt: (MACHINE_ATTEMPTS + 1).saturating_sub(left),
+        last: left == 1,
+    }
+}
+
 impl From<LedgerError> for AppError {
     fn from(error: LedgerError) -> Self {
         AppError::InvalidState(error.to_string())
@@ -178,6 +205,7 @@ impl ClaimLedgerEntry {
             decided: None,
             last_support: None,
             hinted: false,
+            code_example: None,
         };
         let mut entry = Self {
             claim_id,
@@ -347,16 +375,24 @@ impl ClaimLedgerEntry {
             .count()
     }
 
-    /// The next repair is the escalated one, the machine's last on the claim:
-    /// it takes the claim's sentence out.
-    pub fn next_repair_escalates(&self) -> bool {
-        matches!(
-            self.state(),
+    /// The machine's next repair of this claim, when it may make one.
+    pub fn next_machine_repair(&self) -> Option<MachineRepair> {
+        if !self.may_repair() {
+            return None;
+        }
+        match self.state() {
             ClaimState::Open {
-                machine_attempts_left: 1,
+                machine_attempts_left,
                 ..
-            }
-        )
+            } => Some(machine_repair(*machine_attempts_left)),
+            _ => None,
+        }
+    }
+
+    /// The run of a code example this claim stands for; `None` for a
+    /// statement.
+    pub fn code_example(&self) -> Option<&str> {
+        self.cursor().code_example.as_deref()
     }
 
     /// Research runs once per claim for its life, for the kinds new passages
@@ -484,10 +520,7 @@ impl ClaimLedgerEntry {
         match action {
             ClaimActionKind::Confirm | ClaimActionKind::ResearchWithHint => is_open(state),
             ClaimActionKind::Unconfirm => matches!(state, ClaimState::Confirmed { .. }),
-            ClaimActionKind::Edit | ClaimActionKind::Remove => !matches!(
-                state,
-                ClaimState::Removed { .. } | ClaimState::Edited { .. }
-            ),
+            ClaimActionKind::Edit | ClaimActionKind::Remove => !state.is_gone(),
             ClaimActionKind::AttachEvidence => {
                 is_open(state) || matches!(state, ClaimState::Confirmed { .. }) || self.taken_out()
             }
@@ -561,9 +594,12 @@ impl ClaimLedgerEntry {
         let at = record.provenance.at;
         match &record.event {
             ClaimEvent::Extracted { .. } => {
-                if is_gone(&next.state) {
+                if next.state.is_gone() {
                     return Err(self.refuse(&record.event));
                 }
+            }
+            ClaimEvent::CodeExample { observation } => {
+                next.code_example = Some(observation.clone())
             }
             ClaimEvent::Checked(check) => apply_check(&mut next, check, false, at),
             ClaimEvent::Researched { .. } => next.researched = true,
@@ -581,7 +617,8 @@ impl ClaimLedgerEntry {
             | ClaimEvent::Stopped { .. }
             | ClaimEvent::SentenceCut { .. }
             | ClaimEvent::TextRemoved { .. }
-            | ClaimEvent::SectionEdited { .. } => {}
+            | ClaimEvent::SectionEdited { .. }
+            | ClaimEvent::Faulted { .. } => {}
             ClaimEvent::PublishedUnverified { reason } => {
                 if !matches!(
                     next.state,
@@ -613,7 +650,7 @@ impl ClaimLedgerEntry {
                 reason,
                 cause,
             } => match cause {
-                _ if is_gone(&next.state) => return Err(self.refuse(&record.event)),
+                _ if next.state.is_gone() => return Err(self.refuse(&record.event)),
                 None => next.trust = Some(trust.as_ref().clone()),
                 Some(_) if !self.redecidable() => return Err(self.refuse(&record.event)),
                 Some(cause) => redecided(&mut next, trust, reason, cause),
@@ -723,14 +760,7 @@ impl ClaimLedgerEntry {
         // the claims that passed on it too: they are checked again on the new
         // text, with no more attempts than the claim whose repair it was
         // (claim classes design §3.2).
-        if *outcome == RepairOutcome::Rewritten
-            && matches!(
-                next.state,
-                ClaimState::ResolvedByEvidence { .. }
-                    | ClaimState::Consistent { .. }
-                    | ClaimState::GeneralKnowledge { .. }
-            )
-        {
+        if *outcome == RepairOutcome::Rewritten && next.state.is_verified() {
             next.attempts_left = next
                 .attempts_left
                 .min(MACHINE_ATTEMPTS.saturating_sub(attempt));
@@ -750,9 +780,11 @@ impl ClaimLedgerEntry {
         if !self.repair_recordable() {
             return Err(self.refuse(event));
         }
-        if attempt != (MACHINE_ATTEMPTS + 1).saturating_sub(machine_attempts_left)
-            || escalated != (machine_attempts_left == 1)
-        {
+        let given = MachineRepair {
+            attempt,
+            last: escalated,
+        };
+        if given != machine_repair(machine_attempts_left) {
             return Err(LedgerError::RepairMismatch {
                 claim: self.claim_id.0.clone(),
                 attempt,
@@ -857,14 +889,6 @@ fn is_open(state: &ClaimState) -> bool {
         state,
         ClaimState::Open { .. } | ClaimState::Unverified { .. }
     ) || state.awaits_user()
-}
-
-/// The sentence is gone: nothing to extract, check or supersede.
-fn is_gone(state: &ClaimState) -> bool {
-    matches!(
-        state,
-        ClaimState::Removed { .. } | ClaimState::Edited { .. }
-    )
 }
 
 fn is_machine_removal(record: &RecordedEvent) -> bool {

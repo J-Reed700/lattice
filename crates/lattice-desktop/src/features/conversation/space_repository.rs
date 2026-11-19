@@ -5,15 +5,13 @@
 //! services should call this repository instead of inlining sqlx queries.
 
 use chrono::Utc;
-use sqlx::SqlitePool;
 
 use crate::features::conversation::repository::space_rows::ConversationSpaceRow;
 use crate::features::conversation::space_dto::{
     ConversationSpaceDto, CreateConversationSpaceRequestDto,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::Database;
 
 /// Synthetic single-user owner. Spaces always have an "owner" membership
 /// pointing at this profile so the per-space membership table has a
@@ -22,13 +20,12 @@ pub const LOCAL_OWNER_MEMBER_ID: &str = "member_local_owner";
 
 #[derive(Debug, Clone)]
 pub struct ConversationSpaceRepository {
-    pool: SqlitePool,
+    db: Database,
 }
 
 impl ConversationSpaceRepository {
-    pub fn new(pool: impl DriverPool) -> Self {
-        let pool = pool.sqlx_pool().clone();
-        Self { pool }
+    pub fn new(db: Database) -> Self {
+        Self { db }
     }
 
     /// Create a new conversation space with the local owner as a member.
@@ -48,7 +45,7 @@ impl ConversationSpaceRepository {
         let id = format!("space_{}", uuid::Uuid::new_v4().simple());
         let now = Utc::now().to_rfc3339();
 
-        let mut tx = self.pool.begin_write().await.map_err(|e| {
+        let mut tx = self.db.begin_write().await.map_err(|e| {
             AppError::Database(format!("Failed to open tx for space create: {}", e))
         })?;
 

@@ -1,4 +1,5 @@
 use super::schema::rebuild_fts5_index;
+use lattice_core::shared::persistence::Database;
 use sqlx::sqlite::SqlitePoolOptions;
 
 #[tokio::test]
@@ -8,6 +9,7 @@ async fn a_rebuild_that_cannot_refill_the_index_leaves_it_as_it_was() {
         .connect(":memory:")
         .await
         .unwrap();
+    let db = Database::new(pool.clone());
     sqlx::raw_sql(
         "CREATE VIRTUAL TABLE documents_fts USING fts5(document_id UNINDEXED, content);
          INSERT INTO documents_fts(document_id, content) VALUES ('doc', 'kept');",
@@ -16,7 +18,7 @@ async fn a_rebuild_that_cannot_refill_the_index_leaves_it_as_it_was() {
     .await
     .unwrap();
 
-    assert!(rebuild_fts5_index(&pool).await.is_err());
+    assert!(rebuild_fts5_index(&db).await.is_err());
 
     let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents_fts")
         .fetch_one(&pool)

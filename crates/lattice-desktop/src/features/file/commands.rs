@@ -138,7 +138,7 @@ pub async fn get_indexed_folders(
 ///
 /// # Security
 ///
-/// - **DoS Prevention (CWE-770)**: Limit is capped at 10,000 to prevent excessive resource usage
+/// - **Limit**: At most `limit` activities, which must be at least 1
 /// - **SQL Injection Prevention**: Uses parameterized queries with bind
 pub async fn get_indexing_activities(
     container: State<'_, Container>,

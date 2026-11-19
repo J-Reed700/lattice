@@ -18,7 +18,7 @@ import { CLOUD_PROVIDER_NAMES, modelRefKey } from '@/utils/chatModelSelection';
 import { MIN_CONTEXT_LENGTH, TokenLimitField } from './TokenLimitField';
 import { clamp } from '../AITab/shared';
 
-const MIN_OUTPUT_TOKENS = 128;
+const MIN_OUTPUT_TOKENS = 1;
 
 type ConnectedModelRef = Extract<ModelRef, { kind: 'cloud' | 'ollama' }>;
 type Limit = keyof ModelWindowDto;
