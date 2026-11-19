@@ -290,6 +290,21 @@ class Keeps(unittest.TestCase):
     def test_a_cut_off_answer_with_an_item_still_open_leaves_every_item_cut_off(self):
         self.assertEqual(read_keeps("r1:\n- u1\n- u2", CUT_OFF_FINISH, 3, 3), [unanswered("cut_off")] * 3)
 
+    def test_lines_are_trimmed_and_ranges_read_with_white_space_only_as_rust_does(self):
+        for separator in "\x1c\x1d\x1e\x1f":
+            self.assertEqual(read_keeps(f"r1: u1\n{separator}", CUT_OFF_FINISH, 2, 2),
+                             [answered(1), unanswered("cut_off")], repr(separator))
+            self.assertEqual(read_keeps(f"r1: u1{separator}-{separator}u3", COMPLETE, 2, 3),
+                             [answered(1, 3), answered()], repr(separator))
+            self.assertIsNone(replay.pointed(f"[r1{separator}]"), repr(separator))
+            self.assertIsNone(replay.pointed(f"{separator}r1"), repr(separator))
+        self.assertEqual(read_keeps("r1: u1　- u3", COMPLETE, 2, 3), [answered(1, 2, 3), answered()])
+        self.assertEqual(replay.pointed("　[ r1 ] "), ("r", 1))
+
+    def test_white_space_is_python_s_less_the_four_information_separators(self):
+        spaces = {chr(code) for code in range(0x110000) if chr(code).isspace()}
+        self.assertEqual(set(replay.WHITE_SPACE), spaces - set("\x1c\x1d\x1e\x1f"))
+
 
 class Finish(unittest.TestCase):
     def test_finish_reasons_end_as_the_contract_reads_them(self):

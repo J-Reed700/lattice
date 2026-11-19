@@ -219,13 +219,16 @@ def sender(window):
 RANGE_SEPARATORS = ("-", "--", "–", "—", "..", "...", "…")
 ITEM, OWN = "r", "u"
 U32_MAX = 4_294_967_295
+# Unicode's White_Space, which Rust's trim and char::is_whitespace use; Python's isspace adds U+001C to U+001F.
+WHITE_SPACE = "".join(map(chr, [*range(0x09, 0x0E), 0x20, 0x85, 0xA0, 0x1680, *range(0x2000, 0x200B), 0x2028, 0x2029,
+                                0x202F, 0x205F, 0x3000]))
 
 
 def pointed(written):
     """shown.rs `Name::pointed`: a handle bare or in square brackets -> (prefix, ordinal), else None."""
-    written = written.strip()
+    written = written.strip(WHITE_SPACE)
     if len(written) >= 2 and written.startswith("[") and written.endswith("]"):
-        written = written[1:-1].strip()
+        written = written[1:-1].strip(WHITE_SPACE)
     m = re.fullmatch(r"([a-z]+)([1-9][0-9]*)", written)
     if not m or int(m.group(2)) > U32_MAX:
         return None
@@ -247,7 +250,7 @@ def range_follows(line, tokens, at):
     if at + 1 >= len(tokens):
         return False
     start, token = tokens[at]
-    between = "".join(c for c in line[start + len(token):tokens[at + 1][0]] if not c.isspace())
+    between = "".join(c for c in line[start + len(token):tokens[at + 1][0]] if c not in WHITE_SPACE)
     return between in RANGE_SEPARATORS
 
 
@@ -414,7 +417,7 @@ def read(reply, shown):
     if ended == "declined":
         return {i: ("unanswered", "declined") for i in indices}
     complete = ended == "complete"
-    lines = [line for line in (part.strip() for part in (reply.get("content") or "").split("\n")) if line]
+    lines = [line for line in (part.strip(WHITE_SPACE) for part in (reply.get("content") or "").split("\n")) if line]
     if not complete and lines:
         lines.pop()
     reader = KeepsReader({i: len(source.sentences) for i, source in shown})
