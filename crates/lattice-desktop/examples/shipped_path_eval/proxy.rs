@@ -498,6 +498,7 @@ fn relayed_head(response: &reqwest::Response) -> Vec<u8> {
 fn hop_by_hop(name: &str, named: &[&str]) -> bool {
     [
         "connection",
+        "keep-alive",
         "proxy-connection",
         "te",
         "transfer-encoding",
