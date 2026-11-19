@@ -1,8 +1,1 @@
-[
-  {
-    "id": "GHSA-fc5q-39xc-vjpf",
-    "package": "picomatch",
-    "reason": "No fixed release exists (every version up to the latest, 4.0.7, is affected); the app reaches it only through @excalidraw/excalidraw, sass and the optional @parcel/watcher, which sass uses for its command-line watch mode, and everything else that pulls it in is a build or test tool.",
-    "added": "2026-11-17"
-  }
-]
+[]
