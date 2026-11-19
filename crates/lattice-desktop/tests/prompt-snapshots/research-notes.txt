@@ -33,6 +33,41 @@ The tool results:
 [u10] Sign up for the newsletter to hear about tide tables and kiln rotas every single week.
 [u11] Sign up for the newsletter to hear about tide tables and kiln rotas every single week.
 
+=== schema ===
+{
+  "type": "object",
+  "properties": {
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "of": {
+            "type": "string",
+            "description": "One of the names the request shows, such as r1."
+          },
+          "keep": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "One of the names the request shows, such as u1."
+            }
+          }
+        },
+        "required": [
+          "of",
+          "keep"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "entries"
+  ],
+  "additionalProperties": false
+}
+
 === sent with ===
 {
   "reasoning_effort": "none",

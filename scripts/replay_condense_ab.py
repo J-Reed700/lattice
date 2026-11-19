@@ -47,9 +47,11 @@ RESULTS_CHARS = 26_000
 CONDENSE = ("Your context window is nearly full. Before you continue, choose from all the tool results you have so far "
             "the sentences that make up compact research notes. Keep every sentence with a fact, number, date, name, "
             "short quotation or URL that could matter to my question. Drop navigation text, boilerplate, repetition "
-            "and anything that does not bear on my question. Do not answer my question yet. Answer with an entries "
-            "list: each entry names a result in `of` by the handle shown beside it, and lists in `keep` the handles "
-            "of that result's sentences to keep, which may be none.")
+            "and anything that does not bear on my question. Do not answer my question yet. "
+            "Answer with one line for each result that has sentences to keep: the result's handle, a colon, "
+            "then the handle of each of those sentences, written out in full and separated by spaces. "
+            "Leave out a result with nothing to keep. If nothing is worth keeping, answer `none`. "
+            "Write nothing else.")
 # research_notes.rs NOTES_HEADER.
 NOTES_HEADER = ("Research notes so far. These condense the tool results you gathered earlier in this turn, to make room "
                 "in your context window. Every citation label in them still refers to the same source. Continue the "
