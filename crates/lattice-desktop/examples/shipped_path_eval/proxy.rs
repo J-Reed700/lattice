@@ -440,7 +440,8 @@ fn elapsed_ms(started: Instant) -> u64 {
 const BAD_GATEWAY: &str =
     "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 
-/// The server's content type, or `application/octet-stream` when it gave none.
+/// The server's content type, or `application/octet-stream` when it gave none
+/// or gave one that is not visible ASCII.
 fn content_type_of(response: &reqwest::Response) -> String {
     response
         .headers()
