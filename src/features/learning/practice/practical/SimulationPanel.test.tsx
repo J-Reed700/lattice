@@ -1,11 +1,16 @@
 import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import '@/tests/interactionDom';
+
 import { LEARNER_TEXT_MAX_CHARS } from '@/features/learning/model/learnerTextLimit';
+import { ReaderPane } from '@/features/reading/components/ReaderPane';
 import { citationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
+import { useReaderStore } from '@/features/reading/stores/readerStore';
 import type { LearningPracticalActivityDto, LearningSimulationSessionDto } from '@/lib/bindings';
 
 import { questionLabel } from './practicalWorkbenchHelpers';
@@ -13,6 +18,11 @@ import { SimulationPanel } from './SimulationPanel';
 
 const api = vi.hoisted(() => ({ startLearningSimulation: vi.fn(), sendLearningSimulationTurn: vi.fn(), finishLearningSimulation: vi.fn(), getLearningSourceVersion: vi.fn() }));
 vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: api }));
+// The docked reader's body asks the conversations store which chat it sits beside; none here.
+vi.mock('@/shared/conversations/conversationsStore', () => ({
+  useConversationsStore: (selector: (_state: unknown) => unknown) =>
+    selector({ activeConversationId: null, conversations: [], spaces: [], selectedSpaceId: null, messageVerification: new Map(), loadConversationLinkedDocuments: vi.fn() }),
+}));
 vi.mock('@/features/voice/hooks/useVoiceConversation', () => ({ useVoiceConversation: () => ({ phase: 'off', toggle: vi.fn() }) }));
 vi.mock('@/features/speech/hooks/useSpeech', () => ({ useSpeaker: () => vi.fn() }));
 vi.mock('@/components/TiptapEditor', () => ({ TiptapViewer: ({ content }: { content: string }) => <div>{content}</div> }));
@@ -27,14 +37,15 @@ const session = (overrides: Partial<LearningSimulationSessionDto> = {}): Learnin
 function renderPanel(current: LearningSimulationSessionDto | null, currentActivity: LearningPracticalActivityDto = activity) {
   const onSession = vi.fn();
   const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
-  const view = render(<SimulationPanel programId="course-1" activity={currentActivity} session={current} onSession={onSession} />, { wrapper });
+  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}><MemoryRouter>{children}</MemoryRouter></QueryClientProvider>;
+  const view = render(<><SimulationPanel programId="course-1" activity={currentActivity} session={current} onSession={onSession} /><ReaderPane rowWidth={1728} availableWidth={1468} resetKey="simulation" /></>, { wrapper });
   return { ...view, onSession };
 }
 
 beforeEach(() => {
   for (const fn of Object.values(api)) fn.mockReset();
   act(() => citationDisplayStore.getState().setVisible(true));
+  useReaderStore.setState({ session: null, resolvedLocations: new Map() });
 });
 
 describe('SimulationPanel', () => {
@@ -91,9 +102,12 @@ describe('SimulationPanel', () => {
     }));
     const turns = screen.getAllByRole('article');
     expect(turns.map((turn) => turn.querySelector('p')?.textContent)).toEqual(['Museum guide', 'Visitor', 'Coach']);
-    expect(screen.getByText('“Paint has worn away.”')).toBeInTheDocument();
+    const cited = screen.getByRole('list', { name: 'Saved sources cited' });
+    expect(within(cited).getByText('Paint has worn away.')).toBeInTheDocument();
+    expect(within(cited).getByRole('button', { name: /^Citation 1/ })).toBeInTheDocument();
     act(() => citationDisplayStore.getState().setVisible(false));
-    expect(screen.queryByText('“Paint has worn away.”')).not.toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: 'Saved sources cited' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Paint has worn away.')).not.toBeInTheDocument();
   });
 
   it('opens the exact cited source after an interview without fetching its live page', async () => {
@@ -103,11 +117,18 @@ describe('SimulationPanel', () => {
     } });
     renderPanel(session({ status: 'submitted', turns: [{ id: 'feedback', speaker: 'coach', content: 'Compare the intended effects.', citations: [{ sourceId: 'spec', versionId: 'spec-v2', quote: 'repeated effects' }] }] as never }), { ...activity, kind: 'interview', practiceMode: 'demonstrate' });
     expect(api.getLearningSourceVersion).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'View saved source' }));
-    expect(await screen.findByText('Retry semantics')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^Citation 1/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'View source' }));
+    const reader = await screen.findByRole('complementary', { name: 'Source reader' });
+    expect(await within(reader).findByRole('heading', { level: 2, name: 'Retry semantics' })).toBeInTheDocument();
     expect(api.getLearningSourceVersion).toHaveBeenCalledWith({ programId: 'course-1', sourceId: 'spec', versionId: 'spec-v2' });
-    expect(screen.getByText('https://spec.example/retries')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Page' })).not.toBeInTheDocument();
+    // The quoted words are marked inside the saved text, so the sentence is split across elements.
+    expect(await within(reader).findByText(/The captured specification explains/)).toBeInTheDocument();
+    expect(within(reader).getAllByText('repeated effects').length).toBeGreaterThan(0);
+    expect(useReaderStore.getState().session?.citations[0]?.webSnapshot?.text).toBe('The captured specification explains repeated effects.');
+    expect(useReaderStore.getState().session?.ownerKey).toBe('simulation:sim-1:feedback');
+    expect(within(reader).queryByRole('button', { name: 'Page' })).not.toBeInTheDocument();
+    expect(within(reader).queryByRole('button', { name: /snapshot/i })).not.toBeInTheDocument();
   });
 
   it('sends a reply with Cmd+Enter, clears it, and keeps it after a failure', async () => {

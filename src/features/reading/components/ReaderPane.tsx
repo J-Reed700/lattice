@@ -73,7 +73,7 @@ export function ReaderPane({ rowWidth, availableWidth, resetKey }: ReaderPanePro
   // The reader owns its response to reading mode; the shared toggle must not
   // know about one surface's state. This also handles changes from another surface.
   useEffect(() => {
-    if (!showCitations && session) close();
+    if (!showCitations && session?.citing) close();
   }, [showCitations, session, close]);
 
   useEffect(() => {
@@ -194,7 +194,7 @@ export function ReaderPane({ rowWidth, availableWidth, resetKey }: ReaderPanePro
     [source]
   );
 
-  if (!showCitations || !session || !source) return null;
+  if (!session || !source || (session.citing && !showCitations)) return null;
 
   if (!canDock) {
     return (

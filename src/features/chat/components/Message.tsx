@@ -20,8 +20,8 @@ import { useMessageEvidence } from '@/features/chat/hooks/useMessageEvidence';
 import { useRevealStreamingRef } from '@/features/chat/hooks/useRevealStreamingRef';
 import { useChatFigures } from '@/features/chat/images/useChatFigures';
 import { openInFolder, revealInFolder } from '@/features/chat/model/folderThreadHost';
-import { CitationFootnote } from '@/features/reading/components/CitationFootnote';
 import { CitationHoverCard } from '@/features/reading/components/CitationHoverCard';
+import { CitationSourcesRow } from '@/features/reading/components/CitationSourcesRow';
 import { SourceCitations } from '@/features/reading/components/SourceCitations';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import { useReaderStore } from '@/features/reading/stores/readerStore';
@@ -199,19 +199,15 @@ export const Message = memo(({
     if (!showCitations || !isAssistantWithSources || citationMap.size === 0) return null;
     const entries = Array.from(citationMap.entries()).sort(([a], [b]) => a - b);
     return (
-      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-        <span className="text-xxs text-text-muted">Sources</span>
-        {entries.map(([num, source], position) => (
-          <CitationFootnote
-            key={`cite-${num}`}
-            number={num}
-            source={source}
-            provenanceLabel={provenanceBySource.get(source.chunkId)}
-            resolvedLocation={resolvedLocations.get(source.chunkId)}
-            onViewFile={() => openCitation(position)}
-          />
-        ))}
-      </div>
+      <CitationSourcesRow
+        entries={entries.map(([num, source], position) => ({
+          number: num,
+          source,
+          provenanceLabel: provenanceBySource.get(source.chunkId),
+          resolvedLocation: resolvedLocations.get(source.chunkId),
+          onView: () => openCitation(position),
+        }))}
+      />
     );
   }, [showCitations, isAssistantWithSources, citationMap, provenanceBySource, resolvedLocations, openCitation]);
 

@@ -125,6 +125,27 @@ describe('closing the reader', () => {
     expect(screen.queryByTestId('reader-body')).not.toBeInTheDocument();
   });
 
+  it('closes a citing session when citations are hidden, and renders nothing', () => {
+    useCitationDisplayStore.setState({ visible: false });
+    render(<ReaderPane {...WIDE} />);
+    openReader();
+
+    expect(screen.queryByTestId('reader-body')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Source reader')).not.toBeInTheDocument();
+    expect(useReaderStore.getState().session).toBeNull();
+  });
+
+  it('keeps a source opened for itself open while citations are hidden', () => {
+    useCitationDisplayStore.setState({ visible: false });
+    render(<ReaderPane {...WIDE} />);
+    act(() => {
+      useReaderStore.getState().open('saved-source', [source], 0, null, { citing: false });
+    });
+
+    expect(screen.getByTestId('reader-body')).toBeInTheDocument();
+    expect(useReaderStore.getState().session?.citing).toBe(false);
+  });
+
   it('closes on Escape and hands focus back to what opened it', () => {
     render(
       <>

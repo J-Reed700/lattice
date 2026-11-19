@@ -15,7 +15,7 @@ function escapeMarkupLikeText(text: string) {
   ));
 }
 
-function tableRow(block: string) {
+function tableRow(block: string, escapeMarkup: boolean) {
   const line = block
     .split('\n')
     .map((part) => part.trim())
@@ -23,7 +23,7 @@ function tableRow(block: string) {
     .join(' ')
     .replace(/^\|\s*/, '| ')
     .replace(/\s*\|?$/, ' |');
-  return escapeMarkupLikeText(line);
+  return escapeMarkup ? escapeMarkupLikeText(line) : line;
 }
 
 function tableColumns(row: string) {
@@ -67,8 +67,17 @@ function splitBlocks(markdown: string) {
  * source HTML's visual line wrapping and emitted table cells without a GFM
  * separator row. Repair that representation for reading without changing the
  * immutable text used by evidence, search, and hashes.
+ *
+ * Text is escaped for TiptapViewer, which parses inline HTML, so `<x>` becomes
+ * `&lt;x&gt;`. A reader that draws the Markdown itself passes
+ * `escapeMarkup: false` to keep `<x>` as written.
  */
-export function formatSourceForReader(fullText: string, extractionVersion: string) {
+export function formatSourceForReader(
+  fullText: string,
+  extractionVersion: string,
+  { escapeMarkup = true }: { escapeMarkup?: boolean } = {},
+) {
+  const escape = (text: string) => (escapeMarkup ? escapeMarkupLikeText(text) : text);
   const normalized = fullText.replace(/\r\n?/g, '\n').trim();
   if (extractionVersion !== LEGACY_WEB_EXTRACTION) {
     return normalized.replace(/\n{3,}/g, '\n\n');
@@ -82,7 +91,7 @@ export function formatSourceForReader(fullText: string, extractionVersion: strin
     if (isTableRow(block)) {
       const rows: string[] = [];
       while (index < blocks.length && isTableRow(blocks[index])) {
-        rows.push(tableRow(blocks[index]));
+        rows.push(tableRow(blocks[index], escapeMarkup));
         index += 1;
       }
       const columns = Math.max(...rows.map(tableColumns));
@@ -93,9 +102,9 @@ export function formatSourceForReader(fullText: string, extractionVersion: strin
     if (isFence(block)) {
       rendered.push(block);
     } else if (/^(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s)/.test(block)) {
-      rendered.push(escapeMarkupLikeText(block.replace(/\n(?!\s*(?:[-*+]\s|\d+[.)]\s|>\s))/g, ' ')));
+      rendered.push(escape(block.replace(/\n(?!\s*(?:[-*+]\s|\d+[.)]\s|>\s))/g, ' ')));
     } else {
-      rendered.push(escapeMarkupLikeText(block.split('\n').map((line) => line.trim()).filter(Boolean).join(' ')));
+      rendered.push(escape(block.split('\n').map((line) => line.trim()).filter(Boolean).join(' ')));
     }
     index += 1;
   }

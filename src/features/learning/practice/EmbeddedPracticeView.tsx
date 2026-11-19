@@ -6,15 +6,15 @@ import {
   RubricPanel,
 } from '@/features/learning/practice/PracticeRubricPanel';
 import {
-  CitationCards,
-  ExactSourceReader,
+  PracticeCitations,
+  sourceClosedReason,
   sourceForVersion,
 } from '@/features/learning/practice/PracticeSourceRail';
 import { StatusLine } from '@/features/learning/practice/shared/StatusLine';
 import { saveStatusOf } from '@/features/learning/practice/shared/useAutosave';
 import type { usePracticeSession } from '@/features/learning/practice/usePracticeSession';
 import { HINTS } from '@/features/learning/practice/workbench/helpModes';
-import { useLearningSourceVersion, useLearningSourceWorkspace } from '@/features/learning/sources/useLearningSources';
+import { useLearningSourceWorkspace } from '@/features/learning/sources/useLearningSources';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import type { LearningLessonDto, LearningProgramDto } from '@/lib/bindings';
 
@@ -51,8 +51,6 @@ export function EmbeddedPracticeView({
     reloadAttempt,
     failure,
     conflict,
-    selectedSource,
-    setSelectedSource,
     hintUsed,
     sourceOpeningAllowed,
     startSession,
@@ -60,11 +58,6 @@ export function EmbeddedPracticeView({
     doOpenSource,
     doSubmit,
   } = sessionState;
-
-  const sourceRequest = selectedSource
-    ? { programId, sourceId: selectedSource.sourceId, versionId: selectedSource.versionId }
-    : null;
-  const sourceVersion = useLearningSourceVersion(sourceRequest);
 
   const nextHint = HINTS.slice(0, 3).find((hint) => !hintUsed.includes(hint.id));
   const saveState = saveStatusOf(autosave.state, dirty);
@@ -165,8 +158,9 @@ export function EmbeddedPracticeView({
                     <TiptapViewer content={turn.response} />
                   </div>
                   {showCitations && turn.citations.length > 0 && (
-                    <CitationCards
-                      disabled={!sourceOpeningAllowed || busy}
+                    <PracticeCitations
+                      programId={programId}
+                      disabledReason={sourceClosedReason(sourceOpeningAllowed, busy)}
                       citations={turn.citations}
                       onOpen={(citation) => {
                         const src = sourceForVersion(
@@ -174,16 +168,13 @@ export function EmbeddedPracticeView({
                           citation.sourceId,
                           citation.versionId,
                         );
-                        if (src) void doOpenSource(src, citation.versionId, saveNow);
+                        if (src) void doOpenSource(src, citation.versionId, saveNow, citation.quote);
                       }}
                     />
                   )}
                 </article>
               ))}
             </div>
-          )}
-          {showCitations && selectedSource && (
-            <ExactSourceReader query={sourceVersion} onClose={() => setSelectedSource(null)} />
           )}
           <details open={Boolean(session.result)} className="rounded-xl border border-border-default bg-surface">
             <summary className="cursor-pointer p-3 text-sm font-medium text-text-primary">

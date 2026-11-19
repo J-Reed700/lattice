@@ -294,3 +294,203 @@ describe('a page the answer cites from more than one sentence', () => {
     expect(mark?.textContent).toContain('Dwarf tomato varieties set fruit indoors');
   });
 });
+
+describe('saved Markdown text', () => {
+  const MARKDOWN = [
+    '## Heading',
+    'Paragraph right after the heading mentions beta gamma delta clearly.',
+    '',
+    '### Minor',
+    '',
+    '```ts',
+    'const a = 1;',
+    '',
+    'const b = 2;',
+    '```',
+    '',
+    '- first item',
+    '- second item',
+    '',
+    'A plain paragraph.',
+  ].join('\n');
+
+  function renderMarkdown(
+    options: { quote?: string; documentId?: string; text?: string; onActivePassageChange?: (_text: string | null) => void } = {},
+  ) {
+    const { quote, documentId = 'web-6', text = MARKDOWN, onActivePassageChange } = options;
+    const markdownSource: SourceWithMetadata = {
+      ...source,
+      documentId,
+      webSnapshot: { ...source.webSnapshot!, text },
+    };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={client}>
+        <TooltipProvider>
+          <WebArticleView
+            url={null}
+            source={markdownSource}
+            initialLocator={quote ? { text: quote } : null}
+            onActivePassageChange={onActivePassageChange}
+          />
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  it('draws headings as h4 for level 2 and under and h5 below, without their markers', () => {
+    renderMarkdown();
+
+    expect(screen.getByRole('heading', { level: 4, name: 'Heading' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 5, name: 'Minor' })).toBeInTheDocument();
+  });
+
+  it('draws fenced code as pre > code with its exact text', () => {
+    renderMarkdown();
+
+    expect(document.querySelector('pre > code')?.textContent).toBe('const a = 1;\n\nconst b = 2;');
+  });
+
+  it('draws a list as a list with its markers hidden, and paragraphs as paragraphs', () => {
+    renderMarkdown();
+
+    const items = screen.getAllByRole('listitem');
+    expect(items.map((item) => item.textContent)).toEqual(['first item', 'second item']);
+    expect(items[0]!.parentElement!.tagName).toBe('UL');
+    expect(screen.queryByText(/- first item/)).not.toBeInTheDocument();
+    expect(screen.getByText('A plain paragraph.').tagName).toBe('P');
+  });
+
+  it('draws the lead-in line before a list as a paragraph of its own', () => {
+    renderMarkdown({ text: 'Ingredients:\n- flour\n- sugar' });
+
+    expect(screen.getByText('Ingredients:').tagName).toBe('P');
+    expect(screen.getAllByRole('listitem').map((item) => item.textContent)).toEqual(['flour', 'sugar']);
+  });
+
+  it('draws inline formatting as elements without its syntax', () => {
+    renderMarkdown({
+      text: 'A **bold** word, an *em* word, `code`, ~~gone~~ and [a link](https://example.com/x "T").',
+    });
+
+    expect(screen.getByText('bold').tagName).toBe('STRONG');
+    expect(screen.getByText('em').tagName).toBe('EM');
+    expect(screen.getByText('code').tagName).toBe('CODE');
+    expect(screen.getByText('gone').tagName).toBe('DEL');
+    const link = screen.getByRole('link', { name: 'a link' });
+    expect(link).toHaveAttribute('href', 'https://example.com/x');
+    expect(document.querySelector('p.mb-4')!.textContent).toBe('A bold word, an em word, code, gone and a link.');
+  });
+
+  it('draws nested lists, ordered lists, quotes, tables and rules as elements', () => {
+    renderMarkdown({
+      text: [
+        '- one',
+        '  - nested',
+        '- two',
+        '',
+        '3. third',
+        '4. fourth',
+        '',
+        '> a quoted',
+        'line',
+        '',
+        '| Name | Count |',
+        '|:--|--:|',
+        '| apples | **3** |',
+        '',
+        '***',
+        '',
+        'After.',
+      ].join('\n'),
+    });
+
+    const outer = screen.getAllByRole('list')[0]!;
+    expect(outer.tagName).toBe('UL');
+    expect(outer.querySelector(':scope > li > ul > li')?.textContent).toBe('nested');
+    const ordered = screen.getAllByRole('list').find((list) => list.tagName === 'OL')!;
+    expect(ordered).toHaveAttribute('start', '3');
+    expect(ordered.querySelectorAll('li')).toHaveLength(2);
+    expect(document.querySelector('blockquote')?.textContent).toBe('a quoted line');
+    const table = screen.getByRole('table');
+    expect(screen.getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual(['Name', 'Count']);
+    expect(screen.getAllByRole('columnheader')[1]).toHaveClass('text-right');
+    expect(screen.getAllByRole('cell').map((cell) => cell.textContent)).toEqual(['apples', '3']);
+    expect(table.parentElement).toHaveClass('overflow-x-auto');
+    expect(document.querySelector('hr')).not.toBeNull();
+    expect(screen.getByText('After.')).toBeInTheDocument();
+  });
+
+  it('shows syntax it does not recognise as the raw text it is', () => {
+    const text = 'Refs [a][1] and [b] and <div>x</div> and 2 * 3 * 4 and snake_case_name and [c](javascript:x).';
+    renderMarkdown({ text });
+
+    expect(document.querySelector('p.mb-4')!.textContent).toBe(
+      'Refs [a][1] and [b] and <div>x</div> and 2 * 3 * 4 and snake_case_name and c.',
+    );
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+  });
+
+  it('marks one passage across bold text as a single mark with the formatting inside it', async () => {
+    renderMarkdown({
+      text: 'Intro words.\n\nThe quick **brown fox** jumps over the lazy dog today.',
+      quote: 'quick **brown fox** jumps over',
+    });
+
+    await waitFor(() => expect(document.querySelector('.source-reader-passage')).not.toBeNull());
+    const paragraph = screen.getByText('brown fox').closest('p')!;
+    const marks = paragraph.querySelectorAll('.source-reader-passage');
+    expect(marks).toHaveLength(1);
+    expect(marks[0]!.textContent).toBe('quick brown fox jumps over');
+    expect(marks[0]!.querySelector('strong')?.textContent).toBe('brown fox');
+    expect(marks[0]).toHaveClass('is-lit');
+  });
+
+  it('gives onActivePassageChange the passage as words, without the Markdown syntax', async () => {
+    const onActivePassageChange = vi.fn();
+    renderMarkdown({
+      text: 'Intro words.\n\nThe quick **brown fox** jumps over the [lazy dog](https://example.com) today.',
+      quote: 'quick **brown fox** jumps over the [lazy dog](https://example.com)',
+      onActivePassageChange,
+    });
+
+    await waitFor(() => expect(onActivePassageChange).toHaveBeenCalledWith('quick brown fox jumps over the lazy dog'));
+    expect(onActivePassageChange.mock.calls.some(([value]) => typeof value === 'string' && value.includes('*'))).toBe(false);
+  });
+
+  it('counts the words a reader sees in the meta line', () => {
+    renderMarkdown({ text: '# Title\n\nSome **bold** words [here](https://example.com).' });
+
+    // Title, Some, bold, words, here.
+    expect(screen.getByText(/5 words/)).toBeInTheDocument();
+  });
+
+  it('does not count table separators or stray punctuation as words', () => {
+    renderMarkdown({ text: '| Name | Count |\n|---|---|\n| apples | 3 |\n\nA - B' });
+
+    // Name, Count, apples, 3, A, B.
+    expect(screen.getByText(/6 words/)).toBeInTheDocument();
+  });
+
+  it('marks exactly the quoted words in a paragraph that follows a heading', async () => {
+    renderMarkdown({ quote: 'beta gamma delta' });
+
+    await waitFor(() => expect(document.querySelector('.source-reader-passage')).not.toBeNull());
+    const marks = document.querySelectorAll('.source-reader-passage');
+    expect(marks).toHaveLength(1);
+    expect(marks[0]!.textContent).toBe('beta gamma delta');
+    expect(marks[0]!.closest('p')?.textContent).toBe(
+      'Paragraph right after the heading mentions beta gamma delta clearly.',
+    );
+  });
+
+  it('labels a course source without an address "Saved source"', () => {
+    renderMarkdown({ documentId: 'course:abc:1' });
+    expect(screen.getByText('Saved source')).toBeInTheDocument();
+  });
+
+  it('labels another source without an address "Web source"', () => {
+    renderMarkdown();
+    expect(screen.getByText('Web source')).toBeInTheDocument();
+  });
+});

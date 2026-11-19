@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 
 import { SourceReaderBody } from '@/features/reading/components/SourceReaderBody';
+import { captureWebPageSnapshot } from '@/features/reading/snapshot/api';
 import { useWebPageSnapshotStore } from '@/features/reading/snapshot/webPageSnapshotStore';
 import VaultAPI from '@/lib/api';
 import type { SourceWithMetadata } from '@/types/conversation';
@@ -231,6 +232,33 @@ describe('SourceReaderBody course passages', () => {
     expect(mocks.resolveSourcePath).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Open file' })).toBeNull();
     expect(screen.queryByText(/Show in|Reveal in/)).toBeNull();
+  });
+
+  it('reads a saved web version as an article with no Page view and no live capture', async () => {
+    mocks.activeConversationId = 'conv-1';
+    renderBody(source({
+      documentId: 'course:version-1',
+      filePath: '',
+      fileName: 'Saved story',
+      mimeType: 'text/html',
+      category: 'web',
+      content: '',
+      webSnapshot: {
+        url: 'https://example.com/story',
+        title: 'Saved story',
+        text: 'The page as it was saved.',
+        fetchedAt: null,
+        truncated: false,
+      },
+    }));
+
+    const article = await screen.findByTestId('web-article');
+    expect(article.getAttribute('data-text')).toBe('The page as it was saved.');
+    expect(screen.queryByRole('tablist')).toBeNull();
+    expect(screen.queryByRole('tab', { name: 'Page' })).toBeNull();
+    expect(screen.queryByTestId('page-view')).toBeNull();
+    expect(mocks.getWebPageSnapshot).not.toHaveBeenCalled();
+    expect(captureWebPageSnapshot).not.toHaveBeenCalled();
   });
 });
 
