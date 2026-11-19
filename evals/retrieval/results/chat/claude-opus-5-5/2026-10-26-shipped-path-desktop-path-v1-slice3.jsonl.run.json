@@ -1,0 +1,271 @@
+{
+  "schema": "lattice-shipped-path-answers/1",
+  "name": "shipped-path-claude-opus-5-5",
+  "server_launch": null,
+  "answering_model": {
+    "kind": "cloud",
+    "model": "claude-opus-5-5",
+    "served_as": [
+      "claude-opus-5-5"
+    ]
+  },
+  "recipe_path": "C:/Code/lattice-wt/harness/evals/retrieval/shipped-path-recipe-claude-opus-5-5.json",
+  "recipe_sha256": "6531ea9cc54144ccfb07033e4900b9e177fd3a8d225c0366484518ab3787fc8f",
+  "recipe": {
+    "name": "shipped-path-claude-opus-5-5",
+    "corpus": "evals/retrieval/synthetic-library-v3.json",
+    "questions": "evals/retrieval/desktop-path-v1.json",
+    "embedding_gguf": "~/.cache/lattice/models/qwen3-embedding-0.6b/Qwen3-Embedding-0.6B-f16.gguf",
+    "embedding_model_id": "qwen3-embedding-0.6b",
+    "cloud": {
+      "provider": "anthropic",
+      "model": "claude-opus-5-5"
+    },
+    "index": {
+      "chunk_tokens": 800
+    },
+    "settings": {
+      "llm": {
+        "contextWindow": 32768
+      }
+    },
+    "wait": {
+      "verification_secs": 300,
+      "quiet_ms": 3000,
+      "quiet_cap_secs": 600
+    }
+  },
+  "corpus_sha256": "0c0d46835e8961519b4ebbe176c3f02fe1a16cefb9c8fe32858eb483b3013efd",
+  "questions_sha256": "353825881e897d03bd9f9c953aab828d6d53e0f01a2c3d94305c3ec98d57cb7b",
+  "questions_path": "evals/retrieval/desktop-path-v1.json",
+  "gguf_sha256": null,
+  "server": {
+    "provider": "anthropic",
+    "model": "claude-opus-5-5"
+  },
+  "thinking": "as-sent",
+  "only": [
+    "dp-multihop-garnetline-renewal",
+    "dp-paraphrase-monitor",
+    "dp-paraphrase-clock"
+  ],
+  "commit": "6a0189e36d3cc80bed073232e00898029996f4fa",
+  "dirty_files": 5,
+  "harness_sha256": {
+    "crates/lattice-desktop/examples/shipped_path_eval/main.rs": "c07f5881c060ed5852513f106c5a3c72320b77ebf380aacc3de05ca6cc61fd11",
+    "crates/lattice-desktop/examples/shipped_path_eval/app.rs": "26d24ea2e83cede459b98a898d158874c4aa53f51b65fd9e4c1ac8a14e65fad1",
+    "crates/lattice-desktop/examples/shipped_path_eval/proxy.rs": "40fec78a28c7adfa567240d398fcbfa875a2eab79d86ca5037189e57f95952c9",
+    "crates/lattice-desktop/examples/shipped_path_eval/recipe.rs": "abd216719a9be740e558a3f534507cde5e1c77b9f942844298ca91a027d69672",
+    "crates/lattice-desktop/examples/shipped_path_eval/record.rs": "dd6500140fc9b4873c7330f05871240d047ccd5f2487efeb8b796820ea2e1610",
+    "crates/lattice-desktop/src/features/conversation/chat/headless.rs": "fae2a2bec898d8ba33bc6e7c35c9bdc65c1bb9949c849dd99d8f26ed4fdbb015"
+  },
+  "settings": {
+    "indexing": {
+      "chunkSize": 800,
+      "chunkOverlap": 120,
+      "batchSize": 100,
+      "autoIndexNewFiles": true,
+      "fileTypes": [
+        "txt",
+        "md",
+        "pdf",
+        "docx"
+      ],
+      "indexedPaths": [],
+      "excludePatterns": [
+        "*.tmp",
+        "*.log",
+        "node_modules",
+        ".git"
+      ]
+    },
+    "search": {
+      "maxResults": 10,
+      "similarityThreshold": 0.699999988079071,
+      "enableReranking": false,
+      "hybridSearchAlpha": 0.5,
+      "retrievalTuning": {
+        "docShortlistCandidateMin": 48,
+        "docShortlistCandidateMax": 192,
+        "docShortlistDocMin": 10,
+        "docShortlistDocMax": 32,
+        "shortlistGateMinCandidates": 8,
+        "shortlistGateMinDocs": 4,
+        "wikiSearchMaxResults": 5,
+        "webSearchMaxResults": 5,
+        "readWebPages": true,
+        "webPageFetchTimeoutSecs": 12,
+        "deepResearchDepth": 3,
+        "deepResearchBranchQueries": 3,
+        "externalSearchMaxWikiTerms": 8,
+        "externalSearchMaxWebTerms": 10,
+        "externalSearchQueryMaxChars": 1200,
+        "rerankMaxCandidates": 48,
+        "rerankQueryMaxChars": 6000,
+        "sufficiencyMinTopScore": 0.3499999940395355,
+        "sufficiencyMinTermCoverage": 0.4000000059604645,
+        "sufficiencyRetryEnabled": true,
+        "overlapMinHitsForMultiTerm": 2,
+        "docSupportMultiHitRatioFactor": 0.3499999940395355,
+        "docSupportSingleHitRatioFactor": 0.6499999761581421,
+        "docSupportMultiHitRatioMin": 0.18000000715255737,
+        "docSupportMultiHitRatioMax": 0.4000000059604645,
+        "docSupportSingleHitRatioMin": 0.30000001192092896,
+        "docSupportSingleHitRatioMax": 0.550000011920929
+      },
+      "vectorIndexCompression": {
+        "mode": "none",
+        "dims": 256,
+        "quantization": "i8"
+      },
+      "summaryIndexEnabled": false
+    },
+    "llm": {
+      "provider": "anthropic",
+      "model": "claude-opus-5-5",
+      "temperature": 0.699999988079071,
+      "topP": 0.800000011920929,
+      "topK": 20,
+      "repeatPenalty": 1.0,
+      "presencePenalty": 1.5,
+      "answerThinking": false,
+      "thinkingOverride": "auto",
+      "thinkingSampling": {
+        "temperature": 1.0,
+        "topP": 0.949999988079071,
+        "topK": 20,
+        "presencePenalty": 1.5,
+        "repeatPenalty": 1.0
+      },
+      "maxTokens": 131072,
+      "contextWindow": 32768,
+      "localContextWindow": null,
+      "localModelConfigs": {},
+      "visionDeclarations": {},
+      "speculativeDecoding": {
+        "mode": "off"
+      },
+      "ollamaUrl": "http://localhost:11434",
+      "ollamaConfigured": false,
+      "ollamaUtilityModel": "",
+      "ollamaAuthHeaderName": "",
+      "ollamaAuthHeaderValue": "",
+      "llamaCpp": {
+        "url": "http://localhost:8080",
+        "model": "",
+        "authHeaderName": "",
+        "authHeaderValue": ""
+      },
+      "timeoutSeconds": 30,
+      "streamResponses": true,
+      "prompts": {
+        "systemPrompt": "You are Lattice, a precise research assistant. Use the user's documents when available. Cite sources using numeric brackets like [1], [2], [3]. Never fabricate document IDs.",
+        "greetingPromptTemplate": "The user greeted you: \"{question}\". Reply briefly and warmly, then offer help with documents, web search, or general questions.",
+        "ragPromptTemplate": "Answer the user's question using only the provided context. Cite every factual statement supported by the context using numeric brackets like [1], [2], [3]. If the context does not contain the answer, say that the answer is not available in the provided documents and do not guess. When the answer is unavailable, respond concisely without summarizing or citing unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, use the exact Document ID shown in the context. For long documents, read on with the offset parameter each result names.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:",
+        "noContextPromptTemplate": "The user asked: \"{question}\"\n\n{context}\n\nAnswer from general knowledge where you can, and say plainly that this answer is not backed by their own documents. If they want sourced evidence, offer a web search or adding documents to their lattice."
+      },
+      "verification": {
+        "enabled": true,
+        "temperature": 0.0,
+        "topP": 1.0,
+        "topK": 1
+      },
+      "toolOutput": {
+        "excerptChars": 4000,
+        "highlightTermsMax": 8,
+        "templates": {
+          "defaultTemplate": "Tool output:\n{json}",
+          "getDocumentTemplate": "Document ID: {document_id}\nTitle: {title}\nChunks: {chunk_count}\nExcerpt: {excerpt}{truncated}",
+          "semanticSearchTemplate": "Search results (showing {shown} of {total_found}):\n{results}"
+        }
+      },
+      "router": {
+        "enabled": false,
+        "model": "qwen3.5-4b-q4_k_m",
+        "timeoutMs": 350,
+        "maxTokens": 120,
+        "temperature": 0.10000000149011612,
+        "ambiguityThreshold": 0.6200000047683716,
+        "preferLastDocument": true,
+        "promptTemplate": "You are a routing assistant for a knowledge base chat.\nReturn ONLY valid JSON with the fields:\n- action: \"use_last_document\" | \"new_search\" | \"clarify\"\n- confidence: number from 0 to 1\n- clarify_question: string or null\n- rationale: short string\n\nUser query: {query}\nHas recent document: {has_recent_document}\nRecent document title: {recent_document_title}\nRecent document id: {recent_document_id}\n\nDecide whether the user is referring to the recent document or wants a new search. If uncertain, choose \"clarify\".\nJSON:",
+        "clarifyPromptTemplate": "Are you asking about the recent document ({recent_document_title}), or should I search for something else?"
+      },
+      "learningModel": null,
+      "verifierModel": null,
+      "utilityModel": null,
+      "externalModelDirectories": [],
+      "customTools": [],
+      "boundedConversationMemory": true
+    },
+    "ui": {
+      "theme": "system",
+      "fontSize": 14,
+      "showPreview": true,
+      "resultsPerPage": 10,
+      "enableAnimations": true
+    },
+    "sync": {
+      "syncEnabled": false,
+      "syncUrl": "",
+      "syncIntervalMinutes": 30,
+      "autoSync": false,
+      "syncOnStartup": false
+    },
+    "backup": {
+      "autoBackupEnabled": false,
+      "backupFrequency": "daily",
+      "backupRetentionDays": 30,
+      "backupPath": "",
+      "compressBackups": true
+    },
+    "privacy": {
+      "telemetryEnabled": false,
+      "crashReporting": false
+    },
+    "vault": {
+      "vaultPath": "",
+      "enabled": false,
+      "watchExternalChanges": false
+    },
+    "onboarding": {
+      "firstRunDismissed": false
+    },
+    "sourcing": {
+      "finders": {},
+      "searxngUrl": null,
+      "contact": null,
+      "archiveFallback": true,
+      "finderConcurrency": 4
+    }
+  },
+  "tool_preferences": {
+    "knowledgeBase": false,
+    "webSearch": false,
+    "deepResearchMode": false,
+    "followupMode": false,
+    "turnMode": "auto",
+    "enabledTools": [],
+    "focusDocumentIds": null,
+    "explorerFocus": null
+  },
+  "embedding": {
+    "model_id": "qwen3-embedding-0.6b",
+    "model_identity": "sha256:421a27e58d165478cc7acb984a688c2aa41404968b0203e7cd743ece44c54340",
+    "dimension": 1024,
+    "activation_ms": 15852
+  },
+  "utility_role": null,
+  "index": {
+    "documents": 405,
+    "lattice_documents": 405,
+    "chunks": 2785,
+    "duplicates": [],
+    "chunk_tokens": 800,
+    "index_ms": 117212
+  },
+  "items": 3,
+  "failed": [],
+  "started_at": "2026-10-26T06:14:24.052780600+00:00",
+  "finished_at": "2026-10-26T06:18:00.886193200+00:00",
+  "run_ms": 216833
+}
