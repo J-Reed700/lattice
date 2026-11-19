@@ -6,7 +6,7 @@
 #[path = "../examples/shipped_path_eval/proxy.rs"]
 mod proxy;
 
-use proxy::{serve, start, CallRecord, Recorder};
+use proxy::{serve, start, upstream_client, CallRecord, Recorder};
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -212,7 +212,7 @@ async fn recorded_for_an_app_that_hung_up(
     request: &str,
 ) -> Res<CallRecord> {
     let recorder = Recorder::new();
-    let client = lattice_core::shared::http::reqwest_client_builder().build()?;
+    let client = upstream_client()?;
     let app = HungUp(io::Cursor::new(request.as_bytes().to_vec()));
     let served = serve(app, &client, upstream, false, reported, None, &recorder).await;
     match recorder.since(0).as_slice() {
@@ -477,5 +477,45 @@ async fn a_redirect_reaches_the_app_as_the_server_s_answer() -> Res<()> {
     let call = calls.first().ok_or("no call was recorded")?;
     assert_eq!((status, call.status), (307, Some(307)));
     drop(held);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_refused_chat_whose_body_breaks_off_keeps_the_read_error() -> Res<()> {
+    let cut = r#"{"error""#;
+    let refusal = format!(
+        "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{cut}"
+    );
+    let recorder = Recorder::new();
+    let upstream = server(vec![Answer::Once(refusal.into_bytes())]).await?;
+    let base = start(upstream, false, None, None, Arc::clone(&recorder)).await?;
+    let (status, _, _) = exchange(&base, &chat(r#"{"model":"m","messages":[]}"#)).await?;
+    let calls = recorded(&recorder, 1).await?;
+    let call = calls.first().ok_or("no call was recorded")?;
+    assert_eq!((status, call.status), (400, Some(400)));
+    let error = call.error.as_deref().unwrap_or_default();
+    assert!(
+        !error.is_empty() && error != cut,
+        "the call's error is {error:?}, not the error from reading the body"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_refused_request_other_than_a_chat_records_its_status_and_no_error() -> Res<()> {
+    let reason = r#"{"error":"Loading model"}"#;
+    let recorder = Recorder::new();
+    let upstream = server(vec![answer(
+        "503 Service Unavailable",
+        "application/json",
+        reason,
+    )])
+    .await?;
+    let base = start(upstream, false, None, None, Arc::clone(&recorder)).await?;
+    let (status, _, body) = exchange(&base, GET_PROPS).await?;
+    let calls = recorded(&recorder, 1).await?;
+    let call = calls.first().ok_or("no call was recorded")?;
+    assert_eq!((status, body.as_slice()), (503, reason.as_bytes()));
+    assert_eq!((call.status, call.error.as_deref()), (Some(503), None));
     Ok(())
 }
