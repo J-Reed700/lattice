@@ -6,11 +6,14 @@
 #[path = "../examples/shipped_path_eval/proxy.rs"]
 mod proxy;
 
-use proxy::{start, CallRecord, Recorder};
+use proxy::{serve, start, CallRecord, Recorder};
+use std::io;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
 
 /// The proxy module's result type, as the example defines it.
@@ -21,6 +24,9 @@ const REPORTED: u64 = 16_384;
 const SERVED: u64 = 32_768;
 
 const GET_PROPS: &str = "GET /props HTTP/1.1\r\nHost: localhost\r\n\r\n";
+
+/// A `/props` answer that promises 100 body bytes and closes after 9.
+const CUT_PROPS: &str = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{\"default";
 
 /// How the scripted server answers one connection.
 enum Answer {
@@ -103,15 +109,20 @@ fn refusing_address() -> Res<(TcpSocket, SocketAddr)> {
     Ok((socket, address))
 }
 
-/// `200 OK` with this content type and body.
-fn ok(content_type: &str, body: &str) -> Answer {
+/// An answer with this status, content type and body.
+fn answer(status: &str, content_type: &str, body: &str) -> Answer {
     Answer::Once(
         format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
         )
         .into_bytes(),
     )
+}
+
+/// `200 OK` with this content type and body.
+fn ok(content_type: &str, body: &str) -> Answer {
+    answer("200 OK", content_type, body)
 }
 
 /// llama-server's `/props` for a window of `n_ctx`.
@@ -164,6 +175,56 @@ async fn recorded(recorder: &Recorder, count: usize) -> Res<Vec<CallRecord>> {
     Ok(recorder.since(0))
 }
 
+/// An app that sends its request and hangs up before the answer: every write
+/// to it fails.
+struct HungUp(io::Cursor<Vec<u8>>);
+
+impl AsyncRead for HungUp {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_read(context, buf)
+    }
+}
+
+impl AsyncWrite for HungUp {
+    fn poll_write(self: Pin<&mut Self>, _: &mut Context<'_>, _: &[u8]) -> Poll<io::Result<usize>> {
+        Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+/// The one call the proxy records when the app sends `request` and hangs up
+/// before the answer, with the server at `upstream` and `reported` as the
+/// window `/props` shows the app.
+async fn recorded_for_an_app_that_hung_up(
+    upstream: &str,
+    reported: Option<u64>,
+    request: &str,
+) -> Res<CallRecord> {
+    let recorder = Recorder::new();
+    let client = lattice_core::shared::http::reqwest_client_builder().build()?;
+    let app = HungUp(io::Cursor::new(request.as_bytes().to_vec()));
+    let served = serve(app, &client, upstream, false, reported, None, &recorder).await;
+    match recorder.since(0).as_slice() {
+        [call] => Ok(call.clone()),
+        calls => Err(format!(
+            "the proxy recorded {} calls; serve returned {served:?}",
+            calls.len()
+        )
+        .into()),
+    }
+}
+
 #[tokio::test]
 async fn the_start_check_reads_the_reported_window_and_records_no_first_byte_time() -> Res<()> {
     let recorder = Recorder::new();
@@ -205,9 +266,12 @@ async fn a_props_body_that_is_not_json_keeps_the_server_content_type() -> Res<()
 
 #[tokio::test]
 async fn a_props_body_that_breaks_off_answers_502_and_records_the_read_error() -> Res<()> {
-    let cut = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{\"default";
     let recorder = Recorder::new();
-    let upstream = server(vec![props(SERVED), Answer::Once(cut.as_bytes().to_vec())]).await?;
+    let upstream = server(vec![
+        props(SERVED),
+        Answer::Once(CUT_PROPS.as_bytes().to_vec()),
+    ])
+    .await?;
     let base = start(upstream, false, Some(REPORTED), None, Arc::clone(&recorder)).await?;
     recorded(&recorder, 1).await?;
     let (status, _, body) = exchange(&base, GET_PROPS).await?;
@@ -280,5 +344,84 @@ async fn an_app_that_hangs_up_mid_reply_still_has_its_call_recorded() -> Res<()>
         "the reply so far is recorded: {:?}",
         call.reply
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_app_that_hangs_up_before_the_props_answer_still_has_its_call_recorded() -> Res<()> {
+    let upstream = server(vec![props(SERVED)]).await?;
+    let call = recorded_for_an_app_that_hung_up(&upstream, Some(REPORTED), GET_PROPS).await?;
+    assert_eq!((call.path.as_str(), call.status), ("/props", Some(200)));
+    assert!(
+        call.error
+            .as_deref()
+            .is_some_and(|error| error.starts_with("client closed: ")),
+        "{:?}",
+        call.error
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_app_that_hangs_up_before_the_502_for_a_broken_props_body_keeps_the_read_error(
+) -> Res<()> {
+    let upstream = server(vec![Answer::Once(CUT_PROPS.as_bytes().to_vec())]).await?;
+    let call = recorded_for_an_app_that_hung_up(&upstream, Some(REPORTED), GET_PROPS).await?;
+    assert_eq!((call.path.as_str(), call.status), ("/props", Some(200)));
+    assert!(
+        call.error
+            .as_deref()
+            .is_some_and(|error| !error.is_empty() && !error.starts_with("client closed: ")),
+        "{:?}",
+        call.error
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_refused_chat_whose_app_hung_up_before_the_head_records_the_hang_up() -> Res<()> {
+    let refused = answer(
+        "400 Bad Request",
+        "application/json",
+        r#"{"error":"too long"}"#,
+    );
+    let upstream = server(vec![refused]).await?;
+    let request = chat(r#"{"model":"m","messages":[]}"#);
+    let call = recorded_for_an_app_that_hung_up(&upstream, None, &request).await?;
+    assert_eq!(
+        (call.path.as_str(), call.status),
+        ("/v1/chat/completions", Some(400))
+    );
+    assert!(
+        call.error
+            .as_deref()
+            .is_some_and(|error| error.starts_with("client closed: ")),
+        "{:?}",
+        call.error
+    );
+    assert!(call.request.is_some(), "the request is recorded");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_server_that_cannot_be_reached_for_an_app_that_hung_up_keeps_the_connection_error(
+) -> Res<()> {
+    let (held, nobody) = refusing_address()?;
+    let request = chat(r#"{"model":"m","messages":[]}"#);
+    let call =
+        recorded_for_an_app_that_hung_up(&format!("http://{nobody}"), None, &request).await?;
+    assert_eq!(
+        (call.path.as_str(), call.status),
+        ("/v1/chat/completions", None)
+    );
+    assert!(
+        call.error
+            .as_deref()
+            .is_some_and(|error| !error.is_empty() && !error.starts_with("client closed: ")),
+        "{:?}",
+        call.error
+    );
+    assert!(call.request.is_some(), "the request is recorded");
+    drop(held);
     Ok(())
 }
