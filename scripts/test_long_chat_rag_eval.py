@@ -28,10 +28,24 @@ def dataset(turns=None):
     return {"name": "t", "description": "d", "items": [{"id": "one", "tags": ["t"], "turns": turns}]}
 
 
-def turn_row(index, answer, error=None, calls=None):
-    return {"index": index, "question": "q", "answer": answer, "error": error, "answered_ms": 5,
-            "model_calls": calls if calls is not None else [{"seq": index, "purpose": "answer"}],
-            "prompt_tokens": {}}
+def text_piece(text):
+    return {"type": "text", "text": text}
+
+
+def source_piece(number):
+    return {"type": "reference", "reference": {"written": f"[s{number}]", "kind": "source", "number": number}}
+
+
+def spelled_by(pieces):
+    return "".join(piece["text"] if piece["type"] == "text" else piece["reference"]["written"] for piece in pieces)
+
+
+def turn_row(index, answer, error=None, calls=None, reply=None):
+    if reply is None:
+        reply = [] if answer is None else [text_piece(answer)]
+    return {"index": index, "question": "q", "answer": answer, "reply": reply, "error": error,
+            "answered_ms": 5, "prompt_tokens": {},
+            "model_calls": calls if calls is not None else [{"seq": index, "purpose": "answer"}]}
 
 
 def run_row(turns, error=None):
@@ -102,6 +116,24 @@ class Score(unittest.TestCase):
     def test_missing_row_is_not_reached(self):
         records = lce.score_run(dataset(), [], {})
         self.assertTrue(all(not r["reached"] and r["error"] == "no row" for r in records))
+
+    def correction(self, cited):
+        said = "There is no mention of using the prior release; instead use v5.7.3 "
+        reply = ([text_piece(said), source_piece(1), text_piece(".")] if cited
+                 else [text_piece(said + "[s1].")])
+        turns = [{"ask": "Use v5.7.3, not the prior release."},
+                 {"ask": "Which release should I use?",
+                  "probe": probe(must_mention=(("v5.7.3",),), notes="Use v5.7.3.")}]
+        row = run_row([turn_row(0, "Noted."), turn_row(1, spelled_by(reply), reply=reply)])
+        return by_turn(lce.score_run(dataset(turns), [row], {}))[2]
+
+    def test_a_correction_citing_a_source_is_not_an_abstention(self):
+        record = self.correction(cited=True)
+        self.assertIs(record["abstained"], False)
+        self.assertIs(record["passed"], True)
+
+    def test_a_mark_the_chat_did_not_resolve_is_not_a_citation(self):
+        self.assertIs(self.correction(cited=False)["abstained"], True)
 
 
 class Attribution(unittest.TestCase):
