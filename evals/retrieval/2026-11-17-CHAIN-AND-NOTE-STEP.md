@@ -257,7 +257,7 @@ main's nine turns with a call through that arithmetic at five windows:
 - **The mechanical column.** Both runs wrote their rows before #588, so their scores here come from #588 (ea1122b41):
   `shipped_path_eval --rescore` reads each saved answer with the app's `ReplyText::read`, in a conversation that named
   `[s1]` up to the turn's highest citation so far, and its scorer scores the result. No model was called. The scorer
-  on main gave the same rows 5/50 and 4/50.
+  at 616587e48 gave the same rows 5/50 and 4/50.
 
 ## Records
 
