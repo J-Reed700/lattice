@@ -10,6 +10,21 @@
  */
 
 /**
+ * Format shortcut for display
+ * Converts "Mod+K" to "⌘K" on Mac or "Ctrl+K" on Windows/Linux
+ */
+export function formatShortcut(shortcut: string, platform?: 'mac' | 'windows' | 'linux'): string {
+  const isMac = platform ? platform === 'mac' : isMacOS();
+
+  return shortcut
+    .replace(/Mod/g, isMac ? '⌘' : 'Ctrl')
+    .replace(/Shift/g, isMac ? '⇧' : 'Shift')
+    .replace(/Alt/g, isMac ? '⌥' : 'Alt')
+    .replace(/Meta/g, isMac ? '⌘' : 'Win')
+    .replace(/\+/g, isMac ? '' : '+');
+}
+
+/**
  * Get platform name
  */
 export function getPlatform(): 'mac' | 'windows' | 'linux' {
