@@ -6,7 +6,10 @@
 #[path = "../examples/shipped_path_eval/proxy.rs"]
 mod proxy;
 
-use proxy::{ask_server, serve, start, upstream_client, CallRecord, Recorder};
+use lattice::features::llm::llama_cpp::remote_client;
+use lattice_core::application::ports::llm_port::RemoteHeader;
+use parking_lot::Mutex;
+use proxy::{ask_server, serve, start, window_of, CallRecord, Recorder};
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -39,16 +42,27 @@ enum Answer {
 /// A server that answers its connections in turn with `answers`, each once
 /// it has read the request.
 async fn server(answers: Vec<Answer>) -> Res<String> {
+    Ok(heard_server(answers).await?.0)
+}
+
+/// The head of each request a scripted server read, lowercased, in order.
+type Heard = Arc<Mutex<Vec<String>>>;
+
+/// `server`, keeping the head of each request it reads.
+async fn heard_server(answers: Vec<Answer>) -> Res<(String, Heard)> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
+    let heard = Heard::default();
+    let keep = Arc::clone(&heard);
     tokio::spawn(async move {
         for answer in answers {
             let Ok((mut stream, _)) = listener.accept().await else {
                 return;
             };
-            if read_request(&mut stream).await.is_err() {
+            let Ok(head) = read_request(&mut stream).await else {
                 return;
-            }
+            };
+            keep.lock().push(head);
             match answer {
                 Answer::Once(bytes) => {
                     stream.write_all(&bytes).await.ok();
@@ -63,12 +77,12 @@ async fn server(answers: Vec<Answer>) -> Res<String> {
             }
         }
     });
-    Ok(format!("http://{address}"))
+    Ok((format!("http://{address}"), heard))
 }
 
 /// Reads one request: its head, then as many body bytes as its
-/// Content-Length gives.
-async fn read_request(stream: &mut TcpStream) -> Res<()> {
+/// Content-Length gives. Returns the head, lowercased.
+async fn read_request(stream: &mut TcpStream) -> Res<String> {
     let mut bytes = Vec::new();
     let end = loop {
         if let Some(at) = find(&bytes, b"\r\n\r\n") {
@@ -89,7 +103,7 @@ async fn read_request(stream: &mut TcpStream) -> Res<()> {
             return Err("the request ended inside its body".into());
         }
     }
-    Ok(())
+    Ok(head)
 }
 
 /// Where `needle` first starts in `bytes`.
@@ -139,6 +153,14 @@ fn chat(body: &str) -> String {
     )
 }
 
+/// The header a remote server asks for, as a run gives it.
+fn run_key() -> RemoteHeader {
+    RemoteHeader {
+        name: "X-Run-Key".to_owned(),
+        value: "k".to_owned(),
+    }
+}
+
 /// Sends `request` to the proxy at `base` and reads its whole answer: the
 /// status, the head's other lines, the body.
 async fn exchange(base: &str, request: &str) -> Res<(u16, Vec<String>, Vec<u8>)> {
@@ -157,6 +179,15 @@ async fn exchange(base: &str, request: &str) -> Res<(u16, Vec<String>, Vec<u8>)>
         .parse::<u16>()?;
     let body = answer.get(end + 4..).unwrap_or_default().to_vec();
     Ok((status, lines.collect(), body))
+}
+
+/// The lines of `head` that are `name`'s, lowercased.
+fn lines_of(head: &[String], name: &str) -> Vec<String> {
+    let prefix = format!("{}:", name.to_ascii_lowercase());
+    head.iter()
+        .map(|line| line.to_ascii_lowercase())
+        .filter(|line| line.starts_with(&prefix))
+        .collect()
 }
 
 /// The proxy's calls once it has recorded `count`. It records a call when
@@ -212,9 +243,9 @@ async fn recorded_for_an_app_that_hung_up(
     request: &str,
 ) -> Res<CallRecord> {
     let recorder = Recorder::new();
-    let client = upstream_client()?;
+    let client = remote_client(None)?;
     let app = HungUp(io::Cursor::new(request.as_bytes().to_vec()));
-    let served = serve(app, &client, upstream, false, reported, None, &recorder).await;
+    let served = serve(app, &client, upstream, false, reported, &recorder).await;
     match recorder.since(0).as_slice() {
         [call] => Ok(call.clone()),
         calls => Err(format!(
@@ -472,10 +503,14 @@ async fn a_redirect_reaches_the_app_as_the_server_s_answer() -> Res<()> {
     let recorder = Recorder::new();
     let upstream = server(vec![Answer::Once(moved.into_bytes())]).await?;
     let base = start(upstream, false, None, None, Arc::clone(&recorder)).await?;
-    let (status, _, _) = exchange(&base, GET_PROPS).await?;
+    let (status, head, _) = exchange(&base, GET_PROPS).await?;
     let calls = recorded(&recorder, 1).await?;
     let call = calls.first().ok_or("no call was recorded")?;
     assert_eq!((status, call.status), (307, Some(307)));
+    assert_eq!(
+        lines_of(&head, "location"),
+        [format!("location: http://{nobody}/props")]
+    );
     drop(held);
     Ok(())
 }
@@ -533,5 +568,119 @@ async fn asking_the_server_follows_no_redirect_and_names_the_status() -> Res<()>
         Err("/props answered 302 Found".to_owned())
     );
     drop(held);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_proxy_sends_the_server_its_header() -> Res<()> {
+    let recorder = Recorder::new();
+    let (upstream, heard) = heard_server(vec![ok("application/json", "{}")]).await?;
+    let base = start(
+        upstream,
+        false,
+        None,
+        Some(run_key()),
+        Arc::clone(&recorder),
+    )
+    .await?;
+    exchange(&base, GET_PROPS).await?;
+    let heads = heard.lock().clone();
+    assert!(
+        heads
+            .first()
+            .is_some_and(|head| head.lines().any(|line| line == "x-run-key: k")),
+        "{heads:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn asking_the_server_sends_it_its_header() -> Res<()> {
+    let (upstream, heard) = heard_server(vec![ok("application/json", "{}")]).await?;
+    ask_server(
+        &upstream,
+        reqwest::Method::GET,
+        "/props",
+        Some(&run_key()),
+        None,
+    )
+    .await?;
+    let heads = heard.lock().clone();
+    assert!(
+        heads
+            .first()
+            .is_some_and(|head| head.lines().any(|line| line == "x-run-key: k")),
+        "{heads:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_app_gets_the_server_s_headers_but_not_its_connection_s() -> Res<()> {
+    let reason = r#"{"error":"busy"}"#;
+    let busy = format!(
+        "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nRetry-After: 7\r\nX-Hop: 1\r\nConnection: close, X-Hop\r\nContent-Length: {}\r\n\r\n{reason}",
+        reason.len()
+    );
+    let recorder = Recorder::new();
+    let upstream = server(vec![Answer::Once(busy.into_bytes())]).await?;
+    let base = start(upstream, false, None, None, Arc::clone(&recorder)).await?;
+    let (status, head, body) = exchange(&base, &chat(r#"{"model":"m","messages":[]}"#)).await?;
+    assert_eq!((status, body.as_slice()), (503, reason.as_bytes()));
+    assert_eq!(lines_of(&head, "retry-after"), ["retry-after: 7"]);
+    assert_eq!(
+        lines_of(&head, "content-type"),
+        ["content-type: application/json"]
+    );
+    assert_eq!(lines_of(&head, "x-hop"), Vec::<String>::new());
+    assert_eq!(lines_of(&head, "content-length"), Vec::<String>::new());
+    assert_eq!(lines_of(&head, "connection"), ["connection: close"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_reported_window_keeps_the_server_s_headers_but_not_its_connection_s() -> Res<()> {
+    let window = serde_json::json!({"default_generation_settings": {"n_ctx": SERVED}}).to_string();
+    let served = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nServer: llama.cpp\r\nX-Hop: 1\r\nConnection: close, X-Hop\r\nContent-Length: {}\r\n\r\n{window}",
+        window.len()
+    );
+    let recorder = Recorder::new();
+    let upstream = server(vec![props(SERVED), Answer::Once(served.into_bytes())]).await?;
+    let base = start(upstream, false, Some(REPORTED), None, Arc::clone(&recorder)).await?;
+    let (status, head, body) = exchange(&base, GET_PROPS).await?;
+    let shown: serde_json::Value = serde_json::from_slice(&body)?;
+    assert_eq!((status, window_of(&shown)), (200, Some(REPORTED)));
+    assert_eq!(
+        lines_of(&head, "content-type"),
+        ["content-type: application/json; charset=utf-8"]
+    );
+    assert_eq!(lines_of(&head, "server"), ["server: llama.cpp"]);
+    assert_eq!(lines_of(&head, "x-hop"), Vec::<String>::new());
+    assert_eq!(
+        lines_of(&head, "content-length"),
+        [format!("content-length: {}", body.len())]
+    );
+    assert_eq!(lines_of(&head, "connection"), ["connection: close"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_server_gets_the_app_s_headers_but_not_its_connection_s() -> Res<()> {
+    let recorder = Recorder::new();
+    let (upstream, heard) = heard_server(vec![ok("application/json", "{}")]).await?;
+    let base = start(upstream, false, None, None, Arc::clone(&recorder)).await?;
+    let request = "GET /props HTTP/1.1\r\nHost: localhost\r\nConnection: close, X-Hop\r\nX-Hop: 1\r\nKeep-Alive: timeout=5\r\nX-End: 2\r\n\r\n";
+    exchange(&base, request).await?;
+    let heads = heard.lock().clone();
+    let head: Vec<String> = heads
+        .first()
+        .ok_or("the server heard no request")?
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(lines_of(&head, "x-end"), ["x-end: 2"]);
+    assert_eq!(lines_of(&head, "x-hop"), Vec::<String>::new());
+    assert_eq!(lines_of(&head, "keep-alive"), Vec::<String>::new());
     Ok(())
 }

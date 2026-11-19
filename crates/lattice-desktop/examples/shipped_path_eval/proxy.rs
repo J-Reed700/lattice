@@ -13,6 +13,7 @@
 
 use crate::Res;
 use futures::StreamExt;
+use lattice::features::llm::llama_cpp::remote_client;
 use lattice_core::application::ports::llm_port::RemoteHeader;
 use lattice_core::shared::error::WithCauses;
 use parking_lot::Mutex;
@@ -126,17 +127,11 @@ pub fn server_auth() -> Option<RemoteHeader> {
     Some(RemoteHeader { name, value })
 }
 
-/// The client the proxy forwards with, which follows no redirect.
-pub fn upstream_client() -> Res<reqwest::Client> {
-    let client = lattice_core::shared::http::reqwest_client_builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()?;
-    Ok(client)
-}
-
 /// Sends one of the eval's own requests, not the app's, to `base` and reads
 /// its JSON answer: a request to the run's server, such as which model it
-/// serves, or the proxy's check of the window it reports.
+/// serves, or the proxy's check of the window it reports. It uses the client
+/// the proxy forwards with, and fails naming the status of an answer that is
+/// not a success.
 pub async fn ask_server(
     base: &str,
     method: reqwest::Method,
@@ -144,20 +139,21 @@ pub async fn ask_server(
     auth: Option<&RemoteHeader>,
     body: Option<&Value>,
 ) -> Res<Value> {
-    let mut request = lattice_core::shared::http::reqwest_client_builder()
-        .build()?
+    let mut request = remote_client(auth.cloned())?
         .request(method, format!("{}{path}", base.trim_end_matches('/')));
-    if let Some(auth) = auth {
-        request = request.header(auth.name.as_str(), auth.value.as_str());
-    }
     if let Some(body) = body {
         request = request.json(body);
     }
-    Ok(request.send().await?.error_for_status()?.json().await?)
+    let response = request.send().await?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("{path} answered {status}").into());
+    }
+    Ok(response.json().await?)
 }
 
 /// Starts the proxy on a free loopback port and returns its base URL. `auth`
-/// is added to every request it forwards.
+/// goes with every request it forwards.
 pub async fn start(
     upstream: String,
     thinking_off: bool,
@@ -167,7 +163,7 @@ pub async fn start(
 ) -> Res<String> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
-    let client = upstream_client()?;
+    let client = remote_client(auth)?;
     let upstream = upstream.trim_end_matches('/').to_owned();
     tokio::spawn(async move {
         loop {
@@ -176,7 +172,6 @@ pub async fn start(
             };
             let client = client.clone();
             let upstream = upstream.clone();
-            let auth = auth.clone();
             let recorder = Arc::clone(&recorder);
             tokio::spawn(async move {
                 recorder.in_flight.fetch_add(1, Ordering::SeqCst);
@@ -187,7 +182,6 @@ pub async fn start(
                     &upstream,
                     thinking_off,
                     reported_ctx,
-                    auth.as_ref(),
                     &recorder,
                 )
                 .await
@@ -304,7 +298,6 @@ pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
     upstream: &str,
     thinking_off: bool,
     reported_ctx: Option<u64>,
-    auth: Option<&RemoteHeader>,
     recorder: &Recorder,
 ) -> Res<()> {
     let mut stream = BufReader::new(stream);
@@ -343,9 +336,6 @@ pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
         if !skip {
             forward = forward.header(name.as_str(), value.as_str());
         }
-    }
-    if let Some(auth) = auth {
-        forward = forward.header(auth.name.as_str(), auth.value.as_str());
     }
     let mut record = CallRecord {
         seq: 0,
