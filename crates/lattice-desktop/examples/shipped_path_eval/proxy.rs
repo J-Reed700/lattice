@@ -36,7 +36,8 @@ pub struct CallRecord {
     pub duration_ms: u64,
     /// Until the first body byte came back: prompt processing plus queueing.
     pub first_byte_ms: Option<u64>,
-    /// The status the server answered with, or `None` if it never answered.
+    /// The status the server answered with, or `None` if sending the request
+    /// failed.
     pub status: Option<u16>,
     /// The chat request exactly as forwarded (after any thinking switch).
     #[serde(skip_serializing_if = "Option::is_none")]
