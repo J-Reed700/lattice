@@ -269,11 +269,12 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
         }
     }
 
+    let reported_ctx = recipe.reported_ctx()?;
+
     // What answers, recorded with the run so a result is never read against
     // another model's: local weights by their hash and the server's own
     // report, a cloud model by provider and the id requested (the id each
     // reply was served under is kept per call, in the calls file).
-    let reported_ctx = recipe.reported_ctx()?;
     let (gguf_sha256, server, upstream, base_url_variable) = match recipe.answerer()? {
         recipe::Answerer::Server(server) => {
             let gguf_sha256 = match (&server.gguf, &server.gguf_sha256) {
