@@ -273,6 +273,7 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
     // another model's: local weights by their hash and the server's own
     // report, a cloud model by provider and the id requested (the id each
     // reply was served under is kept per call, in the calls file).
+    let reported_ctx = recipe.reported_ctx()?;
     let (gguf_sha256, server, upstream, base_url_variable) = match recipe.answerer()? {
         recipe::Answerer::Server(server) => {
             let gguf_sha256 = match (&server.gguf, &server.gguf_sha256) {
@@ -290,10 +291,9 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
                 (None, None) => None,
                 _ => return Err("a recipe gives a server's gguf and gguf_sha256 together".into()),
             };
-            let reported = recipe.reported_ctx()?;
             let mut probe = probe_server(server).await?;
             if let Some(object) = probe.as_object_mut() {
-                object.insert("reported_n_ctx".into(), json!(reported));
+                object.insert("reported_n_ctx".into(), json!(reported_ctx));
             }
             (gguf_sha256, probe, server.url.clone(), None)
         }
@@ -308,7 +308,6 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
     // A cloud provider's key is the desktop's own; only a llama-server's
     // header is the proxy's to add.
     let auth = recipe.server.as_ref().and_then(|_| proxy::server_auth());
-    let reported_ctx = recipe.reported_ctx()?;
     let proxy_url = proxy::start(
         upstream,
         recipe.thinking_off()?,
