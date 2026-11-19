@@ -69,23 +69,23 @@ impl Database {
     /// reads this database, so writers carry on meanwhile.
     pub async fn vacuum_into(&self, destination: &str) -> Result<(), PersistenceError> {
         let mut connection = self.reader_pool.acquire().await?;
-        if is_query_only(&mut connection).await? {
+        let mut conn = if is_query_only(&mut connection).await? {
             // Detach before disabling query_only so task cancellation mid-VACUUM
             // can never return a writable connection to the read-only pool.
             let mut detached = connection.detach();
             disable_query_only(&mut detached).await?;
-            let result = sqlx::query("VACUUM INTO ?")
-                .bind(destination)
-                .execute(&mut detached)
-                .await;
-            let _ = sqlx::Connection::close(detached).await;
-            result?;
-            return Ok(());
-        }
-        sqlx::query("VACUUM INTO ?")
+            VacuumConn::Detached(detached)
+        } else {
+            VacuumConn::Pooled(connection)
+        };
+        let result = sqlx::query("VACUUM INTO ?")
             .bind(destination)
-            .execute(&mut *connection)
-            .await?;
+            .execute(conn.as_mut())
+            .await;
+        if let VacuumConn::Detached(detached) = conn {
+            let _ = sqlx::Connection::close(detached).await;
+        }
+        result?;
         Ok(())
     }
 
@@ -121,5 +121,19 @@ impl Database {
     /// Connections the pool(s) hold open, for shutdown diagnostics.
     pub fn open_connections(&self) -> u32 {
         self.reader_pool.size() + self.writer_pool.as_ref().map_or(0, SqlitePool::size)
+    }
+}
+
+enum VacuumConn {
+    Pooled(sqlx::pool::PoolConnection<sqlx::Sqlite>),
+    Detached(sqlx::SqliteConnection),
+}
+
+impl VacuumConn {
+    fn as_mut(&mut self) -> &mut sqlx::SqliteConnection {
+        match self {
+            Self::Pooled(conn) => conn,
+            Self::Detached(conn) => conn,
+        }
     }
 }

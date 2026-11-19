@@ -254,7 +254,8 @@ impl CourseIndexes {
         if self
             .background
             .spawn(async move {
-                if let Some((closing, reg)) = task_state.lock().take() {
+                let taken = task_state.lock().take();
+                if let Some((closing, reg)) = taken {
                     let _reg = reg;
                     closing.store.close().await;
                     drop(closing);
@@ -264,7 +265,8 @@ impl CourseIndexes {
         {
             return;
         }
-        if let Some((closing, reg)) = close_state.lock().take() {
+        let taken = close_state.lock().take();
+        if let Some((closing, reg)) = taken {
             handle.spawn(async move {
                 let _reg = reg;
                 closing.store.close().await;
