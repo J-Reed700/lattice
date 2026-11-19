@@ -13,6 +13,7 @@
 
 use crate::Res;
 use futures::StreamExt;
+use lattice_core::application::ports::llm_port::RemoteHeader;
 use lattice_core::shared::error::WithCauses;
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -119,10 +120,10 @@ impl Recorder {
 
 /// The header a remote llama-server asks for, from `LLAMA_AUTH_HEADER_NAME`
 /// and `LLAMA_AUTH_HEADER_VALUE`. It goes upstream only and is never recorded.
-pub fn server_auth() -> Option<(String, String)> {
+pub fn server_auth() -> Option<RemoteHeader> {
     let name = std::env::var("LLAMA_AUTH_HEADER_NAME").ok()?;
     let value = std::env::var("LLAMA_AUTH_HEADER_VALUE").ok()?;
-    Some((name, value))
+    Some(RemoteHeader { name, value })
 }
 
 /// The client the proxy forwards with, which follows no redirect.
@@ -133,13 +134,35 @@ pub fn upstream_client() -> Res<reqwest::Client> {
     Ok(client)
 }
 
+/// Sends one of the eval's own requests, not the app's, to `base` and reads
+/// its JSON answer: a request to the run's server, such as which model it
+/// serves, or the proxy's check of the window it reports.
+pub async fn ask_server(
+    base: &str,
+    method: reqwest::Method,
+    path: &str,
+    auth: Option<&RemoteHeader>,
+    body: Option<&Value>,
+) -> Res<Value> {
+    let mut request = lattice_core::shared::http::reqwest_client_builder()
+        .build()?
+        .request(method, format!("{}{path}", base.trim_end_matches('/')));
+    if let Some(auth) = auth {
+        request = request.header(auth.name.as_str(), auth.value.as_str());
+    }
+    if let Some(body) = body {
+        request = request.json(body);
+    }
+    Ok(request.send().await?.error_for_status()?.json().await?)
+}
+
 /// Starts the proxy on a free loopback port and returns its base URL. `auth`
 /// is added to every request it forwards.
 pub async fn start(
     upstream: String,
     thinking_off: bool,
     reported_ctx: Option<u64>,
-    auth: Option<(String, String)>,
+    auth: Option<RemoteHeader>,
     recorder: Arc<Recorder>,
 ) -> Res<String> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
@@ -178,18 +201,8 @@ pub async fn start(
     });
     let base = format!("http://{address}");
     if let Some(n) = reported_ctx {
-        let props: Value = lattice_core::shared::http::reqwest_client_builder()
-            .build()?
-            .get(format!("{base}/props"))
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<Value>()
-            .await?;
-        let seen = props
-            .pointer("/default_generation_settings/n_ctx")
-            .or_else(|| props.get("n_ctx"))
-            .and_then(Value::as_u64);
+        let props = ask_server(&base, reqwest::Method::GET, "/props", None, None).await?;
+        let seen = window_of(&props);
         if seen != Some(n) {
             return Err(format!(
                 "the proxy reports n_ctx {seen:?}; the recipe asks it to report {n}"
@@ -275,6 +288,14 @@ pub fn report_window(props: &mut Value, window: u64) {
     }
 }
 
+/// The window `/props` reports, wherever the server puts it.
+pub fn window_of(props: &Value) -> Option<u64> {
+    props
+        .pointer("/default_generation_settings/n_ctx")
+        .or_else(|| props.get("n_ctx"))
+        .and_then(Value::as_u64)
+}
+
 /// Answers one request from the app on `stream` and records the call, or does
 /// neither if reading or parsing the request fails.
 pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
@@ -283,7 +304,7 @@ pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
     upstream: &str,
     thinking_off: bool,
     reported_ctx: Option<u64>,
-    auth: Option<&(String, String)>,
+    auth: Option<&RemoteHeader>,
     recorder: &Recorder,
 ) -> Res<()> {
     let mut stream = BufReader::new(stream);
@@ -323,8 +344,8 @@ pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
             forward = forward.header(name.as_str(), value.as_str());
         }
     }
-    if let Some((name, value)) = auth {
-        forward = forward.header(name.as_str(), value.as_str());
+    if let Some(auth) = auth {
+        forward = forward.header(auth.name.as_str(), auth.value.as_str());
     }
     let mut record = CallRecord {
         seq: 0,

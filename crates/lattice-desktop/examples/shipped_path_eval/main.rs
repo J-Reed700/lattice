@@ -212,38 +212,6 @@ fn git(args: &[&str]) -> Option<String> {
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
-/// The server must be the one the recipe describes: a different window or
-/// slot count changes the turn budget and the cache behaviour under test.
-async fn probe_server(server: &recipe::Server) -> Res<Value> {
-    let url = server.url.trim_end_matches('/');
-    let mut probe = lattice_core::shared::http::reqwest_client_builder()
-        .build()?
-        .get(format!("{url}/props"));
-    if let Some((name, value)) = proxy::server_auth() {
-        probe = probe.header(name, value);
-    }
-    let props: Value = probe.send().await?.error_for_status()?.json().await?;
-    let n_ctx = props
-        .pointer("/default_generation_settings/n_ctx")
-        .or_else(|| props.get("n_ctx"))
-        .and_then(Value::as_u64);
-    let slots = props.get("total_slots").and_then(Value::as_u64);
-    if n_ctx != Some(server.expected_ctx) || slots != Some(server.expected_slots) {
-        return Err(format!(
-            "server reports n_ctx {n_ctx:?} and {slots:?} slots; the recipe expects {} and {}",
-            server.expected_ctx, server.expected_slots
-        )
-        .into());
-    }
-    Ok(json!({
-        "n_ctx": n_ctx,
-        "total_slots": slots,
-        "model_path": props.get("model_path"),
-        "build_info": props.get("build_info"),
-        "modalities": props.get("modalities"),
-    }))
-}
-
 async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
     let root = repo_root();
     let recipe = recipe::Recipe::load(&args.recipe)?;
@@ -270,6 +238,9 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
     }
 
     let reported_ctx = recipe.reported_ctx()?;
+    // A cloud provider's key is the desktop's own; only a llama-server's
+    // header is the proxy's to add.
+    let auth = recipe.server.as_ref().and_then(|_| proxy::server_auth());
 
     // What answers, recorded with the run so a result is never read against
     // another model's: local weights by their hash and the server's own
@@ -292,7 +263,7 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
                 (None, None) => None,
                 _ => return Err("a recipe gives a server's gguf and gguf_sha256 together".into()),
             };
-            let mut probe = probe_server(server).await?;
+            let mut probe = server.probe(auth.as_ref()).await?;
             if let Some(object) = probe.as_object_mut() {
                 object.insert("reported_n_ctx".into(), json!(reported_ctx));
             }
@@ -306,9 +277,6 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
     };
 
     let recorder = proxy::Recorder::new();
-    // A cloud provider's key is the desktop's own; only a llama-server's
-    // header is the proxy's to add.
-    let auth = recipe.server.as_ref().and_then(|_| proxy::server_auth());
     let proxy_url = proxy::start(
         upstream,
         recipe.thinking_off()?,
