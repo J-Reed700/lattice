@@ -488,9 +488,6 @@ fn relayed_head(response: &reqwest::Response) -> Vec<u8> {
             head.extend_from_slice(b"\r\n");
         }
     }
-    if !headers.contains_key(reqwest::header::CONTENT_TYPE) {
-        head.extend_from_slice(b"content-type: application/octet-stream\r\n");
-    }
     head
 }
 
