@@ -275,8 +275,8 @@ pub fn report_window(props: &mut Value, window: u64) {
     }
 }
 
-/// Answers one request from the app on `stream`, and records the call unless
-/// the request could not be read or parsed.
+/// Answers one request from the app on `stream` and records the call, or does
+/// neither if reading or parsing the request fails.
 pub async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
     stream: S,
     client: &reqwest::Client,
