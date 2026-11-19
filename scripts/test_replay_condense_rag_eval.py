@@ -2,6 +2,7 @@
 import json
 import re
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -314,6 +315,12 @@ class Keeps(unittest.TestCase):
             self.assertEqual(read_keeps(f"r1: u1-{end}\nr2: u1", COMPLETE, 3, 4),
                              [unanswered("unplaced"), answered(1), answered()], f"{len(end)} digits")
         self.assertEqual(read_keeps("r1: u1-" + "0" * 5000 + "3", COMPLETE, 2, 4), [answered(1, 2, 3), answered()])
+
+    def test_says_none_reads_a_long_run_of_punctuation_in_linear_time(self):
+        line = "r1: u1" + " -" * 32_000 + " u2"
+        started = time.perf_counter()
+        self.assertFalse(replay.says_none(line))
+        self.assertLess(time.perf_counter() - started, 2.0)
 
 
 class Finish(unittest.TestCase):
