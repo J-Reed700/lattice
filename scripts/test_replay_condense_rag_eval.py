@@ -298,8 +298,8 @@ class Keeps(unittest.TestCase):
                              [answered(1, 3), answered()], repr(separator))
             self.assertIsNone(replay.pointed(f"[r1{separator}]"), repr(separator))
             self.assertIsNone(replay.pointed(f"{separator}r1"), repr(separator))
-        self.assertEqual(read_keeps("r1: u1　- u3", COMPLETE, 2, 3), [answered(1, 2, 3), answered()])
-        self.assertEqual(replay.pointed("　[ r1 ] "), ("r", 1))
+        self.assertEqual(read_keeps("r1: u1\u3000-\u2028u3", COMPLETE, 2, 3), [answered(1, 2, 3), answered()])
+        self.assertEqual(replay.pointed("\u3000[ r1 ]\u2029"), ("r", 1))
 
     def test_white_space_is_python_s_less_the_four_information_separators(self):
         spaces = {chr(code) for code in range(0x110000) if chr(code).isspace()}
