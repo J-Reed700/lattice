@@ -7,10 +7,11 @@
 mod proxy;
 
 use proxy::{start, CallRecord, Recorder};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::{TcpListener, TcpSocket, TcpStream};
 
 /// The proxy module's result type, as the example defines it.
 type Res<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -90,6 +91,16 @@ fn find(bytes: &[u8], needle: &[u8]) -> Option<usize> {
     bytes
         .windows(needle.len())
         .position(|window| window == needle)
+}
+
+/// A loopback address where nothing listens, with the socket that holds its
+/// port: until the socket is dropped, connections to the address are refused
+/// and the port stays taken.
+fn refusing_address() -> Res<(TcpSocket, SocketAddr)> {
+    let socket = TcpSocket::new_v4()?;
+    socket.bind(SocketAddr::from(([127, 0, 0, 1], 0)))?;
+    let address = socket.local_addr()?;
+    Ok((socket, address))
 }
 
 /// `200 OK` with this content type and body.
@@ -210,7 +221,7 @@ async fn a_props_body_that_breaks_off_answers_502_and_records_the_read_error() -
 
 #[tokio::test]
 async fn a_server_that_cannot_be_reached_answers_502_and_records_the_request() -> Res<()> {
-    let nobody = TcpListener::bind("127.0.0.1:0").await?.local_addr()?;
+    let (held, nobody) = refusing_address()?;
     let recorder = Recorder::new();
     let base = start(
         format!("http://{nobody}"),
@@ -230,6 +241,7 @@ async fn a_server_that_cannot_be_reached_answers_502_and_records_the_request() -
     );
     assert!(call.error.is_some(), "the connection error is recorded");
     assert!(call.request.is_some(), "the request is recorded");
+    drop(held);
     Ok(())
 }
 
