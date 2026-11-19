@@ -46,10 +46,6 @@ def reply(content, finish="stop"):
     return {"content": content, "finish": finish, "usage": {"prompt_tokens": 1}, "timings": {}, "secs": 0.1}
 
 
-def entries(*items):
-    return json.dumps({"entries": [{"of": of, "keep": keep} for of, keep in items]})
-
-
 def bridge_sources():
     tests = text_of(NOTES_TESTS_RS)
     opened, widened, noise = (rust_string(tests, n) for n in ("OPENED", "WIDENED", "NOISE"))
@@ -89,8 +85,8 @@ class Snapshot(unittest.TestCase):
         self.assertEqual(self.messages[0]["content"], self.sections["input 1: message (system)"])
         self.assertEqual(self.messages[1]["content"], self.sections["input 2: message (user)"])
 
-    def test_the_schema_is_the_snapshots(self):
-        self.assertEqual(replay.schema(self.shown, enum=False), json.loads(self.sections["schema"]))
+    def test_the_snapshot_has_no_schema(self):
+        self.assertNotIn("schema", self.sections)
 
     def test_the_sampling_and_the_reservation_are_the_snapshots(self):
         sent = json.loads(self.sections["sent with"])
@@ -99,20 +95,22 @@ class Snapshot(unittest.TestCase):
                      .group(1).replace("_", ""))
         self.assertEqual(replay.max_tokens_for(window), sent["max_output_tokens"])
 
-    def test_the_enum_form_lists_what_is_shown(self):
-        plain = replay.schema(self.shown, enum=False)
-        enum = replay.schema(self.shown, enum=True)
-        item = plain["properties"]["entries"]["items"]["properties"]
-        item["of"] = {"type": "string", "enum": ["r1", "r2"]}
-        item["keep"]["items"] = {"type": "string", "enum": [f"u{k}" for k in range(1, 12)]}
-        self.assertEqual(enum, plain)
-
-    def test_the_body_is_what_llama_cpp_takes(self):
-        sent = replay.body("m", self.messages, replay.schema(self.shown, True), 16384)
-        self.assertEqual(sent["max_tokens"], 4096)
-        self.assertEqual(sent["response_format"]["json_schema"]["name"], "response")
-        self.assertEqual(sent["chat_template_kwargs"], {"enable_thinking": False})
-        self.assertEqual(sent["top_k"], 1)
+    def test_the_body_is_what_the_snapshot_says_was_sent(self):
+        sent = json.loads(self.sections["sent with"])
+        window = int(re.search(r"pub const SCRIPTED_WINDOW: usize = ([\d_]+);", text_of(SCRIPTED_RS))
+                     .group(1).replace("_", ""))
+        body = replay.body("m", self.messages, window)
+        self.assertNotIn("response_format", body)
+        self.assertEqual(sent["reasoning_effort"], "none")
+        self.assertNotIn("reasoning_effort", body)
+        self.assertEqual(sent["thinking"], "off")
+        self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
+        for key, value in sent["sampling"].items():
+            self.assertEqual(body[key], value, key)
+        self.assertEqual(sent["stop"], [])
+        self.assertNotIn("stop", body)
+        self.assertEqual(body["max_tokens"], sent["max_output_tokens"])
+        self.assertEqual(body["messages"], self.messages)
 
 
 class Reservation(unittest.TestCase):
@@ -120,6 +118,19 @@ class Reservation(unittest.TestCase):
         self.assertEqual(replay.max_tokens_for(16384), 4096)
         self.assertEqual(replay.max_tokens_for(65536), 16384)
         self.assertEqual(replay.max_tokens_for(196608), 32768)
+
+    def test_the_doubled_room_is_the_default_times_two_held_to_half_the_window(self):
+        for window, doubled in ((4096, 2048), (16384, 8192), (65536, 32768), (131072, 65536),
+                                (196608, 65536), (262144, 65536), (1048576, 65536)):
+            self.assertEqual(replay.max_tokens_for(window, 2), doubled, window)
+
+    def test_the_doubled_room_is_larger_than_the_first_at_every_window(self):
+        for window in (4096, 16384, 65536, 131072, 196608, 262144, 1048576):
+            self.assertGreater(replay.max_tokens_for(window, 2), replay.max_tokens_for(window), window)
+
+    def test_the_body_carries_the_scale(self):
+        body = replay.body("m", [], 16384, 2)
+        self.assertEqual(body["max_tokens"], 8192)
 
 
 class Splitter(unittest.TestCase):
@@ -130,41 +141,166 @@ class Splitter(unittest.TestCase):
             self.assertEqual(len(replay.sentences(text)), count, text)
 
 
-class Reading(unittest.TestCase):
-    def setUp(self):
-        self.shown = [(0, source(1, "a", "b", "c")), (1, source(2, "d", "e")), (2, source(3, "f", "g"))]
+COMPLETE, CUT_OFF_FINISH, DECLINED_FINISH = "stop", "length", "refusal"
 
-    def test_entries_are_checked_against_what_was_shown(self):
-        got = replay.read(reply(entries(("r1", ["u1", "u1", "u9"]), ("[r3]", []), ("r9", ["u1"]))), self.shown)
-        self.assertEqual(got, {0: ("answered", [1]), 1: ("unanswered", "missing"), 2: ("answered", [])})
 
-    def test_equal_entries_count_once_and_differing_ones_contradict(self):
-        same = replay.read(reply(entries(("r1", ["u1", "u2"]), ("r1", ["u1", "u2"]))), self.shown)
-        self.assertEqual(same[0], ("answered", [1, 2]))
-        differ = replay.read(reply(entries(("r1", ["u1", "u2"]), ("r1", ["u2", "u1"]))), self.shown)
-        self.assertEqual(differ[0], ("contradicted", "r1 has two entries that differ."))
+def answered(*numbers):
+    return ("answered", list(numbers))
 
-    def test_a_cut_off_answer_keeps_what_closed(self):
-        got = replay.read(reply('{"entries":[{"of":"r1","keep":["u1"]},{"of":"r2","ke', "length"), self.shown)
-        self.assertEqual(got, {0: ("answered", [1]), 1: ("unanswered", "cut_off"), 2: ("unanswered", "cut_off")})
 
-    def test_an_answer_that_is_not_json_is_not_read(self):
-        got = replay.read(reply("not json"), self.shown)
-        self.assertEqual({row for row in got.values()}, {("unanswered", "not_read")})
+def unanswered(why):
+    return ("unanswered", why)
 
-    def test_a_refused_answer_declines_everything(self):
-        got = replay.read(reply("{}", "refusal"), self.shown)
-        self.assertEqual({row for row in got.values()}, {("unanswered", "declined")})
 
-    def test_a_filtered_answer_is_read_as_cut_off(self):
-        got = replay.read(reply('{"entries":[{"of":"r1","keep":["u1"]}', "content_filter"), self.shown)
-        self.assertEqual(got, {0: ("answered", [1]), 1: ("unanswered", "cut_off"), 2: ("unanswered", "cut_off")})
+def contradicted(text):
+    return ("contradicted", text)
 
+
+def read_keeps(text, finish, items, own):
+    """What the answer says of each of `items` results that each show `own` sentences, in shown order."""
+    shown = [(i, source(i + 1, *[f"Sentence {k}." for k in range(1, own + 1)])) for i in range(items)]
+    got = replay.read(reply(text, finish), shown)
+    assert list(got) == list(range(items))
+    return [got[i] for i in range(items)]
+
+
+class Keeps(unittest.TestCase):
+    def test_keeps_reads_every_spelling_of_a_line(self):
+        text = "r1: u1 u2\n[r2] [u1], [u3]\n  r3: u2,u3  \n\nr4\tu3 u1\n"
+        self.assertEqual(read_keeps(text, COMPLETE, 4, 3),
+                         [answered(1, 2), answered(1, 3), answered(2, 3), answered(3, 1)])
+
+    def test_keeps_counts_a_handle_once_in_written_order(self):
+        self.assertEqual(read_keeps("r1: u3 u1 u3 u2 u1", COMPLETE, 2, 3), [answered(3, 1, 2), answered()])
+
+    def test_an_item_line_with_no_own_handles_keeps_nothing(self):
+        self.assertEqual(read_keeps("r1\nr2: u1\nr3:", COMPLETE, 3, 2), [answered(), answered(1), answered()])
+
+    def test_the_word_none_says_every_item_keeps_nothing(self):
+        for text in ["none", "  none \n", "\n\nnone"]:
+            self.assertEqual(read_keeps(text, COMPLETE, 3, 2), [answered(), answered(), answered()], repr(text))
+        self.assertEqual(read_keeps("r1: u1\nnone", COMPLETE, 3, 2), [answered(1), answered(), answered()])
+        self.assertEqual(read_keeps("none", CUT_OFF_FINISH, 3, 2), [unanswered("cut_off")] * 3)
+
+    def test_an_empty_answer_is_not_read_and_a_declined_one_is_declined(self):
+        for text in ["", " \n\n  "]:
+            self.assertEqual(read_keeps(text, COMPLETE, 2, 2), [unanswered("not_read")] * 2, repr(text))
+            self.assertEqual(read_keeps(text, CUT_OFF_FINISH, 2, 2), [unanswered("cut_off")] * 2, repr(text))
+        self.assertEqual(read_keeps("r1: u1", DECLINED_FINISH, 2, 2), [unanswered("declined")] * 2)
+
+    def test_a_cut_off_answer_drops_its_last_line_and_leaves_the_rest_cut_off(self):
+        self.assertEqual(read_keeps("r1: u1\nr2: u2", CUT_OFF_FINISH, 3, 2),
+                         [answered(1), unanswered("cut_off"), unanswered("cut_off")])
+        self.assertEqual(read_keeps("r1: u1\nr2: u2\n\n", CUT_OFF_FINISH, 3, 2),
+                         [answered(1), unanswered("cut_off"), unanswered("cut_off")])
+        self.assertEqual(read_keeps("r1: u1\nr2: u2\n", COMPLETE, 3, 2), [answered(1), answered(2), answered()])
+
+    def test_an_own_handle_that_does_not_resolve_leaves_only_its_item_unplaced(self):
+        for line in ["r1: u9", "r1: u1 u9"]:
+            text = f"{line}\nr2: u1"
+            self.assertEqual(read_keeps(text, COMPLETE, 3, 2),
+                             [unanswered("unplaced"), answered(1), answered()], repr(text))
+
+    def test_an_item_handle_that_is_not_shown_leaves_the_unnamed_items_unplaced(self):
+        for line in ["r9: u1", "u1: u1", "[r9]: u1"]:
+            text = f"r2: u1\n{line}"
+            self.assertEqual(read_keeps(text, COMPLETE, 3, 2),
+                             [unanswered("unplaced"), answered(1), unanswered("unplaced")], repr(text))
+
+    def test_words_that_are_not_handles_are_passed_over(self):
+        self.assertEqual(read_keeps("Here is my answer:\nr1: u1", COMPLETE, 3, 3),
+                         [answered(1), answered(), answered()])
+        self.assertEqual(read_keeps("- r1: u1\n* r2: u2\n1. r3: u3", COMPLETE, 3, 3),
+                         [answered(1), answered(2), answered(3)])
+        self.assertEqual(read_keeps("**r1**: `u1`", COMPLETE, 3, 3), [answered(1), answered(), answered()])
+
+    def test_items_on_one_line_each_keep_their_own(self):
+        for text in ["r1: u1 u2; r2: u3", "r1: u1, u2, r2: u3"]:
+            self.assertEqual(read_keeps(text, COMPLETE, 3, 3), [answered(1, 2), answered(3), answered()], repr(text))
+
+    def test_handles_are_read_whatever_punctuation_surrounds_them(self):
+        self.assertEqual(read_keeps("r1:u1,u2.\n[r2]: [u3].", COMPLETE, 3, 3),
+                         [answered(1, 2), answered(3), answered()])
+
+    def test_an_answer_naming_no_item_is_not_read_unless_it_says_none(self):
+        for text in ["None", "none.", "**NONE**"]:
+            self.assertEqual(read_keeps(text, COMPLETE, 3, 2), [answered(), answered(), answered()], repr(text))
+        self.assertEqual(read_keeps("I found nothing that bears on it.", COMPLETE, 3, 2),
+                         [unanswered("not_read")] * 3)
+
+    def test_an_own_handle_before_any_item_leaves_the_unnamed_items_unplaced(self):
+        self.assertEqual(read_keeps("u1\nr2: u1", COMPLETE, 3, 2),
+                         [unanswered("unplaced"), answered(1), unanswered("unplaced")])
+
+    def test_an_own_handle_on_a_line_after_an_unknown_word_is_not_given_to_the_line_above(self):
+        self.assertEqual(read_keeps("r2: u1\nx1: u2", COMPLETE, 3, 2),
+                         [unanswered("unplaced"), answered(1), unanswered("unplaced")])
+
+    def test_equal_lines_for_one_item_count_once_and_differing_lines_contradict(self):
+        self.assertEqual(read_keeps("r1: u1 u2\nr2: u1\nr1: u1 u2", COMPLETE, 3, 2),
+                         [answered(1, 2), answered(1), answered()])
+        self.assertEqual(read_keeps("r1: u1\nr1: u2", COMPLETE, 3, 2),
+                         [contradicted("r1 has two entries that differ."), answered(), answered()])
+
+    def test_a_range_of_own_handles_keeps_every_handle_from_the_first_through_the_second(self):
+        for text in ["r1: u1-u4", "r1: u1–u4", "r1: u1 - u4", "r1: u1..u4", "r1: u1...u4", "r1: u1…u4",
+                     "r1: u1—u4", "r1: u1-4", "r1: u1 – 4", "r1: u1 -- u4"]:
+            self.assertEqual(read_keeps(text, COMPLETE, 3, 4), [answered(1, 2, 3, 4), answered(), answered()],
+                             repr(text))
+
+    def test_a_range_counts_a_handle_already_kept_once(self):
+        self.assertEqual(read_keeps("r1: u3 u1-u3", COMPLETE, 2, 4), [answered(3, 1, 2), answered()])
+
+    def test_a_reversed_range_or_one_past_the_last_own_handle_leaves_its_item_unplaced(self):
+        for line in ["r1: u3-u1", "r1: u2-u5", "r1: u2-5", "r1: u3-2"]:
+            text = f"{line}\nr2: u1"
+            self.assertEqual(read_keeps(text, COMPLETE, 3, 4),
+                             [unanswered("unplaced"), answered(1), answered()], repr(text))
+
+    def test_a_range_of_items_is_not_an_entry(self):
+        for text in ["r1-r3: u1", "r1-3: u1", "r1 – r3: u1"]:
+            self.assertEqual(read_keeps(text, COMPLETE, 3, 4), [unanswered("unplaced")] * 3, repr(text))
+
+    def test_handles_are_read_in_any_case(self):
+        self.assertEqual(read_keeps("R1: U1 U2\nr2: U3", COMPLETE, 3, 3), [answered(1, 2), answered(3), answered()])
+
+    def test_an_item_named_above_its_sentences_keeps_the_sentences_listed_under_it(self):
+        self.assertEqual(read_keeps("r1:\n- u1\n- u2\nr2:\n- u3", COMPLETE, 3, 3),
+                         [answered(1, 2), answered(3), answered()])
+        self.assertEqual(read_keeps("r1\nu1 u2", COMPLETE, 3, 3), [answered(1, 2), answered(), answered()])
+        self.assertEqual(read_keeps("r1:\n- u1-u3", COMPLETE, 3, 3), [answered(1, 2, 3), answered(), answered()])
+
+    def test_an_item_named_above_a_line_that_says_none_keeps_nothing(self):
+        self.assertEqual(read_keeps("r1:\nnone\nr2: u1", COMPLETE, 3, 3), [answered(), answered(1), answered()])
+
+    def test_an_entry_holding_a_word_or_number_it_cannot_read_is_not_read(self):
+        for text in ["r1: 2 3\nr2: u1", "r1: sentence two\nr2: u1"]:
+            self.assertEqual(read_keeps(text, COMPLETE, 3, 3),
+                             [unanswered("not_read"), answered(1), answered()], repr(text))
+
+    def test_an_entry_of_only_punctuation_or_none_keeps_nothing(self):
+        for text in ["r1: -\nr2: u1", "r1: none\nr2: u1", "r1:\nr2: u1"]:
+            self.assertEqual(read_keeps(text, COMPLETE, 3, 3), [answered(), answered(1), answered()], repr(text))
+
+    def test_an_entry_that_says_none_and_names_what_it_keeps_contradicts_itself(self):
+        said = contradicted("r1 both says none and names what it keeps.")
+        for text in ["r1: none u1\nr2: u2", "r1:\nnone\nu1\nr2: u2"]:
+            self.assertEqual(read_keeps(text, COMPLETE, 3, 3), [said, answered(2), answered()], repr(text))
+
+    def test_a_cut_off_answer_with_an_item_still_open_leaves_every_item_cut_off(self):
+        self.assertEqual(read_keeps("r1:\n- u1\n- u2", CUT_OFF_FINISH, 3, 3), [unanswered("cut_off")] * 3)
+
+
+class Finish(unittest.TestCase):
     def test_finish_reasons_end_as_the_contract_reads_them(self):
         for finish, ended in (("stop", "complete"), (None, "complete"), ("tool_calls", "complete"),
                               ("length", "cut_off"), ("MAX_TOKENS", "cut_off"), ("content_filter", "cut_off"),
                               ("refusal", "declined")):
             self.assertEqual(replay.ended_of(finish), ended, finish)
+
+    def test_a_filtered_answer_is_read_as_cut_off(self):
+        got = replay.read(reply("r1: u1\nr2: u", "content_filter"), [(0, source(1, "a")), (1, source(2, "b"))])
+        self.assertEqual(got, {0: ("answered", [1]), 1: ("unanswered", "cut_off")})
 
 
 class Notes(unittest.TestCase):
@@ -186,10 +322,9 @@ class Asking(unittest.TestCase):
         asked = [source(1, "a"), source(2, "b"), source(3, "c")]
         sent = []
 
-        def send(messages, schema):
+        def send(messages, scale=1):
             sent.append(messages)
-            return reply(entries(("r1", ["u1"]))) if len(sent) == 1 else reply(
-                entries(("r2", ["u1"]), ("r3", [])))
+            return reply("r1: u1") if len(sent) == 1 else reply("r2: u1\nr3:")
 
         got = replay.ask_each("q", asked, send)
         self.assertEqual(len(sent), 2)
@@ -200,21 +335,47 @@ class Asking(unittest.TestCase):
         self.assertEqual(got["rows"], [("answered", [1]), ("answered", [1]), ("answered", [])])
         self.assertEqual(got["first"], {0})
 
-    def test_a_lone_source_cut_off_is_resent_then_corrected(self):
+    def test_a_lone_source_cut_off_is_resent_with_twice_the_room_then_corrected_with_it(self):
         sent = []
 
-        def send(messages, schema):
-            sent.append(messages)
-            return reply('{"entries":[{"of":"r1","ke', "length")
+        def send(messages, scale=1):
+            sent.append((messages, scale))
+            return reply("r1: u1\nr1: u", "length")
 
         got = replay.ask_each("q", [source(1, "a")], send)
         self.assertEqual(len(sent), 3)
-        self.assertEqual(sent[0], sent[1])
-        self.assertEqual([m["role"] for m in sent[2]], ["system", "user", "assistant", "user"])
-        self.assertEqual(sent[2][:2], sent[0])
-        self.assertEqual(sent[2][3]["content"], replay.CUT_OFF)
+        self.assertEqual([scale for _, scale in sent], [1, 2, 2])
+        self.assertEqual(sent[0][0], sent[1][0])
+        self.assertEqual([m["role"] for m in sent[2][0]], ["system", "user", "assistant", "user"])
+        self.assertEqual(sent[2][0][:2], sent[0][0])
+        self.assertEqual(sent[2][0][3]["content"], replay.CUT_OFF)
         self.assertEqual((got["resends"], got["corrections"]), (1, 1))
         self.assertEqual(got["rows"], [("unanswered", "cut_off")])
+
+    def test_a_lone_source_not_cut_off_is_corrected_at_the_first_room(self):
+        sent = []
+
+        def send(messages, scale=1):
+            sent.append(scale)
+            return reply("I cannot say.")
+
+        got = replay.ask_each("q", [source(1, "a")], send)
+        self.assertEqual(sent, [1, 1])
+        self.assertEqual((got["resends"], got["corrections"]), (0, 1))
+
+    def test_an_unplaced_answer_asked_alone_is_corrected_with_unplaced(self):
+        sent = []
+
+        def send(messages, scale=1):
+            sent.append(messages)
+            return reply("r1: u9") if len(sent) == 1 else reply("r1: u1")
+
+        got = replay.ask_each("q", [source(1, "a")], send)
+        self.assertEqual(len(sent), 2)
+        self.assertEqual(sent[1][3]["content"], replay.UNPLACED)
+        self.assertEqual(sent[1][2], {"role": "assistant", "content": "r1: u9"})
+        self.assertEqual((got["resends"], got["corrections"]), (0, 1))
+        self.assertEqual(got["rows"], [("answered", [1])])
 
 
 if __name__ == "__main__":
