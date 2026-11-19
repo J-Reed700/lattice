@@ -130,9 +130,9 @@ pub fn server_auth() -> Option<RemoteHeader> {
 
 /// Sends one of the eval's own requests, not the app's, to `base` and reads
 /// its JSON answer: a request to the run's server, such as which model it
-/// serves, or the proxy's check of the window it reports. It uses the client
-/// the proxy forwards with, and fails naming the status of an answer that is
-/// not a success.
+/// serves, or the proxy's check of the window it reports. It builds its client
+/// with `remote_client`, as the proxy does, and fails naming the status of an
+/// answer that is not a success.
 pub async fn ask_server(
     base: &str,
     method: reqwest::Method,
@@ -154,7 +154,8 @@ pub async fn ask_server(
 }
 
 /// Starts the proxy on a free loopback port and returns its base URL. `auth`
-/// goes with every request it forwards.
+/// goes with every request it forwards, except one to which it passes on a
+/// header of that name from the app: that header goes instead.
 pub async fn start(
     upstream: String,
     thinking_off: bool,
