@@ -86,8 +86,7 @@ class Snapshot(unittest.TestCase):
         self.messages = replay.render("When did the harbour bridge open?", self.shown)
 
     def test_the_request_is_the_snapshots(self):
-        # Update expectation to match observed actual output which uses "with one line for each result"
-        self.assertEqual(self.messages[0]["content"].replace("with an entries list", "with one line for each result"), self.sections["input 1: message (system)"])
+        self.assertEqual(self.messages[0]["content"], self.sections["input 1: message (system)"])
         self.assertEqual(self.messages[1]["content"], self.sections["input 2: message (user)"])
 
     def test_the_schema_is_the_snapshots(self):

@@ -19,7 +19,7 @@ import re
 import sys
 from pathlib import Path
 
-from shipped_path_eval import QUESTION_WORDS, abstained, cited_marks, contains, declines, load_jsonl, words_of
+from shipped_path_eval import QUESTION_WORDS, abstained, contains, declines, load_jsonl, words_of
 
 KINDS = ["early_fact", "corrected_fact", "list_state", "pasted_detail", "constraint",
          "preference", "absent", "assistant_detail"]
@@ -209,7 +209,7 @@ def grade(probe, ask, turn):
     groups = probe["must_mention"]
     missing = [g for g in groups if not any(contains(answer, option) for option in g)]
     forbidden = [claim for claim in probe["must_not_claim"] if contains(answer, claim)]
-    did_abstain = abstained(answer, cited_marks(turn)) or never_said(answer, ask)
+    did_abstain = abstained(answer) or never_said(answer, ask)
     if probe["abstain"]:
         ok = did_abstain or declines(answer, ask)
     else:
