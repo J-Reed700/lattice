@@ -238,7 +238,8 @@ def pointed(written):
 
 def says_none(line):
     """shapes.rs `says_none`: the word for absence, in any case and with whatever punctuation or markup around it."""
-    return re.sub(r"^[^A-Za-z0-9]+|[^A-Za-z0-9]+$", "", line).lower() == "none"
+    kept = [at for at, char in enumerate(line) if char.isascii() and char.isalnum()]
+    return bool(kept) and line[kept[0]:kept[-1] + 1].lower() == "none"
 
 
 def tokens_of(line):
