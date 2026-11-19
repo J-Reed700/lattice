@@ -7,14 +7,14 @@ opens with), RESULT_SIZE passages to a result, in label order, while they stay w
 of a window the loop's results reach before they are condensed, less the room the message and the reservation take.
 
 What is replayed is the request the app sends when those results pass 60% of the window. Every labelled passage is
-a source named r1, r2, ... and its sentences u1, u2, ...; one request asks the model, with a JSON schema, which
-sentences of each source to keep, by handle. The answer is read as the app reads it (the first JSON object, what
-closed of it, handles checked against what was shown). A source the answer does not settle is asked about again
-in smaller requests, alone with one resend after a cut-off, and with one correction; one still unsettled is kept
-whole. The notes are the kept sentences, unchanged, under the source's heading, and are used only when they are
-shorter than the results. A fact is kept when the text after condensing holds one of the rubric's spellings for it
-(case-insensitive), of the facts whose passage is among the results; it is cited when it sits in its own
-passage's block of the notes.
+a source named r1, r2, ... and its sentences u1, u2, ...; one request asks the model, in plain lines with no
+schema, which sentences of each source to keep, by handle. The answer is read as the app reads it (one line for each
+result that keeps something, handles checked against what was shown). A source the answer does not settle is asked
+about again in smaller requests, alone with one resend after a cut-off, sent with twice the output room, and with
+one correction, sent with the room of the request it follows; one still unsettled is kept whole. The notes are the
+kept sentences, unchanged, under the source's heading, and are used only when they are shorter than the results. A
+fact is kept when the text after condensing holds one of the rubric's spellings for it (case-insensitive), of the
+facts whose passage is among the results; it is cited when it sits in its own passage's block of the notes.
 
 `--question message` (arm SHIPPED) asks with the whole last user message before the results, as the app does.
 `--question line` (arm LINE) asks with the question's line alone.
@@ -47,9 +47,10 @@ RESULTS_CHARS = 26_000
 CONDENSE = ("Your context window is nearly full. Before you continue, choose from all the tool results you have so far "
             "the sentences that make up compact research notes. Keep every sentence with a fact, number, date, name, "
             "short quotation or URL that could matter to my question. Drop navigation text, boilerplate, repetition "
-            "and anything that does not bear on my question. Do not answer my question yet. Answer with an entries "
-            "list: each entry names a result in `of` by the handle shown beside it, and lists in `keep` the handles "
-            "of that result's sentences to keep, which may be none.")
+            "and anything that does not bear on my question. Do not answer my question yet. Answer with one line for "
+            "each result that has sentences to keep: the result's handle, a colon, then the handle of each of those "
+            "sentences, written out in full and separated by spaces. Leave out a result with nothing to keep. If "
+            "nothing is worth keeping, answer `none`. Write nothing else.")
 # research_notes.rs NOTES_HEADER.
 NOTES_HEADER = ("Research notes so far. These condense the tool results you gathered earlier in this turn, to make room "
                 "in your context window. Every citation label in them still refers to the same source. Continue the "
@@ -197,210 +198,202 @@ def render(question, shown):
     return [{"role": "system", "content": CONDENSE}, {"role": "user", "content": task}]
 
 
-def schema(shown, enum=False):
-    """The answer's JSON schema. Plain is what the app's contract writes; enum is what a backend that enforces
-    schemas (llama.cpp) is given, each pointer limited to the handles shown."""
-    handles = [f"r{index + 1}" for index, _ in shown]
-    most = max((len(source.sentences) for _, source in shown), default=0)
-    if enum:
-        of, keep = {"type": "string", "enum": handles}, {"type": "string", "enum": [f"u{k}" for k in range(1, most + 1)]}
-    else:
-        of = {"type": "string",
-              "description": f"One of the names the request shows, such as {handles[0] if handles else 'r1'}."}
-        keep = {"type": "string", "description": "One of the names the request shows, such as u1."}
-    entry = {"type": "object", "properties": {"of": of, "keep": {"type": "array", "items": keep}},
-             "required": ["of", "keep"], "additionalProperties": False}
-    return {"type": "object", "properties": {"entries": {"type": "array", "items": entry}},
-            "required": ["entries"], "additionalProperties": False}
+def max_tokens_for(window, scale=1):
+    """context_assembler/budget.rs `plan`: the default output reservation times the request's output_scale, held to
+    half the window."""
+    return min(min(window // 4, OUTPUT_RESERVATION_CAP) * scale, window // 2)
 
 
-def max_tokens_for(window):
-    """The planner's default output reservation, which a contract call that asks for no output size gets."""
-    return min(window // 4, OUTPUT_RESERVATION_CAP)
-
-
-def body(model, messages, schema, window):
+def body(model, messages, window, scale=1):
     return {"model": model, "messages": messages, **SAMPLING, "repeat_penalty": 1.0,
-            "max_tokens": max_tokens_for(window), "chat_template_kwargs": {"enable_thinking": False},
-            "response_format": {"type": "json_schema", "json_schema": {"name": "response", "schema": schema}}}
+            "max_tokens": max_tokens_for(window, scale), "chat_template_kwargs": {"enable_thinking": False}}
 
 
 def sender(window):
-    def send(messages, schema):
-        return base.call(body(base.running_model(), messages, schema, window), "condense")
+    def send(messages, scale=1):
+        return base.call(body(base.running_model(), messages, window, scale), "condense")
     return send
 
 
-# ---------- reading an answer (model_contract/shape/document.rs and shapes.rs `read_each`) ----------
-_BAD = object()
-_SPACE = " \t\n\r\x0c"
-
-
-@dataclass
-class Document:
-    fields: dict = field(default_factory=dict)
-    open_list: tuple = None
-    closed: bool = False
-
-
-def _skip(text, at):
-    while at < len(text) and text[at] in _SPACE:
-        at += 1
-    return at
-
-
-def _string_end(text, start):
-    at = start + 1
-    while at < len(text):
-        if text[at] == "\\":
-            at += 2
-        elif text[at] == '"':
-            return "closed", at + 1
-        else:
-            at += 1
-    return "open", None
-
-
-def _nested_end(text, start):
-    depth, at = 0, start
-    while at < len(text):
-        c = text[at]
-        if c == '"':
-            kind, end = _string_end(text, at)
-            if kind != "closed":
-                return kind, None
-            at = end
-            continue
-        if c in "{[":
-            depth += 1
-        elif c in "}]":
-            depth = max(depth - 1, 0)
-            if depth == 0:
-                return "closed", at + 1
-        at += 1
-    return "open", None
-
-
-def _literal_end(text, start):
-    at = start
-    while at < len(text):
-        if text[at] in _SPACE or text[at] in ",}]":
-            return ("bad", None) if at == start else ("closed", at)
-        at += 1
-    return "open", None
-
-
-def _value_end(text, start):
-    if start >= len(text):
-        return "open", None
-    if text[start] == '"':
-        return _string_end(text, start)
-    if text[start] in "{[":
-        return _nested_end(text, start)
-    return _literal_end(text, start)
-
-
-def _parse(text, start, end):
-    try:
-        return json.loads(text[start:end])
-    except ValueError:
-        return _BAD
-
-
-def _list_at(text, open_at):
-    items, at, need_comma = [], open_at + 1, False
-    while True:
-        at = _skip(text, at)
-        if at >= len(text):
-            return "cut", items, None
-        c = text[at]
-        if c == "]":
-            return "closed", items, at + 1
-        if c == ",":
-            if not need_comma:
-                return "cut", items, None
-            need_comma, at = False, at + 1
-        elif need_comma:
-            return "cut", items, None
-        else:
-            kind, end = _value_end(text, at)
-            if kind != "closed":
-                return "cut", items, None
-            value = _parse(text, at, end)
-            if value is _BAD:
-                return "cut", items, None
-            items.append(value)
-            at, need_comma = end, True
-
-
-def _object_at(text, open_at):
-    first = _skip(text, open_at + 1)
-    if text[first:first + 1] not in ("}", '"'):
-        return None
-    doc, at = Document(), first
-    while True:
-        at = _skip(text, at)
-        c = text[at:at + 1]
-        if c == "}":
-            doc.closed = True
-            return doc
-        if c != '"':
-            return doc
-        kind, key_end = _string_end(text, at)
-        if kind != "closed":
-            return doc
-        key = _parse(text, at, key_end)
-        if not isinstance(key, str):
-            return doc
-        at = _skip(text, key_end)
-        if text[at:at + 1] != ":":
-            return doc
-        at = _skip(text, at + 1)
-        if text[at:at + 1] == "[":
-            kind, items, end = _list_at(text, at)
-            if kind == "cut":
-                doc.open_list = (key, items)
-                return doc
-            doc.fields[key] = items
-            at = end
-        else:
-            kind, end = _value_end(text, at)
-            if kind != "closed":
-                return doc
-            value = _parse(text, at, end)
-            if value is _BAD:
-                return doc
-            doc.fields[key] = value
-            at = end
-        at = _skip(text, at)
-        c = text[at:at + 1]
-        if c == ",":
-            at += 1
-        elif c == "}":
-            doc.closed = True
-            return doc
-        else:
-            return doc
-
-
-def read_document(text):
-    """The first JSON object in `text` as far as it was written: what closed, never repaired or completed."""
-    for m in re.finditer(r"\{", text):
-        doc = _object_at(text, m.start())
-        if doc is not None:
-            return doc
-    return None
+# ---------- reading an answer (model_contract/shape/shapes.rs `read_keeps`) ----------
+RANGE_SEPARATORS = ("-", "--", "–", "—", "..", "...", "…")
+ITEM, OWN = "r", "u"
+U32_MAX = 4_294_967_295
 
 
 def pointed(written):
     """shown.rs `Name::pointed`: a handle bare or in square brackets -> (prefix, ordinal), else None."""
-    if not isinstance(written, str):
-        return None
     written = written.strip()
-    if written.startswith("[") and written.endswith("]"):
+    if len(written) >= 2 and written.startswith("[") and written.endswith("]"):
         written = written[1:-1].strip()
     m = re.fullmatch(r"([a-z]+)([1-9][0-9]*)", written)
-    return (m.group(1), int(m.group(2))) if m else None
+    if not m or int(m.group(2)) > U32_MAX:
+        return None
+    return m.group(1), int(m.group(2))
+
+
+def says_none(line):
+    """shapes.rs `says_none`: the word for absence, in any case and with whatever punctuation or markup around it."""
+    return re.sub(r"^[^A-Za-z0-9]+|[^A-Za-z0-9]+$", "", line).lower() == "none"
+
+
+def tokens_of(line):
+    """shapes.rs `tokens_of`: the runs of ASCII letters and digits in a line, with where each starts."""
+    return [(m.start(), m.group()) for m in re.finditer(r"[A-Za-z0-9]+", line)]
+
+
+def range_follows(line, tokens, at):
+    """shapes.rs `range_follows`: whether what stands between token `at` and the next one is a range sign."""
+    if at + 1 >= len(tokens):
+        return False
+    start, token = tokens[at]
+    between = "".join(c for c in line[start + len(token):tokens[at + 1][0]] if not c.isspace())
+    return between in RANGE_SEPARATORS
+
+
+def all_digits(token):
+    return re.fullmatch(r"[0-9]+", token) is not None
+
+
+class Entry:
+    """shapes.rs `Entry`: an item being read and what has been said under it so far."""
+
+    def __init__(self, item, own_count):
+        self.item, self.own_count = item, own_count
+        self.kept, self.unplaced = [], False
+        self.names_own = self.says_none = self.other_words = False
+
+    def keep(self, first, last):
+        self.names_own = True
+        if self.unplaced:
+            return
+        if last < first:
+            self.unplaced = True
+            return
+        for ordinal in range(first, last + 1):
+            if not 1 <= ordinal <= self.own_count:
+                self.unplaced = True
+                return
+            if ordinal not in self.kept:
+                self.kept.append(ordinal)
+
+    def row(self):
+        if self.unplaced:
+            return ("unanswered", "unplaced")
+        if self.says_none and self.names_own:
+            return ("contradicted", f"r{self.item + 1} both says none and names what it keeps.")
+        if not self.names_own and self.other_words:
+            return ("unanswered", "not_read")
+        return ("answered", self.kept)
+
+
+class KeepsReader:
+    """shapes.rs `KeepsReader`: the lines of an answer read one by one. An item named on a line that holds none of its
+    own handles stays open: the lines after it that name no item are its own."""
+
+    def __init__(self, counts):
+        self.counts, self.entries, self.open, self.stray = counts, [], None, False
+
+    def close(self, entry):
+        if entry is not None:
+            self.entries.append((entry.item, entry.row()))
+
+    def item_of(self, word):
+        name = pointed(word)
+        if name and name[0] == ITEM and name[1] - 1 in self.counts:
+            return name[1] - 1
+        return None
+
+    def unplace_item(self, word):
+        self.stray = True
+        item = self.item_of(word)
+        if item is not None:
+            self.entries.append((item, ("unanswered", "unplaced")))
+
+    def line(self, line):
+        tokens = tokens_of(line)
+        words = [token.lower() for _, token in tokens]
+
+        def prefix_of(word):
+            name = pointed(word) if word is not None else None
+            return name[0] if name else None
+
+        names_item = any(prefix_of(word) == ITEM for word in words)
+        opened, self.open = self.open, None
+        if names_item:
+            self.close(opened)
+            current = None
+        else:
+            current = opened
+        at = 0
+        while at < len(words):
+            word = words[at]
+            following = words[at + 1] if at + 1 < len(words) else None
+            ranged = range_follows(line, tokens, at)
+            prefix = prefix_of(word)
+            if prefix == ITEM:
+                self.close(current)
+                current = None
+                to_item = following if prefix_of(following) == ITEM else None
+                if ranged and (to_item is not None or (following is not None and all_digits(following))):
+                    self.unplace_item(word)
+                    if to_item is not None:
+                        self.unplace_item(to_item)
+                    at += 2
+                    continue
+                item = self.item_of(word)
+                if item is None:
+                    self.stray = True
+                else:
+                    current = Entry(item, self.counts[item])
+            elif prefix == OWN:
+                first = pointed(word)[1]
+                to_own = pointed(following)[1] if prefix_of(following) == OWN else None
+                to_number = min(int(following), U32_MAX) if following is not None and all_digits(following) else None
+                last = (to_own if to_own is not None else to_number) if ranged else None
+                if current is None:
+                    self.stray = True
+                else:
+                    current.keep(first, first if last is None else last)
+                if last is not None:
+                    at += 2
+                    continue
+            elif current is not None:
+                if word == "none":
+                    current.says_none = True
+                else:
+                    current.other_words = True
+            at += 1
+        if current is not None and (not names_item or not current.names_own):
+            self.open = current
+        else:
+            self.close(current)
+
+    def finish(self, complete):
+        entry, self.open = self.open, None
+        if entry is None:
+            return
+        if complete:
+            self.close(entry)
+        else:
+            self.entries.append((entry.item, ("unanswered", "cut_off")))
+
+
+def join(index, entries):
+    """shapes.rs `join`: what the entries of one item say together: equal entries count once, differing ones
+    contradict; None when there is no entry."""
+    answered, unread = None, None
+    for row in entries:
+        if row[0] == "answered":
+            if answered is not None and answered != row[1]:
+                return ("contradicted", f"r{index + 1} has two entries that differ.")
+            if answered is None:
+                answered = row[1]
+        elif unread is None:
+            unread = row
+    if answered is not None:
+        return ("answered", answered)
+    return unread
 
 
 def ended_of(finish):
@@ -413,76 +406,58 @@ def ended_of(finish):
 
 
 def read(reply, shown):
-    """What an answer says of each of `shown`, a list of (index, source): {index: row} with row
-    ("answered", [sentence numbers]), ("contradicted", text) or ("unanswered", why), why one of not_read,
-    cut_off, missing, declined."""
+    """What an answer says of each of `shown`, a list of (index, source), as shapes.rs `read_keeps` reads it:
+    {index: row} with row ("answered", [sentence numbers]), ("contradicted", text) or ("unanswered", why), why one
+    of not_read, cut_off, unplaced, declined."""
     ended = ended_of(reply.get("finish"))
     indices = [i for i, _ in shown]
-
-    def everyone(why):
-        return {i: ("unanswered", why) for i in indices}
-
-    def unfinished():
-        return {"complete": "not_read", "cut_off": "cut_off", "declined": "declined"}[ended]
-
     if ended == "declined":
-        return everyone("declined")
-    doc = read_document(reply.get("content") or "")
-    if doc is None:
-        return everyone(unfinished())
-    entries = doc.fields.get("entries")
-    if not isinstance(entries, list):
-        if "entries" in doc.fields or not doc.open_list or doc.open_list[0] != "entries":
-            return everyone("not_read" if doc.closed else unfinished())
-        entries = doc.open_list[1]
-    sentence_counts = {i: len(source.sentences) for i, source in shown}
-    written = {i: [] for i in indices}
-    for element in entries:
-        if not isinstance(element, dict):
-            continue
-        name = pointed(element.get("of"))
-        if not name or name[0] != "r" or name[1] - 1 not in written:
-            continue
-        index, kept = name[1] - 1, []
-        if isinstance(element.get("keep"), list):
-            for handle in element["keep"]:
-                sentence = pointed(handle)
-                if sentence and sentence[0] == "u" and 1 <= sentence[1] <= sentence_counts[index] \
-                        and sentence[1] not in kept:
-                    kept.append(sentence[1])
-        written[index].append(kept)
+        return {i: ("unanswered", "declined") for i in indices}
+    complete = ended == "complete"
+    lines = [line for line in (part.strip() for part in (reply.get("content") or "").split("\n")) if line]
+    if not complete and lines:
+        lines.pop()
+    reader = KeepsReader({i: len(source.sentences) for i, source in shown})
+    none_said = False
+    for line in lines:
+        none_said = none_said or says_none(line)
+        reader.line(line)
+    reader.finish(complete)
+    if not complete:
+        unnamed = ("unanswered", "cut_off")
+    elif reader.stray:
+        unnamed = ("unanswered", "unplaced")
+    elif not reader.entries and not none_said:
+        unnamed = ("unanswered", "not_read")
+    else:
+        unnamed = None
     rows = {}
     for index in indices:
-        mine = written[index]
-        if not mine:
-            rows[index] = ("unanswered", "missing" if doc.closed else unfinished())
-        elif any(kept != mine[0] for kept in mine):
-            rows[index] = ("contradicted", f"r{index + 1} has two entries that differ.")
-        else:
-            rows[index] = ("answered", mine[0])
+        joined = join(index, [row for item, row in reader.entries if item == index])
+        rows[index] = joined or unnamed or ("answered", [])
     return rows
 
 
 # ---------- asking again (model_contract/ask.rs `ask_each`, `ask_alone`, `alone`) ----------
 def told(row, index):
-    """The correction a row is due, or None."""
+    """ask.rs `told`: the correction a row is due, or None."""
     kind, why = row
     if kind == "contradicted":
         return CONTRADICTED.format(what=why)
-    return {"not_read": NOT_READ, "cut_off": CUT_OFF,
+    return {"not_read": NOT_READ, "cut_off": CUT_OFF, "unplaced": UNPLACED,
             "missing": MISSING.format(handle=f"r{index + 1}")}.get(why)
 
 
-def ask_each(question, asked, send, enum=True):
+def ask_each(question, asked, send):
     """Asks which sentences of each of `asked` to keep, in as few requests as settle them; `send(messages,
-    schema)` returns one reply. Returns the settlement of each source (answered, or unanswered and so kept
-    whole) and what the asking cost."""
+    scale)` returns one reply, with `scale` times the output room. Returns the settlement of each source (answered,
+    or unanswered and so kept whole) and what the asking cost."""
     raw, log, rows = [], [], {}
     count = {"resends": 0, "corrections": 0}
     contradicted, first = set(), []
 
-    def post(messages, shown):
-        reply = send(messages, schema(shown, enum))
+    def post(messages, shown, scale=1):
+        reply = send(messages, scale)
         raw.append(reply)
         usage = reply.get("usage") or {}
         log.append({"shown": [f"r{i + 1}" for i, _ in shown], "content": reply.get("content"),
@@ -500,11 +475,13 @@ def ask_each(question, asked, send, enum=True):
     def alone(index):
         shown = [(index, asked[index])]
         messages = render(question, shown)
+        scale = 1
         reply = post(messages, shown)
         row = note(reply, shown)[index]
         if row == ("unanswered", "cut_off"):
             count["resends"] += 1
-            reply = post(messages, shown)
+            scale = 2
+            reply = post(messages, shown, scale)
             row = note(reply, shown)[index]
         if row[0] != "answered":
             due = told(row, index)
@@ -512,7 +489,7 @@ def ask_each(question, asked, send, enum=True):
                 count["corrections"] += 1
                 again = messages + [{"role": "assistant", "content": reply.get("content") or ""},
                                     {"role": "user", "content": due}]
-                row = note(post(again, shown), shown)[index]
+                row = note(post(again, shown, scale), shown)[index]
         rows[index] = row
 
     queue = deque([list(range(len(asked)))] if asked else [])
@@ -639,7 +616,6 @@ def dry(args):
     print(request[1]["content"][:3000], "\n")
     print(f"{len(asked)} sources, {sum(len(a.sentences) for a in asked)} sentences, "
           f"max_tokens {max_tokens_for(args.window)}")
-    print(json.dumps(schema(shown, enum=True)))
 
 
 def summary(args):
