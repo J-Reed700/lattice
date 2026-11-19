@@ -333,44 +333,42 @@ async fn serve(
         (Ok(response), Some(window)) if response.status().is_success() => {
             let status = response.status();
             record.status = Some(status.as_u16());
-            let props = match response.bytes().await {
+            let sent_as = content_type_of(&response);
+            match response.bytes().await {
                 Ok(body) => {
-                    record.first_byte_ms = Some(elapsed_ms(started));
-                    match serde_json::from_slice::<Value>(&body) {
+                    let (content_type, body) = match serde_json::from_slice::<Value>(&body) {
                         Ok(mut props) => {
                             report_window(&mut props, window);
-                            props.to_string().into_bytes()
+                            (
+                                "application/json".to_owned(),
+                                props.to_string().into_bytes(),
+                            )
                         }
                         Err(error) => {
                             record.error = Some(WithCauses(&error).to_string());
-                            body.to_vec()
+                            (sent_as, body.to_vec())
                         }
-                    }
+                    };
+                    let mut reply = format!(
+                        "HTTP/1.1 {} {}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        status.as_u16(),
+                        status.canonical_reason().unwrap_or(""),
+                        body.len()
+                    )
+                    .into_bytes();
+                    reply.extend_from_slice(&body);
+                    client_stream.write_all(&reply).await
                 }
                 Err(error) => {
                     record.error = Some(WithCauses(&error).to_string());
-                    Vec::new()
+                    client_stream.write_all(BAD_GATEWAY.as_bytes()).await
                 }
-            };
-            let mut reply = format!(
-                "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                status.as_u16(),
-                status.canonical_reason().unwrap_or(""),
-                props.len()
-            )
-            .into_bytes();
-            reply.extend_from_slice(&props);
-            client_stream.write_all(&reply).await
+            }
         }
         (Ok(response), _) => {
             let status = response.status();
             record.status = Some(status.as_u16());
-            let content_type = response
-                .headers()
-                .get(reqwest::header::CONTENT_TYPE)
-                .and_then(|value| value.to_str().ok())
-                .unwrap_or("application/octet-stream")
-                .to_owned();
+            let content_type = content_type_of(&response);
             let head = format!(
                 "HTTP/1.1 {} {}\r\nContent-Type: {content_type}\r\nConnection: close\r\n\r\n",
                 status.as_u16(),
@@ -416,9 +414,7 @@ async fn serve(
         }
         (Err(error), _) => {
             record.error = Some(WithCauses(&error).to_string());
-            let reply =
-                "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-            client_stream.write_all(reply.as_bytes()).await
+            client_stream.write_all(BAD_GATEWAY.as_bytes()).await
         }
     };
     // A client that gave up still gets its call recorded.
@@ -437,6 +433,20 @@ async fn serve(
 
 fn elapsed_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+/// What the proxy answers when the server's own answer failed.
+const BAD_GATEWAY: &str =
+    "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+/// The server's content type, or `application/octet-stream` when it gave none.
+fn content_type_of(response: &reqwest::Response) -> String {
+    response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_owned()
 }
 
 /// Reassembles a chat completion from an SSE stream or a JSON body.
