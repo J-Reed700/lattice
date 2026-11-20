@@ -1,18 +1,18 @@
 # Getting Started with Lattice
 
-This guide covers installing Lattice, setting up its AI models on first launch,
-and a short first session.
+This guide covers installing Lattice on Windows, macOS, or Ubuntu, setting up AI (either with a cloud API key or local offline models), and starting your first course or library session.
 
 ## Table of Contents
 
 1. [Supported Systems](#supported-systems)
 2. [Installation](#installation)
-3. [First Launch](#first-launch)
-4. [Your First Session](#your-first-session)
-5. [Where Lattice Keeps Your Data](#where-lattice-keeps-your-data)
-6. [Uninstalling](#uninstalling)
-7. [If Something Goes Wrong](#if-something-goes-wrong)
-8. [Next Steps](#next-steps)
+3. [First Launch (Set up AI)](#first-launch)
+4. [Start Your First Course (Learning Studio)](#start-your-first-course)
+5. [Your First Library Session](#your-first-session)
+6. [Where Lattice Keeps Your Data](#where-lattice-keeps-your-data)
+7. [Uninstalling](#uninstalling)
+8. [If Something Goes Wrong](#if-something-goes-wrong)
+9. [Next Steps](#next-steps)
 
 ---
 
@@ -20,49 +20,57 @@ and a short first session.
 
 Lattice is built for:
 
-- **Windows 11** (x64)
-- **macOS 13.3 or later** on Apple Silicon. A separate Intel Mac build is being
-  qualified; Intel Macs run models on the CPU, so expect slower answers than on
-  Apple Silicon.
+- **Windows 10/11** (x64)
+- **macOS 13.3 or later** on Apple Silicon. Intel Mac support is being qualified and runs local models on the CPU.
 - **Ubuntu 24.04 LTS** (x64)
 
-Other Linux distributions, ARM Windows and ARM Linux are not supported.
+Other Linux distributions, ARM Windows, and ARM Linux are not supported with prebuilt installers.
 
-**Disk space:** models take several gigabytes. The setup dialog on first launch
-shows the exact download size and warns you if there isn't enough free space.
-
-**Memory:** Lattice suggests a chat model sized to your computer's RAM. More
-memory lets you run larger models.
+**Disk space:** If you run local models, they take several gigabytes (the first-launch dialog shows the exact size before downloading). If you use a cloud API key (Claude, OpenAI, or Google), nothing extra is downloaded.
 
 ---
 
 ## Installation
 
-Lattice is pre-release. Download the installer for your platform from the
-[latest release](https://github.com/J-Reed700/lattice/releases/latest).
+### Option A: Prebuilt installer (easiest)
 
-### Windows
+Open the [Releases](https://github.com/J-Reed700/lattice/releases) page and look for the latest **Lattice app release** (`Lattice_<version>_...` files — ignore `llama-server` sidecar releases).
 
-Run the setup `.exe` (`Lattice_<version>_x64-setup.exe`) and follow the prompts, then start
-Lattice from the Start menu. Pre-release builds are not code-signed, so Windows
-SmartScreen may warn you; choose **More info > Run anyway** if you trust the
-source.
+#### Windows 10/11
 
-### macOS
+1. Download and double-click `Lattice_<version>_x64-setup.exe`.
+2. Pre-release builds are not code-signed yet, so Windows SmartScreen may warn you: click **More info**, then **Run anyway**.
+3. Follow the installer prompts (no administrator rights required), then open **Lattice** from the Start menu.
 
-1. Open the Apple Silicon `.dmg` and drag **Lattice** to **Applications**.
-   There is no Intel Mac download yet.
+#### macOS (Apple Silicon)
+
+1. Download and open `Lattice_<version>_aarch64.dmg` and drag **Lattice** to **Applications**.
 2. Open Lattice from Applications.
-3. Pre-release builds are not notarized. If macOS says it can't verify the app,
-   open **System Settings > Privacy & Security** and choose **Open Anyway**.
+3. Pre-release builds are not notarized yet. If macOS says it can't verify the app, open **System Settings → Privacy & Security** and click **Open Anyway**.
 
-### Ubuntu 24.04
+#### Ubuntu 24.04
 
-Install the `.deb` package:
+Install the `.deb` package, then open Lattice from your applications menu:
 
 ```bash
 sudo apt install ./Lattice_*_amd64.deb
 ```
+
+### Option B: One-command install (no installer needed)
+
+If no app installer release is published yet (or you want the latest `main` build), run the one-command setup script. It installs any missing build tools, compiles Lattice, installs it, and opens it automatically (~10–15 minutes on first run).
+
+- **Windows 10/11:** Press the **Windows key**, type **PowerShell**, open **Windows PowerShell**, paste this line, and press **Enter**:
+
+  ```powershell
+  irm https://raw.githubusercontent.com/J-Reed700/lattice/main/setup.ps1 | iex
+  ```
+
+- **macOS / Linux:** Open **Terminal**, paste this line, and press **Enter**:
+
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/J-Reed700/lattice/main/setup.sh | bash
+  ```
 
 ---
 
@@ -70,31 +78,40 @@ sudo apt install ./Lattice_*_amd64.deb
 
 ### Set up AI
 
-If no models are installed yet, Lattice opens a **Set up AI** dialog. It checks
-your hardware and offers two models that fit it:
+When you open Lattice for the first time, a **Set up AI** window opens. You have two choices:
 
-- a **chat** model, which writes answers, and
-- an **embedding** model, which turns text into vectors for search by meaning.
+#### Option 1: Use an API key (Claude, OpenAI, or Google) — fastest
 
-The dialog shows each model's size and the total. Choose:
+1. Click **Use an API key instead**.
+2. Pick your **Provider** (**Anthropic** for Claude is selected by default).
+3. Paste your API key and click **Save key** (stored in your computer's keychain).
+4. Choose a **Model** from the dropdown and click **Use this model**.
 
-- **Install** to download both in the background. You can keep using the app
-  while they download.
-- **Choose models** to pick your own in Settings. Model downloads are under
-  **Settings > AI > Models**.
-- **Use an API key instead** to use a cloud provider: pick the provider, save your key
-  and choose a model. Chats and courses then use it.
-- **Not now** to skip. The dialog won't come back, but you can install models
-  any time from **Settings > AI > Models**.
+Chats and Learning Studio courses now use that model with zero downloads.
 
-Importing and indexing need the embedding model, so install at least that one
-before you import. Chat needs a chat model, or a provider you set up with **Use an API key instead** (or later under
-**Settings > AI > Chat**).
+> **Important if you want to import PDFs or files later:** Using an API key downloads nothing, so **chat and topic-based courses work right away**. If you later want to import PDFs, textbooks, or notes for semantic search or source-backed courses, open **Settings → AI → Models**, download an embedding model, and click **Set as Embedding** under **Settings → AI → Downloaded**.
 
-After the models download, Lattice runs offline. It uses the network only when
-you import a web page, turn on web or Wikipedia search in a chat, browse or
-download models, check for updates, or use a remote provider or custom tool you
-set up.
+#### Option 2: Download local offline models (no API key needed)
+
+The dialog checks your computer's memory and recommends a **chat** model plus an **embedding** model (for searching your files by meaning), showing the total size before anything downloads.
+
+- Click **Install** to download both in the background. You can keep using the app while they download, and both activate automatically when finished.
+- Click **See all models** to pick different models in **Settings → AI → Models**.
+- Click **Not now** to skip and set up models later under **Settings → AI**.
+
+Once local models finish downloading, Lattice runs offline. It uses the network only when you import a web page, turn on web/Wikipedia search, research course references, download models, check for updates, or use a cloud/remote provider you configured.
+
+---
+
+## Start Your First Course
+
+1. Open **Studio** from the left sidebar (**Ctrl+7** on Windows/Linux, **⌘7** on macOS).
+2. Click **Build your first program** (or **Build a program** in the top right).
+3. Fill in **Your goal** — describe what you want to be able to do (e.g., *"Understand SQL query plans and index design well enough to tune slow queries"*). Optionally describe what you already know.
+4. Pick a depth (**Focused course**, **Complete course**, or **Deep dive**) and your session length (e.g., 30 minutes).
+5. *(Optional)* Click **Add optional materials** to attach imported documents from your Library or paste reference URLs. If you leave this blank, Lattice searches for and verifies supporting web references automatically.
+6. Click **Create outline**. Writing and reviewing the outline can take several minutes depending on your model and course depth — you can follow each step live.
+7. Once the outline is ready, review it, approve it, and open **Lesson 1** to begin studying.
 
 ---
 
@@ -102,95 +119,74 @@ set up.
 
 ### 1. Import some documents
 
-Press **⌘I** (**Ctrl+I** on Windows and Linux) to open **Import**:
+Press **Ctrl+I** (**⌘I** on macOS) to open **Import**:
 
 - **Files**: drop files onto the page, or click **choose files**.
 - **URL** / **URLs**: import one web page, or several, one per line.
 - **History**: see past imports and any that failed.
 
-Lattice copies each file into its own library, extracts the text and indexes it.
-To import a whole folder, open the command palette (**⌘K**) and choose
-**Add folder**.
+Lattice copies each file into its own library, extracts the text, and indexes it. To import a whole folder, open the command palette (**Ctrl+K** / **⌘K**) and choose **Add folder**.
 
-PDF, Word (`.docx`), text, Markdown and many code and data formats are
-supported. See [Supported file types](user-manual.md#supported-file-types).
+PDF, Word (`.docx`), text, Markdown, audio, and many code and data formats are supported. See [Supported file types](user-manual.md#supported-file-types).
 
 ### 2. Search
 
-Press **⌘1** for **Search** and type what you remember. **Hybrid** (the default)
-combines exact keywords with meaning; **Semantic** and **Keyword** use one or the
-other. You can also press **⌘K** from anywhere to jump to a document.
+Press **Ctrl+1** (**⌘1** on macOS) for **Search** and type what you remember. **Hybrid** (the default) combines exact keywords with meaning; **Semantic** and **Keyword** use one or the other. You can also press **Ctrl+K** (**⌘K**) from anywhere to jump to a document.
 
 ### 3. Ask a question
 
-Press **⌘4** for **Chat**, type a question and press **Enter**. Answers cite the
-passages they used; hover a citation to see the passage and click it to open the
-source.
+Press **Ctrl+4** (**⌘4** on macOS) for **Chat**, type a question, and press **Enter**. Answers cite the passages they used; hover a citation to preview the passage and click it to open the source.
 
 ### 4. Keep a thought
 
-Press **⌘⇧N** for **Quick capture**, type a note and press **Enter**. It is added
-to today's page in your **Journal** (**⌘3**).
+Press **Ctrl+Shift+N** (**⌘⇧N** on macOS) for **Quick capture**, type a note, and press **Enter**. It is added to today's page in your **Journal** (**Ctrl+3** / **⌘3**).
 
 ### 5. Look around
 
-- **Library** (**⌘2**) lists everything you've imported.
-- **Explorer** (**⌘6**) opens a folder on disk next to a chat that can read it.
-- **Studio** (**⌘7**) builds learning programs and holds your flashcards.
+- **Home** (**Ctrl+0** / **⌘0**) shows today's journal, recent chats, and library stats.
+- **Library** (**Ctrl+2** / **⌘2**) lists everything you've imported.
+- **References** (**Ctrl+5** / **⌘5**) holds saved passages and bookmarked answers.
+- **Explorer** (**Ctrl+6** / **⌘6**) opens a folder on disk next to a chat that can read it.
+- **Studio** (**Ctrl+7** / **⌘7**) builds learning programs and holds your flashcards.
 
-The [User Manual](user-manual.md) covers each of these.
+The [User Manual](user-manual.md) covers each of these in detail.
 
 ---
 
 ## Where Lattice Keeps Your Data
 
-| What | macOS | Windows | Ubuntu |
+| What | Windows | macOS | Ubuntu |
 | --- | --- | --- | --- |
-| Database, settings, backups, exports, Explorer folder indexes | `~/Library/Application Support/tech.lattice.app/` | `%APPDATA%\tech.lattice.app\` | `~/.local/share/tech.lattice.app/` |
-| Copies of imported files | `~/.lattice/files/` | `%USERPROFILE%\.lattice\files\` | `~/.lattice/files/` |
-| Downloaded models | `~/.cache/lattice/models/` | `%USERPROFILE%\.cache\lattice\models\` | `~/.cache/lattice/models/` |
-| Logs | `~/Library/Application Support/lattice/logs/` | `%LOCALAPPDATA%\lattice\logs\` | `~/.local/share/lattice/logs/` |
+| Database, settings, backups, exports, Explorer folder indexes | `%APPDATA%\tech.lattice.app\` | `~/Library/Application Support/tech.lattice.app/` | `~/.local/share/tech.lattice.app/` |
+| Copies of imported files | `%USERPROFILE%\.lattice\files\` | `~/.lattice/files/` | `~/.lattice/files/` |
+| Downloaded models | `%USERPROFILE%\.cache\lattice\models\` | `~/.cache/lattice/models/` | `~/.cache/lattice/models/` |
+| Logs | `%LOCALAPPDATA%\lattice\logs\` | `~/Library/Application Support/lattice/logs/` | `~/.local/share/lattice/logs/` |
 
-The database file is `lattice.db`. If you turn on **Mirror notes to disk** in
-**Settings > Vault**, your notes are also written as Markdown files to a folder
-you choose (`~/Lattice` by default).
+The database file is `lattice.db`. If you turn on **Mirror notes to disk** in **Settings → Vault**, your notes are also written as Markdown files to a folder you choose (`~/Lattice` by default).
 
 ---
 
 ## Uninstalling
 
 1. Quit Lattice.
-2. Remove the app: drag it from Applications to the Trash (macOS), use
-   **Settings > Apps** (Windows), or run `sudo apt remove lattice` (Ubuntu
-   `.deb`) or delete the AppImage.
-3. To remove your data as well, delete the folders listed in
-   [Where Lattice Keeps Your Data](#where-lattice-keeps-your-data). Back up or
-   export first if you want to keep anything.
+2. Remove the app:
+   - **Windows:** open **Settings → Apps → Installed apps**, find **Lattice**, and click **Uninstall**.
+   - **macOS:** drag **Lattice** from **Applications** to the Trash.
+   - **Ubuntu:** run `sudo apt remove lattice`.
+3. To remove your data as well, delete the folders listed in [Where Lattice Keeps Your Data](#where-lattice-keeps-your-data). Back up or export first if you want to keep anything.
 
 ---
 
 ## If Something Goes Wrong
 
-- **The setup dialog says there isn't enough disk.** Free up space, then install
-  models from **Settings > AI > Models**.
-- **A model download failed.** Try it again from **Settings > AI > Models**.
-  Gated models on Hugging Face need a token, which you can add in the
-  **Hugging Face** section of the same page.
-- **Chat says there's no model.** In **Settings > AI > Downloaded**, choose
-  **Set as Chat** on a downloaded chat model, and check the provider under
-  **Settings > AI > Chat**.
-- **Import says the embedding model is not ready.** Install an embedding model
-  in **Settings > AI > Models**, choose **Set as Embedding** on it under
-  **Settings > AI > Downloaded**, then import again.
-- **Search finds nothing.** Check that your import finished in
-  **Import > History**.
-- **The app won't start because the database won't open.** Quit Lattice, move
-  `lattice.db` out of the data folder (keep it in case you need it), and start
-  again with a fresh database. Don't delete the models folder; it has nothing to
-  do with database problems.
+- **The setup dialog says there isn't enough disk.** Free up space, use a cloud API key instead, or pick a smaller model in **Settings → AI → Models**.
+- **A model download failed.** Retry it in **Settings → AI → Models**. Gated Hugging Face models need a token, which you can add in the **Hugging Face** section of the same page.
+- **Chat or Studio says there's no model.** Open **Settings → AI → Chat** to check your cloud provider/model (or **Settings → AI → Downloaded** to click **Set as Chat** on a local model).
+- **Import says the embedding model is not ready.** Install an embedding model in **Settings → AI → Models**, click **Set as Embedding** under **Settings → AI → Downloaded**, then import again.
+- **Search finds nothing.** Check that your import finished in **Import → History**.
+- **The app won't start because the database won't open.** Quit Lattice, move `lattice.db` out of the data folder (keep it in case you need it), and start again with a fresh database. Don't delete the models folder; it has nothing to do with database problems.
 
-For more, see the [Troubleshooting](troubleshooting.md) guide and the
-[FAQ](faq.md). **Settings > Logs** shows recent log messages.
+For more, see the [Troubleshooting](troubleshooting.md) guide and the [FAQ](faq.md). **Settings → Logs** shows recent log messages.
 
 ---
 
