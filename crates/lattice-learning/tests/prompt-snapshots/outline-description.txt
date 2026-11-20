@@ -199,7 +199,7 @@ Step 2: give the final answer from your draft. Keep its content, wording, number
     "presence_penalty": 0.0
   },
   "thinking": "off",
-  "max_output_tokens": 120197,
+  "max_output_tokens": 4000,
   "stop": [],
   "want_logprobs": false,
   "priority": "background",
