@@ -165,13 +165,8 @@ describe('Studio programs workspace with no Learning model', () => {
     await waitFor(() => expect(screen.queryByText(NOTICE)).not.toBeInTheDocument());
   });
 
-  it('shows the Learning model notice inside an open program workspace and hides it once adopted', async () => {
-    let saved = withChatModel();
-    mocks.getSettings.mockImplementation(async () => ok(saved));
-    mocks.updateSettings.mockImplementation(async () => {
-      saved = withChatModel(CHAT_REF);
-      return ok(saved);
-    });
+  it('keeps the active program workspace clear of the notice so the lesson stays above the fold', async () => {
+    mocks.getSettings.mockResolvedValue(ok(withChatModel()));
     const summary = {
       id: 'program-1',
       title: 'Thermodynamics',
@@ -206,8 +201,7 @@ describe('Studio programs workspace with no Learning model', () => {
     }));
     show('/studio?course=program-1');
     expect(await screen.findByText('Thermodynamics')).toBeVisible();
-    expect(await screen.findByText(NOTICE)).toBeVisible();
-    await userEvent.click(await screen.findByRole('button', { name: `Use ${CHAT_MODEL}` }));
-    await waitFor(() => expect(screen.queryByText(NOTICE)).not.toBeInTheDocument());
+    await settle();
+    expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
   });
 });
