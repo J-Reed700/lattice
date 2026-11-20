@@ -1,6 +1,9 @@
 import { useCallback, useMemo } from 'react';
 
 import type { ConversationsState } from '@/shared/conversations/conversationsStore.types';
+import type { ConversationMessage, OptimisticMessage } from '@/types/conversation';
+
+const EMPTY_REAL_MESSAGES: ConversationMessage[] = [];
 
 /**
  * The open conversation's messages, persisted and optimistic, with the keys
@@ -9,19 +12,28 @@ import type { ConversationsState } from '@/shared/conversations/conversationsSto
 export function useThreadMessages(
   activeConversationId: string | null,
   conversations: ConversationsState['conversations'],
-  optimisticMessages: ConversationsState['optimisticMessages']
+  optimisticMessages: ConversationsState['optimisticMessages'] | readonly OptimisticMessage[]
 ) {
+  const realMessages = useMemo(() => {
+    if (!activeConversationId) return EMPTY_REAL_MESSAGES;
+    return (
+      conversations.find((conversation) => conversation.id === activeConversationId)?.messages ??
+      EMPTY_REAL_MESSAGES
+    );
+  }, [activeConversationId, conversations]);
+
   const messages = useMemo(() => {
     if (!activeConversationId) return [];
 
-    const realMessages =
-      conversations.find((conversation) => conversation.id === activeConversationId)?.messages ?? [];
-    const optimisticForConversation = Array.from(optimisticMessages.values()).filter(
+    const candidates = Array.isArray(optimisticMessages)
+      ? optimisticMessages
+      : Array.from((optimisticMessages as ConversationsState['optimisticMessages']).values());
+    const optimisticForConversation = candidates.filter(
       (message) =>
         message.conversationId === activeConversationId || message.conversationId === 'temp'
     );
     return [...realMessages, ...optimisticForConversation];
-  }, [activeConversationId, conversations, optimisticMessages]);
+  }, [activeConversationId, realMessages, optimisticMessages]);
 
   /**
    * Raw content of the loaded messages, for resolving memory evidence spans.
@@ -31,13 +43,13 @@ export function useThreadMessages(
    */
   const messageContentById = useMemo(() => {
     const byId = new Map<string, string>();
-    for (const message of messages) {
+    for (const message of realMessages) {
       if ('id' in message && typeof message.content === 'string') {
         byId.set(message.id, message.content);
       }
     }
     return byId;
-  }, [messages]);
+  }, [realMessages]);
 
   const getMessageKey = useCallback(
     (message: typeof messages[number]): string =>

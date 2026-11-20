@@ -69,7 +69,13 @@ function usePortabilityMutation<TRequest, TResult>(
           await invalidateLearningSourceDependents(client, data.programId);
         }
         if ('exports' in data) client.setQueryData(learningPortabilityKey(data.programId), data);
-        if ('cards' in data) client.setQueryData(learningRecallKey(data.programId), data);
+        if ('cards' in data) {
+          client.setQueryData(learningRecallKey(data.programId), data);
+          await Promise.all([
+            client.invalidateQueries({ queryKey: ['study'] }),
+            client.invalidateQueries({ queryKey: ['learning-practice-due'] }),
+          ]);
+        }
       }
       await client.invalidateQueries({ queryKey: learningPortabilityKey(programId) });
     },

@@ -35,14 +35,16 @@ describe('logger', () => {
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining('Kitchen closed'), { error: 'Fire alarm', stack: failure.stack });
   });
 
-  it('prints nothing below the set level, but still records it', () => {
+  it('skips below-level debug and info logs before recording diagnostics', () => {
     logger.setLogLevel('warn');
     expect(logger.getLogLevel()).toBe('warn');
+    logger.debug('Hidden debug');
     logger.info('Quiet');
     logger.warn('Loud');
+    expect(console.debug).not.toHaveBeenCalled();
     expect(console.info).not.toHaveBeenCalled();
     expect(console.warn).toHaveBeenCalled();
-    expect(diagnostics.getSnapshot().map((e) => e.message)).toEqual(['Loud', 'Quiet']);
+    expect(diagnostics.getSnapshot().map((e) => e.message)).toEqual(['Loud']);
   });
 
   it('prints nothing while disabled, but still records it', () => {

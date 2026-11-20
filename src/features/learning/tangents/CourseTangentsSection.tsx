@@ -14,7 +14,8 @@ export interface CourseTangentsSectionProps {
 
 export function CourseTangentsSection({ onOpenDestination }: CourseTangentsSectionProps) {
   const navigate = useAppNavigate();
-  const store = useOptionalConversationsStore();
+  const setSelectedSpace = useOptionalConversationsStore((state) => state.setSelectedSpace);
+  const selectConversation = useOptionalConversationsStore((state) => state.selectConversation);
   const tangentsQuery = useLearningTangents();
   const tangents = useMemo(() => tangentsQuery.data ?? [], [tangentsQuery.data]);
 
@@ -49,13 +50,13 @@ export function CourseTangentsSection({ onOpenDestination }: CourseTangentsSecti
   if (tangents.length === 0) return null;
 
   const handleOpenSpaceInChat = (spaceId: string) => {
-    store?.setSelectedSpace(spaceId);
+    setSelectedSpace?.(spaceId);
     navigate('/chat');
   };
 
   const handleOpenTangentInChat = (spaceId: string, conversationId: string) => {
-    store?.setSelectedSpace(spaceId);
-    void store?.selectConversation(conversationId);
+    setSelectedSpace?.(spaceId);
+    void selectConversation?.(conversationId);
     navigate(`/chat?conversationId=${encodeURIComponent(conversationId)}`);
   };
 

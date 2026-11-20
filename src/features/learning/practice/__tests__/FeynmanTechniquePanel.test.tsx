@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FeynmanTechniquePanel } from '@/features/learning/practice/FeynmanTechniquePanel';
 import type * as Wire from '@/lib/bindings';
-import { setDraft, useDraftStore } from '@/shared/drafts/drafts';
+import { flushDrafts, setDraft, useDraftStore } from '@/shared/drafts/drafts';
 
 type LearningLessonDto = Wire.LearningLessonDto;
 type LearningModuleDto = Wire.LearningModuleDto;
@@ -164,6 +164,7 @@ describe('FeynmanTechniquePanel UI', () => {
 
   it('writes nothing on mount, so a draft kept for later is not wiped', () => {
     setDraft('feynman:prog-1:l-1:explanation', 'Kept for later.');
+    flushDrafts();
     const before = localStorage.getItem('lattice.drafts');
     render(<FeynmanTechniquePanel program={mockProgram} lesson={mockLesson} module={mockModule} />);
     expect(screen.getByDisplayValue('Kept for later.')).toBeInTheDocument();
@@ -177,6 +178,7 @@ describe('FeynmanTechniquePanel UI', () => {
     fireEvent.change(screen.getByLabelText(/Your plain-language explanation/i), { target: { value: 'Persisted plain explanation text.' } });
     fireEvent.change(screen.getByLabelText(/Everyday Analogy/i), { target: { value: 'Like a recipe card.' } });
     fireEvent.click(screen.getByRole('checkbox', { name: /Speak out loud test/i }));
+    flushDrafts();
     const stored = JSON.parse(localStorage.getItem('lattice.drafts') ?? '{}') as Record<string, string>;
     expect(stored['feynman:prog-1:l-1:explanation']).toBe('Persisted plain explanation text.');
     expect(stored['feynman:prog-1:l-1:analogy']).toBe('Like a recipe card.');

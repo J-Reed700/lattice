@@ -549,7 +549,7 @@ impl DownloadRepository for SqliteDownloadRepository {
     }
 }
 
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(any(test, feature = "test-support"))]
 #[allow(clippy::unwrap_used)] // Test/mock code - unwrap() is acceptable for test infrastructure
 pub mod mock {
     use super::*;

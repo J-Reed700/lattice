@@ -1,6 +1,6 @@
 use super::*;
-use std::io::Read;
-use std::net::{Shutdown, TcpListener};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 
 #[derive(Debug)]
 struct Layer {
@@ -58,26 +58,30 @@ fn an_error_without_causes_is_its_message() {
 
 #[tokio::test]
 async fn a_dropped_connection_shows_why_the_request_failed() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
         let mut seen = Vec::new();
         let mut buffer = [0u8; 256];
         while !seen.windows(4).any(|window| window == b"\r\n\r\n") {
-            match stream.read(&mut buffer) {
+            match stream.read(&mut buffer).await {
                 Ok(0) | Err(_) => break,
                 Ok(count) => seen.extend_from_slice(&buffer[..count]),
             }
         }
-        let _ = stream.shutdown(Shutdown::Both);
+        let _ = stream.shutdown().await;
     });
 
     let result = reqwest::Client::new()
         .get(format!("http://{addr}/"))
         .send()
         .await;
-    server.join().unwrap();
+    if server.is_finished() {
+        server.await.unwrap();
+    } else {
+        server.abort();
+    }
 
     let Err(error) = result else {
         panic!("the dropped connection must fail the request");

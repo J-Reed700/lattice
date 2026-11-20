@@ -11,7 +11,11 @@ mod desktop_e2e;
 
 fn run_app() -> Result<(), Box<dyn std::error::Error>> {
     use tauri::Manager;
-    let builder = tauri::Builder::default();
+    let builder = tauri::Builder::default().on_page_load(setup::renderer_watchdog::on_page_load);
+    #[cfg(target_os = "macos")]
+    let builder = builder.on_web_content_process_terminate(
+        setup::renderer_watchdog::on_web_content_process_terminate,
+    );
     #[cfg(feature = "desktop-e2e")]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
     builder
@@ -65,6 +69,7 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
             // Register before the webview can announce readiness. On macOS
             // this also routes AppKit's Cmd-Q/Dock Quit through the save gate.
             setup::renderer_shutdown::install(app.handle())?;
+            setup::renderer_watchdog::install(app.handle());
 
             // Register the sidecar registry before anything can spawn a
             // sidecar. The LLM factory looks this up via
@@ -88,6 +93,8 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
             for plugin in lattice::plugins::init_plugins() {
                 app.handle().plugin(plugin)?;
             }
+
+            setup::renderer_watchdog::start(app.handle());
 
             Ok(())
         })

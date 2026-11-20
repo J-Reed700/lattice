@@ -216,6 +216,51 @@ pub fn unavailable() -> AppError {
     AppError::ServiceNotAvailable("no browser is available to read pages".to_string())
 }
 
+/// Destroys the native OS webview on drop so cancelling or dropping a read
+/// future never leaks a `WKWebView`/`WebView2` process.
+struct WindowGuard {
+    window: Option<tauri::WebviewWindow>,
+    label: String,
+}
+
+impl WindowGuard {
+    fn new(window: tauri::WebviewWindow, label: String) -> Self {
+        Self {
+            window: Some(window),
+            label,
+        }
+    }
+
+    fn url(&self) -> Option<Url> {
+        self.window.as_ref().and_then(|window| window.url().ok())
+    }
+
+    fn eval(&self, script: String) -> tauri::Result<()> {
+        match self.window.as_ref() {
+            Some(window) => window.eval(script),
+            None => Ok(()),
+        }
+    }
+
+    fn close_window(&mut self) {
+        if let Some(window) = self.window.take() {
+            if let Err(error) = window.destroy() {
+                warn!(%error, label = %self.label, "Page reader window could not be destroyed");
+            }
+        }
+    }
+
+    fn destroy(mut self) {
+        self.close_window();
+    }
+}
+
+impl Drop for WindowGuard {
+    fn drop(&mut self) {
+        self.close_window();
+    }
+}
+
 impl BrowserReader {
     /// The reader for the running `app`.
     pub fn new(app: AppHandle<Wry>) -> Self {
@@ -334,6 +379,7 @@ impl BrowserReader {
         let window = builder.build().map_err(|e| {
             AppError::InternalError(format!("could not open a browser window: {e}"))
         })?;
+        let window = WindowGuard::new(window, label);
 
         // The check is driven from here, not from timers inside the page: a
         // challenge page replaces its document mid-check, and anything injected
@@ -364,10 +410,8 @@ impl BrowserReader {
         // Where the page is, from the browser rather than from the page. The
         // report navigation was cancelled, so the window still shows the page
         // that sent it; history.pushState can move within its origin only.
-        let landed = window.url().ok();
-        if let Err(error) = window.destroy() {
-            warn!(%error, label, "Page reader window could not be destroyed");
-        }
+        let landed = window.url();
+        window.destroy();
         drop(sender);
 
         let report = match outcome {

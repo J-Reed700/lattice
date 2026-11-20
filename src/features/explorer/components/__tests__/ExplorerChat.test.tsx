@@ -10,6 +10,13 @@ import type { ExplorerThreads } from '@/features/explorer/hooks/useExplorerThrea
 import { ExplorerChat } from '../ExplorerChat';
 
 
+vi.mock('@/features/chat/components/tangents/TangentConversation', () => ({
+  ScopedConversationProvider: ({ conversationId, children }: { conversationId: string; children: ReactNode }) => (
+    <div data-testid="scoped-conversation" data-conversation-id={conversationId}>
+      {children}
+    </div>
+  ),
+}));
 vi.mock('@/features/chat/components/ChatPanel', () => ({
   ChatPanel: ({ composerNotice, composerChips }: { composerNotice?: ReactNode; composerChips?: ReactNode }) => (
     <div>
@@ -70,6 +77,7 @@ describe('ExplorerChat conversation actions', () => {
 describe('ExplorerChat composer', () => {
   it('puts the folder index notice and the selected lines into the chat composer', () => {
     show(threads());
+    expect(screen.getByTestId('scoped-conversation')).toHaveAttribute('data-conversation-id', 'thread-1');
     expect(screen.getByTestId('composer-notice')).toHaveTextContent('Folder index notice');
     expect(screen.getByTestId('composer-chips')).toHaveTextContent('Selected lines chip');
   });

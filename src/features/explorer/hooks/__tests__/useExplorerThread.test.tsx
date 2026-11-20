@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
+
 import { useExplorerThread } from '../useExplorerThread';
 
 const mocks = vi.hoisted(() => ({
@@ -40,7 +42,8 @@ const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider 
 beforeEach(() => {
   vi.clearAllMocks();
   client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  mocks.store.activeConversationId = null;
+  conversationUiStore.setState({ activeConversationId: 'chat-main-1' });
+  mocks.store.activeConversationId = 'chat-main-1';
   mocks.api.listConversationsExplorer.mockResolvedValue({
     ok: true,
     data: { conversations: [thread('older', '2026-10-01T10:00:00Z'), thread('newer', '2026-10-08T10:00:00Z')] },
@@ -49,33 +52,34 @@ beforeEach(() => {
 });
 
 describe('the thread a folder opens on', () => {
-  it('is the one its row remembers, not the newest', async () => {
+  it('is the one its row remembers, not the newest, without touching /chat activeConversationId', async () => {
     mocks.api.explorerFoldersList.mockResolvedValue({ ok: true, data: { home: null, folders: [folder('older')] } });
-    renderHook(() => useExplorerThread(ROOT, 'project'), { wrapper });
-    await waitFor(() => expect(mocks.store.selectConversation).toHaveBeenCalledWith('older'));
-    expect(mocks.store.selectConversation).not.toHaveBeenCalledWith('newer');
+    const { result } = renderHook(() => useExplorerThread(ROOT, 'project'), { wrapper });
+    await waitFor(() => expect(result.current.activeId).toBe('older'));
+    expect(mocks.store.selectConversation).not.toHaveBeenCalled();
+    expect(conversationUiStore.getState().activeConversationId).toBe('chat-main-1');
   });
 
   it('is the newest when the remembered one is gone', async () => {
     mocks.api.explorerFoldersList.mockResolvedValue({ ok: true, data: { home: null, folders: [folder('deleted')] } });
-    renderHook(() => useExplorerThread(ROOT, 'project'), { wrapper });
-    await waitFor(() => expect(mocks.store.selectConversation).toHaveBeenCalledWith('newer'));
+    const { result } = renderHook(() => useExplorerThread(ROOT, 'project'), { wrapper });
+    await waitFor(() => expect(result.current.activeId).toBe('newer'));
+    expect(mocks.store.selectConversation).not.toHaveBeenCalled();
+    expect(conversationUiStore.getState().activeConversationId).toBe('chat-main-1');
   });
 
   it('is saved on the folder\'s row when another thread is shown, once', async () => {
     mocks.api.explorerFoldersList.mockResolvedValue({ ok: true, data: { home: null, folders: [folder('older')] } });
-    const { rerender } = renderHook(() => useExplorerThread(ROOT, 'project'), { wrapper });
-    await waitFor(() => expect(mocks.store.selectConversation).toHaveBeenCalledWith('older'));
-
-    mocks.store.activeConversationId = 'older';
-    rerender();
+    const { result, rerender } = renderHook(() => useExplorerThread(ROOT, 'project'), { wrapper });
+    await waitFor(() => expect(result.current.activeId).toBe('older'));
     expect(mocks.api.explorerFolderSetLastThread).not.toHaveBeenCalled();
 
-    mocks.store.activeConversationId = 'newer';
+    act(() => result.current.select('newer'));
     rerender();
-    rerender();
+    await waitFor(() => expect(result.current.activeId).toBe('newer'));
     await waitFor(() => expect(mocks.api.explorerFolderSetLastThread).toHaveBeenCalledWith(ROOT, 'newer'));
-    await act(async () => { rerender(); });
+    act(() => result.current.select('newer'));
     expect(mocks.api.explorerFolderSetLastThread).toHaveBeenCalledOnce();
+    expect(conversationUiStore.getState().activeConversationId).toBe('chat-main-1');
   });
 });

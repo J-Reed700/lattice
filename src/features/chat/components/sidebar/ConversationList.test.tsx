@@ -17,7 +17,10 @@ const h = vi.hoisted(() => ({
   reducedMotion: false,
 }));
 
-vi.mock('@/shared/conversations/conversationsStore', () => ({ useConversationsStore: () => h.store }));
+vi.mock('@/shared/conversations/conversationsStore', () => ({
+  useConversationsStore: <T,>(selector?: (_s: Record<string, unknown>) => T) =>
+    (selector ? selector(h.store) : h.store),
+}));
 vi.mock('@/features/chat/hooks/workspaceQueries', () => ({ useJournalsQuery: () => ({ journals: h.journals }) }));
 vi.mock('@/features/chat/hooks/useForkLineage', () => ({ useForkLineage: () => h.forkLineage }));
 vi.mock('@/features/learning/recall/flashcards/useFlashcards', () => ({ useGenerateConversationFlashcardDeck: () => h.deck }));
@@ -410,6 +413,28 @@ describe('ConversationList', () => {
       expect(within(menu).getByRole('button', { name: 'Delete conversation' })).toBeDisabled();
       pending.resolve();
       await waitFor(() => expect(within(menu).getByRole('button', { name: 'Delete conversation' })).toBeEnabled());
+    });
+  });
+
+  describe('virtualization for large lists', () => {
+    it('virtualizes lists above 50 conversations while keeping visible items interactive', async () => {
+      const selectConversation = vi.fn().mockResolvedValue(undefined);
+      const conversations = Array.from({ length: 80 }, (_, index) =>
+        makeConversation(`conv-${index}`, `Thread ${index}`, {
+          updatedAt: daysAgo(index < 40 ? 0 : 8),
+        }),
+      );
+      h.store = store({ conversations, selectConversation });
+
+      renderList();
+
+      expect(screen.getByText('Today')).toBeInTheDocument();
+      expect(screen.getByText('Thread 0')).toBeInTheDocument();
+      // Distant items past initialRect + overscan are virtualized out of the DOM.
+      expect(screen.queryByText('Thread 79')).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByText('Thread 0'));
+      await waitFor(() => expect(selectConversation).toHaveBeenCalledWith('conv-0'));
     });
   });
 });

@@ -35,6 +35,14 @@ impl ShutdownState {
         self.approved = saved;
         Some(saved)
     }
+
+    /// Resets readiness when the main webview reloads or its content process
+    /// terminates. Returns `true` if a quit request was waiting on that dead
+    /// renderer, so the caller can let the quit proceed.
+    fn mark_unready(&mut self) -> bool {
+        self.ready = false;
+        self.pending.take().is_some()
+    }
 }
 
 type State = Mutex<ShutdownState>;
@@ -77,6 +85,26 @@ pub fn install(app: &tauri::AppHandle) -> lattice_core::shared::error::Result<()
 pub fn finish_native_termination(_app: &tauri::AppHandle) {
     #[cfg(target_os = "macos")]
     macos::reply(_app, true);
+}
+
+/// Called when the main webview navigates or its content process crashes so a
+/// subsequent quit cannot deadlock waiting on a renderer that is not mounted.
+/// A quit already waiting on the dead renderer is not cancelled: that renderer
+/// can no longer save, so the quit is re-issued and, being unready, proceeds.
+pub fn mark_unready(app: &tauri::AppHandle) {
+    let Some(state) = app.try_state::<State>() else {
+        return;
+    };
+    let had_pending = state.lock().mark_unready();
+    if had_pending {
+        tracing::warn!(
+            "Main webview went away while a quit waited on its save; nothing is left to save, so the quit proceeds"
+        );
+        // Re-enters the normal path: `ExitRequested` -> `defer()` returns false
+        // (not ready) -> graceful shutdown -> native termination. Safe from
+        // page-load and WebContent callbacks because `exit` posts to the event loop.
+        app.exit(0);
+    }
 }
 
 /// Returns true when native destruction must be prevented. A repeated quit
@@ -126,5 +154,25 @@ mod tests {
         assert_ne!(retry, id);
         assert_eq!(state.respond(id, true), None);
         assert_eq!(state.respond(retry, true), Some(true));
+    }
+
+    #[test]
+    fn reload_or_crash_clears_readiness_and_releases_stranded_quit() {
+        let mut state = ShutdownState {
+            ready: true,
+            ..Default::default()
+        };
+        let stranded = state.request().unwrap();
+        assert!(state.mark_unready());
+        // Stale reply from the previous generation is ignored, and the
+        // re-issued quit proceeds because the unmounted webview cannot save.
+        assert_eq!(state.respond(stranded, true), None);
+        assert_eq!(state.request(), None);
+        assert!(!state.mark_unready());
+
+        state.ready = true;
+        let fresh = state.request().unwrap();
+        assert_ne!(fresh, stranded);
+        assert_eq!(state.respond(fresh, true), Some(true));
     }
 }

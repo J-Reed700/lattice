@@ -5,7 +5,9 @@
 
 import { useEffect } from 'react';
 
+import { useQueryClient } from '@tanstack/react-query';
 
+import { WORKSPACE_NOTES_QUERY_KEY } from '@/lib/queryClient';
 import { TauriEventNames, EventSchemas, listenValidated } from '@/types/events';
 
 import { useVaultImportStore } from '../stores/vaultImportStore';
@@ -13,6 +15,8 @@ import { useVaultImportStore } from '../stores/vaultImportStore';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 
 export function useVaultImportListener(): void {
+  const queryClient = useQueryClient();
+
   useEffect(() => {
     const isMounted = { current: true };
     let unlisten: UnlistenFn | undefined;
@@ -25,6 +29,7 @@ export function useVaultImportListener(): void {
           EventSchemas.Vault.NoteImported,
           (event) => {
             bump(event.payload.noteId);
+            void queryClient.invalidateQueries({ queryKey: WORKSPACE_NOTES_QUERY_KEY });
           },
           (err) => {
             console.error(
@@ -48,5 +53,5 @@ export function useVaultImportListener(): void {
       isMounted.current = false;
       unlisten?.();
     };
-  }, []);
+  }, [queryClient]);
 }

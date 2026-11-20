@@ -56,7 +56,9 @@ impl SummaryTier {
         if let Some(index) = cache.get(&path).and_then(Weak::upgrade) {
             return Ok(index as Arc<dyn VectorSearchPort>);
         }
-        let index = Arc::new(USearchVectorIndex::open_or_create(dimension, path.clone())?);
+        let index = Arc::new(
+            USearchVectorIndex::open_or_create(dimension, path.clone())?.with_coalesced_saves(),
+        );
         cache.insert(path, Arc::downgrade(&index));
         Ok(index as Arc<dyn VectorSearchPort>)
     }
@@ -100,7 +102,7 @@ pub async fn register(app: tauri::AppHandle, enabled: bool) -> Result<()> {
         tier.trigger().clear_post_index_hook();
         return Ok(());
     }
-    let Some(identity) = container.search.embedding_identity().map(str::to_owned) else {
+    let Some(identity) = container.search.embedding_identity() else {
         tracing::info!("Summary tier idle: no active embedding model to key its index by");
         return Ok(());
     };
@@ -147,7 +149,7 @@ impl Container {
     /// or no summaries stored under it. The check is one indexed `COUNT`, so a
     /// vault with the tier switched off pays nothing per turn.
     pub async fn summary_search(&self) -> Option<Arc<SummarySearch>> {
-        let identity = self.search.embedding_identity()?.to_owned();
+        let identity = self.search.embedding_identity()?;
         let repository: Arc<dyn SummaryRepositoryPort> =
             Arc::new(SqliteSummaryRepository::new(self.database().clone()));
         match repository.count_for_identity(&identity).await {

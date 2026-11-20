@@ -36,20 +36,34 @@ import {
 } from '../types/shortcuts';
 import { logger } from '../utils/logger';
 
+const CUSTOM_SHORTCUTS_STORAGE_KEY = 'lattice-custom-shortcuts';
+
 // Global registry of all active shortcuts
 const globalShortcutRegistry = new Map<string, KeyboardShortcutRegistration>();
+let cachedCustomShortcuts: Record<string, string> | null = null;
 
 /**
  * Load custom shortcuts from localStorage
  */
 function loadCustomShortcuts(): Record<string, string> {
   try {
-    const stored = localStorage.getItem('lattice-custom-shortcuts');
-    return stored ? JSON.parse(stored) : {};
+    const stored = localStorage.getItem(CUSTOM_SHORTCUTS_STORAGE_KEY);
+    const parsed: unknown = stored ? JSON.parse(stored) : {};
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return { ...(parsed as Record<string, string>) };
   } catch (error) {
     logger.error('Failed to load custom shortcuts:', { error });
     return {};
   }
+}
+
+function refreshCustomShortcutsCache(): Record<string, string> {
+  cachedCustomShortcuts = loadCustomShortcuts();
+  return cachedCustomShortcuts;
+}
+
+function getCachedCustomShortcuts(): Record<string, string> {
+  return cachedCustomShortcuts ?? refreshCustomShortcutsCache();
 }
 
 /**
@@ -57,7 +71,7 @@ function loadCustomShortcuts(): Record<string, string> {
  */
 function saveCustomShortcuts(shortcuts: Record<string, string>): void {
   try {
-    localStorage.setItem('lattice-custom-shortcuts', JSON.stringify(shortcuts));
+    localStorage.setItem(CUSTOM_SHORTCUTS_STORAGE_KEY, JSON.stringify(shortcuts));
   } catch (error) {
     logger.error('Failed to save custom shortcuts:', { error });
   }
@@ -115,8 +129,11 @@ function areConflictsEqual(
 /**
  * Get the effective shortcut (custom or default)
  */
-function getEffectiveShortcut(id: string, defaultKeys: string): string {
-  const customShortcuts = loadCustomShortcuts();
+function getEffectiveShortcut(
+  id: string,
+  defaultKeys: string,
+  customShortcuts: Record<string, string> = getCachedCustomShortcuts()
+): string {
   return customShortcuts[id] || defaultKeys;
 }
 
@@ -151,10 +168,11 @@ export function useKeyboardShortcuts(
 
     const registeredIds: string[] = [];
     const newConflicts: ShortcutConflict[] = [];
+    const customShortcuts = refreshCustomShortcutsCache();
 
     // Register each shortcut
     for (const shortcut of shortcuts) {
-      const effectiveKeys = getEffectiveShortcut(shortcut.id, shortcut.keys);
+      const effectiveKeys = getEffectiveShortcut(shortcut.id, shortcut.keys, customShortcuts);
       const registration: KeyboardShortcutRegistration = {
         ...shortcut,
         keys: effectiveKeys,
@@ -184,6 +202,16 @@ export function useKeyboardShortcuts(
   }, [shortcuts, enabled, context]);
 
   useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === null || event.key === CUSTOM_SHORTCUTS_STORAGE_KEY) {
+        cachedCustomShortcuts = null;
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  useEffect(() => {
     if (!enabled) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -195,8 +223,9 @@ export function useKeyboardShortcuts(
         target.tagName === 'TEXTAREA' ||
         target.isContentEditable;
 
+      const customShortcuts = getCachedCustomShortcuts();
       for (const shortcut of shortcutsRef.current) {
-        const effectiveKeys = getEffectiveShortcut(shortcut.id, shortcut.keys);
+        const effectiveKeys = getEffectiveShortcut(shortcut.id, shortcut.keys, customShortcuts);
 
         if (matchesShortcut(event, effectiveKeys)) {
           // Skip if typing in input and not a global shortcut
@@ -236,8 +265,8 @@ export function useKeyboardShortcuts(
   }, [enabled, context, preventDefault]);
 
   const updateShortcut = useCallback((id: string, newKeys: string) => {
-    const customShortcuts = loadCustomShortcuts();
-    customShortcuts[id] = newKeys;
+    const customShortcuts = { ...getCachedCustomShortcuts(), [id]: newKeys };
+    cachedCustomShortcuts = customShortcuts;
     saveCustomShortcuts(customShortcuts);
 
     const existing = globalShortcutRegistry.get(id);
@@ -249,8 +278,9 @@ export function useKeyboardShortcuts(
   }, []);
 
   const resetShortcut = useCallback((id: string) => {
-    const customShortcuts = loadCustomShortcuts();
+    const customShortcuts = { ...getCachedCustomShortcuts() };
     delete customShortcuts[id];
+    cachedCustomShortcuts = customShortcuts;
     saveCustomShortcuts(customShortcuts);
 
     const existing = globalShortcutRegistry.get(id);
@@ -265,7 +295,8 @@ export function useKeyboardShortcuts(
   }, [shortcuts]);
 
   const resetAllShortcuts = useCallback(() => {
-    localStorage.removeItem('lattice-custom-shortcuts');
+    localStorage.removeItem(CUSTOM_SHORTCUTS_STORAGE_KEY);
+    cachedCustomShortcuts = {};
 
     for (const shortcut of shortcuts) {
       const existing = globalShortcutRegistry.get(shortcut.id);

@@ -14,9 +14,11 @@ pub struct InitializationDi {
     pub initialize_database_use_case: Arc<InitializeDatabaseUseCase>,
 }
 
-pub fn build(database: Database) -> InitializationDi {
+pub fn build(database: Database, db_path: impl Into<String>) -> InitializationDi {
     InitializationDi {
-        initialize_database_use_case: Arc::new(InitializeDatabaseUseCase::new(database)),
+        initialize_database_use_case: Arc::new(
+            InitializeDatabaseUseCase::new(database).with_db_path(db_path),
+        ),
     }
 }
 

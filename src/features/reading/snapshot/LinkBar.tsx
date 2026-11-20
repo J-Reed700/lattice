@@ -54,10 +54,14 @@ export function LinkBar({ conversationId, snapshotId, onOpenFrozenCopy }: LinkBa
     void listenValidated(TauriEventNames.WebPageSnapshot.Link, EventSchemas.WebPageSnapshot.Link, ({ payload }) => {
       if (payload.snapshotId !== snapshotId) return;
       setLink((previous) => ({ url: payload.url, seq: (previous?.seq ?? 0) + 1 }));
-    }).then((stop) => {
-      if (disposed) stop();
-      else unlisten = stop;
-    });
+    })
+      .then((stop) => {
+        if (disposed) stop();
+        else unlisten = stop;
+      })
+      .catch((err: unknown) => {
+        console.error('[LinkBar] failed to subscribe to snapshot link events:', err);
+      });
     return () => {
       disposed = true;
       unlisten?.();

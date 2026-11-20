@@ -6,9 +6,11 @@
 
 import { useEffect } from 'react';
 
+import { useQueryClient } from '@tanstack/react-query';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
 import { useApi } from '@/contexts/ApiContext';
+import { WORKSPACE_NOTES_QUERY_KEY } from '@/lib/queryClient';
 import { toast } from '@/stores/toastStore';
 
 import { useVaultImportStore } from '../stores/vaultImportStore';
@@ -17,6 +19,7 @@ const RESCAN_THROTTLE_MS = 2000;
 
 export function useVaultFocusRescan(): void {
   const api = useApi();
+  const queryClient = useQueryClient();
   useEffect(() => {
     let mounted = true;
     let unlisten: (() => void) | null = null;
@@ -40,6 +43,7 @@ export function useVaultFocusRescan(): void {
         // only care that it ticked.
         const bump = useVaultImportStore.getState().bump;
         bump('');
+        void queryClient.invalidateQueries({ queryKey: WORKSPACE_NOTES_QUERY_KEY });
 
         const parts: string[] = [];
         if (imported > 0) {
@@ -78,5 +82,5 @@ export function useVaultFocusRescan(): void {
       mounted = false;
       unlisten?.();
     };
-  }, [api]);
+  }, [api, queryClient]);
 }

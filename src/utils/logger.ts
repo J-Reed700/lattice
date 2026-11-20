@@ -64,6 +64,7 @@ class Logger {
     context?: LogContext,
     ...args: unknown[]
   ): void {
+    if (!this.shouldLog(level) && level !== 'warn' && level !== 'error') return;
     diagnostics.record(level, message, context?.component ?? 'Application', { context, args });
     if (!this.shouldLog(level)) return;
 

@@ -10,7 +10,11 @@ import { toast } from '@/stores/toastStore';
 
 export function useJournalSelection() {
   const navigate = useAppNavigate();
-  const { conversations, spaces, filterMode, selectedSpaceId, activeConversationId } = useConversationsStore();
+  const conversations = useConversationsStore((state) => state.conversations);
+  const spaces = useConversationsStore((state) => state.spaces);
+  const filterMode = useConversationsStore((state) => state.filterMode);
+  const selectedSpaceId = useConversationsStore((state) => state.selectedSpaceId);
+  const activeConversationId = useConversationsStore((state) => state.activeConversationId);
   const { journals } = useJournalsQuery();
   const journalSpaces = useMemo(() => journals.filter(journal => !journal.isArchived), [journals]);
   const journalNameById = useMemo(() => new Map(journals.map(journal => [journal.id, journal.name])), [journals]);

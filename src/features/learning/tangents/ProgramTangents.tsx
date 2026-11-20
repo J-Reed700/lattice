@@ -359,7 +359,8 @@ function CourseTangentCard({
   onOpen: () => void;
 }) {
   const navigate = useAppNavigate();
-  const store = useOptionalConversationsStore();
+  const setSelectedSpace = useOptionalConversationsStore((state) => state.setSelectedSpace);
+  const selectConversation = useOptionalConversationsStore((state) => state.selectConversation);
   const replies = Math.max(0, tangent.messageCount - tangent.contextMessageCount);
   const sectionLabel =
     tangent.sectionTitle ??
@@ -367,8 +368,8 @@ function CourseTangentCard({
 
   const handleOpenInChat = (event: React.MouseEvent) => {
     event.stopPropagation();
-    store?.setSelectedSpace(tangent.spaceId);
-    void store?.selectConversation(tangent.conversationId);
+    setSelectedSpace?.(tangent.spaceId);
+    void selectConversation?.(tangent.conversationId);
     navigate(`/chat?conversationId=${encodeURIComponent(tangent.conversationId)}`);
   };
 

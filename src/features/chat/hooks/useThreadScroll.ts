@@ -68,8 +68,10 @@ export function useThreadScroll<TMessage>({
     if (!container) return;
 
     const previousConversationId = previousConversationIdRef.current;
+    const previousMessageCount = previousMessageCountRef.current;
     const isConversationChange = previousConversationId !== activeConversationId;
-    const isInitialMessageLoad = previousMessageCountRef.current === 0;
+    const isInitialMessageLoad = previousMessageCount === 0;
+    const didMessageCountIncrease = messages.length > previousMessageCount;
     previousConversationIdRef.current = activeConversationId ?? null;
     previousMessageCountRef.current = messages.length;
 
@@ -87,7 +89,12 @@ export function useThreadScroll<TMessage>({
       // The conversation can arrive before its messages. Treat that first
       // batch as a jump too; smooth scrolling through estimated long rows
       // can stop partway down the history and compete with a navigation click.
-      behavior: isConversationChange || isInitialMessageLoad || prefersReducedMotion ? 'auto' : 'smooth',
+      // When streaming content grows on an existing turn, jump immediately
+      // with 'auto' instead of starting 60 smooth-scroll animations per second.
+      behavior:
+        isConversationChange || isInitialMessageLoad || prefersReducedMotion || !didMessageCountIncrease
+          ? 'auto'
+          : 'smooth',
     });
   }, [messages, activeConversationId, prefersReducedMotion]);
 

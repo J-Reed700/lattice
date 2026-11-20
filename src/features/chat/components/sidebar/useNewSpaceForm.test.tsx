@@ -14,7 +14,10 @@ const h = vi.hoisted(() => ({
 
 vi.mock('react-router', () => ({ useNavigate: () => h.navigate }));
 vi.mock('@/shared/conversations/conversationsStore', () => ({
-  useConversationsStore: () => ({ setSelectedSpace: h.setSelectedSpace, loadConversations: h.loadConversations }),
+  useConversationsStore: <T,>(selector?: (_s: { setSelectedSpace: typeof h.setSelectedSpace; loadConversations: typeof h.loadConversations }) => T) => {
+    const state = { setSelectedSpace: h.setSelectedSpace, loadConversations: h.loadConversations };
+    return selector ? selector(state) : state;
+  },
 }));
 vi.mock('@/features/chat/hooks/workspaceQueries', () => ({
   useJournalsQuery: () => ({ journals: h.journals }),

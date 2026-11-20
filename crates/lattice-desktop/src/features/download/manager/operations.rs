@@ -279,7 +279,29 @@ impl DownloadManager for DownloadManagerService {
     }
 
     async fn delete_pending_by_model(&self, model_id: &str) -> Result<u64, DownloadError> {
-        self.repository.delete_pending_by_model(model_id).await
+        let _queue_guard = self.queue_gate.lock().await;
+        let pending_ids: Vec<String> = self
+            .repository
+            .list_by_state(&DownloadState::Pending)
+            .await?
+            .into_iter()
+            .filter(|session| session.model_id() == Some(model_id))
+            .map(|session| session.id().to_string())
+            .collect();
+        let deleted = self.repository.delete_pending_by_model(model_id).await?;
+        if !pending_ids.is_empty() {
+            {
+                let mut tokens = self.auth_tokens.write().await;
+                for id in &pending_ids {
+                    tokens.remove(id);
+                }
+            }
+            {
+                let mut queue = self.download_queue.write().await;
+                queue.retain(|queued| !pending_ids.iter().any(|id| id == queued));
+            }
+        }
+        Ok(deleted)
     }
 
     async fn process_pending_queue(&self) -> Result<(), DownloadError> {

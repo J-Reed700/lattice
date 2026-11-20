@@ -16,7 +16,7 @@
  * messy; a context keeps the cards decoupled and the mutation path unified.
  */
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useMemo } from 'react';
 import type { ReactNode } from 'react';
 
 import { useActiveModels } from '@/features/model/hooks/useActiveModels';
@@ -64,6 +64,8 @@ interface ProviderProps {
   children: ReactNode;
 }
 
+const EMPTY_MODELS: DownloadedModel[] = [];
+
 export function ModelRolesProvider({ children }: ProviderProps) {
   const { data: settings } = useSettingsQuery();
   const { mutateAsync: updateSettings } = useUpdateSettingsMutation();
@@ -71,6 +73,9 @@ export function ModelRolesProvider({ children }: ProviderProps) {
   const chatProvider = llmSettings?.provider;
   const { activeModels } = useActiveModels();
   const {
+    downloadedModels: models = EMPTY_MODELS,
+    isLoading = false,
+    error = null,
     fetchDownloadedModels,
     setActiveChatModel,
     setActiveEmbeddingModel,
@@ -80,29 +85,13 @@ export function ModelRolesProvider({ children }: ProviderProps) {
     clearActiveUtilityModel,
   } = useDownloadedModels();
 
-  const [models, setModels] = useState<DownloadedModel[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  // Caught here, not by callers: the mount effect fires and forgets, so an
-  // uncaught failure would be an unhandled rejection and an empty list that
-  // claims no models are downloaded.
   const refresh = useCallback(async () => {
-    setIsLoading(true);
     try {
-      const all = await fetchDownloadedModels();
-      setModels(all);
-      setError(null);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setIsLoading(false);
+      await fetchDownloadedModels();
+    } catch {
+      // React Query records the failure on `useDownloadedModels().error`.
     }
   }, [fetchDownloadedModels]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
 
   const assignRole = useCallback(
     async (modelId: string | null, role: RoleId) => {

@@ -222,3 +222,16 @@ fn writes_a_wav_in_each_accent_for_a_listening_check() {
         wav.finalize().unwrap();
     }
 }
+
+#[tokio::test]
+async fn synthesize_rejects_oversized_text_before_loading_model() {
+    let speech = speech(&[]);
+    let voice = find_speech_voice("bf_emma").unwrap();
+    let oversized = "a".repeat(MAX_SPEECH_CHARS + 1);
+
+    let err = match speech.synthesize(oversized, voice, 1.0).await {
+        Ok(_) => panic!("oversized text must be rejected"),
+        Err(err) => err,
+    };
+    assert!(matches!(err, AppError::InvalidInput(_)), "got: {err:?}");
+}

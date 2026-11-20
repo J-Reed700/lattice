@@ -3,6 +3,7 @@ use super::{USearchVectorIndex, VectorMeta, INITIAL_INDEX_CAPACITY};
 use lattice_core::application::ports::VectorSearchPort;
 use lattice_core::shared::error::{AppError, Result};
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 impl USearchVectorIndex {
     /// Rebuild the index from SQLite embeddings.
@@ -173,9 +174,10 @@ impl USearchVectorIndex {
         state.key_to_id.insert(key, id.clone());
 
         if let (Some(_content), Some(chunk_id), Some(doc_id)) = (content, chunk_id, document_id) {
+            let doc_id = state.intern_document_id(&doc_id);
             state
                 .document_to_keys
-                .entry(doc_id.clone())
+                .entry(Arc::clone(&doc_id))
                 .or_default()
                 .insert(key);
             state.metadata.insert(
@@ -188,7 +190,12 @@ impl USearchVectorIndex {
         } else {
             // Legacy bare-vector callers identify the document with the vector
             // id. Keep their scope lookup indexed as well.
-            state.document_to_keys.entry(id).or_default().insert(key);
+            let doc_id = state.intern_document_id(&id);
+            state
+                .document_to_keys
+                .entry(doc_id)
+                .or_default()
+                .insert(key);
         }
 
         Ok(())

@@ -91,6 +91,6 @@ impl<R: Runtime> EmbedderSource for AppEmbedders<R> {
     /// model's `model_identity`: read without loading anything.
     async fn identity(&self) -> Option<String> {
         let container = self.app.try_state::<Container>()?;
-        container.search.embedding_identity().map(str::to_owned)
+        container.search.embedding_identity()
     }
 }

@@ -8,6 +8,7 @@ class FakeNode {
   startedAt: number | null = null;
   stopped = false;
   connect = vi.fn();
+  disconnect = vi.fn();
   start(at: number) {
     this.startedAt = at;
   }
@@ -61,6 +62,9 @@ describe('SpeechPlayer', () => {
 
     output.nodes.at(-1)?.onended?.();
     expect(player.getSnapshot().status).toBe('idle');
+    expect(output.suspend).toHaveBeenCalledTimes(1);
+    expect(output.nodes.at(-1)?.disconnect).toHaveBeenCalledTimes(1);
+    expect(output.nodes.at(-1)?.buffer).toBeNull();
   });
 
   it('plays one thing at a time: a new source stops the old one', async () => {
@@ -182,5 +186,19 @@ describe('decodeClip', () => {
 
     player.stop();
     await vi.waitFor(() => expect(done).toHaveBeenCalled());
+  });
+
+  it('suspends rather than resumes audio output when stopped while paused', async () => {
+    const { output, player } = setup();
+    await player.play('answer', ['one'], async () => clip(2));
+    player.pause();
+    output.resume.mockClear();
+    output.suspend.mockClear();
+
+    player.stop('answer');
+
+    expect(output.resume).not.toHaveBeenCalled();
+    expect(output.nodes[0].disconnect).toHaveBeenCalledTimes(1);
+    expect(output.nodes[0].buffer).toBeNull();
   });
 });

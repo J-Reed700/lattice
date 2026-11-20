@@ -1,36 +1,20 @@
-#![allow(clippy::panic)]
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::expect_used)]
-#![allow(clippy::assertions_on_constants)]
-#![allow(clippy::useless_vec)]
-#![allow(clippy::indexing_slicing)]
-#![allow(unused_variables)]
-#![allow(unused_imports)]
-
-#[cfg(feature = "test-utils")]
-use lattice::features::download::download_repository::mock::MockDownloadRepository;
-#[cfg(feature = "test-utils")]
-use lattice::features::download::engine::mock::MockDownloadEngine;
-#[cfg(feature = "test-utils")]
-use lattice::features::download::manager::DownloadManagerService;
-#[cfg(feature = "test-utils")]
+use crate::features::download::download_repository::mock::MockDownloadRepository;
+use crate::features::download::engine::mock::MockDownloadEngine;
+use crate::features::download::manager::DownloadManagerService;
 use lattice_core::application::ports::download_manager::{DownloadManager, DownloadRequest};
-#[cfg(feature = "test-utils")]
 use lattice_core::domain::download::{Checksum, ChecksumAlgorithm, DownloadState};
-#[cfg(feature = "test-utils")]
-use std::{path::PathBuf, sync::Arc};
-#[cfg(feature = "test-utils")]
+use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 
 #[tokio::test]
-#[cfg(feature = "test-utils")]
 async fn test_download_manager_start_download() {
+    let temp = tempfile::tempdir().unwrap();
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
     let manager = DownloadManagerService::new(
         repository.clone(),
         engine.clone(),
-        PathBuf::from("/tmp"),
+        temp.path().to_path_buf(),
         Arc::default(),
     );
 
@@ -39,7 +23,7 @@ async fn test_download_manager_start_download() {
     let id = manager
         .start_download(DownloadRequest {
             url: "https://example.com/file.bin".to_string(),
-            destination: PathBuf::from("/tmp/file.bin"),
+            destination: temp.path().join("file.bin"),
             checksum: None,
             auth_token: None,
             model_name: None,
@@ -62,14 +46,14 @@ async fn test_download_manager_start_download() {
 }
 
 #[tokio::test]
-#[cfg(feature = "test-utils")]
 async fn test_download_manager_pause_and_resume() {
+    let temp = tempfile::tempdir().unwrap();
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
     let manager = DownloadManagerService::new(
         repository.clone(),
         engine.clone(),
-        PathBuf::from("/tmp"),
+        temp.path().to_path_buf(),
         Arc::default(),
     );
 
@@ -79,7 +63,7 @@ async fn test_download_manager_pause_and_resume() {
     let id = manager
         .start_download(DownloadRequest {
             url: "https://example.com/file.bin".to_string(),
-            destination: PathBuf::from("/tmp/file.bin"),
+            destination: temp.path().join("file.bin"),
             checksum: None,
             auth_token: None,
             model_name: None,
@@ -112,14 +96,14 @@ async fn test_download_manager_pause_and_resume() {
 }
 
 #[tokio::test]
-#[cfg(feature = "test-utils")]
 async fn test_download_manager_cancel() {
+    let temp = tempfile::tempdir().unwrap();
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
     let manager = DownloadManagerService::new(
         repository.clone(),
         engine.clone(),
-        PathBuf::from("/tmp"),
+        temp.path().to_path_buf(),
         Arc::default(),
     );
 
@@ -129,7 +113,7 @@ async fn test_download_manager_cancel() {
     let id = manager
         .start_download(DownloadRequest {
             url: "https://example.com/file.bin".to_string(),
-            destination: PathBuf::from("/tmp/file.bin"),
+            destination: temp.path().join("file.bin"),
             checksum: None,
             auth_token: None,
             model_name: None,
@@ -150,14 +134,14 @@ async fn test_download_manager_cancel() {
 }
 
 #[tokio::test]
-#[cfg(feature = "test-utils")]
 async fn test_download_manager_list_downloads() {
+    let temp = tempfile::tempdir().unwrap();
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
     let manager = DownloadManagerService::new(
         repository.clone(),
         engine.clone(),
-        PathBuf::from("/tmp"),
+        temp.path().to_path_buf(),
         Arc::default(),
     );
 
@@ -167,7 +151,7 @@ async fn test_download_manager_list_downloads() {
     let id1 = manager
         .start_download(DownloadRequest {
             url: "https://example.com/file1.bin".to_string(),
-            destination: PathBuf::from("/tmp/file1.bin"),
+            destination: temp.path().join("file1.bin"),
             checksum: None,
             auth_token: None,
             model_name: None,
@@ -180,7 +164,7 @@ async fn test_download_manager_list_downloads() {
     let id2 = manager
         .start_download(DownloadRequest {
             url: "https://example.com/file2.bin".to_string(),
-            destination: PathBuf::from("/tmp/file2.bin"),
+            destination: temp.path().join("file2.bin"),
             checksum: None,
             auth_token: None,
             model_name: None,
@@ -201,14 +185,14 @@ async fn test_download_manager_list_downloads() {
 }
 
 #[tokio::test]
-#[cfg(feature = "test-utils")]
 async fn test_download_manager_with_checksum() {
+    let temp = tempfile::tempdir().unwrap();
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
     let manager = DownloadManagerService::new(
         repository.clone(),
         engine.clone(),
-        PathBuf::from("/tmp"),
+        temp.path().to_path_buf(),
         Arc::default(),
     );
 
@@ -220,7 +204,7 @@ async fn test_download_manager_with_checksum() {
     let id = manager
         .start_download(DownloadRequest {
             url: "https://example.com/file.bin".to_string(),
-            destination: PathBuf::from("/tmp/file.bin"),
+            destination: temp.path().join("file.bin"),
             checksum: Some(checksum),
             auth_token: None,
             model_name: None,
@@ -239,14 +223,14 @@ async fn test_download_manager_with_checksum() {
 }
 
 #[tokio::test]
-#[cfg(feature = "test-utils")]
 async fn test_download_manager_concurrent_downloads() {
+    let temp = tempfile::tempdir().unwrap();
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
     let manager = DownloadManagerService::new(
         repository.clone(),
         engine.clone(),
-        PathBuf::from("/tmp"),
+        temp.path().to_path_buf(),
         Arc::default(),
     )
     .with_max_concurrent(2);
@@ -258,7 +242,7 @@ async fn test_download_manager_concurrent_downloads() {
     let _id1 = manager
         .start_download(DownloadRequest {
             url: "https://example.com/file1.bin".to_string(),
-            destination: PathBuf::from("/tmp/file1.bin"),
+            destination: temp.path().join("file1.bin"),
             checksum: None,
             auth_token: None,
             model_name: None,
@@ -271,7 +255,7 @@ async fn test_download_manager_concurrent_downloads() {
     let _id2 = manager
         .start_download(DownloadRequest {
             url: "https://example.com/file2.bin".to_string(),
-            destination: PathBuf::from("/tmp/file2.bin"),
+            destination: temp.path().join("file2.bin"),
             checksum: None,
             auth_token: None,
             model_name: None,
@@ -284,7 +268,7 @@ async fn test_download_manager_concurrent_downloads() {
     let _id3 = manager
         .start_download(DownloadRequest {
             url: "https://example.com/file3.bin".to_string(),
-            destination: PathBuf::from("/tmp/file3.bin"),
+            destination: temp.path().join("file3.bin"),
             checksum: None,
             auth_token: None,
             model_name: None,
@@ -304,14 +288,14 @@ async fn test_download_manager_concurrent_downloads() {
 }
 
 #[tokio::test]
-#[cfg(feature = "test-utils")]
 async fn test_download_manager_event_subscription() {
+    let temp = tempfile::tempdir().unwrap();
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
     let manager = DownloadManagerService::new(
         repository.clone(),
         engine.clone(),
-        PathBuf::from("/tmp"),
+        temp.path().to_path_buf(),
         Arc::default(),
     );
 
@@ -357,7 +341,7 @@ async fn test_download_manager_event_subscription() {
     let _id = manager_for_task
         .start_download(DownloadRequest {
             url: "https://example.com/file.bin".to_string(),
-            destination: PathBuf::from("/tmp/file.bin"),
+            destination: temp.path().join("file.bin"),
             checksum: None,
             auth_token: None,
             model_name: None,
@@ -378,14 +362,14 @@ async fn test_download_manager_event_subscription() {
 }
 
 #[tokio::test]
-#[cfg(feature = "test-utils")]
 async fn test_download_manager_error_handling() {
+    let temp = tempfile::tempdir().unwrap();
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
     let manager = DownloadManagerService::new(
         repository.clone(),
         engine.clone(),
-        PathBuf::from("/tmp"),
+        temp.path().to_path_buf(),
         Arc::default(),
     );
 
@@ -395,14 +379,14 @@ async fn test_download_manager_error_handling() {
 }
 
 #[tokio::test]
-#[cfg(feature = "test-utils")]
 async fn test_download_manager_state_persistence() {
+    let temp = tempfile::tempdir().unwrap();
     let repository = Arc::new(MockDownloadRepository::new());
     let engine = Arc::new(MockDownloadEngine::new());
     let manager = DownloadManagerService::new(
         repository.clone(),
         engine.clone(),
-        PathBuf::from("/tmp"),
+        temp.path().to_path_buf(),
         Arc::default(),
     );
 
@@ -412,7 +396,7 @@ async fn test_download_manager_state_persistence() {
     let id = manager
         .start_download(DownloadRequest {
             url: "https://example.com/file.bin".to_string(),
-            destination: PathBuf::from("/tmp/file.bin"),
+            destination: temp.path().join("file.bin"),
             checksum: None,
             auth_token: None,
             model_name: None,
@@ -431,7 +415,7 @@ async fn test_download_manager_state_persistence() {
     let manager2 = DownloadManagerService::new(
         repository.clone(),
         engine.clone(),
-        PathBuf::from("/tmp"),
+        temp.path().to_path_buf(),
         Arc::default(),
     );
 
@@ -439,4 +423,102 @@ async fn test_download_manager_state_persistence() {
 
     assert_eq!(status_before.id(), status_after.id());
     assert_eq!(status_before.url(), status_after.url());
+}
+
+#[tokio::test]
+async fn test_delete_pending_by_model_clears_queue_and_auth_tokens() {
+    use crate::features::download::download_repository::DownloadRepository;
+    use lattice_core::domain::download::DownloadSession;
+
+    let temp = tempfile::tempdir().unwrap();
+    let repository = Arc::new(MockDownloadRepository::new());
+    let engine = Arc::new(MockDownloadEngine::new());
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine,
+        temp.path().to_path_buf(),
+        Arc::default(),
+    );
+
+    let target = DownloadSession::new(
+        "pending-target".to_string(),
+        "https://example.com/a.gguf".to_string(),
+        temp.path().join("a.gguf"),
+        Some(100),
+        None,
+    )
+    .unwrap()
+    .with_model_metadata("Model A".to_string(), "model-a".to_string());
+    let other = DownloadSession::new(
+        "pending-other".to_string(),
+        "https://example.com/b.gguf".to_string(),
+        temp.path().join("b.gguf"),
+        Some(100),
+        None,
+    )
+    .unwrap()
+    .with_model_metadata("Model B".to_string(), "model-b".to_string());
+    repository.create(&target).await.unwrap();
+    repository.create(&other).await.unwrap();
+
+    {
+        let mut tokens = manager.auth_tokens.write().await;
+        tokens.insert("pending-target".to_string(), "secret-a".to_string());
+        tokens.insert("pending-other".to_string(), "secret-b".to_string());
+    }
+    {
+        let mut queue = manager.download_queue.write().await;
+        queue.push_back("pending-target".to_string());
+        queue.push_back("pending-other".to_string());
+    }
+
+    let deleted = manager.delete_pending_by_model("model-a").await.unwrap();
+    assert_eq!(deleted, 1);
+
+    let tokens = manager.auth_tokens.read().await;
+    assert!(!tokens.contains_key("pending-target"));
+    assert_eq!(
+        tokens.get("pending-other").map(String::as_str),
+        Some("secret-b")
+    );
+
+    let queue = manager.download_queue.read().await;
+    assert!(!queue.iter().any(|id| id == "pending-target"));
+    assert!(queue.iter().any(|id| id == "pending-other"));
+}
+
+#[tokio::test]
+async fn test_failed_queue_start_clears_auth_token() {
+    let temp = tempfile::tempdir().unwrap();
+    let repository = Arc::new(MockDownloadRepository::new());
+    let engine = Arc::new(MockDownloadEngine::new());
+    let manager = DownloadManagerService::new(
+        repository,
+        engine,
+        temp.path().to_path_buf(),
+        Arc::default(),
+    );
+
+    // Queued session missing from repository makes `start_download_task` return `Err(SessionNotFound)`.
+    manager
+        .auth_tokens
+        .write()
+        .await
+        .insert("missing-session".to_string(), "secret-token".to_string());
+    manager
+        .download_queue
+        .write()
+        .await
+        .push_back("missing-session".to_string());
+
+    manager.process_pending_queue().await.unwrap();
+
+    assert!(
+        !manager
+            .auth_tokens
+            .read()
+            .await
+            .contains_key("missing-session"),
+        "failed start_download_task must evict auth token"
+    );
 }

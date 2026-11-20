@@ -21,7 +21,8 @@ import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 export function SidebarReferences({ query, active }: { query: string; active: boolean }) {
   const navigate = useAppNavigate();
-  const { selectedSpaceId, selectConversation } = useConversationsStore();
+  const selectedSpaceId = useConversationsStore((state) => state.selectedSpaceId);
+  const selectConversation = useConversationsStore((state) => state.selectConversation);
   const [referenceInboxEnabled] = useState(isReferenceInboxEnabled);
   const bookmarks = useSidebarBookmarksQuery(query, selectedSpaceId, active);
   const captures = useCapturedReferencesQuery(active && referenceInboxEnabled);

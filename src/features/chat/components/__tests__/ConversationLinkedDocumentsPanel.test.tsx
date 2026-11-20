@@ -27,7 +27,8 @@ vi.mock('@/features/files/hooks/useLibraryDocumentActions', () => ({
 }));
 
 vi.mock('@/shared/conversations/conversationsStore', () => ({
-  useConversationsStore: () => storeState.current,
+  useConversationsStore: <T,>(selector?: (_s: Record<string, unknown>) => T) =>
+    (selector ? selector(storeState.current) : storeState.current),
 }));
 
 const emptyStore = () => ({

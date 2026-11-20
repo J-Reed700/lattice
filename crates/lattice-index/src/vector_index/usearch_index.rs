@@ -28,6 +28,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
 #[cfg(test)]
 use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 use std::time::Instant;
 use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
 
@@ -71,14 +72,22 @@ pub enum SavePolicy {
     Coalesced,
 }
 
+fn serialize_arc_str<S>(value: &Arc<str>, serializer: S) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(value)
+}
+
 /// Metadata stored alongside each vector for search result enrichment.
 ///
 /// Search identity and scope metadata only. Candidate text is fetched from
 /// SQLite after ranking so corpus text is never retained in the vector index.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 struct VectorMeta {
     chunk_id: String,
-    document_id: String,
+    #[serde(serialize_with = "serialize_arc_str")]
+    document_id: Arc<str>,
 }
 
 /// Whether the in-memory index has changes the file on disk does not.
@@ -119,7 +128,16 @@ struct KeyState {
     /// Metadata map: string ID → chunk metadata
     metadata: HashMap<String, VectorMeta>,
     /// Reverse scope index so a narrow document filter can visit just its keys.
-    document_to_keys: HashMap<String, HashSet<u64>>,
+    document_to_keys: HashMap<Arc<str>, HashSet<u64>>,
+}
+
+impl KeyState {
+    fn intern_document_id(&self, doc_id: &str) -> Arc<str> {
+        self.document_to_keys
+            .get_key_value(doc_id)
+            .map(|(existing, _)| Arc::clone(existing))
+            .unwrap_or_else(|| Arc::from(doc_id))
+    }
 }
 
 /// USearch-backed vector index implementing both `VectorSearchPort` (application layer)
@@ -182,6 +200,8 @@ fn temp_path_for(path: &Path) -> PathBuf {
 /// Write `bytes` so that readers see either the previous file or the whole new
 /// one, never a prefix of it.
 pub fn write_file_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write;
+
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
             AppError::FileStorage(format!(
@@ -191,8 +211,25 @@ pub fn write_file_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
         })?;
     }
     let temp = temp_path_for(path);
-    std::fs::write(&temp, bytes)
+    let mut file = std::fs::File::create(&temp)
         .map_err(|e| AppError::FileStorage(format!("Failed to write {}: {e}", temp.display())))?;
+    if let Err(e) = file.write_all(bytes) {
+        drop(file);
+        let _ = std::fs::remove_file(&temp);
+        return Err(AppError::FileStorage(format!(
+            "Failed to write {}: {e}",
+            temp.display()
+        )));
+    }
+    if let Err(e) = file.sync_all() {
+        drop(file);
+        let _ = std::fs::remove_file(&temp);
+        return Err(AppError::FileStorage(format!(
+            "Failed to sync {}: {e}",
+            temp.display()
+        )));
+    }
+    drop(file);
     std::fs::rename(&temp, path).map_err(|e| {
         let _ = std::fs::remove_file(&temp);
         AppError::FileStorage(format!("Failed to replace {}: {e}", path.display()))

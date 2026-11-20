@@ -1,6 +1,8 @@
 import { useCallback } from 'react';
 
 import { useApi } from '@/contexts/ApiContext';
+import { useStagedPicturesStore } from '@/features/chat/images/stagedPictures';
+import { useCompactionStore } from '@/features/chat/stores/compactionStore';
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { spacesQueryOptions } from '@/features/spaces/api/queries';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
@@ -259,6 +261,18 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
       lifecycle.cleanupConversation(removedId);
       forgetRequestedConversation(removedId);
       clearDraft(conversationDraftKey(removedId));
+      if (removedId in useStagedPicturesStore.getState().byConversation) {
+        useStagedPicturesStore.setState((state) => {
+          const { [removedId]: _removed, ...byConversation } = state.byConversation;
+          return { byConversation };
+        });
+      }
+      if (removedId in useCompactionStore.getState().runs) {
+        useCompactionStore.setState((state) => {
+          const { [removedId]: _removed, ...runs } = state.runs;
+          return { runs };
+        });
+      }
       queryClient.removeQueries({ queryKey: conversationKeys.detail(removedId), exact: true });
       queryClient.removeQueries({ queryKey: conversationKeys.messages(removedId), exact: true });
       queryClient.removeQueries({ queryKey: conversationKeys.bookmarks(removedId) });

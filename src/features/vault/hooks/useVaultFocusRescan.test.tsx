@@ -1,6 +1,10 @@
+import type { ReactNode } from 'react';
+
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { WORKSPACE_NOTES_QUERY_KEY } from '@/features/journal/api/queries';
 import { toast } from '@/stores/toastStore';
 
 import { useVaultFocusRescan } from './useVaultFocusRescan';
@@ -18,7 +22,13 @@ vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ onFocusCha
 
 const focus = (focused = true) => act(async () => { mocks.focusHandler!({ payload: focused }); });
 
+let client: QueryClient;
+const wrapper = ({ children }: { children: ReactNode }) => (
+  <QueryClientProvider client={client}>{children}</QueryClientProvider>
+);
+
 beforeEach(() => {
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(2026, 9, 24, 10, 0, 0));
   mocks.rescanVault.mockReset().mockResolvedValue({ ok: true, data: { imported: 0, deleted: 0 } });
@@ -36,7 +46,7 @@ afterEach(() => {
 });
 
 async function mount() {
-  const view = renderHook(() => useVaultFocusRescan());
+  const view = renderHook(() => useVaultFocusRescan(), { wrapper });
   await waitFor(() => expect(mocks.focusHandler).not.toBeNull());
   return view;
 }
@@ -44,6 +54,7 @@ async function mount() {
 describe('useVaultFocusRescan', () => {
   it('rescans on focus, announces the window, and ignores blur', async () => {
     const focused = vi.fn();
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
     window.addEventListener('lattice:window-focused', focused);
     await mount();
     await focus(false);
@@ -52,6 +63,7 @@ describe('useVaultFocusRescan', () => {
     expect(mocks.rescanVault).toHaveBeenCalledTimes(1);
     expect(focused).toHaveBeenCalledTimes(1);
     expect(toast.info).not.toHaveBeenCalled();
+    expect(invalidateSpy).not.toHaveBeenCalled();
     expect(useVaultImportStore.getState().importTick).toBe(0);
     window.removeEventListener('lattice:window-focused', focused);
   });
@@ -72,20 +84,24 @@ describe('useVaultFocusRescan', () => {
     [{ imported: 0, deleted: 1 }, 'Vault sync: synced 1 deletion note'],
     [{ imported: 1, deleted: 3 }, 'Vault sync: re-imported 1, synced 3 deletions notes'],
   ])('reports what a rescan changed (%j) and refreshes listeners', async (data, message) => {
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
     mocks.rescanVault.mockResolvedValue({ ok: true, data });
     await mount();
     await focus();
     expect(toast.info).toHaveBeenCalledWith(message);
     expect(useVaultImportStore.getState()).toMatchObject({ importTick: 1, lastImportedId: '' });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: WORKSPACE_NOTES_QUERY_KEY });
   });
 
   it('logs a failed rescan without a toast', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
     mocks.rescanVault.mockResolvedValue({ ok: false, error: 'vault folder missing' });
     await mount();
     await focus();
     expect(warn).toHaveBeenCalledWith('[useVaultFocusRescan] rescan failed:', 'vault folder missing');
     expect(toast.info).not.toHaveBeenCalled();
+    expect(invalidateSpy).not.toHaveBeenCalled();
   });
 
   it('unsubscribes on unmount, even when the subscription lands afterwards', async () => {
@@ -95,7 +111,7 @@ describe('useVaultFocusRescan', () => {
 
     let attach!: (unlisten: () => void) => void;
     mocks.onFocusChanged.mockReturnValue(new Promise((resolve) => { attach = resolve; }));
-    const late = renderHook(() => useVaultFocusRescan());
+    const late = renderHook(() => useVaultFocusRescan(), { wrapper });
     late.unmount();
     const lateUnlisten = vi.fn();
     await act(async () => { attach(lateUnlisten); });
@@ -105,7 +121,7 @@ describe('useVaultFocusRescan', () => {
   it('logs when focus events are unavailable', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     mocks.onFocusChanged.mockRejectedValue(new Error('no window'));
-    renderHook(() => useVaultFocusRescan());
+    renderHook(() => useVaultFocusRescan(), { wrapper });
     await waitFor(() => expect(error).toHaveBeenCalledWith('[useVaultFocusRescan] failed to subscribe to focus events:', expect.any(Error)));
   });
 });

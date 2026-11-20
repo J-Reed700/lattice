@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 
-import { reportWarmupFailure } from '@/features/model/hooks/useDownloadedModels';
+import { DOWNLOADED_MODELS_QUERY_KEY, reportWarmupFailure } from '@/features/model/hooks/useDownloadedModels';
 import { VaultAPI } from '@/lib/api';
 import { useToastStore } from '@/stores/toastStore';
 import { makeAppSettings } from '@/tests/fixtures/appSettings';
@@ -100,4 +100,34 @@ it('saves the Learning role as a model reference in Settings, and clears it the 
   // Learning is never a row flag and never the chat provider.
   expect(api.setActiveChatModel).not.toHaveBeenCalled();
   expect(useToastStore.getState().toasts).toEqual([]);
+});
+
+it('reflects background downloaded-model query updates without manual refresh', async () => {
+  const initialRows = [
+    { id: 'r1', model_id: 'qwen-4b', model_name: 'Qwen 4B', backend: 'local', model_type: 'chat' },
+  ];
+  const updatedRows = [
+    ...initialRows,
+    { id: 'r2', model_id: 'qwen-9b', model_name: 'Qwen 9B', backend: 'local', model_type: 'chat' },
+  ];
+  api.getDownloadedModels = vi
+    .fn()
+    .mockResolvedValueOnce({ ok: true, data: initialRows })
+    .mockResolvedValueOnce({ ok: true, data: updatedRows });
+  api.getSettings = vi.fn().mockResolvedValue({ ok: true, data: makeAppSettings() });
+
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={queryClient}>
+      <ModelRolesProvider>{children}</ModelRolesProvider>
+    </QueryClientProvider>
+  );
+
+  const { result } = renderHook(() => useModelRoles(), { wrapper });
+  await waitFor(() => expect(result.current.localModels.map((m) => m.model_id)).toEqual(['qwen-4b']));
+
+  await act(async () => {
+    await queryClient.invalidateQueries({ queryKey: DOWNLOADED_MODELS_QUERY_KEY });
+  });
+  await waitFor(() => expect(result.current.localModels.map((m) => m.model_id)).toEqual(['qwen-4b', 'qwen-9b']));
 });

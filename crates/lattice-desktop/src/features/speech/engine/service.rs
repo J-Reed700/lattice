@@ -29,6 +29,8 @@ use lattice_core::shared::runtime::background::BackgroundTasks;
 
 /// How long the model stays loaded after the last sentence it spoke.
 pub const SPEECH_IDLE_TTL: Duration = Duration::from_secs(300);
+/// Maximum characters accepted in one synthesis request to bound PCM memory.
+pub const MAX_SPEECH_CHARS: usize = 100_000;
 
 /// Speech at Kokoro's sample rate.
 pub struct Clip {
@@ -220,6 +222,7 @@ impl KokoroSpeech {
         })?;
         let mut slot = self.loaded.lock().await;
         if let Some(loaded) = slot.as_ref().filter(|loaded| loaded.dir == dir) {
+            *self.last_used.lock() = Instant::now();
             return Ok(Arc::clone(loaded));
         }
         let loaded = tokio::task::spawn_blocking(move || Loaded::load(&dir))
@@ -227,6 +230,7 @@ impl KokoroSpeech {
             .map_err(|e| AppError::InternalError(format!("loading the voice failed: {e}")))??;
         let loaded = Arc::new(loaded);
         let first_load = slot.replace(Arc::clone(&loaded)).is_none();
+        *self.last_used.lock() = Instant::now();
         drop(slot);
         if first_load {
             self.unload_when_idle();
@@ -236,6 +240,7 @@ impl KokoroSpeech {
 
     fn unload_when_idle(&self) {
         let loaded = Arc::clone(&self.loaded);
+        let speaking = Arc::clone(&self.speaking);
         let last_used = Arc::clone(&self.last_used);
         let cancel = self.background.token();
         self.background.spawn(async move {
@@ -246,10 +251,20 @@ impl KokoroSpeech {
                     _ = cancel.cancelled() => return,
                     _ = tokio::time::sleep_until(deadline.into()) => {}
                 }
+                let mut guard = loaded.lock().await;
+                if speaking.available_permits() == 0 {
+                    drop(guard);
+                    tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => return,
+                        _ = tokio::time::sleep(SPEECH_IDLE_TTL) => continue,
+                    }
+                }
                 if last_used.lock().elapsed() < SPEECH_IDLE_TTL {
                     continue;
                 }
-                if let Some(model) = loaded.lock().await.take() {
+                if let Some(model) = guard.take() {
+                    drop(guard);
                     let _ = tokio::task::spawn_blocking(move || drop(model)).await;
                     info!("read-aloud voice unloaded after idle");
                 }
@@ -265,6 +280,11 @@ impl KokoroSpeech {
         voice: &'static CuratedVoice,
         speed: f32,
     ) -> Result<Clip, AppError> {
+        if text.chars().count() > MAX_SPEECH_CHARS {
+            return Err(AppError::InvalidInput(format!(
+                "Text exceeds maximum read-aloud length of {MAX_SPEECH_CHARS} characters"
+            )));
+        }
         let _turn = self
             .speaking
             .acquire()

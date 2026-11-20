@@ -130,6 +130,7 @@ export default function CanvasPanel({
     // A navigation flush owns the pending edit. Its old debounce must not retry
     // a failed write behind the error message after the flush has returned.
     clearAutosave();
+    surfaceRef.current?.flush?.();
     if (inFlight.current) return inFlight.current;
     const work = (async () => {
       while (true) {
@@ -282,7 +283,8 @@ export default function CanvasPanel({
       if (!blob) throw new Error('The drawing surface is still opening. Try again shortly.');
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${(draft?.title || 'learning-canvas').replace(/[^a-z0-9-_]+/gi, '-').toLowerCase()}.${kind === 'json' ? 'excalidraw' : kind}`;
-      anchor.click(); URL.revokeObjectURL(url);
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (failure) { setExportError(failure instanceof Error ? failure.message : 'This canvas could not be exported.'); }
   };
 

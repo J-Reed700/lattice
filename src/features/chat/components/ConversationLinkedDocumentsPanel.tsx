@@ -29,21 +29,39 @@ export function ConversationLinkedDocumentsPanel({
   onMoveToGeneral,
 }: ConversationLinkedDocumentsPanelProps) {
   const api = useApi();
-  const {
-    spaces,
-    conversations,
-    lastMessageSources,
-    linkedDocumentsByConversationId,
-    webSourcesByConversationId,
-    documentSpaceMembershipsByDocumentId,
-    loadConversationLinkedDocuments,
-    loadConversationWebSources,
-    addConversationWebSource,
-    removeConversationWebSource,
-    removeConversationLinkedDocument,
-    loadDocumentSpaceMemberships,
-    setDocumentSpaceMembership,
-  } = useConversationsStore();
+  const spaces = useConversationsStore((state) => state.spaces);
+  const conversations = useConversationsStore((state) => state.conversations);
+  const lastMessageSources = useConversationsStore((state) => state.lastMessageSources);
+  const linkedDocumentsByConversationId = useConversationsStore(
+    (state) => state.linkedDocumentsByConversationId,
+  );
+  const webSourcesByConversationId = useConversationsStore(
+    (state) => state.webSourcesByConversationId,
+  );
+  const documentSpaceMembershipsByDocumentId = useConversationsStore(
+    (state) => state.documentSpaceMembershipsByDocumentId,
+  );
+  const loadConversationLinkedDocuments = useConversationsStore(
+    (state) => state.loadConversationLinkedDocuments,
+  );
+  const loadConversationWebSources = useConversationsStore(
+    (state) => state.loadConversationWebSources,
+  );
+  const addConversationWebSource = useConversationsStore(
+    (state) => state.addConversationWebSource,
+  );
+  const removeConversationWebSource = useConversationsStore(
+    (state) => state.removeConversationWebSource,
+  );
+  const removeConversationLinkedDocument = useConversationsStore(
+    (state) => state.removeConversationLinkedDocument,
+  );
+  const loadDocumentSpaceMemberships = useConversationsStore(
+    (state) => state.loadDocumentSpaceMemberships,
+  );
+  const setDocumentSpaceMembership = useConversationsStore(
+    (state) => state.setDocumentSpaceMembership,
+  );
   const { addDocumentsToLibrary, ingestWebSource } = useConversationSourceFiling(conversationId);
 
   const [expanded, setExpanded] = useState(false);

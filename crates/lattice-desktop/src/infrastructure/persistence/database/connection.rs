@@ -13,7 +13,11 @@ const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Readers run side by side in WAL mode and each connection keeps its own page cache, so this
 /// bounds memory.
-const MAX_CONNECTIONS: u32 = 5;
+const READER_MAX_CONNECTIONS: u32 = 8;
+
+/// Writers serialize through a dedicated single-connection pool so reading spikes
+/// never starve write transactions.
+const WRITER_MAX_CONNECTIONS: u32 = 1;
 
 /// One connection stays open so the first unit after a quiet spell does not pay for opening it.
 const MIN_CONNECTIONS: u32 = 1;
@@ -92,8 +96,9 @@ fn sidecar_path(db_path: &Path, suffix: &str) -> PathBuf {
 impl DatabaseConnection {
     pub async fn new(db_path: PathBuf) -> Result<Self> {
         // Connect with corruption detection and automatic recovery.
-        let (pool, recovered_from) = Self::create_pool_with_corruption_recovery(&db_path).await?;
-        let database = Database::new(pool);
+        let (reader_pool, writer_pool, recovered_from) =
+            Self::create_pools_with_corruption_recovery(&db_path).await?;
+        let database = Database::with_writer_pool(reader_pool, writer_pool);
 
         let mut read = database
             .begin_read()
@@ -136,9 +141,9 @@ impl DatabaseConnection {
     ///
     /// This prevents the "hundreds of errors" scenario where a corrupted
     /// database causes infinite boot loops.
-    async fn create_pool_with_corruption_recovery(
+    async fn create_pools_with_corruption_recovery(
         db_path: &PathBuf,
-    ) -> Result<(SqlitePool, Option<PathBuf>)> {
+    ) -> Result<(SqlitePool, SqlitePool, Option<PathBuf>)> {
         let connect_options = SqliteConnectOptions::new()
             .filename(db_path)
             .create_if_missing(true)
@@ -149,18 +154,12 @@ impl DatabaseConnection {
             .pragma("cache_size", "-20000") // 20MB cache
             .pragma("temp_store", "MEMORY") // Use memory for temp tables
             .pragma("mmap_size", "268435456") // 256MB mapped database cache
-            .pragma("optimize", "0x10002") // Initial planner-statistics check on open
             .analysis_limit(ANALYSIS_LIMIT)
-            .optimize_on_close(true, Some(ANALYSIS_LIMIT)); // Bounded maintenance as each connection closes
+            .optimize_on_close(false, None);
 
-        let pool = pool_options().connect_lazy_with(connect_options.clone());
-        let pool_result = pool.acquire().await.map(drop);
-
-        match pool_result {
-            Ok(()) => Ok((pool, None)),
+        match Self::open_pools_once(&connect_options).await {
+            Ok((reader_pool, writer_pool)) => Ok((reader_pool, writer_pool, None)),
             Err(e) => {
-                // Stop pool maintenance before replacing any database files.
-                pool.close().await;
                 let error_msg = e.to_string();
 
                 // Detect corruption errors
@@ -188,14 +187,11 @@ impl DatabaseConnection {
                             );
                             tracing::info!("Creating fresh database at: {}", db_path.display());
 
-                            // Retry connection (will create fresh database)
-                            pool_options()
-                                .connect_with(connect_options)
-                                .await
-                                .context(
+                            let (fresh_reader, fresh_writer) =
+                                Self::open_pools_once(&connect_options).await.context(
                                     "Failed to create fresh database after corruption recovery",
-                                )
-                                .map(|pool| (pool, Some(backup_path)))
+                                )?;
+                            Ok((fresh_reader, fresh_writer, Some(backup_path)))
                         }
                         Err(rename_err) => {
                             tracing::error!("Failed to move corrupted database: {}", rename_err);
@@ -218,6 +214,32 @@ impl DatabaseConnection {
         }
     }
 
+    async fn open_pools_once(
+        connect_options: &SqliteConnectOptions,
+    ) -> std::result::Result<(SqlitePool, SqlitePool), sqlx::Error> {
+        // Open the single-connection writer pool first so `journal_mode = WAL`
+        // is established without racing concurrent reader connections. Only the
+        // writer runs `PRAGMA optimize` on open/close; reader connections have
+        // `query_only = ON`, where `PRAGMA optimize` fails with SQLITE_READONLY
+        // and would abort `SqliteConnection::close()` before worker shutdown.
+        let writer_options = connect_options
+            .clone()
+            .pragma("optimize", "0x10002")
+            .optimize_on_close(true, Some(ANALYSIS_LIMIT));
+        let writer_pool = writer_pool_options().connect_with(writer_options).await?;
+        let reader_options = connect_options
+            .clone()
+            .pragma("query_only", "ON")
+            .optimize_on_close(false, None);
+        let reader_pool = reader_pool_options().connect_lazy_with(reader_options);
+        if let Err(error) = reader_pool.acquire().await {
+            reader_pool.close().await;
+            writer_pool.close().await;
+            return Err(error);
+        }
+        Ok((reader_pool, writer_pool))
+    }
+
     pub fn database(&self) -> &Database {
         &self.database
     }
@@ -228,9 +250,18 @@ impl DatabaseConnection {
     }
 }
 
-fn pool_options() -> SqlitePoolOptions {
+fn reader_pool_options() -> SqlitePoolOptions {
     SqlitePoolOptions::new()
-        .max_connections(MAX_CONNECTIONS)
+        .max_connections(READER_MAX_CONNECTIONS)
+        .min_connections(MIN_CONNECTIONS)
+        .acquire_timeout(ACQUIRE_TIMEOUT)
+        .idle_timeout(IDLE_TIMEOUT)
+        .max_lifetime(MAX_LIFETIME)
+}
+
+fn writer_pool_options() -> SqlitePoolOptions {
+    SqlitePoolOptions::new()
+        .max_connections(WRITER_MAX_CONNECTIONS)
         .min_connections(MIN_CONNECTIONS)
         .acquire_timeout(ACQUIRE_TIMEOUT)
         .idle_timeout(IDLE_TIMEOUT)
@@ -329,8 +360,25 @@ mod tests {
                     .unwrap(),
                 268_435_456
             );
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("PRAGMA query_only")
+                    .fetch_one(&mut *conn)
+                    .await
+                    .unwrap(),
+                1
+            );
         }
         drop((first, second));
+
+        let mut writer = database.begin_write().await.unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("PRAGMA query_only")
+                .fetch_one(&mut *writer)
+                .await
+                .unwrap(),
+            0
+        );
+        writer.commit().await.unwrap();
 
         connection.close().await.unwrap();
         assert!(database.begin_read().await.is_err());
@@ -477,5 +525,53 @@ mod tests {
             "the database at the original path is a new, empty one"
         );
         connection.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn populated_database_closes_readers_and_releases_file_for_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("populated.db");
+        let connection = DatabaseConnection::new(db.clone()).await.unwrap();
+
+        let mut tx = connection.database().begin_write().await.unwrap();
+        sqlx::query(
+            "CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT NOT NULL); \
+             CREATE INDEX idx_items_label ON items(label);",
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        for i in 0..32 {
+            sqlx::query("INSERT INTO items (id, label) VALUES (?, ?)")
+                .bind(i)
+                .bind(format!("item-{i}"))
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+        }
+        tx.commit().await.unwrap();
+
+        // Exercise indexed reads across reader connections so SQLite records
+        // planner-stat candidates that `PRAGMA optimize` on close would try to
+        // write into `sqlite_stat1` if readers erroneously enabled optimize_on_close.
+        let mut r1 = connection.database().begin_read().await.unwrap();
+        let mut r2 = connection.database().begin_read().await.unwrap();
+        let c1: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM items WHERE label = 'item-1'")
+            .fetch_one(&mut *r1)
+            .await
+            .unwrap();
+        let c2: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM items WHERE label = 'item-2'")
+            .fetch_one(&mut *r2)
+            .await
+            .unwrap();
+        assert_eq!((c1, c2), (1, 1));
+        r1.commit().await.unwrap();
+        r2.commit().await.unwrap();
+
+        connection.close().await.unwrap();
+
+        let moved = dir.path().join("populated-moved.db");
+        rename_after_sqlite_close(&db, &moved).await.unwrap();
+        assert!(moved.exists());
     }
 }

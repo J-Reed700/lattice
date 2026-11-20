@@ -532,6 +532,20 @@ describe('toastStore - Zustand Implementation', () => {
       });
       expect(useToastStore.getState().toasts).toHaveLength(0);
     });
+
+    it('drops stale timer state if the toast is no longer in the store', () => {
+      const id = useToastStore.getState().addToast({
+        type: 'info',
+        title: 'Removed externally',
+        duration: 3000,
+      });
+      useToastStore.setState({ toasts: [] });
+      act(() => {
+        useToastStore.getState().pauseToast(id);
+        useToastStore.getState().resumeToast(id);
+      });
+      expect(useToastStore.getState().toasts).toHaveLength(0);
+    });
   });
 
 });

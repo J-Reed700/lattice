@@ -8,6 +8,7 @@ pub mod indexing_config;
 pub mod microphone;
 pub mod observability;
 pub mod renderer_shutdown;
+pub mod renderer_watchdog;
 
 #[cfg(test)]
 mod tests;

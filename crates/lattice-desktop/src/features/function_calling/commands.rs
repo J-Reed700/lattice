@@ -163,7 +163,7 @@ pub async fn get_function_stats(
     Ok(stats)
 }
 
-#[cfg(all(test, feature = "test-utils"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::tests::common::setup_test_container;

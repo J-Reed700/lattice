@@ -6,6 +6,7 @@ import { IconButton } from '@/components/ui/IconButton';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ChatPanel } from '@/features/chat/components/ChatPanel';
 import { DeleteConversationDialog } from '@/features/chat/components/DeleteConversationDialog';
+import { ScopedConversationProvider } from '@/features/chat/components/tangents/TangentConversation';
 import { cn } from '@/lib/utils';
 
 import { ExplorerIndexNotice } from './ExplorerIndexNotice';
@@ -89,7 +90,9 @@ export function ExplorerChat({ threads }: { threads: ExplorerThreads }) {
         </Popover>
       </div>
       {threads.activeId ? (
-        <ChatPanel composerNotice={<ExplorerIndexNotice />} composerChips={<ExplorerSelectionChip />} />
+        <ScopedConversationProvider conversationId={threads.activeId}>
+          <ChatPanel composerNotice={<ExplorerIndexNotice />} composerChips={<ExplorerSelectionChip />} />
+        </ScopedConversationProvider>
       ) : (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
           {threads.error ? (

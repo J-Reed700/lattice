@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { useEditor, EditorContent } from '@tiptap/react';
+import { useEditor, EditorContent, type Editor } from '@tiptap/react';
 import { Markdown } from 'tiptap-markdown';
 
 import { MediaLightbox } from '@/components/MediaLightbox';
 import { hasUnclosedFence } from '@/utils/assistantMarkdown';
-import { findReplyMarks, writeMarksAsNumbers, type FileTarget } from '@/utils/replyPieces';
+import { fileLabel, findReplyMarks, writeMarksAsNumbers, type FileTarget } from '@/utils/replyPieces';
 
 import { createExtensions } from './extensions';
 import { chatImagesKey, figureCredit, type ChatFigure, type ChatImageHost } from './extensions/chatImage';
@@ -14,7 +14,6 @@ import { ClaimMarks, claimMarksKey, type ClaimMark } from './extensions/claimMar
 import { Diagrams, diagramsKey } from './extensions/codeBlockView';
 import { CodeRefMarks, codeRefMarksKey } from './extensions/codeRefMarks';
 import { ViewerMath } from './extensions/math';
-import { getMarkdownFromEditor } from './markdownStorage';
 
 import './tiptap.css';
 
@@ -75,9 +74,15 @@ export function TiptapViewer({
   const marksRef = useRef<readonly number[]>(marks ?? NO_MARKS);
   const evidenceVisibleRef = useRef(showEvidence);
   const citationSignature = `${showEvidence ? 'visible' : 'hidden'}:${(citationNumbers ?? []).join(',')}`;
+  const marksSignature = (marks ?? NO_MARKS).join(',');
+  const filesSignature = (files ?? NO_FILES).map(fileLabel).join('|');
+  const decorationSignature = `${citationSignature};${marksSignature};${filesSignature}`;
   const claimsRef = useRef<readonly ClaimMark[]>(showEvidence ? claims ?? NO_CLAIMS : NO_CLAIMS);
   const codeRefsRef = useRef(codeRefs);
   const filesRef = useRef<readonly FileTarget[]>(files ?? NO_FILES);
+  const lastAppliedContentRef = useRef<string | null>(null);
+  const lastContentEditorRef = useRef<Editor | null>(null);
+  const lastDecorationRef = useRef<{ editor: Editor; signature: string } | null>(null);
   const suspendLastBlock = streaming && hasUnclosedFence(content);
   const suspendLastBlockRef = useRef(suspendLastBlock);
   const figuresRef = useRef<readonly ChatFigure[]>(images ?? NO_FIGURES);
@@ -143,10 +148,16 @@ export function TiptapViewer({
     // destroyed instance has no command manager; wait for the replacement
     // render, which reruns this effect with the latest content.
     if (!editor || editor.isDestroyed) return;
-    const currentMd = getMarkdownFromEditor(editor);
-    if (currentMd !== content) {
-      editor.commands.setContent(content);
+    if (lastContentEditorRef.current !== editor) {
+      lastContentEditorRef.current = editor;
+      if (lastAppliedContentRef.current === null) {
+        lastAppliedContentRef.current = content;
+        return;
+      }
     }
+    if (lastAppliedContentRef.current === content) return;
+    lastAppliedContentRef.current = content;
+    editor.commands.setContent(content);
   }, [editor, content]);
 
   useEffect(() => {
@@ -155,11 +166,22 @@ export function TiptapViewer({
     filesRef.current = files ?? NO_FILES;
     evidenceVisibleRef.current = showEvidence;
     if (!editor || editor.isDestroyed) return;
+    if (
+      lastDecorationRef.current?.editor === editor &&
+      lastDecorationRef.current.signature === decorationSignature
+    ) {
+      return;
+    }
+    const isInitialMount = lastDecorationRef.current === null;
+    lastDecorationRef.current = { editor, signature: decorationSignature };
+    if (isInitialMount) return;
     // An empty transaction: nothing changes but the decorations are redrawn.
     // Pictures' caption chips follow the same switch.
     const tr = editor.state.tr.setMeta(citationMarksKey, citationSignature);
     editor.view.dispatch(chatImages ? tr.setMeta(chatImagesKey, true) : tr);
-  }, [editor, chatImages, citationNumbers, citationSignature, marks, files, showEvidence]);
+    // `citationNumbers`, `marks`, `files`, and `showEvidence` are captured by `decorationSignature`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor, chatImages, citationSignature, decorationSignature]);
 
   useEffect(() => {
     const previous = claimsRef.current;

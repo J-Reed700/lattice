@@ -36,20 +36,18 @@ interface ConversationSidebarProps {
 
 export function ConversationSidebar({ onCollapse }: ConversationSidebarProps = {}) {
   const navigate = useAppNavigate();
-  const {
-    spaces,
-    selectedSpaceId,
-    filterMode,
-    searchQuery,
-    conversations,
-    error,
-    loadConversations,
-    setSelectedSpace,
-    setFilterMode,
-    setSearchQuery,
-    createConversation,
-    clearError,
-  } = useConversationsStore();
+  const spaces = useConversationsStore((state) => state.spaces);
+  const selectedSpaceId = useConversationsStore((state) => state.selectedSpaceId);
+  const filterMode = useConversationsStore((state) => state.filterMode);
+  const searchQuery = useConversationsStore((state) => state.searchQuery);
+  const conversations = useConversationsStore((state) => state.conversations);
+  const error = useConversationsStore((state) => state.error);
+  const loadConversations = useConversationsStore((state) => state.loadConversations);
+  const setSelectedSpace = useConversationsStore((state) => state.setSelectedSpace);
+  const setFilterMode = useConversationsStore((state) => state.setFilterMode);
+  const setSearchQuery = useConversationsStore((state) => state.setSearchQuery);
+  const createConversation = useConversationsStore((state) => state.createConversation);
+  const clearError = useConversationsStore((state) => state.clearError);
 
   const [isCreating, setIsCreating] = useState(false);
   const [isSpacesOpen, setIsSpacesOpen] = useState(false);

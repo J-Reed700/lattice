@@ -2,6 +2,8 @@ import { QueryClient } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { useStagedPicturesStore } from '@/features/chat/images/stagedPictures';
+import { useCompactionStore } from '@/features/chat/stores/compactionStore';
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { spaceKeys } from '@/features/spaces/api/queries';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
@@ -257,6 +259,8 @@ describe('useConversationActions', () => {
       queryClient.setQueryData(conversationKeys.tangents('c1'), [{ conversationId: 't1' }]);
       queryClient.setQueryData(conversationKeys.messages('t1'), []);
       setDraft(conversationDraftKey('c1'), 'half a question');
+      useStagedPicturesStore.setState({ byConversation: { c1: [{ id: 'img-1' } as never], c2: [{ id: 'img-2' } as never] } });
+      useCompactionStore.setState({ runs: { c1: { state: 'done', startedAt: 1, finishedAt: 2, record: {} as never }, c2: { state: 'running', startedAt: 3 } } });
       conversationUiStore.setState({ activeConversationId: 'c1' } as never);
       h.api.deleteConversation.mockResolvedValueOnce(ok(null));
       const actions = setup();
@@ -266,6 +270,10 @@ describe('useConversationActions', () => {
       expect(conversationUiStore.getState().activeConversationId).toBeNull();
       expect(lifecycle.cleanupConversation.mock.calls).toEqual([['c1'], ['t1']]);
       expect(useDraftStore.getState().drafts[conversationDraftKey('c1')]).toBeUndefined();
+      expect(useStagedPicturesStore.getState().byConversation.c1).toBeUndefined();
+      expect(useStagedPicturesStore.getState().byConversation.c2).toHaveLength(1);
+      expect(useCompactionStore.getState().runs.c1).toBeUndefined();
+      expect(useCompactionStore.getState().runs.c2).toBeDefined();
       expect(queryClient.getQueryData(conversationKeys.messages('t1'))).toBeUndefined();
     });
 

@@ -148,6 +148,12 @@ export const useToastStore = create<ToastStore>((set, get) => ({
   },
 
   pauseToast: (id: string) => {
+    if (!get().toasts.some((item) => item.id === id)) {
+      const stale = dismissTimers.get(id);
+      if (stale?.timer) clearTimeout(stale.timer);
+      dismissTimers.delete(id);
+      return;
+    }
     const entry = dismissTimers.get(id);
     if (!entry || entry.paused) return;
     if (entry.timer) {
@@ -160,6 +166,12 @@ export const useToastStore = create<ToastStore>((set, get) => ({
   },
 
   resumeToast: (id: string) => {
+    if (!get().toasts.some((item) => item.id === id)) {
+      const stale = dismissTimers.get(id);
+      if (stale?.timer) clearTimeout(stale.timer);
+      dismissTimers.delete(id);
+      return;
+    }
     const entry = dismissTimers.get(id);
     if (!entry?.paused) return;
     if (entry.remaining <= 0) {

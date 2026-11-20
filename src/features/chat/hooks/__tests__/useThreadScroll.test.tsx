@@ -18,12 +18,14 @@ const setup = (initial: Props) => {
 };
 
 describe('useThreadScroll', () => {
-  it('jumps to the end when a conversation opens, then glides as messages arrive', () => {
+  it('jumps to the end when a conversation opens, glides when a message arrives, and uses auto while streaming grows', () => {
     const { rerender, scrollToIndex } = setup({ activeConversationId: null, messages: [], prefersReducedMotion: false });
     rerender({ activeConversationId: 'c1', messages: msgs('a', 'b'), prefersReducedMotion: false });
     expect(scrollToIndex).toHaveBeenLastCalledWith(1, { align: 'end', behavior: 'auto' });
     rerender({ activeConversationId: 'c1', messages: msgs('a', 'b', 'c'), prefersReducedMotion: false });
     expect(scrollToIndex).toHaveBeenLastCalledWith(2, { align: 'end', behavior: 'smooth' });
+    rerender({ activeConversationId: 'c1', messages: msgs('a', 'b', 'c'), prefersReducedMotion: false });
+    expect(scrollToIndex).toHaveBeenLastCalledWith(2, { align: 'end', behavior: 'auto' });
   });
 
   it('never glides when motion is reduced', () => {

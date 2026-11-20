@@ -25,7 +25,10 @@ const h = vi.hoisted(() => ({
   scrollToMessage: vi.fn(),
 }));
 
-vi.mock('@/shared/conversations/conversationsStore', () => ({ useConversationsStore: () => h.store }));
+vi.mock('@/shared/conversations/conversationsStore', () => ({
+  useConversationsStore: <T,>(selector?: (_s: Record<string, unknown>) => T) =>
+    (selector ? selector(h.store) : h.store),
+}));
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({
   useDownloadedModels: () => ({ fetchDownloadedModels: h.fetchDownloadedModels }),
 }));

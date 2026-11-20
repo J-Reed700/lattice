@@ -69,6 +69,40 @@ export async function fetchDownloadMap(api: ApiClient = VaultAPI): Promise<Map<s
   ]));
 }
 
+function mergeDownloadMap(
+  current: Map<string, DownloadStatus>,
+  fetched: Map<string, DownloadStatus>
+): Map<string, DownloadStatus> {
+  if (current.size === 0) return fetched;
+  const next = new Map(fetched);
+
+  for (const [key, existing] of current) {
+    const matchedEntry = next.has(key)
+      ? ([key, next.get(key)!] as [string, DownloadStatus])
+      : findByBackendId(next, existing.id);
+
+    if (!matchedEntry) {
+      next.set(key, existing);
+      continue;
+    }
+
+    const [matchedKey, fetchedRow] = matchedEntry;
+    const fetchedStatus = fetchedRow.state === 'Failed' ? 'error' : fetchedRow.state.toLowerCase();
+    const shouldKeepExisting =
+      isLateProgress(existing, fetchedStatus) ||
+      (existing.state === 'Downloading' &&
+        fetchedRow.state === 'Downloading' &&
+        existing.bytes_downloaded > fetchedRow.bytes_downloaded);
+
+    if (shouldKeepExisting) {
+      if (matchedKey !== key) next.delete(matchedKey);
+      next.set(key, existing);
+    }
+  }
+
+  return next;
+}
+
 function updateDownloadCache(
   queryClient: QueryClient,
   updater: (current: Map<string, DownloadStatus>) => Map<string, DownloadStatus>
@@ -199,8 +233,10 @@ export function useDownloadsListener(): void {
     // session with no progress listener, and events that fire while the list
     // loads must not fall between the two.
     void (async () => {
+      let progressListener: (() => void) | null = null;
+      let failedListener: (() => void) | null = null;
       try {
-        const progressListener = await listenValidated(
+        progressListener = await listenValidated(
           TauriEventNames.Downloads.Event,
           EventSchemas.Downloads.StateSnapshot,
           (event: { payload: EventSchemas.Downloads.StateSnapshot }) => {
@@ -216,7 +252,7 @@ export function useDownloadsListener(): void {
             setListenerError('Invalid download event received from backend');
           }
         );
-        const failedListener = await listenValidated(
+        failedListener = await listenValidated(
           TauriEventNames.Downloads.Failed,
           EventSchemas.Downloads.Failed,
           (event: { payload: EventSchemas.Downloads.Failed }) => {
@@ -249,12 +285,21 @@ export function useDownloadsListener(): void {
           return;
         }
       } catch (error) {
+        progressListener?.();
+        failedListener?.();
         if (!mounted) return;
         console.error('[useDownloadsListener] Setup error:', error);
         setListenerError(error instanceof Error ? error.message : 'Failed to setup download listener');
       }
       try {
-        await queryClient.fetchQuery({ queryKey: DOWNLOADS_QUERY_KEY, queryFn: () => fetchDownloadMap(api) });
+        await queryClient.fetchQuery({
+          queryKey: DOWNLOADS_QUERY_KEY,
+          queryFn: async () => {
+            const fetched = await fetchDownloadMap(api);
+            const current = queryClient.getQueryData<Map<string, DownloadStatus>>(DOWNLOADS_QUERY_KEY);
+            return current ? mergeDownloadMap(current, fetched) : fetched;
+          },
+        });
       } catch (error) {
         if (!mounted) return;
         console.error('[useDownloadsListener] Initial download list failed:', error);

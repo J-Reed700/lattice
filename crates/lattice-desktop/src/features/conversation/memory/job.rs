@@ -98,6 +98,66 @@ pub struct CompactionSlots {
     slots: SyncMutex<HashMap<String, Arc<AsyncMutex<()>>>>,
 }
 
+impl CompactionSlots {
+    /// Drop the slot when the releasing call was the last holder.
+    ///
+    /// A strong count of two means only the map and this guard hold it, so no
+    /// waiter can lose its place; anyone arriving later inserts a fresh slot.
+    fn release(&self, conversation_id: &str, slot: Arc<AsyncMutex<()>>) {
+        let mut slots = self.slots.lock();
+        if slots
+            .get(conversation_id)
+            .is_some_and(|existing| Arc::strong_count(existing) == 2)
+        {
+            slots.remove(conversation_id);
+        }
+        drop(slot);
+    }
+}
+
+/// RAII lease over a conversation's compaction slot so dropping an in-flight
+/// [`CompactionJob::run`] future across any `.await` still removes the entry
+/// from [`CompactionSlots`].
+struct SlotGuard<'a> {
+    slots: &'a CompactionSlots,
+    conversation_id: String,
+    slot: Option<Arc<AsyncMutex<()>>>,
+}
+
+impl<'a> SlotGuard<'a> {
+    fn acquire(slots: &'a CompactionSlots, conversation_id: &str) -> Self {
+        let slot = slots
+            .slots
+            .lock()
+            .entry(conversation_id.to_string())
+            .or_default()
+            .clone();
+        Self {
+            slots,
+            conversation_id: conversation_id.to_string(),
+            slot: Some(slot),
+        }
+    }
+
+    fn mutex(&self) -> Option<&Arc<AsyncMutex<()>>> {
+        self.slot.as_ref()
+    }
+
+    fn release(mut self) {
+        if let Some(slot) = self.slot.take() {
+            self.slots.release(&self.conversation_id, slot);
+        }
+    }
+}
+
+impl Drop for SlotGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(slot) = self.slot.take() {
+            self.slots.release(&self.conversation_id, slot);
+        }
+    }
+}
+
 impl CompactionJob {
     /// A job with its own private slots, for tests and one-off use; production
     /// goes through [`Self::with_slots`].
@@ -153,12 +213,17 @@ impl CompactionJob {
         conversation_id: &str,
         request: CompactionRequest,
     ) -> Result<CompactionOutcome> {
-        let slot = self.slot(conversation_id);
+        let slot_guard = SlotGuard::acquire(&self.slots, conversation_id);
         let operation_id = request
             .operation_id
             .clone()
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let outcome = {
+            let Some(slot) = slot_guard.mutex() else {
+                return Err(lattice_core::shared::error::AppError::InternalError(
+                    "Compaction slot missing after acquisition".into(),
+                ));
+            };
             // Cancellation while queued must release the slot rather than wait
             // for a run that is no longer wanted.
             let guard = match &request.cancellation {
@@ -184,7 +249,7 @@ impl CompactionJob {
                 }
             }
         };
-        self.release(conversation_id, slot);
+        slot_guard.release();
 
         match outcome {
             Ok(outcome) => Ok(outcome),
@@ -204,31 +269,6 @@ impl CompactionJob {
                 Err(error.into())
             }
         }
-    }
-
-    /// The conversation's slot, created on first use.
-    fn slot(&self, conversation_id: &str) -> Arc<AsyncMutex<()>> {
-        self.slots
-            .slots
-            .lock()
-            .entry(conversation_id.to_string())
-            .or_default()
-            .clone()
-    }
-
-    /// Drop the slot when this call was the last holder.
-    ///
-    /// A strong count of two means only the map and this local hold it, so no
-    /// waiter can lose its place; anyone arriving later inserts a fresh slot.
-    fn release(&self, conversation_id: &str, slot: Arc<AsyncMutex<()>>) {
-        let mut slots = self.slots.slots.lock();
-        if slots
-            .get(conversation_id)
-            .is_some_and(|existing| Arc::strong_count(existing) == 2)
-        {
-            slots.remove(conversation_id);
-        }
-        drop(slot);
     }
 
     /// [`Self::run_with_retry`], again for each further page of a fold below the
@@ -534,5 +574,168 @@ impl CandidateLedger {
 
     fn into_changes(self) -> (Vec<MemoryItem>, Vec<MemoryItem>) {
         (self.inserts, self.updates)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use lattice_core::application::ports::conversation_memory::{
+        CommittedMemorySnapshot, MemoryCommitCandidate, MemoryCommitError,
+        MemoryCommitPreconditions, ResolvedSpan, SourcePage, SourceReadLimits, SourceSpanRef,
+    };
+    use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+    use lattice_core::domain::conversation::memory::{
+        ConversationMemoryState, MemoryItem, MemorySnapshot, SuppressedSpan,
+    };
+    use lattice_core::shared::error::AppError;
+    use tokio::sync::Notify;
+
+    struct BlockingMemory {
+        started: Arc<Notify>,
+    }
+
+    #[async_trait]
+    impl ConversationMemoryPort for BlockingMemory {
+        async fn load_snapshot(&self, _conversation_id: &str) -> Result<MemorySnapshot> {
+            self.started.notify_one();
+            std::future::pending::<()>().await;
+            unreachable!()
+        }
+
+        async fn page_source_messages(
+            &self,
+            _: &str,
+            _: i64,
+            _: i64,
+            _: SourceReadLimits,
+        ) -> Result<SourcePage> {
+            unreachable!()
+        }
+
+        async fn page_recent_source_messages(
+            &self,
+            _: &str,
+            _: i64,
+            _: i64,
+            _: SourceReadLimits,
+        ) -> Result<SourcePage> {
+            unreachable!()
+        }
+
+        async fn read_source_spans(
+            &self,
+            _: &str,
+            _: &[SourceSpanRef],
+            _: SourceReadLimits,
+        ) -> Result<Vec<ResolvedSpan>> {
+            unreachable!()
+        }
+
+        async fn suppressed_spans(&self, _: &str, _: &[String]) -> Result<Vec<SuppressedSpan>> {
+            unreachable!()
+        }
+
+        async fn forgotten_labels(&self, _: &str) -> Result<Vec<String>> {
+            unreachable!()
+        }
+
+        async fn commit_memory(
+            &self,
+            _: &MemoryCommitPreconditions,
+            _: &MemoryCommitCandidate,
+        ) -> std::result::Result<CommittedMemorySnapshot, MemoryCommitError> {
+            unreachable!()
+        }
+
+        async fn record_memory_error(&self, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+
+        async fn mark_rebuild_required(&self, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+
+        async fn page_inactive_items(&self, _: &str, _: i64, _: i64) -> Result<Vec<MemoryItem>> {
+            Ok(Vec::new())
+        }
+
+        async fn load_state(&self, _: &str) -> Result<ConversationMemoryState> {
+            Err(AppError::NotFound("unused".into()))
+        }
+    }
+
+    struct DummyLlm;
+
+    #[async_trait]
+    impl LLMPort for DummyLlm {
+        async fn complete(&self, _: &CompletionRequest) -> Result<CompletionResponse> {
+            unreachable!()
+        }
+
+        fn model_name(&self) -> &str {
+            "dummy"
+        }
+
+        fn max_context_tokens(&self) -> usize {
+            8192
+        }
+
+        fn count_tokens(&self, text: &str) -> usize {
+            text.split_whitespace().count()
+        }
+
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
+        }
+
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn dropping_in_flight_run_future_removes_conversation_from_slots() {
+        let started = Arc::new(Notify::new());
+        let slots = Arc::new(CompactionSlots::default());
+        let job = CompactionJob::with_slots(
+            Arc::new(BlockingMemory {
+                started: Arc::clone(&started),
+            }),
+            Arc::new(DummyLlm),
+            Arc::new(|text: &str| text.split_whitespace().count()),
+            CompactionConfig::default(),
+            Arc::clone(&slots),
+        );
+
+        let mut run_future = Box::pin(job.run(
+            "conv-drop-leak-test",
+            CompactionRequest {
+                trigger: CompactionTrigger::Maintenance,
+                summary_refold: None,
+                operation_id: None,
+                keep_recent_messages: None,
+                cancellation: None,
+            },
+        ));
+
+        tokio::select! {
+            _ = &mut run_future => unreachable!("BlockingMemory never completes"),
+            () = started.notified() => {}
+        }
+        assert!(
+            slots.slots.lock().contains_key("conv-drop-leak-test"),
+            "slot must be present while run() is in flight"
+        );
+
+        drop(run_future);
+        assert!(
+            !slots.slots.lock().contains_key("conv-drop-leak-test"),
+            "dropping in-flight run() future must release the slot from CompactionSlots"
+        );
     }
 }

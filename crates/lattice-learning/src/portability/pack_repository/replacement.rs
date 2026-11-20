@@ -293,8 +293,17 @@ async fn backup_if_present(
         },
     };
     let snapshot = export::snapshot_on(connection, program_id, &request.options).await?;
-    let bytes = encode_learning_pack(snapshot)?;
-    let decoded = decode_learning_pack(&bytes)?;
+    let (bytes, decoded) = tokio::task::spawn_blocking(move || -> Result<_> {
+        let bytes = encode_learning_pack(snapshot)?;
+        let decoded = decode_learning_pack(&bytes)?;
+        Ok((bytes, decoded))
+    })
+    .await
+    .map_err(|error| {
+        lattice_core::shared::error::AppError::InternalError(format!(
+            "Learning pack backup compression task failed: {error}"
+        ))
+    })??;
     let path = managed_path(managed_dir, &format!("backup-{id}")).await?;
     atomic_write(&path, &bytes).await?;
     Ok(Some(BackupExportRecord {

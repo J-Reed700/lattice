@@ -16,7 +16,9 @@ import { toast } from '@/stores/toastStore';
 
 export function useConversationSynthesis() {
   const queryClient = useQueryClient();
-  const { conversations, activeConversationId, continueInNewConversation } = useConversationsStore();
+  const conversations = useConversationsStore((state) => state.conversations);
+  const activeConversationId = useConversationsStore((state) => state.activeConversationId);
+  const continueInNewConversation = useConversationsStore((state) => state.continueInNewConversation);
   const [continuingConversationId, setContinuingConversationId] = useState<string | null>(null);
   const activeSynthesis = useActiveSynthesis();
   const isSynthesizing = activeSynthesis !== null;

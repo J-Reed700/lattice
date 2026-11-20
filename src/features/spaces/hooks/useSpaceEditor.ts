@@ -20,7 +20,10 @@ const errorMessage = (error: unknown) => (error instanceof Error ? error.message
  * the selected space; saving writes them all at once.
  */
 export function useSpaceEditor() {
-  const { spaces, selectedSpaceId, setSelectedSpace, loadConversations } = useConversationsStore();
+  const spaces = useConversationsStore((state) => state.spaces);
+  const selectedSpaceId = useConversationsStore((state) => state.selectedSpaceId);
+  const setSelectedSpace = useConversationsStore((state) => state.setSelectedSpace);
+  const loadConversations = useConversationsStore((state) => state.loadConversations);
   const selectedSpace = spaces.find(space => space.id === selectedSpaceId) ?? null;
   const mutations = useSpaceMutations();
   const [isSpaceEditorOpen, setIsSpaceEditorOpen] = useState(false);

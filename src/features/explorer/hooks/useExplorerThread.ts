@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
 import { fetchConversationList } from '@/features/chat/api/conversationQueryData';
+import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { bindThreadToFolder, useExplorerFolderMutations, useExplorerFoldersQuery } from '@/features/explorer/api/queries';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
@@ -34,21 +35,19 @@ function threadTitle(rootName: string): string {
 /**
  * The conversations bound to a folder, and which of them the chat shows.
  *
- * Entering a folder opens the thread last used there (kept on the folder's
- * row), else its most recent one, else a new one. The chat column only ever shows a thread of the
- * current folder: the send path reads the folder's focus, and a Chat
- * conversation must not receive it.
+ * Keeps the active folder thread in local state (projected into `<ChatPanel />`
+ * via `ScopedConversationProvider`) so visiting Explorer never overwrites
+ * `/chat`'s `activeConversationId`.
  */
 export function useExplorerThread(root: string | null, rootName: string): ExplorerThreads {
   const api = useApi();
   const queryClient = useQueryClient();
-  const activeConversationId = useConversationsStore((state) => state.activeConversationId);
-  const selectConversation = useConversationsStore((state) => state.selectConversation);
   const createConversation = useConversationsStore((state) => state.createConversation);
   const deleteConversation = useConversationsStore((state) => state.deleteConversation);
   const foldersQuery = useExplorerFoldersQuery();
   const lastThreadId = foldersQuery.data?.folders.find((folder) => folder.root === root)?.lastThreadId ?? null;
   const { mutate: saveLastThread } = useExplorerFolderMutations().setLastThread;
+  const [selectedByRoot, setSelectedByRoot] = useState<Record<string, string | null>>({});
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const creatingForRef = useRef<string | null>(null);
@@ -78,17 +77,35 @@ export function useExplorerThread(root: string | null, rootName: string): Explor
     staleTime: 15_000,
   });
   const threads = useMemo(() => threadsQuery.data ?? [], [threadsQuery.data]);
-  const activeIsThread = threads.some((thread) => thread.id === activeConversationId);
+  const explicitId = root ? (selectedByRoot[root] ?? null) : null;
+  const activeThread = useMemo(() => {
+    if (!root || !threadsQuery.isSuccess || foldersQuery.isPending) return null;
+    if (explicitId) {
+      const picked = threads.find((thread) => thread.id === explicitId);
+      if (picked) return picked;
+    }
+    if (lastThreadId) {
+      const remembered = threads.find((thread) => thread.id === lastThreadId);
+      if (remembered) return remembered;
+    }
+    return threads[0] ?? null;
+  }, [explicitId, foldersQuery.isPending, lastThreadId, root, threads, threadsQuery.isSuccess]);
+  const activeId = activeThread?.id ?? null;
 
   const create = useCallback(async () => {
     if (!root || creatingForRef.current === root) return;
     creatingForRef.current = root;
     setCreating(true);
     setError(null);
+    const previousActiveId = conversationUiStore.getState().activeConversationId;
     try {
       // Made in General, never the Chat sidebar's space: binding it to the
-      // folder files it in the folder's own space.
+      // folder files it in the folder's own space. Preserve `/chat`'s global
+      // selection because `createConversation` activates the newly created id.
       const id = await createConversation(threadTitle(rootName), GENERAL_SPACE_ID);
+      if (conversationUiStore.getState().activeConversationId !== previousActiveId) {
+        conversationUiStore.setState({ activeConversationId: previousActiveId });
+      }
       const bound = await bindThreadToFolder(id, root, api);
       if (!bound.ok) throw new Error(bound.error);
       // The create response predates the binding; the send path reads it.
@@ -99,11 +116,15 @@ export function useExplorerThread(root: string | null, rootName: string): Explor
         const created = queryClient.getQueryData<Conversation>(conversationKeys.detail(id));
         return created ? [created, ...(current ?? []).filter((item) => item.id !== id)] : current;
       });
+      setSelectedByRoot((prev) => ({ ...prev, [root]: id }));
       rememberThread(root, id);
       // The binding moved it into the folder's space after the create.
       void queryClient.invalidateQueries({ queryKey: conversationKeys.detail(id) });
       await queryClient.invalidateQueries({ queryKey: conversationKeys.lists });
     } catch (cause) {
+      if (conversationUiStore.getState().activeConversationId !== previousActiveId) {
+        conversationUiStore.setState({ activeConversationId: previousActiveId });
+      }
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       creatingForRef.current = null;
@@ -111,31 +132,39 @@ export function useExplorerThread(root: string | null, rootName: string): Explor
     }
   }, [api, createConversation, queryClient, rememberThread, root, rootName]);
 
-  // Land on this folder's thread whenever the folder or its threads change.
-  // The folders list says which thread that is, so it is waited for.
+  // Persist the chosen/fallback thread on the folder row, or start one if empty.
   useEffect(() => {
     if (!root || !threadsQuery.isSuccess || foldersQuery.isPending || creating || error) return;
-    if (activeIsThread) {
-      rememberThread(root, activeConversationId!);
+    if (activeId) {
+      rememberThread(root, activeId);
       return;
     }
-    const remembered = threads.find((thread) => thread.id === lastThreadId);
-    const next = remembered ?? threads[0];
-    if (next) void selectConversation(next.id);
-    else void create();
-  }, [activeConversationId, activeIsThread, create, creating, error, foldersQuery.isPending, lastThreadId, rememberThread, root, selectConversation, threads, threadsQuery.isSuccess]);
+    void create();
+  }, [activeId, create, creating, error, foldersQuery.isPending, rememberThread, root, threadsQuery.isSuccess]);
+
+  const select = useCallback((id: string) => {
+    if (!root) return;
+    setSelectedByRoot((prev) => ({ ...prev, [root]: id }));
+    rememberThread(root, id);
+  }, [rememberThread, root]);
+
+  const remove = useCallback(async (id: string) => {
+    const removed = await deleteConversation(id);
+    if (removed && root) {
+      setSelectedByRoot((prev) => (prev[root] === id ? { ...prev, [root]: null } : prev));
+      await queryClient.invalidateQueries({ queryKey: threadsKey(root) });
+    }
+    return removed;
+  }, [deleteConversation, queryClient, root]);
 
   return {
     threads,
-    activeId: activeIsThread ? activeConversationId : null,
-    preparing: Boolean(root) && (threadsQuery.isPending || creating || (!activeIsThread && !error && !threadsQuery.isError)),
+    activeId,
+    preparing: Boolean(root) && (threadsQuery.isPending || creating || (!activeId && !error && !threadsQuery.isError)),
     error: error ?? (threadsQuery.isError ? threadsQuery.error.message : null),
-    select: (id) => {
-      void selectConversation(id);
-      if (root) rememberThread(root, id);
-    },
+    select,
     create,
-    remove: deleteConversation,
+    remove,
     retry: () => {
       setError(null);
       void threadsQuery.refetch();

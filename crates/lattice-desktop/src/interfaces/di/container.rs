@@ -91,6 +91,9 @@ pub struct Container {
     /// Starts the llama-server the embedding model runs on.
     pub(crate) embedding_starter:
         Arc<dyn crate::features::embedding::llama_cpp::EmbeddingServerStarter>,
+    /// Shared swappable cell backing `embedding_starter` so
+    /// `Container::with_embedding_starter` updates every module that captured it.
+    swappable_embedding_starter: Arc<SwappableEmbeddingStarter>,
     /// The embedding servers `embedding_starter` has started, for the
     /// activity view.
     pub(crate) embedding_servers: Arc<crate::features::embedding::activity::StartedServers>,
@@ -98,6 +101,9 @@ pub struct Container {
     /// All vault writes flow through a single mpsc-fed worker; see
     /// `features::vault::writeback`.
     pub(crate) vault_writer: crate::features::vault::writeback::VaultWriterHandle,
+
+    /// Dynamically reconfigurable filesystem watcher for external vault edits.
+    pub(crate) vault_watcher: crate::features::vault::watcher::VaultWatcherHandle,
 
     /// Shared by writer + watcher for loop suppression.
     pub(crate) vault_write_suppression: crate::features::vault::watcher::WriteSuppressionRegistry,
@@ -258,7 +264,7 @@ impl Container {
             llm_runtime.clone(),
             current_reranker,
         ));
-        let embedding_starter: Arc<
+        let initial_embedding_starter: Arc<
             dyn crate::features::embedding::llama_cpp::EmbeddingServerStarter,
         > = Arc::new(crate::features::embedding::activity::WatchedStarter::new(
             Arc::new(super::modules::embedding::SidecarEmbeddingStarter::new(
@@ -269,6 +275,15 @@ impl Container {
             )),
             Arc::clone(&embedding_servers),
         ));
+        let swappable_embedding_starter =
+            Arc::new(SwappableEmbeddingStarter::new(initial_embedding_starter));
+        let embedding_starter: Arc<
+            dyn crate::features::embedding::llama_cpp::EmbeddingServerStarter,
+        > = Arc::clone(&swappable_embedding_starter)
+            as Arc<dyn crate::features::embedding::llama_cpp::EmbeddingServerStarter>;
+
+        let health_embedding = Arc::new(DynamicEmbeddingService::new(embedding_runtime.clone()))
+            as Arc<dyn EmbeddingServiceTrait>;
 
         // CoreModule builds shared singletons (security, runtime, credentials)
         // Stack frame for this construction is freed before Layer 2 begins
@@ -285,6 +300,7 @@ impl Container {
                 database.clone(),
                 core.clone(),
                 Arc::clone(&backend_devices),
+                health_embedding,
             )
             .await?,
         );
@@ -414,11 +430,20 @@ impl Container {
 
         let vault_write_suppression =
             crate::features::vault::watcher::WriteSuppressionRegistry::new();
+        let vault_rescan_lock = crate::features::vault::watcher::RescanLock::default();
         let vault_writer = crate::features::vault::writeback::start_vault_writer(
             Arc::clone(system.get_settings_use_case()),
             vault_write_suppression.clone(),
             core.database().clone(),
             core.background(),
+        );
+        let vault_watcher = crate::features::vault::watcher::VaultWatcherHandle::new(
+            Arc::clone(system.get_settings_use_case()),
+            core.database().clone(),
+            vault_write_suppression.clone(),
+            Arc::clone(core.background()),
+            vault_rescan_lock.clone(),
+            vault_writer.clone(),
         );
 
         let allowed_roots = Arc::new(super::allowed_roots::AllowedRoots::new(
@@ -436,6 +461,7 @@ impl Container {
                 settings_repository: system.settings_repo().clone(),
                 database: core.database().clone(),
                 vault_writer: vault_writer.clone(),
+                vault_watcher: vault_watcher.clone(),
                 web_service: Arc::clone(&web_service),
                 credentials: Arc::clone(core.credentials()),
             });
@@ -482,10 +508,12 @@ impl Container {
             llm_instances,
             embedding_runtime,
             embedding_starter,
+            swappable_embedding_starter,
             embedding_servers,
             vault_writer,
+            vault_watcher,
             vault_write_suppression,
-            vault_rescan_lock: Default::default(),
+            vault_rescan_lock,
             settings_side_effects,
             jobs,
             web_page_snapshots,
@@ -511,17 +539,18 @@ impl Container {
     /// Serve embeddings through `starter` instead of the bundled sidecar.
     /// Tools that build a container without the app (the shipped-path eval)
     /// pass a [`StandaloneServers`](super::modules::standalone::StandaloneServers).
-    /// After construction the container is the starter's only holder, so
-    /// every load and activation from here on uses this one.
+    /// Replaces the shared inner starter cell so every module (including
+    /// `SearchModule`) uses `starter` from here on.
     pub fn with_embedding_starter(
-        mut self,
+        self,
         starter: Arc<dyn crate::features::embedding::llama_cpp::EmbeddingServerStarter>,
     ) -> Self {
-        self.embedding_starter =
-            Arc::new(crate::features::embedding::activity::WatchedStarter::new(
+        self.swappable_embedding_starter.replace(Arc::new(
+            crate::features::embedding::activity::WatchedStarter::new(
                 starter,
                 Arc::clone(&self.embedding_servers),
-            ));
+            ),
+        ));
         self
     }
 
@@ -540,6 +569,7 @@ impl Container {
     /// `.with_app_handle(handle)`; tests skip it.
     pub fn with_app_handle(mut self, handle: tauri::AppHandle) -> Self {
         self.vault_writer.set_app_handle(handle.clone());
+        self.vault_watcher.set_app_handle(handle.clone());
         self.allowed_roots.set_app_handle(handle.clone());
         self.web_snapshot_events.attach(handle.clone());
         // A page that refuses the HTTP client is read in a hidden window of
@@ -561,6 +591,7 @@ impl Container {
             self.index_file_use_case(),
             self.delete_document_use_case(),
             Arc::clone(self.indexing.document_repo()),
+            Arc::new(ContainerVaultNoteDocuments(self.core.database().clone())),
             Arc::new(self.active_embedding()),
             self.get_settings_use_case(),
             self.file_access_config(),
@@ -568,15 +599,7 @@ impl Container {
         );
         self.vault_writer
             .set_note_index_sink(Arc::new(note_index_sink));
-        // Watcher reads settings once and exits if disabled.
-        crate::features::vault::watcher::start_vault_watcher(
-            Arc::clone(self.system.get_settings_use_case()),
-            self.core.database().clone(),
-            handle.clone(),
-            self.vault_write_suppression.clone(),
-            Arc::clone(self.core.background()),
-            self.vault_rescan_lock.clone(),
-        );
+        self.vault_watcher.trigger_reconfigure();
 
         let events = handle.clone();
         self.jobs.observe(move |job| {
@@ -631,5 +654,81 @@ impl Container {
         );
         self.index_turns = Some(turns);
         self
+    }
+}
+
+struct SwappableEmbeddingStarter {
+    inner:
+        std::sync::RwLock<Arc<dyn crate::features::embedding::llama_cpp::EmbeddingServerStarter>>,
+}
+
+impl SwappableEmbeddingStarter {
+    fn new(
+        starter: Arc<dyn crate::features::embedding::llama_cpp::EmbeddingServerStarter>,
+    ) -> Self {
+        Self {
+            inner: std::sync::RwLock::new(starter),
+        }
+    }
+
+    fn current(&self) -> Arc<dyn crate::features::embedding::llama_cpp::EmbeddingServerStarter> {
+        match self.inner.read() {
+            Ok(guard) => Arc::clone(&guard),
+            Err(poisoned) => Arc::clone(&poisoned.into_inner()),
+        }
+    }
+
+    fn replace(
+        &self,
+        starter: Arc<dyn crate::features::embedding::llama_cpp::EmbeddingServerStarter>,
+    ) {
+        match self.inner.write() {
+            Ok(mut guard) => *guard = starter,
+            Err(poisoned) => *poisoned.into_inner() = starter,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::features::embedding::llama_cpp::EmbeddingServerStarter for SwappableEmbeddingStarter {
+    async fn header(
+        &self,
+        gguf: &std::path::Path,
+    ) -> Option<crate::features::embedding::llama_cpp::EmbeddingHeader> {
+        let starter = self.current();
+        starter.header(gguf).await
+    }
+
+    async fn accelerated(&self) -> bool {
+        let starter = self.current();
+        starter.accelerated().await
+    }
+
+    async fn start(
+        &self,
+        launch: &crate::features::embedding::llama_cpp::EmbeddingLaunch,
+    ) -> Result<Arc<crate::infrastructure::llama_server::RunningLlamaServer>> {
+        let starter = self.current();
+        starter.start(launch).await
+    }
+}
+
+struct ContainerVaultNoteDocuments(Database);
+
+#[async_trait::async_trait]
+impl crate::features::indexing::note_index_sink::VaultNoteDocumentRepo
+    for ContainerVaultNoteDocuments
+{
+    async fn find_document_id(&self, note_id: &str) -> Result<Option<String>> {
+        crate::features::vault::repository::find_note_document_id(&self.0, note_id).await
+    }
+
+    async fn upsert_document_id(&self, note_id: &str, document_id: &str) -> Result<()> {
+        crate::features::vault::repository::upsert_note_document_id(&self.0, note_id, document_id)
+            .await
+    }
+
+    async fn delete_mapping(&self, note_id: &str) -> Result<()> {
+        crate::features::vault::repository::delete_note_document_mapping(&self.0, note_id).await
     }
 }

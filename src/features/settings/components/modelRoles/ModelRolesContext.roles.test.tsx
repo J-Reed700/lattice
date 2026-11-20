@@ -9,6 +9,9 @@ const h = vi.hoisted(() => ({
   settings: undefined as unknown,
   updateSettings: vi.fn(),
   models: {
+    downloadedModels: [] as Array<{ id: string; model_id: string; model_name: string; backend: 'local' | 'ollama' }>,
+    isLoading: false,
+    error: null as string | null,
     fetchDownloadedModels: vi.fn(),
     setActiveChatModel: vi.fn(),
     setActiveEmbeddingModel: vi.fn(),
@@ -40,8 +43,13 @@ describe('ModelRolesProvider roles', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     h.settings = { llm: { provider: 'local', model: 'llama3:8b', utilityModel: null } };
-    h.models.fetchDownloadedModels.mockResolvedValue([row('qwen-9b'), row('mistral', 'ollama')]);
-    for (const fn of Object.values(h.models)) if (fn !== h.models.fetchDownloadedModels) fn.mockResolvedValue(undefined);
+    h.models.downloadedModels = [row('qwen-9b'), row('mistral', 'ollama')];
+    h.models.isLoading = false;
+    h.models.error = null;
+    h.models.fetchDownloadedModels.mockResolvedValue(h.models.downloadedModels);
+    for (const [k, fn] of Object.entries(h.models)) {
+      if (typeof fn === 'function' && k !== 'fetchDownloadedModels') fn.mockResolvedValue(undefined);
+    }
     h.updateSettings.mockResolvedValue(undefined);
   });
 
@@ -52,11 +60,11 @@ describe('ModelRolesProvider roles', () => {
   });
 
   it('splits local and Ollama models and reports a failed read', async () => {
-    const { result } = await setup();
+    const { result, rerender } = await setup();
     expect(result.current.localModels.map((m) => m.model_id)).toEqual(['qwen-9b']);
     expect(result.current.ollamaModels.map((m) => m.model_id)).toEqual(['mistral']);
-    h.models.fetchDownloadedModels.mockRejectedValueOnce(new Error('models dir missing'));
-    await act(() => result.current.refresh());
+    h.models.error = 'models dir missing';
+    rerender();
     expect(result.current.error).toBe('models dir missing');
   });
 
@@ -125,7 +133,7 @@ describe('ModelRolesProvider roles', () => {
 
   it('needs the Ollama chat tag before the Ollama server can verify', async () => {
     h.settings = { llm: { provider: 'ollama', model: '  ' } };
-    h.models.fetchDownloadedModels.mockResolvedValue([row('__ollama_server__', 'ollama')]);
+    h.models.downloadedModels = [row('__ollama_server__', 'ollama')];
     const { result } = await setup();
     await act(() => result.current.assignRole('__ollama_server__', 'verifier'));
     expect(h.toast.error).toHaveBeenCalledWith('Failed to set verifier role', { message: 'Set the Ollama chat tag in Chat settings first.' });

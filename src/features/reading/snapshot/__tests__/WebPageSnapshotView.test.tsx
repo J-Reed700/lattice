@@ -132,6 +132,10 @@ describe('WebPageSnapshotView states', () => {
     fire('web-page-snapshot:changed', { conversationId: CONVERSATION, url: URL_CITED, snapshot: dto() });
     expect(await frame()).toBeTruthy();
     expect(mocks.getWebPageSnapshot).toHaveBeenCalledTimes(1);
+
+    // A stale pending event for the same snapshot must never regress a ready copy.
+    fire('web-page-snapshot:changed', { conversationId: CONVERSATION, url: URL_CITED, snapshot: dto({ status: 'pending' }) });
+    expect(await frame()).toBeTruthy();
   });
 
   it('explains a failure and offers to try again or open the live page', async () => {

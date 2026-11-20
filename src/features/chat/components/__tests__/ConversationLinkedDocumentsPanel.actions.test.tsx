@@ -12,7 +12,10 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/features/chat/hooks/useConversationSourceFiling', () => ({ useConversationSourceFiling: () => h.filing }));
 vi.mock('@/features/files/hooks/useLibraryDocumentActions', () => ({ openDocumentFile: vi.fn() }));
-vi.mock('@/shared/conversations/conversationsStore', () => ({ useConversationsStore: () => h.store }));
+vi.mock('@/shared/conversations/conversationsStore', () => ({
+  useConversationsStore: <T,>(selector?: (_s: Record<string, any>) => T) =>
+    (selector ? selector(h.store) : h.store),
+}));
 vi.mock('@/stores/toastStore', () => ({ toast: h.toast }));
 
 const doc = (id: string, fileName: string, overrides: Record<string, unknown> = {}) => ({

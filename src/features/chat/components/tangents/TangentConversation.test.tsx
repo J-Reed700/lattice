@@ -29,7 +29,7 @@ vi.mock('@/features/chat/api/conversationQueryData', () => ({
 
 // What the chat inside a tangent sees of the shared controller.
 function Probe() {
-  h.scope = useConversationsStore() as unknown as Record<string, any>;
+  h.scope = useConversationsStore((state) => state) as unknown as Record<string, any>;
   return <p>Chat inside</p>;
 }
 

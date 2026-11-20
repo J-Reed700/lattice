@@ -41,6 +41,7 @@ impl DownloadManagerService {
                             error = %e,
                             "Failed to start download task - marking as failed and continuing queue processing"
                         );
+                        self.auth_tokens.write().await.remove(&id);
 
                         // Mark the download as failed in database since it was popped from queue
                         if let Ok(Some(mut session)) = self.repository.get(&id).await {

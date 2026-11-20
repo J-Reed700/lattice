@@ -61,14 +61,7 @@ pub enum Exempt {
 /// `(file, function, exempt part, reason)`: a function rule 3 would flag, with the reason it must not be one transaction.
 pub type Exception<'a> = (&'a str, &'a str, Exempt, &'a str);
 
-pub const EXCEPTIONS: &[Exception<'static>] = &[
-    (
-        "crates/lattice-desktop/src/features/indexing/library_owner.rs",
-        "adopt",
-        Exempt::Awaits,
-        "The owner file is created (create_new, never replacing) while the owner id is uncommitted: a file that cannot be created, or that another instance created first, rolls the id back, so the id and the file always agree.",
-    ),
-];
+pub const EXCEPTIONS: &[Exception<'static>] = &[];
 
 /// `(file, owner, item, reason)`: an item rule 5(b) would flag, with the reason it must hand
 /// out a handle. The owner is `trait T` for a trait declaration, `impl T for S` for a trait

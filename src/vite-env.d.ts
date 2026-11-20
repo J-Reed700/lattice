@@ -11,3 +11,14 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv
 }
+
+interface LatticeBootGuard {
+  markLoaded(): void
+  markMounted(): void
+  isMounted(): boolean
+  disarm(): void
+}
+
+interface Window {
+  __LATTICE_BOOT__?: LatticeBootGuard
+}

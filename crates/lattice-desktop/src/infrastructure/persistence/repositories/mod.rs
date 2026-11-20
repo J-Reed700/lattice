@@ -18,7 +18,7 @@ pub mod model_file;
 pub(crate) mod models_table_type;
 
 // Shared repository support.
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(any(test, feature = "test-support"))]
 pub mod mocks;
 pub mod traits;
 
