@@ -1,9 +1,25 @@
 use super::*;
 use lattice_core::application::ports::turn_source::TurnSourcePolicy;
 
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub(super) const SKIP_KB_CONFIDENCE_THRESHOLD: f32 = 0.75;
+
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub(super) struct SearchFlags {
     pub(super) force_kb_search: bool,
+    /// The user explicitly asked for the library ("Your documents" toggle,
+    /// Query turn mode, or pinned focus documents), distinct from an
+    /// intent-inferred vault search.
+    #[serde(default)]
+    pub(super) user_requested_kb: bool,
+    /// Answer strictly from retrieved sources only. When false (hybrid mode,
+    /// the default), cite retrieved passages first and allow uncited general
+    /// knowledge for general or conceptual gaps.
+    #[serde(default)]
+    pub(super) strict_sources: bool,
+    /// High-confidence intent signal (or trivial greeting fast path) in hybrid
+    /// auto mode indicating no vault search is needed for this turn.
+    #[serde(default)]
+    pub(super) skip_auto_kb: bool,
     /// The user asked for the web: the web-search toggle, or the query turn
     /// mode. Searched whatever the vault holds, and beside it.
     pub(super) force_web_search: bool,
@@ -43,6 +59,9 @@ impl SearchFlags {
             // flags can reopen the vault or the network for such a turn.
             return Self {
                 force_kb_search: false,
+                user_requested_kb: false,
+                strict_sources: false,
+                skip_auto_kb: false,
                 force_web_search: false,
                 web_fallback: false,
                 force_wiki_search: false,
@@ -51,8 +70,12 @@ impl SearchFlags {
                 closed_book: true,
             };
         }
+        let user_requested_kb = tool_preferences.knowledge_base || turn_mode_is_query;
         Self {
-            force_kb_search: tool_preferences.knowledge_base || turn_mode_is_query,
+            force_kb_search: user_requested_kb,
+            user_requested_kb,
+            strict_sources: tool_preferences.strict_sources,
+            skip_auto_kb: false,
             force_web_search: tool_preferences.web_search || turn_mode_is_query,
             web_fallback: false,
             force_wiki_search,
@@ -100,10 +123,14 @@ pub(super) async fn infer_turn_intent(
     context: &[String],
     cancel: tokio_util::sync::CancellationToken,
 ) -> InferredIntent {
-    if !should_infer_turn_intent(tool_preferences, search_flags)
-        || is_trivial_conversational_message(validated_message)
-    {
+    if !should_infer_turn_intent(tool_preferences, search_flags) {
         return InferredIntent::as_requested(search_flags);
+    }
+    if is_trivial_conversational_message(validated_message) {
+        return InferredIntent::as_requested(SearchFlags {
+            skip_auto_kb: !search_flags.strict_sources,
+            ..search_flags
+        });
     }
 
     // Resolved the way the grounding judge below resolves its model: the
@@ -135,6 +162,7 @@ pub(super) async fn infer_turn_intent(
         needs_web = intent.needs_web,
         is_followup = intent.is_followup,
         confidence = intent.confidence,
+        skip_auto_kb = merged.skip_auto_kb,
         web_fallback = merged.web_fallback,
         "chat_with_conversation: inferred turn intent"
     );
@@ -207,8 +235,20 @@ pub(super) fn apply_turn_intent(search_flags: SearchFlags, intent: &TurnIntent) 
     if search_flags.closed_book {
         return search_flags;
     }
+    let skip_auto_kb = !search_flags.strict_sources
+        && !search_flags.force_kb_search
+        && !search_flags.user_requested_kb
+        && !search_flags.force_web_search
+        && !search_flags.force_wiki_search
+        && !search_flags.force_followup_mode
+        && !search_flags.deep_research_mode
+        && intent.confidence >= SKIP_KB_CONFIDENCE_THRESHOLD
+        && !intent.needs_knowledge_base
+        && !intent.needs_web
+        && !intent.is_followup;
     SearchFlags {
         force_kb_search: search_flags.force_kb_search || intent.needs_knowledge_base,
+        skip_auto_kb,
         web_fallback: intent.needs_web && !search_flags.force_web_search,
         force_followup_mode: search_flags.force_followup_mode || intent.is_followup,
         ..search_flags

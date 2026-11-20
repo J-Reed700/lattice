@@ -2,13 +2,9 @@ use super::*;
 
 fn flags() -> SearchFlags {
     SearchFlags {
-        force_kb_search: false,
         force_web_search: true,
-        web_fallback: false,
-        force_wiki_search: false,
         deep_research_mode: true,
-        force_followup_mode: false,
-        closed_book: false,
+        ..SearchFlags::default()
     }
 }
 

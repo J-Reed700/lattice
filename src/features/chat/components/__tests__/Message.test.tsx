@@ -238,6 +238,81 @@ describe('message verification disclosure', () => {
     renderAnswer();
     expect(screen.getByRole('button', { name: /Partially verified · 1/ })).toBeInTheDocument();
   });
+
+  it('shows General knowledge badge and tooltip in hybrid mode with no evaluated claims', () => {
+    verificationSummary = {
+      enabled: true,
+      claimsEvaluated: 0,
+      groundingMode: 'hybrid',
+    };
+    renderAnswer();
+
+    const badge = screen.getByRole('button', { name: /General knowledge/ });
+    expect(badge).toHaveAttribute(
+      'title',
+      'Answered from general knowledge without source citations. Turn on Sources only for document-only answers.'
+    );
+    expect(badge).not.toHaveAttribute('aria-expanded');
+    expect(badge.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('shows an interrupted tooltip on Not checked badges', () => {
+    verificationSummary = {
+      enabled: true,
+      interrupted: true,
+    };
+    renderAnswer();
+
+    const badge = screen.getByRole('button', { name: /Not checked/ });
+    expect(badge).toHaveAttribute('title', 'Verification was interrupted before finishing.');
+  });
+
+  it('shows Sources verified badge, tooltip, and hybrid summary line when cited claims pass', () => {
+    verificationSummary = {
+      enabled: true,
+      claimsEvaluated: 2,
+      supportedClaims: 2,
+      supportedClaimNotes: ['Claim one', 'Claim two'],
+      unsupportedClaims: [],
+      contradictedClaims: [],
+      verdictCounts: { supported: 2, contradicted: 0, unsupported: 0, unverified: 0 },
+      groundingMode: 'hybrid',
+      citedOnly: true,
+    };
+    renderAnswer();
+
+    const badge = screen.getByRole('button', { name: /Sources verified/ });
+    expect(badge).toHaveAttribute(
+      'title',
+      'Cited claims verified against your sources; uncited parts may use general knowledge.'
+    );
+
+    fireEvent.click(badge);
+    expect(
+      screen.getByText('All cited claims are grounded in your sources · 2 claims checked · uncited parts may use general knowledge')
+    ).toBeVisible();
+  });
+
+  it('keeps Verified and Nothing to verify when groundingMode is strict or undefined', () => {
+    verificationSummary = {
+      enabled: true,
+      claimsEvaluated: 0,
+      groundingMode: 'strict',
+    };
+    const first = render(<Message message={{ id: 'answer', role: 'assistant', content: 'Answer', createdAt: new Date().toISOString(), conversationId: 'conversation' } as Parameters<typeof Message>[0]['message']} />);
+    expect(screen.getByRole('button', { name: /Nothing to verify/ })).toBeInTheDocument();
+    first.unmount();
+
+    verificationSummary = {
+      enabled: true,
+      claimsEvaluated: 2,
+      supportedClaims: 2,
+      unsupportedClaims: [],
+      verdictCounts: { supported: 2, contradicted: 0, unsupported: 0, unverified: 0 },
+    };
+    renderAnswer();
+    expect(screen.getByRole('button', { name: /^Verified$/ })).toBeInTheDocument();
+  });
 });
 
 describe('a checked sentence of the answer', () => {

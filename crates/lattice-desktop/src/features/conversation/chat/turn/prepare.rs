@@ -144,6 +144,7 @@ pub(super) async fn prepare_turn(
 
     info!(
         force_kb_search = search_flags.force_kb_search,
+        strict_sources = search_flags.strict_sources,
         force_web_search = search_flags.force_web_search,
         force_wiki_search = search_flags.force_wiki_search,
         deep_research_mode = search_flags.deep_research_mode,
@@ -214,6 +215,7 @@ pub(super) async fn prepare_turn(
     // nothing, since only that path reports why the turn read nothing.
     let search_flags = SearchFlags {
         force_kb_search: search_flags.force_kb_search || focus.is_requested(),
+        user_requested_kb: search_flags.user_requested_kb || focus.is_requested(),
         ..search_flags
     };
     let names = open_names(container, &conv_id).await?;
@@ -280,6 +282,7 @@ pub(super) async fn prepare_turn(
             &prompt_settings,
             &validated_message,
             source.as_ref().map(|source| source.policy()),
+            search_flags.strict_sources,
         ),
         &context,
         settings.llm.bounded_conversation_memory,

@@ -302,7 +302,8 @@ impl RetrievalPlan {
             // the fallback has nothing to go by. A closed-book turn never
             // reaches this plan.
             should_search_kb: search_flags.force_kb_search
-                || ((router_decision.router_may_search || search_flags.web_planned())
+                || (!search_flags.skip_auto_kb
+                    && (router_decision.router_may_search || search_flags.web_planned())
                     && matches!(
                         route_action,
                         RouterAction::NewSearch | RouterAction::UseLastDocument

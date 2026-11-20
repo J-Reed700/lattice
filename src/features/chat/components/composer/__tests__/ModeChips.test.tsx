@@ -38,6 +38,7 @@ describe('the composer mode chips', () => {
       webSearch: true,
       wikipedia: true,
       knowledgeBase: true,
+      strictSources: true,
       customTools: ['read_inbox'],
     });
 
@@ -46,7 +47,15 @@ describe('the composer mode chips', () => {
     expect(screen.getByText('Web')).toBeInTheDocument();
     expect(screen.getByText('Wikipedia')).toBeInTheDocument();
     expect(screen.getByText('Your documents')).toBeInTheDocument();
+    expect(screen.getByText('Sources only')).toBeInTheDocument();
     expect(screen.getByText('Read Inbox')).toBeInTheDocument();
+  });
+
+  it('shows Sources only independently of Your documents and removes it', async () => {
+    const { onRemove } = renderChips({ knowledgeBase: false, strictSources: true });
+    expect(screen.queryByText('Your documents')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Allow general knowledge alongside sources/ }));
+    expect(onRemove).toHaveBeenCalledWith('strict');
   });
 
   it('calls Auto the default, so it earns no chip', () => {

@@ -73,6 +73,8 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
     setSpacePromptDraft,
     spaceKbDefault,
     setSpaceKbDefault,
+    spaceStrictSourcesDefault,
+    setSpaceStrictSourcesDefault,
     spaceWebDefault,
     setSpaceWebDefault,
     spaceDeepResearchDefault,
@@ -370,7 +372,7 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
                         rows={4}
                         className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-hidden focus:ring-2 focus:ring-[hsl(var(--ring))] resize-y"
                       />
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <button
                           type="button"
                           onClick={() => setSpaceKbDefault((value) => !value)}
@@ -380,6 +382,18 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
                             }`}
                         >
                           Search documents by default
+                        </button>
+                        <button
+                          type="button"
+                          aria-pressed={spaceStrictSourcesDefault}
+                          title="Answer strictly from retrieved sources; no general knowledge"
+                          onClick={() => setSpaceStrictSourcesDefault((value) => !value)}
+                          className={`px-2 py-1 text-xs rounded-sm border transition-colors duration-fast ${spaceStrictSourcesDefault
+                            ? 'border-[hsl(var(--accent))] text-[hsl(var(--accent))]'
+                            : 'border-border-default text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]'
+                            }`}
+                        >
+                          Sources only
                         </button>
                         <button
                           type="button"

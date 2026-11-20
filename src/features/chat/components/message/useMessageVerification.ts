@@ -1,8 +1,15 @@
 import { useMemo, useState } from 'react';
 
-import { ShieldAlert, ShieldCheck, ShieldEllipsis, ShieldOff } from 'lucide-react';
+import { ShieldAlert, ShieldCheck, ShieldEllipsis, ShieldOff, Sparkles, type LucideIcon } from 'lucide-react';
 
 import type { MessageVerificationSummary } from '@/types/conversation';
+
+interface VerificationBadge {
+  label: string;
+  icon: LucideIcon;
+  className: string;
+  title?: string;
+}
 
 /**
  * What a message reads off its verification summary: the claims sorted by
@@ -84,7 +91,7 @@ export function useMessageVerification({
     ? ungroundedClaims
     : ungroundedClaims.slice(0, 5);
 
-  const verificationBadge = useMemo(() => {
+  const verificationBadge = useMemo<VerificationBadge | null>(() => {
     if (isUser || !verificationSummary) return null;
     if (!verificationSummary.enabled) {
       return {
@@ -112,9 +119,19 @@ export function useMessageVerification({
         icon: ShieldOff,
         className:
           'border-subtle bg-surface text-[hsl(var(--text-muted))]',
+        title: 'Verification was interrupted before finishing.',
       };
     }
     if (claimsEvaluated === 0) {
+      if (verificationSummary.groundingMode === 'hybrid') {
+        return {
+          label: 'General knowledge',
+          icon: Sparkles,
+          className:
+            'border-subtle bg-surface text-[hsl(var(--text-muted))]',
+          title: 'Answered from general knowledge without source citations. Turn on Sources only for document-only answers.',
+        };
+      }
       return {
         label: 'Nothing to verify',
         icon: ShieldOff,
@@ -131,6 +148,15 @@ export function useMessageVerification({
       };
     }
     if (unsupportedCount === 0) {
+      if (verificationSummary.groundingMode === 'hybrid') {
+        return {
+          label: 'Sources verified',
+          icon: ShieldCheck,
+          className:
+            'border-[hsl(var(--success-muted))] bg-[hsl(var(--success-muted))] text-[hsl(var(--success-fg))]',
+          title: 'Cited claims verified against your sources; uncited parts may use general knowledge.',
+        };
+      }
       return {
         label: 'Verified',
         icon: ShieldCheck,
@@ -165,6 +191,8 @@ export function useMessageVerification({
     uncheckedCount,
   ]);
 
+  const citedOnly = Boolean(verificationSummary?.citedOnly);
+
   return {
     claimsEvaluated,
     supportedClaims,
@@ -173,6 +201,7 @@ export function useMessageVerification({
     ungroundedClaims,
     uncheckedClaims,
     uncheckedCount,
+    citedOnly,
     verificationPending,
     evidenceByClaim,
     reasonByClaim,

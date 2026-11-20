@@ -33,6 +33,7 @@ export function useSpaceEditor() {
   const [spaceAccentDraft, setSpaceAccentDraft] = useState('');
   const [spacePromptDraft, setSpacePromptDraft] = useState('');
   const [spaceKbDefault, setSpaceKbDefault] = useState(false);
+  const [spaceStrictSourcesDefault, setSpaceStrictSourcesDefault] = useState(false);
   const [spaceWebDefault, setSpaceWebDefault] = useState(false);
   const [spaceDeepResearchDefault, setSpaceDeepResearchDefault] = useState(false);
   useEffect(() => {
@@ -43,6 +44,7 @@ export function useSpaceEditor() {
       setSpaceAccentDraft('');
       setSpacePromptDraft('');
       setSpaceKbDefault(false);
+      setSpaceStrictSourcesDefault(false);
       setSpaceWebDefault(false);
       setSpaceDeepResearchDefault(false);
       return;
@@ -55,6 +57,7 @@ export function useSpaceEditor() {
     setSpaceAccentDraft(selectedSpace.accentColor ?? '');
     setSpacePromptDraft(selectedSpace.spacePrompt ?? '');
     setSpaceKbDefault(defaults.knowledgeBase);
+    setSpaceStrictSourcesDefault(defaults.strictSources);
     setSpaceWebDefault(defaults.webSearch);
     setSpaceDeepResearchDefault(defaults.deepResearchMode);
   }, [selectedSpace]);
@@ -74,6 +77,7 @@ export function useSpaceEditor() {
         spacePrompt: null,
         toolPreferencesJson: buildSpaceToolPreferencesJson({
           knowledgeBase: false,
+          strictSources: false,
           webSearch: false,
           deepResearchMode: false,
         }),
@@ -101,6 +105,7 @@ export function useSpaceEditor() {
         spacePrompt: spacePromptDraft.trim() ? spacePromptDraft.trim() : null,
         toolPreferencesJson: buildSpaceToolPreferencesJson({
           knowledgeBase: spaceKbDefault,
+          strictSources: spaceStrictSourcesDefault,
           webSearch: spaceWebDefault,
           deepResearchMode: spaceDeepResearchDefault,
         }),
@@ -170,6 +175,8 @@ export function useSpaceEditor() {
     setSpacePromptDraft,
     spaceKbDefault,
     setSpaceKbDefault,
+    spaceStrictSourcesDefault,
+    setSpaceStrictSourcesDefault,
     spaceWebDefault,
     setSpaceWebDefault,
     spaceDeepResearchDefault,

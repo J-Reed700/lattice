@@ -22,21 +22,47 @@ fn retrieval_plan_does_not_short_circuit_clarify_without_recent_document() {
         clarify_message: None,
         router_may_search: true,
     };
-    let flags = SearchFlags {
-        force_kb_search: false,
-        force_web_search: false,
-        web_fallback: false,
-        force_wiki_search: false,
-        deep_research_mode: false,
-        force_followup_mode: false,
-        closed_book: false,
-    };
+    let flags = SearchFlags::default();
 
     let plan = RetrievalPlan::from_router(&settings, &decision, "test", flags);
 
     assert_eq!(plan.route_action, RouterAction::NewSearch);
     assert!(plan.short_circuit_response.is_none());
     assert!(plan.should_search_kb);
+}
+
+#[test]
+fn retrieval_plan_skips_auto_kb_when_skip_auto_kb_is_set_unless_forced() {
+    let settings = RouterSettingsDto::default();
+    let decision = RouterDecisionOutcome {
+        action: RouterAction::NewSearch,
+        recent_doc_meta: None,
+        clarify_message: None,
+        router_may_search: true,
+    };
+
+    let skipped = RetrievalPlan::from_router(
+        &settings,
+        &decision,
+        "Explain quicksort",
+        SearchFlags {
+            skip_auto_kb: true,
+            ..SearchFlags::default()
+        },
+    );
+    assert!(!skipped.should_search_kb);
+
+    let forced = RetrievalPlan::from_router(
+        &settings,
+        &decision,
+        "Explain quicksort",
+        SearchFlags {
+            force_kb_search: true,
+            skip_auto_kb: true,
+            ..SearchFlags::default()
+        },
+    );
+    assert!(forced.should_search_kb);
 }
 
 #[test]
@@ -62,11 +88,7 @@ fn followup_with_forced_web_prefers_kb_first_without_external_intent() {
     let flags = SearchFlags {
         force_kb_search: true,
         force_web_search: true,
-        web_fallback: false,
-        force_wiki_search: false,
-        deep_research_mode: false,
-        force_followup_mode: false,
-        closed_book: false,
+        ..SearchFlags::default()
     };
     let interpretation = lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
         "Right, I am talking about a scenario with my company",
@@ -82,11 +104,7 @@ fn question_with_forced_web_keeps_web_enabled() {
     let flags = SearchFlags {
         force_kb_search: true,
         force_web_search: true,
-        web_fallback: false,
-        force_wiki_search: false,
-        deep_research_mode: false,
-        force_followup_mode: false,
-        closed_book: false,
+        ..SearchFlags::default()
     };
     let interpretation = lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
         "latest updates?",
@@ -101,11 +119,9 @@ fn flags(kb: bool, web: bool, wiki: bool, followup: bool) -> SearchFlags {
     SearchFlags {
         force_kb_search: kb,
         force_web_search: web,
-        web_fallback: false,
         force_wiki_search: wiki,
-        deep_research_mode: false,
         force_followup_mode: followup,
-        closed_book: false,
+        ..SearchFlags::default()
     }
 }
 

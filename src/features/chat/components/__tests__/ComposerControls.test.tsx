@@ -8,8 +8,9 @@ const renderControls = (overrides: Partial<Parameters<typeof ComposerControls>[0
   const props = {
     turnMode: 'auto' as const,
     onTurnModeChange: vi.fn(),
-    toolPreferences: { knowledgeBase: true, webSearch: false, deepResearchMode: false } as never,
+    toolPreferences: { knowledgeBase: true, strictSources: false, webSearch: false, deepResearchMode: false } as never,
     onToggleKnowledgeBase: vi.fn(),
+    onToggleStrictSources: vi.fn(),
     onToggleWebTools: vi.fn(),
     onToggleWikiTools: vi.fn(),
     onToggleDeepResearch: vi.fn(),
@@ -36,13 +37,16 @@ describe('ComposerControls', () => {
   it('shows each tool’s state and toggles it', () => {
     const props = renderControls();
     expect(screen.getByRole('checkbox', { name: /Your documents/ })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('checkbox', { name: /Sources only/ })).toHaveAttribute('aria-checked', 'false');
     expect(screen.getByRole('checkbox', { name: /^Web/ })).toHaveAttribute('aria-checked', 'false');
     expect(screen.getByRole('checkbox', { name: /Wikipedia/ })).toHaveAttribute('aria-checked', 'false');
     fireEvent.click(screen.getByRole('checkbox', { name: /Your documents/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /Sources only/ }));
     fireEvent.click(screen.getByRole('checkbox', { name: /^Web/ }));
     fireEvent.click(screen.getByRole('checkbox', { name: /Wikipedia/ }));
     fireEvent.click(screen.getByRole('checkbox', { name: /Deep research/ }));
     expect(props.onToggleKnowledgeBase).toHaveBeenCalled();
+    expect(props.onToggleStrictSources).toHaveBeenCalled();
     expect(props.onToggleWebTools).toHaveBeenCalled();
     expect(props.onToggleWikiTools).toHaveBeenCalled();
     expect(props.onToggleDeepResearch).toHaveBeenCalled();
@@ -52,11 +56,11 @@ describe('ComposerControls', () => {
   it('lists custom tools, describing one without a description by its name', () => {
     const props = renderControls();
     const checks = screen.getAllByRole('checkbox');
-    expect(checks).toHaveLength(6);
-    expect(checks[4]).toHaveAttribute('aria-checked', 'true');
-    expect(checks[4]).toHaveTextContent('Tide times');
-    expect(checks[5]).toHaveTextContent('star_atlas');
-    fireEvent.click(checks[5]);
+    expect(checks).toHaveLength(7);
+    expect(checks[5]).toHaveAttribute('aria-checked', 'true');
+    expect(checks[5]).toHaveTextContent('Tide times');
+    expect(checks[6]).toHaveTextContent('star_atlas');
+    fireEvent.click(checks[6]);
     expect(props.onToggleCustomTool).toHaveBeenCalledWith('star_atlas');
   });
 

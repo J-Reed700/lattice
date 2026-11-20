@@ -33,7 +33,7 @@ describe('loading a conversation', () => {
   it('starts from the defaults without a conversation', () => {
     const { result } = renderPrefs({ conversationId: null });
     expect(result.current.toolPreferences).toEqual({
-      knowledgeBase: false, webSearch: false, deepResearchMode: false, followupMode: false, turnMode: 'auto', enabledTools: [],
+      knowledgeBase: false, webSearch: false, strictSources: false, deepResearchMode: false, followupMode: false, turnMode: 'auto', enabledTools: [],
       focusDocumentIds: [],
     });
     expect(result.current.turnMode).toBe('auto');
@@ -132,6 +132,26 @@ describe('switches', () => {
     act(() => result.current.handleTurnModeChange('unknown' as TurnMode));
     expect(result.current.turnMode).toBe('auto');
     expect(result.current.resolveEffectiveToolPreferences().turnMode).toBe('auto');
+  });
+
+  it('toggles strictSources independently of knowledgeBase and preserves it when resolving', () => {
+    const { result } = renderPrefs({ conversationId: null });
+    expect(result.current.toolPreferences.strictSources).toBe(false);
+    expect(result.current.toolPreferences.knowledgeBase).toBe(false);
+
+    act(() => result.current.toggleStrictSources());
+    expect(result.current.toolPreferences.strictSources).toBe(true);
+    expect(result.current.toolPreferences.knowledgeBase).toBe(false);
+    expect(result.current.resolveEffectiveToolPreferences().strictSources).toBe(true);
+
+    act(() => result.current.toggleKnowledgeBase());
+    expect(result.current.toolPreferences.knowledgeBase).toBe(true);
+    expect(result.current.toolPreferences.strictSources).toBe(true);
+
+    act(() => result.current.toggleStrictSources());
+    expect(result.current.toolPreferences.strictSources).toBe(false);
+    expect(result.current.toolPreferences.knowledgeBase).toBe(true);
+    expect(result.current.resolveEffectiveToolPreferences().strictSources).toBe(false);
   });
 });
 

@@ -253,6 +253,7 @@ fn test_generate_title_exact_length() {
 fn test_search_flags_respect_followup_turn_mode() {
     let prefs = ToolPreferences {
         knowledge_base: false,
+        strict_sources: false,
         web_search: false,
         deep_research_mode: false,
         followup_mode: false,
@@ -275,6 +276,7 @@ fn test_search_flags_respect_followup_turn_mode() {
 fn a_closed_book_turn_cannot_be_reopened_by_any_other_preference() {
     let prefs = ToolPreferences {
         knowledge_base: true,
+        strict_sources: true,
         web_search: true,
         deep_research_mode: true,
         followup_mode: false,
@@ -289,6 +291,7 @@ fn a_closed_book_turn_cannot_be_reopened_by_any_other_preference() {
 
     assert!(flags.closed_book);
     assert!(!flags.force_kb_search);
+    assert!(!flags.strict_sources);
     assert!(!flags.force_web_search);
     assert!(!flags.force_wiki_search);
     assert!(!flags.deep_research_mode);
@@ -309,6 +312,7 @@ fn the_frontend_cannot_set_closed_book() {
 fn test_deep_research_gets_a_longer_generation_budget() {
     let mut prefs = ToolPreferences {
         knowledge_base: false,
+        strict_sources: false,
         web_search: true,
         deep_research_mode: false,
         followup_mode: false,
@@ -330,6 +334,7 @@ fn test_deep_research_gets_a_longer_generation_budget() {
 fn test_search_flags_query_turn_mode_forces_retrieval() {
     let prefs = ToolPreferences {
         knowledge_base: false,
+        strict_sources: false,
         web_search: false,
         deep_research_mode: false,
         followup_mode: false,
@@ -348,20 +353,106 @@ fn test_search_flags_query_turn_mode_forces_retrieval() {
 
 #[test]
 fn deep_research_keeps_its_searches_after_the_first_round() {
-    // An ordinary grounded turn reads what it found; it does not search again.
-    assert!(!kept_with_grounded_context("web_search", true, false));
-    assert!(!kept_with_grounded_context("wiki_search", true, false));
-    assert!(kept_with_grounded_context("fetch_url_content", true, false));
-    assert!(kept_with_grounded_context("semantic_search", false, false));
-    assert!(kept_with_grounded_context("get_document", false, false));
-    assert!(kept_with_grounded_context("list_attachments", false, false));
-    // Deep research goes back for more.
-    assert!(kept_with_grounded_context("web_search", true, true));
-    assert!(kept_with_grounded_context("wiki_search", true, true));
-    assert!(kept_with_grounded_context("wiki_summary", true, true));
-    assert!(!kept_with_grounded_context("list_documents", true, true));
+    let default_policy = GroundedToolPolicy::default();
+    let open_pages = GroundedToolPolicy {
+        can_open_pages: true,
+        ..GroundedToolPolicy::default()
+    };
+    let deep_research = GroundedToolPolicy {
+        can_open_pages: true,
+        allow_web_search: true,
+        allow_wiki_search: true,
+    };
+
+    // An ordinary grounded turn reads what it found; it does not search again
+    // unless the user explicitly enabled those searches.
+    assert!(!kept_with_grounded_context("web_search", open_pages, false));
+    assert!(!kept_with_grounded_context(
+        "wiki_search",
+        open_pages,
+        false
+    ));
+    assert!(kept_with_grounded_context(
+        "fetch_url_content",
+        open_pages,
+        false
+    ));
+    assert!(kept_with_grounded_context(
+        "semantic_search",
+        default_policy,
+        false
+    ));
+    assert!(kept_with_grounded_context(
+        "get_document",
+        default_policy,
+        false
+    ));
+    assert!(kept_with_grounded_context(
+        "list_attachments",
+        default_policy,
+        false
+    ));
+    // Deep research or explicit web/wiki toggles keep their searches.
+    assert!(kept_with_grounded_context(
+        "web_search",
+        deep_research,
+        false
+    ));
+    assert!(kept_with_grounded_context(
+        "wiki_search",
+        deep_research,
+        false
+    ));
+    assert!(kept_with_grounded_context(
+        "wiki_summary",
+        deep_research,
+        false
+    ));
+    assert!(!kept_with_grounded_context(
+        "list_documents",
+        deep_research,
+        false
+    ));
     // A picture illustrates the answer; grounding does not replace it.
-    assert!(kept_with_grounded_context("find_image", false, false));
+    assert!(kept_with_grounded_context(
+        "find_image",
+        default_policy,
+        false
+    ));
+}
+
+#[test]
+fn explicitly_enabled_web_wiki_and_custom_tools_survive_grounded_pruning() {
+    let web_only = GroundedToolPolicy {
+        allow_web_search: true,
+        ..GroundedToolPolicy::default()
+    };
+    assert!(kept_with_grounded_context("web_search", web_only, false));
+    assert!(kept_with_grounded_context("find_sources", web_only, false));
+    assert!(!kept_with_grounded_context("wiki_search", web_only, false));
+
+    let wiki_only = GroundedToolPolicy {
+        allow_wiki_search: true,
+        ..GroundedToolPolicy::default()
+    };
+    assert!(kept_with_grounded_context("wiki_search", wiki_only, false));
+    assert!(kept_with_grounded_context("wiki_summary", wiki_only, false));
+    assert!(!kept_with_grounded_context("web_search", wiki_only, false));
+
+    assert!(kept_with_grounded_context(
+        "my_custom_tool",
+        GroundedToolPolicy::default(),
+        true
+    ));
+    assert!(!kept_with_grounded_context(
+        "list_documents",
+        GroundedToolPolicy {
+            can_open_pages: true,
+            allow_web_search: true,
+            allow_wiki_search: true,
+        },
+        false
+    ));
 }
 
 #[test]
@@ -566,6 +657,8 @@ fn turn_intent_merge_enables_inferred_retrieval() {
     let merged = apply_turn_intent(flags, &intent);
 
     assert!(merged.force_kb_search);
+    assert!(!merged.user_requested_kb);
+    assert!(!merged.strict_sources);
     assert!(merged.force_followup_mode);
     assert!(!merged.force_web_search);
     assert!(!merged.web_fallback);
@@ -660,6 +753,9 @@ fn a_follow_up_inherits_no_web_fallback_from_an_earlier_turn() {
 fn turn_intent_merge_never_clears_a_set_flag() {
     let every_flag_set = SearchFlags {
         force_kb_search: true,
+        user_requested_kb: true,
+        strict_sources: true,
+        skip_auto_kb: false,
         force_web_search: true,
         web_fallback: false,
         force_wiki_search: true,
@@ -671,6 +767,8 @@ fn turn_intent_merge_never_clears_a_set_flag() {
     let merged = apply_turn_intent(every_flag_set, &TurnIntent::fallback());
 
     assert!(merged.force_kb_search);
+    assert!(merged.user_requested_kb);
+    assert!(merged.strict_sources);
     assert!(merged.force_web_search);
     assert!(merged.force_wiki_search);
     assert!(merged.deep_research_mode);
@@ -693,6 +791,37 @@ fn turn_intent_merge_never_clears_a_set_flag() {
     assert!(!merged.force_kb_search);
     assert!(!merged.force_web_search);
     assert!(!merged.web_fallback);
+}
+
+#[test]
+fn high_confidence_non_kb_intent_sets_skip_auto_kb_in_hybrid_auto_mode() {
+    let no_kb = TurnIntent {
+        needs_knowledge_base: false,
+        needs_web: false,
+        is_followup: false,
+        standalone_question: None,
+        confidence: 0.85,
+    };
+    let hybrid = apply_turn_intent(SearchFlags::from_preferences(None), &no_kb);
+    assert!(hybrid.skip_auto_kb);
+
+    let low_conf = TurnIntent {
+        confidence: 0.70,
+        ..no_kb.clone()
+    };
+    assert!(!apply_turn_intent(SearchFlags::from_preferences(None), &low_conf).skip_auto_kb);
+
+    let strict = SearchFlags {
+        strict_sources: true,
+        ..SearchFlags::from_preferences(None)
+    };
+    assert!(!apply_turn_intent(strict, &no_kb).skip_auto_kb);
+
+    let needs_web = TurnIntent {
+        needs_web: true,
+        ..no_kb
+    };
+    assert!(!apply_turn_intent(SearchFlags::from_preferences(None), &needs_web).skip_auto_kb);
 }
 
 /// Diagram and math guidance are on every turn, after whatever system prompt is saved,

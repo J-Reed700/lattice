@@ -47,13 +47,14 @@ const makeComposer = (overrides: Record<string, unknown> = {}) => ({
   handleTurnModeChange: vi.fn(),
   toolPreferences: {},
   toggleKnowledgeBase: vi.fn(),
+  toggleStrictSources: vi.fn(),
   toggleWebTools: vi.fn(),
   toggleWikiTools: vi.fn(),
   toggleDeepResearch: vi.fn(),
   customTools: [],
   enabledToolSet: new Set(),
   toggleCustomTool: vi.fn(),
-  composerMode: { knowledgeBase: true, webSearch: false, wikipedia: false, deepResearch: false },
+  composerMode: { knowledgeBase: true, strictSources: false, webSearch: false, wikipedia: false, deepResearch: false },
   enabledCustomToolNames: [],
   removeMode: vi.fn(),
   ...overrides,
@@ -136,9 +137,11 @@ describe('Composer', () => {
   });
 
   it('opens the controls and attaches files', () => {
-    const props = renderComposer({ composer: { isControlsOpen: true } });
+    const props = renderComposer({ composer: { isControlsOpen: true, composerMode: { knowledgeBase: true, strictSources: true, webSearch: false, wikipedia: false, deepResearch: false } } });
     expect(screen.getByText('Turn mode and tools panel')).toBeInTheDocument();
     expect(h.props.ComposerControls.onToggleWebTools).toBe(props.composer.toggleWebTools);
+    expect(h.props.ComposerControls.onToggleStrictSources).toBe(props.composer.toggleStrictSources);
+    expect(h.props.ModeChips.strictSources).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Composer controls' }));
     fireEvent.click(screen.getByRole('button', { name: 'Add files to this conversation' }));
     expect(props.attachments.chooseFiles).toHaveBeenCalled();

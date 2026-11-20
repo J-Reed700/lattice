@@ -1,4 +1,4 @@
-import { BookOpen, Database, Globe, Telescope, Wrench } from 'lucide-react';
+import { BookOpen, Database, Globe, ShieldCheck, Telescope, Wrench } from 'lucide-react';
 
 import { formatToolLabel, WEB_TOOL_NAMES, WIKI_TOOL_NAMES } from '@/features/chat/components/composer/toolNames';
 import type { CustomToolSettings, ToolPreferences } from '@/types';
@@ -13,6 +13,7 @@ interface ComposerControlsProps {
   onTurnModeChange: (next: TurnMode) => void;
   toolPreferences: ToolPreferences;
   onToggleKnowledgeBase: () => void;
+  onToggleStrictSources: () => void;
   onToggleWebTools: () => void;
   onToggleWikiTools: () => void;
   onToggleDeepResearch: () => void;
@@ -26,6 +27,7 @@ export function ComposerControls({
   onTurnModeChange,
   toolPreferences,
   onToggleKnowledgeBase,
+  onToggleStrictSources,
   onToggleWebTools,
   onToggleWikiTools,
   onToggleDeepResearch,
@@ -86,6 +88,13 @@ export function ComposerControls({
             description="Search your library"
             checked={toolPreferences.knowledgeBase}
             onToggle={onToggleKnowledgeBase}
+          />
+          <ToolRow
+            icon={ShieldCheck}
+            label="Sources only"
+            description="Answer strictly from retrieved sources; no general knowledge"
+            checked={Boolean(toolPreferences.strictSources)}
+            onToggle={onToggleStrictSources}
           />
           <ToolRow
             icon={Globe}

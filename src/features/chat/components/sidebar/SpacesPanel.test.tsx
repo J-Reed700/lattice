@@ -48,6 +48,8 @@ const makeEditor = (overrides: Record<string, unknown> = {}) => ({
   setSpacePromptDraft: vi.fn(),
   spaceKbDefault: true,
   setSpaceKbDefault: vi.fn(),
+  spaceStrictSourcesDefault: false,
+  setSpaceStrictSourcesDefault: vi.fn(),
   spaceWebDefault: false,
   setSpaceWebDefault: vi.fn(),
   spaceDeepResearchDefault: false,
@@ -229,9 +231,13 @@ describe('SpacesPanel', () => {
     it('toggles the research defaults', () => {
       const { editor } = renderPanel({ editor: { isSpaceEditorOpen: true } });
       fireEvent.click(screen.getByRole('button', { name: 'Search documents by default' }));
+      const strictBtn = screen.getByRole('button', { name: 'Sources only' });
+      expect(strictBtn).toHaveAttribute('aria-pressed', 'false');
+      fireEvent.click(strictBtn);
       fireEvent.click(screen.getByRole('button', { name: 'Web by default' }));
       fireEvent.click(screen.getByRole('button', { name: 'Deep research by default' }));
       expect(applyUpdate(editor.setSpaceKbDefault, true)).toBe(false);
+      expect(applyUpdate(editor.setSpaceStrictSourcesDefault, false)).toBe(true);
       expect(applyUpdate(editor.setSpaceWebDefault, false)).toBe(true);
       expect(editor.toggleSpaceDeepResearchDefault).toHaveBeenCalled();
       expect(screen.queryByRole('status')).not.toBeInTheDocument();

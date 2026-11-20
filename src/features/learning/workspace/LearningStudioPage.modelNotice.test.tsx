@@ -5,6 +5,7 @@ import '@/tests/interactionDom';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { quizOverview } from '@/features/learning/quizzes/quizTestData';
 import { LearningStudioPage } from '@/features/learning/workspace/LearningStudioPage';
 import { queryClient as activityClient } from '@/lib/queryClient';
 import { STUDY_ACTIVITY_KEY } from '@/lib/studyActivity';
@@ -21,12 +22,22 @@ import type { AppSettings } from '@/types/api/settings';
 
 const mocks = vi.hoisted(() => ({
   getSettings: vi.fn(), updateSettings: vi.fn(), downloadedModels: vi.fn(), activeModels: vi.fn(),
+  listPrograms: vi.fn(), getProgram: vi.fn(),
 }));
 vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
   listConversationSpaces: async () => ({ ok: true, data: [] }),
   listSpaceDocuments: async () => ({ ok: true, data: [] }),
-  listLearningPrograms: async () => ({ ok: true, data: [] }),
+  listLearningPrograms: mocks.listPrograms,
+  getLearningProgram: mocks.getProgram,
+  getLearningPlan: async () => ({ ok: true, data: null }),
+  getLearningMemory: async () => ({ ok: true, data: null }),
+  getLearningQuizOverview: async () => ({ ok: true, data: quizOverview() }),
+  getLearningOutlineEvidence: async () => ({ ok: true, data: null }),
+  getLearningLessonEvidence: async () => ({ ok: true, data: null }),
+  getLearningPracticeWorkspace: async (programId: string) => ({ ok: true, data: { programId, sessions: [] } }),
   listStudyDecks: async () => ({ ok: true, data: [] }),
+  courseIndexOpen: async () => ({ ok: true, data: null }),
+  courseIndexClose: async () => ({ ok: true, data: null }),
   generateLearningProgram: vi.fn(),
   getSettings: mocks.getSettings,
   updateSettings: mocks.updateSettings,
@@ -52,12 +63,12 @@ function SettingsProbe() {
   return <p data-testid="settings-page">{location.pathname}{location.search}</p>;
 }
 
-function show() {
+function show(entry = '/studio?new=1') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } } });
   const router = createMemoryRouter([
     { path: '/studio', element: <LearningStudioPage /> },
     { path: '/settings', element: <SettingsProbe /> },
-  ], { initialEntries: ['/studio?new=1'] });
+  ], { initialEntries: [entry] });
   return render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
 }
 
@@ -70,6 +81,8 @@ describe('Studio course builder with no Learning model', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     activityClient.removeQueries({ queryKey: STUDY_ACTIVITY_KEY });
+    mocks.listPrograms.mockResolvedValue(ok([]));
+    mocks.getProgram.mockResolvedValue(ok(null));
     mocks.downloadedModels.mockResolvedValue(ok([]));
     mocks.activeModels.mockImplementation(async () => {
       const { data } = await mocks.getSettings();
@@ -117,5 +130,84 @@ describe('Studio course builder with no Learning model', () => {
     expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Choose a model' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: `Use ${CHAT_MODEL}` })).not.toBeInTheDocument();
+  });
+});
+
+describe('Studio programs workspace with no Learning model', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    activityClient.removeQueries({ queryKey: STUDY_ACTIVITY_KEY });
+    mocks.listPrograms.mockResolvedValue(ok([]));
+    mocks.getProgram.mockResolvedValue(ok(null));
+    mocks.downloadedModels.mockResolvedValue(ok([]));
+    mocks.activeModels.mockImplementation(async () => {
+      const { data } = await mocks.getSettings();
+      const chat = data.llm.provider === 'anthropic' ? [CHAT_REF] : [];
+      return ok({
+        chat,
+        chat_unset: chat.length ? null : 'No chat model',
+        utility: [], llama_cpp: null, ollama: null, ollama_utility_tag: null,
+      });
+    });
+  });
+
+  it('shows the Learning model notice in the program library and hides it once adopted', async () => {
+    let saved = withChatModel();
+    mocks.getSettings.mockImplementation(async () => ok(saved));
+    mocks.updateSettings.mockImplementation(async () => {
+      saved = withChatModel(CHAT_REF);
+      return ok(saved);
+    });
+    show('/studio');
+    expect(await screen.findByText(NOTICE)).toBeVisible();
+    await userEvent.click(await screen.findByRole('button', { name: `Use ${CHAT_MODEL}` }));
+    expect(mocks.updateSettings).toHaveBeenCalledWith({ category: 'llm', updates: { learningModel: CHAT_REF } });
+    await waitFor(() => expect(screen.queryByText(NOTICE)).not.toBeInTheDocument());
+  });
+
+  it('shows the Learning model notice inside an open program workspace and hides it once adopted', async () => {
+    let saved = withChatModel();
+    mocks.getSettings.mockImplementation(async () => ok(saved));
+    mocks.updateSettings.mockImplementation(async () => {
+      saved = withChatModel(CHAT_REF);
+      return ok(saved);
+    });
+    const summary = {
+      id: 'program-1',
+      title: 'Thermodynamics',
+      goal: 'Master heat transfer',
+      status: 'active',
+      revision: 1,
+      moduleCount: 1,
+      lessonCount: 1,
+      completedLessons: 0,
+      sourceCount: 0,
+      updatedAt: 1_790_000_000_000,
+    };
+    mocks.listPrograms.mockResolvedValue(ok([summary]));
+    mocks.getProgram.mockResolvedValue(ok({
+      summary,
+      modules: [{
+        id: 'mod-1',
+        title: 'Zeroth Law',
+        summary: 'Thermal equilibrium',
+        outcomes: ['State the zeroth law'],
+        lessons: [{
+          id: 'les-1',
+          title: 'Temperature',
+          objective: 'Define temperature',
+          estimatedMinutes: 15,
+          preparation: 'outline',
+          completed: false,
+          blocks: [],
+        }],
+      }],
+      sources: [],
+    }));
+    show('/studio?course=program-1');
+    expect(await screen.findByText('Thermodynamics')).toBeVisible();
+    expect(await screen.findByText(NOTICE)).toBeVisible();
+    await userEvent.click(await screen.findByRole('button', { name: `Use ${CHAT_MODEL}` }));
+    await waitFor(() => expect(screen.queryByText(NOTICE)).not.toBeInTheDocument());
   });
 });

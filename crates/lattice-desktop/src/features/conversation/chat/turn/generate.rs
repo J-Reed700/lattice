@@ -68,6 +68,7 @@ pub(super) async fn generate_answer(
                         .as_ref()
                         .map(|source| source.policy().tool_rounds),
                 ),
+                strict_sources: flags.strict_sources,
                 research,
             },
             &turn.settings.llm.tool_output,

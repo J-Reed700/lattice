@@ -510,7 +510,7 @@ impl Default for RouterSettingsDto {
         Self {
             enabled: false,
             model: "qwen3.5-4b-q4_k_m".to_string(),
-            timeout_ms: 350,
+            timeout_ms: 3000,
             max_tokens: 120,
             temperature: 0.1,
             ambiguity_threshold: 0.62,
@@ -572,18 +572,27 @@ impl Default for LLMSettingsDto {
     }
 }
 
-/// The answer template a turn with passages renders in, unless the user set
-/// their own: search before concluding evidence is missing, then say it was
-/// not found in what was searched.
+/// The strict answer template a turn with passages renders in when `strict_sources`
+/// is on (or unless the user set a custom template): search before concluding
+/// evidence is missing, then say it was not found in what was searched.
 pub const DEFAULT_RAG_PROMPT_TEMPLATE: &str = "Answer the user's question using only the provided context. Cite every factual statement supported by the context using bracketed labels like [s1], [s2], [s3]. If the excerpts are insufficient, use available document search/read tools before concluding that evidence is missing. If still unsupported, say it was not found in the excerpts searched and do not guess or claim the entire collection lacks it. Do not cite unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, name the document by its bracketed name in the context. For long documents, read on with read_more and the name each result gives.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
+
+/// The default hybrid answer template: ground claims in the user's documents
+/// first with citations, and allow clearly uncited general knowledge when the
+/// passages do not cover a general or conceptual question (while still
+/// abstaining on private facts specific to the user's own files).
+pub const DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE: &str = "Answer the user's question using the provided context first, citing every factual statement supported by a passage using bracketed labels like [s1], [s2], [s3]. If the excerpts are incomplete for a question about the user's documents, use available document search/read tools first. When the passages do not cover a general, conceptual, or public-knowledge question (or only cover part of it), answer naturally from general knowledge without adding citations to uncited claims. Never fabricate citations, never present general knowledge as coming from their documents, and never guess private facts about the user's own files, notes, policies, or projects that are not in the passages. Do not cite unrelated context or a source that does not support the associated statement. If you need to call get_document, name the document by its bracketed name in the context. For long documents, read on with read_more and the name each result gives.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
+
+/// The default prompt when no passages were retrieved in hybrid mode.
+pub const DEFAULT_NO_CONTEXT_PROMPT_TEMPLATE: &str = "The user asked: \"{question}\"\n\n{context}\n\nAnswer naturally from general knowledge for general, conceptual, or public-knowledge questions. Only abstain if the question specifically asks for private facts from the user's own documents, notes, or records. Do not claim this answer came from their documents or add fake citations.";
 
 impl Default for LLMPromptSettingsDto {
     fn default() -> Self {
         Self {
             system_prompt: "You are Lattice, a precise research assistant. Use the user's documents when available. Cite sources using bracketed labels like [s1], [s2], [s3]. Never fabricate document IDs.".to_string(),
             greeting_prompt_template: default_greeting_prompt_template(),
-            rag_prompt_template: DEFAULT_RAG_PROMPT_TEMPLATE.to_string(),
-            no_context_prompt_template: "The user asked: \"{question}\"\n\n{context}\n\nAnswer from general knowledge where you can, and say plainly that this answer is not backed by their own documents. If they want sourced evidence, offer a web search or adding documents to their lattice.".to_string(),
+            rag_prompt_template: DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE.to_string(),
+            no_context_prompt_template: DEFAULT_NO_CONTEXT_PROMPT_TEMPLATE.to_string(),
         }
     }
 }

@@ -230,7 +230,9 @@ pub(super) async fn run_retrieval_pipeline(
         kb_has_results = !outcome.search_response.results.is_empty();
         kb_low_confidence = kb_outcome.low_confidence;
 
-        if kb_outcome.low_confidence
+        if router_settings.enabled
+            && search_flags.strict_sources
+            && kb_outcome.low_confidence
             && !retrieval_plan.should_search_web
             && !retrieval_plan.should_search_wiki
             && outcome.short_circuit_response.is_none()

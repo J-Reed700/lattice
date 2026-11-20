@@ -33,16 +33,31 @@ use notes::as_kept;
 /// the reading and writing rounds share the cached prompt.
 pub(in crate::features::conversation::chat) const READING_INSTRUCTION: &str = "Before answering, go through every labelled passage above in order and write one line for each: its label, then the sentences of that passage that bear on my question, including any exception or condition, copied exactly as written and in the passage's own language. For a passage that says nothing bearing on my question, write its label and a single hyphen. When my question names a document, a passage from any other document gets a hyphen. Account for every label. Write only these lines; the answer comes after.";
 
-/// Said after the notes, last, to turn the reading into the answer.
+/// Said after the notes, last, to turn the reading into the answer in strict mode.
 pub(super) const WRITE_INSTRUCTION: &str = "Now answer my question directly, in the passages' own words, keeping their dates, figures and names as given. Cover every passage your notes quote and cite each with its label. Do not describe the notes or the passages, and say nothing about passages that do not bear on my question. Write in the language of my question, translating any passage in another.";
+
+/// [`WRITE_INSTRUCTION`] in hybrid mode: cover and cite every quoted passage,
+/// and allow uncited general knowledge when the question asks beyond what the
+/// passages cover.
+pub(super) const HYBRID_WRITE_INSTRUCTION: &str = "Now answer my question directly. Cover every passage your notes quote and cite each with its label, keeping their dates, figures and names as given. If my question asks for general or conceptual information beyond what the passages cover, answer that part naturally from general knowledge with no citations. Never guess private facts about my own files or add citations to uncited claims. Do not describe the notes or the passages, and say nothing about passages that do not bear on my question. Write in the language of my question, translating any passage in another.";
 
 /// [`WRITE_INSTRUCTION`] for a round that can still search, where a part of the
 /// question the passages leave open is for a search to answer.
 pub(super) const SEARCH_OR_WRITE_INSTRUCTION: &str = "If the passages leave any part of my question unanswered, do not answer yet: search for that part now. Otherwise, start straight with the answer, in the passages' own words, keeping their dates, figures and names as given. Cover every passage your notes quote and cite each with its label. Do not describe the notes or the passages, do not say whether they are enough, and say nothing about passages that do not bear on my question. Write in the language of my question, translating any passage in another.";
 
+/// [`SEARCH_OR_WRITE_INSTRUCTION`] in hybrid mode: search first when the
+/// question asks about missing document details, or answer directly combining
+/// cited passages with uncited general knowledge for general/conceptual gaps.
+pub(super) const HYBRID_SEARCH_OR_WRITE_INSTRUCTION: &str = "If my question asks for missing details from my documents, search for that part now. Otherwise, start straight with the answer: cover every passage your notes quote and cite each with its label, keeping their dates, figures and names as given, and answer any general or conceptual part the passages do not cover naturally from general knowledge with no citations. Do not describe the notes or the passages, and say nothing about passages that do not bear on my question. Write in the language of my question, translating any passage in another.";
+
 /// Closes the turn's message in place of [`READING_INSTRUCTION`] when no passage
 /// bore on the question and the round can still search.
 pub(super) const NOTHING_BEARS_INSTRUCTION: &str = "None of these passages bears on my question, so do not answer yet: search for it now, spelling out in full what it asks about.";
+
+/// [`NOTHING_BEARS_INSTRUCTION`] in hybrid mode: search only when the question
+/// asks about the user's documents or notes, otherwise answer directly from
+/// general knowledge.
+pub(super) const HYBRID_NOTHING_BEARS_INSTRUCTION: &str = "None of these passages bears on my question. If my question asks about something in my documents or notes, search for it now, spelling out in full what it asks about. Otherwise, answer my question directly and naturally from general knowledge with no citations, and do not mention these unrelated passages.";
 
 /// Said after an answer that left out passages its notes quote. `{quotes}`
 /// gives each one's label and note.
@@ -245,13 +260,15 @@ pub(super) async fn append_notes(
     llm: &dyn LLMPort,
     request: &mut CompletionRequest,
     notes: &Notes,
+    strict_sources: bool,
 ) -> bool {
     let planned = request.input().len();
     legacy::says(request).input.push(assistant(&notes.text));
-    let instruction = if request.tools().is_empty() {
-        WRITE_INSTRUCTION
-    } else {
-        SEARCH_OR_WRITE_INSTRUCTION
+    let instruction = match (request.tools().is_empty(), strict_sources) {
+        (true, true) => WRITE_INSTRUCTION,
+        (true, false) => HYBRID_WRITE_INSTRUCTION,
+        (false, true) => SEARCH_OR_WRITE_INSTRUCTION,
+        (false, false) => HYBRID_SEARCH_OR_WRITE_INSTRUCTION,
     };
     say_last(legacy::says(request).input, instruction);
     let room = room_left(llm, request).await;
@@ -273,15 +290,23 @@ pub(super) async fn append_notes(
 pub(super) fn noted_in(transcript: &[CompletionInput]) -> bool {
     transcript.iter().any(|item| {
         let text = item.text();
-        text.ends_with(WRITE_INSTRUCTION) || text.ends_with(SEARCH_OR_WRITE_INSTRUCTION)
+        text.ends_with(WRITE_INSTRUCTION)
+            || text.ends_with(HYBRID_WRITE_INSTRUCTION)
+            || text.ends_with(SEARCH_OR_WRITE_INSTRUCTION)
+            || text.ends_with(HYBRID_SEARCH_OR_WRITE_INSTRUCTION)
     })
 }
 
 /// Have a round that can search do so, in place of the reading that found
 /// nothing. Without tools the reading is [`withdraw`]n like any other.
-pub(super) fn search_instead(request: &mut CompletionRequest) {
+pub(super) fn search_instead(request: &mut CompletionRequest, strict_sources: bool) {
     if !request.tools().is_empty() {
-        replace_reading(legacy::says(request).input, NOTHING_BEARS_INSTRUCTION);
+        let instruction = if strict_sources {
+            NOTHING_BEARS_INSTRUCTION
+        } else {
+            HYBRID_NOTHING_BEARS_INSTRUCTION
+        };
+        replace_reading(legacy::says(request).input, instruction);
     }
 }
 

@@ -109,6 +109,7 @@ describe('useComposer commands and guards', () => {
     it.each([
       ['/deep', (r: ReturnType<typeof useComposer>) => r.composerMode.deepResearch, true],
       ['/docs', (r: ReturnType<typeof useComposer>) => r.composerMode.knowledgeBase, true],
+      ['/strict', (r: ReturnType<typeof useComposer>) => r.composerMode.strictSources, true],
       ['/wiki', (r: ReturnType<typeof useComposer>) => r.composerMode.wikipedia, true],
       ['/followup', (r: ReturnType<typeof useComposer>) => r.turnMode, 'followup'],
       ['/query', (r: ReturnType<typeof useComposer>) => r.turnMode, 'query'],
@@ -140,17 +141,20 @@ describe('useComposer commands and guards', () => {
     it('remove the mode they show', async () => {
       const { result } = renderComposer();
       await typeAndSubmit(result, '/deep');
+      await typeAndSubmit(result, '/strict');
       await typeAndSubmit(result, '/wiki');
       await typeAndSubmit(result, '/web');
       await typeAndSubmit(result, '/query');
       const webBefore = result.current.composerMode.webSearch;
       act(() => result.current.removeMode('deep'));
+      act(() => result.current.removeMode('strict'));
       act(() => result.current.removeMode('wiki'));
       act(() => result.current.removeMode('web'));
       act(() => result.current.removeMode('turn'));
       const kbBefore = result.current.composerMode.knowledgeBase;
       act(() => result.current.removeMode('docs'));
       expect(result.current.composerMode.deepResearch).toBe(false);
+      expect(result.current.composerMode.strictSources).toBe(false);
       expect(result.current.composerMode.wikipedia).toBe(false);
       expect(result.current.composerMode.webSearch).toBe(!webBefore);
       expect(result.current.turnMode).toBe('auto');

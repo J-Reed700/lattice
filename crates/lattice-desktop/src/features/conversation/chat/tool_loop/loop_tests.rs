@@ -441,6 +441,7 @@ async fn run_turn(
             input_budget,
             time_budget: turn.time_budget,
             max_tool_rounds: rounds,
+            strict_sources: true,
             research: None,
         },
         &settings,
