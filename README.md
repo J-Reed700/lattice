@@ -1,182 +1,147 @@
 # Lattice
 
-Lattice is a local-first desktop knowledge base. It indexes the files on your
-machine, searches them by keyword and by meaning, and answers questions with
-local language models — every answer cites the documents it came from.
+Lattice is a local-first desktop knowledge base and study studio. It indexes the files on your computer, searches them by keyword and by meaning, answers questions with clickable citations, and builds structured courses with lessons, exercises, quizzes, and flashcards.
 
-Lattice needs no account or cloud service, and this version sends no product
-telemetry. Your index stays on your computer. If you explicitly choose a cloud
-chat provider, remote model server, or custom tool, that turn's prompt and the
-retrieved passages it needs are sent to that service; the
-[privacy FAQ](docs/user/faq.md#what-leaves-my-computer) lists every networked
-feature.
+Lattice needs no account or cloud subscription, and sends no product telemetry. Your library stays on your machine. If you choose a cloud AI provider (Anthropic Claude, OpenAI, or Google Gemini) or remote model server, only that turn's prompt and needed passages are sent to that provider; the [privacy FAQ](docs/user/faq.md#what-leaves-my-computer) lists every networked feature.
 
 ## Screenshots
 
-Screenshots from the running macOS app. Click an image to view it at full size.
+Screenshots from the desktop app (dark theme). Click any image to view it at full size.
 
-| Home dashboard | Explorer and chat |
+| Home dashboard | Learning Studio |
 | --- | --- |
-| [![Home dashboard with library statistics and recent conversations](docs/screenshots/dashboard.png)](docs/screenshots/dashboard.png) | [![Explorer with a folder tree, Rust source file, and a chat about the code](docs/screenshots/explorer.png)](docs/screenshots/explorer.png) |
-| **Journal and sources** | **Learning Studio** |
-| [![Journal entry with inline citations and the sources panel open](docs/screenshots/journal.png)](docs/screenshots/journal.png) | [![Learning Studio with options to build a program and create a flashcard deck](docs/screenshots/studio.png)](docs/screenshots/studio.png) |
+| [![Home dashboard with library stats, today's journal, recent chats, and indexed files](docs/screenshots/dashboard.png)](docs/screenshots/dashboard.png) | [![Learning Studio showing an active course with modules, lessons, citations, and study timer](docs/screenshots/studio.png)](docs/screenshots/studio.png) |
+| **Journal** | **Explorer** |
+| [![Journal with pages, sidebar conversations, and synthesis tools](docs/screenshots/journal.png)](docs/screenshots/journal.png) | [![Explorer with a folder tree, syntax-highlighted code viewer, and side-by-side chat](docs/screenshots/explorer.png)](docs/screenshots/explorer.png) |
 
-## What it does
+## Quickstart (zero experience required)
 
-- **Search that understands meaning.** Indexing runs locally: text is
-  extracted, embedded on-device, and stored in SQLite. Search blends exact
-  keyword matching with vector similarity, so "that memo about the offsite"
-  finds the document even if the word "offsite" never appears in your query.
-- **Chat with receipts.** Ask questions against your library and get answers
-  with footnoted citations you can click through to the source. A retrieval
-  trace shows which documents were pulled in and why.
-- **A home page that tells the truth.** The dashboard reports what's actually
-  in your library — document counts, storage used, recent files, and the
-  conversations worth picking back up. If a number can't be computed, the
-  tile is left out rather than showing a zero.
-- **Learning Studio.** Build a learning program from your sources: a
-  curriculum, practice, hands-on labs that run in a sandbox, assessments, and
-  recall. Flashcard decks live here too: turn a document or a conversation
-  into a deck, review with spaced repetition, and every card keeps its
-  citations so you can check the evidence behind it.
-- **Practice.** One Practice area holds written practice and coding sessions
-  with a coach or an interviewer: work a problem in the editor, run its
-  examples, ask for hints, and get a debrief at the end.
-- **Voice, on-device.** The mic beside Send turns any chat into a spoken
-  conversation. Whisper transcribes what you say and Kokoro reads answers and
-  lessons aloud, both on your computer. Audio files you import become
-  searchable transcripts whose citations play from the cited moment.
-- **Explorer.** Open a folder from disk beside a chat. Browse the tree, read
-  files in a code viewer, and ask questions the model answers by reading that
-  folder, pointing at the exact lines. Each folder gets its own search index,
-  kept apart from your library.
-- **Documents that know their neighbors.** Open any document and the related
-  panel shows what links to it, what's similar, and which conversations cite
-  it.
-- **A journal and a reference inbox** for the notes and passages you want to
-  keep coming back to, plus quick capture from anywhere.
+Works on **Windows 10/11 (x64)**, **macOS 13.3+ (Apple Silicon)**, and **Ubuntu 24.04 (x64)**.
 
-The first launch offers a model bundle recommended for your hardware: an
-embedding model (Qwen3-Embedding, on the GPU where there is one and on the
-CPU otherwise) and a local chat model. Downloads continue in the background, the
-full catalog stays in Settings, and after that it works fully offline.
-Optional chat providers (Ollama, a remote llama.cpp server, OpenAI,
-Anthropic, Google) are available if you want them; `crates/lattice-sync/` holds an
-experimental sync service the app does not use yet.
+### Step 1: Install Lattice
 
-For a cloud provider, open **Settings → AI → Chat**, save its API key, and choose
-from the available models. Use **Refresh** to reload the provider's list.
-Models from providers with saved keys also appear in each chat's model picker;
-choosing one there changes that conversation's model, keeping the app default.
+#### Option A — Download the installer (easiest)
 
-## Getting started
+Check [Releases](https://github.com/J-Reed700/lattice/releases) for the latest **Lattice app release** (look for `Lattice_<version>_...` files — ignore the `llama-server` sidecar releases).
 
-### Install
+| System | Installer file | How to install |
+| --- | --- | --- |
+| **Windows 10/11 (x64)** | `Lattice_<version>_x64-setup.exe` | Double-click the `.exe`. If Windows SmartScreen warns you, click **More info** → **Run anyway**. Then open **Lattice** from the Start menu. |
+| **macOS (Apple Silicon)** | `Lattice_<version>_aarch64.dmg` | Open the `.dmg` and drag **Lattice** to **Applications**. On first launch, if macOS blocks it, open **System Settings → Privacy & Security** and click **Open Anyway**. |
+| **Ubuntu 24.04 (x64)** | `Lattice_<version>_amd64.deb` | Run `sudo apt install ./Lattice_<version>_amd64.deb`, then open **Lattice** from your apps menu. |
 
-Download the installer for your system from the
-[latest release](https://github.com/J-Reed700/lattice/releases/latest). The
-installers are not signed yet, so each system shows a warning the first time.
+> If there is no `Lattice_<version>` installer on the Releases page yet (or you want the very latest `main` build), use **Option B** below.
 
-| System | File |
-| --- | --- |
-| Windows 11 (x64) | `Lattice_<version>_x64-setup.exe` |
-| macOS on Apple Silicon | `Lattice_<version>_aarch64.dmg` |
-| Ubuntu 24.04 (x64) | `Lattice_<version>_amd64.deb` |
+#### Option B — One-command install (Windows, macOS, or Linux)
 
-- **Windows:** run the setup `.exe`. It installs for your user only and needs
-  no administrator rights. SmartScreen may say it protected your PC: choose
-  **More info**, then **Run anyway**. Start Lattice from the Start menu.
-- **macOS:** open the `.dmg` and drag Lattice to Applications. The first time
-  you open it, macOS blocks it. Open **System Settings**, then **Privacy &
-  Security**, and choose **Open Anyway**.
-- **Ubuntu:** install the package, then start Lattice from the applications
-  menu:
+No prior developer tools needed — the setup script installs any missing prerequisites, builds Lattice, installs it, and opens it for you. Running it again later updates Lattice. *(First run takes ~10–15 minutes and needs ~8 GB of RAM/swap.)*
 
-  ```bash
-  sudo apt install ./Lattice_<version>_amd64.deb
-  ```
+**Windows 10/11:**
 
-Intel Macs have no download yet; build from source (below). The
-[getting started guide](docs/user/getting-started.md#installation) has the
-full walkthrough.
+1. Press the **Windows key**, type **PowerShell**, and click **Windows PowerShell**.
+2. Paste this command and press **Enter**:
 
-### First launch
+   ```powershell
+   irm https://raw.githubusercontent.com/J-Reed700/lattice/main/setup.ps1 | iex
+   ```
 
-On first launch the app shows "Set up AI" with a chat model and an embedding
-model sized to the machine's memory. The dialog shows each model's size and the
-total before anything downloads. Click Install. The downloads run in the
-background and both models are switched on when they finish. To use a cloud
-provider instead, click **Use an API key instead**, pick the provider, save its key and
-choose a model. Chats and courses then use it. **Settings > AI > Chat** changes it later.
+3. Follow the prompts. When it finishes, **Lattice** is installed in your Start menu and opens automatically.
 
-### Build from source
+*(If you already downloaded this repository as a folder, you can simply double-click `setup.cmd`.)*
 
-This section is for developers. The desktop release targets are Windows 11
-x64, macOS 13.3+ (Apple Silicon and Intel), and Ubuntu 24.04 LTS x64. Intel
-Mac support is being qualified and uses CPU inference. See
-[platform support](docs/development/platform-support.md) for its build
-instructions and remaining release gates.
+**macOS or Linux:**
 
-Native compatibility tests build and exercise isolated app packages on macOS
-(both architectures), Windows x64 and Ubuntu. See the
-[desktop test guide](e2e/desktop/README.md) for local commands and CI coverage.
-
-#### Install on a new machine
-
-One command installs everything the build needs, builds the app, installs it
-and opens it. Steps that are already done are skipped, so running it again
-just rebuilds and reinstalls.
-
-macOS or Linux, from a checkout:
-
-```bash
-./setup.sh
-```
-
-Without a checkout (the source goes to `~/lattice`):
+Open **Terminal**, paste this command, and press **Enter**:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/J-Reed700/lattice/main/setup.sh | bash
 ```
 
-Windows: double-click `setup.cmd`, or without a checkout run
-`irm https://raw.githubusercontent.com/J-Reed700/lattice/main/setup.ps1 | iex`
-in PowerShell.
+*(From an existing checkout, run `./setup.sh`.)*
 
-What the script installs when it is missing:
+---
 
-| | macOS | Linux (apt, dnf) | Windows (winget) |
+### Step 2: Set up AI (first launch)
+
+The first time you open Lattice, a **Set up AI** window appears. Pick **one** of these two paths:
+
+#### Path A — Use an API key (Claude, OpenAI, or Google) — fastest, no downloads
+
+1. Click **Use an API key instead**.
+2. Choose your **Provider** (**Anthropic** for Claude is selected by default).
+3. Paste your API key and click **Save key** (stored securely in your system keychain).
+4. Pick a **Model** from the dropdown (for example, Claude Sonnet) and click **Use this model**.
+
+Both **Chat** and **Learning Studio** courses now use that model immediately, with zero downloads.
+
+> **Using your own PDFs or notes?** Choosing an API key skips local model downloads, so **chat and topic-based courses work right away**. If you later want to import PDFs, textbooks, or notes for semantic search or source-backed courses, open **Settings → AI → Models**, download an **embedding model**, and click **Set as Embedding** under **Downloaded**.
+
+#### Path B — Run 100% locally and offline (no API key needed)
+
+1. In the **Set up AI** window, pick one of the recommended chat models sized to your computer's memory (Lattice includes an embedding model automatically and shows the total download size).
+2. Click **Install**. Downloads run in the background and activate automatically when finished.
+
+You can switch providers or models any time under **Settings → AI → Chat** and **Settings → AI → Models**.
+
+---
+
+### Step 3: Start your first course (Learning Studio)
+
+1. Click **Studio** in the left sidebar (`Ctrl+7` on Windows/Linux, `⌘7` on macOS).
+2. Click **Build your first program** (or **Build a program** in the top right).
+3. Under **Your goal**, describe what you want to learn (for example: *"Learn introductory statistics well enough to design an experiment and interpret results"*). Optionally add what you already know.
+4. Pick a course depth (**Focused course**, **Complete course**, or **Deep dive**) and your preferred session length.
+5. *(Optional)* Click **Add optional materials** to attach documents from your Library or paste reference URLs. If you skip this, Lattice researches and verifies supporting web references automatically.
+6. Click **Create outline**. Generating and reviewing the outline takes a few minutes depending on your model and course depth — you can watch each step live.
+7. Review the outline, approve it, and open **Lesson 1** to start studying.
+
+---
+
+### Step 4: Finding your way around
+
+| Sidebar view | Windows / Linux | macOS | What it's for |
 | --- | --- | --- | --- |
-| Build tools | Xcode Command Line Tools | WebKitGTK 4.1, GTK and the other [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/), a C/C++ toolchain, git, curl, python3, the Vulkan loader | Visual Studio 2022 Build Tools (C++), Git, Python 3 |
-| Rust | rustup, stable; the build then uses the toolchain `rust-toolchain.toml` pins | same | same |
-| Node.js | 24, unpacked into `~/.local/share/lattice/toolchain` (or `$XDG_DATA_HOME/lattice/toolchain`) | same | Node.js LTS |
-| Project | `npm ci`, the pinned `llama-server` sidecar | same | same |
-| App | `Lattice.app` in `/Applications` | the `.deb` or `.rpm`, installed with apt or dnf | the NSIS installer, current user |
+| **Home** | `Ctrl+0` | `⌘0` | Dashboard with quick search, today's journal, recent chats, and library stats |
+| **Search** | `Ctrl+1` | `⌘1` | Hybrid keyword + meaning search across your indexed files |
+| **Library** | `Ctrl+2` | `⌘2` | Browse and inspect every imported document |
+| **Journal** | `Ctrl+3` | `⌘3` | Daily notes, writing pages, highlights, and conversation synthesis |
+| **Chat** | `Ctrl+4` | `⌘4` | Ask questions against your library with clickable citations |
+| **References** | `Ctrl+5` | `⌘5` | Saved passages and bookmarked answers |
+| **Explorer** | `Ctrl+6` | `⌘6` | Open a local code/project folder beside a chat that reads the files |
+| **Studio** | `Ctrl+7` | `⌘7` | Courses, lessons, practice sessions, quizzes, and spaced-repetition flashcards |
+| **Import** | `Ctrl+I` | `⌘I` | Add PDFs, Word docs, Markdown, code files, audio, or web URLs |
+| **Command palette** | `Ctrl+K` | `⌘K` | Jump anywhere or run any action |
+| **Settings** | `Ctrl+,` | `⌘,` | AI providers, API keys, local models, theme, vault mirror, and logs |
 
-The build needs about 8 GB of memory, counting swap: compiling the app crate
-peaked near 7 GB in testing. On Linux the script checks memory and swap before
-it starts and prints the commands to add swap when there is too little.
+See the [Getting Started Guide](docs/user/getting-started.md) and [User Manual](docs/user/user-manual.md) for full walkthroughs.
 
-On Arch Linux the script installs the prerequisites with pacman, but there is
-no Arch package to build, so use `./setup.sh --dev` there.
+## What Lattice does
 
-Other modes: `./setup.sh --check` lists what is missing and changes nothing,
-`--deps` stops once the build prerequisites are installed, `--dev` runs
-`npm run tauri:dev` instead of installing, and `--yes` never prompts. The
-Windows script takes `-Check`, `-Deps`, `-Dev` and `-Yes`.
-`e2e/turnkey/` tests the Linux path on clean Ubuntu containers; see its
-[README](e2e/turnkey/README.md).
+- **Learning Studio & Practice.** Build a course from a topic or your own materials: verified outlines, structured lessons, worked examples, exercises, quizzes, hands-on sandboxed labs, coaching/interview practice, and cited spaced-repetition flashcards.
+- **Search that understands meaning.** Indexing runs locally: text is extracted, embedded on-device, and stored in SQLite, blending exact keywords with semantic vector similarity.
+- **Chat with receipts.** Ask questions against your library and get answers with clickable footnoted citations that open the exact source passage beside the chat.
+- **Voice, on-device.** Whisper transcribes speech and Kokoro reads answers and lessons aloud locally; imported audio becomes searchable timestamped transcripts.
+- **Explorer & Journal.** Browse local folders alongside a code-aware chat, or write in a journal linked to your sources and conversations.
 
-#### Set up by hand
+## Developer setup
 
-You'll need Node.js 20.19+ or 22.12+ (CI uses 24), rustup (the repository's
-`rust-toolchain.toml` pins Rust 1.100.0, and rustup installs it on the first
-build), and the
-[Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your
-platform. Local generation uses a bundled `llama-server` sidecar; the build
-refuses to start without it. See
-[crates/lattice-desktop/binaries](crates/lattice-desktop/binaries/README.md)
-for how it is fetched.
+### What the setup scripts install
+
+| | Windows (`setup.ps1`, winget) | macOS (`setup.sh`) | Linux (`setup.sh`, apt/dnf) |
+| --- | --- | --- | --- |
+| Build tools | Visual Studio 2022 Build Tools (C++), Git, Python 3 | Xcode Command Line Tools | WebKitGTK 4.1, GTK, [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/), C/C++ toolchain, git, curl, python3, Vulkan loader |
+| Rust | rustup + toolchain pinned in `rust-toolchain.toml` | same | same |
+| Node.js | Node.js LTS | Node 24 in `~/.local/share/lattice/toolchain` | same |
+| Project | `npm ci` + pinned `llama-server` sidecar | same | same |
+| App | NSIS installer (current user) | `Lattice.app` in `/Applications` | `.deb` or `.rpm` |
+
+Script flags:
+- **Windows:** `-Check` (report missing tools), `-Deps` (prerequisites only), `-Dev` (run `npm run tauri:dev`), `-Yes` (no prompts).
+- **macOS / Linux:** `--check`, `--deps`, `--dev`, `--yes`. On Arch Linux, use `./setup.sh --dev`.
+
+### Set up by hand
+
+You'll need Node.js 20.19+ or 22.12+ (CI uses 24), `rustup` (`rust-toolchain.toml` pins the Rust version), and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS. Local generation requires the bundled `llama-server` sidecar (see [crates/lattice-desktop/binaries](crates/lattice-desktop/binaries/README.md)).
 
 ```bash
 npm ci
@@ -184,10 +149,9 @@ bash crates/lattice-desktop/scripts/fetch-llama-binaries.sh
 npm run tauri:dev
 ```
 
-The frontend can run on its own with `npx vite` (port 5173), but anything that
-talks to the Rust backend needs the Tauri dev process.
+The frontend can run on its own with `npx vite` (port 5173), but anything that talks to the Rust backend needs the Tauri dev process.
 
-## Repository layout
+### Repository layout
 
 ```text
 .
@@ -205,14 +169,12 @@ talks to the Rust backend needs the Tauri dev process.
 ├── evals/                 # Retrieval, grounding and memory eval sets and results
 ├── docs/                  # Architecture, ADRs, design docs and user docs
 ├── scripts/               # Repository checks and developer utilities
-└── Cargo.toml             # Rust workspace: every crate above but lattice-sync
+└── Cargo.toml             # Rust workspace: every crate above except lattice-sync
 ```
 
-`lattice-desktop` depends on `lattice-core` and the three library crates, and
-`lattice-learning` on core, index and store, never the other way round; see
-[Rust architecture](docs/RUST_ARCHITECTURE.md) for the layer rules.
+See [Rust architecture](docs/RUST_ARCHITECTURE.md), [platform support](docs/development/platform-support.md), and [CONTRIBUTING.md](CONTRIBUTING.md) for architecture rules and checks.
 
-## Development checks
+### Development checks
 
 Frontend:
 
@@ -225,18 +187,14 @@ npm test -- --run
 npx vite build && node scripts/check-initial-js-budget.mjs dist
 ```
 
-Production renderer smoke tests (Chromium and WebKit, with simulated desktop IPC):
+Production renderer smoke tests (Chromium and WebKit, simulated desktop IPC):
 
 ```bash
 npx playwright install --with-deps chromium webkit
 npm run test:e2e
 ```
 
-The suite builds its own renderer in `e2e-results/renderer` and serves it on port
-4173. Keep that port free; the tests do not reuse a running development server.
-
-Desktop backend (run cargo from the app crate, whose `.cargo/config.toml`
-sets offline SQLx and the test thread stack):
+Desktop backend (run from `crates/lattice-desktop`):
 
 ```bash
 cd crates/lattice-desktop
@@ -256,14 +214,9 @@ python3 scripts/check-sql-contracts.py
 python3 scripts/check-tauri-command-inventory.py
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for project conventions and the full
-change checklist.
+### Publishing a release
 
-## Publishing a release
-
-In GitHub, open Actions, then Release, then Run workflow on `main`. It builds
-the installers and makes a draft release. Check the files, then Publish it
-with "Set as the latest release" ticked.
+In GitHub, open **Actions → Release → Run workflow** on `main`. It builds the Windows, macOS, and Ubuntu installers and creates a draft release. Verify the installer files, then publish it with **"Set as the latest release"** checked.
 
 ## License
 
