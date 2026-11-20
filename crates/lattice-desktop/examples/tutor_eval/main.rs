@@ -48,6 +48,7 @@ use lattice::features::conversation::chat::{ChatEventSink, ChatResponse, ChatStr
 use lattice::features::learning::references::course_index::{CourseIndexes, CourseProgress};
 use lattice::features::learning::tutor::{bind_conversation, SetConversationCourseRequestDto};
 use lattice::infrastructure::passage_index::EmbedderSource;
+use lattice_core::application::ports::llm_port::RemoteHeader;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::error::AppError;
 use learner::Turn;
@@ -178,15 +179,8 @@ fn git(args: &[&str]) -> Option<String> {
 
 /// The one model the server says it is serving: what a row is measured on,
 /// asked of the server, as `scripts/replay_model.py` asks it.
-async fn served_model(upstream: &str, auth: Option<&(String, String)>) -> Res<String> {
-    let url = format!("{}/v1/models", upstream.trim_end_matches('/'));
-    let mut request = lattice_core::shared::http::reqwest_client_builder()
-        .build()?
-        .get(url);
-    if let Some((name, value)) = auth {
-        request = request.header(name.as_str(), value.as_str());
-    }
-    let reply: Value = request.send().await?.error_for_status()?.json().await?;
+async fn served_model(upstream: &str, auth: Option<&RemoteHeader>) -> Res<String> {
+    let reply = proxy::ask_server(upstream, reqwest::Method::GET, "/v1/models", auth, None).await?;
     let mut models: Vec<&str> = reply
         .get("data")
         .and_then(Value::as_array)
@@ -198,36 +192,6 @@ async fn served_model(upstream: &str, auth: Option<&(String, String)>) -> Res<St
         (Some(model), true) => Ok(model.to_owned()),
         _ => Err("the server does not name exactly one model".into()),
     }
-}
-
-/// The window and slots the recipe expects, as the server reports them.
-async fn probe_server(server: &recipe::Server, auth: Option<&(String, String)>) -> Res<Value> {
-    let url = format!("{}/props", server.url.trim_end_matches('/'));
-    let mut probe = lattice_core::shared::http::reqwest_client_builder()
-        .build()?
-        .get(url);
-    if let Some((name, value)) = auth {
-        probe = probe.header(name.as_str(), value.as_str());
-    }
-    let props: Value = probe.send().await?.error_for_status()?.json().await?;
-    let n_ctx = props
-        .pointer("/default_generation_settings/n_ctx")
-        .or_else(|| props.get("n_ctx"))
-        .and_then(Value::as_u64);
-    let slots = props.get("total_slots").and_then(Value::as_u64);
-    if n_ctx != Some(server.expected_ctx) || slots != Some(server.expected_slots) {
-        return Err(format!(
-            "server reports n_ctx {n_ctx:?} and {slots:?} slots; the recipe expects {} and {}",
-            server.expected_ctx, server.expected_slots
-        )
-        .into());
-    }
-    Ok(json!({
-        "n_ctx": n_ctx,
-        "total_slots": slots,
-        "model_path": props.get("model_path"),
-        "build_info": props.get("build_info"),
-    }))
 }
 
 /// The container's embedding model, handed to the course indexes as the app's
@@ -253,7 +217,7 @@ struct Bench<'a> {
     tool_preferences: &'a lattice::features::conversation::chat::ToolPreferences,
     recorder: &'a Arc<proxy::Recorder>,
     upstream: &'a str,
-    auth: Option<&'a (String, String)>,
+    auth: Option<&'a RemoteHeader>,
     /// The name requests go out under.
     requested_model: &'a str,
     /// The name the server gives the model it serves.
@@ -282,7 +246,7 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
     };
     let auth = proxy::server_auth();
     let served = served_model(&server.url, auth.as_ref()).await?;
-    let server_report = probe_server(server, auth.as_ref()).await?;
+    let server_report = server.probe(auth.as_ref()).await?;
     eprintln!("the server serves {served}");
 
     let recorder = proxy::Recorder::new();

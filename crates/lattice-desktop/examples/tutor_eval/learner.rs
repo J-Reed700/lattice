@@ -4,7 +4,9 @@
 //! not through the recording proxy: it is the test's, not the app's.
 
 use crate::course::Course;
+use crate::proxy::ask_server;
 use crate::Res;
+use lattice_core::application::ports::llm_port::RemoteHeader;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -57,34 +59,32 @@ fn brief(course: &Course, play: Play, misconception: Option<&str>) -> String {
 /// The learner's next message, answering `tutor_said`.
 pub async fn played(
     upstream: &str,
-    auth: Option<&(String, String)>,
+    auth: Option<&RemoteHeader>,
     model: &str,
     course: &Course,
     tutor_said: &str,
     play: Play,
     misconception: Option<&str>,
 ) -> Res<String> {
-    let mut request = lattice_core::shared::http::reqwest_client_builder()
-        .build()?
-        .post(format!(
-            "{}/v1/chat/completions",
-            upstream.trim_end_matches('/')
-        ))
-        .json(&json!({
-            "model": model,
-            "messages": [
-                {"role": "system", "content": brief(course, play, misconception)},
-                {"role": "user", "content": format!("The tutor said:\n\n{tutor_said}")},
-            ],
-            "max_tokens": 300,
-            "temperature": 0.7,
-            "stream": false,
-            "chat_template_kwargs": {"enable_thinking": false},
-        }));
-    if let Some((name, value)) = auth {
-        request = request.header(name.as_str(), value.as_str());
-    }
-    let reply: Value = request.send().await?.error_for_status()?.json().await?;
+    let request = json!({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": brief(course, play, misconception)},
+            {"role": "user", "content": format!("The tutor said:\n\n{tutor_said}")},
+        ],
+        "max_tokens": 300,
+        "temperature": 0.7,
+        "stream": false,
+        "chat_template_kwargs": {"enable_thinking": false},
+    });
+    let reply = ask_server(
+        upstream,
+        reqwest::Method::POST,
+        "/v1/chat/completions",
+        auth,
+        Some(&request),
+    )
+    .await?;
     let text = reply
         .pointer("/choices/0/message/content")
         .and_then(Value::as_str)

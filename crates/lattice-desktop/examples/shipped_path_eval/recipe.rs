@@ -7,11 +7,13 @@
 //! override for a field that does not exist is an error rather than a silent
 //! no-op, so a renamed setting cannot quietly drop out of a recipe.
 
+use crate::proxy::{ask_server, window_of};
 use crate::Res;
 use lattice::features::conversation::chat::ToolPreferences;
 use lattice_core::application::contracts::settings::SettingsDto;
+use lattice_core::application::ports::llm_port::RemoteHeader;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize)]
@@ -79,6 +81,30 @@ pub struct Server {
     /// request that does not choose for itself. `"as-sent"`: forward
     /// requests untouched.
     pub thinking: String,
+}
+
+impl Server {
+    /// The server must be the one the recipe describes: a different window or
+    /// slot count changes the turn budget and the cache behaviour under test.
+    pub async fn probe(&self, auth: Option<&RemoteHeader>) -> Res<Value> {
+        let props = ask_server(&self.url, reqwest::Method::GET, "/props", auth, None).await?;
+        let n_ctx = window_of(&props);
+        let slots = props.get("total_slots").and_then(Value::as_u64);
+        if n_ctx != Some(self.expected_ctx) || slots != Some(self.expected_slots) {
+            return Err(format!(
+                "server reports n_ctx {n_ctx:?} and {slots:?} slots; the recipe expects {} and {}",
+                self.expected_ctx, self.expected_slots
+            )
+            .into());
+        }
+        Ok(json!({
+            "n_ctx": n_ctx,
+            "total_slots": slots,
+            "model_path": props.get("model_path"),
+            "build_info": props.get("build_info"),
+            "modalities": props.get("modalities"),
+        }))
+    }
 }
 
 /// A model on a cloud provider's public API. The key is the one the desktop

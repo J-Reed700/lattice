@@ -91,7 +91,7 @@ impl LlamaCppLlm {
             ));
         }
         Ok(Self {
-            client: http_client(reqwest_client_builder(), remote_headers(header)?)?,
+            client: remote_client(header)?,
             base_url,
             config: ServerConfig {
                 model: connection.model.clone(),
@@ -163,7 +163,7 @@ impl LlamaCppLlm {
         header: Option<RemoteHeader>,
     ) -> Result<Vec<String>> {
         let base_url = connection.validated_base_url()?;
-        let client = http_client(reqwest_client_builder(), remote_headers(header)?)?;
+        let client = remote_client(header)?;
         let probe_timeout = Duration::from_secs(30);
         let response = client
             .get(format!("{base_url}/models"))
@@ -474,6 +474,11 @@ impl ModelBackend for LlamaCppLlm {
             }
         }
     }
+}
+
+/// The client for a server the user runs, sending `header` with every request.
+pub fn remote_client(header: Option<RemoteHeader>) -> Result<reqwest::Client> {
+    http_client(reqwest_client_builder(), remote_headers(header)?)
 }
 
 /// The authentication header of a remote server.
