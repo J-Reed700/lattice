@@ -1159,6 +1159,29 @@ async fn a_follow_up_is_sent_as_the_one_step_it_is() -> Result<()> {
 }
 
 #[tokio::test]
+async fn step_two_answer_stays_bounded_under_lesson_progress() -> Result<()> {
+    let llm = Recorder::new(196_608);
+    let progress = OutlineProgress::default();
+    let asking = Asking {
+        progress: Some(&progress),
+        reasoning: authoring(),
+    };
+    let sent = ask::Transport::send(&asking, &llm, first_request()).await?;
+    assert_eq!(sent.text, ANSWER);
+
+    let requests = llm.sent();
+    assert_eq!(requests.len(), 2, "draft then structured answer");
+    assert!(is_draft_request(&requests[0]));
+    assert!(!is_draft_request(&requests[1]));
+    assert_eq!(
+        requests[1].max_output_tokens(),
+        Some(1000),
+        "step 2 must stay bounded by its output reservation instead of filling a 196K window"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn an_unanswered_request_lets_its_saved_draft_go() -> Result<()> {
     for (unanswered, drafts) in [(false, 1), (true, 2)] {
         let (database, jobs, job_id, lesson) = lesson_job().await?;

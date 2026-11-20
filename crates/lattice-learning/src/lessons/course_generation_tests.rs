@@ -1595,11 +1595,23 @@ impl LLMPort for DelayedOutlineModel {
                 _ => None,
             })
             .sum();
-        // The answer takes the window the prompt leaves, less only the
-        // planner's safety margin, and never runs past the window.
+        // Single-step answers take the remaining window (less safety margin),
+        // while Step 2 answers stay bounded by their output reservation so a
+        // model formatting an already-written draft cannot loop across 128K.
         let max_output = request.max_output_tokens().unwrap() as usize;
         assert!(max_output + input_tokens <= self.max_context_tokens());
-        assert!(max_output + input_tokens >= self.max_context_tokens() * 9 / 10);
+        let is_step_two = request.input().iter().any(|part| {
+            matches!(
+                part,
+                CompletionInput::Message { content, .. }
+                    if content.starts_with("Step 2: give the final answer from your draft.")
+            )
+        });
+        if is_step_two {
+            assert!(max_output < self.max_context_tokens() / 2);
+        } else {
+            assert!(max_output + input_tokens >= self.max_context_tokens() * 9 / 10);
+        }
         let seconds = self.delays.lock().unwrap().pop_front().unwrap();
         tokio::time::pause();
         tokio::time::sleep(std::time::Duration::from_secs(seconds)).await;

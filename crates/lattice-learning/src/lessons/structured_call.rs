@@ -660,9 +660,12 @@ fn restate(request: GroundedRequest, reason: &str) -> GroundedRequest {
 }
 
 /// Whether a step's answer may take the whole window the prompt leaves: a
-/// streamed step under a lesson job or an outline run, other than the draft.
+/// streamed single-step call under a lesson job or an outline run. Draft and
+/// Step-2 answer calls stay bounded by their output reservation (and double
+/// once on `CutOff`), so a local model formatting an already-written draft
+/// cannot loop across a large-context window until it exceeds the stream limit.
 fn fills_window(progress: Option<&OutlineProgress>, step: Step) -> bool {
-    (progress.is_some() || lesson_progress::active()) && !matches!(step, Step::Draft)
+    (progress.is_some() || lesson_progress::active()) && !matches!(step, Step::Draft | Step::Answer)
 }
 
 /// Send one learning request, streaming its text to whichever progress the
