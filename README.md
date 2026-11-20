@@ -32,32 +32,16 @@ Check [Releases](https://github.com/J-Reed700/lattice/releases) for the latest *
 
 > If there is no `Lattice_<version>` installer on the Releases page yet (or you want the very latest `main` build), use **Option B** below.
 
-#### Option B — One-command install (Windows, macOS, or Linux)
+#### Option B — Build from this repository (Windows, macOS, or Linux)
 
-No prior developer tools needed — the setup script installs any missing prerequisites, builds Lattice, installs it, and opens it for you. Running it again later updates Lattice. *(First run takes ~10–15 minutes and needs ~8 GB of RAM/swap.)*
+If you cloned this repo (or clicked **Code → Download ZIP** and unzipped it), run the setup script inside the folder. It installs any missing prerequisites, builds Lattice, installs it, and opens it for you. Running it again later updates Lattice. *(First run takes ~10–15 minutes and needs ~8 GB of RAM/swap.)*
 
-**Windows 10/11:**
+- **Windows 10/11:** Double-click **`setup.cmd`** in the repo folder (or run `powershell -ExecutionPolicy Bypass -File .\setup.ps1` in PowerShell from the repo folder).
+- **macOS or Linux:** Open **Terminal** in the repo folder and run:
 
-1. Press the **Windows key**, type **PowerShell**, and click **Windows PowerShell**.
-2. Paste this command and press **Enter**:
-
-   ```powershell
-   irm https://raw.githubusercontent.com/J-Reed700/lattice/main/setup.ps1 | iex
-   ```
-
-3. Follow the prompts. When it finishes, **Lattice** is installed in your Start menu and opens automatically.
-
-*(If you already downloaded this repository as a folder, you can simply double-click `setup.cmd`.)*
-
-**macOS or Linux:**
-
-Open **Terminal**, paste this command, and press **Enter**:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/J-Reed700/lattice/main/setup.sh | bash
-```
-
-*(From an existing checkout, run `./setup.sh`.)*
+  ```bash
+  ./setup.sh
+  ```
 
 ---
 

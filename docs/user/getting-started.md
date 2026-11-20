@@ -56,20 +56,15 @@ Install the `.deb` package, then open Lattice from your applications menu:
 sudo apt install ./Lattice_*_amd64.deb
 ```
 
-### Option B: One-command install (no installer needed)
+### Option B: Build from this repository
 
-If no app installer release is published yet (or you want the latest `main` build), run the one-command setup script. It installs any missing build tools, compiles Lattice, installs it, and opens it automatically (~10–15 minutes on first run).
+If no app installer release is published yet (or you cloned / downloaded this repository as a ZIP), run the setup script inside the repo folder. It installs any missing build tools, compiles Lattice, installs it, and opens it automatically (~10–15 minutes on first run):
 
-- **Windows 10/11:** Press the **Windows key**, type **PowerShell**, open **Windows PowerShell**, paste this line, and press **Enter**:
-
-  ```powershell
-  irm https://raw.githubusercontent.com/J-Reed700/lattice/main/setup.ps1 | iex
-  ```
-
-- **macOS / Linux:** Open **Terminal**, paste this line, and press **Enter**:
+- **Windows 10/11:** Double-click **`setup.cmd`** in the repo folder (or run `powershell -ExecutionPolicy Bypass -File .\setup.ps1` in PowerShell from the repo folder).
+- **macOS / Linux:** Open **Terminal** in the repo folder and run:
 
   ```bash
-  curl -fsSL https://raw.githubusercontent.com/J-Reed700/lattice/main/setup.sh | bash
+  ./setup.sh
   ```
 
 ---
