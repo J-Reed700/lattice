@@ -690,12 +690,9 @@ async fn live_corpus_retrieval_and_answer() {
         false,
         crate::features::conversation::chat::SearchFlags {
             force_kb_search: true,
-            force_web_search: false,
-            web_fallback: false,
-            force_wiki_search: false,
-            deep_research_mode: false,
-            force_followup_mode: false,
-            closed_book: false,
+            user_requested_kb: true,
+            strict_sources: true,
+            ..crate::features::conversation::chat::SearchFlags::default()
         },
     )
     .with_kb_context(Some(context))

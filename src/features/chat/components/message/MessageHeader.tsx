@@ -135,12 +135,13 @@ export function MessageHeader({
                 ? 'Verification is off. Turn on in settings.'
                 : verificationPending
                   ? 'Checking the answer against its sources'
-                  : canExpandVerification
-                  ? (isVerificationPanelExpanded ? 'Hide verification details' : 'Show verification details')
-                  : 'Nothing in this message to verify.'
+                  : verificationBadge.title
+                    ?? (canExpandVerification
+                      ? (isVerificationPanelExpanded ? 'Hide verification details' : 'Show verification details')
+                      : 'Nothing in this message to verify.')
             }
           >
-            <verificationBadge.icon className="h-3 w-3" />
+            <verificationBadge.icon className="h-3 w-3" aria-hidden="true" />
             {verificationBadge.label}
             {canExpandVerification && (
               isVerificationPanelExpanded

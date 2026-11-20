@@ -189,6 +189,11 @@ impl ChatStreamEventDto {
 pub struct ToolPreferences {
     #[serde(default)]
     pub knowledge_base: bool,
+    /// Answer strictly from retrieved sources only (no general-knowledge
+    /// fallback). Orthogonal to `knowledge_base`, which controls whether to
+    /// always search the library.
+    #[serde(default)]
+    pub strict_sources: bool,
     #[serde(default)]
     pub web_search: bool,
     #[serde(default)]

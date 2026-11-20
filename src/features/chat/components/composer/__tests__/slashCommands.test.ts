@@ -6,6 +6,7 @@ import type { ComposerModeState } from '@/features/chat/components/composer/slas
 const mode = (overrides: Partial<ComposerModeState> = {}): ComposerModeState => ({
   turnMode: 'auto',
   knowledgeBase: false,
+  strictSources: false,
   webSearch: false,
   wikipedia: false,
   deepResearch: false,
@@ -41,6 +42,12 @@ describe('the slash commands', () => {
     const [followup] = matchSlashCommands('followup', mode({ turnMode: 'followup' }));
     expect(followup.state(mode({ turnMode: 'followup' }))).toBe('Current');
     expect(followup.state(mode())).toBe('');
+
+    const [strict] = matchSlashCommands('sources-only', mode({ strictSources: true }));
+    expect(strict.id).toBe('strict');
+    expect(strict.state(mode({ strictSources: true }))).toBe('On');
+    expect(strict.state(mode())).toBe('Off');
+    expect(tokensOf(matchSlashCommands('rag-only', mode()))).toContain('strict');
   });
 });
 
@@ -55,6 +62,7 @@ describe('a message that is only a command', () => {
   it('runs the other commands the same way', () => {
     expect(parseSlashSubmission('/deep')).toBe('deep');
     expect(parseSlashSubmission('/query')).toBe('query');
+    expect(parseSlashSubmission('/strict')).toBe('strict');
   });
 
   it('is a question, not a command, as soon as it says anything more', () => {

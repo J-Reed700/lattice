@@ -117,6 +117,13 @@ export function useComposerToolPreferences({
     }));
   };
 
+  const toggleStrictSources = () => {
+    updateToolPreferences((prev) => ({
+      ...prev,
+      strictSources: !(prev.strictSources ?? false),
+    }));
+  };
+
   const toggleWebTools = () => {
     updateToolPreferences((prev) => {
       const enabled = !prev.webSearch;
@@ -198,6 +205,7 @@ export function useComposerToolPreferences({
       followupMode: mode === 'followup',
       knowledgeBase: mode === 'query' ? true : current.knowledgeBase,
       webSearch: mode === 'query' ? true : current.webSearch,
+      strictSources: Boolean(current.strictSources),
       enabledTools: queryModeEnabledTools,
     };
   }, [customTools]);
@@ -216,6 +224,7 @@ export function useComposerToolPreferences({
     enabledToolSet,
     applyFocusDocuments,
     toggleKnowledgeBase,
+    toggleStrictSources,
     toggleWebTools,
     toggleWikiTools,
     toggleDeepResearch,

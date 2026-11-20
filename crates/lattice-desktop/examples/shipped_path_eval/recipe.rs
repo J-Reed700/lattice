@@ -231,12 +231,14 @@ impl Recipe {
         }
     }
 
-    /// The desktop composer's defaults (`useComposer.ts`): no switch forced
-    /// on, so the intent step decides whether the vault is searched.
+    /// The desktop composer's defaults (`useComposer.ts`) with strict source
+    /// grounding enabled so shipped-path RAG evals continue measuring strict
+    /// document faithfulness and abstention unless a recipe opts into hybrid.
     pub fn tool_preferences(&self) -> Res<ToolPreferences> {
         let value = self.tool_preferences.clone().unwrap_or_else(|| {
             serde_json::json!({
                 "knowledgeBase": false,
+                "strictSources": true,
                 "webSearch": false,
                 "deepResearchMode": false,
                 "followupMode": false,

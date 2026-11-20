@@ -88,6 +88,7 @@ export function useComposer({
     enabledToolSet,
     applyFocusDocuments,
     toggleKnowledgeBase,
+    toggleStrictSources,
     toggleWebTools,
     toggleWikiTools,
     toggleDeepResearch,
@@ -103,6 +104,7 @@ export function useComposer({
   const composerMode: ComposerModeState = {
     turnMode,
     knowledgeBase: Boolean(toolPreferences.knowledgeBase),
+    strictSources: Boolean(toolPreferences.strictSources),
     webSearch: Boolean(toolPreferences.webSearch),
     wikipedia: wikipediaEnabled,
     deepResearch: Boolean(toolPreferences.deepResearchMode),
@@ -117,6 +119,9 @@ export function useComposer({
         break;
       case 'docs':
         toggleKnowledgeBase();
+        break;
+      case 'strict':
+        toggleStrictSources();
         break;
       case 'web':
         toggleWebTools();
@@ -146,6 +151,9 @@ export function useComposer({
         break;
       case 'docs':
         toggleKnowledgeBase();
+        break;
+      case 'strict':
+        toggleStrictSources();
         break;
       case 'web':
         toggleWebTools();
@@ -372,6 +380,7 @@ export function useComposer({
     setIsControlsOpen,
     handleTurnModeChange,
     toggleKnowledgeBase,
+    toggleStrictSources,
     toggleWebTools,
     toggleWikiTools,
     toggleDeepResearch,

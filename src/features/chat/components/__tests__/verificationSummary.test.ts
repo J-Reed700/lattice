@@ -36,3 +36,35 @@ describe('verificationSummaryLine with unchecked claims', () => {
     );
   });
 });
+
+describe('verificationSummaryLine in hybrid cited-only mode', () => {
+  it('qualifies a fully verified line when uncited parts may use general knowledge', () => {
+    expect(verificationSummaryLine(3, 0, 0, true)).toBe(
+      'All cited claims are grounded in your sources · 3 claims checked · uncited parts may use general knowledge'
+    );
+  });
+
+  it('uses singular claim for one checked cited claim', () => {
+    expect(verificationSummaryLine(1, 0, 0, true)).toBe(
+      'All cited claims are grounded in your sources · 1 claim checked · uncited parts may use general knowledge'
+    );
+  });
+
+  it('notes uncited general knowledge when some cited claims are unchecked', () => {
+    expect(verificationSummaryLine(5, 0, 2, true)).toBe(
+      'Every checked cited claim is grounded in your sources · 3 of 5 cited claims checked · uncited parts may use general knowledge'
+    );
+    expect(verificationSummaryLine(1, 0, 1, true)).toBe(
+      'Every checked cited claim is grounded in your sources · 0 of 1 cited claim checked · uncited parts may use general knowledge'
+    );
+  });
+
+  it('notes uncited general knowledge when some cited claims could not be grounded', () => {
+    expect(verificationSummaryLine(5, 1, 2, true)).toBe(
+      '1 of 5 cited claims could not be grounded in your sources · 2 not checked · uncited parts may use general knowledge'
+    );
+    expect(verificationSummaryLine(1, 1, 0, true)).toBe(
+      '1 of 1 cited claim could not be grounded in your sources · uncited parts may use general knowledge'
+    );
+  });
+});

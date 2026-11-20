@@ -1,4 +1,4 @@
-import { BookOpen, CornerDownRight, Database, Globe, Search, Telescope, Wrench, X } from 'lucide-react';
+import { BookOpen, CornerDownRight, Database, Globe, Search, ShieldCheck, Telescope, Wrench, X } from 'lucide-react';
 
 import { formatToolLabel } from '@/features/chat/components/composer/toolNames';
 import type { TurnMode } from '@/types';
@@ -15,11 +15,12 @@ import type { LucideIcon } from 'lucide-react';
  * is typed.
  */
 
-export type ModeChipId = 'turn' | 'docs' | 'web' | 'wiki' | 'deep';
+export type ModeChipId = 'turn' | 'docs' | 'strict' | 'web' | 'wiki' | 'deep';
 
 export interface ModeChipsProps {
   turnMode: TurnMode;
   knowledgeBase: boolean;
+  strictSources?: boolean;
   webSearch: boolean;
   wikipedia: boolean;
   deepResearch: boolean;
@@ -41,6 +42,7 @@ interface Chip {
 export function ModeChips({
   turnMode,
   knowledgeBase,
+  strictSources = false,
   webSearch,
   wikipedia,
   deepResearch,
@@ -75,6 +77,15 @@ export function ModeChips({
       icon: Database,
       title: 'Stop always searching your documents',
       remove: () => onRemove('docs'),
+    });
+  }
+  if (strictSources) {
+    chips.push({
+      key: 'strict',
+      label: 'Sources only',
+      icon: ShieldCheck,
+      title: 'Allow general knowledge alongside sources',
+      remove: () => onRemove('strict'),
     });
   }
   if (webSearch) {

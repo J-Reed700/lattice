@@ -1,6 +1,9 @@
 use super::prompting::enforce_citation_format;
 pub(super) use lattice_core::application::contracts::settings::LLMPromptSettingsDto;
-use lattice_core::application::contracts::settings::DEFAULT_RAG_PROMPT_TEMPLATE;
+use lattice_core::application::contracts::settings::{
+    DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE, DEFAULT_NO_CONTEXT_PROMPT_TEMPLATE,
+    DEFAULT_RAG_PROMPT_TEMPLATE,
+};
 
 /// The default that asked the model to copy a document id and an offset.
 const ID_AND_OFFSET_RAG_TEMPLATE: &str = "Answer the user's question using only the provided context. Cite every factual statement supported by the context using numeric brackets like [1], [2], [3]. If the excerpts are insufficient, use available document search/read tools before concluding that evidence is missing. If still unsupported, say it was not found in the excerpts searched and do not guess or claim the entire collection lacks it. Do not cite unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, use the exact Document ID shown in the context. For long documents, read on with the offset parameter each result names.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
@@ -20,10 +23,10 @@ pub(super) fn normalize_prompt_settings(
     const LEGACY_GREETING_TEMPLATE_SIGNATURE: u64 = 0xa8c8_948b_d572_9258;
     const UPDATED_GREETING_TEMPLATE: &str =
         "The user greeted you: \"{question}\". Reply briefly and warmly, then offer help with documents, web search, or general questions.";
+    const PREVIOUS_NO_CONTEXT_TEMPLATE: &str =
+        "The user asked: \"{question}\"\n\n{context}\n\nAnswer from general knowledge where you can, and say plainly that this answer is not backed by their own documents. If they want sourced evidence, offer a web search or adding documents to their lattice.";
     const LEGACY_NO_CONTEXT_TEMPLATE_SIGNATURES: [u64; 2] =
         [0x5384_8234_c2d7_4254, 0x4de7_593e_1cc6_dd55];
-    const UPDATED_NO_CONTEXT_TEMPLATE: &str =
-        "The user asked: \"{question}\"\n\n{context}\n\nAnswer from general knowledge where you can, and say plainly that this answer is not backed by their own documents. If they want sourced evidence, offer a web search or adding documents to their lattice.";
     const LEGACY_RAG_TEMPLATE_SIGNATURE: u64 = 0xa971_9544_23a3_fba2;
 
     // Soft migration with stable signatures keeps custom templates intact while
@@ -35,16 +38,18 @@ pub(super) fn normalize_prompt_settings(
     }
     if LEGACY_NO_CONTEXT_TEMPLATE_SIGNATURES.contains(&stable_prompt_signature(
         &prompt_settings.no_context_prompt_template,
-    )) {
-        prompt_settings.no_context_prompt_template = UPDATED_NO_CONTEXT_TEMPLATE.to_string();
+    )) || prompt_settings.no_context_prompt_template == PREVIOUS_NO_CONTEXT_TEMPLATE
+    {
+        prompt_settings.no_context_prompt_template = DEFAULT_NO_CONTEXT_PROMPT_TEMPLATE.to_string();
     }
     if stable_prompt_signature(&prompt_settings.rag_prompt_template)
         == LEGACY_RAG_TEMPLATE_SIGNATURE
         || prompt_settings.rag_prompt_template == PREVIOUS_DEFAULT_RAG_TEMPLATE
         || prompt_settings.rag_prompt_template == ID_AND_OFFSET_RAG_TEMPLATE
         || prompt_settings.rag_prompt_template == NUMERIC_BRACKETS_RAG_TEMPLATE
+        || prompt_settings.rag_prompt_template == DEFAULT_RAG_PROMPT_TEMPLATE
     {
-        prompt_settings.rag_prompt_template = DEFAULT_RAG_PROMPT_TEMPLATE.to_string();
+        prompt_settings.rag_prompt_template = DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE.to_string();
     }
     if prompt_settings.system_prompt == NUMERIC_BRACKETS_SYSTEM_PROMPT {
         prompt_settings.system_prompt = LLMPromptSettingsDto::default().system_prompt;
@@ -121,10 +126,25 @@ mod tests {
     #[test]
     fn a_fresh_install_answers_in_the_search_first_template() {
         let settings = normalize_prompt_settings(LLMPromptSettingsDto::default());
-        assert_eq!(settings.rag_prompt_template, DEFAULT_RAG_PROMPT_TEMPLATE);
+        assert_eq!(
+            settings.rag_prompt_template,
+            DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE
+        );
         assert!(settings
             .rag_prompt_template
-            .contains("use available document search/read tools before concluding"));
+            .contains("use available document search/read tools first"));
+    }
+
+    #[test]
+    fn a_saved_copy_of_the_strict_default_is_migrated_to_hybrid() {
+        let saved = LLMPromptSettingsDto {
+            rag_prompt_template: DEFAULT_RAG_PROMPT_TEMPLATE.to_string(),
+            ..LLMPromptSettingsDto::default()
+        };
+        assert_eq!(
+            normalize_prompt_settings(saved).rag_prompt_template,
+            DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE
+        );
     }
 
     #[test]
@@ -135,7 +155,7 @@ mod tests {
         };
         assert_eq!(
             normalize_prompt_settings(saved).rag_prompt_template,
-            DEFAULT_RAG_PROMPT_TEMPLATE
+            DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE
         );
     }
 
@@ -146,7 +166,7 @@ mod tests {
             ..LLMPromptSettingsDto::default()
         };
         let migrated = normalize_prompt_settings(saved).rag_prompt_template;
-        assert_eq!(migrated, DEFAULT_RAG_PROMPT_TEMPLATE);
+        assert_eq!(migrated, DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE);
         assert!(!migrated.contains("Document ID") && !migrated.contains("offset"));
     }
 
@@ -158,7 +178,10 @@ mod tests {
             ..LLMPromptSettingsDto::default()
         };
         let migrated = normalize_prompt_settings(saved);
-        assert_eq!(migrated.rag_prompt_template, DEFAULT_RAG_PROMPT_TEMPLATE);
+        assert_eq!(
+            migrated.rag_prompt_template,
+            DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE
+        );
         assert!(!migrated.system_prompt.contains("numeric brackets"));
         assert!(migrated.system_prompt.contains("[s1], [s2], [s3]"));
     }
@@ -169,6 +192,8 @@ mod tests {
         assert!(!settings.system_prompt.contains("numeric"));
         assert!(!DEFAULT_RAG_PROMPT_TEMPLATE.contains("numeric"));
         assert!(!DEFAULT_RAG_PROMPT_TEMPLATE.contains("bracketed number"));
+        assert!(!DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE.contains("numeric"));
+        assert!(!DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE.contains("bracketed number"));
     }
 
     #[test]

@@ -185,7 +185,8 @@ fn only_a_message_with_passages_asks_for_a_reading_and_the_frame_prices_it() {
         "the rule is said once, in the system prompt"
     );
     assert!(settings.system_prompt.contains("Citation rule:"));
-    assert!(evidence_frame(&settings, "When?", None).ends_with(READING_INSTRUCTION));
+    assert!(evidence_frame(&settings, "When?", None, false).ends_with(READING_INSTRUCTION));
+    assert!(evidence_frame(&settings, "When?", None, true).ends_with(READING_INSTRUCTION));
 }
 
 #[test]
@@ -232,15 +233,7 @@ fn a_passage_carries_only_its_own_source_lines() {
 
 #[test]
 fn the_synthesis_note_sits_once_beside_the_passages_and_names_no_document_type() {
-    let flags = SearchFlags {
-        force_kb_search: false,
-        force_web_search: false,
-        web_fallback: false,
-        force_wiki_search: false,
-        deep_research_mode: false,
-        force_followup_mode: false,
-        closed_book: false,
-    };
+    let flags = SearchFlags::default();
     let settings = LLMPromptSettingsDto::default();
     let prompt = |kb: Option<&str>| {
         PromptMessageBuilder::new(&settings, "¿Qué fase sigue a la profase?", false, flags)

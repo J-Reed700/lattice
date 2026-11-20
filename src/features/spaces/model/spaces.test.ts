@@ -18,24 +18,31 @@ describe('normalizeHexColor', () => {
 });
 
 describe('space tool preferences', () => {
-  const off = { knowledgeBase: false, webSearch: false, deepResearchMode: false, enabledTools: [] };
+  const off = { knowledgeBase: false, strictSources: false, webSearch: false, deepResearchMode: false, enabledTools: [] };
 
   it('turns the web tools on with web search and round-trips', () => {
-    const json = buildSpaceToolPreferencesJson({ knowledgeBase: true, webSearch: true, deepResearchMode: true });
+    const json = buildSpaceToolPreferencesJson({ knowledgeBase: true, strictSources: true, webSearch: true, deepResearchMode: true });
     expect(parseSpaceToolPreferences(json)).toEqual({
-      knowledgeBase: true, webSearch: true, deepResearchMode: true, enabledTools: ['web_search', 'fetch_url_content'],
+      knowledgeBase: true, strictSources: true, webSearch: true, deepResearchMode: true, enabledTools: ['web_search', 'fetch_url_content'],
+    });
+  });
+
+  it('defaults strictSources to false when omitted', () => {
+    const json = buildSpaceToolPreferencesJson({ knowledgeBase: true, webSearch: false, deepResearchMode: false });
+    expect(parseSpaceToolPreferences(json)).toEqual({
+      knowledgeBase: true, strictSources: false, webSearch: false, deepResearchMode: false, enabledTools: [],
     });
   });
 
   it('reads nothing, malformed JSON and wrong types as all off', () => {
     expect(parseSpaceToolPreferences(null)).toEqual(off);
     expect(parseSpaceToolPreferences('{not json')).toEqual(off);
-    expect(parseSpaceToolPreferences(JSON.stringify({ knowledgeBase: 'yes', web_search: 1, deepResearchMode: null }))).toEqual(off);
+    expect(parseSpaceToolPreferences(JSON.stringify({ knowledgeBase: 'yes', strictSources: 'yes', web_search: 1, deepResearchMode: null }))).toEqual(off);
   });
 
   it('reads snake_case keys and de-duplicates a stored tool list', () => {
-    const raw = JSON.stringify({ knowledge_base: true, web_search: false, deep_research_mode: true, enabled_tools: [' wiki ', 'wiki', 7, ''] });
-    expect(parseSpaceToolPreferences(raw)).toEqual({ knowledgeBase: true, webSearch: false, deepResearchMode: true, enabledTools: ['wiki'] });
+    const raw = JSON.stringify({ knowledge_base: true, strict_sources: true, web_search: false, deep_research_mode: true, enabled_tools: [' wiki ', 'wiki', 7, ''] });
+    expect(parseSpaceToolPreferences(raw)).toEqual({ knowledgeBase: true, strictSources: true, webSearch: false, deepResearchMode: true, enabledTools: ['wiki'] });
   });
 
   it('prefers a camelCase tool list when present', () => {

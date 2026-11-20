@@ -184,6 +184,7 @@ export function Composer({
                     onTurnModeChange={composer.handleTurnModeChange}
                     toolPreferences={composer.toolPreferences}
                     onToggleKnowledgeBase={composer.toggleKnowledgeBase}
+                    onToggleStrictSources={composer.toggleStrictSources}
                     onToggleWebTools={composer.toggleWebTools}
                     onToggleWikiTools={composer.toggleWikiTools}
                     onToggleDeepResearch={composer.toggleDeepResearch}
@@ -233,6 +234,7 @@ export function Composer({
             <ModeChips
               turnMode={composer.turnMode}
               knowledgeBase={composer.composerMode.knowledgeBase}
+              strictSources={composer.composerMode.strictSources}
               webSearch={composer.composerMode.webSearch}
               wikipedia={composer.composerMode.wikipedia}
               deepResearch={composer.composerMode.deepResearch}

@@ -90,8 +90,14 @@ describe('messageMetadata', () => {
 
   describe('parseVerification', () => {
     it('reads snake case', () => {
-      expect(parseVerification({ enabled: 1, claims_evaluated: 3, supported_claims: 2, unsupported_claims: ['Rome fell in 1200'], grounded_ratio: 0.66 })).toMatchObject({
-        enabled: true, claimsEvaluated: 3, supportedClaims: 2,
+      expect(parseVerification({ enabled: 1, claims_evaluated: 3, supported_claims: 2, unsupported_claims: ['Rome fell in 1200'], grounded_ratio: 0.66, grounding_mode: 'hybrid', cited_only: true })).toMatchObject({
+        enabled: true, claimsEvaluated: 3, supportedClaims: 2, groundingMode: 'hybrid', citedOnly: true,
+      });
+    });
+
+    it('reads camelCase groundingMode and citedOnly', () => {
+      expect(parseVerification({ enabled: true, groundingMode: 'strict', citedOnly: false })).toMatchObject({
+        enabled: true, groundingMode: 'strict', citedOnly: false,
       });
     });
 

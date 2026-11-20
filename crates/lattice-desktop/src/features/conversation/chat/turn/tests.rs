@@ -974,3 +974,217 @@ fn an_explorer_turn_searches_the_library_only_when_the_user_turns_it_on() {
         assert!(has(&plain_chat, name), "{name} missing from {plain_chat:?}");
     }
 }
+
+#[test]
+fn tool_preferences_default_to_hybrid_and_keep_kb_and_strict_sources_orthogonal() {
+    let defaults = ToolPreferences::default();
+    assert!(!defaults.strict_sources);
+    assert!(!defaults.knowledge_base);
+    let default_flags = SearchFlags::from_preferences(Some(&defaults));
+    assert!(!default_flags.strict_sources);
+    assert!(!default_flags.user_requested_kb);
+    assert!(!default_flags.force_kb_search);
+
+    let kb_only = ToolPreferences {
+        knowledge_base: true,
+        strict_sources: false,
+        ..ToolPreferences::default()
+    };
+    let kb_only_flags = SearchFlags::from_preferences(Some(&kb_only));
+    assert!(kb_only_flags.user_requested_kb);
+    assert!(kb_only_flags.force_kb_search);
+    assert!(!kb_only_flags.strict_sources);
+
+    let strict_only = ToolPreferences {
+        knowledge_base: false,
+        strict_sources: true,
+        ..ToolPreferences::default()
+    };
+    let strict_only_flags = SearchFlags::from_preferences(Some(&strict_only));
+    assert!(!strict_only_flags.user_requested_kb);
+    assert!(!strict_only_flags.force_kb_search);
+    assert!(strict_only_flags.strict_sources);
+}
+
+#[tokio::test]
+async fn background_verification_respects_grounding_mode_and_source_policy() {
+    let runtime = FakeRuntime::default();
+    let llm: Arc<dyn LLMPort> = Arc::new(ToolCalling);
+    let (sink, _) = recording_sink();
+    let make_verification = |turn: &PreparedTurn, flags: SearchFlags| {
+        let mode = super::finalize::grounding_mode_for(turn, flags);
+        super::finalize::background_verification_for(
+            &runtime,
+            turn,
+            flags,
+            mode,
+            "msg-1".into(),
+            crate::features::conversation::chat::reply_text::ReplyText::default(),
+            Vec::new(),
+            TurnRecordDto::default(),
+            Instant::now(),
+            &sink,
+        )
+    };
+
+    let chat_turn = PreparedTurn::for_test(
+        "conv-chat",
+        "turn-chat",
+        Arc::clone(&llm),
+        runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
+    )
+    .unwrap();
+
+    let hybrid_flags = SearchFlags::from_preferences(Some(&ToolPreferences::default()));
+    let hybrid = make_verification(&chat_turn, hybrid_flags);
+    assert!(hybrid.verifies_cited_only);
+    assert_eq!(hybrid.grounding_mode, Some("hybrid"));
+
+    let strict_flags = SearchFlags::from_preferences(Some(&ToolPreferences {
+        strict_sources: true,
+        ..ToolPreferences::default()
+    }));
+    let strict = make_verification(&chat_turn, strict_flags);
+    assert!(!strict.verifies_cited_only);
+    assert_eq!(strict.grounding_mode, Some("strict"));
+
+    // Explorer (`Folder`) always verifies cited claims only, even if strict_sources is set.
+    let mut explorer_turn = PreparedTurn::for_test(
+        "conv-explorer",
+        "turn-explorer",
+        Arc::clone(&llm),
+        runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
+    )
+    .unwrap();
+    explorer_turn.source = Some(Arc::new(Folder));
+    let explorer = make_verification(&explorer_turn, strict_flags);
+    assert!(explorer.verifies_cited_only);
+    assert_eq!(explorer.grounding_mode, None);
+
+    // Tutor (`drops_session_talk: true`) verifies cited claims only in hybrid mode,
+    // and checks full non-session-talk claims in strict mode.
+    let mut tutor_policy = Course::new().policy;
+    tutor_policy.drops_session_talk = true;
+    let mut tutor_turn = PreparedTurn::for_test(
+        "conv-tutor",
+        "turn-tutor",
+        Arc::clone(&llm),
+        runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
+    )
+    .unwrap();
+    tutor_turn.source = Some(Arc::new(Course {
+        policy: tutor_policy,
+    }));
+    let tutor_hybrid = make_verification(&tutor_turn, hybrid_flags);
+    assert!(tutor_hybrid.verifies_cited_only);
+    assert!(!tutor_hybrid.drops_session_talk);
+    assert_eq!(tutor_hybrid.grounding_mode, None);
+
+    let tutor_strict = make_verification(&tutor_turn, strict_flags);
+    assert!(!tutor_strict.verifies_cited_only);
+    assert!(tutor_strict.drops_session_talk);
+    assert_eq!(tutor_strict.grounding_mode, None);
+}
+
+#[tokio::test]
+async fn zero_claim_turns_skip_background_verification_with_immediate_metadata() {
+    use super::finalize::{initial_verification_metadata, needs_background_verification};
+    use crate::features::conversation::chat::reply_text::ReplyText;
+
+    let runtime = FakeRuntime::default();
+    let llm: Arc<dyn LLMPort> = Arc::new(ToolCalling);
+    let turn = PreparedTurn::for_test(
+        "conv-zero-flash",
+        "turn-zero-flash",
+        llm,
+        runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
+    )
+    .unwrap();
+
+    // No sources at all -> no background verification, immediate non-pending metadata.
+    let no_sources_needs = needs_background_verification(true, true, &ReplyText::default(), &[]);
+    assert!(!no_sources_needs);
+    let no_sources_meta =
+        initial_verification_metadata(true, no_sources_needs, true, Some("hybrid"));
+    assert_eq!(no_sources_meta["enabled"], true);
+    assert_eq!(no_sources_meta["claimsEvaluated"], 0);
+    assert_eq!(no_sources_meta["citedOnly"], true);
+    assert_eq!(no_sources_meta["groundingMode"], "hybrid");
+    assert!(no_sources_meta.get("pending").is_none());
+
+    // Hybrid turn with sources present, but reply made zero citations -> no background check.
+    let dummy_source: SourceDto = serde_json::from_value(serde_json::json!({
+        "documentId": "doc-1",
+        "chunkId": "chunk-1",
+        "content": "passage",
+        "score": 1.0,
+        "fileName": "Notes",
+        "filePath": "/notes.md",
+        "mimeType": "text/markdown",
+        "category": "Markdown",
+        "fileSizeBytes": 10,
+        "modifiedAt": "",
+    }))
+    .unwrap();
+    let uncited_reply = ReplyText {
+        text: "A pure general-knowledge answer.".into(),
+        references: Vec::new(),
+    };
+    assert!(!needs_background_verification(
+        true,
+        true,
+        &uncited_reply,
+        std::slice::from_ref(&dummy_source),
+    ));
+
+    // Strict turn with sources present and zero citations STILL runs background verification
+    // so uncited factual claims are checked.
+    assert!(needs_background_verification(
+        true,
+        false,
+        &uncited_reply,
+        std::slice::from_ref(&dummy_source),
+    ));
+    let pending_strict = initial_verification_metadata(true, true, false, Some("strict"));
+    assert_eq!(pending_strict["enabled"], true);
+    assert_eq!(pending_strict["pending"], true);
+    assert_eq!(pending_strict["groundingMode"], "strict");
+    assert!(pending_strict.get("citedOnly").is_none());
+
+    // `infer_turn_intent` sets `skip_auto_kb` for trivial greetings in hybrid auto mode,
+    // and keeps `skip_auto_kb: false` in strict mode.
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let hybrid_greeting = crate::features::conversation::chat::routing::infer_turn_intent(
+        &runtime,
+        &turn.llm,
+        None,
+        SearchFlags::from_preferences(None),
+        "hello!",
+        &[],
+        cancel.clone(),
+    )
+    .await;
+    assert!(hybrid_greeting.flags.skip_auto_kb);
+
+    let strict_greeting = crate::features::conversation::chat::routing::infer_turn_intent(
+        &runtime,
+        &turn.llm,
+        Some(&ToolPreferences {
+            strict_sources: true,
+            ..ToolPreferences::default()
+        }),
+        SearchFlags::from_preferences(Some(&ToolPreferences {
+            strict_sources: true,
+            ..ToolPreferences::default()
+        })),
+        "hello!",
+        &[],
+        cancel,
+    )
+    .await;
+    assert!(!strict_greeting.flags.skip_auto_kb);
+}

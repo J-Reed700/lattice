@@ -53,18 +53,23 @@ pub(super) async fn finalize_turn(
     // A closed-book turn cites nothing, so there is nothing to ground it
     // against — judging it only reports every sentence unsupported.
     let verification_enabled = turn.settings.llm.verification.enabled && !flags.closed_book;
-    // Begun here and left running: the check itself happens after the answer
-    // is persisted and returned (see `BackgroundVerification`), which finishes
-    // this step in the persisted record when it lands.
-    if verification_enabled {
+    let (verifies_cited_only, _) = verification_policy_for(turn, flags);
+    let needs_background_check =
+        needs_background_verification(verification_enabled, verifies_cited_only, &reply, &sources);
+    // Begun here and left running only when claims actually need checking: the
+    // check itself happens after the answer is persisted and returned (see
+    // `BackgroundVerification`), which finishes this step when it lands.
+    if needs_background_check {
         turn.recorder
             .begin(TurnStepKind::Verify, "Checking the answer", None);
     }
-    let verification_metadata = Some(if verification_enabled {
-        pending_metadata()
-    } else {
-        serde_json::json!({ "enabled": false })
-    });
+    let grounding_mode = grounding_mode_for(turn, flags);
+    let verification_metadata = Some(initial_verification_metadata(
+        verification_enabled,
+        needs_background_check,
+        verifies_cited_only,
+        grounding_mode,
+    ));
     metrics.verification_ms = elapsed_ms(verification_start);
 
     // Built here rather than after persistence so `totalMs` is time to the
@@ -89,7 +94,7 @@ pub(super) async fn finalize_turn(
     };
 
     let background_verification =
-        verification_enabled.then(|| (reply.clone(), sources.clone(), turn_record.clone()));
+        needs_background_check.then(|| (reply.clone(), sources.clone(), turn_record.clone()));
 
     let finalize_start = Instant::now();
     // Finalization marks the question failed itself when the commit does not
@@ -118,6 +123,8 @@ pub(super) async fn finalize_turn(
         background_verification_for(
             container,
             turn,
+            flags,
+            grounding_mode,
             saved.message_id.clone(),
             reply,
             sources,
@@ -155,11 +162,68 @@ pub(super) async fn finalize_turn(
     Ok(chat_response)
 }
 
+pub(super) fn grounding_mode_for(turn: &PreparedTurn, flags: SearchFlags) -> Option<&'static str> {
+    turn.source.is_none().then_some(if flags.strict_sources {
+        "strict"
+    } else {
+        "hybrid"
+    })
+}
+
+pub(super) fn verification_policy_for(turn: &PreparedTurn, flags: SearchFlags) -> (bool, bool) {
+    match turn.source.as_ref().map(|source| source.policy()) {
+        None => (!flags.strict_sources, false),
+        Some(policy) if policy.verifies_cited_only => (true, false),
+        Some(policy) if policy.drops_session_talk => (!flags.strict_sources, flags.strict_sources),
+        Some(_) => (false, false),
+    }
+}
+
+pub(super) fn needs_background_verification(
+    verification_enabled: bool,
+    verifies_cited_only: bool,
+    reply: &ReplyText,
+    sources: &[SourceDto],
+) -> bool {
+    verification_enabled
+        && !sources.is_empty()
+        && (!verifies_cited_only || !reply.cited().is_empty())
+}
+
+pub(super) fn initial_verification_metadata(
+    verification_enabled: bool,
+    needs_background_check: bool,
+    verifies_cited_only: bool,
+    grounding_mode: Option<&'static str>,
+) -> serde_json::Value {
+    if !verification_enabled {
+        return serde_json::json!({ "enabled": false });
+    }
+    let mut metadata = if needs_background_check {
+        pending_metadata()
+    } else {
+        crate::features::conversation::chat::verification::GroundingReport::default()
+            .metadata_json()
+    };
+    if let Some(obj) = metadata.as_object_mut() {
+        if verifies_cited_only {
+            obj.insert("citedOnly".to_string(), serde_json::json!(true));
+        }
+        if let Some(mode) = grounding_mode {
+            obj.insert("groundingMode".to_string(), serde_json::json!(mode));
+        }
+    }
+    metadata
+}
+
 /// The grounding check, after the answer is saved and returned: it reports
 /// through its own event and finishes the turn's verify step when it lands.
-fn background_verification_for(
+#[allow(clippy::too_many_arguments)]
+pub(super) fn background_verification_for(
     container: &dyn ChatRuntime,
     turn: &PreparedTurn,
+    flags: SearchFlags,
+    grounding_mode: Option<&'static str>,
     message_id: String,
     reply: ReplyText,
     sources: Vec<SourceDto>,
@@ -167,6 +231,7 @@ fn background_verification_for(
     started: Instant,
     emit: &ChatEventSink,
 ) -> BackgroundVerification {
+    let (verifies_cited_only, drops_session_talk) = verification_policy_for(turn, flags);
     BackgroundVerification {
         conversation_repository: container.chat_records(),
         conversation_service: Arc::clone(&turn.conv_service),
@@ -176,14 +241,9 @@ fn background_verification_for(
         message_id,
         reply,
         sources,
-        verifies_cited_only: turn
-            .source
-            .as_ref()
-            .is_some_and(|source| source.policy().verifies_cited_only),
-        drops_session_talk: turn
-            .source
-            .as_ref()
-            .is_some_and(|source| source.policy().drops_session_talk),
+        verifies_cited_only,
+        grounding_mode,
+        drops_session_talk,
         tuning: turn.settings.llm.verification.clone(),
         chat_llm: Arc::clone(&turn.llm),
         turn: Some(record),

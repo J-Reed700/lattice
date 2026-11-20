@@ -387,7 +387,7 @@ fn a_resumed_turn_knows_its_saved_rounds_hold_the_reading() {
 fn a_search_takes_the_readings_place_only_in_a_round_that_can_search() {
     let mut closed = planned(&[1]);
     legacy::says(&mut closed).tools.clear();
-    search_instead(&mut closed);
+    search_instead(&mut closed, true);
     assert!(closed
         .input()
         .last()
@@ -395,16 +395,27 @@ fn a_search_takes_the_readings_place_only_in_a_round_that_can_search() {
         .text()
         .contains(READING_INSTRUCTION));
 
-    let mut open = planned(&[1]);
-    *legacy::says(&mut open).tools = vec![ToolDefinition {
+    let mut open_strict = planned(&[1]);
+    *legacy::says(&mut open_strict).tools = vec![ToolDefinition {
         name: "semantic_search".into(),
         description: String::new(),
         parameters: serde_json::json!({}),
     }];
-    search_instead(&mut open);
-    let message = open.input().last().unwrap().text();
+    search_instead(&mut open_strict, true);
+    let message = open_strict.input().last().unwrap().text();
     assert!(!message.contains(READING_INSTRUCTION));
     assert!(message.ends_with(NOTHING_BEARS_INSTRUCTION));
+
+    let mut open_hybrid = planned(&[1]);
+    *legacy::says(&mut open_hybrid).tools = vec![ToolDefinition {
+        name: "semantic_search".into(),
+        description: String::new(),
+        parameters: serde_json::json!({}),
+    }];
+    search_instead(&mut open_hybrid, false);
+    let hybrid_message = open_hybrid.input().last().unwrap().text();
+    assert!(!hybrid_message.contains(READING_INSTRUCTION));
+    assert!(hybrid_message.ends_with(HYBRID_NOTHING_BEARS_INSTRUCTION));
 }
 
 #[tokio::test]
@@ -417,7 +428,7 @@ async fn the_writing_round_is_the_reading_round_with_the_notes_and_the_instructi
         tokens: 3,
         labels: BTreeMap::new(),
     };
-    assert!(append_notes(&ScriptedModel::new(), &mut writing, &notes).await);
+    assert!(append_notes(&ScriptedModel::new(), &mut writing, &notes, true).await);
     assert_eq!(
         writing.max_output_tokens(),
         Some(777),
@@ -451,8 +462,16 @@ async fn only_a_round_with_tools_is_told_to_search_for_what_is_missing() {
     };
     let mut closed = planned(&[1]);
     legacy::says(&mut closed).tools.clear();
-    assert!(append_notes(&ScriptedModel::new(), &mut closed, &notes).await);
+    assert!(append_notes(&ScriptedModel::new(), &mut closed, &notes, true).await);
     assert_eq!(closed.input().last().unwrap().text(), WRITE_INSTRUCTION);
+
+    let mut closed_hybrid = planned(&[1]);
+    legacy::says(&mut closed_hybrid).tools.clear();
+    assert!(append_notes(&ScriptedModel::new(), &mut closed_hybrid, &notes, false).await);
+    assert_eq!(
+        closed_hybrid.input().last().unwrap().text(),
+        HYBRID_WRITE_INSTRUCTION
+    );
 
     let mut open = planned(&[1]);
     *legacy::says(&mut open).tools = vec![ToolDefinition {
@@ -460,10 +479,22 @@ async fn only_a_round_with_tools_is_told_to_search_for_what_is_missing() {
         description: String::new(),
         parameters: serde_json::json!({}),
     }];
-    assert!(append_notes(&ScriptedModel::new(), &mut open, &notes).await);
+    assert!(append_notes(&ScriptedModel::new(), &mut open, &notes, true).await);
     let instruction = open.input().last().unwrap().text();
     assert_eq!(instruction, SEARCH_OR_WRITE_INSTRUCTION);
     assert!(instruction.starts_with("If the passages leave any part of my question unanswered"));
+
+    let mut open_hybrid = planned(&[1]);
+    *legacy::says(&mut open_hybrid).tools = vec![ToolDefinition {
+        name: "semantic_search".into(),
+        description: String::new(),
+        parameters: serde_json::json!({}),
+    }];
+    assert!(append_notes(&ScriptedModel::new(), &mut open_hybrid, &notes, false).await);
+    assert_eq!(
+        open_hybrid.input().last().unwrap().text(),
+        HYBRID_SEARCH_OR_WRITE_INSTRUCTION
+    );
 }
 
 #[tokio::test]
@@ -475,11 +506,11 @@ async fn the_answer_gets_what_the_window_has_left_after_the_notes() {
         labels: BTreeMap::new(),
     };
     let mut measured = planned(&[1]);
-    assert!(append_notes(&ScriptedModel::new(), &mut measured, &notes).await);
+    assert!(append_notes(&ScriptedModel::new(), &mut measured, &notes, true).await);
     let needed = prompt_tokens(&ScriptedModel::new(), &measured).await;
     let model = ScriptedModel::new().window(needed + 30);
     let mut writing = planned(&[1]);
-    assert!(append_notes(&model, &mut writing, &notes).await);
+    assert!(append_notes(&model, &mut writing, &notes, true).await);
     assert_eq!(
         writing.max_output_tokens(),
         Some(30),
@@ -496,12 +527,12 @@ async fn notes_that_would_crowd_out_the_answer_are_taken_back() {
         labels: BTreeMap::new(),
     };
     let mut measured = planned(&[1]);
-    assert!(append_notes(&ScriptedModel::new(), &mut measured, &notes).await);
+    assert!(append_notes(&ScriptedModel::new(), &mut measured, &notes, true).await);
     let needed = prompt_tokens(&ScriptedModel::new(), &measured).await;
     let model = ScriptedModel::new().window(needed + 30);
     let request = planned(&[1]);
     let mut writing = request.clone();
-    assert!(!append_notes(&model, &mut writing, &notes).await);
+    assert!(!append_notes(&model, &mut writing, &notes, true).await);
     assert_eq!(json(&writing.input()), json(&request.input()), "no notes");
     assert_eq!(writing.max_output_tokens(), Some(777));
 }

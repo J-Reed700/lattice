@@ -83,6 +83,10 @@ pub(super) struct LoopRequest<'a> {
     pub(super) time_budget: Duration,
     /// Model rounds this turn may spend; see [`max_tool_rounds`].
     pub(super) max_tool_rounds: usize,
+    /// When true, the post-reading write instruction holds the answer strictly
+    /// to quoted passages; when false (hybrid mode), uncited general knowledge
+    /// is permitted for parts the passages do not cover.
+    pub(super) strict_sources: bool,
     /// A research turn saves every round it finishes here, and a resumed one
     /// starts after the last it saved.
     pub(super) research: Option<Rounds<'a>>,
@@ -129,6 +133,7 @@ pub(super) async fn run_agentic_tool_loop(
         input_budget,
         time_budget,
         max_tool_rounds,
+        strict_sources,
         research,
     } = request;
     let max_tool_rounds = max_tool_rounds.max(1);
@@ -278,12 +283,12 @@ pub(super) async fn run_agentic_tool_loop(
             };
             notes = match read {
                 Reading::Noted(read) => {
-                    reading::append_notes(llm.as_ref(), &mut native_request, &read)
+                    reading::append_notes(llm.as_ref(), &mut native_request, &read, strict_sources)
                         .await
                         .then_some(read)
                 }
                 Reading::NothingBears => {
-                    reading::search_instead(&mut native_request);
+                    reading::search_instead(&mut native_request, strict_sources);
                     None
                 }
                 Reading::NoNotes => None,

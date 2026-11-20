@@ -1,5 +1,7 @@
 use lattice_core::application::contracts::search::SearchResultDto;
-use lattice_core::application::contracts::settings::LLMPromptSettingsDto;
+use lattice_core::application::contracts::settings::{
+    LLMPromptSettingsDto, DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE, DEFAULT_RAG_PROMPT_TEMPLATE,
+};
 use lattice_core::application::ports::turn_source::TurnSourcePolicy;
 
 use super::retrieval::source_names::marker;
@@ -10,7 +12,8 @@ pub(super) struct PromptMessageBuilder<'a> {
     prompt_settings: &'a LLMPromptSettingsDto,
     question: &'a str,
     is_greeting: bool,
-    force_kb_search: bool,
+    user_requested_kb: bool,
+    strict_sources: bool,
     force_web_search: bool,
     /// The message is a whole prompt the app wrote, with its own material and
     /// rules, so no template frames it.
@@ -59,7 +62,8 @@ impl<'a> PromptMessageBuilder<'a> {
             prompt_settings,
             question,
             is_greeting,
-            force_kb_search: search_flags.force_kb_search,
+            user_requested_kb: search_flags.user_requested_kb,
+            strict_sources: search_flags.strict_sources,
             force_web_search: search_flags.force_web_search,
             closed_book: search_flags.closed_book,
             source: None,
@@ -209,7 +213,7 @@ impl<'a> PromptMessageBuilder<'a> {
         {
             if let Some(context_text) = self.followup_context.as_deref() {
                 return render_prompt_template(
-                    &self.prompt_settings.rag_prompt_template,
+                    evidence_template(self.prompt_settings, self.source, self.strict_sources),
                     context_text,
                     self.question,
                 );
@@ -250,11 +254,20 @@ impl<'a> PromptMessageBuilder<'a> {
             });
         }
         if let Some(reason) = thin_kb_reason {
-            context_sections.push(format!(
-                "Evidence quality: {reason} Answer only what these passages support, \
+            context_sections.push(if self.strict_sources {
+                format!(
+                    "Evidence quality: {reason} Answer only what these passages support, \
 say plainly which part of the question they do not cover, and do not fill the gap \
 from general knowledge as though it came from the user's documents."
-            ));
+                )
+            } else {
+                format!(
+                    "Evidence quality: {reason} Cite only what these passages genuinely support. \
+Do not pretend the documents cover the rest; for general or conceptual parts, answer naturally \
+from general knowledge without citations, and abstain only on private details specific to the \
+user's own files."
+                )
+            });
         }
         if let Some(context_text) = self.kb_context.as_ref() {
             context_sections.push(EVIDENCE_SYNTHESIS_NOTE.to_string());
@@ -278,7 +291,7 @@ from general knowledge as though it came from the user's documents."
 
         if context_sections.len() > 1 {
             return render_prompt_template(
-                evidence_template(self.prompt_settings, self.source),
+                evidence_template(self.prompt_settings, self.source, self.strict_sources),
                 &context_sections.join("\n\n"),
                 self.question,
             );
@@ -307,6 +320,14 @@ from general knowledge as though it came from the user's documents."
                 .web_search_error
                 .as_deref()
                 .unwrap_or("No web results were returned");
+            if self.strict_sources {
+                return format!(
+                    "The user explicitly requested web search with Sources-only mode on, but live web retrieval failed ({web_failure_note}) and no supporting passages were available. \
+Do not answer from general knowledge. Explain this clearly in one sentence and offer a concrete next step \
+(for example: retry the web search, add documents, or turn off Sources only).\n\nQuestion: {question}",
+                    question = self.question
+                );
+            }
             return format!(
                 "The user explicitly requested web search, but live web retrieval is currently unavailable ({web_failure_note}). \
 Respond in a natural, personable tone. Give your best-effort answer from your built-in knowledge, clearly stating that live web lookup failed for this turn and citations are unavailable. \
@@ -315,14 +336,30 @@ Do not mention the knowledge base unless asked.\n\nQuestion: {question}",
             );
         }
 
-        if self.force_kb_search && !self.evidence_cut && self.kb_context.is_none() {
+        if self.strict_sources && self.evidence_cut {
+            return format!(
+                "Sources-only mode is on, and evidence was found for this turn, but the model's context window had no room to carry any of it. \
+Use the document search and read tools if they are available before concluding evidence is missing. \
+Do not answer from general knowledge.\n\nQuestion: {question}",
+                question = self.question
+            );
+        }
+
+        if self.strict_sources && !self.evidence_cut && self.kb_context.is_none() {
             let kb_reason = self
                 .kb_unavailable_reason
                 .as_deref()
                 .unwrap_or("no matching knowledge base documents were found");
+            let scope_hint = if self.user_requested_kb {
+                "The user explicitly requested a source-only answer from their documents"
+            } else {
+                "Sources-only mode is on, so this answer must come strictly from retrieved sources"
+            };
             return format!(
-                "The user explicitly requested a knowledge base search, but it could not be fulfilled because {kb_reason}. \
-Respond conversationally, explain this clearly in one sentence, and offer a concrete next step (for example: upload documents, assign docs to the current space, or switch scope).\n\nQuestion: {question}",
+                "{scope_hint}, but no supporting passages were available because {kb_reason}. \
+Do not answer from general knowledge. Explain this clearly in one sentence and offer a concrete next step \
+(for example: add documents, adjust the conversation's space or focus, or turn off Sources only).\n\nQuestion: {question}",
+                scope_hint = scope_hint,
                 kb_reason = kb_reason,
                 question = self.question,
             );
@@ -400,9 +437,10 @@ pub(super) fn evidence_frame(
     prompt_settings: &LLMPromptSettingsDto,
     question: &str,
     source: Option<TurnSourcePolicy>,
+    strict_sources: bool,
 ) -> String {
     let frame = render_prompt_template(
-        evidence_template(prompt_settings, source),
+        evidence_template(prompt_settings, source, strict_sources),
         CONTINUITY_NOTE,
         question,
     );
@@ -432,14 +470,28 @@ fn with_reading(message: &str) -> String {
 }
 
 /// The template an evidence-carrying message renders in: the source's own,
-/// such as an Explorer folder's, or else the saved document-answer template.
+/// such as an Explorer folder's; either built-in default template switched
+/// between strict (`DEFAULT_RAG_PROMPT_TEMPLATE`) and hybrid
+/// (`DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE`) based on `strict_sources`; or else
+/// the user's custom `rag_prompt_template` verbatim.
 fn evidence_template(
     prompt_settings: &LLMPromptSettingsDto,
     source: Option<TurnSourcePolicy>,
+    strict_sources: bool,
 ) -> &str {
-    source
-        .and_then(|source| source.evidence_template)
-        .unwrap_or(&prompt_settings.rag_prompt_template)
+    if let Some(template) = source.and_then(|source| source.evidence_template) {
+        return template;
+    }
+    if prompt_settings.rag_prompt_template == DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE
+        || prompt_settings.rag_prompt_template == DEFAULT_RAG_PROMPT_TEMPLATE
+    {
+        return if strict_sources {
+            DEFAULT_RAG_PROMPT_TEMPLATE
+        } else {
+            DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE
+        };
+    }
+    &prompt_settings.rag_prompt_template
 }
 
 /// What a deep-research turn is asked to do with the rounds it has left: go

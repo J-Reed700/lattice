@@ -205,6 +205,8 @@ export const MessageVerificationSummarySchema = z.object({
   claimVerdicts: z.array(ClaimVerdictSchema).optional(),
   /** Whether any claim in this turn was judged by a model rather than by overlap. */
   judgeUsed: z.boolean().optional(),
+  groundingMode: z.enum(['hybrid', 'strict']).optional(),
+  citedOnly: z.boolean().optional(),
 }).strip();
 
 export type MessageVerificationSummary = z.infer<typeof MessageVerificationSummarySchema>;
@@ -224,6 +226,7 @@ export type TurnMode = 'auto' | 'followup' | 'query';
 export interface ToolPreferences {
   knowledgeBase: boolean;
   webSearch: boolean;
+  strictSources?: boolean;
   deepResearchMode?: boolean;
   followupMode?: boolean;
   turnMode?: TurnMode;

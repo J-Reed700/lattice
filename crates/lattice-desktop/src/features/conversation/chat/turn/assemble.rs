@@ -702,13 +702,23 @@ pub(super) fn offered_tools(
         custom_tools,
         grounding.can_open_pages,
     );
+    let enabled_custom_names: HashSet<&str> = custom_tools
+        .iter()
+        .filter(|tool| tool.enabled)
+        .map(|tool| tool.name.as_str())
+        .collect();
+    let grounded_policy = GroundedToolPolicy {
+        can_open_pages: grounding.can_open_pages,
+        allow_web_search: flags.force_web_search || flags.deep_research_mode,
+        allow_wiki_search: flags.force_wiki_search || flags.deep_research_mode,
+    };
     let grounded_tools: Vec<_> = tool_definitions
         .iter()
         .filter(|tool| {
             kept_with_grounded_context(
                 &tool.name,
-                grounding.can_open_pages,
-                flags.deep_research_mode,
+                grounded_policy,
+                enabled_custom_names.contains(tool.name.as_str()),
             )
         })
         .cloned()

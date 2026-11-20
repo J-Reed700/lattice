@@ -11885,7 +11885,13 @@ getDocumentTemplate: string;
  * Template for semantic_search output
  */
 semanticSearchTemplate: string }
-export type ToolPreferences = { knowledgeBase?: boolean; webSearch?: boolean; deepResearchMode?: boolean; followupMode?: boolean; turnMode?: string | null; enabledTools?: string[] | null;
+export type ToolPreferences = { knowledgeBase?: boolean;
+/**
+ * Answer strictly from retrieved sources only (no general-knowledge
+ * fallback). Orthogonal to `knowledge_base`, which controls whether to
+ * always search the library.
+ */
+strictSources?: boolean; webSearch?: boolean; deepResearchMode?: boolean; followupMode?: boolean; turnMode?: string | null; enabledTools?: string[] | null;
 /**
  * Documents this chat is pinned to; empty or absent means the whole space. A
  * request may only narrow what the turn reads, so these are intersected with
