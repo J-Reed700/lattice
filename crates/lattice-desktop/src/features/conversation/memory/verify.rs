@@ -161,7 +161,14 @@ pub async fn review_patch(
     for addition in &additions {
         requests.push(Review {
             subject: Subject::Addition(addition.candidate_id.clone()),
-            change: Told("add_mandatory_item".to_owned()),
+            change: Told(
+                if addition.kind.is_mandatory() {
+                    "add_mandatory_item"
+                } else {
+                    "add_item"
+                }
+                .to_owned(),
+            ),
             kind: Told(addition.kind.as_str().to_owned()),
             label: Some(Told(addition.label.clone())),
             proposed: passages(&addition.evidence, evidence),

@@ -272,6 +272,7 @@ impl GroundedRequest {
             no_time_limit: call.no_time_limit,
             schema: self.schema.clone(),
             reasoning_effort: call.reasoning_effort,
+            thinking: call.thinking,
             max_output_tokens,
             ..CompletionRequest::empty()
         }
