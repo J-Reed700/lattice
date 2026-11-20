@@ -254,6 +254,7 @@ impl Deadline {
             time_budget: remaining,
             no_time_limit: remaining.is_none(),
             reasoning_effort: None,
+            ..Default::default()
         })
     }
 

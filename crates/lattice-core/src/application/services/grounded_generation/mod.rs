@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use crate::application::ports::llm_port::{
-    CompletionInput, InferencePriority, SamplingOverride, TEMPLATE_TOKENS_FOR_ANSWER,
+    CompletionInput, InferencePriority, SamplingOverride, ThinkingMode, TEMPLATE_TOKENS_FOR_ANSWER,
     TEMPLATE_TOKENS_PER_MESSAGE,
 };
 use crate::application::ports::LLMPort;
@@ -118,6 +118,7 @@ pub struct CallOptions {
     /// fail. Stall detection and retry limits still apply.
     pub no_time_limit: bool,
     pub reasoning_effort: Option<String>,
+    pub thinking: ThinkingMode,
 }
 
 /// Where answer text goes while the model writes it.

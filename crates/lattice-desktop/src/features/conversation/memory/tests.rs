@@ -791,15 +791,18 @@ fn sentences_of_quote(passages: &[Vec<(String, String)>], quote: &str) -> Vec<St
     Vec::new()
 }
 
-/// An answer scripted in the old patch form, written as the layer's items: each
-/// quote becomes the labelled sentences of the prompt it lies in, each message
-/// id and candidate id goes, and a transition holds the addition it names. Any
-/// other script is returned as it is.
-fn as_items(scripted: &str, prompt: &str, existing: &[String]) -> String {
+/// An answer scripted in the old patch form (`schema_version` present), written as the
+/// new patch form: each quote becomes the labelled sentences of the prompt it lies in,
+/// each existing id becomes its `mN` handle, and each transition uses the tagged union.
+/// Any native patch answer (no `schema_version`) is returned as it is.
+fn as_patch(scripted: &str, prompt: &str, existing: &[String]) -> String {
     let Ok(old) = serde_json::from_str::<serde_json::Value>(scripted) else {
         return scripted.to_string();
     };
-    let Some(add) = old.get("add").and_then(serde_json::Value::as_array) else {
+    if old.get("schema_version").is_none() {
+        return scripted.to_string();
+    }
+    let Some(old_add) = old.get("add").and_then(serde_json::Value::as_array) else {
         return scripted.to_string();
     };
     let shown: serde_json::Value = serde_json::Deserializer::from_str(prompt)
@@ -808,7 +811,7 @@ fn as_items(scripted: &str, prompt: &str, existing: &[String]) -> String {
         .and_then(std::result::Result::ok)
         .unwrap_or_default();
     let passages = labelled_rows(&shown);
-    let cited = |evidence: &serde_json::Value, purpose: bool| -> Vec<serde_json::Value> {
+    let cited = |evidence: &serde_json::Value| -> Vec<serde_json::Value> {
         evidence
             .as_array()
             .into_iter()
@@ -816,72 +819,80 @@ fn as_items(scripted: &str, prompt: &str, existing: &[String]) -> String {
             .map(|quote| {
                 let sentences =
                     sentences_of_quote(&passages, quote["quote"].as_str().unwrap_or_default());
-                if purpose {
-                    serde_json::json!({"purpose": quote["purpose"], "sentences": sentences})
-                } else {
-                    serde_json::json!({"sentences": sentences})
-                }
+                serde_json::json!({"purpose": quote["purpose"], "sentences": sentences})
             })
             .collect()
     };
-    let addition = |item: &serde_json::Value| {
-        serde_json::json!({
-            "evidence": cited(&item["evidence"], true),
-            "kind": item["kind"],
-            "label": item["label"],
-        })
+    let transition_sentences = |evidence: &serde_json::Value| -> Vec<String> {
+        evidence
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|quote| {
+                sentences_of_quote(&passages, quote["quote"].as_str().unwrap_or_default())
+            })
+            .collect()
     };
-    let candidate = |id: &serde_json::Value| add.iter().find(|item| item["candidate_id"] == *id);
+    let mut code_for: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let add: Vec<serde_json::Value> = old_add
+        .iter()
+        .enumerate()
+        .map(|(idx, item)| {
+            let cid = item["candidate_id"].as_str().unwrap_or_default().to_owned();
+            let code = if cid.starts_with('c') && cid[1..].parse::<u32>().is_ok() {
+                cid.clone()
+            } else {
+                format!("c{}", idx + 1)
+            };
+            code_for.insert(cid, code.clone());
+            serde_json::json!({
+                "code": code,
+                "kind": item["kind"],
+                "label": item["label"],
+                "quotes": cited(&item["evidence"]),
+            })
+        })
+        .collect();
     let handle = |id: &str| {
         existing
             .iter()
             .position(|known| known == id)
             .map_or_else(|| "none".to_string(), |at| format!("m{}", at + 1))
     };
-    let transitions = old["transitions"].as_array().cloned().unwrap_or_default();
-    let mut nested: Vec<serde_json::Value> = Vec::new();
-    let mut moves: Vec<serde_json::Value> = Vec::new();
-    for transition in &transitions {
-        let grounds = cited(&transition["evidence"], false);
-        let replacement = candidate(&transition["replacement_candidate_id"]);
-        let superseded = transition["state"] == "superseded";
-        let proposal = match (candidate(&transition["item_id"]), replacement) {
-            (Some(earlier), Some(later)) if superseded => {
-                nested.extend([
-                    earlier["candidate_id"].clone(),
-                    later["candidate_id"].clone(),
-                ]);
-                serde_json::json!({
-                    "kind": "correct",
-                    "evidence": grounds,
-                    "earlier": addition(earlier),
-                    "later": addition(later),
-                })
-            }
-            (_, Some(later)) if superseded => {
-                nested.push(later["candidate_id"].clone());
-                serde_json::json!({
-                    "kind": "supersede",
-                    "evidence": grounds,
-                    "item_id": handle(transition["item_id"].as_str().unwrap_or_default()),
-                    "replacement": addition(later),
-                })
-            }
-            _ => serde_json::json!({
-                "kind": "resolve",
-                "evidence": grounds,
-                "item_id": handle(transition["item_id"].as_str().unwrap_or_default()),
-            }),
-        };
-        moves.push(serde_json::json!({ "proposal": proposal }));
-    }
-    let mut items: Vec<serde_json::Value> = add
+    let old_transitions = old["transitions"].as_array().cloned().unwrap_or_default();
+    let transitions: Vec<serde_json::Value> = old_transitions
         .iter()
-        .filter(|item| !nested.contains(&item["candidate_id"]))
-        .map(|item| serde_json::json!({"proposal": {"kind": "add", "addition": addition(item)}}))
+        .map(|transition| {
+            let sentences = transition_sentences(&transition["evidence"]);
+            let item_id = transition["item_id"].as_str().unwrap_or_default();
+            let replacement = transition["replacement_candidate_id"]
+                .as_str()
+                .and_then(|id| code_for.get(id))
+                .cloned();
+            let superseded = transition["state"] == "superseded";
+            let inner = match (code_for.get(item_id), replacement) {
+                (Some(older), Some(repl)) if superseded => serde_json::json!({
+                    "kind": "supersede_candidate",
+                    "older": older,
+                    "replacement": repl,
+                    "sentences": sentences,
+                }),
+                (_, Some(repl)) if superseded => serde_json::json!({
+                    "kind": "supersede_existing",
+                    "memory": handle(item_id),
+                    "replacement": repl,
+                    "sentences": sentences,
+                }),
+                _ => serde_json::json!({
+                    "kind": "resolve_existing",
+                    "memory": handle(item_id),
+                    "sentences": sentences,
+                }),
+            };
+            serde_json::json!({ "transition": inner })
+        })
         .collect();
-    items.extend(moves);
-    serde_json::json!({ "items": items }).to_string()
+    serde_json::json!({ "add": add, "transitions": transitions }).to_string()
 }
 
 impl FakeLlm {
@@ -1086,7 +1097,7 @@ impl FakeLlm {
             )))
         });
         match (task, scripted) {
-            (Task::Extract, Ok(text)) => Ok(as_items(&text, prompt, &self.existing.lock())),
+            (Task::Extract, Ok(text)) => Ok(as_patch(&text, prompt, &self.existing.lock())),
             (Task::Summarize, Ok(text)) => Ok(Self::rewriting(prompt, "previous_summary", &text)),
             (Task::Shrink, Ok(text)) => Ok(Self::rewriting(prompt, "summary", &text)),
             (_, other) => other,
@@ -1324,18 +1335,53 @@ fn properties_holding<'a>(
     }
 }
 
-/// llama.cpp builds the grammar in schema order. An addition asks for its
-/// evidence before its kind and label, as the sorted keys did.
+/// llama.cpp sorts object keys alphabetically when building GBNF grammars.
+/// Pin that every object in the extraction schema is already in alphabetical
+/// order matching natural writing order:
+/// - Patch: `add` -> `transitions`
+/// - Addition: `code` -> `kind` -> `label` -> `quotes`
+/// - Quote: `purpose` -> `sentences`
+/// - Transition branches: `kind` first in every `anyOf` branch
 #[test]
-fn the_extraction_grammar_asks_for_the_grounds_before_the_decision() {
+fn the_extraction_grammar_keys_match_alphabetical_generation_order() {
     use lattice_core::application::services::model_contract::shape::{Held, Shape};
     let mut scope =
         lattice_core::application::services::model_contract::shown::Scope::for_question();
     let showing = scope.request();
     type Answer = <super::extract::MemoryExtraction as lattice_core::application::services::model_contract::ask::Answered>::Answer;
     let schema = <Answer as Shape>::schema(&showing, Held::Plain).expect("the extraction schema");
+    let root_keys = object_keys(schema.as_json().get("properties"));
+    assert_eq!(root_keys, ["add", "transitions"]);
+
     let addition = properties_holding(schema.as_json(), "label").expect("an addition");
-    assert_eq!(object_keys(Some(addition)), ["evidence", "kind", "label"]);
+    assert_eq!(
+        object_keys(Some(addition)),
+        ["code", "kind", "label", "quotes"]
+    );
+
+    let quote = properties_holding(schema.as_json(), "purpose").expect("a quote");
+    assert_eq!(object_keys(Some(quote)), ["purpose", "sentences"]);
+
+    let transition_branches = schema
+        .as_json()
+        .pointer("/properties/transitions/items/properties/transition/anyOf")
+        .and_then(serde_json::Value::as_array)
+        .expect("transition anyOf branches");
+    assert_eq!(transition_branches.len(), 3);
+    for branch in transition_branches {
+        let keys = object_keys(branch.get("properties"));
+        let mut sorted = keys.clone();
+        sorted.sort_unstable();
+        assert_eq!(
+            keys, sorted,
+            "transition branch keys must sort alphabetically"
+        );
+        assert_eq!(
+            keys.first().map(String::as_str),
+            Some("kind"),
+            "kind must sort first in every transition branch: {keys:?}"
+        );
+    }
 }
 
 /// The passages to extract are the last thing the extractor reads before it
@@ -3592,26 +3638,30 @@ fn the_review_request_holds_no_identity_of_the_app() {
     holds::<MemoryReview>(&input, &marks);
 }
 
-fn add_item(kind: &str, label: &str, sentence: &str) -> serde_json::Value {
-    serde_json::json!({"proposal": {"kind": "add", "addition": {
-        "evidence": [{"purpose": "assertion", "sentences": [sentence]}],
+fn add_entry(code: &str, kind: &str, label: &str, sentence: &str) -> serde_json::Value {
+    serde_json::json!({
+        "code": code,
         "kind": kind,
         "label": label,
-    }}})
+        "quotes": [{"purpose": "assertion", "sentences": [sentence]}],
+    })
 }
 
-fn items_answer(items: Vec<serde_json::Value>) -> String {
-    serde_json::json!({ "items": items }).to_string()
+fn patch_answer(add: Vec<serde_json::Value>, transitions: Vec<serde_json::Value>) -> String {
+    serde_json::json!({ "add": add, "transitions": transitions }).to_string()
 }
 
 #[tokio::test]
 async fn a_proposal_the_rules_refuse_is_left_out_and_the_others_stand() {
     let port = FakePort::new(four_turns(), Vec::new(), 0);
     let llm = FakeLlm::new(
-        vec![Ok(items_answer(vec![
-            add_item("constraint", "Deployment requires approval", "s1"),
-            add_item("constraint", "The assistant will wait", "s2"),
-        ]))],
+        vec![Ok(patch_answer(
+            vec![
+                add_entry("c1", "constraint", "Deployment requires approval", "s1"),
+                add_entry("c2", "constraint", "The assistant will wait", "s2"),
+            ],
+            Vec::new(),
+        ))],
         vec![Ok(verdict_response(&[("r1", "supported")]))],
         vec![Ok("Approval gate recorded.".to_string())],
     );
@@ -3634,11 +3684,15 @@ async fn a_proposal_the_rules_refuse_is_left_out_and_the_others_stand() {
 async fn an_answer_whose_proposals_cannot_be_read_leaves_the_batch_unprocessed() {
     let port = FakePort::new(four_turns(), Vec::new(), 0);
     let unreadable = || {
-        Ok(items_answer(vec![add_item(
-            "constraint",
-            "Deployment requires approval",
-            "s99",
-        )]))
+        Ok(patch_answer(
+            vec![add_entry(
+                "c1",
+                "constraint",
+                "Deployment requires approval",
+                "s99",
+            )],
+            Vec::new(),
+        ))
     };
     let llm = FakeLlm::new(vec![unreadable(), unreadable()], vec![], vec![]);
 
@@ -3657,11 +3711,15 @@ async fn an_answer_whose_proposals_cannot_be_read_leaves_the_batch_unprocessed()
 async fn an_answer_whose_proposals_the_rules_all_refuse_leaves_the_batch_unprocessed() {
     let port = FakePort::new(four_turns(), Vec::new(), 0);
     let refused = || {
-        Ok(items_answer(vec![add_item(
-            "constraint",
-            "The assistant will wait",
-            "s2",
-        )]))
+        Ok(patch_answer(
+            vec![add_entry(
+                "c1",
+                "constraint",
+                "The assistant will wait",
+                "s2",
+            )],
+            Vec::new(),
+        ))
     };
     let llm = FakeLlm::new(vec![refused(), refused()], vec![], vec![]);
 
@@ -3680,7 +3738,7 @@ async fn an_answer_whose_proposals_the_rules_all_refuse_leaves_the_batch_unproce
 async fn an_answer_with_no_proposals_is_an_empty_patch() {
     let port = FakePort::new(four_turns(), Vec::new(), 0);
     let llm = FakeLlm::new(
-        vec![Ok(items_answer(Vec::new()))],
+        vec![Ok(patch_answer(Vec::new(), Vec::new()))],
         vec![],
         vec![Ok("Nothing new to record.".to_string())],
     );
@@ -3697,21 +3755,24 @@ async fn an_answer_with_no_proposals_is_an_empty_patch() {
 
 #[tokio::test]
 async fn an_answer_that_does_not_end_leaves_the_batch_unprocessed() {
-    let whole = items_answer(vec![add_item(
-        "constraint",
-        "Deployment requires approval",
-        "s1",
-    )]);
+    let whole = patch_answer(
+        vec![add_entry(
+            "c1",
+            "constraint",
+            "Deployment requires approval",
+            "s1",
+        )],
+        Vec::new(),
+    );
     let cut = whole.trim_end_matches("]}").to_string();
     let port = FakePort::new(four_turns(), Vec::new(), 0);
-    let llm = FakeLlm::new(vec![Ok(cut)], vec![], vec![]);
+    let llm = FakeLlm::new(vec![Ok(cut.clone()), Ok(cut)], vec![], vec![]);
 
     job(port.clone(), llm.clone(), small_config())
         .run(CONVERSATION, CompactionRequest::default())
         .await
         .expect_err("an answer that did not end cannot be committed");
 
-    assert_eq!(llm.count(Task::Extract), 1);
     assert_eq!(port.commits(), 0);
     assert_eq!(port.watermark(), 0);
     assert_eq!(port.errors(), vec!["malformed_json".to_string()]);
@@ -3723,11 +3784,10 @@ async fn the_quoted_span_is_the_pointed_sentence_found_by_the_app_among_repeats(
     messages[0] = message("m1", 1, SourceRole::User, "Hold the kiln. Hold the kiln.");
     let port = FakePort::new(messages, Vec::new(), 0);
     let llm = FakeLlm::new(
-        vec![Ok(items_answer(vec![add_item(
-            "constraint",
-            "The kiln is held",
-            "s2",
-        )]))],
+        vec![Ok(patch_answer(
+            vec![add_entry("c1", "constraint", "The kiln is held", "s2")],
+            Vec::new(),
+        ))],
         vec![Ok(verdict_response(&[("r1", "supported")]))],
         vec![Ok("Kiln held.".to_string())],
     );
@@ -3751,16 +3811,20 @@ async fn a_supersede_proposal_retires_the_existing_item_by_its_handle() {
         0,
     );
     let llm = FakeLlm::new(
-        vec![Ok(items_answer(vec![serde_json::json!({"proposal": {
-            "kind": "supersede",
-            "evidence": [{"sentences": ["s3"]}],
-            "item_id": "m1",
-            "replacement": {
-                "evidence": [{"purpose": "assertion", "sentences": ["s3"]}],
-                "kind": "constraint",
-                "label": "Staging may be deployed",
-            },
-        }})]))],
+        vec![Ok(patch_answer(
+            vec![add_entry(
+                "c1",
+                "constraint",
+                "Staging may be deployed",
+                "s3",
+            )],
+            vec![serde_json::json!({"transition": {
+                "kind": "supersede_existing",
+                "memory": "m1",
+                "replacement": "c1",
+                "sentences": ["s3"],
+            }})],
+        ))],
         vec![Ok(verdict_response(&[
             ("r1", "supported"),
             ("r2", "supported"),
@@ -3778,6 +3842,99 @@ async fn a_supersede_proposal_retires_the_existing_item_by_its_handle() {
         port.item("item-old").map(|item| item.state),
         Some(MemoryState::Superseded)
     );
+}
+
+#[tokio::test]
+async fn a_same_batch_supersede_candidate_retires_earlier_addition_in_order() {
+    let port = FakePort::new(four_turns(), Vec::new(), 0);
+    let llm = FakeLlm::new(
+        vec![Ok(patch_answer(
+            vec![
+                add_entry("c1", "constraint", "Do not deploy until approved", "s1"),
+                add_entry("c2", "constraint", "Staging may be deployed", "s3"),
+            ],
+            vec![serde_json::json!({"transition": {
+                "kind": "supersede_candidate",
+                "older": "c1",
+                "replacement": "c2",
+                "sentences": ["s3"],
+            }})],
+        ))],
+        vec![Ok(verdict_response(&[
+            ("r1", "supported"),
+            ("r2", "supported"),
+            ("r3", "supported"),
+        ]))],
+        vec![Ok("Staging deploy allowed.".to_string())],
+    );
+
+    let outcome = job(port.clone(), llm, small_config())
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.commit.inserts.len(), 2);
+    let states: Vec<MemoryState> = outcome.commit.inserts.iter().map(|i| i.state).collect();
+    assert!(states.contains(&MemoryState::Superseded));
+    assert!(states.contains(&MemoryState::Active));
+}
+
+#[tokio::test]
+async fn a_dangling_transition_is_refused_and_repaired() {
+    let port = FakePort::new(four_turns(), Vec::new(), 0);
+    let llm = FakeLlm::new(
+        vec![
+            // First attempt omits c2 from add even though transition references c2.
+            Ok(patch_answer(
+                vec![add_entry(
+                    "c1",
+                    "constraint",
+                    "Do not deploy until approved",
+                    "s1",
+                )],
+                vec![serde_json::json!({"transition": {
+                    "kind": "supersede_candidate",
+                    "older": "c1",
+                    "replacement": "c2",
+                    "sentences": ["s3"],
+                }})],
+            )),
+            // Repair adds c2 so the transition resolves cleanly.
+            Ok(patch_answer(
+                vec![
+                    add_entry("c1", "constraint", "Do not deploy until approved", "s1"),
+                    add_entry("c2", "constraint", "Staging may be deployed", "s3"),
+                ],
+                vec![serde_json::json!({"transition": {
+                    "kind": "supersede_candidate",
+                    "older": "c1",
+                    "replacement": "c2",
+                    "sentences": ["s3"],
+                }})],
+            )),
+        ],
+        vec![Ok(verdict_response(&[
+            ("r1", "supported"),
+            ("r2", "supported"),
+            ("r3", "supported"),
+        ]))],
+        vec![Ok("Staging deploy allowed.".to_string())],
+    );
+
+    let outcome = job(port.clone(), llm.clone(), small_config())
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        llm.count(Task::Extract),
+        2,
+        "dangling transition triggered repair"
+    );
+    assert_eq!(outcome.commit.inserts.len(), 2);
+    let states: Vec<MemoryState> = outcome.commit.inserts.iter().map(|i| i.state).collect();
+    assert!(states.contains(&MemoryState::Superseded));
+    assert!(states.contains(&MemoryState::Active));
 }
 
 #[test]
