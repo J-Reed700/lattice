@@ -288,7 +288,11 @@ mod tests {
             .expect("answering rules");
         assert!(passage_pos < question_pos, "{rendered}");
         assert!(question_pos < rules_pos, "{rendered}");
-        assert!(rendered.ends_with("Answer:"), "{rendered}");
+        assert!(
+            rendered.ends_with("translating any passage in another."),
+            "{rendered}"
+        );
+        assert!(!rendered.ends_with("Answer:"), "{rendered}");
     }
 
     #[test]
