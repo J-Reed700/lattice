@@ -1,6 +1,6 @@
 import { queryOptions, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { isJobFinished, useJobStatus, type JobDto } from '@/features/jobs/api';
+import { isJobFinished, newerJob, useJobStatus, type JobDto } from '@/features/jobs/api';
 import type {
   JournalSynthesisDto,
   StartJournalSynthesisRequestDto,
@@ -41,10 +41,24 @@ export const retrySynthesis = async (jobId: string) =>
 export const synthesesQueryOptions = () =>
   queryOptions({
     queryKey: synthesisKeys.list,
-    queryFn: async () => unwrapApiResult(await apiCall('list_journal_syntheses')),
+    queryFn: async ({ client }) => {
+      const snapshot = unwrapApiResult(await apiCall('list_journal_syntheses'));
+      return mergeSyntheses(client.getQueryData<JournalSynthesisDto[]>(synthesisKeys.list) ?? [], snapshot);
+    },
     // Kept current by the job status event, not by refetching.
     staleTime: Infinity,
   });
+
+/** The snapshot's syntheses and order, each keeping a newer job the cache already holds. */
+export function mergeSyntheses(
+  cached: readonly JournalSynthesisDto[],
+  snapshot: readonly JournalSynthesisDto[],
+): JournalSynthesisDto[] {
+  return snapshot.map((item) => {
+    const cachedItem = cached.find((candidate) => candidate.job.id === item.job.id);
+    return cachedItem && newerJob(item.job, cachedItem.job) !== item.job ? withJob(item, cachedItem.job) : item;
+  });
+}
 
 /** Whether a synthesis is still being written. */
 export function isSynthesisLive(synthesis: JournalSynthesisDto): boolean {
@@ -70,8 +84,11 @@ export function useJournalSyntheses() {
       void client.invalidateQueries({ queryKey: synthesisKeys.list });
       return;
     }
-    client.setQueryData<JournalSynthesisDto[]>(synthesisKeys.list, syntheses.map((synthesis) =>
-      synthesis.job.id === job.id ? withJob(synthesis, job) : synthesis));
+    client.setQueryData<JournalSynthesisDto[]>(synthesisKeys.list, syntheses.map((synthesis) => {
+      if (synthesis.job.id !== job.id) return synthesis;
+      const chosen = newerJob(synthesis.job, job);
+      return chosen === synthesis.job ? synthesis : withJob(synthesis, chosen);
+    }));
   });
   return useQuery(synthesesQueryOptions());
 }

@@ -69,7 +69,8 @@ export const jobsQueryOptions = (kinds: readonly string[]) =>
     staleTime: Infinity,
   });
 
-function pickMonotonicJob(existing: JobDto, incoming: JobDto): JobDto {
+/** The copy of a job with the higher revision; the incoming one on a tie. */
+export function newerJob(existing: JobDto, incoming: JobDto): JobDto {
   return incoming.revision >= existing.revision ? incoming : existing;
 }
 
@@ -100,7 +101,7 @@ export function upsertJob(jobs: readonly JobDto[], job: JobDto): JobDto[] {
   const at = jobs.findIndex((existing) => existing.id === job.id);
   if (at < 0) return capFinishedJobs([...jobs, job]);
   const existing = jobs[at]!;
-  const chosen = pickMonotonicJob(existing, job);
+  const chosen = newerJob(existing, job);
   if (chosen === existing) return capFinishedJobs([...jobs]);
   const next = [...jobs];
   next[at] = chosen;
