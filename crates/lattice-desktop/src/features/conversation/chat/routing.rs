@@ -114,28 +114,17 @@ impl InferredIntent {
 }
 
 /// Ask the utility model what an unflagged turn needs, and fold the answer
-/// into the search flags. Skipped the moment the user said anything explicit —
-/// a toggle, a turn mode, a closed book — because inference exists to fill in
-/// defaults, not to second-guess a decision.
-pub(super) async fn infer_turn_intent(
+/// into the search flags. Triage asks only for a turn the user left on its
+/// defaults (`should_infer_turn_intent`) that is more than a greeting:
+/// inference fills in defaults, it does not second-guess a decision.
+async fn infer_turn_intent(
     container: &dyn ChatRuntime,
     chat_llm: &Arc<dyn lattice_core::application::ports::LLMPort>,
-    tool_preferences: Option<&ToolPreferences>,
     search_flags: SearchFlags,
     validated_message: &str,
     context: &[String],
     cancel: tokio_util::sync::CancellationToken,
 ) -> InferredIntent {
-    if !should_infer_turn_intent(tool_preferences, search_flags) {
-        return InferredIntent::as_requested(search_flags);
-    }
-    if is_trivial_conversational_message(validated_message) {
-        return InferredIntent::as_requested(SearchFlags {
-            skip_auto_kb: !search_flags.strict_sources,
-            ..search_flags
-        });
-    }
-
     // Resolved the way the grounding judge below resolves its model: the
     // utility LLM when one is configured, the chat LLM otherwise, and no
     // classification at all when loading one fails.
@@ -324,10 +313,12 @@ pub(super) async fn triage_turn_with_scope(
     };
 
     if !infers_intent || !should_infer_turn_intent(tool_preferences, requested_flags) {
+        // A turn the user marked as a follow-up has answered the router's
+        // question, but only where the router would have been asked.
         if requested_flags.force_followup_mode
             && !requested_flags.force_kb_search
-            && !requested_flags.web_planned()
-            && recent_doc.is_some()
+            && may_reuse_recent_document(requested_flags, router_may_search)
+            && router_has_a_choice(router_settings, document_context, recent_doc.as_ref())
         {
             return Ok(TurnTriageOutcome {
                 inferred: InferredIntent::as_requested(requested_flags),
@@ -366,22 +357,6 @@ pub(super) async fn triage_turn_with_scope(
             skip_auto_kb: !requested_flags.strict_sources,
             ..requested_flags
         };
-        if flags.skip_auto_kb
-            || !router_settings.enabled
-            || !router_may_search
-            || recent_doc.is_none()
-        {
-            return Ok(TurnTriageOutcome {
-                inferred: InferredIntent::as_requested(flags),
-                decision: RouterDecisionOutcome {
-                    action: RouterAction::NewSearch,
-                    recent_doc_meta: None,
-                    clarify_message: None,
-                    router_may_search,
-                },
-                record: None,
-            });
-        }
         let router_start = Instant::now();
         let (decision, record) = resolve_router_decision_with_recent(
             container,
@@ -417,9 +392,7 @@ pub(super) async fn triage_turn_with_scope(
     }
 
     let can_route_recent_doc = router_may_search
-        && router_settings.enabled
-        && !document_context.is_empty()
-        && recent_doc.is_some();
+        && router_has_a_choice(router_settings, document_context, recent_doc.as_ref());
     let using_default_router_template =
         router_settings.prompt_template == RouterSettingsDto::default().prompt_template;
 
@@ -582,7 +555,6 @@ pub(super) async fn triage_turn_with_scope(
     let inferred = infer_turn_intent(
         container,
         chat_llm,
-        tool_preferences,
         requested_flags,
         validated_message,
         context,
@@ -630,50 +602,27 @@ pub(super) async fn triage_turn_with_scope(
     })
 }
 
-/// Routes the turn and keeps the router's decision, with its confidence and
-/// rationale, for the turn record.
-#[cfg(test)]
-pub(super) async fn resolve_router_decision(
-    container: &dyn ChatRuntime,
-    conversation_document_context: &[DocumentReference],
-    validated_message: &str,
-    search_flags: SearchFlags,
-    source: Option<TurnSourcePolicy>,
-    router_settings: &RouterSettingsDto,
-    recorder: &TurnRecorder,
-    cancel: tokio_util::sync::CancellationToken,
-) -> Result<(RouterDecisionOutcome, Option<TurnRouterDto>)> {
-    let router_may_search = source.is_none_or(|source| source.routes_to_library);
-    if search_flags.web_planned()
-        || search_flags.closed_book
-        || search_flags.skip_auto_kb
-        || (!router_may_search && !search_flags.force_kb_search)
-    {
-        return Ok((
-            RouterDecisionOutcome {
-                action: RouterAction::NewSearch,
-                recent_doc_meta: None,
-                clarify_message: None,
-                router_may_search,
-            },
-            None,
-        ));
-    }
+/// Whether the turn may go back to its recent document at all. Not a
+/// closed-book turn, which has nothing to route; not an Explorer turn the user
+/// did not point at the library; not a turn with `skip_auto_kb` (a greeting,
+/// or a confident general-knowledge turn in Hybrid Auto). A turn with the web
+/// in its plan, asked for or as a fallback, searches the vault afresh so the
+/// fallback has a verdict on the vault to go by.
+fn may_reuse_recent_document(search_flags: SearchFlags, router_may_search: bool) -> bool {
+    !search_flags.web_planned()
+        && !search_flags.closed_book
+        && !search_flags.skip_auto_kb
+        && (router_may_search || search_flags.force_kb_search)
+}
 
-    let recent_doc_meta =
-        load_recent_document_metadata(container, conversation_document_context).await;
-    resolve_router_decision_with_recent(
-        container,
-        conversation_document_context,
-        recent_doc_meta,
-        validated_message,
-        search_flags,
-        source,
-        router_settings,
-        recorder,
-        cancel,
-    )
-    .await
+/// Whether the router has a choice to make: it is on, and the conversation
+/// has a recent document to go back to.
+fn router_has_a_choice(
+    router_settings: &RouterSettingsDto,
+    document_context: &[DocumentReference],
+    recent_doc: Option<&RecentDocumentMetadata>,
+) -> bool {
+    router_settings.enabled && !document_context.is_empty() && recent_doc.is_some()
 }
 
 async fn resolve_router_decision_with_recent(
@@ -690,19 +639,7 @@ async fn resolve_router_decision_with_recent(
     // In an Explorer turn the question is about the folder on screen, so the
     // router's default "search the library" is not enough to start one.
     let router_may_search = source.is_none_or(|source| source.routes_to_library);
-    // A closed-book turn has nothing to route: the pipeline returns before it
-    // reads this, and asking the router model would only spend time. Nor does
-    // an Explorer turn the user did not point at the library, or a turn with
-    // `skip_auto_kb` (e.g. trivial greetings or high-confidence general-knowledge
-    // turns in Hybrid Auto) — skipping routing here neither loads the router
-    // model nor overrides `skip_auto_kb` with `UseLastDocument`/`Clarify`. A
-    // turn with the web in its plan, asked for or as a fallback, searches the
-    // vault afresh so the fallback has a verdict on the vault to go by.
-    if search_flags.web_planned()
-        || search_flags.closed_book
-        || search_flags.skip_auto_kb
-        || (!router_may_search && !search_flags.force_kb_search)
-    {
+    if !may_reuse_recent_document(search_flags, router_may_search) {
         return Ok((
             RouterDecisionOutcome {
                 action: RouterAction::NewSearch,
@@ -714,9 +651,11 @@ async fn resolve_router_decision_with_recent(
         ));
     }
 
-    let has_recent_document = recent_doc_meta.is_some();
-    if conversation_document_context.is_empty() || !router_settings.enabled || !has_recent_document
-    {
+    if !router_has_a_choice(
+        router_settings,
+        conversation_document_context,
+        recent_doc_meta.as_ref(),
+    ) {
         return Ok((
             RouterDecisionOutcome {
                 action: RouterAction::NewSearch,
@@ -730,7 +669,7 @@ async fn resolve_router_decision_with_recent(
 
     let router_input = RouterInput {
         query: validated_message.to_string(),
-        has_recent_document,
+        has_recent_document: recent_doc_meta.is_some(),
         recent_document_title: recent_doc_meta.as_ref().map(|m| m.title.clone()),
     };
     let step = recorder.begin(TurnStepKind::Route, "Deciding how to answer", None);
@@ -779,184 +718,5 @@ pub(super) fn router_action_label(action: &RouterAction) -> &'static str {
         RouterAction::UseLastDocument => "Continuing with the last document",
         RouterAction::NewSearch => "Searching afresh",
         RouterAction::Clarify => "Asking what you mean",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::features::conversation::chat::test_runtime::{FakeRuntime, Scripted};
-    use async_trait::async_trait;
-    use lattice_core::application::ports::document_repository_port::DocumentRepositoryPort;
-    use lattice_core::application::ports::llm_port::CompletionResponse;
-    use lattice_core::application::ports::repository_port::RepositoryPort;
-    use lattice_core::domain::conversation::DocumentReference;
-    use lattice_core::domain::entities::document::{
-        Category, DocumentStatus, Language, StoredDocument,
-    };
-    use lattice_core::domain::entities::Document;
-    use lattice_core::domain::value_objects::checksum::Checksum;
-    use lattice_core::shared::types::{DocumentId, ValidatedFilePath};
-
-    struct OneDocRepo(Document);
-
-    #[async_trait]
-    impl RepositoryPort<Document> for OneDocRepo {
-        async fn find_by_id(&self, id: &str) -> Result<Option<Document>> {
-            Ok((self.0.id().to_string() == id).then(|| self.0.clone()))
-        }
-        async fn find_all(&self) -> Result<Vec<Document>> {
-            Ok(vec![self.0.clone()])
-        }
-        async fn save(&self, _entity: &Document) -> Result<()> {
-            Ok(())
-        }
-        async fn save_batch(&self, _entities: &[Document]) -> Result<()> {
-            Ok(())
-        }
-        async fn delete(&self, _id: &str) -> Result<()> {
-            Ok(())
-        }
-        async fn delete_batch(&self, _ids: &[&str]) -> Result<()> {
-            Ok(())
-        }
-        async fn count(&self) -> Result<usize> {
-            Ok(1)
-        }
-        async fn exists(&self, id: &str) -> Result<bool> {
-            Ok(self.0.id().to_string() == id)
-        }
-    }
-
-    #[async_trait]
-    impl DocumentRepositoryPort for OneDocRepo {
-        async fn find_file_path_by_id(&self, _document_id: &str) -> Result<String> {
-            Ok(self.0.file_path().to_string_lossy().into_owned())
-        }
-        async fn document_exists(&self, document_id: &str) -> Result<bool> {
-            Ok(self.0.id().to_string() == document_id)
-        }
-        async fn find_id_by_path(&self, _file_path: &str) -> Result<Option<String>> {
-            Ok(None)
-        }
-        async fn delete(&self, _document_id: &str) -> Result<()> {
-            Ok(())
-        }
-        async fn delete_and_release_blob(&self, _document_id: &str) -> Result<()> {
-            Ok(())
-        }
-        async fn find_by_checksum(&self, _checksum: &Checksum) -> Result<Option<Document>> {
-            Ok(None)
-        }
-        async fn count_documents(&self) -> Result<i64> {
-            Ok(1)
-        }
-        async fn count_chunks(&self) -> Result<i64> {
-            Ok(0)
-        }
-        async fn find_all_paginated(
-            &self,
-            _page: lattice_core::shared::persistence::Page,
-        ) -> Result<Vec<Document>> {
-            Ok(vec![self.0.clone()])
-        }
-    }
-
-    impl lattice_core::application::ports::DocumentRepository for OneDocRepo {}
-
-    fn recent_doc(id: &str, title: &str) -> Document {
-        let now = chrono::Utc::now();
-        Document::with_id(StoredDocument {
-            id: DocumentId::from_string(id.to_string()).unwrap(),
-            file_path: ValidatedFilePath::new(std::path::PathBuf::from(format!("/vault/{title}")))
-                .unwrap(),
-            file_name: title.to_string(),
-            file_type: Some("md".to_string()),
-            mime_type: "text/markdown".to_string(),
-            size_bytes: 128,
-            modified_at: now,
-            indexed_at: now,
-            checksum: Checksum::new("a".repeat(64)).unwrap(),
-            status: DocumentStatus::Indexed,
-            error_message: None,
-            language: Language::English,
-            category: Category::Notes,
-            quality_score: 1.0,
-            access_count: 0,
-            last_accessed_at: None,
-            word_count: 20,
-            content: "Notes".to_string(),
-        })
-    }
-
-    #[tokio::test]
-    async fn resolve_router_decision_skips_router_model_when_skip_auto_kb_is_set() {
-        let doc = recent_doc("doc-1", "ProjectNotes.md");
-        let refs = vec![DocumentReference {
-            document_id: "doc-1".to_string(),
-            chunk_id: None,
-            relevance_score: Some(0.9),
-            added_at: chrono::Utc::now(),
-        }];
-        let router_settings = RouterSettingsDto {
-            enabled: true,
-            ..RouterSettingsDto::default()
-        };
-        let cancel = tokio_util::sync::CancellationToken::new();
-
-        // Control: with skip_auto_kb = false and a recent document, the router model is loaded.
-        let control_runtime = FakeRuntime {
-            documents: Some(Arc::new(OneDocRepo(doc.clone()))),
-            router_llm: Some(Scripted::new([CompletionResponse::from_text(
-                r#"{"action":"use_last_document","confidence":0.95,"rationale":"follow-up"}"#,
-            )])),
-            ..FakeRuntime::default()
-        };
-        let control_recorder = TurnRecorder::silent("conv-1", "req-control");
-        let (control_outcome, control_record) = resolve_router_decision(
-            &control_runtime,
-            &refs,
-            "tell me more about that",
-            SearchFlags::default(),
-            None,
-            &router_settings,
-            &control_recorder,
-            cancel.clone(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(control_runtime.loader_counts.router_llm_calls(), 1);
-        assert_eq!(control_outcome.action, RouterAction::UseLastDocument);
-        assert!(control_record.is_some());
-
-        // Under test: with skip_auto_kb = true, the router model is never loaded and
-        // the decision stays NewSearch with no TurnRouterDto record.
-        let skipped_runtime = FakeRuntime {
-            documents: Some(Arc::new(OneDocRepo(doc))),
-            router_llm: Some(Scripted::new([CompletionResponse::from_text(
-                r#"{"action":"use_last_document","confidence":0.95,"rationale":"follow-up"}"#,
-            )])),
-            ..FakeRuntime::default()
-        };
-        let skipped_recorder = TurnRecorder::silent("conv-1", "req-skip");
-        let (skipped_outcome, skipped_record) = resolve_router_decision(
-            &skipped_runtime,
-            &refs,
-            "hello!",
-            SearchFlags {
-                skip_auto_kb: true,
-                ..SearchFlags::default()
-            },
-            None,
-            &router_settings,
-            &skipped_recorder,
-            cancel,
-        )
-        .await
-        .unwrap();
-        assert_eq!(skipped_runtime.loader_counts.router_llm_calls(), 0);
-        assert_eq!(skipped_outcome.action, RouterAction::NewSearch);
-        assert!(skipped_outcome.recent_doc_meta.is_none());
-        assert!(skipped_record.is_none());
     }
 }

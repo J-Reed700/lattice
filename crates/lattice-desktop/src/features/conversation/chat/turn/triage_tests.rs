@@ -1,6 +1,7 @@
 //! Unit tests for unified turn triage, zero-LLM fast paths, and custom router fallback.
 use super::classify;
 use super::prepare::PreparedTurn;
+use super::tests::Folder;
 use super::*;
 use crate::features::conversation::chat::retrieval::{
     run_retrieval_pipeline_with_scope, RecentDocumentMetadata, SpaceDocumentScope,
@@ -468,4 +469,154 @@ async fn malformed_triage_output_falls_back_to_new_search_never_clarify() {
     assert!(route.record.is_none());
     assert_eq!(utility_llm.requests().len(), 1);
     assert_eq!(router_llm.requests().len(), 0);
+}
+
+/// A turn the user marked as a follow-up goes back to the recent document only
+/// when the router is on. With it off, the turn searches afresh like any other.
+#[tokio::test]
+async fn a_followup_with_the_router_off_searches_afresh() {
+    let utility_llm = Scripted::new([]);
+    let router_llm = Scripted::new([]);
+    let runtime = FakeRuntime {
+        utility_llm: Some(utility_llm.clone()),
+        router_llm: Some(router_llm.clone()),
+        ..FakeRuntime::default()
+    };
+    let prefs = ToolPreferences {
+        followup_mode: true,
+        ..Default::default()
+    };
+    let mut turn = turn_with_recent_doc(&runtime, Scripted::new([]), "Go on");
+    turn.requested_flags = SearchFlags::from_preferences(Some(&prefs));
+    turn.settings.llm.router.enabled = false;
+
+    let mut metrics = ConversationFlowTimingMetrics::default();
+    let (_inferred, route) = classify::triage_turn(&runtime, &turn, Some(&prefs), &mut metrics)
+        .await
+        .unwrap();
+
+    assert_eq!(route.decision.action, RouterAction::NewSearch);
+    assert!(route.record.is_none());
+    assert_eq!(utility_llm.requests().len(), 0);
+    assert_eq!(router_llm.requests().len(), 0);
+    assert_eq!(runtime.loader_counts.router_llm_calls(), 0);
+}
+
+/// An Explorer turn reads the library only when the user points it there.
+/// Marking the turn as a follow-up does not, so the library document the
+/// conversation last read stays closed.
+#[tokio::test]
+async fn an_explorer_followup_leaves_the_library_document_closed() {
+    let utility_llm = Scripted::new([]);
+    let router_llm = Scripted::new([]);
+    let runtime = FakeRuntime {
+        utility_llm: Some(utility_llm.clone()),
+        router_llm: Some(router_llm.clone()),
+        ..FakeRuntime::default()
+    };
+    let prefs = ToolPreferences {
+        followup_mode: true,
+        ..Default::default()
+    };
+    let mut turn = turn_with_recent_doc(&runtime, Scripted::new([]), "Go on");
+    turn.requested_flags = SearchFlags::from_preferences(Some(&prefs));
+    turn.source = Some(Arc::new(Folder));
+
+    let mut metrics = ConversationFlowTimingMetrics::default();
+    let (_inferred, route) = classify::triage_turn(&runtime, &turn, Some(&prefs), &mut metrics)
+        .await
+        .unwrap();
+
+    assert_eq!(route.decision.action, RouterAction::NewSearch);
+    assert!(route.decision.recent_doc_meta.is_none());
+    assert!(!route.decision.router_may_search);
+    assert!(route.record.is_none());
+    assert_eq!(utility_llm.requests().len(), 0);
+    assert_eq!(router_llm.requests().len(), 0);
+    assert_eq!(runtime.loader_counts.router_llm_calls(), 0);
+}
+
+/// A greeting needs no model to say what it needs: it skips the vault search,
+/// except in strict mode, where every answer comes from the sources.
+#[tokio::test]
+async fn a_greeting_skips_the_vault_search_except_in_strict_mode() {
+    for (strict_sources, skips_vault) in [(false, true), (true, false)] {
+        let utility_llm = Scripted::new([]);
+        let router_llm = Scripted::new([]);
+        let runtime = FakeRuntime {
+            utility_llm: Some(utility_llm.clone()),
+            router_llm: Some(router_llm.clone()),
+            ..FakeRuntime::default()
+        };
+        let prefs = ToolPreferences {
+            strict_sources,
+            ..Default::default()
+        };
+        let mut turn = PreparedTurn::for_test(
+            "greeting-conv",
+            "greeting-turn",
+            Scripted::new([]),
+            runtime.conversations.clone(),
+            runtime.turn_cancellation.clone(),
+        )
+        .unwrap();
+        turn.message = "hello!".to_string();
+        turn.requested_flags = SearchFlags::from_preferences(Some(&prefs));
+
+        let mut metrics = ConversationFlowTimingMetrics::default();
+        let (inferred, route) = classify::triage_turn(&runtime, &turn, Some(&prefs), &mut metrics)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            inferred.flags.skip_auto_kb, skips_vault,
+            "strict: {strict_sources}"
+        );
+        assert_eq!(
+            route.decision.action,
+            RouterAction::NewSearch,
+            "strict: {strict_sources}"
+        );
+        assert_eq!(utility_llm.requests().len(), 0, "strict: {strict_sources}");
+        assert_eq!(
+            runtime.loader_counts.utility_loader_calls(),
+            0,
+            "strict: {strict_sources}"
+        );
+        assert_eq!(
+            runtime.loader_counts.router_llm_calls(),
+            0,
+            "strict: {strict_sources}"
+        );
+    }
+}
+
+/// A turn that skips the vault never asks the router, custom template or not.
+#[tokio::test]
+async fn custom_router_prompt_template_skips_the_router_when_the_turn_skips_the_vault() {
+    let utility_llm = Scripted::new([CompletionResponse::from_text(
+        r#"{"needsKnowledgeBase":false,"needsWeb":false,"isFollowup":false,"confidence":0.95}"#,
+    )]);
+    let router_llm = Scripted::new([]);
+    let runtime = FakeRuntime {
+        utility_llm: Some(utility_llm.clone()),
+        router_llm: Some(router_llm.clone()),
+        ..FakeRuntime::default()
+    };
+    let mut turn = turn_with_recent_doc(&runtime, Scripted::new([]), "What is a hash map?");
+    turn.settings.llm.router.prompt_template =
+        "Custom router: {query} / {recent_document_title}".to_string();
+
+    let mut metrics = ConversationFlowTimingMetrics::default();
+    let (inferred, route) = classify::triage_turn(&runtime, &turn, None, &mut metrics)
+        .await
+        .unwrap();
+
+    assert!(inferred.flags.skip_auto_kb);
+    assert_eq!(route.decision.action, RouterAction::NewSearch);
+    assert!(route.decision.recent_doc_meta.is_none());
+    assert!(route.record.is_none());
+    assert_eq!(utility_llm.requests().len(), 1);
+    assert_eq!(router_llm.requests().len(), 0);
+    assert_eq!(runtime.loader_counts.router_llm_calls(), 0);
 }
