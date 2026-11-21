@@ -372,7 +372,7 @@ Do not answer from general knowledge. Explain this clearly in one sentence and o
         )
     }
 
-    /// One sentence saying what happened to the user's documents this turn. A
+    /// What happened to the user's documents this turn, in a sentence or two. A
     /// search that found nothing, a vault with nothing in it, an unreachable vault
     /// and evidence cut for room are different outcomes and must not be conflated.
     fn retrieval_note(&self) -> String {
@@ -382,18 +382,29 @@ to carry any of it. Say so, and use the document search and read tools if they a
 rather than describing this as a search that found nothing."
                 .to_string();
         }
-        if let Some(reason) = self.kb_unavailable_reason.as_deref() {
-            return format!(
+        let outcome = if let Some(reason) = self.kb_unavailable_reason.as_deref() {
+            format!(
                 "Their documents were not searched for this turn, because {reason}. Do not describe this as a search that found nothing."
-            );
+            )
+        } else if self.kb_attempted {
+            "Their documents were searched for this turn and no passage came back that bears on the question."
+                .to_string()
+        } else {
+            "No passages from their documents were available for this turn.".to_string()
+        };
+        if self.user_requested_kb {
+            format!("{outcome} {REQUESTED_DOCUMENTS_NOT_BACKING_NOTE}")
+        } else {
+            outcome
         }
-        if self.kb_attempted {
-            return "Their documents were searched for this turn and no passage came back that bears on the question."
-                .to_string();
-        }
-        "No passages from their documents were available for this turn.".to_string()
     }
 }
+
+/// Closes the outcome of a turn whose user asked for the answer to come from
+/// their documents when no passage backs it.
+const REQUESTED_DOCUMENTS_NOT_BACKING_NOTE: &str =
+    "The user asked for this answer to come from their documents, so say plainly that it is \
+not backed by their documents, and offer a concrete next step.";
 
 /// The standing instruction that opens every evidence-carrying message. It
 /// names the latest message as the one to answer; "the ongoing question" makes
