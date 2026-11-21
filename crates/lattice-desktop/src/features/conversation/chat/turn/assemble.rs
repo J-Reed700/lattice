@@ -735,7 +735,7 @@ pub(super) fn offered_tools(
     let mut turn_tools =
         history_tools::tools_for_turn(selected_tools, flags.closed_book, supports_tools);
     // An Explorer turn searches the library only when the user turns it on
-    // (`classify_turn`); reading a document the message names stays open.
+    // (`triage_turn_with_scope`); reading a document the message names stays open.
     if source.is_some_and(|source| !source.policy().offers_library_tools) && !flags.force_kb_search
     {
         turn_tools.retain(|tool| !LIBRARY_TOOL_NAMES.contains(&tool.name.as_str()));

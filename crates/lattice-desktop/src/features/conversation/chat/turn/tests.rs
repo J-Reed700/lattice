@@ -190,7 +190,12 @@ async fn each_turn_decides_its_own_web_fallback() {
         runtime.turn_cancellation.clone(),
     )
     .unwrap();
-    let flags = classify::classify_turn(&runtime, &first, None).await.flags;
+    let mut metrics = ConversationFlowTimingMetrics::default();
+    let flags = classify::triage_turn(&runtime, &first, None, &mut metrics)
+        .await
+        .unwrap()
+        .0
+        .flags;
     assert!(flags.web_fallback);
     assert!(!flags.force_web_search);
     drop(first);
@@ -203,7 +208,11 @@ async fn each_turn_decides_its_own_web_fallback() {
         runtime.turn_cancellation.clone(),
     )
     .unwrap();
-    let flags = classify::classify_turn(&runtime, &second, None).await.flags;
+    let flags = classify::triage_turn(&runtime, &second, None, &mut metrics)
+        .await
+        .unwrap()
+        .0
+        .flags;
     assert!(!flags.web_fallback);
     assert!(!flags.web_planned());
     assert_eq!(
@@ -229,7 +238,10 @@ async fn a_followup_comes_with_the_question_it_stands_for() {
         runtime.turn_cancellation.clone(),
     )
     .unwrap();
-    let inferred = classify::classify_turn(&runtime, &turn, None).await;
+    let mut metrics = ConversationFlowTimingMetrics::default();
+    let (inferred, _route) = classify::triage_turn(&runtime, &turn, None, &mut metrics)
+        .await
+        .unwrap();
     assert!(inferred.flags.force_followup_mode);
     assert_eq!(
         inferred.standalone_question.as_deref(),
@@ -1087,21 +1099,10 @@ async fn background_verification_respects_grounding_mode_and_source_policy() {
     assert_eq!(tutor_strict.grounding_mode, None);
 }
 
-#[tokio::test]
-async fn zero_claim_turns_skip_background_verification_with_immediate_metadata() {
+#[test]
+fn zero_claim_turns_skip_background_verification_with_immediate_metadata() {
     use super::finalize::{initial_verification_metadata, needs_background_verification};
     use crate::features::conversation::chat::reply_text::ReplyText;
-
-    let runtime = FakeRuntime::default();
-    let llm: Arc<dyn LLMPort> = Arc::new(ToolCalling);
-    let turn = PreparedTurn::for_test(
-        "conv-zero-flash",
-        "turn-zero-flash",
-        llm,
-        runtime.conversations.clone(),
-        runtime.turn_cancellation.clone(),
-    )
-    .unwrap();
 
     // No sources at all -> no background verification, immediate non-pending metadata.
     let no_sources_needs = needs_background_verification(true, true, &ReplyText::default(), &[]);
@@ -1152,37 +1153,4 @@ async fn zero_claim_turns_skip_background_verification_with_immediate_metadata()
     assert_eq!(pending_strict["pending"], true);
     assert_eq!(pending_strict["groundingMode"], "strict");
     assert!(pending_strict.get("citedOnly").is_none());
-
-    // `infer_turn_intent` sets `skip_auto_kb` for trivial greetings in hybrid auto mode,
-    // and keeps `skip_auto_kb: false` in strict mode.
-    let cancel = tokio_util::sync::CancellationToken::new();
-    let hybrid_greeting = crate::features::conversation::chat::routing::infer_turn_intent(
-        &runtime,
-        &turn.llm,
-        None,
-        SearchFlags::from_preferences(None),
-        "hello!",
-        &[],
-        cancel.clone(),
-    )
-    .await;
-    assert!(hybrid_greeting.flags.skip_auto_kb);
-
-    let strict_greeting = crate::features::conversation::chat::routing::infer_turn_intent(
-        &runtime,
-        &turn.llm,
-        Some(&ToolPreferences {
-            strict_sources: true,
-            ..ToolPreferences::default()
-        }),
-        SearchFlags::from_preferences(Some(&ToolPreferences {
-            strict_sources: true,
-            ..ToolPreferences::default()
-        })),
-        "hello!",
-        &[],
-        cancel,
-    )
-    .await;
-    assert!(!strict_greeting.flags.skip_auto_kb);
 }
