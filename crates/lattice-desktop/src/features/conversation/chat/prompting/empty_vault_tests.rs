@@ -112,6 +112,50 @@ fn hybrid_user_requested_kb_without_hits_still_allows_general_knowledge() {
 }
 
 #[test]
+fn a_requested_search_that_found_nothing_says_the_answer_is_not_backed_by_their_documents() {
+    let settings = LLMPromptSettingsDto::default();
+    let flags = SearchFlags {
+        force_kb_search: true,
+        user_requested_kb: true,
+        strict_sources: false,
+        ..SearchFlags::default()
+    };
+    let prompt = PromptMessageBuilder::new(&settings, "What is TCP?", false, flags)
+        .with_kb_attempted(true)
+        .build();
+
+    assert!(prompt.contains("not backed by their documents"), "{prompt}");
+}
+
+#[test]
+fn a_requested_search_that_could_not_run_says_why_and_that_the_answer_is_not_backed() {
+    let settings = LLMPromptSettingsDto::default();
+    let flags = SearchFlags {
+        user_requested_kb: true,
+        ..SearchFlags::default()
+    };
+    let prompt = PromptMessageBuilder::new(&settings, "What is TCP?", false, flags)
+        .with_kb_unavailable_reason(Some("the vault is still indexing".to_string()))
+        .build();
+
+    assert!(prompt.contains("the vault is still indexing"), "{prompt}");
+    assert!(prompt.contains("not backed by their documents"), "{prompt}");
+}
+
+#[test]
+fn a_turn_that_did_not_ask_for_its_documents_is_not_told_to_say_so() {
+    let settings = LLMPromptSettingsDto::default();
+    let prompt = PromptMessageBuilder::new(&settings, "What is TCP?", false, flags())
+        .with_kb_attempted(true)
+        .build();
+
+    assert!(
+        !prompt.contains("not backed by their documents"),
+        "{prompt}"
+    );
+}
+
+#[test]
 fn strict_mode_without_hits_refuses_general_knowledge() {
     let settings = LLMPromptSettingsDto::default();
     let flags = SearchFlags {
