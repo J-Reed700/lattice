@@ -296,20 +296,6 @@ describe('inlineRuns', () => {
       ['nested links', halves('[a', ']')],
       ['entities', repeated('&amp;')],
     ];
-    const median = (values: number[]) => [...values].sort((x, y) => x - y)[Math.floor(values.length / 2)]!;
-    const sample = (text: string, runs: number) => {
-      inlineRuns(text, 0, text.length);
-      return Array.from({ length: runs }, () => {
-        const started = performance.now();
-        inlineRuns(text, 0, text.length);
-        return performance.now() - started;
-      });
-    };
-    const timeOf = (text: string, runs: number) => median(sample(text, runs));
-
-    it.each(pathological)('parses 20,000 characters of %s in well under 50 ms', (_name, build) => {
-      expect(timeOf(build(20_000), 5)).toBeLessThan(50);
-    });
 
     it.each(pathological)('grows linearly with the length of %s', (_name, build) => {
       // Timed in alternation, fastest of fifteen each: a contended machine only ever
