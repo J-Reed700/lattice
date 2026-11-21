@@ -94,7 +94,7 @@ export class SpeechPlayer {
     const session: Session = { sourceId, cancelled: false, nodes: [], endsAt: 0, allScheduled: false, caughtUp: true };
     this.session = session;
     this.publish({ sourceId, status: 'loading', error: null });
-    if (output.state !== 'running') await output.resume();
+    await output.resume();
 
     try {
       for await (const piece of pieces) {
