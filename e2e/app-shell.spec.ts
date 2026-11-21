@@ -270,8 +270,8 @@ for (const width of [1440, 620]) {
           const { request } = args as { request: StartJournalSynthesisRequestDto };
           const id = `synthesis-${synthesisCalls}`;
           results.set(id, { synthesis: synthesisCalls === 1 ? 'Canopy shade helps the forest retain moisture.' : 'The second synthesis adds a comparison of tree species.', entryCount: 1, chunkCount: 2, scope: 'conversation', conversationIds: [conversation.id], citations: [], sources: [] });
-          let job: JobDto = { id, kind: 'journal.synthesis', subjectId: 'destination', status: 'pending', progressCurrent: 0, progressTotal: 100, progressMessage: 'Waiting to synthesize', activity: null, resultRef: null, errorCode: null, error: null, retryOfJobId: null, retryCount: 0, retryNotBefore: null, createdAt: Date.now(), startedAt: Date.now(), finishedAt: null };
-          const publish = (patch: Partial<JobDto>) => { job = { ...job, ...patch }; ipc.emit('jobs://status', job); };
+          let job: JobDto = { id, kind: 'journal.synthesis', subjectId: 'destination', status: 'pending', progressCurrent: 0, progressTotal: 100, progressMessage: 'Waiting to synthesize', activity: null, resultRef: null, errorCode: null, error: null, retryOfJobId: null, retryCount: 0, retryNotBefore: null, createdAt: Date.now(), startedAt: Date.now(), finishedAt: null, revision: 0 };
+          const publish = (patch: Partial<JobDto>) => { job = { ...job, ...patch, revision: job.revision + 1 }; ipc.emit('jobs://status', job); };
           const report = (stage: string, chunkIndex: number | null) => publish({ status: 'running', activity: { stage, entryCount: 1, chunkCount: 2, chunkIndex } });
           setTimeout(() => report('gathering', null), 0);
           window.addEventListener('test:synthesis-reading', () => report('reading', 1), { once: true });
@@ -1467,7 +1467,7 @@ test('restores a 45-PDF import and updates progress as files finish', async ({ p
     window.__LATTICE_IPC__.emit('jobs://status', {
       id: 'job', kind: 'batch.file_import', subjectId: null, status: 'running', progressCurrent: 3, progressTotal: 45,
       progressMessage: 'Imported 3 of 45 files', activity: { completed: 3, failed: 0 }, resultRef: null, errorCode: null,
-      error: null, retryOfJobId: null, retryCount: 0, retryNotBefore: null, createdAt: 1, startedAt: 1, finishedAt: null,
+      error: null, retryOfJobId: null, retryCount: 0, retryNotBefore: null, createdAt: 1, startedAt: 1, finishedAt: null, revision: 1,
     });
   });
   await expect(page.getByText('3 of 45 files processed · 7%')).toBeVisible();
@@ -1686,7 +1686,7 @@ test('chat exposes provider errors and persisted PDF import failures', async ({ 
           ipc.emit('jobs://status', {
             id: job.jobId, kind: 'batch.file_import', subjectId: null, status: job.status, progressCurrent: 1, progressTotal: 1,
             progressMessage: job.status, activity: null, resultRef: null, errorCode: null, error: null, retryOfJobId: null,
-            retryCount: 0, retryNotBefore: null, createdAt: 1, startedAt: 1, finishedAt: 2,
+            retryCount: 0, retryNotBefore: null, createdAt: 1, startedAt: 1, finishedAt: 2, revision: 1,
           });
         }, 600);
         return { newJobId: job.jobId, retriedCount: 1 };

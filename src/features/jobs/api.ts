@@ -69,45 +69,8 @@ export const jobsQueryOptions = (kinds: readonly string[]) =>
     staleTime: Infinity,
   });
 
-function statusRank(status: JobDto['status']): number {
-  if (status === 'pending') return 0;
-  if (status === 'running') return 1;
-  return 2;
-}
-
 function pickMonotonicJob(existing: JobDto, incoming: JobDto): JobDto {
-  const existingFinished = isJobFinished(existing);
-  const incomingFinished = isJobFinished(incoming);
-  if (existingFinished && !incomingFinished) return existing;
-  if (!existingFinished && incomingFinished) return incoming;
-  if (existingFinished && incomingFinished) {
-    return (incoming.finishedAt ?? 0) < (existing.finishedAt ?? 0)
-      ? existing
-      : incoming;
-  }
-
-  // Both are non-finished (`pending` | `running`). A deferred retry increments
-  // `retryCount` and transitions `running` -> `pending`, so compare `retryCount`
-  // before status rank.
-  const existingRetries = existing.retryCount ?? 0;
-  const incomingRetries = incoming.retryCount ?? 0;
-  if (incomingRetries > existingRetries) return incoming;
-  if (incomingRetries < existingRetries) return existing;
-
-  const existingRank = statusRank(existing.status);
-  const incomingRank = statusRank(incoming.status);
-  if (incomingRank < existingRank) return existing;
-  if (incomingRank > existingRank) return incoming;
-
-  if (incomingRank === 1) {
-    const existingStart = existing.startedAt ?? 0;
-    const incomingStart = incoming.startedAt ?? 0;
-    if (incomingStart < existingStart) return existing;
-    if (incomingStart === existingStart && incoming.progressCurrent < existing.progressCurrent) {
-      return existing;
-    }
-  }
-  return incoming;
+  return incoming.revision >= existing.revision ? incoming : existing;
 }
 
 function capFinishedJobs(jobs: JobDto[]): JobDto[] {
