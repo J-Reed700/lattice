@@ -175,10 +175,10 @@ pub(super) async fn run_retrieval_pipeline(
     let mut external_phase: Option<ExternalPhaseOutcome> = None;
     let kb_result = if kb_alongside_external {
         // The external phase interprets the turn itself instead of waiting on
-        // KB's interpretation, so it starts from the raw message. `allow_lookup`
-        // is true on the promise of `kb_can_run_alongside_external`: no KB
-        // result can close the gate on a turn that takes this path. The merge
-        // below re-checks the gate and complains if that promise ever breaks.
+        // KB's interpretation, so it starts from the raw message. It searches on
+        // the promise of `kb_can_run_alongside_external`: no KB result can close
+        // the gate on a turn that takes this path. The merge below re-checks the
+        // gate and complains if that promise ever breaks.
         let external_base = outcome.interpretation.clone();
         let interpret = external_base.hyde_text.is_none();
         let external_future = async {
@@ -192,7 +192,6 @@ pub(super) async fn run_retrieval_pipeline(
                         &utility_llm,
                         &external_base,
                         interpret,
-                        true,
                         WebSearchReason::Requested,
                     )
                     .await,
@@ -308,13 +307,7 @@ pub(super) async fn run_retrieval_pipeline(
         let interpret = outcome.interpretation.hyde_text.is_none();
         external_phase = Some(
             external
-                .run(
-                    &utility_llm,
-                    &outcome.interpretation,
-                    interpret,
-                    allow_external_lookup,
-                    web_reason,
-                )
+                .run(&utility_llm, &outcome.interpretation, interpret, web_reason)
                 .await,
         );
     }

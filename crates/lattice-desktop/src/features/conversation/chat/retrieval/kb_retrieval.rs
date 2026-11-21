@@ -60,25 +60,17 @@ pub(super) async fn run_kb_retrieval(
     };
     timings.kb_scope_load_ms = scope_load_ms;
     let Some(scope) = scope else {
-        timings.kb_total_ms = super::elapsed_ms(kb_start);
         warn!(
             conversation_id = conversation_id,
             "Unable to resolve hard space scope; failing closed before retrieval"
         );
-        return super::KbRetrievalOutcome {
-            interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
-                validated_message.to_string(),
-                QueryType::Question,
-            ),
-            search_response: super::empty_search_response(),
-            sources: Vec::new(),
-            low_confidence: true,
-            kb_unavailable_reason: Some("the conversation scope could not be resolved".to_string()),
+        return searched_nothing(
+            validated_message,
+            kb_start,
             timings,
-            searched_documents: 0,
-            scope_is_linked: false,
-            sufficiency: None,
-        };
+            Some("the conversation scope could not be resolved".to_string()),
+            false,
+        );
     };
     // The exact set the hard filter allows. Reported to the UI verbatim so
     // "Searched N documents" is a fact, not a corpus-sized guess.
@@ -86,71 +78,41 @@ pub(super) async fn run_kb_retrieval(
     let scope_is_linked = scope.space_id != super::DEFAULT_SPACE_ID;
 
     if focus.blocks_everything() {
-        timings.kb_total_ms = super::elapsed_ms(kb_start);
         warn!(
             conversation_id = conversation_id,
             space_id = scope.space_id.as_str(),
             "Focus documents are outside this conversation's space; searching nothing"
         );
-        return super::KbRetrievalOutcome {
-            interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
-                validated_message.to_string(),
-                QueryType::Question,
-            ),
-            search_response: super::empty_search_response(),
-            sources: Vec::new(),
-            low_confidence: true,
-            kb_unavailable_reason: Some(focus.unavailable_reason().to_string()),
+        return searched_nothing(
+            validated_message,
+            kb_start,
             timings,
-            searched_documents: 0,
+            Some(focus.unavailable_reason().to_string()),
             scope_is_linked,
-            sufficiency: None,
-        };
+        );
     }
 
     if scope.document_ids.is_empty() {
-        timings.kb_total_ms = super::elapsed_ms(kb_start);
         info!(
             conversation_id = conversation_id,
             space_id = scope.space_id.as_str(),
             "Space scope contains no indexed documents; skipping KB retrieval"
         );
-        return super::KbRetrievalOutcome {
-            interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
-                validated_message.to_string(),
-                QueryType::Question,
-            ),
-            search_response: super::empty_search_response(),
-            sources: Vec::new(),
-            low_confidence: true,
-            kb_unavailable_reason: Some(if scope.space_id == super::DEFAULT_SPACE_ID {
+        return searched_nothing(
+            validated_message,
+            kb_start,
+            timings,
+            Some(if scope.space_id == super::DEFAULT_SPACE_ID {
                 "the vault has no indexed documents yet".to_string()
             } else {
                 "no indexed documents are assigned to this conversation’s space".to_string()
             }),
-            timings,
-            searched_documents: 0,
-            scope_is_linked: scope.space_id != super::DEFAULT_SPACE_ID,
-            sufficiency: None,
-        };
+            scope_is_linked,
+        );
     }
 
     if cancel.is_cancelled() {
-        timings.kb_total_ms = super::elapsed_ms(kb_start);
-        return super::KbRetrievalOutcome {
-            interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
-                validated_message.to_string(),
-                QueryType::Question,
-            ),
-            search_response: super::empty_search_response(),
-            sources: Vec::new(),
-            low_confidence: true,
-            kb_unavailable_reason: None,
-            timings,
-            searched_documents: 0,
-            scope_is_linked,
-            sufficiency: None,
-        };
+        return searched_nothing(validated_message, kb_start, timings, None, scope_is_linked);
     }
 
     let repository = container.chat_records();
@@ -173,21 +135,7 @@ pub(super) async fn run_kb_retrieval(
         }
     };
     if cancel.is_cancelled() {
-        timings.kb_total_ms = super::elapsed_ms(kb_start);
-        return super::KbRetrievalOutcome {
-            interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
-                validated_message.to_string(),
-                QueryType::Question,
-            ),
-            search_response: super::empty_search_response(),
-            sources: Vec::new(),
-            low_confidence: true,
-            kb_unavailable_reason: None,
-            timings,
-            searched_documents: 0,
-            scope_is_linked,
-            sufficiency: None,
-        };
+        return searched_nothing(validated_message, kb_start, timings, None, scope_is_linked);
     }
     let passage_chars = match passage_chars_result {
         Ok(measured) => measured,
@@ -770,6 +718,32 @@ async fn planner_skip_plan(
     }
     let anchors = super::load_followup_turn_anchor_terms(conv_service, conversation_id).await;
     super::corpus_plan::followup_plan(validated_message, &anchors, catalog)
+}
+
+/// What a search that read nothing reports: no passages, low confidence, and
+/// the reason to give the user when there is one.
+fn searched_nothing(
+    message: &str,
+    kb_start: Instant,
+    mut timings: super::RetrievalSubTimingMetrics,
+    kb_unavailable_reason: Option<String>,
+    scope_is_linked: bool,
+) -> super::KbRetrievalOutcome {
+    timings.kb_total_ms = super::elapsed_ms(kb_start);
+    super::KbRetrievalOutcome {
+        interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
+            message.to_string(),
+            QueryType::Question,
+        ),
+        search_response: super::empty_search_response(),
+        sources: Vec::new(),
+        low_confidence: true,
+        kb_unavailable_reason,
+        timings,
+        searched_documents: 0,
+        scope_is_linked,
+        sufficiency: None,
+    }
 }
 
 #[cfg(test)]
