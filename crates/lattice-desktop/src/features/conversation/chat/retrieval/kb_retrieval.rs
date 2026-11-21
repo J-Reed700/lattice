@@ -133,13 +133,61 @@ pub(super) async fn run_kb_retrieval(
         };
     }
 
+    if cancel.is_cancelled() {
+        timings.kb_total_ms = super::elapsed_ms(kb_start);
+        return super::KbRetrievalOutcome {
+            interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
+                validated_message.to_string(),
+                QueryType::Question,
+            ),
+            search_response: super::empty_search_response(),
+            sources: Vec::new(),
+            low_confidence: true,
+            kb_unavailable_reason: None,
+            timings,
+            searched_documents: 0,
+            scope_is_linked,
+            sufficiency: None,
+        };
+    }
+
     let repository = container.chat_records();
     // How deep to read: as many passages as the evidence budget can carry, at
     // what a passage of this library actually measures, up to the shortlist.
-    let passage_chars = match repository
-        .retrieval_mean_chunk_chars(&scope.document_ids)
-        .await
-    {
+    // Overlap cold embedding load with the mean-chunk-chars query so an empty
+    // space or focus-blocked turn never wakes the embedding model.
+    let (embedding_result, passage_chars_result) = tokio::join!(
+        container.get_or_load_embedding(),
+        repository.retrieval_mean_chunk_chars(&scope.document_ids),
+    );
+    let embedding_unavailable_reason = match embedding_result {
+        Ok(_) => None,
+        Err(e) => {
+            tracing::debug!(
+                error = %e,
+                "Embedding model not available for RAG — keyword search only"
+            );
+            Some("the embedding model is not ready".to_string())
+        }
+    };
+    if cancel.is_cancelled() {
+        timings.kb_total_ms = super::elapsed_ms(kb_start);
+        return super::KbRetrievalOutcome {
+            interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
+                validated_message.to_string(),
+                QueryType::Question,
+            ),
+            search_response: super::empty_search_response(),
+            sources: Vec::new(),
+            low_confidence: true,
+            kb_unavailable_reason: None,
+            timings,
+            searched_documents: 0,
+            scope_is_linked,
+            sufficiency: None,
+        };
+    }
+    let passage_chars = match passage_chars_result {
         Ok(measured) => measured,
         Err(error) => {
             warn!(%error, "Could not measure passage length; assuming the chunker's target");
@@ -255,7 +303,7 @@ pub(super) async fn run_kb_retrieval(
     .await;
     timings.kb_search_plan_ms = super::elapsed_ms(search_start);
     timings.kb_query_execution_ms = timings.kb_search_plan_ms;
-    let (search_response, kb_unavailable_reason) = match response {
+    let (search_response, mut kb_unavailable_reason) = match response {
         Ok(response) => {
             search_step.done(Some(passage_count_line(&response.results)));
             (response, None)
@@ -439,6 +487,11 @@ pub(super) async fn run_kb_retrieval(
             warn!(error = %e, "Failed to persist conversation document references");
         }
         timings.kb_persist_references_ms = super::elapsed_ms(persist_refs_start);
+    }
+    if let Some(reason) = embedding_unavailable_reason {
+        if sources.is_empty() {
+            kb_unavailable_reason.get_or_insert(reason);
+        }
     }
     timings.kb_total_ms = super::elapsed_ms(kb_start);
 

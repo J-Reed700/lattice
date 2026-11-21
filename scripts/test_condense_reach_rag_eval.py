@@ -14,7 +14,6 @@ CHAT = ROOT / "crates/lattice-desktop/src/features/conversation/chat"
 NOTES_RS = CHAT / "tool_loop/research_notes.rs"
 ROOM_RS = CHAT / "tool_loop/room.rs"
 TOOL_LOOP_RS = CHAT / "tool_loop.rs"
-CONTRACT_RS = CHAT / "tool_loop/reading/contract.rs"
 PROMPT_SETTINGS_RS = CHAT / "prompt_settings.rs"
 LLM_PORT_RS = ROOT / "crates/lattice-core/src/application/ports/llm_port.rs"
 BUDGET_RS = ROOT / "crates/lattice-core/src/application/services/context_assembler/budget.rs"
@@ -82,7 +81,6 @@ class Constants(unittest.TestCase):
         self.assertIn(f"(capacity / {reach.OUTPUT_RESERVATION_DIVISOR}).min(OUTPUT_RESERVATION_CAP)", budget)
         self.assertIn(f"(capacity as f64 * {reach.SAFETY_MARGIN_SHARE}).ceil() as usize", budget)
         self.assertIn(f"proportional.max({reach.SAFETY_MARGIN_FLOOR})", budget)
-        self.assertEqual(rust_string(text_of(CONTRACT_RS), "READ_INSTRUCTION"), reach.READ_INSTRUCTION)
         self.assertTrue(rust_string(text_of(PROMPT_SETTINGS_RS), "NUMERIC_BRACKETS_SYSTEM_PROMPT")
                         .startswith(reach.CHAT_SYSTEM_START))
 

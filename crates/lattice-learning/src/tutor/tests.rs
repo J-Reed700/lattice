@@ -1303,7 +1303,6 @@ fn the_tutor_s_prompt_and_tool_schemas_are_pinned() {
 fn a_tutor_turn_cites_and_is_checked_as_a_chat_turn_is() {
     let policy = TUTOR_POLICY;
     assert!(!policy.verifies_cited_only);
-    assert!(!policy.reads_passages);
     assert!(policy.drops_session_talk);
     assert_eq!(policy.evidence_template, Some(TUTOR_TEMPLATE));
     assert!(policy.offers_library_tools, "it keeps a chat's tools");

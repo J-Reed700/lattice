@@ -17,6 +17,12 @@ const NUMERIC_BRACKETS_RAG_TEMPLATE: &str = "Answer the user's question using on
 /// The default system prompt that asked for numeric brackets.
 const NUMERIC_BRACKETS_SYSTEM_PROMPT: &str = "You are Lattice, a precise research assistant. Use the user's documents when available. Cite sources using numeric brackets like [1], [2], [3]. Never fabricate document IDs.";
 
+/// The strict default before rules moved after the question.
+const PREVIOUS_STRICT_RAG_TEMPLATE: &str = "Answer the user's question using only the provided context. Cite every factual statement supported by the context using bracketed labels like [s1], [s2], [s3]. If the excerpts are insufficient, use available document search/read tools before concluding that evidence is missing. If still unsupported, say it was not found in the excerpts searched and do not guess or claim the entire collection lacks it. Do not cite unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, name the document by its bracketed name in the context. For long documents, read on with read_more and the name each result gives.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
+
+/// The hybrid default before rules moved after the question.
+const PREVIOUS_HYBRID_RAG_TEMPLATE: &str = "Answer the user's question using the provided context first, citing every factual statement supported by a passage using bracketed labels like [s1], [s2], [s3]. If the excerpts are incomplete for a question about the user's documents, use available document search/read tools first. When the passages do not cover a general, conceptual, or public-knowledge question (or only cover part of it), answer naturally from general knowledge without adding citations to uncited claims. Never fabricate citations, never present general knowledge as coming from their documents, and never guess private facts about the user's own files, notes, policies, or projects that are not in the passages. Do not cite unrelated context or a source that does not support the associated statement. If you need to call get_document, name the document by its bracketed name in the context. For long documents, read on with read_more and the name each result gives.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
+
 pub(super) fn normalize_prompt_settings(
     mut prompt_settings: LLMPromptSettingsDto,
 ) -> LLMPromptSettingsDto {
@@ -47,6 +53,8 @@ pub(super) fn normalize_prompt_settings(
         || prompt_settings.rag_prompt_template == PREVIOUS_DEFAULT_RAG_TEMPLATE
         || prompt_settings.rag_prompt_template == ID_AND_OFFSET_RAG_TEMPLATE
         || prompt_settings.rag_prompt_template == NUMERIC_BRACKETS_RAG_TEMPLATE
+        || prompt_settings.rag_prompt_template == PREVIOUS_STRICT_RAG_TEMPLATE
+        || prompt_settings.rag_prompt_template == PREVIOUS_HYBRID_RAG_TEMPLATE
         || prompt_settings.rag_prompt_template == DEFAULT_RAG_PROMPT_TEMPLATE
     {
         prompt_settings.rag_prompt_template = DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE.to_string();
@@ -204,5 +212,38 @@ mod tests {
             ..LLMPromptSettingsDto::default()
         };
         assert_eq!(normalize_prompt_settings(saved).rag_prompt_template, own);
+    }
+
+    #[test]
+    fn saved_copies_of_prior_strict_and_hybrid_defaults_migrate_to_context_first_hybrid() {
+        for previous in [PREVIOUS_STRICT_RAG_TEMPLATE, PREVIOUS_HYBRID_RAG_TEMPLATE] {
+            let saved = LLMPromptSettingsDto {
+                rag_prompt_template: previous.to_string(),
+                ..LLMPromptSettingsDto::default()
+            };
+            assert_eq!(
+                normalize_prompt_settings(saved).rag_prompt_template,
+                DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE
+            );
+        }
+    }
+
+    #[test]
+    fn default_templates_place_context_before_question_and_rules_after_question() {
+        for template in [
+            DEFAULT_RAG_PROMPT_TEMPLATE,
+            DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE,
+        ] {
+            let context_pos = template.find("{context}").expect("context slot");
+            let question_pos = template.find("{question}").expect("question slot");
+            let rules_pos = template
+                .find("Check every supplied passage")
+                .expect("answering rules");
+            let answer_pos = template.rfind("Answer:").expect("closing cue");
+            assert!(context_pos < question_pos, "{template}");
+            assert!(question_pos < rules_pos, "{template}");
+            assert!(rules_pos < answer_pos, "{template}");
+            assert!(template.ends_with("\n\nAnswer:"), "{template}");
+        }
     }
 }
