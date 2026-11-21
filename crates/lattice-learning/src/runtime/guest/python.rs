@@ -595,40 +595,42 @@ mod tests {
         Ok(())
     }
 
+    /// `X:name` names `name` in drive X's current directory, which for the drive the process runs on is the
+    /// process's own current directory.
     #[cfg(windows)]
     #[tokio::test]
     async fn drive_prefixed_paths_stay_inside_the_sandbox() -> Result<()> {
-        let outside =
-            std::env::temp_dir().join(format!("lattice-sandbox-probe-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&outside)?;
+        struct Removed(PathBuf);
+        impl Drop for Removed {
+            fn drop(&mut self) {
+                let _ = fs::remove_file(&self.0);
+            }
+        }
+        let here = std::env::current_dir()?;
+        let name = format!("lattice-sandbox-probe-{}.txt", uuid::Uuid::new_v4());
+        let probe = Removed(here.join(&name));
         let secret = uuid::Uuid::new_v4().to_string();
-        let target = outside.join("probe.txt");
-        fs::write(&target, &secret)?;
-        let host = target.to_string_lossy().replace('\\', "/");
-        let Some((drive, rest)) = host
-            .get(..2)
-            .zip(host.get(2..))
-            .filter(|(drive, _)| drive.ends_with(':'))
-        else {
+        fs::write(&probe.0, &secret)?;
+        let dir = here.to_string_lossy();
+        let Some(drive) = dir.get(..2).filter(|drive| drive.ends_with(':')) else {
             return Err(AppError::InternalError(format!(
-                "The probe file has no drive: {host}"
+                "The current directory has no drive: {dir}"
             )));
         };
         let paths: Vec<String> = ["/work", "/runtime"]
             .iter()
             .flat_map(|root| {
                 [
-                    format!("{root}/{drive}{rest}"),
-                    format!("{root}/./{drive}{rest}"),
+                    format!("{root}/./{drive}{name}"),
+                    format!("{root}/{drive}{name}"),
                 ]
             })
             .collect();
         let checks = format!(
             "paths = {paths:?}\nfor path in paths:\n    try:\n        seen = open(path).read()\n    except OSError:\n        continue\n    if seen == {secret:?}:\n        raise AssertionError('host file visible through ' + path)\nprint('drive paths denied')\n"
         );
-        let execution = execute_python_lab(&spec("", &checks), CancellationToken::new()).await;
-        let _ = fs::remove_dir_all(&outside);
-        let execution = execution?;
+        let execution = execute_python_lab(&spec("", &checks), CancellationToken::new()).await?;
+        drop(probe);
         assert_eq!(
             execution.status,
             LearningLabRunStatus::Passed,
