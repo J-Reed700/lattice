@@ -21,6 +21,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { flushSync } from 'react-dom';
 
 import { IconButton } from '@/components/ui/IconButton';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -265,14 +266,34 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
 
   const [listOffset, setListOffset] = useState(0);
   useLayoutEffect(() => {
-    if (!shouldVirtualize) return;
     const nav = navRef.current;
     const scroller = scrollElementOf(nav);
-    if (!nav || !scroller) return;
-    setListOffset(
-      nav.getBoundingClientRect().top - scroller.getBoundingClientRect().top - scroller.clientTop + scroller.scrollTop,
-    );
-  });
+    if (!shouldVirtualize || !nav || !scroller) return;
+    const offset = () =>
+      nav.getBoundingClientRect().top - scroller.getBoundingClientRect().top - scroller.clientTop + scroller.scrollTop;
+    setListOffset(offset());
+    if (typeof ResizeObserver === 'undefined') return;
+    const remeasure = () => flushSync(() => setListOffset(offset()));
+    const sizes = new ResizeObserver(remeasure);
+    const observeContentAbove = () => {
+      sizes.disconnect();
+      for (const child of scroller.children) {
+        if (child === nav) break;
+        sizes.observe(child, { box: 'border-box' });
+        if (child.contains(nav)) break;
+      }
+    };
+    const children = new MutationObserver(() => {
+      observeContentAbove();
+      remeasure();
+    });
+    observeContentAbove();
+    children.observe(scroller, { childList: true });
+    return () => {
+      children.disconnect();
+      sizes.disconnect();
+    };
+  }, [shouldVirtualize]);
 
   const rowVirtualizer = useVirtualizer({
     count: flattenedRows.length,
