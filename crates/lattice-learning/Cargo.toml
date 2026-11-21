@@ -41,8 +41,8 @@ tracing = { workspace = true }
 unicode-normalization = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }
-wasmtime = { version = "=48.0.9", default-features = false, features = ["cranelift", "runtime", "std"], optional = true }
-wasmtime-wasi = { version = "=48.0.9", default-features = false, features = ["p1"], optional = true }
+wasmtime = { version = "=48.0.10", default-features = false, features = ["cranelift", "runtime", "std"], optional = true }
+wasmtime-wasi = { version = "=48.0.10", default-features = false, features = ["p1"], optional = true }
 zstd = "0.14"
 
 [dev-dependencies]
