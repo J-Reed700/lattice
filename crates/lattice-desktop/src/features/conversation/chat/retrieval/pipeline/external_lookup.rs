@@ -20,6 +20,7 @@ impl ExternalLookup<'_> {
     /// interpretation. `web_reason` is why the web is searched, for the record.
     pub(super) async fn run(
         &self,
+        utility_llm: &Arc<dyn lattice_core::application::ports::LLMPort>,
         base_interpretation: &HyDEInterpretation,
         interpret: bool,
         allow_lookup: bool,
@@ -29,9 +30,9 @@ impl ExternalLookup<'_> {
         let search_wiki = self.wiki_planned && allow_lookup;
         let search_web = self.web_planned && allow_lookup;
         // HyDE and web-query rewriting run on the utility LLM (small, fast,
-        // local) when set, not the chat LLM. See utility_llm resolution above.
+        // local) when set, not the chat LLM. See resolve_external_utility_llm.
         let hyde_service = self.container.query_interpreter(
-            Arc::clone(self.utility_llm),
+            Arc::clone(utility_llm),
             self.cancellation.turn_token(self.request_id),
         );
         let hyde_context = if interpret || search_web {
@@ -39,7 +40,7 @@ impl ExternalLookup<'_> {
                 self.conv_service,
                 self.conversation_id,
                 self.validated_message,
-                self.utility_llm.as_ref(),
+                utility_llm.as_ref(),
                 None,
             )
             .await;

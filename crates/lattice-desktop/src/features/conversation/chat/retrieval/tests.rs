@@ -1,6 +1,7 @@
 use super::*;
 use std::collections::HashSet;
 
+mod lazy_loading;
 mod web_fallback;
 
 #[test]
