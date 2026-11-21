@@ -93,29 +93,29 @@ describe('job status reports', () => {
     error.mockRestore();
   });
 
-  it('never regresses terminal or higher-progress jobs on out-of-order events or late snapshots', async () => {
-    const completed = jobFixture({ id: 'j1', status: 'completed', finishedAt: 10, progressCurrent: 10 });
-    const regressed = upsertJob([completed], jobFixture({ id: 'j1', status: 'running', progressCurrent: 2 }));
-    expect(regressed[0]?.status).toBe('completed');
+  it('keeps the copy with the higher revision on out-of-order events and late snapshots', async () => {
+    const running = jobFixture({ id: 'j1', status: 'running', startedAt: 5, retryCount: 0, revision: 5 });
+    const suspended = upsertJob([running], jobFixture({ id: 'j1', status: 'pending', startedAt: 5, retryCount: 0, revision: 6 }));
+    expect(suspended[0]).toMatchObject({ status: 'pending', revision: 6 });
 
-    const failed = jobFixture({ id: 'j2', status: 'failed', finishedAt: 10 });
-    expect(upsertJob([failed], jobFixture({ id: 'j2', status: 'pending' }))[0]?.status).toBe('failed');
+    const stale = jobFixture({ id: 'j2', status: 'completed', finishedAt: 10, revision: 4 });
+    expect(upsertJob([jobFixture({ id: 'j2', status: 'running', revision: 5 })], stale)[0]).toMatchObject({ status: 'running', revision: 5 });
+    const done = jobFixture({ id: 'j3', status: 'completed', finishedAt: 10, revision: 5 });
+    expect(upsertJob([done], jobFixture({ id: 'j3', status: 'running', revision: 4 }))[0]).toMatchObject({ status: 'completed', revision: 5 });
 
-    const cancelled = jobFixture({ id: 'j3', status: 'cancelled', finishedAt: 10 });
-    expect(upsertJob([cancelled], jobFixture({ id: 'j3', status: 'running' }))[0]?.status).toBe('cancelled');
-
-    const running5 = jobFixture({ id: 'j4', status: 'running', startedAt: 5, progressCurrent: 5 });
-    expect(upsertJob([running5], jobFixture({ id: 'j4', status: 'running', startedAt: 5, progressCurrent: 2 }))[0]?.progressCurrent).toBe(5);
-    expect(upsertJob([running5], jobFixture({ id: 'j4', status: 'pending', retryCount: 0 }))[0]?.status).toBe('running');
+    const tied = upsertJob(
+      [jobFixture({ id: 'j4', status: 'running', progressCurrent: 5, revision: 3 })],
+      jobFixture({ id: 'j4', status: 'running', progressCurrent: 2, revision: 3 }),
+    );
+    expect(tied[0]?.progressCurrent).toBe(2);
 
     // A deferred retry transitions running (retryCount: 0) -> pending (retryCount: 1).
     const deferred = upsertJob(
-      [jobFixture({ id: 'j-retry', status: 'running', retryCount: 0 })],
-      jobFixture({ id: 'j-retry', status: 'pending', retryCount: 1, retryNotBefore: 12345 }),
+      [jobFixture({ id: 'j-retry', status: 'running', retryCount: 0, revision: 1 })],
+      jobFixture({ id: 'j-retry', status: 'pending', retryCount: 1, retryNotBefore: 12345, revision: 2 }),
     );
     expect(deferred[0]).toMatchObject({ id: 'j-retry', status: 'pending', retryCount: 1, retryNotBefore: 12345 });
-    // Once deferred to retryCount: 1, a stale running (retryCount: 0) snapshot cannot overwrite it.
-    expect(upsertJob(deferred, jobFixture({ id: 'j-retry', status: 'running', retryCount: 0 }))[0]?.retryCount).toBe(1);
+    expect(upsertJob(deferred, jobFixture({ id: 'j-retry', status: 'running', retryCount: 0, revision: 1 }))[0]?.retryCount).toBe(1);
 
     // Simulate an in-flight list_jobs snapshot returning running while a live completed event lands first.
     let resolveList!: (value: { ok: true; data: unknown[] }) => void;
@@ -123,9 +123,9 @@ describe('job status reports', () => {
     const { result } = renderHook(() => useJobs(['batch.file_import']), { wrapper });
     await waitFor(() => expect(mocks.handlers.size).toBe(1));
 
-    report(jobFixture({ id: 'snap-1', kind: 'batch.file_import', status: 'completed', finishedAt: 20 }));
+    report(jobFixture({ id: 'snap-1', kind: 'batch.file_import', status: 'completed', finishedAt: 20, revision: 2 }));
     await act(async () => {
-      resolveList({ ok: true, data: [jobFixture({ id: 'snap-1', kind: 'batch.file_import', status: 'running', progressCurrent: 1 })] });
+      resolveList({ ok: true, data: [jobFixture({ id: 'snap-1', kind: 'batch.file_import', status: 'running', progressCurrent: 1, revision: 1 })] });
     });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));

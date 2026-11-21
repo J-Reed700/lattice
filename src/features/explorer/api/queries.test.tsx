@@ -5,7 +5,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { FolderIndexStatus } from '@/features/explorer/stores/explorerStore';
-import { JOB_STATUS_EVENT, type JobDto } from '@/features/jobs/api';
+import { JOB_STATUS_EVENT, useJobs, type JobDto } from '@/features/jobs/api';
 import { folderBuildFixture } from '@/tests/fixtures/jobs';
 
 import {
@@ -112,6 +112,21 @@ describe('index status in the query cache', () => {
     expect(client.getQueryData(explorerKeys.indexStatus(ROOT))).toBeUndefined();
     emit({ ...build(status({ root: OTHER, indexRoot: OTHER })), kind: 'batch.file_import' });
     expect(client.getQueryData(explorerKeys.indexStatus(OTHER))).toBeUndefined();
+  });
+
+  it('stops showing a folder build as building once it is suspended back to pending', async () => {
+    const { result } = renderHook(() => {
+      useExplorerIndexStatusEvents();
+      return useJobs([FOLDER_INDEX_JOB]).data;
+    }, { wrapper });
+    await waitFor(() => expect(mocks.listeners.get(JOB_STATUS_EVENT)?.size).toBe(1));
+    emit(build(status(), { revision: 1 }));
+    emit(build(status(), { status: 'pending', progressMessage: 'Waiting for its turn', revision: 2 }));
+    expect(client.getQueryData(explorerKeys.indexStatus(ROOT))).toBeUndefined();
+    emit(build(status({ root: OTHER, indexRoot: OTHER }), { revision: 1 }));
+    await waitFor(() => expect(result.current?.map((job) => job.id)).toContain(`build:${OTHER}`));
+    expect(client.getQueryData(explorerKeys.indexStatus(OTHER))).toEqual(status({ root: OTHER, indexRoot: OTHER }));
+    expect(client.getQueryData(explorerKeys.indexStatus(ROOT))).toBeUndefined();
   });
 
   it("a watcher update after the build reaches the folder's status and the folders list", async () => {
