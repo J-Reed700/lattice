@@ -145,6 +145,41 @@ describe('SpeechPlayer', () => {
       error: 'The read-aloud voices are not downloaded.',
     });
   });
+
+  it('queues suspend when stopped while resume is still pending on a late-state suspended output', async () => {
+    const output = new LateStateOutput();
+    output.state = 'suspended';
+    const { player } = setup(output);
+    const synthesize = vi.fn(async () => clip(1));
+
+    const playing = player.play('answer', ['one'], synthesize);
+    player.stop('answer');
+    await playing;
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    expect(output.suspend).toHaveBeenCalledTimes(1);
+    expect(output.state).toBe('suspended');
+    expect(player.getSnapshot().status).toBe('idle');
+    expect(synthesize).not.toHaveBeenCalled();
+    expect(output.nodes).toHaveLength(0);
+  });
+
+  it('clears the session and publishes an error when output.resume rejects', async () => {
+    const output = new FakeOutput();
+    output.resume.mockRejectedValueOnce(new Error('AudioContext not allowed'));
+    const { player } = setup(output);
+
+    const playing = player.play('answer', ['one'], async () => clip(1));
+    const idle = player.whenIdle();
+
+    await expect(playing).resolves.toBeUndefined();
+    await expect(idle).resolves.toBeUndefined();
+    expect(player.getSnapshot()).toEqual({
+      sourceId: null,
+      status: 'idle',
+      error: 'AudioContext not allowed',
+    });
+  });
 });
 
 describe('decodeClip', () => {

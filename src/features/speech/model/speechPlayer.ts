@@ -94,9 +94,10 @@ export class SpeechPlayer {
     const session: Session = { sourceId, cancelled: false, nodes: [], endsAt: 0, allScheduled: false, caughtUp: true };
     this.session = session;
     this.publish({ sourceId, status: 'loading', error: null });
-    await output.resume();
 
     try {
+      await output.resume();
+      if (session.cancelled) return;
       for await (const piece of pieces) {
         while (!session.cancelled && session.endsAt - output.currentTime > LEAD_SECONDS) {
           await new Promise((resolve) => setTimeout(resolve, 500));
@@ -118,7 +119,7 @@ export class SpeechPlayer {
   private finishIfDone(session: Session) {
     if (!session.allScheduled || !session.caughtUp || this.session !== session) return;
     this.session = null;
-    if (this.output && this.output.state !== 'suspended') {
+    if (this.output) {
       void this.output.suspend();
     }
     this.publish(IDLE);
@@ -194,7 +195,7 @@ export class SpeechPlayer {
     }
     session.nodes = [];
     this.session = null;
-    if (this.output && this.output.state !== 'suspended') {
+    if (this.output) {
       void this.output.suspend();
     }
     this.publish(IDLE);
