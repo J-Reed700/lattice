@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -438,40 +438,137 @@ describe('ConversationList', () => {
       fireEvent.click(screen.getByText('Thread 0'));
       await waitFor(() => expect(selectConversation).toHaveBeenCalledWith('conv-0'));
     });
-    it('renders the rows in view when content above the list pushes it down its scroll container', async () => {
-      const conversations = Array.from({ length: 80 }, (_, index) =>
-        makeConversation(`conv-${index}`, `Thread ${index}`, {
-          updatedAt: daysAgo(index < 40 ? 0 : 8),
-        }),
-      );
-      h.store = store({ conversations });
-      const zero = { top: 0, left: 0, width: 0, height: 0, bottom: 0, right: 0, x: 0, y: 0 };
-      const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-        if (this.dataset.testid === 'scroller') {
-          return { ...zero, width: 280, height: 800, bottom: 800, right: 280, toJSON: () => ({}) };
+    describe('below other content in its scroll container', () => {
+      const ROW_20_TOP = 36 + 20 * 72;
+
+      class ResizeObserverFake {
+        static observers = new Set<ResizeObserverFake>();
+        readonly targets = new Set<Element>();
+        readonly callback: ResizeObserverCallback;
+        constructor(callback: ResizeObserverCallback) {
+          this.callback = callback;
+          ResizeObserverFake.observers.add(this);
         }
-        if (this.getAttribute('role') === 'navigation') {
-          const scroller = this.closest('[data-testid="scroller"]') as HTMLElement | null;
-          const top = 2000 - (scroller?.scrollTop ?? 0);
-          return { ...zero, top, y: top, bottom: top, toJSON: () => ({}) };
+        observe(target: Element) {
+          this.targets.add(target);
         }
-        return { ...zero, toJSON: () => ({}) };
+        unobserve(target: Element) {
+          this.targets.delete(target);
+        }
+        disconnect() {
+          this.targets.clear();
+        }
+        static resize(target: Element) {
+          for (const observer of ResizeObserverFake.observers) {
+            if (observer.targets.has(target)) {
+              observer.callback([{ target } as unknown as ResizeObserverEntry], observer as unknown as ResizeObserver);
+            }
+          }
+        }
+      }
+
+      let restoreLayout = () => {};
+      beforeEach(() => {
+        h.store = store({
+          conversations: Array.from({ length: 80 }, (_, index) =>
+            makeConversation(`conv-${index}`, `Thread ${index}`, {
+              updatedAt: daysAgo(index < 40 ? 0 : 8),
+            }),
+          ),
+        });
       });
-      try {
-        renderList({}, (list) => (
-          <div className="overflow-y-auto" data-testid="scroller">{list}</div>
-        ));
+      afterEach(() => {
+        restoreLayout();
+        restoreLayout = () => {};
+        vi.unstubAllGlobals();
+        ResizeObserverFake.observers.clear();
+      });
+
+      const layOutBelow = (content: { above: number }) => {
+        const zero = { top: 0, left: 0, width: 0, height: 0, bottom: 0, right: 0, x: 0, y: 0, toJSON: () => ({}) };
+        const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
+          return this.dataset.testid === 'scroller' ? 800 : 0;
+        });
+        const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+          if (this.dataset.testid === 'scroller') {
+            return { ...zero, width: 280, height: 800, bottom: 800, right: 280 };
+          }
+          if (this.getAttribute('role') === 'navigation') {
+            const top = content.above - (this.closest<HTMLElement>('[data-testid="scroller"]')?.scrollTop ?? 0);
+            return { ...zero, top, y: top, bottom: top };
+          }
+          return zero;
+        });
+        restoreLayout = () => {
+          height.mockRestore();
+          rect.mockRestore();
+        };
+      };
+
+      const scrollContainerTo = (top: number) => {
         const scroller = screen.getByTestId('scroller');
         Object.defineProperty(scroller, 'scrollTop', { configurable: true, writable: true, value: 0 });
         act(() => {
-          scroller.scrollTop = 2000 + 20 * 72;
+          scroller.scrollTop = top;
           fireEvent.scroll(scroller);
         });
+      };
+
+      it('renders the rows in view when content above the list pushes it down its scroll container', async () => {
+        layOutBelow({ above: 2000 });
+        renderList({}, (list) => (
+          <div className="overflow-y-auto" data-testid="scroller">{list}</div>
+        ));
+        scrollContainerTo(2000 + 20 * 72);
 
         await waitFor(() => expect(screen.queryByText('Thread 19')).toBeInTheDocument());
-      } finally {
-        rectSpy.mockRestore();
-      }
+      });
+
+      it('renders the rows in view when content appears above the list after it rendered', async () => {
+        const content = { above: 0 };
+        layOutBelow(content);
+        vi.stubGlobal('ResizeObserver', ResizeObserverFake);
+        let showAbove: (shown: boolean) => void = () => {};
+        function Scroller({ children }: { children: ReactNode }) {
+          const [shown, setShown] = useState(false);
+          showAbove = setShown;
+          return (
+            <div className="overflow-y-auto" data-testid="scroller">
+              {shown ? <div /> : null}
+              {children}
+            </div>
+          );
+        }
+        renderList({}, (list) => <Scroller>{list}</Scroller>);
+        scrollContainerTo(ROW_20_TOP);
+        await waitFor(() => expect(screen.queryByText('Thread 20')).toBeInTheDocument());
+        expect(screen.queryByText('Thread 0')).not.toBeInTheDocument();
+
+        content.above = ROW_20_TOP;
+        act(() => showAbove(true));
+
+        await waitFor(() => expect(screen.queryByText('Thread 0')).toBeInTheDocument());
+      });
+
+      it('renders the rows in view when the content above the list grows after it rendered', async () => {
+        const content = { above: 0 };
+        layOutBelow(content);
+        vi.stubGlobal('ResizeObserver', ResizeObserverFake);
+        renderList({}, (list) => (
+          <div className="overflow-y-auto" data-testid="scroller">
+            <div data-testid="above" />
+            {list}
+          </div>
+        ));
+        scrollContainerTo(ROW_20_TOP);
+        await waitFor(() => expect(screen.queryByText('Thread 20')).toBeInTheDocument());
+        expect(screen.queryByText('Thread 0')).not.toBeInTheDocument();
+
+        content.above = ROW_20_TOP;
+        act(() => ResizeObserverFake.resize(screen.getByTestId('above')));
+
+        await waitFor(() => expect(screen.queryByText('Thread 0')).toBeInTheDocument());
+      });
     });
   });
 });
