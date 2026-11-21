@@ -1,4 +1,6 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import type { ReactNode } from 'react';
+
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -71,7 +73,7 @@ const store = (overrides: Record<string, unknown> = {}) => ({
 });
 
 type Props = Partial<Parameters<typeof ConversationList>[0]>;
-const renderList = (props: Props = {}) => {
+const renderList = (props: Props = {}, inside: (list: ReactNode) => ReactNode = (list) => list) => {
   const all = {
     isJournalScope: false,
     isSelectionMode: false,
@@ -81,7 +83,7 @@ const renderList = (props: Props = {}) => {
     exportActions: exportActions(),
     ...props,
   };
-  return { ...render(<ConversationList {...all} />, { wrapper: TooltipProvider }), props: all };
+  return { ...render(inside(<ConversationList {...all} />), { wrapper: TooltipProvider }), props: all };
 };
 
 const row = (title: string) => screen.getByRole('button', { name: `Select conversation: ${title}` });
@@ -435,6 +437,41 @@ describe('ConversationList', () => {
 
       fireEvent.click(screen.getByText('Thread 0'));
       await waitFor(() => expect(selectConversation).toHaveBeenCalledWith('conv-0'));
+    });
+    it('renders the rows in view when content above the list pushes it down its scroll container', async () => {
+      const conversations = Array.from({ length: 80 }, (_, index) =>
+        makeConversation(`conv-${index}`, `Thread ${index}`, {
+          updatedAt: daysAgo(index < 40 ? 0 : 8),
+        }),
+      );
+      h.store = store({ conversations });
+      const zero = { top: 0, left: 0, width: 0, height: 0, bottom: 0, right: 0, x: 0, y: 0 };
+      const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+        if (this.dataset.testid === 'scroller') {
+          return { ...zero, width: 280, height: 800, bottom: 800, right: 280, toJSON: () => ({}) };
+        }
+        if (this.getAttribute('role') === 'navigation') {
+          const scroller = this.closest('[data-testid="scroller"]') as HTMLElement | null;
+          const top = 2000 - (scroller?.scrollTop ?? 0);
+          return { ...zero, top, y: top, bottom: top, toJSON: () => ({}) };
+        }
+        return { ...zero, toJSON: () => ({}) };
+      });
+      try {
+        renderList({}, (list) => (
+          <div className="overflow-y-auto" data-testid="scroller">{list}</div>
+        ));
+        const scroller = screen.getByTestId('scroller');
+        Object.defineProperty(scroller, 'scrollTop', { configurable: true, writable: true, value: 0 });
+        act(() => {
+          scroller.scrollTop = 2000 + 20 * 72;
+          fireEvent.scroll(scroller);
+        });
+
+        await waitFor(() => expect(screen.queryByText('Thread 19')).toBeInTheDocument());
+      } finally {
+        rectSpy.mockRestore();
+      }
     });
   });
 });
