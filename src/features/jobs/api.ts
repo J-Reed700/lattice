@@ -22,8 +22,6 @@ export function isJobFinished(job: Pick<JobDto, 'status'>): boolean {
   return job.status !== 'pending' && job.status !== 'running';
 }
 
-const MAX_FINISHED_JOBS = 100;
-
 type JobSubscriber = (job: JobDto) => void;
 
 const subscribers = new Set<JobSubscriber>();
@@ -74,42 +72,20 @@ export function newerJob(existing: JobDto, incoming: JobDto): JobDto {
   return incoming.revision >= existing.revision ? incoming : existing;
 }
 
-function capFinishedJobs(jobs: JobDto[]): JobDto[] {
-  let finishedCount = 0;
-  for (const job of jobs) {
-    if (isJobFinished(job)) finishedCount += 1;
-  }
-  if (finishedCount <= MAX_FINISHED_JOBS) return jobs;
-
-  const finishedWithIndex = jobs
-    .map((job, index) => ({ job, index }))
-    .filter(({ job }) => isJobFinished(job))
-    .sort((a, b) => {
-      const timeA = a.job.finishedAt ?? a.job.startedAt ?? a.job.createdAt;
-      const timeB = b.job.finishedAt ?? b.job.startedAt ?? b.job.createdAt;
-      if (timeB !== timeA) return timeB - timeA;
-      return b.index - a.index;
-    });
-  const keepIndices = new Set(
-    finishedWithIndex.slice(0, MAX_FINISHED_JOBS).map(({ index }) => index),
-  );
-  return jobs.filter((job, index) => !isJobFinished(job) || keepIndices.has(index));
-}
-
-/** Replaces `job` monotonically in `jobs` by id, or appends it, capping retained terminal jobs. */
+/** Replaces `job` monotonically in `jobs` by id, or appends it. */
 export function upsertJob(jobs: readonly JobDto[], job: JobDto): JobDto[] {
   const at = jobs.findIndex((existing) => existing.id === job.id);
-  if (at < 0) return capFinishedJobs([...jobs, job]);
+  if (at < 0) return [...jobs, job];
   const existing = jobs[at]!;
   const chosen = newerJob(existing, job);
-  if (chosen === existing) return capFinishedJobs([...jobs]);
+  if (chosen === existing) return [...jobs];
   const next = [...jobs];
   next[at] = chosen;
-  return capFinishedJobs(next);
+  return next;
 }
 
 function mergeJobs(cached: readonly JobDto[], snapshot: readonly JobDto[]): JobDto[] {
-  let merged: JobDto[] = capFinishedJobs([...snapshot]);
+  let merged: JobDto[] = [...snapshot];
   for (const job of cached) {
     merged = upsertJob(merged, job);
   }

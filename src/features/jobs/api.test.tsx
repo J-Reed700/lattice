@@ -134,19 +134,6 @@ describe('job status reports', () => {
     ]);
   });
 
-  it('keeps all active jobs and caps retained terminal jobs at 100', () => {
-    let jobs = [jobFixture({ id: 'active-1', status: 'running' })];
-    for (let i = 0; i < 120; i += 1) {
-      jobs = upsertJob(jobs, jobFixture({ id: `done-${i}`, status: 'completed', finishedAt: 1000 + i }));
-    }
-    const active = jobs.filter((j) => j.status === 'running');
-    const finished = jobs.filter((j) => j.status === 'completed');
-    expect(active).toHaveLength(1);
-    expect(finished).toHaveLength(100);
-    expect(finished.some((j) => j.id === 'done-119')).toBe(true);
-    expect(finished.some((j) => j.id === 'done-0')).toBe(false);
-  });
-
   it('keeps a finished job finished against a late copy however many jobs finish after it', () => {
     let jobs = [jobFixture({ id: 'first', status: 'completed', finishedAt: 1, revision: 2 })];
     for (let i = 0; i < 120; i += 1) {

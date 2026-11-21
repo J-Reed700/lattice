@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { SourceWithMetadata } from '@/types/conversation';
 
 import {
-  MAX_RESOLVED_LOCATIONS,
   READER_DEFAULT_WIDTH,
   READER_MAX_WIDTH,
   READER_MIN_WIDTH,
@@ -114,20 +113,14 @@ describe('the chat reader width', () => {
 });
 
 describe('locations a viewer resolved', () => {
-  it('bounds retained labels and can resolve an evicted citation again', () => {
+  it('keeps the latest label a viewer resolved for each chunk', () => {
     const remember = useReaderStore.getState().rememberResolvedLocation;
-    for (let i = 0; i < MAX_RESOLVED_LOCATIONS; i += 1) {
-      remember(`chunk-${i}`, `p. ${i}`);
-    }
-    remember('chunk-0', 'p. corrected');
-    remember('new-chunk', 'p. new');
-    const locations = useReaderStore.getState().resolvedLocations;
-    expect(locations.size).toBe(MAX_RESOLVED_LOCATIONS);
-    expect(locations.get('chunk-0')).toBe('p. corrected');
-    expect(locations.has('chunk-1')).toBe(false);
+    remember('chunk-0', 'p. 0');
     remember('chunk-1', 'p. 1');
-    expect(useReaderStore.getState().resolvedLocations.get('chunk-1')).toBe('p. 1');
-    expect(useReaderStore.getState().resolvedLocations.size).toBe(MAX_RESOLVED_LOCATIONS);
+    remember('chunk-0', 'p. corrected');
+    const locations = useReaderStore.getState().resolvedLocations;
+    expect(locations.get('chunk-0')).toBe('p. corrected');
+    expect(locations.get('chunk-1')).toBe('p. 1');
   });
 
   it('are kept per chunk, so every answer citing it says the page', () => {
