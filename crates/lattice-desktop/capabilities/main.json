@@ -74,6 +74,7 @@
     "model:allow-warm-up-active-utility-model",
     "model:allow-warm-up-learning-model",
     "model:allow-list-loaded-models",
+    "model:allow-warmup-status",
     "model:allow-last-learning-window-shortfall",
     "model:allow-get-active-chat-model",
     "model:allow-get-active-embedding-model",

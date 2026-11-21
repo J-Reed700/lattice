@@ -148,6 +148,7 @@ export function createVaultAPIMock() {
     downloadModel: vi.fn().mockResolvedValue({ success: true }),
     warmUpActiveChatModel: vi.fn().mockResolvedValue({ ok: true, data: null }),
     warmUpActiveUtilityModel: vi.fn().mockResolvedValue({ ok: true, data: null }),
+    warmupStatus: vi.fn().mockResolvedValue({ ok: true, data: [] }),
     clearActiveChatModel: vi.fn().mockResolvedValue({ ok: true, data: null }),
     clearActiveEmbeddingModel: vi.fn().mockResolvedValue({ ok: true, data: null }),
     checkFirstRunStatus: vi

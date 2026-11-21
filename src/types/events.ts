@@ -86,7 +86,10 @@ export namespace EventSchemas {
       role: z.enum(['chat', 'utility', 'embedding', 'learning']),
       phase: z.enum(['started', 'ready', 'skipped', 'failed']),
       error: z.string().nullable().optional(),
+      degraded: z.string().nullable().optional(),
+      revision: z.number(),
     });
+    export type WarmupStatus = z.infer<typeof WarmupStatus>;
   }
 
   export namespace Vault {
@@ -260,8 +263,9 @@ export const TauriEventNames = {
     Event: 'indexing-progress' as const,
   },
   Models: {
-    /// Boot-time pre-warm status for chat/utility/embedding model roles.
-    /// Backend fires `started → ready|skipped|failed` per role.
+    /// Warm-up status of a model role, from the boot pre-warm and from Settings.
+    /// Backend fires `started → ready|skipped|failed` per role, each numbered
+    /// by `revision`.
     WarmupStatus: 'model:warmup-status' as const,
   },
   LLM: {

@@ -83,6 +83,7 @@ export async function installChatFixture(page: Page) {
     list_passage_references: () => [],
     get_batch_history: () => ({ jobs: [] }),
     list_loaded_models: () => [],
+    warmup_status: () => [],
     // The chat panel lists each cloud provider's models; no keys are saved here.
     list_cloud_models: () => ({ hasApiKey: false, models: [] }),
     generate_chat_starters: () => ({ fingerprint: '', generatedAt: STAMP, starters: [], documentCount: 1 }),

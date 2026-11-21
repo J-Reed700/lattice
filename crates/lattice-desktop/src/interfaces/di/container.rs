@@ -24,6 +24,7 @@ use crate::features::function_calling::registry::{
 };
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
 use crate::features::llm::instances::LlmInstances;
+use crate::features::llm::warmup::WarmupBoard;
 use crate::features::web::services::web::{build_instance_client, public_web_client, WebService};
 use crate::interfaces::settings_side_effects::ContainerSettingsSideEffects;
 use lattice_core::application::ports::EmbeddingPort as EmbeddingServiceTrait;
@@ -86,6 +87,8 @@ pub struct Container {
     /// Every LLM loaded now, for every role: chats, the Learning model, the
     /// router and the utility model.
     pub(crate) llm_instances: Arc<LlmInstances>,
+    /// Each model role's latest warm-up, read by windows that open after it began.
+    pub(crate) warmups: Arc<WarmupBoard>,
     /// Owns embedding readiness checks, loading, and retry cooldown.
     pub(crate) embedding_runtime: Arc<EmbeddingRuntime>,
     /// Starts the llama-server the embedding model runs on.
@@ -506,6 +509,7 @@ impl Container {
             function_executor,
             web_service,
             llm_instances,
+            warmups: Arc::new(WarmupBoard::default()),
             embedding_runtime,
             embedding_starter,
             swappable_embedding_starter,

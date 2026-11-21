@@ -16,6 +16,7 @@ pub(crate) mod loading;
 pub(crate) mod openai_chat;
 mod repository;
 pub mod use_cases;
+pub mod warmup;
 
 pub mod cloud;
 pub mod engine;
