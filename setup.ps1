@@ -173,7 +173,7 @@ function Get-Python {
     )) {
         if (-not $base -or -not (Test-Path $base)) { continue }
         $installs = Get-ChildItem $base -Directory -Filter 'Python3*' -ErrorAction SilentlyContinue |
-            Sort-Object { if ($_.Name -match '^Python3(\d+)') { [int]$Matches[1] } else { -1 } } -Descending
+            Sort-Object { if ($_.Name -match '^Python3(\d+)$') { [int]$Matches[1] * 2 + 1 } elseif ($_.Name -match '^Python3(\d+)') { [int]$Matches[1] * 2 } else { -1 } } -Descending
         foreach ($dir in $installs) {
             $py = Join-Path $dir.FullName 'python.exe'
             if (Test-Path $py) { $candidates += ,@($py) }
