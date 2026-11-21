@@ -176,4 +176,24 @@ describe('synthesis workflow', () => {
     expect(calls('mark_journal_synthesis_applied')).toHaveLength(2);
     expect(queries.getQueryData(synthesisKeys.list)).toEqual([]);
   });
+
+  it('does not append a synthesis twice however many other saved syntheses wait to be marked applied', async () => {
+    const first = synthesis({}, { id: 'synthesis-first' });
+    let failMark = true;
+    apiCallMock.mockImplementation(async (command: string) => {
+      if (command === 'get_journal_synthesis_result') return { ok: true, data: result };
+      if (command === 'mark_journal_synthesis_applied') return failMark ? { ok: false, error: 'sqlite busy' } : { ok: true, data: true };
+      return { ok: true, data: true };
+    });
+    const queries = client();
+    expect(await applySynthesis(first, queries)).toBe(false);
+    for (let i = 0; i < 64; i += 1) {
+      expect(await applySynthesis(synthesis({}, { id: `synthesis-other-${i}` }), queries)).toBe(false);
+    }
+
+    failMark = false;
+    vi.mocked(VaultAPI.quickCapture).mockClear();
+    expect(await applySynthesis(first, queries)).toBe(true);
+    expect(VaultAPI.quickCapture).not.toHaveBeenCalled();
+  });
 });
