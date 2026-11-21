@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::practice::session::fake_kind::fake_kind;
-use crate::practice::session::observation::{ClockView, Coverage};
+use crate::practice::session::observation::{CheckView, ClockView, Coverage};
 use lattice_core::domain::learning::practice::work::{Brief, Difficulty, Piece};
 use lattice_core::shared::error::AppError;
 use serde_json::json;
@@ -148,6 +148,7 @@ fn rows() -> Vec<(&'static str, Event, [Option<Cue>; 3])> {
             "shown cases checked",
             Event::Checked {
                 scope: CheckScope::Shown,
+                status: CheckStatus::Failed,
             },
             [
                 Some(Cue::CheckReview(CheckScope::Shown)),
@@ -159,6 +160,7 @@ fn rows() -> Vec<(&'static str, Event, [Option<Cue>; 3])> {
             "own case checked",
             Event::Checked {
                 scope: CheckScope::Own,
+                status: CheckStatus::Passed,
             },
             [
                 Some(Cue::CheckReview(CheckScope::Own)),
@@ -170,12 +172,21 @@ fn rows() -> Vec<(&'static str, Event, [Option<Cue>; 3])> {
             "all cases checked",
             Event::Checked {
                 scope: CheckScope::All,
+                status: CheckStatus::Failed,
             },
             [
                 Some(Cue::CheckReview(CheckScope::All)),
                 Some(Cue::Submitted),
                 Some(Cue::Submitted),
             ],
+        ),
+        (
+            "all cases checked, without an answer",
+            Event::Checked {
+                scope: CheckScope::All,
+                status: CheckStatus::Interrupted,
+            },
+            [None, None, None],
         ),
         (
             "draft paused, changed",
@@ -574,5 +585,118 @@ fn failed_check_and_submit_cues_forbid_pointing_or_diagnosing() {
             system.contains("leave parts empty"),
             "{setting:?}: {system}"
         );
+    }
+}
+
+fn with_last_check(setting: Setting, scope: CheckScope, status: CheckStatus) -> Observation {
+    let mut state = observation(setting, Form::Build, Stage::Check);
+    state.last_check = Some(CheckView {
+        id: "chk".to_owned(),
+        scope,
+        status,
+        cases: Vec::new(),
+        detail: json!({}),
+    });
+    state
+}
+
+fn check_cues(setting: Setting) -> Vec<Cue> {
+    let mut cues = vec![Cue::Submitted];
+    if setting == Setting::Coached {
+        cues.extend(SCOPES.into_iter().map(Cue::CheckReview));
+    }
+    cues
+}
+
+/// The cues about a check that judges the work: of the shown cases or every case.
+fn verdict_cues(setting: Setting) -> Vec<Cue> {
+    let mut cues = vec![Cue::Submitted];
+    if setting == Setting::Coached {
+        cues.extend([
+            Cue::CheckReview(CheckScope::Shown),
+            Cue::CheckReview(CheckScope::All),
+        ]);
+    }
+    cues
+}
+
+#[test]
+fn a_check_without_an_answer_is_not_reported_as_passing_or_failing() {
+    let kind = kind();
+    let noun = kind.wording.check_noun();
+    let said_failed = format!("the last {noun} failed");
+    let said_passed = format!("the last {noun} passed");
+    for status in [
+        CheckStatus::Pending,
+        CheckStatus::Running,
+        CheckStatus::Cancelled,
+        CheckStatus::Interrupted,
+        CheckStatus::Unavailable,
+    ] {
+        for setting in SETTINGS {
+            let state = with_last_check(setting, CheckScope::All, status);
+            let policy = policy_for(setting, &kind, Form::Build);
+            for cue in check_cues(setting) {
+                let system = policy.system(&cue, &state).to_lowercase();
+                assert!(
+                    !system.contains(&said_failed),
+                    "{setting:?} {status:?} {cue:?}: {system}"
+                );
+                assert!(
+                    !system.contains(&said_passed),
+                    "{setting:?} {status:?} {cue:?}: {system}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_check_with_an_answer_is_reported_by_it_and_a_timeout_as_a_failure() {
+    let kind = kind();
+    let noun = kind.wording.check_noun();
+    for (status, outcome) in [
+        (CheckStatus::Passed, "passed"),
+        (CheckStatus::Failed, "failed"),
+        (CheckStatus::TimedOut, "failed"),
+    ] {
+        let said = format!("the last {noun} {outcome}");
+        for setting in SETTINGS {
+            let state = with_last_check(setting, CheckScope::All, status);
+            let policy = policy_for(setting, &kind, Form::Build);
+            for cue in verdict_cues(setting) {
+                let system = policy.system(&cue, &state).to_lowercase();
+                assert!(
+                    system.contains(&said),
+                    "{setting:?} {status:?} {cue:?}: {system}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_run_of_the_learners_own_input_is_never_reported_as_passing_or_failing() {
+    let kind = kind();
+    let noun = kind.wording.check_noun();
+    let coached = policy_for(Setting::Coached, &kind, Form::Build);
+    for status in [
+        CheckStatus::Passed,
+        CheckStatus::Failed,
+        CheckStatus::TimedOut,
+    ] {
+        let state = with_last_check(Setting::Coached, CheckScope::Own, status);
+        let system = coached
+            .system(&Cue::CheckReview(CheckScope::Own), &state)
+            .to_lowercase();
+        assert!(
+            !system.contains(&format!("the last {noun} passed")),
+            "{status:?}: {system}"
+        );
+        assert!(
+            !system.contains(&format!("the last {noun} failed")),
+            "{status:?}: {system}"
+        );
+        assert!(system.contains("say what it shows"), "{status:?}: {system}");
     }
 }

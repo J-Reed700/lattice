@@ -325,6 +325,7 @@ impl CodingSessions<'_> {
                     &at(&request.program_id, &request.session_id),
                     Event::Checked {
                         scope: CheckScope::Own,
+                        status: made.status,
                     },
                 )
                 .await?;

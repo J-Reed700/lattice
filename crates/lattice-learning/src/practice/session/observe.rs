@@ -4,6 +4,7 @@ use crate::practice::session::kind::Kind;
 use crate::practice::session::observation::{
     CaseView, CheckView, ClockView, Coverage, HintView, LearnerCaseView, Observation,
 };
+use crate::practice::session::policy::Cue;
 use crate::practice::session::record::{Outcome, Session, SessionCheck};
 use lattice_core::domain::learning::practice::work::{
     Case, CaseStatus, CaseVisibility, CheckScope, Hidden, LearnerCaseVerdict, Piece, Stage,
@@ -83,13 +84,15 @@ fn coverage(session: &Session, uncaught_shown: bool) -> Coverage {
     }
 }
 
-/// What the counterpart may read: what the learner sees in `session`, cut by the setting, with `piece` as the draft
-/// and the changes since `seen`.
+/// What the counterpart may read: what the learner sees in `session`, cut by the setting, with `piece` as the draft,
+/// the changes since `seen`, and as the last check the newest one or, with `about`, the newest check of that scope
+/// that gave an answer.
 pub fn observe(
     kind: &Kind,
     session: &Session,
     piece: &Piece,
     seen: Option<&Piece>,
+    about: Option<CheckScope>,
 ) -> Result<Observation> {
     let row = &session.row;
     let finished = row.finished_at.is_some();
@@ -114,10 +117,11 @@ pub fn observe(
             .map(|seen| kind.diff.changes(&session.exercise.brief, seen, piece))
             .transpose()?
             .unwrap_or_default(),
-        last_check: session
-            .checks
-            .last()
-            .map(|check| check_view(check, failing_open)),
+        last_check: match about {
+            Some(scope) => last_answered(session, scope),
+            None => session.checks.last(),
+        }
+        .map(|check| check_view(check, failing_open)),
         learner_cases: session
             .learner_cases
             .iter()
@@ -139,6 +143,18 @@ pub fn observe(
             .collect(),
         turns: session.turns.clone(),
     })
+}
+
+/// What a reply to `cue` reads: the stored draft, its changes since the counterpart last looked, and the check the
+/// cue is about; with no cue, the newest check.
+pub fn observe_reply(kind: &Kind, session: &Session, cue: Option<&Cue>) -> Result<Observation> {
+    observe(
+        kind,
+        session,
+        &session.row.draft,
+        session.draft_seen.as_ref(),
+        cue.and_then(Cue::check_scope),
+    )
 }
 
 /// The cases a check of `scope` runs, and the ids of those the learner wrote. Shown: the cases shown with the brief
@@ -172,12 +188,13 @@ pub fn cases_for(
     }
 }
 
-fn last_of_every_case(session: &Session) -> Option<&SessionCheck> {
+/// The newest check of `scope` that gave an answer.
+fn last_answered(session: &Session, scope: CheckScope) -> Option<&SessionCheck> {
     session
         .checks
         .iter()
         .rev()
-        .find(|check| check.scope == CheckScope::All)
+        .find(|check| check.scope == scope && check.status.answer().is_some())
 }
 
 /// How the session went, for the schedules of what it practised.
@@ -189,7 +206,8 @@ pub fn outcome(session: &Session) -> Outcome {
         .map(|check| check.at)
         .min();
     Outcome {
-        all_passed: last_of_every_case(session).is_some_and(|check| check.report.all_passed()),
+        all_passed: last_answered(session, CheckScope::All)
+            .is_some_and(|check| check.report.all_passed()),
         highest_rung: session.hints.iter().map(|hint| hint.rung).max(),
         solution_seen_before_passing: session
             .row
@@ -200,7 +218,7 @@ pub fn outcome(session: &Session) -> Outcome {
 
 /// The cases passed and run on the last check of every case.
 pub fn submit_counts(session: &Session) -> (u32, u32) {
-    last_of_every_case(session).map_or((0, 0), |check| {
+    last_answered(session, CheckScope::All).map_or((0, 0), |check| {
         let passed = check
             .report
             .results
