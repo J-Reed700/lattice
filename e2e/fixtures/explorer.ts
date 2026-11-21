@@ -58,6 +58,7 @@ export async function installExplorerFixture(page: Page) {
     get_indexed_folders: () => [],
     list_downloaded_models: () => state.models,
     list_loaded_models: () => [],
+    warmup_status: () => [],
     last_learning_window_shortfall: () => null,
     list_journals: () => [],
     list_conversation_tangents: () => [],

@@ -5,6 +5,7 @@ use crate::features::llm::instances::{
     ContextFit, GpuBudget, LearningShortfall, LoadedInstance, SidecarBudget,
 };
 use crate::features::llm::loading::ModelLoader;
+use crate::features::llm::warmup::{WarmupOutcome, WarmupRole, WarmupTicket};
 use std::sync::Arc;
 
 use crate::features::llm::use_cases::{
@@ -308,16 +309,12 @@ impl Container {
     /// `model:warmup-status { role: "learning" }`. A failure is reported and
     /// changes no setting.
     pub async fn warm_up_learning_model(&self) -> Result<()> {
-        let role = "learning";
-        let emit = |phase, error, degraded| {
-            if let Some(app) = self.app_handle() {
-                emit_warmup(&app, role, phase, error, degraded);
-            }
-        };
-        emit("started", None, None);
+        let ticket = self.begin_warmup(WarmupRole::Learning);
         match self.learning_llm(ModelRequirements::default()).await {
             Ok(pinned) => {
-                emit("ready", None, pinned.degraded);
+                ticket.finish(WarmupOutcome::Ready {
+                    degraded: pinned.degraded,
+                });
                 Ok(())
             }
             Err(error) => {
@@ -329,10 +326,16 @@ impl Container {
                     | AppError::ServiceNotAvailable(message) => message.clone(),
                     _ => error.to_string(),
                 };
-                emit("failed", Some(message), None);
+                ticket.finish(WarmupOutcome::Failed(message));
                 Err(error)
             }
         }
+    }
+
+    /// Records a warm-up of `role` on the board and announces it; the ticket
+    /// ends it.
+    pub(crate) fn begin_warmup(&self, role: WarmupRole) -> WarmupTicket {
+        WarmupTicket::begin(Arc::clone(&self.warmups), self.app_handle(), role)
     }
 
     /// Fire-and-forget per-role warmup at boot. Emits
@@ -350,7 +353,7 @@ impl Container {
             Arc::clone(&self.llm_runtime.devices),
             background,
         );
-        for role in ["chat", "utility", "embedding"] {
+        for role in [WarmupRole::Chat, WarmupRole::Utility, WarmupRole::Embedding] {
             let handle = app_handle.clone();
             let cancel = background.token();
             let _ = background.spawn(async move {
@@ -360,11 +363,14 @@ impl Container {
                 let container = match handle.try_state::<Container>() {
                     Some(c) => c,
                     None => {
-                        tracing::warn!(role, "prewarm: Container not in Tauri state yet");
+                        tracing::warn!(
+                            role = role.as_str(),
+                            "prewarm: Container not in Tauri state yet"
+                        );
                         return;
                     }
                 };
-                emit_warmup(&handle, role, "started", None, None);
+                let ticket = container.begin_warmup(role);
                 let started = std::time::Instant::now();
                 // Cancellation stops the prewarm waiter. Any sidecar whose
                 // startup already crossed the process boundary is still
@@ -372,20 +378,24 @@ impl Container {
                 // kills late registrations during shutdown.
                 let Some(outcome) = finish_or_cancel(&cancel, async {
                     match role {
-                        "chat" => match container.llm_for(&ModelRequest::default_chat()).await {
-                            Ok(pinned) => Outcome::Ready(pinned.degraded),
-                            Err(e) => classify_load_error(e),
+                        WarmupRole::Chat => {
+                            match container.llm_for(&ModelRequest::default_chat()).await {
+                                Ok(pinned) => WarmupOutcome::Ready {
+                                    degraded: pinned.degraded,
+                                },
+                                Err(e) => WarmupOutcome::from_load_error(e),
+                            }
+                        }
+                        WarmupRole::Utility => match container.get_or_load_utility_llm().await {
+                            Ok(Some(_)) => WarmupOutcome::Ready { degraded: None },
+                            Ok(None) => WarmupOutcome::Skipped,
+                            Err(e) => WarmupOutcome::from_load_error(e),
                         },
-                        "utility" => match container.get_or_load_utility_llm().await {
-                            Ok(Some(_)) => Outcome::Ready(None),
-                            Ok(None) => Outcome::Skipped,
-                            Err(e) => classify_load_error(e),
+                        WarmupRole::Embedding => match container.get_or_load_embedding().await {
+                            Ok(_) => WarmupOutcome::Ready { degraded: None },
+                            Err(e) => WarmupOutcome::from_load_error(e),
                         },
-                        "embedding" => match container.get_or_load_embedding().await {
-                            Ok(_) => Outcome::Ready(None),
-                            Err(e) => classify_load_error(e),
-                        },
-                        _ => unreachable!(),
+                        WarmupRole::Learning => unreachable!(),
                     }
                 })
                 .await
@@ -396,17 +406,19 @@ impl Container {
                     return;
                 }
                 let elapsed_ms = started.elapsed().as_millis() as u64;
+                let role = role.as_str();
                 match &outcome {
-                    Outcome::Ready(_) => tracing::info!(role, elapsed_ms, "prewarm: ready"),
-                    Outcome::Skipped => tracing::info!(role, "prewarm: no active model — skipped"),
-                    Outcome::Failed(msg) => tracing::warn!(role, error = %msg, "prewarm: failed"),
+                    WarmupOutcome::Ready { .. } => {
+                        tracing::info!(role, elapsed_ms, "prewarm: ready")
+                    }
+                    WarmupOutcome::Skipped => {
+                        tracing::info!(role, "prewarm: no active model — skipped")
+                    }
+                    WarmupOutcome::Failed(msg) => {
+                        tracing::warn!(role, error = %msg, "prewarm: failed")
+                    }
                 }
-                let (phase, error, degraded) = match outcome {
-                    Outcome::Ready(degraded) => ("ready", None, degraded),
-                    Outcome::Skipped => ("skipped", None, None),
-                    Outcome::Failed(msg) => ("failed", Some(msg), None),
-                };
-                emit_warmup(&handle, role, phase, error, degraded);
+                ticket.finish(outcome);
             });
         }
     }
@@ -455,13 +467,6 @@ async fn chat_model_choice(
     ))
 }
 
-enum Outcome {
-    /// Loaded; with the reason when it runs degraded (on the CPU).
-    Ready(Option<String>),
-    Skipped,
-    Failed(String),
-}
-
 async fn finish_or_cancel<F: std::future::Future>(
     cancel: &tokio_util::sync::CancellationToken,
     work: F,
@@ -470,43 +475,6 @@ async fn finish_or_cancel<F: std::future::Future>(
         biased;
         _ = cancel.cancelled() => None,
         result = work => Some(result),
-    }
-}
-
-/// First-run state (`AiModelsNotInstalled`) and router opt-out
-/// (`InvalidConfig("...not configured...")`) are Skipped, not Failed —
-/// the chat input mask shouldn't treat them as load errors.
-///
-/// `ServiceNotAvailable` carries an unusable llama-server binary; its
-/// message is already user-facing, so it goes out without the prefix.
-fn classify_load_error(e: AppError) -> Outcome {
-    match &e {
-        AppError::AiModelsNotInstalled(_) => Outcome::Skipped,
-        AppError::InvalidConfig(msg) if msg.contains("not configured") => Outcome::Skipped,
-        AppError::ModelLoadFailed(msg) | AppError::ServiceNotAvailable(msg) => {
-            Outcome::Failed(msg.clone())
-        }
-        _ => Outcome::Failed(e.to_string()),
-    }
-}
-
-/// `degraded` is why a model that is ready runs on the CPU, when it does.
-fn emit_warmup(
-    app: &tauri::AppHandle,
-    role: &str,
-    phase: &str,
-    error: Option<String>,
-    degraded: Option<String>,
-) {
-    use tauri::Emitter;
-    let payload = serde_json::json!({
-        "role": role,
-        "phase": phase,
-        "error": error,
-        "degraded": degraded,
-    });
-    if let Err(e) = app.emit("model:warmup-status", payload) {
-        tracing::warn!(role, phase, error = %e, "Failed to emit warmup status event");
     }
 }
 

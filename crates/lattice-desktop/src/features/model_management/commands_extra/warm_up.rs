@@ -1,5 +1,6 @@
 //! Warming up the chat, utility and Learning models.
 use super::*;
+use crate::features::llm::warmup::{WarmupOutcome, WarmupRole};
 
 /// Warm up the currently active chat model.
 ///
@@ -15,21 +16,27 @@ pub async fn warm_up_active_chat_model_impl(container: &Container) -> Result<(),
         AppError::InvalidState("No active chat model is selected. Set one first.".to_string())
     })?;
 
+    let ticket = container.begin_warmup(WarmupRole::Chat);
     let start = Instant::now();
-    if let Err(error) = container.default_chat_llm().await {
-        warn!(
-            model_id = %active_model.model_id(),
-            model_name = %active_model.model_name(),
-            error = %error,
-            "Active chat model failed to load during warmup"
-        );
-        return Err(match error {
-            AppError::ModelLoadFailed(load_error) => AppError::ModelLoadFailed(format!(
-                "Failed to warm up active chat model: {load_error}"
-            )),
-            error => error,
-        });
-    }
+    let degraded = match container.pinned_default_chat_llm().await {
+        Ok(pinned) => pinned.degraded,
+        Err(error) => {
+            ticket.finish(WarmupOutcome::from_load_error(error.clone()));
+            warn!(
+                model_id = %active_model.model_id(),
+                model_name = %active_model.model_name(),
+                error = %error,
+                "Active chat model failed to load during warmup"
+            );
+            return Err(match error {
+                AppError::ModelLoadFailed(load_error) => AppError::ModelLoadFailed(format!(
+                    "Failed to warm up active chat model: {load_error}"
+                )),
+                error => error,
+            });
+        }
+    };
+    ticket.finish(WarmupOutcome::Ready { degraded });
 
     let elapsed_ms = start.elapsed().as_millis() as u64;
 
@@ -68,14 +75,17 @@ pub async fn warm_up_learning_model_impl(container: &Container) -> Result<(), Ap
 /// to warm up. Returns `Err` only when a model IS configured but fails
 /// to load.
 pub async fn warm_up_active_utility_model_impl(container: &Container) -> Result<(), AppError> {
+    let ticket = container.begin_warmup(WarmupRole::Utility);
     let start = Instant::now();
     match container.get_or_load_utility_llm().await {
         Ok(Some(_llm)) => {
+            ticket.finish(WarmupOutcome::Ready { degraded: None });
             let elapsed_ms = start.elapsed().as_millis() as u64;
             info!(elapsed_ms, "Active utility model warmed up");
             Ok(())
         }
         Ok(None) => {
+            ticket.finish(WarmupOutcome::Skipped);
             // No utility model is configured. Not an error — the runtime
             // falls back to the chat LLM. Surface a friendly message in
             // logs but treat as success so the UI doesn't toast errors
@@ -83,11 +93,15 @@ pub async fn warm_up_active_utility_model_impl(container: &Container) -> Result<
             info!("No active utility model configured; warmup is a no-op");
             Ok(())
         }
-        Err(AppError::ModelLoadFailed(load_error)) => Err(AppError::ModelLoadFailed(format!(
-            "Failed to warm up active utility model: {}",
-            load_error
-        ))),
-        Err(error) => Err(error),
+        Err(error) => {
+            ticket.finish(WarmupOutcome::from_load_error(error.clone()));
+            Err(match error {
+                AppError::ModelLoadFailed(load_error) => AppError::ModelLoadFailed(format!(
+                    "Failed to warm up active utility model: {load_error}"
+                )),
+                error => error,
+            })
+        }
     }
 }
 

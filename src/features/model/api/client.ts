@@ -77,6 +77,10 @@ export const modelApi = {
   listLoadedModels: async (): Promise<ApiResult<Wire.LoadedModelDto[]>> =>
     apiCall('list_loaded_models'),
 
+  /** Where each model role's latest warm-up stands. */
+  warmupStatus: async (): Promise<ApiResult<Wire.RoleWarmupDto[]>> =>
+    apiCall('warmup_status'),
+
   /**
    * The last learning work refused because the Learning model's window was
    * too small, while that model has not covered the window since; null when

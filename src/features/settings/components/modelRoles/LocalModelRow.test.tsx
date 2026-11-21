@@ -64,6 +64,17 @@ function utilityModel(): DownloadedModel {
   };
 }
 
+function backendRecords(
+  role: 'chat' | 'utility' | 'learning',
+  phase: 'ready' | 'failed',
+  error: string | null = null,
+) {
+  return async () => {
+    useModelWarmupStore.getState().applyStatus({ role, phase, error, revision: 1 });
+    if (phase === 'failed') throw new Error(error ?? '');
+  };
+}
+
 function renderRow(model = utilityModel()) {
   return render(
     <TooltipProvider>
@@ -82,7 +93,7 @@ describe('LocalModelRow load status', () => {
   });
 
   it("shows the backend's reason when the model failed to load for a role it holds", () => {
-    useModelWarmupStore.getState().setRolePhase('utility', 'failed', UNUSABLE);
+    useModelWarmupStore.getState().applyStatus({ role: 'utility', phase: 'failed', error: UNUSABLE, revision: 1 });
 
     renderRow();
 
@@ -99,7 +110,7 @@ describe('LocalModelRow load status', () => {
   it('shows a start the server refused, worded as the backend wrote it', () => {
     const refusal = 'This llama-server cannot draft and see at once. Turn off either Vision '
       + 'or Speculative decoding for this model in Settings → Downloaded.';
-    useModelWarmupStore.getState().setRolePhase('utility', 'failed', refusal);
+    useModelWarmupStore.getState().applyStatus({ role: 'utility', phase: 'failed', error: refusal, revision: 1 });
 
     renderRow();
 
@@ -107,7 +118,7 @@ describe('LocalModelRow load status', () => {
   });
 
   it('ignores failures of roles the model does not hold', () => {
-    useModelWarmupStore.getState().setRolePhase('chat', 'failed', UNUSABLE);
+    useModelWarmupStore.getState().applyStatus({ role: 'chat', phase: 'failed', error: UNUSABLE, revision: 1 });
 
     renderRow();
 
@@ -117,7 +128,8 @@ describe('LocalModelRow load status', () => {
   it("ignores a failure that belongs to the model previously assigned to the role", () => {
     // Model 'other' failed for utility, then utility was reassigned to m1.
     // m1 was never loaded, so its row must not carry the old model's error.
-    useModelWarmupStore.getState().setRolePhase('utility', 'failed', UNUSABLE, 'other');
+    useModelWarmupStore.getState().claimRole('utility', 'other');
+    useModelWarmupStore.getState().applyStatus({ role: 'utility', phase: 'failed', error: UNUSABLE, revision: 1 });
 
     renderRow();
 
@@ -128,9 +140,9 @@ describe('LocalModelRow load status', () => {
     });
   });
 
-  it('records a manual warm-up failure so the row shows it', async () => {
+  it('shows a manual warm-up failure the backend recorded', async () => {
     const user = userEvent.setup();
-    hooks.warmUpActiveUtilityModel.mockRejectedValue(new Error(UNUSABLE));
+    hooks.warmUpActiveUtilityModel.mockImplementation(backendRecords('utility', 'failed', UNUSABLE));
 
     renderRow();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
@@ -165,8 +177,8 @@ describe('LocalModelRow load status', () => {
     const settings = makeAppSettings().llm;
     settings.learningModel = { kind: 'local', model_id: 'qwen3-4b' };
     roles.llmSettings = settings;
-    hooks.warmUpActiveUtilityModel.mockResolvedValue(undefined);
-    hooks.warmUpLearningModel.mockRejectedValue(new Error('Not enough memory'));
+    hooks.warmUpActiveUtilityModel.mockImplementation(backendRecords('utility', 'ready'));
+    hooks.warmUpLearningModel.mockImplementation(backendRecords('learning', 'failed', 'Not enough memory'));
 
     renderRow();
     expect(screen.getByText('Learning')).toHaveAttribute('data-active-role', 'learning');
@@ -180,7 +192,7 @@ describe('LocalModelRow load status', () => {
 
   it('says a loaded model runs on the CPU, and why, in words', async () => {
     const user = userEvent.setup();
-    hooks.warmUpActiveUtilityModel.mockResolvedValue(undefined);
+    hooks.warmUpActiveUtilityModel.mockImplementation(backendRecords('utility', 'ready'));
     hooks.loaded = [{
       model: { kind: 'local', model_id: 'qwen3-4b' }, provider: 'local', context_tokens: 8192, in_flight: 0,
       pinned_by: [], loaded_at: '', last_used_at: '', gpu_bytes: null, degraded: 'Metal buffer limit',

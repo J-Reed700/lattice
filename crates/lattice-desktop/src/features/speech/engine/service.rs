@@ -29,8 +29,6 @@ use lattice_core::shared::runtime::background::BackgroundTasks;
 
 /// How long the model stays loaded after the last sentence it spoke.
 pub const SPEECH_IDLE_TTL: Duration = Duration::from_secs(300);
-/// Maximum characters accepted in one synthesis request to bound PCM memory.
-pub const MAX_SPEECH_CHARS: usize = 100_000;
 
 /// Speech at Kokoro's sample rate.
 pub struct Clip {
@@ -280,11 +278,6 @@ impl KokoroSpeech {
         voice: &'static CuratedVoice,
         speed: f32,
     ) -> Result<Clip, AppError> {
-        if text.chars().count() > MAX_SPEECH_CHARS {
-            return Err(AppError::InvalidInput(format!(
-                "Text exceeds maximum read-aloud length of {MAX_SPEECH_CHARS} characters"
-            )));
-        }
         let _turn = self
             .speaking
             .acquire()

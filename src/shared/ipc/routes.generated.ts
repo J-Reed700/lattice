@@ -469,6 +469,7 @@ export const COMMAND_PLUGINS = {
   warm_up_active_chat_model: 'model',
   warm_up_active_utility_model: 'model',
   warm_up_learning_model: 'model',
+  warmup_status: 'model',
 } as const;
 
 export type CommandName = keyof typeof COMMAND_PLUGINS;

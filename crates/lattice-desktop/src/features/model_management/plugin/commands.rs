@@ -3,6 +3,7 @@
 //! Direct delegation to business logic in model_management_commands.rs
 //! NO GATEWAY WRAPPER - calls *_impl functions directly like search plugin does
 
+use crate::features::llm::warmup::RoleWarmupDto;
 use crate::interfaces::di::Container;
 use lattice_core::application::contracts::active_models::ActiveModels;
 use lattice_core::shared::error::AppError;
@@ -348,6 +349,15 @@ pub async fn list_loaded_models(
             degraded: loaded.degraded,
         })
         .collect())
+}
+
+/// Where each model role's latest warm-up stands, for a window that opens after it began.
+#[tauri::command]
+#[specta::specta]
+pub async fn warmup_status(
+    container: State<'_, Container>,
+) -> Result<Vec<RoleWarmupDto>, ApiError> {
+    Ok(container.warmups.snapshot())
 }
 
 /// The last learning work refused because the Learning model's window was
