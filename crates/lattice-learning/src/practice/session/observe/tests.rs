@@ -147,7 +147,7 @@ fn open_of(observation: &Observation, case_id: &str) -> bool {
 }
 
 fn observed(session: &Session) -> Observation {
-    observe(&kind(), session, &session.row.draft, None).unwrap()
+    observe(&kind(), session, &session.row.draft, None, None).unwrap()
 }
 
 fn learner_case(ordinal: u32, verdict: LearnerCaseVerdict, catches: &[&str]) -> SessionLearnerCase {
@@ -250,12 +250,12 @@ fn only_a_right_case_catches_a_misreading() {
 #[test]
 fn changes_are_read_only_against_a_draft_the_counterpart_has_seen() {
     let each = session(Setting::Mock);
-    let none = observe(&kind(), &each, &each.row.draft, None).unwrap();
+    let none = observe(&kind(), &each, &each.row.draft, None, None).unwrap();
     assert!(!none.has_baseline);
     assert!(none.changes.is_empty());
 
     let seen = piece(&["a", "b", "c"]);
-    let some = observe(&kind(), &each, &each.row.draft, Some(&seen)).unwrap();
+    let some = observe(&kind(), &each, &each.row.draft, Some(&seen), None).unwrap();
     assert!(some.has_baseline);
     assert_eq!(some.changes.len(), 2);
 }
@@ -264,7 +264,10 @@ fn changes_are_read_only_against_a_draft_the_counterpart_has_seen() {
 fn the_draft_read_is_the_piece_given_and_not_the_stored_one() {
     let each = session(Setting::Mock);
     let typed = piece(&["z", "z", "z"]);
-    assert_eq!(observe(&kind(), &each, &typed, None).unwrap().piece, typed);
+    assert_eq!(
+        observe(&kind(), &each, &typed, None, None).unwrap().piece,
+        typed
+    );
 }
 
 #[test]
@@ -277,7 +280,7 @@ fn stages_reached_stop_at_the_stage_the_session_is_in() {
     );
     let plain = fake_kind(&["a", "b", "c"]).build();
     assert_eq!(
-        observe(&plain, &each, &each.row.draft, None)
+        observe(&plain, &each, &each.row.draft, None, None)
             .unwrap()
             .stages_reached,
         vec![Stage::Understand, Stage::Plan]
@@ -499,4 +502,34 @@ fn a_check_of_every_case_that_timed_out_is_how_the_session_went() {
     ];
     assert!(!outcome(&each).all_passed);
     assert_eq!(submit_counts(&each), (0, 1));
+}
+
+#[test]
+fn a_reply_reads_the_newest_check_its_cue_is_about_that_gave_an_answer() {
+    let mut each = session(Setting::Coached);
+    each.checks = vec![
+        ended(
+            "c1",
+            1,
+            CheckStatus::Failed,
+            &[("case-1", CaseStatus::Failed)],
+        ),
+        SessionCheck {
+            status: CheckStatus::Passed,
+            ..check("c2", CheckScope::Own, 2, &[("input", CaseStatus::Ran)])
+        },
+        ended("c3", 3, CheckStatus::Running, &[]),
+    ];
+    let read = |cue: Option<&Cue>| {
+        observe_reply(&kind(), &each, cue)
+            .unwrap()
+            .last_check
+            .unwrap()
+            .id
+    };
+    assert_eq!(read(Some(&Cue::CheckReview(CheckScope::All))), "c1");
+    assert_eq!(read(Some(&Cue::Submitted)), "c1");
+    assert_eq!(read(Some(&Cue::CheckReview(CheckScope::Own))), "c2");
+    assert_eq!(read(Some(&Cue::Reply)), "c3");
+    assert_eq!(read(None), "c3");
 }

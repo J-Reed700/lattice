@@ -148,6 +148,7 @@ fn rows() -> Vec<(&'static str, Event, [Option<Cue>; 3])> {
             "shown cases checked",
             Event::Checked {
                 scope: CheckScope::Shown,
+                status: CheckStatus::Failed,
             },
             [
                 Some(Cue::CheckReview(CheckScope::Shown)),
@@ -159,6 +160,7 @@ fn rows() -> Vec<(&'static str, Event, [Option<Cue>; 3])> {
             "own case checked",
             Event::Checked {
                 scope: CheckScope::Own,
+                status: CheckStatus::Passed,
             },
             [
                 Some(Cue::CheckReview(CheckScope::Own)),
@@ -170,12 +172,21 @@ fn rows() -> Vec<(&'static str, Event, [Option<Cue>; 3])> {
             "all cases checked",
             Event::Checked {
                 scope: CheckScope::All,
+                status: CheckStatus::Failed,
             },
             [
                 Some(Cue::CheckReview(CheckScope::All)),
                 Some(Cue::Submitted),
                 Some(Cue::Submitted),
             ],
+        ),
+        (
+            "all cases checked, without an answer",
+            Event::Checked {
+                scope: CheckScope::All,
+                status: CheckStatus::Interrupted,
+            },
+            [None, None, None],
         ),
         (
             "draft paused, changed",
