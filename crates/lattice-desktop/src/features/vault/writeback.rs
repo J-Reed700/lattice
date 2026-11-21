@@ -477,6 +477,14 @@ async fn inspect_existing_markdown(
     Ok(Some(ExistingMarkdown { sha256, parsed }))
 }
 
+fn changed_outside_lattice(write: &super::repository::PendingWrite, disk_sha256: &str) -> bool {
+    write
+        .last_mirrored_sha256
+        .as_deref()
+        .is_some_and(|baseline| baseline != disk_sha256)
+        && write.writing_sha256.as_deref() != Some(disk_sha256)
+}
+
 /// Mirror `note` to `target` unless the on-disk file was externally modified
 /// since `write.last_mirrored_sha256`. When an external modification is detected,
 /// SQLite `daily_notes_workspace` is reconciled to match the preserved disk file
@@ -491,10 +499,9 @@ async fn mirror_note_to_disk(
 ) -> std::result::Result<Option<String>, String> {
     let existing = inspect_existing_markdown(target).await?;
 
-    if let (Some(expected), Some(existing_md)) =
-        (write.last_mirrored_sha256.as_deref(), existing.as_ref())
-    {
-        if existing_md.sha256 != expected {
+    if let Some(existing_md) = existing.as_ref() {
+        if changed_outside_lattice(write, &existing_md.sha256) {
+            let expected = write.last_mirrored_sha256.as_deref().unwrap_or_default();
             tracing::warn!(
                 note_id = %write.note_id,
                 target = %target.display(),
@@ -555,6 +562,9 @@ async fn mirror_note_to_disk(
         return Ok(None);
     }
 
+    super::repository::begin_mirror(database, &note.id, &new_sha256)
+        .await
+        .map_err(|error| error.to_string())?;
     atomic_write(target, &document)
         .await
         .map_err(|error| error.to_string())?;
@@ -775,6 +785,12 @@ mod tests {
         .unwrap();
         sqlx::raw_sql(include_str!(
             "../../../migrations/20261119000000_vault_note_index_and_mirror_state.sql"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::raw_sql(include_str!(
+            "../../../migrations/20261121010000_vault_mirror_writing.sql"
         ))
         .execute(&pool)
         .await
