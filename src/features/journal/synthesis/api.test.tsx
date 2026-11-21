@@ -8,7 +8,7 @@ import type { JobDto } from '@/features/jobs/api';
 import type { JournalSynthesisDto } from '@/lib/bindings';
 import { jobFixture } from '@/tests/fixtures/jobs';
 
-import { JOURNAL_SYNTHESIS_JOB, synthesisKeys, useJournalSyntheses } from './api';
+import { JOURNAL_SYNTHESIS_JOB, mergeSyntheses, rememberSynthesis, synthesisKeys, useJournalSyntheses } from './api';
 
 const mocks = vi.hoisted(() => ({
   apiCall: vi.fn(),
@@ -91,5 +91,60 @@ describe('the synthesis list', () => {
     });
 
     expect(cachedJob()).toMatchObject({ status: 'completed', revision: 2 });
+  });
+});
+
+describe('rememberSynthesis', () => {
+  it('preserves a newer cached job when a late pending start or retry response arrives, places it first, and removes any superseded retryOfJobId entry', () => {
+    const writingActivity = { stage: 'writing', entryCount: 3, chunkIndex: 2, chunkCount: 2 } as const;
+    const other = synthesis(job({ id: 'other', status: 'completed', revision: 3, finishedAt: 3 }));
+    const superseded = synthesis(job({ id: 'failed-1', status: 'failed', revision: 1, finishedAt: 1 }));
+    const newerCached = {
+      ...synthesis(job({ id: 'retry-2', retryOfJobId: 'failed-1', status: 'running', revision: 2, activity: writingActivity })),
+      activity: writingActivity,
+    };
+    const lateRetryResponse = {
+      ...synthesis(job({ id: 'retry-2', retryOfJobId: 'failed-1', status: 'pending', revision: 0, activity: null })),
+      activity: null,
+    };
+
+    const next = rememberSynthesis([other, superseded, newerCached], lateRetryResponse);
+
+    expect(next.map((item) => item.job.id)).toEqual(['retry-2', 'other']);
+    expect(next[0].job).toEqual(newerCached.job);
+    expect(next[0].activity).toEqual(writingActivity);
+  });
+
+  it('preserves a completed cached job over a late revision 0 response', () => {
+    const completed = synthesis(job({ id: 'synth-1', status: 'completed', revision: 2, finishedAt: 4 }));
+    const lateStartResponse = synthesis(job({ id: 'synth-1', status: 'pending', revision: 0 }));
+
+    const next = rememberSynthesis([completed], lateStartResponse);
+
+    expect(next).toHaveLength(1);
+    expect(next[0].job).toEqual(completed.job);
+  });
+});
+
+describe('mergeSyntheses', () => {
+  it('returns the snapshot item directly when cached and snapshot revisions are equal', () => {
+    const cachedItem = synthesis(job({ id: 'synth-1', status: 'running', revision: 1 }));
+    const snapshotItem = synthesis(job({ id: 'synth-1', status: 'running', revision: 1 }));
+
+    const merged = mergeSyntheses([cachedItem], [snapshotItem]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toBe(snapshotItem);
+  });
+
+  it('preserves the cached job when the cached revision is higher than the snapshot revision', () => {
+    const cachedJob = job({ id: 'synth-1', status: 'completed', revision: 3, finishedAt: 5 });
+    const cachedItem = synthesis(cachedJob);
+    const snapshotItem = synthesis(job({ id: 'synth-1', status: 'running', revision: 1 }));
+
+    const merged = mergeSyntheses([cachedItem], [snapshotItem]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].job).toBe(cachedJob);
   });
 });

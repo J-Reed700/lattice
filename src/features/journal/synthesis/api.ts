@@ -49,15 +49,22 @@ export const synthesesQueryOptions = () =>
     staleTime: Infinity,
   });
 
+/** Keeps `existing.job` only when its revision is strictly higher than `synthesis.job`. */
+function keepNewerJob(
+  synthesis: JournalSynthesisDto,
+  existing: JournalSynthesisDto | undefined,
+): JournalSynthesisDto {
+  return existing && newerJob(existing.job, synthesis.job) !== synthesis.job
+    ? withJob(synthesis, existing.job)
+    : synthesis;
+}
+
 /** The snapshot's syntheses and order, each keeping a newer job the cache already holds. */
 export function mergeSyntheses(
   cached: readonly JournalSynthesisDto[],
   snapshot: readonly JournalSynthesisDto[],
 ): JournalSynthesisDto[] {
-  return snapshot.map((item) => {
-    const cachedItem = cached.find((candidate) => candidate.job.id === item.job.id);
-    return cachedItem && newerJob(item.job, cachedItem.job) !== item.job ? withJob(item, cachedItem.job) : item;
-  });
+  return snapshot.map((item) => keepNewerJob(item, cached.find((candidate) => candidate.job.id === item.job.id)));
 }
 
 /** Whether a synthesis is still being written. */
@@ -98,5 +105,9 @@ export function rememberSynthesis(
   syntheses: readonly JournalSynthesisDto[] | undefined,
   synthesis: JournalSynthesisDto,
 ): JournalSynthesisDto[] {
-  return [synthesis, ...(syntheses ?? []).filter((existing) => existing.job.id !== synthesis.job.id && existing.job.id !== synthesis.job.retryOfJobId)];
+  const existing = syntheses?.find((item) => item.job.id === synthesis.job.id);
+  return [
+    keepNewerJob(synthesis, existing),
+    ...(syntheses ?? []).filter((item) => item.job.id !== synthesis.job.id && item.job.id !== synthesis.job.retryOfJobId),
+  ];
 }
