@@ -29,6 +29,7 @@ OUTPUT_RESERVATION_DIVISOR = 4
 SAFETY_MARGIN_SHARE = 0.05
 SAFETY_MARGIN_FLOOR = 256
 CHAT_SYSTEM_START = "You are Lattice"
+# How a reading request looked in recorded runs before the reading step was removed.
 READ_INSTRUCTION = "Do not answer my question yet. First read these passages, each on its own."
 # How a reading request ended before the reading became a contract.
 OLD_READING_CLOSE = "Write only these lines"

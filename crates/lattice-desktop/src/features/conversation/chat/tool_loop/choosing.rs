@@ -1,5 +1,4 @@
-//! The options of a call that chooses sentences by handle, shared by the
-//! reading and the research notes.
+//! The options of a call that chooses sentences by handle for research notes.
 
 use lattice_core::application::ports::llm_port::{CompletionRequest, SamplingOverride};
 use lattice_core::application::services::grounded_generation::CallOptions;

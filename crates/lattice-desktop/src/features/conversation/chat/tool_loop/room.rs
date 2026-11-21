@@ -2,10 +2,15 @@
 //! already carries, what one more result may take, and when there is no room
 //! for another.
 
+use super::tool_schema_text;
 use lattice_core::application::ports::llm_port::{
-    chars_within_tokens, CompletionInput, DEFAULT_CHARS_PER_TOKEN,
+    chars_within_tokens, CompletionInput, CompletionRequest, DEFAULT_CHARS_PER_TOKEN,
+    TEMPLATE_TOKENS_FOR_ANSWER, TEMPLATE_TOKENS_PER_MESSAGE,
 };
+use lattice_core::application::ports::LLMPort;
+use std::borrow::Cow;
 use std::collections::HashSet;
+use tracing::debug;
 
 /// The characters the prompt may fill this turn: the plan's input budget at a
 /// characters-per-token rate that starts at the backend's calibrated average
@@ -143,4 +148,187 @@ pub(super) fn shed_newest_results(
         }
     }
     shed
+}
+
+/// `request`'s prompt in tokens, counted as the send-time gates count it.
+pub(super) async fn prompt_tokens(llm: &dyn LLMPort, request: &CompletionRequest) -> usize {
+    let text = request
+        .input()
+        .iter()
+        .flat_map(|item| match item {
+            CompletionInput::Native { value } => vec![Cow::Owned(value.to_string())],
+            CompletionInput::Message { role, .. } | CompletionInput::Multimodal { role, .. } => {
+                vec![Cow::Borrowed(role.as_str()), item.text()]
+            }
+            _ => vec![item.text()],
+        })
+        .chain((!request.tools().is_empty()).then(|| Cow::Owned(tool_schema_text(request.tools()))))
+        .collect::<Vec<_>>()
+        .join("\n");
+    tokens(llm, &text).await
+        + TEMPLATE_TOKENS_PER_MESSAGE * request.input().len()
+        + TEMPLATE_TOKENS_FOR_ANSWER
+        + request.image_tokens()
+}
+
+/// Tokens in `text` as the backend's own tokenizer counts them where it has
+/// one, by its estimate otherwise or when the count fails.
+async fn tokens(llm: &dyn LLMPort, text: &str) -> usize {
+    if !llm.counts_tokens_exactly() {
+        return llm.count_tokens(text);
+    }
+    match llm.count_tokens_exact(text).await {
+        Ok(tokens) => tokens,
+        Err(error) => {
+            debug!(%error, "The backend could not count the text; measuring by the estimate");
+            llm.count_tokens(text)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lattice_core::application::ports::llm_port::CompletionResponse;
+    use lattice_core::application::ports::ToolDefinition;
+    use lattice_core::application::services::model_contract::legacy;
+    use lattice_core::application::services::model_contract::shape::Schema;
+    use lattice_core::shared::error::{AppError, Result};
+    use serde_json::json;
+
+    struct FakeTokenizer {
+        exact_supported: bool,
+        exact_result: std::result::Result<usize, String>,
+        estimate: usize,
+    }
+
+    #[async_trait::async_trait]
+    impl LLMPort for FakeTokenizer {
+        async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
+            unreachable!("not used in prompt_tokens tests")
+        }
+
+        fn model_name(&self) -> &str {
+            "fake-tokenizer"
+        }
+
+        fn max_context_tokens(&self) -> usize {
+            8_192
+        }
+
+        fn count_tokens(&self, _text: &str) -> usize {
+            self.estimate
+        }
+
+        async fn count_tokens_exact(&self, _text: &str) -> Result<usize> {
+            self.exact_result
+                .clone()
+                .map_err(AppError::ServiceNotAvailable)
+        }
+
+        fn counts_tokens_exactly(&self) -> bool {
+            self.exact_supported
+        }
+
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+
+        fn enforces(&self, _schema: &Schema) -> bool {
+            false
+        }
+    }
+
+    fn sample_request() -> CompletionRequest {
+        legacy::completion(legacy::Completion {
+            input: vec![
+                CompletionInput::Message {
+                    role: "system".into(),
+                    content: "Answer carefully.".into(),
+                },
+                CompletionInput::Message {
+                    role: "user".into(),
+                    content: "When did the bridge open?".into(),
+                },
+            ],
+            tools: vec![ToolDefinition {
+                name: "search_documents".into(),
+                description: "Search.".into(),
+                parameters: json!({"type": "object", "properties": {}}),
+            }],
+            ..Default::default()
+        })
+    }
+
+    #[tokio::test]
+    async fn prompt_tokens_uses_exact_count_and_template_overhead() {
+        let llm = FakeTokenizer {
+            exact_supported: true,
+            exact_result: Ok(42),
+            estimate: 99,
+        };
+        let request = sample_request();
+        let expected = 42 + TEMPLATE_TOKENS_PER_MESSAGE * 2 + TEMPLATE_TOKENS_FOR_ANSWER;
+        assert_eq!(prompt_tokens(&llm, &request).await, expected);
+    }
+
+    #[tokio::test]
+    async fn prompt_tokens_falls_back_to_estimate_when_exact_count_fails() {
+        let llm = FakeTokenizer {
+            exact_supported: true,
+            exact_result: Err("tokenizer unavailable".into()),
+            estimate: 77,
+        };
+        let request = sample_request();
+        let expected = 77 + TEMPLATE_TOKENS_PER_MESSAGE * 2 + TEMPLATE_TOKENS_FOR_ANSWER;
+        assert_eq!(prompt_tokens(&llm, &request).await, expected);
+    }
+
+    #[tokio::test]
+    async fn prompt_tokens_uses_estimate_when_exact_counting_is_unsupported() {
+        let llm = FakeTokenizer {
+            exact_supported: false,
+            exact_result: Ok(999),
+            estimate: 31,
+        };
+        let request = sample_request();
+        let expected = 31 + TEMPLATE_TOKENS_PER_MESSAGE * 2 + TEMPLATE_TOKENS_FOR_ANSWER;
+        assert_eq!(prompt_tokens(&llm, &request).await, expected);
+    }
+
+    #[tokio::test]
+    async fn prompt_tokens_accounts_for_message_and_answer_template_overhead() {
+        let llm = FakeTokenizer {
+            exact_supported: true,
+            exact_result: Ok(10),
+            estimate: 10,
+        };
+        let empty = legacy::completion(legacy::Completion::default());
+        assert_eq!(
+            prompt_tokens(&llm, &empty).await,
+            10 + TEMPLATE_TOKENS_FOR_ANSWER
+        );
+
+        let three_messages = legacy::completion(legacy::Completion {
+            input: vec![
+                CompletionInput::Message {
+                    role: "system".into(),
+                    content: "a".into(),
+                },
+                CompletionInput::Message {
+                    role: "user".into(),
+                    content: "b".into(),
+                },
+                CompletionInput::ToolResult {
+                    id: "c1".into(),
+                    output: "c".into(),
+                },
+            ],
+            ..Default::default()
+        });
+        assert_eq!(
+            prompt_tokens(&llm, &three_messages).await,
+            10 + TEMPLATE_TOKENS_PER_MESSAGE * 3 + TEMPLATE_TOKENS_FOR_ANSWER
+        );
+    }
 }

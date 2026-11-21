@@ -645,7 +645,6 @@ impl lattice_core::application::ports::turn_source::TurnSourcePort for Folder {
             offers_library_tools: false,
             infers_intent: false,
             verifies_cited_only: true,
-            reads_passages: true,
             drops_session_talk: false,
             tool_rounds: 10,
             evidence_template: None,
@@ -717,7 +716,6 @@ impl Course {
                 offers_library_tools: true,
                 infers_intent: false,
                 verifies_cited_only: false,
-                reads_passages: true,
                 drops_session_talk: false,
                 tool_rounds: 10,
                 evidence_template: None,
@@ -803,7 +801,7 @@ fn rendered(
 }
 
 /// A course's passages reach the prompt as a library passage does: numbered,
-/// read one by one, and in the list the answer's citations resolve against.
+/// and in the list the answer's citations resolve against.
 #[test]
 fn a_source_s_passages_join_the_turn_s_numbered_passages() {
     use lattice_core::application::services::context_assembler::EvidenceBudget;
@@ -827,10 +825,10 @@ fn a_source_s_passages_join_the_turn_s_numbered_passages() {
         !message.contains("Document ID:"),
         "it reads on with the course's tools: {message}"
     );
-    assert!(
-        message.ends_with(crate::features::conversation::chat::tool_loop::READING_INSTRUCTION),
-        "{message}"
-    );
+    let passage_pos = message.find("[s1] Document:").expect("passage marker");
+    let question_pos = message.find("Question:").expect("question line");
+    assert!(passage_pos < question_pos, "{message}");
+    assert!(message.ends_with("Answer:"), "{message}");
     assert_eq!(prompt.sources[0].citation_id, Some(1));
     assert_eq!(prompt.sources[0].document_id, "course:version-1");
     assert_eq!(prompt.sources[0].content, "Fusion sums reciprocal ranks.");

@@ -12,7 +12,6 @@ mod images;
 mod limits;
 #[cfg(test)]
 mod loop_tests;
-mod reading;
 mod research_notes;
 mod room;
 mod scoped_document_tools;
@@ -40,8 +39,6 @@ use super::{ChatEventSink, ChatStreamEventDto, ChatTurn};
 use emitter::StreamEmitter;
 use final_round::LastRound;
 use lattice_core::application::services::tool_handles::{picture_line, Picture};
-use reading::Reading;
-pub(super) use reading::READING_INSTRUCTION;
 use room::{chars_in_flight, tool_result_allowance, window_has_room_for_a_result};
 use written_calls::WrittenCalls;
 
@@ -83,10 +80,6 @@ pub(super) struct LoopRequest<'a> {
     pub(super) time_budget: Duration,
     /// Model rounds this turn may spend; see [`max_tool_rounds`].
     pub(super) max_tool_rounds: usize,
-    /// When true, the post-reading write instruction holds the answer strictly
-    /// to quoted passages; when false (hybrid mode), uncited general knowledge
-    /// is permitted for parts the passages do not cover.
-    pub(super) strict_sources: bool,
     /// A research turn saves every round it finishes here, and a resumed one
     /// starts after the last it saved.
     pub(super) research: Option<Rounds<'a>>,
@@ -133,7 +126,6 @@ pub(super) async fn run_agentic_tool_loop(
         input_budget,
         time_budget,
         max_tool_rounds,
-        strict_sources,
         research,
     } = request;
     let max_tool_rounds = max_tool_rounds.max(1);
@@ -150,11 +142,6 @@ pub(super) async fn run_agentic_tool_loop(
     // The last round always answers, so a resumed turn has at least that one.
     let mut first_round = 0;
     if let Some(start) = start {
-        // A turn whose reading came to nothing answered without the
-        // instruction to read, and carries on without it.
-        if !reading::noted_in(&start.transcript) {
-            reading::withdraw(&mut input);
-        }
         input.extend(start.transcript);
         queries = start.queries;
         fetched = start.fetched;
@@ -190,8 +177,7 @@ pub(super) async fn run_agentic_tool_loop(
     // The stop button as a token: every round's request carries it, so Stop
     // dequeues or aborts a request at once rather than at the next poll.
     let turn_cancel = container.turn_cancellation().turn_token(request_id);
-    // Background work waits for the turn rather than evicting its prompt
-    // between rounds and reading groups.
+    // Background work waits for the turn rather than evicting its prompt between rounds.
     let _held = llm.hold_cache(conv_id);
     let mut native_request = legacy::completion(legacy::Completion {
         // Someone is watching this turn; it goes ahead of background work and
@@ -256,54 +242,6 @@ pub(super) async fn run_agentic_tool_loop(
     // Why the next round has to answer, when a limit cut the round before it
     // short: the deadline passed, or the prompt no longer fit.
     let mut forced: Option<LastRound> = None;
-    // A message that shows numbered passages asks for a reading of them
-    // first; a resumed turn has its notes in the saved transcript already.
-    let mut notes = None;
-    if native_request.input().len() == planned_len {
-        if let Some(passages) = reading::asked(native_request.input(), sources.as_slice()) {
-            let reading_start = Instant::now();
-            let read = match reading::read_passages(
-                llm.as_ref(),
-                &native_request,
-                &passages,
-                question,
-                recorder,
-                &turn_cancel,
-                &clock,
-            )
-            .await
-            {
-                Ok(read) => read,
-                Err(error) if limits::ran_out(&clock, &turn_cancel) => {
-                    warn!(%error, "The turn ran out of time reading its passages; answering without notes");
-                    forced = Some(LastRound::OutOfTime);
-                    Reading::NoNotes
-                }
-                Err(error) => return Err(error),
-            };
-            notes = match read {
-                Reading::Noted(read) => {
-                    reading::append_notes(llm.as_ref(), &mut native_request, &read, strict_sources)
-                        .await
-                        .then_some(read)
-                }
-                Reading::NothingBears => {
-                    reading::search_instead(&mut native_request, strict_sources);
-                    None
-                }
-                Reading::NoNotes => None,
-            };
-            timings.llm_stream_ms = timings
-                .llm_stream_ms
-                .saturating_add(elapsed_ms(reading_start));
-        }
-        // No notes, none that fit beside the answer, or nothing to read: the
-        // answer is asked for exactly as before reading existed. A search asked
-        // for instead has already taken the reading's place.
-        if notes.is_none() {
-            reading::withdraw(legacy::says(&mut native_request).input);
-        }
-    }
     let mut condensed = 0;
     let mut iteration = first_round;
     // A reply with nothing in it is asked for once more: Claude's classifiers
@@ -318,7 +256,7 @@ pub(super) async fn run_agentic_tool_loop(
         // window follows what this turn has read, and a prompt already past
         // it sheds its newest results and answers.
         if iteration > 0 && forced.is_none() && llm.counts_tokens_exactly() {
-            let tokens = reading::prompt_tokens(llm.as_ref(), &native_request).await;
+            let tokens = room::prompt_tokens(llm.as_ref(), &native_request).await;
             window.measured(
                 chars_in_flight(native_request.input()) + tool_schema_chars,
                 tokens,
@@ -446,10 +384,7 @@ pub(super) async fn run_agentic_tool_loop(
             recorder,
             &turn_cancel,
             deadline,
-            match notes {
-                Some(_) if iteration == 0 => "Writing the answer",
-                _ => generation::thinking_label(iteration),
-            },
+            generation::thinking_label(iteration),
             written_calls,
         )
         .await
@@ -634,30 +569,6 @@ pub(super) async fn run_agentic_tool_loop(
         if tool_calls.is_empty() {
             if response_text.trim().is_empty() {
                 return Err(AppError::InvalidState("Model returned no answer".into()));
-            }
-            // A last round answers at a limit, and adds nothing after it.
-            if let Some(notes) = notes.as_ref().filter(|_| last_round.is_none()) {
-                let coverage_start = Instant::now();
-                let answered = super::reply_text::ReplyText::read(
-                    names,
-                    super::reply_text::markers(source),
-                    &response_text,
-                );
-                reading::add_what_was_left_out(
-                    llm.as_ref(),
-                    &mut native_request,
-                    notes,
-                    &mut response_text,
-                    &answered,
-                    &emitter,
-                    recorder,
-                    &turn_cancel,
-                    &clock,
-                )
-                .await?;
-                timings.llm_stream_ms = timings
-                    .llm_stream_ms
-                    .saturating_add(elapsed_ms(coverage_start));
             }
             emitter.done();
             tracing::info!(
