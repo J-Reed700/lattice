@@ -635,7 +635,7 @@ impl LLMPort for ToolCalling {
 
 /// A folder that offers one tool of its own.
 #[derive(Debug)]
-struct Folder;
+pub(super) struct Folder;
 
 #[async_trait::async_trait]
 impl lattice_core::application::ports::turn_source::TurnSourcePort for Folder {
