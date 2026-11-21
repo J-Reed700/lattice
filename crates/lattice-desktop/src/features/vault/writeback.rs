@@ -816,6 +816,146 @@ mod tests {
         );
     }
 
+    async fn own_write_fixture() -> (
+        SqlitePool,
+        Database,
+        tempfile::TempDir,
+        std::path::PathBuf,
+        super::super::watcher::WriteSuppressionRegistry,
+        Arc<std::sync::RwLock<Option<tauri::AppHandle>>>,
+    ) {
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+            .await
+            .unwrap();
+        let db = Database::new(pool.clone());
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("notes/n1.md");
+        let suppression = super::super::watcher::WriteSuppressionRegistry::new();
+        let app_handle = Arc::new(std::sync::RwLock::new(None));
+        sqlx::query(
+            "INSERT INTO daily_notes_workspace (id, title, content, created_at, updated_at) \
+             VALUES ('n1', 'T1', 'first', '2026-11-19T00:00:00Z', '2026-11-19T00:01:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        (pool, db, dir, target, suppression, app_handle)
+    }
+
+    async fn pass_over_n1(
+        db: &Database,
+        suppression: &super::super::watcher::WriteSuppressionRegistry,
+        app_handle: &Arc<std::sync::RwLock<Option<tauri::AppHandle>>>,
+        target: &Path,
+    ) -> Option<String> {
+        let write = super::super::repository::pending(db)
+            .await
+            .unwrap()
+            .remove(0);
+        let note = super::super::repository::workspace_notes(db)
+            .get("n1")
+            .await
+            .unwrap();
+        let outside = mirror_note_to_disk(db, suppression, app_handle, &write, &note, target)
+            .await
+            .unwrap();
+        settle_write(db, &write, Ok(())).await.unwrap();
+        outside
+    }
+
+    #[tokio::test]
+    async fn a_save_during_a_write_keeps_the_newer_text() {
+        let (pool, db, _dir, target, suppression, app_handle) = own_write_fixture().await;
+        pass_over_n1(&db, &suppression, &app_handle, &target).await;
+
+        sqlx::query("UPDATE daily_notes_workspace SET content = 'second' WHERE id = 'n1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let w2 = super::super::repository::pending(&db)
+            .await
+            .unwrap()
+            .remove(0);
+        let n2 = super::super::repository::workspace_notes(&db)
+            .get("n1")
+            .await
+            .unwrap();
+        sqlx::query("UPDATE daily_notes_workspace SET content = 'third' WHERE id = 'n1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        mirror_note_to_disk(&db, &suppression, &app_handle, &w2, &n2, &target)
+            .await
+            .unwrap();
+        settle_write(&db, &w2, Ok(())).await.unwrap();
+
+        let outside = pass_over_n1(&db, &suppression, &app_handle, &target).await;
+
+        let note = super::super::repository::workspace_notes(&db)
+            .get("n1")
+            .await
+            .unwrap();
+        assert_eq!(note.content, "third", "the page must keep the newer save");
+        let on_disk = tokio::fs::read_to_string(&target).await.unwrap();
+        assert!(on_disk.contains("third"));
+        assert_eq!(outside, None);
+        assert!(super::super::repository::pending(&db)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_write_whose_baseline_did_not_commit_is_still_lattices_own() {
+        let (pool, db, _dir, target, suppression, app_handle) = own_write_fixture().await;
+        pass_over_n1(&db, &suppression, &app_handle, &target).await;
+
+        sqlx::query("UPDATE daily_notes_workspace SET content = 'second' WHERE id = 'n1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let w2 = super::super::repository::pending(&db)
+            .await
+            .unwrap()
+            .remove(0);
+        let n2 = super::super::repository::workspace_notes(&db)
+            .get("n1")
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TRIGGER fail_mirror_record BEFORE UPDATE ON vault_write_outbox \
+             BEGIN SELECT RAISE(ABORT, 'injected'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(
+            mirror_note_to_disk(&db, &suppression, &app_handle, &w2, &n2, &target)
+                .await
+                .is_err()
+        );
+        let on_disk = tokio::fs::read_to_string(&target).await.unwrap();
+        assert!(on_disk.contains("second"));
+        sqlx::query("DROP TRIGGER fail_mirror_record")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query("UPDATE daily_notes_workspace SET content = 'third' WHERE id = 'n1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pass_over_n1(&db, &suppression, &app_handle, &target).await;
+
+        let note = super::super::repository::workspace_notes(&db)
+            .get("n1")
+            .await
+            .unwrap();
+        assert_eq!(note.content, "third");
+        let on_disk = tokio::fs::read_to_string(&target).await.unwrap();
+        assert!(on_disk.contains("third"));
+    }
+
     #[tokio::test]
     async fn mirror_preserves_existing_frontmatter_tags_and_skips_clobbering_external_edits() {
         let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
