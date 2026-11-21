@@ -98,6 +98,7 @@ pub struct JobRecord {
     /// Where the job stands in its course's backlog; lower runs first. Set when
     /// a ranked kind's job is admitted, and kept by its retries.
     pub rank: Option<i64>,
+    pub revision: i64,
 }
 
 /// A request to run work. `operation_id` is the caller's idempotency key;
@@ -290,6 +291,7 @@ pub struct JobDto {
     pub created_at: i64,
     pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
+    pub revision: i64,
 }
 
 impl From<&JobRecord> for JobDto {
@@ -312,6 +314,7 @@ impl From<&JobRecord> for JobDto {
             created_at: job.created_at,
             started_at: job.started_at,
             finished_at: job.finished_at,
+            revision: job.revision,
         }
     }
 }

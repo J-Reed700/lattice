@@ -78,6 +78,7 @@ fn parse(row: &SqliteRow) -> Result<JobRecord> {
         finished_at: row.get("finished_at"),
         heartbeat_at: row.get("heartbeat_at"),
         rank: row.get("rank"),
+        revision: row.get("revision"),
     })
 }
 

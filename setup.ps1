@@ -2,8 +2,6 @@
 #
 #   Double-click setup.cmd, or in PowerShell:
 #     powershell -ExecutionPolicy Bypass -File .\setup.ps1
-#   Without a checkout (downloads the source to %USERPROFILE%\lattice first):
-#     irm https://raw.githubusercontent.com/J-Reed700/lattice/main/setup.ps1 | iex
 #
 # The Windows counterpart of setup.sh. Each step is skipped when what it
 # installs is already there:
@@ -175,7 +173,7 @@ function Get-Python {
     )) {
         if (-not $base -or -not (Test-Path $base)) { continue }
         $installs = Get-ChildItem $base -Directory -Filter 'Python3*' -ErrorAction SilentlyContinue |
-            Sort-Object Name -Descending
+            Sort-Object { if ($_.Name -match '^Python3(\d+)$') { [int]$Matches[1] * 2 + 1 } elseif ($_.Name -match '^Python3(\d+)') { [int]$Matches[1] * 2 } else { -1 } } -Descending
         foreach ($dir in $installs) {
             $py = Join-Path $dir.FullName 'python.exe'
             if (Test-Path $py) { $candidates += ,@($py) }

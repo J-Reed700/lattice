@@ -22,8 +22,6 @@ export function isJobFinished(job: Pick<JobDto, 'status'>): boolean {
   return job.status !== 'pending' && job.status !== 'running';
 }
 
-const MAX_FINISHED_JOBS = 100;
-
 type JobSubscriber = (job: JobDto) => void;
 
 const subscribers = new Set<JobSubscriber>();
@@ -69,83 +67,25 @@ export const jobsQueryOptions = (kinds: readonly string[]) =>
     staleTime: Infinity,
   });
 
-function statusRank(status: JobDto['status']): number {
-  if (status === 'pending') return 0;
-  if (status === 'running') return 1;
-  return 2;
+/** The copy of a job with the higher revision; the incoming one on a tie. */
+export function newerJob(existing: JobDto, incoming: JobDto): JobDto {
+  return incoming.revision >= existing.revision ? incoming : existing;
 }
 
-function pickMonotonicJob(existing: JobDto, incoming: JobDto): JobDto {
-  const existingFinished = isJobFinished(existing);
-  const incomingFinished = isJobFinished(incoming);
-  if (existingFinished && !incomingFinished) return existing;
-  if (!existingFinished && incomingFinished) return incoming;
-  if (existingFinished && incomingFinished) {
-    return (incoming.finishedAt ?? 0) < (existing.finishedAt ?? 0)
-      ? existing
-      : incoming;
-  }
-
-  // Both are non-finished (`pending` | `running`). A deferred retry increments
-  // `retryCount` and transitions `running` -> `pending`, so compare `retryCount`
-  // before status rank.
-  const existingRetries = existing.retryCount ?? 0;
-  const incomingRetries = incoming.retryCount ?? 0;
-  if (incomingRetries > existingRetries) return incoming;
-  if (incomingRetries < existingRetries) return existing;
-
-  const existingRank = statusRank(existing.status);
-  const incomingRank = statusRank(incoming.status);
-  if (incomingRank < existingRank) return existing;
-  if (incomingRank > existingRank) return incoming;
-
-  if (incomingRank === 1) {
-    const existingStart = existing.startedAt ?? 0;
-    const incomingStart = incoming.startedAt ?? 0;
-    if (incomingStart < existingStart) return existing;
-    if (incomingStart === existingStart && incoming.progressCurrent < existing.progressCurrent) {
-      return existing;
-    }
-  }
-  return incoming;
-}
-
-function capFinishedJobs(jobs: JobDto[]): JobDto[] {
-  let finishedCount = 0;
-  for (const job of jobs) {
-    if (isJobFinished(job)) finishedCount += 1;
-  }
-  if (finishedCount <= MAX_FINISHED_JOBS) return jobs;
-
-  const finishedWithIndex = jobs
-    .map((job, index) => ({ job, index }))
-    .filter(({ job }) => isJobFinished(job))
-    .sort((a, b) => {
-      const timeA = a.job.finishedAt ?? a.job.startedAt ?? a.job.createdAt;
-      const timeB = b.job.finishedAt ?? b.job.startedAt ?? b.job.createdAt;
-      if (timeB !== timeA) return timeB - timeA;
-      return b.index - a.index;
-    });
-  const keepIndices = new Set(
-    finishedWithIndex.slice(0, MAX_FINISHED_JOBS).map(({ index }) => index),
-  );
-  return jobs.filter((job, index) => !isJobFinished(job) || keepIndices.has(index));
-}
-
-/** Replaces `job` monotonically in `jobs` by id, or appends it, capping retained terminal jobs. */
+/** Replaces `job` monotonically in `jobs` by id, or appends it. */
 export function upsertJob(jobs: readonly JobDto[], job: JobDto): JobDto[] {
   const at = jobs.findIndex((existing) => existing.id === job.id);
-  if (at < 0) return capFinishedJobs([...jobs, job]);
+  if (at < 0) return [...jobs, job];
   const existing = jobs[at]!;
-  const chosen = pickMonotonicJob(existing, job);
-  if (chosen === existing) return capFinishedJobs([...jobs]);
+  const chosen = newerJob(existing, job);
+  if (chosen === existing) return [...jobs];
   const next = [...jobs];
   next[at] = chosen;
-  return capFinishedJobs(next);
+  return next;
 }
 
 function mergeJobs(cached: readonly JobDto[], snapshot: readonly JobDto[]): JobDto[] {
-  let merged: JobDto[] = capFinishedJobs([...snapshot]);
+  let merged: JobDto[] = [...snapshot];
   for (const job of cached) {
     merged = upsertJob(merged, job);
   }

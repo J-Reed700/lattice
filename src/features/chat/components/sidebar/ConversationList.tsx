@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { motion, useReducedMotion } from 'framer-motion';
@@ -21,6 +21,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { flushSync } from 'react-dom';
 
 import { IconButton } from '@/components/ui/IconButton';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -58,6 +59,9 @@ interface ConversationListProps {
   exportActions: ConversationExportActions;
 }
 const MENU_ITEM_CLASS = 'flex w-full items-center gap-2.5 rounded-sm px-2.5 py-2 text-left text-sm text-text-primary transition-colors duration-fast hover:bg-surface focus-visible:bg-surface focus-visible:outline-hidden disabled:cursor-not-allowed disabled:opacity-50';
+
+const scrollElementOf = (element: HTMLElement | null) =>
+  (element?.closest('.overflow-y-auto') as HTMLElement | null) ?? null;
 
 function lastMessageText(messages: ConversationMessage[] | undefined): string | undefined {
   const last = messages?.[messages.length - 1];
@@ -260,10 +264,41 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
   const estimateRowSize = (index: number) =>
     flattenedRows[index]?.kind === 'header' ? 36 : 72;
 
+  const [listOffset, setListOffset] = useState(0);
+  useLayoutEffect(() => {
+    const nav = navRef.current;
+    const scroller = scrollElementOf(nav);
+    if (!shouldVirtualize || !nav || !scroller) return;
+    const offset = () =>
+      nav.getBoundingClientRect().top - scroller.getBoundingClientRect().top - scroller.clientTop + scroller.scrollTop;
+    setListOffset(offset());
+    if (typeof ResizeObserver === 'undefined') return;
+    const remeasure = () => flushSync(() => setListOffset(offset()));
+    const sizes = new ResizeObserver(remeasure);
+    const observeContentAbove = () => {
+      sizes.disconnect();
+      for (const child of scroller.children) {
+        if (child === nav) break;
+        sizes.observe(child, { box: 'border-box' });
+        if (child.contains(nav)) break;
+      }
+    };
+    const children = new MutationObserver(() => {
+      observeContentAbove();
+      remeasure();
+    });
+    observeContentAbove();
+    children.observe(scroller, { childList: true });
+    return () => {
+      children.disconnect();
+      sizes.disconnect();
+    };
+  }, [shouldVirtualize]);
+
   const rowVirtualizer = useVirtualizer({
     count: flattenedRows.length,
-    getScrollElement: () =>
-      (navRef.current?.closest('.overflow-y-auto') as HTMLElement | null) ?? null,
+    getScrollElement: () => scrollElementOf(navRef.current),
+    scrollMargin: listOffset,
     getItemKey: (index) => flattenedRows[index]?.key ?? index,
     estimateSize: estimateRowSize,
     measureElement: (element) => {
@@ -622,7 +657,7 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
                   top: 0,
                   left: 0,
                   width: '100%',
-                  transform: `translateY(${virtualRow.start}px)`,
+                  transform: `translateY(${virtualRow.start - rowVirtualizer.options.scrollMargin}px)`,
                 }}
               >
                 {row.kind === 'header' ? (

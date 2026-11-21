@@ -34,7 +34,7 @@ Check [Releases](https://github.com/J-Reed700/lattice/releases) for the latest *
 
 #### Option B — Build from this repository (Windows, macOS, or Linux)
 
-If you cloned this repo (or clicked **Code → Download ZIP** and unzipped it), run the setup script inside the folder. It installs any missing prerequisites, builds Lattice, installs it, and opens it for you. Running it again later updates Lattice. *(First run takes ~10–15 minutes and needs ~8 GB of RAM/swap.)*
+If you cloned this repo (or clicked **Code → Download ZIP** and unzipped it), run the setup script inside the folder. It installs any missing prerequisites, builds Lattice, installs it, and opens it for you. To update later, pull the latest changes (or download a fresh ZIP) and run it again. *(First run takes ~10–15 minutes and needs ~8 GB of RAM/swap.)*
 
 - **Windows 10/11:** Double-click **`setup.cmd`** in the repo folder (or run `powershell -ExecutionPolicy Bypass -File .\setup.ps1` in PowerShell from the repo folder).
 - **macOS or Linux:** Open **Terminal** in the repo folder and run:

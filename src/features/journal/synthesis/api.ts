@@ -1,6 +1,6 @@
 import { queryOptions, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { isJobFinished, useJobStatus, type JobDto } from '@/features/jobs/api';
+import { isJobFinished, newerJob, useJobStatus, type JobDto } from '@/features/jobs/api';
 import type {
   JournalSynthesisDto,
   StartJournalSynthesisRequestDto,
@@ -41,10 +41,31 @@ export const retrySynthesis = async (jobId: string) =>
 export const synthesesQueryOptions = () =>
   queryOptions({
     queryKey: synthesisKeys.list,
-    queryFn: async () => unwrapApiResult(await apiCall('list_journal_syntheses')),
+    queryFn: async ({ client }) => {
+      const snapshot = unwrapApiResult(await apiCall('list_journal_syntheses'));
+      return mergeSyntheses(client.getQueryData<JournalSynthesisDto[]>(synthesisKeys.list) ?? [], snapshot);
+    },
     // Kept current by the job status event, not by refetching.
     staleTime: Infinity,
   });
+
+/** Keeps `existing.job` only when its revision is strictly higher than `synthesis.job`. */
+function keepNewerJob(
+  synthesis: JournalSynthesisDto,
+  existing: JournalSynthesisDto | undefined,
+): JournalSynthesisDto {
+  return existing && newerJob(existing.job, synthesis.job) !== synthesis.job
+    ? withJob(synthesis, existing.job)
+    : synthesis;
+}
+
+/** The snapshot's syntheses and order, each keeping a newer job the cache already holds. */
+export function mergeSyntheses(
+  cached: readonly JournalSynthesisDto[],
+  snapshot: readonly JournalSynthesisDto[],
+): JournalSynthesisDto[] {
+  return snapshot.map((item) => keepNewerJob(item, cached.find((candidate) => candidate.job.id === item.job.id)));
+}
 
 /** Whether a synthesis is still being written. */
 export function isSynthesisLive(synthesis: JournalSynthesisDto): boolean {
@@ -70,8 +91,11 @@ export function useJournalSyntheses() {
       void client.invalidateQueries({ queryKey: synthesisKeys.list });
       return;
     }
-    client.setQueryData<JournalSynthesisDto[]>(synthesisKeys.list, syntheses.map((synthesis) =>
-      synthesis.job.id === job.id ? withJob(synthesis, job) : synthesis));
+    client.setQueryData<JournalSynthesisDto[]>(synthesisKeys.list, syntheses.map((synthesis) => {
+      if (synthesis.job.id !== job.id) return synthesis;
+      const chosen = newerJob(synthesis.job, job);
+      return chosen === synthesis.job ? synthesis : withJob(synthesis, chosen);
+    }));
   });
   return useQuery(synthesesQueryOptions());
 }
@@ -81,5 +105,9 @@ export function rememberSynthesis(
   syntheses: readonly JournalSynthesisDto[] | undefined,
   synthesis: JournalSynthesisDto,
 ): JournalSynthesisDto[] {
-  return [synthesis, ...(syntheses ?? []).filter((existing) => existing.job.id !== synthesis.job.id && existing.job.id !== synthesis.job.retryOfJobId)];
+  const existing = syntheses?.find((item) => item.job.id === synthesis.job.id);
+  return [
+    keepNewerJob(synthesis, existing),
+    ...(syntheses ?? []).filter((item) => item.job.id !== synthesis.job.id && item.job.id !== synthesis.job.retryOfJobId),
+  ];
 }

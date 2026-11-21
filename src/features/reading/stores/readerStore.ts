@@ -29,8 +29,6 @@ export const READER_DEFAULT_WIDTH = 560;
 export const READER_MIN_CHAT_WIDTH = 560;
 
 const WIDTH_KEY = 'chat.reader.width';
-/** Recomputable labels must not retain every citation opened in a long session. */
-export const MAX_RESOLVED_LOCATIONS = 512;
 
 export interface ReaderSession {
   /** The message these citations belong to. */
@@ -150,12 +148,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     set((state) => {
       if (state.resolvedLocations.get(chunkId) === label) return {};
       const resolvedLocations = new Map(state.resolvedLocations);
-      resolvedLocations.delete(chunkId);
       resolvedLocations.set(chunkId, label);
-      for (const oldest of resolvedLocations.keys()) {
-        if (resolvedLocations.size <= MAX_RESOLVED_LOCATIONS) break;
-        resolvedLocations.delete(oldest);
-      }
       return { resolvedLocations };
     });
   },
