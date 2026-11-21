@@ -41,6 +41,8 @@ pub(super) use research::{AssembledTurn, Research, ResearchJournal, ResearchRoun
 mod pin_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod triage_tests;
 
 /// What the reader attached to a message: the files by name, the library
 /// documents they became, and the pictures staged for the model to see.
@@ -182,9 +184,11 @@ pub(super) async fn run_stages(
         &mut metrics,
     )
     .await?;
-    let inferred = classify::classify_turn(container, &turn, preferences).await;
+    let (inferred, route) =
+        classify::triage_turn(container, &turn, preferences, &mut metrics).await?;
     let flags = inferred.flags;
     turn.standalone_question = inferred.standalone_question;
+    turn.ensure_not_cancelled()?;
     let mut evidence = turn.budget.evidence;
     let carried = carry::carry_material(
         container,
@@ -195,7 +199,6 @@ pub(super) async fn run_stages(
         &mut evidence,
     )
     .await;
-    let route = classify::route_turn(container, &turn, flags, &mut metrics).await?;
     turn.ensure_not_cancelled()?;
     let retrieved = retrieve::retrieve_evidence(
         container,

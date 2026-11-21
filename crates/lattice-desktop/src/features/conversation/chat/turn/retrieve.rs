@@ -69,17 +69,19 @@ pub(super) async fn retrieve_evidence(
     // the attachment or it searches for the request instead of the question.
     let attachment_digest = carried.attachments.subject_digest(ATTACHMENT_DIGEST_CHARS);
     let retrieval_start = Instant::now();
-    let retrieval = run_retrieval_pipeline(
-        container,
-        turn.chat_turn(),
-        &turn.settings,
-        &route.decision,
-        flags,
-        &turn.document_context,
-        evidence,
-        attachment_digest.as_deref(),
-    )
-    .await;
+    let retrieval =
+        crate::features::conversation::chat::retrieval::run_retrieval_pipeline_with_scope(
+            container,
+            turn.chat_turn(),
+            &turn.settings,
+            &route.decision,
+            flags,
+            &turn.document_context,
+            evidence,
+            attachment_digest.as_deref(),
+            Some(&turn.scope),
+        )
+        .await;
     metrics.retrieval_pipeline_ms = elapsed_ms(retrieval_start);
     metrics.retrieval_subtimings = Some(retrieval.sub_timings.clone());
     Ok(Retrieved {
