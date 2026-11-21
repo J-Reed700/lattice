@@ -3,7 +3,9 @@
 
 use crate::practice::session::hints::next_rung;
 use crate::practice::session::kind::{Kind, Kinds};
-use crate::practice::session::observe::{cases_for, observe, outcome, submit_counts};
+use crate::practice::session::observe::{
+    cases_for, observe, observe_reply, outcome, submit_counts,
+};
 use crate::practice::session::policy::{policy_for, Cue, Event};
 use crate::practice::session::ports::{
     Aids, At, CheckFinished, CheckStart, Checks, Clock, Debriefer, SessionStore,
@@ -12,7 +14,7 @@ use crate::practice::session::rating::rating;
 use crate::practice::session::record::{Applied, Finish, Help, NewHint, NewSession, Op, Session};
 use crate::practice::session::turn::validate_learner_turn;
 use lattice_core::domain::learning::practice::work::{
-    CaseStatus, CheckScope, CheckStatus, Exercise, Piece, Setting, Stage,
+    CaseStatus, CheckScope, Exercise, Piece, Setting, Stage,
 };
 use lattice_core::shared::error::{AppError, Result};
 
@@ -59,14 +61,6 @@ pub struct PracticeSessions<'a> {
     pub clock: &'a dyn Clock,
 }
 
-/// Whether the work gave an answer, so a check of every case counts as a submit.
-fn gave_an_answer(status: CheckStatus) -> bool {
-    matches!(
-        status,
-        CheckStatus::Passed | CheckStatus::Failed | CheckStatus::TimedOut
-    )
-}
-
 fn count(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
@@ -87,7 +81,7 @@ impl PracticeSessions<'_> {
             return Ok(());
         }
         let kind = self.kind_of(&session)?;
-        let observation = observe(kind, &session, &session.row.draft, None)?;
+        let observation = observe(kind, &session, &session.row.draft, None, None)?;
         let policy = policy_for(session.row.setting, kind, session.row.form);
         if let Some(cue) = policy.cue(&event, &observation) {
             self.store.offer_cue(at, &cue).await?;
@@ -190,14 +184,20 @@ impl PracticeSessions<'_> {
                     scope: ask.scope,
                     passed: count(passed),
                     total: count(made.report.results.len()),
-                    submit: ask.scope == CheckScope::All && gave_an_answer(made.status),
+                    submit: ask.scope == CheckScope::All && made.status.answer().is_some(),
                 },
                 self.clock.now(),
             )
             .await?;
         if recorded {
-            self.happened(at, Event::Checked { scope: ask.scope })
-                .await?;
+            self.happened(
+                at,
+                Event::Checked {
+                    scope: ask.scope,
+                    status: made.status,
+                },
+            )
+            .await?;
         }
         Ok(())
     }
@@ -218,7 +218,7 @@ impl PracticeSessions<'_> {
         }
         let session = self.read(at).await?;
         let kind = self.kind_of(&session)?;
-        let observation = observe(kind, &session, piece, None)?;
+        let observation = observe(kind, &session, piece, None, None)?;
         let in_role = session.row.setting == Setting::Watched;
         let rung = next_rung(session.hints.iter().map(|hint| hint.rung));
         let hint = self
@@ -282,12 +282,7 @@ impl PracticeSessions<'_> {
     async fn reply(&self, at: &At<'_>, cue: &Cue) -> Result<()> {
         let session = self.read(at).await?;
         let kind = self.kind_of(&session)?;
-        let observation = observe(
-            kind,
-            &session,
-            &session.row.draft,
-            session.draft_seen.as_ref(),
-        )?;
+        let observation = observe_reply(kind, &session, Some(cue))?;
         let policy = policy_for(session.row.setting, kind, session.row.form);
         let reply = self
             .aids

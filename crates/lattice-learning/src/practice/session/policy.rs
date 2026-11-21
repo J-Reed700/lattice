@@ -4,7 +4,7 @@ use crate::practice::session::kind::{Kind, ReplyGuard, Wording};
 use crate::practice::session::observation::Observation;
 use crate::practice::simulation_policy::TurnPolicy;
 use lattice_core::domain::learning::practice::work::{
-    CheckScope, CheckStatus, Form, Setting, Spacing, Stage,
+    CheckAnswer, CheckScope, CheckStatus, Form, Setting, Spacing, Stage,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
@@ -27,6 +27,7 @@ pub enum Event {
     },
     Checked {
         scope: CheckScope,
+        status: CheckStatus,
     },
     DraftPaused {
         changed: bool,
@@ -64,6 +65,20 @@ impl Cue {
             Self::CheckReview(_) => 2,
             Self::Checkpoint => 1,
             Self::Idle => 0,
+        }
+    }
+
+    /// The scope of the check a reply to this cue is about, when it is about one.
+    pub fn check_scope(&self) -> Option<CheckScope> {
+        match self {
+            Self::CheckReview(scope) => Some(*scope),
+            Self::Submitted => Some(CheckScope::All),
+            Self::Opening
+            | Self::Reply
+            | Self::StageOpened(_)
+            | Self::AskForSkipped(_)
+            | Self::Checkpoint
+            | Self::Idle => None,
         }
     }
 }
@@ -117,7 +132,8 @@ fn cue_for(setting: Setting, form: Form, event: &Event) -> Option<Cue> {
                 .collect();
             (!asked.is_empty()).then_some(Cue::AskForSkipped(asked))
         }
-        Event::Checked { scope } => match (setting, scope) {
+        Event::Checked { status, .. } if status.answer().is_none() => None,
+        Event::Checked { scope, .. } => match (setting, scope) {
             (Setting::Coached, scope) => Some(Cue::CheckReview(*scope)),
             (_, CheckScope::All) => Some(Cue::Submitted),
             (Setting::Watched, _) => Some(Cue::Checkpoint),
@@ -274,7 +290,11 @@ impl Roles {
         let stage_label = |stage: Stage| wording.stage_label(&state.brief, self.form, stage);
         let noun = wording.check_noun();
         let piece = wording.piece_noun();
-        let check_status = state.last_check.as_ref().map(|check| check.status);
+        let answer = state
+            .last_check
+            .as_ref()
+            .filter(|check| check.scope.asks_for_verdict())
+            .and_then(|check| check.status.answer());
         match cue {
             Cue::Opening if coached => format!(
                 "Open the session in two short sentences: greet the learner, then ask them to do the {} stage. {} Do not summarize or restate the {}, do not name inputs, outputs, edge cases, or approach, and do not comment on their draft: just greet them and ask them to begin.",
@@ -300,40 +320,40 @@ impl Roles {
                     .collect::<Vec<_>>()
                     .join(" and ")
             ),
-            Cue::CheckReview(scope) => match check_status {
-                Some(CheckStatus::Passed) => format!(
+            Cue::CheckReview(scope) => match answer {
+                Some(CheckAnswer::Passed) => format!(
                     "The learner {} {}. The last {noun} passed. Say so briefly and ask what comes next.",
                     wording.checked_verb(),
                     wording.scope_label(*scope)
                 ),
-                Some(_) => format!(
+                Some(CheckAnswer::Failed) => format!(
                     "The learner {} {}. The last {noun} failed. Report only the failing outcome from the last {noun} (which case failed and what it returned versus expected), then ask what they make of it. Stop there: do not name, quote, or point at any part of their {piece}, do not explain or hint why it failed, and leave parts empty.",
                     wording.checked_verb(),
                     wording.scope_label(*scope)
                 ),
                 None => format!(
-                    "The learner {} {}. Read the last {noun}. If it failed, report only what failed and ask what they make of it without naming, quoting, or pointing at any part of their {piece} or explaining why it failed (leave parts empty). If it passed, say so briefly and ask what comes next.",
+                    "The learner {} {}. Read the last {noun}. Say what it shows, and ask what they make of it.",
                     wording.checked_verb(),
                     wording.scope_label(*scope)
                 ),
             },
-            Cue::Submitted if coached => match check_status {
-                Some(CheckStatus::Passed) => format!(
+            Cue::Submitted if coached => match answer {
+                Some(CheckAnswer::Passed) => format!(
                     "The learner submitted every case and the last {noun} passed. Say so briefly and ask what comes next."
                 ),
-                Some(_) => format!(
+                Some(CheckAnswer::Failed) => format!(
                     "The learner submitted every case and the last {noun} failed. Report only the failing outcome from the last {noun}, then ask what they make of it. Stop there: do not name, quote, or point at any part of their {piece}, do not explain or hint why it failed, and leave parts empty."
                 ),
                 None => format!(
                     "The learner submitted every case. Read the last {noun}. If any case failed, report only what failed and ask what they make of it without naming, quoting, or pointing at any part of their {piece} or explaining why it failed (leave parts empty). If every case passed, say so briefly and ask what comes next."
                 ),
             },
-            Cue::Submitted => match check_status {
-                Some(CheckStatus::Passed) => format!(
+            Cue::Submitted => match answer {
+                Some(CheckAnswer::Passed) => format!(
                     "Speak directly to the candidate (\"you\"). The candidate submitted and the last {noun} passed. Acknowledge it briefly without praising or grading, and ask one question, about {}.",
                     wording.submit_probes()
                 ),
-                Some(_) => format!(
+                Some(CheckAnswer::Failed) => format!(
                     "Speak directly to the candidate (\"you\"). The candidate submitted and the last {noun} failed. In one or two short sentences, acknowledge only the failing outcome without hinting at cases you cannot see, and ask how they want to investigate it. Do not name, quote, or point at any part of their {piece}, do not explain or hint why it failed, and leave parts empty."
                 ),
                 None => format!(

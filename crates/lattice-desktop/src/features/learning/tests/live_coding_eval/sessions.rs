@@ -42,7 +42,7 @@ use lattice_learning::practice::session::dto::{
     PracticeHintDto, PracticeSessionDto, PracticeSessionRequestDto, SendPracticeTurnRequestDto,
     StartPracticeSessionRequestDto,
 };
-use lattice_learning::practice::session::observe::observe;
+use lattice_learning::practice::session::observe::observe_reply;
 use lattice_learning::practice::session::policy::policy_for;
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
@@ -331,7 +331,7 @@ impl<'a> Player<'a> {
         let cue = bundle.row.pending_cue.clone();
         let engine = session_of(&bundle)?;
         let kind = self.lab.kinds.get(&engine.exercise.kind)?;
-        let observation = observe(kind, &engine, &engine.row.draft, engine.draft_seen.as_ref())?;
+        let observation = observe_reply(kind, &engine, cue.as_ref())?;
         let known = engine.turns.len();
         let started = Instant::now();
         let result = self.sessions.respond(&request).await;

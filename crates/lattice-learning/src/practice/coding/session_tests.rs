@@ -32,7 +32,7 @@ use crate::practice::test_support::fixture;
 use crate::repository::LearningRepository;
 use async_trait::async_trait;
 use lattice_core::domain::learning::practice::work::{
-    Brief, CheckScope, Exercise, Form, KindId, Piece, Rung, Setting, Stage,
+    Brief, CheckScope, CheckStatus, Exercise, Form, KindId, Piece, Rung, Setting, Stage,
 };
 use lattice_core::domain::learning::practice::{ScoreStatus, PROBLEM_PATTERNS};
 use lattice_core::shared::error::{AppError, Result};
@@ -43,6 +43,10 @@ use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 const START: i64 = 1_000_000;
+
+fn completed_at(status: &str) -> Option<i64> {
+    (!matches!(status, "pending" | "running")).then_some(START)
+}
 
 fn id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -178,6 +182,8 @@ struct FakeAids {
     reply_calls: AtomicUsize,
     /// The lines the next hints point at, as file and line.
     pointing: Mutex<Vec<(String, u32)>>,
+    /// The last check each reply read, as its id and status.
+    replied_on: Mutex<Vec<Option<(String, CheckStatus)>>>,
 }
 
 impl FakeAids {
@@ -262,9 +268,15 @@ impl Aids for FakeAids {
         _exercise: &Exercise,
         _policy: &Policy,
         _cue: &Cue,
-        _observation: &Observation,
+        observation: &Observation,
     ) -> Result<Option<Reply>> {
         self.reply_calls.fetch_add(1, Ordering::SeqCst);
+        self.replied_on.lock().unwrap().push(
+            observation
+                .last_check
+                .as_ref()
+                .map(|check| (check.id.clone(), check.status)),
+        );
         let queued = self
             .replies
             .lock()
@@ -287,6 +299,8 @@ struct FakeRuns {
     pool: SqlitePool,
     repo: LearningPracticalRepository,
     failing: Mutex<Vec<String>>,
+    /// When set, a run ends with this status and no case results.
+    ends_as: Mutex<Option<&'static str>>,
 }
 
 #[async_trait]
@@ -330,11 +344,16 @@ impl CodingRuns for FakeRuns {
         } else {
             "passed"
         };
+        let ends_as = *self.ends_as.lock().unwrap();
+        let (status, details) = match ends_as {
+            Some(ended) => (ended, Vec::new()),
+            None => (status, details),
+        };
         sqlx::query("INSERT INTO learning_practical_runs(id,program_id,activity_id,activity_revision,activity_snapshot_json,operation_id,payload_hash,status,learner_files_json,created_at,completed_at,exercise_session_id,scope) VALUES(?,?,?,?,'{}',?,?,?,?,?,?,?,?)")
             .bind(&base.run_id).bind(&base.program_id).bind(&base.activity_id)
             .bind(base.expected_activity_revision).bind(&base.operation_id).bind(payload_hash)
             .bind(status).bind(serde_json::to_string(&base.learner_files).unwrap())
-            .bind(START).bind(START).bind(&start.exercise_session_id).bind(start.scope.as_str())
+            .bind(START).bind(completed_at(status)).bind(&start.exercise_session_id).bind(start.scope.as_str())
             .execute(&self.pool).await.unwrap();
         for (ordinal, detail) in details.iter().enumerate() {
             sqlx::query("INSERT INTO learning_practical_run_checks(run_id,ordinal,name,status,message,detail_json) VALUES(?,?,?,?,'',?)")
@@ -457,6 +476,7 @@ impl Ctx {
                 pool: pool.clone(),
                 repo: repo.clone(),
                 failing: Mutex::new(vec![]),
+                ends_as: Mutex::new(None),
             },
             pool,
             db,
@@ -513,8 +533,9 @@ impl Ctx {
             .unwrap();
     }
 
-    /// Inserts a bare run at the fixed clock, so its id is the only thing that differs.
-    async fn insert_run(&self, session: &PracticeSessionDto, run_id: &str) {
+    /// Inserts a bare run of every case ending with `status`, at the fixed clock so runs made with it share a
+    /// millisecond.
+    async fn insert_run(&self, session: &PracticeSessionDto, run_id: &str, status: &str) {
         let revision: i64 = sqlx::query_scalar(
             "SELECT revision FROM learning_practical_activities WHERE program_id=? AND id=?",
         )
@@ -523,9 +544,9 @@ impl Ctx {
         .fetch_one(&self.pool)
         .await
         .unwrap();
-        sqlx::query("INSERT INTO learning_practical_runs(id,program_id,activity_id,activity_revision,activity_snapshot_json,operation_id,payload_hash,status,learner_files_json,created_at,completed_at,exercise_session_id,scope) VALUES(?,?,?,?,'{}',?,'hash','passed','[]',?,?,?,'all')")
+        sqlx::query("INSERT INTO learning_practical_runs(id,program_id,activity_id,activity_revision,activity_snapshot_json,operation_id,payload_hash,status,learner_files_json,created_at,completed_at,exercise_session_id,scope) VALUES(?,?,?,?,'{}',?,'hash',?,'[]',?,?,?,'all')")
             .bind(run_id).bind(&self.program_id).bind(&self.activity_id).bind(revision)
-            .bind(id()).bind(START).bind(START).bind(&session.session_id)
+            .bind(id()).bind(status).bind(START).bind(completed_at(status)).bind(&session.session_id)
             .execute(&self.pool).await.unwrap();
     }
 
@@ -924,11 +945,60 @@ async fn the_first_run_of_every_case_is_the_submit() {
 }
 
 #[tokio::test]
+async fn a_run_without_an_answer_cues_no_one_and_submits_nothing() {
+    let ctx = Ctx::new().await;
+    for status in [
+        "pending",
+        "running",
+        "cancelled",
+        "interrupted",
+        "runtime_unavailable",
+    ] {
+        *ctx.runs.ends_as.lock().unwrap() = Some(status);
+        for setting in [Setting::Coached, Setting::Mock, Setting::Watched] {
+            for scope in [CheckScope::Shown, CheckScope::All] {
+                let session = ctx.start(setting).await;
+                ctx.clear_cue(&session).await;
+                let after = ctx.run(&session, scope).await.unwrap();
+                assert!(!after.cue_pending, "{status} {setting:?} {scope:?}");
+                assert!(!after.submitted, "{status} {setting:?} {scope:?}");
+            }
+            let session = ctx.start(setting).await;
+            ctx.clear_cue(&session).await;
+            let after = ctx.run_input(&session, vec!["2".into()]).await.unwrap();
+            assert!(!after.cue_pending, "{status} {setting:?} input");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_run_of_every_case_that_timed_out_is_the_submit_and_cues_the_counterpart() {
+    let ctx = Ctx::new().await;
+    *ctx.runs.ends_as.lock().unwrap() = Some("timed_out");
+    for (setting, cue) in [
+        (Setting::Coached, Cue::CheckReview(CheckScope::All)),
+        (Setting::Mock, Cue::Submitted),
+        (Setting::Watched, Cue::Submitted),
+    ] {
+        let session = ctx.start(setting).await;
+        ctx.clear_cue(&session).await;
+        let after = ctx.run(&session, CheckScope::All).await.unwrap();
+        assert!(after.submitted, "{setting:?}");
+        let pending = ctx
+            .repo
+            .take_coding_cue(&ctx.program_id, &session.session_id)
+            .await
+            .unwrap();
+        assert_eq!(pending, Some(cue), "{setting:?}");
+    }
+}
+
+#[tokio::test]
 async fn runs_made_in_one_millisecond_keep_the_order_they_were_made_in() {
     let ctx = Ctx::new().await;
     let session = ctx.start(Setting::Mock).await;
-    ctx.insert_run(&session, "run-b").await;
-    ctx.insert_run(&session, "run-a").await;
+    ctx.insert_run(&session, "run-b", "passed").await;
+    ctx.insert_run(&session, "run-a", "passed").await;
     let read = ctx.get(&session).await;
     let order: Vec<&str> = read
         .checks
@@ -945,8 +1015,8 @@ async fn runs_made_in_one_millisecond_keep_the_order_they_were_made_in() {
 async fn a_hint_points_at_the_last_run_made_even_when_two_share_a_millisecond() {
     let ctx = Ctx::new().await;
     let session = ctx.start(Setting::Coached).await;
-    ctx.insert_run(&session, "run-b").await;
-    ctx.insert_run(&session, "run-a").await;
+    ctx.insert_run(&session, "run-b", "passed").await;
+    ctx.insert_run(&session, "run-a", "passed").await;
     let session = ctx.get(&session).await;
     let after = ctx
         .sessions()
@@ -1217,6 +1287,33 @@ async fn a_reply_becomes_the_counterparts_turn_and_the_cue_is_spent() {
             .unwrap();
         assert!(bundle.events.iter().any(|event| event.kind == "draft_seen"));
     }
+}
+
+#[tokio::test]
+async fn a_reply_to_a_run_reads_that_run_and_not_a_later_one_still_going() {
+    let ctx = Ctx::new().await;
+    let session = ctx.start(Setting::Coached).await;
+    ctx.clear_cue(&session).await;
+    ctx.runs.failing.lock().unwrap().push("h1".into());
+    let failed = ctx.run(&session, CheckScope::All).await.unwrap();
+    let failed_id = failed.checks.last().unwrap().check_id.clone();
+    ctx.insert_run(&session, "later", "running").await;
+    ctx.aids.queue(Ok(Some(CounterpartReply {
+        content: "What do you make of that?".into(),
+        lines: vec![],
+        path: None,
+    })));
+    ctx.sessions()
+        .respond(&PracticeSessionRequestDto {
+            program_id: ctx.program_id.clone(),
+            session_id: session.session_id.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        *ctx.aids.replied_on.lock().unwrap(),
+        vec![Some((failed_id, CheckStatus::Failed))]
+    );
 }
 
 #[tokio::test]
