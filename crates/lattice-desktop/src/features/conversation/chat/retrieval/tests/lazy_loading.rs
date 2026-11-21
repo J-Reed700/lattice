@@ -16,9 +16,9 @@ use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::persistence::Database;
 use std::sync::Mutex;
 
-const CONVERSATION: &str = "lazy-loading-chat";
+pub(super) const CONVERSATION: &str = "lazy-loading-chat";
 
-async fn records_with_documents(with_doc: bool) -> Arc<dyn ChatRecords> {
+pub(super) async fn records_with_documents(with_doc: bool) -> Arc<dyn ChatRecords> {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect(":memory:")
@@ -49,8 +49,8 @@ async fn records_with_documents(with_doc: bool) -> Arc<dyn ChatRecords> {
     Arc::new(ConversationRepository::new(Database::new(pool)))
 }
 
-struct FixedSearch {
-    passages: Vec<SearchResultDto>,
+pub(super) struct FixedSearch {
+    pub(super) passages: Vec<SearchResultDto>,
 }
 
 #[async_trait::async_trait]
@@ -120,7 +120,7 @@ impl ChatTools for RecordingExternalTools {
     }
 }
 
-fn sample_passage() -> SearchResultDto {
+pub(super) fn sample_passage() -> SearchResultDto {
     SearchResultDto {
         id: "doc-1-0".to_string(),
         title: "Guide.md".to_string(),
@@ -137,7 +137,7 @@ fn sample_passage() -> SearchResultDto {
     }
 }
 
-async fn invoke_pipeline(
+pub(super) async fn invoke_pipeline(
     runtime: &FakeRuntime,
     decision: &RouterDecisionOutcome,
     flags: SearchFlags,
@@ -175,7 +175,7 @@ async fn invoke_pipeline(
     .await
 }
 
-fn new_search_decision() -> RouterDecisionOutcome {
+pub(super) fn new_search_decision() -> RouterDecisionOutcome {
     RouterDecisionOutcome {
         action: RouterAction::NewSearch,
         recent_doc_meta: None,
@@ -471,6 +471,7 @@ async fn kb_retrieval_skips_embedding_load_when_already_cancelled() {
         0.5,
         &RetrievalTuningSettingsDto::default(),
         &cancel,
+        None,
     )
     .await;
 
@@ -554,8 +555,9 @@ async fn web_fallback_skips_external_utility_load_and_interpretation_when_kb_is_
         "external phase must not invoke chat LLM when KB already answered"
     );
     assert_eq!(runtime.loader_counts.embedding_calls(), 1);
-    // KB corpus planner checks utility_llm_loader() once, gets None, and falls back locally;
-    // the external phase must NOT call utility_llm_loader() a second time.
-    assert_eq!(runtime.loader_counts.utility_loader_calls(), 1);
+    // With optimistic retrieval, Pass 1 is sufficient so KB skips utility_llm_loader(),
+    // and the external phase is skipped so it never loads the utility model either.
+    assert_eq!(runtime.loader_counts.utility_loader_calls(), 0);
+    assert!(outcome.sub_timings.kb_planner_skipped);
     assert_eq!(outcome.sub_timings.external_hyde_interpretation_ms, 0);
 }
