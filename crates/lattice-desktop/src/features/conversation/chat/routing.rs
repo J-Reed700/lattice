@@ -272,11 +272,15 @@ pub(super) async fn resolve_router_decision(
     let router_may_search = source.is_none_or(|source| source.routes_to_library);
     // A closed-book turn has nothing to route: the pipeline returns before it
     // reads this, and asking the router model would only spend time. Nor does
-    // an Explorer turn the user did not point at the library. A turn with the
-    // web in its plan, asked for or as a fallback, searches the vault afresh
-    // so the fallback has a verdict on the vault to go by.
+    // an Explorer turn the user did not point at the library, or a turn with
+    // `skip_auto_kb` (e.g. trivial greetings or high-confidence general-knowledge
+    // turns in Hybrid Auto) — skipping routing here neither loads the router
+    // model nor overrides `skip_auto_kb` with `UseLastDocument`/`Clarify`. A
+    // turn with the web in its plan, asked for or as a fallback, searches the
+    // vault afresh so the fallback has a verdict on the vault to go by.
     if search_flags.web_planned()
         || search_flags.closed_book
+        || search_flags.skip_auto_kb
         || (!router_may_search && !search_flags.force_kb_search)
     {
         return Ok((
@@ -357,5 +361,184 @@ pub(super) fn router_action_label(action: &RouterAction) -> &'static str {
         RouterAction::UseLastDocument => "Continuing with the last document",
         RouterAction::NewSearch => "Searching afresh",
         RouterAction::Clarify => "Asking what you mean",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::features::conversation::chat::test_runtime::{FakeRuntime, Scripted};
+    use async_trait::async_trait;
+    use lattice_core::application::ports::document_repository_port::DocumentRepositoryPort;
+    use lattice_core::application::ports::llm_port::CompletionResponse;
+    use lattice_core::application::ports::repository_port::RepositoryPort;
+    use lattice_core::domain::conversation::DocumentReference;
+    use lattice_core::domain::entities::document::{
+        Category, DocumentStatus, Language, StoredDocument,
+    };
+    use lattice_core::domain::entities::Document;
+    use lattice_core::domain::value_objects::checksum::Checksum;
+    use lattice_core::shared::types::{DocumentId, ValidatedFilePath};
+
+    struct OneDocRepo(Document);
+
+    #[async_trait]
+    impl RepositoryPort<Document> for OneDocRepo {
+        async fn find_by_id(&self, id: &str) -> Result<Option<Document>> {
+            Ok((self.0.id().to_string() == id).then(|| self.0.clone()))
+        }
+        async fn find_all(&self) -> Result<Vec<Document>> {
+            Ok(vec![self.0.clone()])
+        }
+        async fn save(&self, _entity: &Document) -> Result<()> {
+            Ok(())
+        }
+        async fn save_batch(&self, _entities: &[Document]) -> Result<()> {
+            Ok(())
+        }
+        async fn delete(&self, _id: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn delete_batch(&self, _ids: &[&str]) -> Result<()> {
+            Ok(())
+        }
+        async fn count(&self) -> Result<usize> {
+            Ok(1)
+        }
+        async fn exists(&self, id: &str) -> Result<bool> {
+            Ok(self.0.id().to_string() == id)
+        }
+    }
+
+    #[async_trait]
+    impl DocumentRepositoryPort for OneDocRepo {
+        async fn find_file_path_by_id(&self, _document_id: &str) -> Result<String> {
+            Ok(self.0.file_path().to_string_lossy().into_owned())
+        }
+        async fn document_exists(&self, document_id: &str) -> Result<bool> {
+            Ok(self.0.id().to_string() == document_id)
+        }
+        async fn find_id_by_path(&self, _file_path: &str) -> Result<Option<String>> {
+            Ok(None)
+        }
+        async fn delete(&self, _document_id: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn delete_and_release_blob(&self, _document_id: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn find_by_checksum(&self, _checksum: &Checksum) -> Result<Option<Document>> {
+            Ok(None)
+        }
+        async fn count_documents(&self) -> Result<i64> {
+            Ok(1)
+        }
+        async fn count_chunks(&self) -> Result<i64> {
+            Ok(0)
+        }
+        async fn find_all_paginated(
+            &self,
+            _page: lattice_core::shared::persistence::Page,
+        ) -> Result<Vec<Document>> {
+            Ok(vec![self.0.clone()])
+        }
+    }
+
+    impl lattice_core::application::ports::DocumentRepository for OneDocRepo {}
+
+    fn recent_doc(id: &str, title: &str) -> Document {
+        let now = chrono::Utc::now();
+        Document::with_id(StoredDocument {
+            id: DocumentId::from_string(id.to_string()).unwrap(),
+            file_path: ValidatedFilePath::new(std::path::PathBuf::from(format!("/vault/{title}")))
+                .unwrap(),
+            file_name: title.to_string(),
+            file_type: Some("md".to_string()),
+            mime_type: "text/markdown".to_string(),
+            size_bytes: 128,
+            modified_at: now,
+            indexed_at: now,
+            checksum: Checksum::new("a".repeat(64)).unwrap(),
+            status: DocumentStatus::Indexed,
+            error_message: None,
+            language: Language::English,
+            category: Category::Notes,
+            quality_score: 1.0,
+            access_count: 0,
+            last_accessed_at: None,
+            word_count: 20,
+            content: "Notes".to_string(),
+        })
+    }
+
+    #[tokio::test]
+    async fn resolve_router_decision_skips_router_model_when_skip_auto_kb_is_set() {
+        let doc = recent_doc("doc-1", "ProjectNotes.md");
+        let refs = vec![DocumentReference {
+            document_id: "doc-1".to_string(),
+            chunk_id: None,
+            relevance_score: Some(0.9),
+            added_at: chrono::Utc::now(),
+        }];
+        let router_settings = RouterSettingsDto {
+            enabled: true,
+            ..RouterSettingsDto::default()
+        };
+        let cancel = tokio_util::sync::CancellationToken::new();
+
+        // Control: with skip_auto_kb = false and a recent document, the router model is loaded.
+        let control_runtime = FakeRuntime {
+            documents: Some(Arc::new(OneDocRepo(doc.clone()))),
+            router_llm: Some(Scripted::new([CompletionResponse::from_text(
+                r#"{"action":"use_last_document","confidence":0.95,"rationale":"follow-up"}"#,
+            )])),
+            ..FakeRuntime::default()
+        };
+        let control_recorder = TurnRecorder::silent("conv-1", "req-control");
+        let (control_outcome, control_record) = resolve_router_decision(
+            &control_runtime,
+            &refs,
+            "tell me more about that",
+            SearchFlags::default(),
+            None,
+            &router_settings,
+            &control_recorder,
+            cancel.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(control_runtime.loader_counts.router_llm_calls(), 1);
+        assert_eq!(control_outcome.action, RouterAction::UseLastDocument);
+        assert!(control_record.is_some());
+
+        // Under test: with skip_auto_kb = true, the router model is never loaded and
+        // the decision stays NewSearch with no TurnRouterDto record.
+        let skipped_runtime = FakeRuntime {
+            documents: Some(Arc::new(OneDocRepo(doc))),
+            router_llm: Some(Scripted::new([CompletionResponse::from_text(
+                r#"{"action":"use_last_document","confidence":0.95,"rationale":"follow-up"}"#,
+            )])),
+            ..FakeRuntime::default()
+        };
+        let skipped_recorder = TurnRecorder::silent("conv-1", "req-skip");
+        let (skipped_outcome, skipped_record) = resolve_router_decision(
+            &skipped_runtime,
+            &refs,
+            "hello!",
+            SearchFlags {
+                skip_auto_kb: true,
+                ..SearchFlags::default()
+            },
+            None,
+            &router_settings,
+            &skipped_recorder,
+            cancel,
+        )
+        .await
+        .unwrap();
+        assert_eq!(skipped_runtime.loader_counts.router_llm_calls(), 0);
+        assert_eq!(skipped_outcome.action, RouterAction::NewSearch);
+        assert!(skipped_outcome.recent_doc_meta.is_none());
+        assert!(skipped_record.is_none());
     }
 }
