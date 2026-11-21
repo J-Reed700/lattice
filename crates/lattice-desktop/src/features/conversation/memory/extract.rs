@@ -859,6 +859,10 @@ pub async fn extract_segments(
     let input = Input::of(segments, quotable, context, existing);
     let mut options = deadline.call_options()?;
     options.thinking = ThinkingMode::On;
+    // Thinking models enter repetition loops under greedy decoding; let the
+    // backend's thinking profile supply sampling and bound effort to "low".
+    options.sampling = None;
+    options.reasoning_effort = Some("low".to_owned());
     let transport = Metered::new(&Plain);
     let asked = ask::<MemoryExtraction>(
         llm,
