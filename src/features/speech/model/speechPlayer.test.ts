@@ -44,8 +44,23 @@ function clip(seconds: number): SpeechClip {
   return { sampleRate: 10, pcm: btoa(String.fromCharCode(...bytes)), durationMs: seconds * 1000 };
 }
 
-function setup() {
-  const output = new FakeOutput();
+class LateStateOutput extends FakeOutput {
+  private pending: Promise<void> = Promise.resolve();
+  override resume = vi.fn(async () => {
+    this.pending = this.pending.then(() => {
+      this.state = 'running';
+    });
+    await this.pending;
+  });
+  override suspend = vi.fn(async () => {
+    this.pending = this.pending.then(() => {
+      this.state = 'suspended';
+    });
+    await this.pending;
+  });
+}
+
+function setup(output: FakeOutput = new FakeOutput()) {
   const player = new SpeechPlayer(() => output as unknown as AudioOutput);
   return { output, player };
 }
@@ -75,6 +90,19 @@ describe('SpeechPlayer', () => {
     await player.play('second', ['two'], async () => clip(1));
     expect(firstNode.stopped).toBe(true);
     expect(player.getSnapshot().sourceId).toBe('second');
+  });
+
+  it('keeps playing a new speech started while another plays, when the engine suspends late', async () => {
+    const { output, player } = setup(new LateStateOutput());
+    await player.play('first', ['one'], async () => clip(30));
+    expect(output.nodes).toHaveLength(1);
+
+    await player.play('second', ['two'], async () => clip(1));
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    expect(output.nodes).toHaveLength(2);
+    expect(output.nodes[1].startedAt).not.toBeNull();
+    expect(output.state).toBe('running');
   });
 
   it('stops before a piece still being made is played', async () => {

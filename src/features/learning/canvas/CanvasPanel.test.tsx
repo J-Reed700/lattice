@@ -22,12 +22,21 @@ vi.mock('@/features/learning/canvas/CanvasSurface', async () => {
   const React = await import('react');
   const MockCanvasSurface = React.forwardRef<CanvasSurfaceHandle, { sceneJson: string; onSceneChange: (scene: { sceneJson: string; outline: string[]; elementCount: number }) => void; onSceneError: (message: string) => void }>((props, ref) => {
     const { onSceneChange, sceneJson } = props;
-    React.useImperativeHandle(ref, () => ({ exportScene: api.exportScene }));
+    const staged = React.useRef<{ sceneJson: string; outline: string[]; elementCount: number } | null>(null);
+    React.useImperativeHandle(ref, () => ({
+      exportScene: api.exportScene,
+      flush: () => {
+        const change = staged.current;
+        staged.current = null;
+        if (change) onSceneChange(change);
+        return change;
+      },
+    }), [onSceneChange]);
     React.useEffect(() => {
       const elements = (JSON.parse(sceneJson) as { elements: unknown[] }).elements;
       onSceneChange({ sceneJson, outline: elements.length ? ['A drawn idea'] : [], elementCount: elements.length });
     }, [onSceneChange, sceneJson]);
-    return <div data-testid="mock-canvas"><button type="button" onClick={() => props.onSceneChange({ sceneJson: JSON.stringify(scene([textElement])), outline: ['A drawn idea'], elementCount: 1 })}>Add text element</button><button type="button" onClick={() => props.onSceneError('Scene is too large')}>Report scene issue</button></div>;
+    return <div data-testid="mock-canvas"><button type="button" onClick={() => props.onSceneChange({ sceneJson: JSON.stringify(scene([textElement])), outline: ['A drawn idea'], elementCount: 1 })}>Add text element</button><button type="button" onClick={() => { staged.current = { sceneJson: JSON.stringify(scene([textElement])), outline: ['A drawn idea'], elementCount: 1 }; }}>Stage text element</button><button type="button" onClick={() => props.onSceneError('Scene is too large')}>Report scene issue</button></div>;
   });
   MockCanvasSurface.displayName = 'MockCanvasSurface';
   return { default: MockCanvasSurface };
@@ -69,6 +78,14 @@ describe('Learning Studio Canvas workspace', () => {
     expect(await screen.findByTestId('mock-canvas')).toBeVisible();
     expect(api.createLearningCanvas).toHaveBeenCalledWith(expect.objectContaining({ title: 'A map of the argument', description: 'Claims connect to evidence.', lessonId: 'lesson-1' }));
     expect(screen.getByLabelText('Describe your drawing or its meaning')).toHaveValue('Claims connect to evidence.');
+  });
+
+  it('saves a stroke the surface still holds when the panel closes', async () => {
+    const view = mount(workspace([canvas()]));
+    await screen.findByTestId('mock-canvas');
+    fireEvent.click(screen.getByRole('button', { name: 'Stage text element' }));
+    view.unmount();
+    await waitFor(() => expect(api.saveLearningCanvas).toHaveBeenCalledWith(expect.objectContaining({ canvasId: 'canvas-1', sceneJson: scene([textElement]) })));
   });
 
   it('autosaves edits and exposes the visible text outline', async () => {
