@@ -156,7 +156,6 @@ interface LinkParts {
 /** Read `(dest "title")` starting at the `(` at `open`. Null when it is not one. */
 function readDestination(context: Context, open: number, end: number): LinkParts | null {
   const { text } = context;
-  if (context.budget <= 0) return null;
   const started = open;
   const skipSpace = (at: number) => {
     while (at < end && /[ \t\n]/.test(text[at]!)) at += 1;
