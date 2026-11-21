@@ -595,6 +595,50 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn drive_prefixed_paths_stay_inside_the_sandbox() -> Result<()> {
+        let outside =
+            std::env::temp_dir().join(format!("lattice-sandbox-probe-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&outside)?;
+        let secret = uuid::Uuid::new_v4().to_string();
+        let target = outside.join("probe.txt");
+        fs::write(&target, &secret)?;
+        let host = target.to_string_lossy().replace('\\', "/");
+        let Some((drive, rest)) = host
+            .get(..2)
+            .zip(host.get(2..))
+            .filter(|(drive, _)| drive.ends_with(':'))
+        else {
+            return Err(AppError::InternalError(format!(
+                "The probe file has no drive: {host}"
+            )));
+        };
+        let paths: Vec<String> = ["/work", "/runtime"]
+            .iter()
+            .flat_map(|root| {
+                [
+                    format!("{root}/{drive}{rest}"),
+                    format!("{root}/./{drive}{rest}"),
+                ]
+            })
+            .collect();
+        let checks = format!(
+            "paths = {paths:?}\nfor path in paths:\n    try:\n        seen = open(path).read()\n    except OSError:\n        continue\n    if seen == {secret:?}:\n        raise AssertionError('host file visible through ' + path)\nprint('drive paths denied')\n"
+        );
+        let execution = execute_python_lab(&spec("", &checks), CancellationToken::new()).await;
+        let _ = fs::remove_dir_all(&outside);
+        let execution = execution?;
+        assert_eq!(
+            execution.status,
+            LearningLabRunStatus::Passed,
+            "{}",
+            execution.stderr
+        );
+        assert!(execution.stdout.contains("drive paths denied"));
+        Ok(())
+    }
+
     #[tokio::test]
     async fn bounds_loop_output_and_cancellation() -> Result<()> {
         let mut input = spec("while True:\n    pass\n", "import solution\n");
