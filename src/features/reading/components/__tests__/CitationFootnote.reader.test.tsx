@@ -36,6 +36,9 @@ const source: SourceWithMetadata = {
 // Narrow: the reader is an overlay, a non-modal dialog, rather than a docked pane.
 const NARROW = { rowWidth: 1100, availableWidth: 840, resetKey: 'narrow' };
 
+/** The test ends the recording, so nothing depends on how long a render takes. */
+const recording: { finish: (() => void) | null } = { finish: null };
+
 /** What the practice flow does: the opening is recorded first, and the popover says "busy" meanwhile. */
 function RecordsFirst() {
   const [busy, setBusy] = useState(false);
@@ -46,10 +49,10 @@ function RecordsFirst() {
       disabledReason={busy ? 'Another workbench action is in progress.' : undefined}
       onViewFile={() => {
         setBusy(true);
-        setTimeout(() => {
+        recording.finish = () => {
           openReader();
           setBusy(false);
-        }, 30);
+        };
       }}
     />
   );
@@ -76,6 +79,7 @@ const settle = (ms = 20) => act(() => new Promise<void>((resolve) => setTimeout(
 beforeEach(() => {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   useReaderStore.setState({ session: null, resolvedLocations: new Map() });
+  recording.finish = null;
 });
 
 afterEach(() => {
@@ -103,10 +107,11 @@ describe('CitationFootnote beside a narrow reader', () => {
     renderBeside(null);
     fireEvent.click(chip());
     fireEvent.click(await screen.findByRole('button', { name: 'View source' }));
-    await settle(5);
+    await settle();
     expect(chip()).toHaveFocus();
 
-    await settle(60);
+    act(() => recording.finish?.());
+    await settle();
     const dialog = screen.getByRole('dialog', { name: 'Field notes' });
     await settle();
     expect(screen.getByRole('dialog')).toBe(dialog);
