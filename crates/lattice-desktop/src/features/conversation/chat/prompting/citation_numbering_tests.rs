@@ -155,38 +155,62 @@ fn every_passage_names_its_document_the_same_way() {
     assert!(kb_passage(&untitled, 3).starts_with("[s3] Document: plain.txt\n"));
 }
 
-/// The reading instruction closes a message only when it shows numbered
-/// passages, and the budget charges it with the frame the evidence travels in.
+/// A message with passages puts the context before the question and the
+/// answering rules after it, and the budget charges that frame with the rest.
 #[test]
-fn only_a_message_with_passages_asks_for_a_reading_and_the_frame_prices_it() {
+fn a_message_with_passages_places_context_first_and_rules_after_the_question_and_the_frame_prices_them(
+) {
     let settings = crate::features::conversation::chat::prompt_settings::normalize_prompt_settings(
         LLMPromptSettingsDto::default(),
     );
-    let builder = || {
-        PromptMessageBuilder::new(
-            &settings,
-            "When was the chimney swept?",
-            false,
-            super::super::SearchFlags::from_preferences(None),
-        )
-        .with_kb_context(Some("[1] Document: log.md\nContent: Swept.".into()))
-    };
-    let read = builder().reading_passages(true).build();
+    let prompt = PromptMessageBuilder::new(
+        &settings,
+        "When was the chimney swept?",
+        false,
+        super::super::SearchFlags::from_preferences(None),
+    )
+    .with_kb_context(Some("[1] Document: log.md\nContent: Swept.".into()))
+    .build();
+
+    let context_pos = prompt.find("Context:\n").expect("context heading");
+    let question_pos = prompt
+        .find("Question: When was the chimney swept?")
+        .expect("question line");
+    let check_pos = prompt
+        .find("Check every supplied passage")
+        .expect("check-every-passage rule");
+    let lang_pos = prompt
+        .find("Write in the language of the question")
+        .expect("language rule");
+    assert!(context_pos < question_pos, "{prompt}");
+    assert!(question_pos < check_pos, "{prompt}");
+    assert!(check_pos < lang_pos, "{prompt}");
+    assert!(prompt.ends_with("\n\nAnswer:"), "{prompt}");
     assert!(
-        read.ends_with(&format!(
-            "Question: When was the chimney swept?\n\n{READING_INSTRUCTION}"
-        )),
-        "{read}"
-    );
-    assert_eq!(read.matches(READING_INSTRUCTION).count(), 1);
-    assert!(!builder().build().contains(READING_INSTRUCTION));
-    assert!(
-        !read.contains("Citation rule:"),
+        !prompt.contains("Citation rule:"),
         "the rule is said once, in the system prompt"
     );
     assert!(settings.system_prompt.contains("Citation rule:"));
-    assert!(evidence_frame(&settings, "When?", None, false).ends_with(READING_INSTRUCTION));
-    assert!(evidence_frame(&settings, "When?", None, true).ends_with(READING_INSTRUCTION));
+
+    let hybrid_frame = evidence_frame(&settings, "When?", None, false);
+    let hybrid_q = hybrid_frame
+        .find("Question: When?")
+        .expect("hybrid question");
+    let hybrid_rule = hybrid_frame
+        .find("from general knowledge without adding citations")
+        .expect("hybrid rule");
+    assert!(hybrid_q < hybrid_rule, "{hybrid_frame}");
+    assert!(hybrid_frame.ends_with("Answer:"), "{hybrid_frame}");
+
+    let strict_frame = evidence_frame(&settings, "When?", None, true);
+    let strict_q = strict_frame
+        .find("Question: When?")
+        .expect("strict question");
+    let strict_rule = strict_frame
+        .find("using only the provided context")
+        .expect("strict rule");
+    assert!(strict_q < strict_rule, "{strict_frame}");
+    assert!(strict_frame.ends_with("Answer:"), "{strict_frame}");
 }
 
 #[test]
