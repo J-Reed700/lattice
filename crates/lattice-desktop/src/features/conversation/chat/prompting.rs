@@ -5,7 +5,6 @@ use lattice_core::application::contracts::settings::{
 use lattice_core::application::ports::turn_source::TurnSourcePolicy;
 
 use super::retrieval::source_names::marker;
-use super::tool_loop::READING_INSTRUCTION;
 use super::SearchFlags;
 
 pub(super) struct PromptMessageBuilder<'a> {
@@ -46,9 +45,6 @@ pub(super) struct PromptMessageBuilder<'a> {
     deep_research_searches: Option<Vec<String>>,
     /// Some of the evidence the turn found was left out to fit the window.
     evidence_cut: bool,
-    /// The message shows numbered passages, which the model reads one by one
-    /// before it answers (see `tool_loop::reading`).
-    reads_passages: bool,
 }
 
 impl<'a> PromptMessageBuilder<'a> {
@@ -80,7 +76,6 @@ impl<'a> PromptMessageBuilder<'a> {
             thin_kb_reason: None,
             deep_research_searches: None,
             evidence_cut: false,
-            reads_passages: false,
         }
     }
 
@@ -89,13 +84,6 @@ impl<'a> PromptMessageBuilder<'a> {
     /// found nothing nor takes what is left for everything there is.
     pub(super) fn with_evidence_cut(mut self, evidence_cut: bool) -> Self {
         self.evidence_cut = evidence_cut;
-        self
-    }
-
-    /// Close the message by asking for a reading of its numbered passages.
-    /// Only a message that shows some has anything to read.
-    pub(super) fn reading_passages(mut self, reads_passages: bool) -> Self {
-        self.reads_passages = reads_passages;
         self
     }
 
@@ -185,18 +173,9 @@ impl<'a> PromptMessageBuilder<'a> {
         self
     }
 
-    /// The message, closed by the reading instruction when it shows numbered
-    /// passages. The instruction is part of the message, so the turn's budget
-    /// prices it with the rest, and the request that writes the answer begins
-    /// with exactly the prompt the reading round left in the server's cache.
+    /// The message rendered for the turn.
     pub(super) fn build(self) -> String {
-        let reads_passages = self.reads_passages && source_reads(self.source);
-        let message = self.message();
-        if reads_passages {
-            with_reading(&message)
-        } else {
-            message
-        }
+        self.message()
     }
 
     fn message(self) -> String {
@@ -428,8 +407,7 @@ terminology alone is not missing evidence, and a narrower mechanism must not be 
 broader one.";
 
 /// The message an evidence-carrying turn sends with every passage taken out:
-/// the template, its standing instructions, the question, and the reading
-/// instruction that closes any message showing a numbered passage.
+/// the template, its standing instructions, and the question.
 ///
 /// The turn's budget charges this as the message before it sizes the
 /// evidence, because it is what the evidence travels in.
@@ -439,34 +417,11 @@ pub(super) fn evidence_frame(
     source: Option<TurnSourcePolicy>,
     strict_sources: bool,
 ) -> String {
-    let frame = render_prompt_template(
+    render_prompt_template(
         evidence_template(prompt_settings, source, strict_sources),
         CONTINUITY_NOTE,
         question,
-    );
-    if source_reads(source) {
-        with_reading(&frame)
-    } else {
-        frame
-    }
-}
-
-/// Whether a message showing numbered passages is read before it is answered:
-/// every turn's but those of a source that says otherwise.
-fn source_reads(source: Option<TurnSourcePolicy>) -> bool {
-    source.is_none_or(|source| source.reads_passages)
-}
-
-/// `message` closed by the reading instruction. The reading comes before the
-/// answer, so a template's closing answer cue is taken off first: left in
-/// front of the reading, it has models answer in place of their lines or
-/// after them.
-fn with_reading(message: &str) -> String {
-    let message = message.trim_end();
-    let message = message
-        .strip_suffix("Answer:")
-        .map_or(message, str::trim_end);
-    format!("{message}\n\n{READING_INSTRUCTION}")
+    )
 }
 
 /// The template an evidence-carrying message renders in: the source's own,
