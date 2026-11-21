@@ -1670,3 +1670,39 @@ async fn a_heartbeat_recorded_behind_a_long_write_waits_its_turn_and_lands() -> 
     assert!(beat.await.unwrap()?);
     Ok(())
 }
+
+#[tokio::test]
+async fn every_write_to_a_job_raises_its_revision() -> Result<()> {
+    let store = JobStore::new(database().await);
+    let id = store.submit(&new_job(KIND, "revision", None)).await?.id;
+    let submitted = store.get(&id).await?;
+    assert_eq!(submitted.revision, 0);
+
+    store.claim(&id).await?;
+    let running = store.get(&id).await?;
+    assert!(running.revision > submitted.revision);
+
+    assert!(store.progress(&id, 1, "One", None).await?);
+    let progressed = store.get(&id).await?;
+    assert!(progressed.revision > running.revision);
+
+    assert!(store.suspend(&id).await?);
+    let suspended = store.get(&id).await?;
+    assert_eq!(suspended.status, JobStatus::Pending);
+    assert_eq!(suspended.retry_count, progressed.retry_count);
+    assert_eq!(suspended.started_at, progressed.started_at);
+    assert!(suspended.revision > progressed.revision);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_job_dto_carries_the_revision() -> Result<()> {
+    let store = JobStore::new(database().await);
+    let id = store.submit(&new_job(KIND, "dto", None)).await?.id;
+    store.claim(&id).await?;
+    assert!(store.progress(&id, 1, "One", None).await?);
+    let record = store.get(&id).await?;
+    assert!(record.revision > 0);
+    assert_eq!(JobDto::from(&record).revision, record.revision);
+    Ok(())
+}

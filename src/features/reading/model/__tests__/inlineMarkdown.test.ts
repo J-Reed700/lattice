@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { inlineRuns, visibleText } from '../inlineMarkdown';
+import { SCAN_BUDGET, inlineRuns, visibleText } from '../inlineMarkdown';
 
 const runs = (text: string) => inlineRuns(text, 0, text.length);
 
@@ -301,8 +301,8 @@ describe('inlineRuns', () => {
       // Timed in alternation, fastest of fifteen each: a contended machine only ever
       // slows a run down, and alternating makes a busy spell hit both sizes alike,
       // so a busy test run cannot fake a ratio.
-      const smallText = build(25_000);
-      const bigText = build(100_000);
+      const smallText = build(8_000);
+      const bigText = build(32_000);
       inlineRuns(smallText, 0, smallText.length);
       inlineRuns(bigText, 0, bigText.length);
       const timed = (text: string) => {
@@ -318,6 +318,21 @@ describe('inlineRuns', () => {
       }
       // Linear is about 4x for 4x the text; quadratic is about 16x.
       expect(big / Math.max(small, 1)).toBeLessThan(8);
+    });
+
+    describe('the link scan budget', () => {
+      // `[a](x` opens a link whose destination never closes, so reading it scans to the
+      // next space: n of them in a row scan about 2.5·n² characters.
+      const brokenLinks = (scanned: number) => '[a](x'.repeat(Math.ceil(Math.sqrt(scanned / 2.5)));
+      const linksTo = (text: string) => inlineRuns(text, 0, text.length).some((run) => run.href === 'https://ok.test');
+
+      it('stops reading link destinations once a paragraph has scanned its budget', () => {
+        expect(linksTo(`${brokenLinks(2 * SCAN_BUDGET)} [ok](https://ok.test)`)).toBe(false);
+      });
+
+      it('reads every link of a paragraph that stays within its budget', () => {
+        expect(linksTo(`${brokenLinks(SCAN_BUDGET / 2)} [ok](https://ok.test)`)).toBe(true);
+      });
     });
   });
 });

@@ -7679,7 +7679,7 @@ export type IssueResultKind = "found" |
 /**
  * A job as the renderer sees it on [`STATUS_EVENT`].
  */
-export type JobDto = { id: string; kind: string; subjectId: string | null; status: JobStatus; progressCurrent: number; progressTotal: number; progressMessage: string; activity: JsonValue | null; resultRef: string | null; errorCode: string | null; error: string | null; retryOfJobId: string | null; retryCount: number; retryNotBefore: number | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
+export type JobDto = { id: string; kind: string; subjectId: string | null; status: JobStatus; progressCurrent: number; progressTotal: number; progressMessage: string; activity: JsonValue | null; resultRef: string | null; errorCode: string | null; error: string | null; retryOfJobId: string | null; retryCount: number; retryNotBefore: number | null; createdAt: number; startedAt: number | null; finishedAt: number | null; revision: number }
 export type JobStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "interrupted"
 /**
  * A synthesis job and what it was asked: live, finished and waiting to be

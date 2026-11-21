@@ -148,19 +148,10 @@ export function approximateScrollRatio(chunkIndex: number): number {
  * Not persisted: a page number costs one scan to recompute and persisting it
  * would need a schema this track does not own.
  */
-const MAX_RESOLVED_LOCATIONS = 512;
 const resolvedLocations = new Map<string, string>();
 
 export function rememberLocation(chunkId: string, label: string): void {
   if (!chunkId || !label) return;
-  if (resolvedLocations.has(chunkId)) {
-    resolvedLocations.delete(chunkId);
-  } else if (resolvedLocations.size >= MAX_RESOLVED_LOCATIONS) {
-    const oldestKey = resolvedLocations.keys().next().value;
-    if (oldestKey !== undefined) {
-      resolvedLocations.delete(oldestKey);
-    }
-  }
   resolvedLocations.set(chunkId, label);
 }
 

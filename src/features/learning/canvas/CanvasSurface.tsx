@@ -181,7 +181,7 @@ const CanvasSurface = forwardRef<CanvasSurfaceHandle, Props>(({ sceneJson, theme
   }, []);
 
   // Cancel any pending debounce on unmount without invoking onSceneChange:
-  // CanvasPanel.drain() calls ref.flush() explicitly before save/switch/checkpoint,
+  // CanvasPanel calls ref.flush() explicitly before save/switch/checkpoint and on unmount,
   // whereas reload/restore/template resets bump surfaceVersion to discard local edits.
   useEffect(() => () => {
     if (debounceTimerRef.current !== null) {

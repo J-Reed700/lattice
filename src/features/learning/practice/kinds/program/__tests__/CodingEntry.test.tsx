@@ -51,6 +51,7 @@ function job(overrides: Partial<JobDto>): JobDto {
     createdAt: 1,
     startedAt: 1,
     finishedAt: null,
+    revision: 0,
     ...overrides,
   };
 }

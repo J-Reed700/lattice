@@ -75,7 +75,7 @@ const SAFE_HREF = /^https?:/i;
 /** Labels nest at most this deep; past it a `[` is just a character. */
 const MAX_LABEL_DEPTH = 6;
 /** Characters of link destination one call may scan, so a hostile paragraph cannot go quadratic. */
-const SCAN_BUDGET = 300_000;
+export const SCAN_BUDGET = 300_000;
 const MAX_AUTOLINK = 2048;
 
 function decodeEntityAt(text: string, at: number, end: number): { text: string; length: number } | null {

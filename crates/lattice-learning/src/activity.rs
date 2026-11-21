@@ -289,6 +289,7 @@ mod tests {
             finished_at: None,
             heartbeat_at: None,
             rank: None,
+            revision: 0,
         }
     }
 

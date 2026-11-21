@@ -11,7 +11,7 @@ use super::{
 use crate::review_findings::{FindingSite, ReviewFinding};
 use lattice_core::application::services::model_contract::ask::{Alone, Answered, Refusal, Says};
 use lattice_core::application::services::model_contract::shape::{
-    Authored, Each, Fields, Form, New, Union, Vocabulary, STATEMENTS,
+    Authored, Each, Fields, Form, New, Union, Vocabulary,
 };
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Internal, Kind, Picked, Showing, Told,
@@ -348,16 +348,11 @@ impl Answered for LessonContractCheck {
     }
 }
 
-/// Upper bound on self-check findings per lesson pass so a grammar-constrained
-/// model cannot repeat findings endlessly into an unbounded array.
-const MAX_CONTRACT_FINDINGS: usize = 24;
-
 impl Answered for LessonContractFind {
     type Answer = New<Finding>;
     const ALONE: Alone = Alone::Fails;
 
     fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
-        showing.asks(&STATEMENTS, 0..=MAX_CONTRACT_FINDINGS);
         let texts = input.lesson.texts();
         let shown = sentence::show(&texts, showing)?;
         let lesson = input.lesson.said(&sentence::labelled(&texts, &shown), &[]);

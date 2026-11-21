@@ -69,21 +69,7 @@ async function saveTo(destination: SynthesisDestinationDto, block: string, resul
 }
 
 const applying = new Set<string>();
-const MAX_SAVED_DESTINATIONS = 64;
 const savedDestinations = new Map<string, { noteId: string; noteTitle: string; entryCount: number }>();
-
-function rememberSavedDestination(
-  jobId: string,
-  record: { noteId: string; noteTitle: string; entryCount: number },
-): void {
-  if (!savedDestinations.has(jobId) && savedDestinations.size >= MAX_SAVED_DESTINATIONS) {
-    const oldestKey = savedDestinations.keys().next().value;
-    if (oldestKey !== undefined) {
-      savedDestinations.delete(oldestKey);
-    }
-  }
-  savedDestinations.set(jobId, record);
-}
 
 /**
  * Saves a finished synthesis to the destination it was started with, after
@@ -109,7 +95,7 @@ export async function applySynthesis(synthesis: JournalSynthesisDto, client: Que
       });
       const target = await saveTo(synthesis.destination, block, result, api);
       const savedRecord = { ...target, entryCount: result.entryCount };
-      rememberSavedDestination(jobId, savedRecord);
+      savedDestinations.set(jobId, savedRecord);
       // Invalidate notes immediately once appended so clean open editors pick up the
       // new revision even if `markSynthesisApplied` fails and needs a retry.
       void client.invalidateQueries({ queryKey: WORKSPACE_NOTES_QUERY_KEY });

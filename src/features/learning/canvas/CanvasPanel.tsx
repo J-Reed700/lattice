@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { AlertCircle, ArrowDownToLine, Check, ChevronDown, CircleHelp, Clock3, FileJson2, ImageDown, LoaderCircle, Plus, RotateCcw, Save, Sparkles, Text } from 'lucide-react';
 
@@ -126,11 +126,13 @@ export default function CanvasPanel({
     autosaveTimer.current = null;
   }, []);
 
+  const flushSurface = useCallback(() => { surfaceRef.current?.flush?.(); }, []);
+
   const drain = useCallback((): Promise<boolean> => {
     // A navigation flush owns the pending edit. Its old debounce must not retry
     // a failed write behind the error message after the flush has returned.
     clearAutosave();
-    surfaceRef.current?.flush?.();
+    flushSurface();
     if (inFlight.current) return inFlight.current;
     const work = (async () => {
       while (true) {
@@ -181,9 +183,10 @@ export default function CanvasPanel({
     })();
     inFlight.current = work;
     return work.finally(() => { if (inFlight.current === work) inFlight.current = null; });
-  }, [programId, save, clearAutosave]);
+  }, [programId, save, clearAutosave, flushSurface]);
   drainRef.current = drain;
 
+  useLayoutEffect(() => flushSurface, [flushSurface]);
   useEffect(() => {
     const unregister = registerPendingSave(() => drainRef.current());
     return () => { void drainRef.current().finally(unregister); };
