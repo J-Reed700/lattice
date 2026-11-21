@@ -44,6 +44,10 @@ use std::sync::{Arc, Mutex};
 
 const START: i64 = 1_000_000;
 
+fn completed_at(status: &str) -> Option<i64> {
+    (!matches!(status, "pending" | "running")).then_some(START)
+}
+
 fn id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -349,7 +353,7 @@ impl CodingRuns for FakeRuns {
             .bind(&base.run_id).bind(&base.program_id).bind(&base.activity_id)
             .bind(base.expected_activity_revision).bind(&base.operation_id).bind(payload_hash)
             .bind(status).bind(serde_json::to_string(&base.learner_files).unwrap())
-            .bind(START).bind(START).bind(&start.exercise_session_id).bind(start.scope.as_str())
+            .bind(START).bind(completed_at(status)).bind(&start.exercise_session_id).bind(start.scope.as_str())
             .execute(&self.pool).await.unwrap();
         for (ordinal, detail) in details.iter().enumerate() {
             sqlx::query("INSERT INTO learning_practical_run_checks(run_id,ordinal,name,status,message,detail_json) VALUES(?,?,?,?,'',?)")
@@ -542,7 +546,7 @@ impl Ctx {
         .unwrap();
         sqlx::query("INSERT INTO learning_practical_runs(id,program_id,activity_id,activity_revision,activity_snapshot_json,operation_id,payload_hash,status,learner_files_json,created_at,completed_at,exercise_session_id,scope) VALUES(?,?,?,?,'{}',?,'hash',?,'[]',?,?,?,'all')")
             .bind(run_id).bind(&self.program_id).bind(&self.activity_id).bind(revision)
-            .bind(id()).bind(status).bind(START).bind(START).bind(&session.session_id)
+            .bind(id()).bind(status).bind(START).bind(completed_at(status)).bind(&session.session_id)
             .execute(&self.pool).await.unwrap();
     }
 
