@@ -7,10 +7,9 @@
 
 import { create } from 'zustand';
 
-import type { WarmupRole } from '@/lib/bindings';
 import type { EventSchemas } from '@/types/events';
 
-export type { WarmupRole } from '@/lib/bindings';
+export type WarmupRole = EventSchemas.Models.WarmupStatus['role'];
 export type WarmupPhase = 'idle' | EventSchemas.Models.WarmupStatus['phase'];
 
 export interface RoleWarmupState {
