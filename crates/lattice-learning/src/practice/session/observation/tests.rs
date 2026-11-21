@@ -236,6 +236,36 @@ fn a_case_without_a_result_stands_as_not_run() {
 }
 
 #[test]
+fn a_run_of_the_learners_own_input_that_finished_shows_as_ran() {
+    let mut observation = plain();
+    for (scope, status, line) in [
+        (
+            CheckScope::Own,
+            CheckStatus::Passed,
+            "Last check: Own, Ran.\n",
+        ),
+        (
+            CheckScope::Own,
+            CheckStatus::Failed,
+            "Last check: Own, Failed.\n",
+        ),
+        (
+            CheckScope::All,
+            CheckStatus::Passed,
+            "Last check: All, Passed.\n",
+        ),
+    ] {
+        observation.last_check = Some(CheckView {
+            scope,
+            status,
+            ..checked()
+        });
+        let text = observation.render(&kind()).unwrap();
+        assert!(text.contains(line), "{scope:?} {status:?}: {text}");
+    }
+}
+
+#[test]
 fn the_notes_of_a_check_follow_its_cases_one_line_each() {
     let mut observation = plain();
     observation.last_check = Some(checked());

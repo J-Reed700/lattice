@@ -577,11 +577,11 @@ fn failed_check_and_submit_cues_forbid_pointing_or_diagnosing() {
     }
 }
 
-fn with_last_check(setting: Setting, status: CheckStatus) -> Observation {
+fn with_last_check(setting: Setting, scope: CheckScope, status: CheckStatus) -> Observation {
     let mut state = observation(setting, Form::Build, Stage::Check);
     state.last_check = Some(CheckView {
         id: "chk".to_owned(),
-        scope: CheckScope::All,
+        scope,
         status,
         cases: Vec::new(),
         detail: json!({}),
@@ -597,8 +597,20 @@ fn check_cues(setting: Setting) -> Vec<Cue> {
     cues
 }
 
+/// The cues about a check that judges the work: of the shown cases or every case.
+fn verdict_cues(setting: Setting) -> Vec<Cue> {
+    let mut cues = vec![Cue::Submitted];
+    if setting == Setting::Coached {
+        cues.extend([
+            Cue::CheckReview(CheckScope::Shown),
+            Cue::CheckReview(CheckScope::All),
+        ]);
+    }
+    cues
+}
+
 #[test]
-fn a_check_that_neither_passed_nor_failed_is_not_reported_as_either() {
+fn a_check_without_an_answer_is_not_reported_as_passing_or_failing() {
     let kind = kind();
     let noun = kind.wording.check_noun();
     let said_failed = format!("the last {noun} failed");
@@ -606,13 +618,12 @@ fn a_check_that_neither_passed_nor_failed_is_not_reported_as_either() {
     for status in [
         CheckStatus::Pending,
         CheckStatus::Running,
-        CheckStatus::TimedOut,
         CheckStatus::Cancelled,
         CheckStatus::Interrupted,
         CheckStatus::Unavailable,
     ] {
         for setting in SETTINGS {
-            let state = with_last_check(setting, status);
+            let state = with_last_check(setting, CheckScope::All, status);
             let policy = policy_for(setting, &kind, Form::Build);
             for cue in check_cues(setting) {
                 let system = policy.system(&cue, &state).to_lowercase();
@@ -630,18 +641,19 @@ fn a_check_that_neither_passed_nor_failed_is_not_reported_as_either() {
 }
 
 #[test]
-fn a_check_that_passed_or_failed_is_reported_as_such() {
+fn a_check_with_an_answer_is_reported_by_it_and_a_timeout_as_a_failure() {
     let kind = kind();
     let noun = kind.wording.check_noun();
     for (status, outcome) in [
         (CheckStatus::Passed, "passed"),
         (CheckStatus::Failed, "failed"),
+        (CheckStatus::TimedOut, "failed"),
     ] {
         let said = format!("the last {noun} {outcome}");
         for setting in SETTINGS {
-            let state = with_last_check(setting, status);
+            let state = with_last_check(setting, CheckScope::All, status);
             let policy = policy_for(setting, &kind, Form::Build);
-            for cue in check_cues(setting) {
+            for cue in verdict_cues(setting) {
                 let system = policy.system(&cue, &state).to_lowercase();
                 assert!(
                     system.contains(&said),
@@ -649,5 +661,31 @@ fn a_check_that_passed_or_failed_is_reported_as_such() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn a_run_of_the_learners_own_input_is_never_reported_as_passing_or_failing() {
+    let kind = kind();
+    let noun = kind.wording.check_noun();
+    let coached = policy_for(Setting::Coached, &kind, Form::Build);
+    for status in [
+        CheckStatus::Passed,
+        CheckStatus::Failed,
+        CheckStatus::TimedOut,
+    ] {
+        let state = with_last_check(Setting::Coached, CheckScope::Own, status);
+        let system = coached
+            .system(&Cue::CheckReview(CheckScope::Own), &state)
+            .to_lowercase();
+        assert!(
+            !system.contains(&format!("the last {noun} passed")),
+            "{status:?}: {system}"
+        );
+        assert!(
+            !system.contains(&format!("the last {noun} failed")),
+            "{status:?}: {system}"
+        );
+        assert!(system.contains("say what it shows"), "{status:?}: {system}");
     }
 }

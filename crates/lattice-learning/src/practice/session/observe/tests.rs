@@ -447,3 +447,56 @@ fn the_counts_of_a_submit_are_those_of_the_last_check_of_every_case() {
     ];
     assert_eq!(submit_counts(&each), (2, 3));
 }
+
+/// A check of every case that ended with `status`.
+fn ended(id: &str, at: i64, status: CheckStatus, results: &[(&str, CaseStatus)]) -> SessionCheck {
+    SessionCheck {
+        status,
+        ..check(id, CheckScope::All, at, results)
+    }
+}
+
+#[test]
+fn a_check_of_every_case_without_an_answer_leaves_how_the_session_went_to_the_one_before() {
+    for status in [
+        CheckStatus::Pending,
+        CheckStatus::Running,
+        CheckStatus::Cancelled,
+        CheckStatus::Interrupted,
+        CheckStatus::Unavailable,
+    ] {
+        let mut each = session(Setting::Mock);
+        each.checks = vec![
+            ended(
+                "c1",
+                1,
+                CheckStatus::Passed,
+                &[("case-1", CaseStatus::Passed)],
+            ),
+            ended("c2", 2, status, &[]),
+        ];
+        assert!(outcome(&each).all_passed, "{status:?}");
+        assert_eq!(submit_counts(&each), (1, 1), "{status:?}");
+    }
+}
+
+#[test]
+fn a_check_of_every_case_that_timed_out_is_how_the_session_went() {
+    let mut each = session(Setting::Mock);
+    each.checks = vec![
+        ended(
+            "c1",
+            1,
+            CheckStatus::Passed,
+            &[("case-1", CaseStatus::Passed)],
+        ),
+        ended(
+            "c2",
+            2,
+            CheckStatus::TimedOut,
+            &[("case-1", CaseStatus::TimedOut)],
+        ),
+    ];
+    assert!(!outcome(&each).all_passed);
+    assert_eq!(submit_counts(&each), (0, 1));
+}
