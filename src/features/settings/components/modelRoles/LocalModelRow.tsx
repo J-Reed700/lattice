@@ -55,7 +55,6 @@ export function LocalModelRow({ model }: Props) {
   const chatWarmup = useModelWarmupStore((state) => state.chat);
   const utilityWarmup = useModelWarmupStore((state) => state.utility);
   const learningWarmup = useModelWarmupStore((state) => state.learning);
-  const setRolePhase = useModelWarmupStore((state) => state.setRolePhase);
   const claimRole = useModelWarmupStore((state) => state.claimRole);
 
   // Stamp this model onto the roles it holds, which drops state left by
@@ -108,15 +107,12 @@ export function LocalModelRow({ model }: Props) {
         return;
       }
       for (const target of targets) {
-        setRolePhase(target.role, 'started', null, model.id);
         try {
           await target.call();
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          setRolePhase(target.role, 'failed', message, model.id);
           throw new Error(`${target.role}: ${message}`);
         }
-        setRolePhase(target.role, 'ready', null, model.id);
       }
       const roleSummary = targets.map((t) => t.role).join(' + ');
       toast.success(`${model.model_name} warmed up (${roleSummary})`, {

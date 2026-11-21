@@ -1152,6 +1152,7 @@ test('Downloaded assigns the Learning model in Settings without touching the cha
       },
       list_downloaded_models: () => [model],
       list_loaded_models: () => [],
+      warmup_status: () => [],
       last_learning_window_shortfall: () => null,
       set_active_chat_model: (args) => {
         record('set_active_chat_model', args);

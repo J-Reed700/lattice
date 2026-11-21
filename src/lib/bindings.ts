@@ -1949,6 +1949,17 @@ async listLoadedModels() : Promise<Result<LoadedModelDto[], ApiError>> {
 }
 },
 /**
+ * Where each model role's latest warm-up stands, for a window that opens after it began.
+ */
+async warmupStatus() : Promise<Result<RoleWarmupDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|warmup_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * The last learning work refused because the Learning model's window was
  * too small, while that model has not covered the window since.
  */
@@ -10706,6 +10717,10 @@ export type RewrittenDto = { original: string; rewrite: string;
  */
 why: string | null }
 /**
+ * One model role's latest warm-up, numbered by the backend's one counter.
+ */
+export type RoleWarmupDto = { role: WarmupRole; phase: WarmupPhase; error: string | null; degraded: string | null; revision: number }
+/**
  * Router settings for conversation scope and routing decisions.
  */
 export type RouterSettingsDto = {
@@ -12358,6 +12373,14 @@ noPassage: number;
  */
 stopped: string | null }
 /**
+ * How far a model role's warm-up has got.
+ */
+export type WarmupPhase = "started" | "ready" | "skipped" | "failed"
+/**
+ * A model role that is warmed up ahead of its first use.
+ */
+export type WarmupRole = "chat" | "utility" | "embedding" | "learning"
+/**
  * Response from web ingestion command
  */
 export type WebIngestResponse = {
@@ -12988,6 +13011,7 @@ export type CommandArgs = {
 	warm_up_active_chat_model: void;
 	warm_up_active_utility_model: void;
 	warm_up_learning_model: void;
+	warmup_status: void;
 };
 
 /** What each command resolves with, keyed by command. */
@@ -13456,4 +13480,5 @@ export type CommandResults = {
 	warm_up_active_chat_model: null;
 	warm_up_active_utility_model: null;
 	warm_up_learning_model: null;
+	warmup_status: RoleWarmupDto[];
 };

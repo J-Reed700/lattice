@@ -1094,6 +1094,7 @@ export async function installLearningStudioBackend(page: Page) {
       initialize_database: () => "Database initialized",
       list_downloaded_models: () => [],
       list_loaded_models: () => [],
+      warmup_status: () => [],
       get_speech_status: () => ({
         modelReady: false, modelId: "kokoro-82m-british", modelName: "Kokoro 82M", downloadBytes: 0, license: "Apache-2.0",
         voicePack: { ready: false, modelId: "kokoro-82m-more-voices", modelName: "Kokoro 82M: more voices", downloadBytes: 0 },
