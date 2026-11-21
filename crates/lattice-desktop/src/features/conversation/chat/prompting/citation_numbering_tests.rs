@@ -185,7 +185,11 @@ fn a_message_with_passages_places_context_first_and_rules_after_the_question_and
     assert!(context_pos < question_pos, "{prompt}");
     assert!(question_pos < check_pos, "{prompt}");
     assert!(check_pos < lang_pos, "{prompt}");
-    assert!(prompt.ends_with("\n\nAnswer:"), "{prompt}");
+    assert!(
+        prompt.ends_with("translating any passage in another."),
+        "{prompt}"
+    );
+    assert!(!prompt.ends_with("Answer:"), "{prompt}");
     assert!(
         !prompt.contains("Citation rule:"),
         "the rule is said once, in the system prompt"
@@ -200,7 +204,10 @@ fn a_message_with_passages_places_context_first_and_rules_after_the_question_and
         .find("from general knowledge without adding citations")
         .expect("hybrid rule");
     assert!(hybrid_q < hybrid_rule, "{hybrid_frame}");
-    assert!(hybrid_frame.ends_with("Answer:"), "{hybrid_frame}");
+    assert!(
+        hybrid_frame.ends_with("translating any passage in another."),
+        "{hybrid_frame}"
+    );
 
     let strict_frame = evidence_frame(&settings, "When?", None, true);
     let strict_q = strict_frame
@@ -210,7 +217,10 @@ fn a_message_with_passages_places_context_first_and_rules_after_the_question_and
         .find("using only the provided context")
         .expect("strict rule");
     assert!(strict_q < strict_rule, "{strict_frame}");
-    assert!(strict_frame.ends_with("Answer:"), "{strict_frame}");
+    assert!(
+        strict_frame.ends_with("translating any passage in another."),
+        "{strict_frame}"
+    );
 }
 
 #[test]
