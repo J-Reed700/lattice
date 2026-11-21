@@ -2,8 +2,6 @@
 #
 #   Double-click setup.cmd, or in PowerShell:
 #     powershell -ExecutionPolicy Bypass -File .\setup.ps1
-#   Without a checkout (downloads the source to %USERPROFILE%\lattice first):
-#     irm https://raw.githubusercontent.com/J-Reed700/lattice/main/setup.ps1 | iex
 #
 # The Windows counterpart of setup.sh. Each step is skipped when what it
 # installs is already there:
