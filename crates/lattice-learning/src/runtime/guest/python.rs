@@ -595,6 +595,52 @@ mod tests {
         Ok(())
     }
 
+    /// `X:name` names `name` in drive X's current directory, which for the drive the process runs on is the
+    /// process's own current directory.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn drive_prefixed_paths_stay_inside_the_sandbox() -> Result<()> {
+        struct Removed(PathBuf);
+        impl Drop for Removed {
+            fn drop(&mut self) {
+                let _ = fs::remove_file(&self.0);
+            }
+        }
+        let here = std::env::current_dir()?;
+        let name = format!("lattice-sandbox-probe-{}.txt", uuid::Uuid::new_v4());
+        let probe = Removed(here.join(&name));
+        let secret = uuid::Uuid::new_v4().to_string();
+        fs::write(&probe.0, &secret)?;
+        let dir = here.to_string_lossy();
+        let Some(drive) = dir.get(..2).filter(|drive| drive.ends_with(':')) else {
+            return Err(AppError::InternalError(format!(
+                "The current directory has no drive: {dir}"
+            )));
+        };
+        let paths: Vec<String> = ["/work", "/runtime"]
+            .iter()
+            .flat_map(|root| {
+                [
+                    format!("{root}/./{drive}{name}"),
+                    format!("{root}/{drive}{name}"),
+                ]
+            })
+            .collect();
+        let checks = format!(
+            "paths = {paths:?}\nfor path in paths:\n    try:\n        seen = open(path).read()\n    except OSError:\n        continue\n    if seen == {secret:?}:\n        raise AssertionError('host file visible through ' + path)\nprint('drive paths denied')\n"
+        );
+        let execution = execute_python_lab(&spec("", &checks), CancellationToken::new()).await?;
+        drop(probe);
+        assert_eq!(
+            execution.status,
+            LearningLabRunStatus::Passed,
+            "{}",
+            execution.stderr
+        );
+        assert!(execution.stdout.contains("drive paths denied"));
+        Ok(())
+    }
+
     #[tokio::test]
     async fn bounds_loop_output_and_cancellation() -> Result<()> {
         let mut input = spec("while True:\n    pass\n", "import solution\n");
