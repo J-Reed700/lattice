@@ -2,6 +2,7 @@ use super::*;
 use std::collections::HashSet;
 
 mod lazy_loading;
+mod optimistic_retrieval;
 mod web_fallback;
 
 #[test]
@@ -755,4 +756,55 @@ fn retrieval_depth_follows_the_evidence_budget() {
     assert_eq!(reading_depth(0, Some(2_000), 4.0), 1);
     // A library that cannot be measured falls back to the chunker's target.
     assert_eq!(reading_depth(4_800, None, 4.0), 10);
+}
+
+#[test]
+fn retrieval_plan_respects_user_requested_kb_over_intent_force_kb() {
+    let settings = RouterSettingsDto::default();
+    let clarify_decision = RouterDecisionOutcome {
+        action: RouterAction::Clarify,
+        recent_doc_meta: Some(RecentDocumentMetadata {
+            title: "Guide.md".to_string(),
+        }),
+        clarify_message: Some("Did you mean Guide.md?".to_string()),
+        router_may_search: true,
+    };
+    let use_last_decision = RouterDecisionOutcome {
+        action: RouterAction::UseLastDocument,
+        recent_doc_meta: Some(RecentDocumentMetadata {
+            title: "Guide.md".to_string(),
+        }),
+        clarify_message: None,
+        router_may_search: true,
+    };
+
+    // Intent-inferred force_kb_search must not suppress Clarify or force KB on UseLastDocument.
+    let inferred_flags = SearchFlags {
+        force_kb_search: true,
+        user_requested_kb: false,
+        ..SearchFlags::default()
+    };
+    let clarify_plan =
+        RetrievalPlan::from_router(&settings, &clarify_decision, "clarify?", inferred_flags);
+    assert!(clarify_plan.short_circuit_response.is_some());
+    assert!(!clarify_plan.should_search_kb);
+
+    let use_last_plan =
+        RetrievalPlan::from_router(&settings, &use_last_decision, "more?", inferred_flags);
+    assert!(!use_last_plan.should_search_kb);
+
+    // Explicit user_requested_kb overrides Clarify and forces KB search even on UseLastDocument.
+    let explicit_flags = SearchFlags {
+        force_kb_search: true,
+        user_requested_kb: true,
+        ..SearchFlags::default()
+    };
+    let explicit_clarify =
+        RetrievalPlan::from_router(&settings, &clarify_decision, "clarify?", explicit_flags);
+    assert!(explicit_clarify.short_circuit_response.is_none());
+    assert!(explicit_clarify.should_search_kb);
+
+    let explicit_use_last =
+        RetrievalPlan::from_router(&settings, &use_last_decision, "more?", explicit_flags);
+    assert!(explicit_use_last.should_search_kb);
 }

@@ -279,7 +279,7 @@ impl RetrievalPlan {
         }
 
         let short_circuit_response = if route_action == RouterAction::Clarify
-            && !search_flags.force_kb_search
+            && !search_flags.user_requested_kb
             && !search_flags.web_planned()
             && router_decision.recent_doc_meta.is_some()
         {
@@ -301,13 +301,11 @@ impl RetrievalPlan {
             // the vault falls short, so the vault has to be searched here or
             // the fallback has nothing to go by. A closed-book turn never
             // reaches this plan.
-            should_search_kb: search_flags.force_kb_search
-                || (!search_flags.skip_auto_kb
-                    && (router_decision.router_may_search || search_flags.web_planned())
-                    && matches!(
-                        route_action,
-                        RouterAction::NewSearch | RouterAction::UseLastDocument
-                    )),
+            should_search_kb: search_flags.user_requested_kb
+                || (route_action == RouterAction::NewSearch
+                    && (search_flags.force_kb_search
+                        || (!search_flags.skip_auto_kb
+                            && (router_decision.router_may_search || search_flags.web_planned())))),
             should_search_web: search_flags.web_planned(),
             should_search_wiki: search_flags.force_wiki_search,
             short_circuit_response,
@@ -331,12 +329,13 @@ struct KbRetrievalOutcome {
     sufficiency: Option<SufficiencyVerdict>,
 }
 
-#[derive(Debug)]
-struct SpaceDocumentScope {
-    space_id: String,
-    document_ids: HashSet<String>,
+#[derive(Debug, Clone)]
+pub(in crate::features::conversation::chat) struct SpaceDocumentScope {
+    pub(in crate::features::conversation::chat) space_id: String,
+    pub(in crate::features::conversation::chat) document_ids: HashSet<String>,
 }
 
+#[cfg(test)]
 pub(super) async fn run_retrieval_pipeline(
     container: &dyn ChatRuntime,
     turn: ChatTurn<'_>,
@@ -347,6 +346,31 @@ pub(super) async fn run_retrieval_pipeline(
     evidence: EvidenceBudget,
     attachment_digest: Option<&str>,
 ) -> RetrievalPipelineOutcome {
+    run_retrieval_pipeline_with_scope(
+        container,
+        turn,
+        settings,
+        router_decision,
+        search_flags,
+        conversation_document_context,
+        evidence,
+        attachment_digest,
+        None,
+    )
+    .await
+}
+
+pub(in crate::features::conversation::chat) async fn run_retrieval_pipeline_with_scope(
+    container: &dyn ChatRuntime,
+    turn: ChatTurn<'_>,
+    settings: &SettingsDto,
+    router_decision: &RouterDecisionOutcome,
+    search_flags: SearchFlags,
+    conversation_document_context: &[lattice_core::domain::conversation::DocumentReference],
+    evidence: EvidenceBudget,
+    attachment_digest: Option<&str>,
+    scope: Option<&crate::features::conversation::chat::scope::ScopeSnapshot>,
+) -> RetrievalPipelineOutcome {
     run_retrieval_pipeline_impl(
         container,
         turn,
@@ -356,6 +380,7 @@ pub(super) async fn run_retrieval_pipeline(
         conversation_document_context,
         evidence,
         attachment_digest,
+        scope,
     )
     .await
 }
@@ -373,6 +398,7 @@ async fn run_kb_retrieval(
     semantic_threshold: f32,
     tuning: &RetrievalTuningSettingsDto,
     cancel: &tokio_util::sync::CancellationToken,
+    scope_snapshot: Option<&crate::features::conversation::chat::scope::ScopeSnapshot>,
 ) -> KbRetrievalOutcome {
     run_kb_retrieval_impl(
         container,
@@ -383,6 +409,7 @@ async fn run_kb_retrieval(
         semantic_threshold,
         tuning,
         cancel,
+        scope_snapshot,
     )
     .await
 }
@@ -406,32 +433,14 @@ async fn apply_rerank_stage(
     .await
 }
 
-async fn load_space_document_scope(
+pub(in crate::features::conversation::chat) async fn load_space_document_scope(
     container: &dyn ChatRuntime,
     conversation_id: &str,
 ) -> Option<SpaceDocumentScope> {
     load_space_document_scope_impl(container, conversation_id).await
 }
 
-/// The documents a conversation remembers citing, minus any its space no
-/// longer allows. The router and the follow-up path reopen a reference by id
-/// with no scope filter in between, so the scope is applied here; an
-/// unresolvable scope keeps nothing.
-pub(super) async fn confine_document_context(
-    container: &dyn ChatRuntime,
-    conversation_id: &str,
-    references: Vec<lattice_core::domain::conversation::DocumentReference>,
-) -> Vec<lattice_core::domain::conversation::DocumentReference> {
-    if references.is_empty() {
-        return references;
-    }
-    let Some(scope) = load_space_document_scope(container, conversation_id).await else {
-        return Vec::new();
-    };
-    keep_references_in_scope(references, &scope.document_ids)
-}
-
-fn keep_references_in_scope(
+pub(in crate::features::conversation::chat) fn keep_references_in_scope(
     references: Vec<lattice_core::domain::conversation::DocumentReference>,
     allowed: &HashSet<String>,
 ) -> Vec<lattice_core::domain::conversation::DocumentReference> {
@@ -491,11 +500,11 @@ pub(super) async fn record_tool_document_references(
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct RecentDocumentMetadata {
-    pub(super) title: String,
+pub(in crate::features::conversation::chat) struct RecentDocumentMetadata {
+    pub(in crate::features::conversation::chat) title: String,
 }
 
-pub(super) async fn load_recent_document_metadata(
+pub(in crate::features::conversation::chat) async fn load_recent_document_metadata(
     container: &dyn ChatRuntime,
     document_context: &[lattice_core::domain::conversation::DocumentReference],
 ) -> Option<RecentDocumentMetadata> {
