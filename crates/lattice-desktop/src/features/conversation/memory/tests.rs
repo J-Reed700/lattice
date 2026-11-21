@@ -1621,15 +1621,24 @@ async fn a_repair_that_validates_is_committed_and_reported_as_repaired() {
     assert_eq!(outcome.processed_through_sequence, 4);
     assert_eq!(
         llm.request_limits(),
-        vec![(None, Some(4_096)); 4],
-        "structured utility requests keep model-default reasoning, and the answer room the fake's window leaves"
+        vec![
+            (Some("low".to_string()), Some(4_096)),
+            (Some("low".to_string()), Some(4_096)),
+            (None, Some(4_096)),
+            (None, Some(4_096)),
+        ],
+        "thinking extraction bounds reasoning effort to low, while non-thinking review and summary keep none"
     );
-    assert!(
-        llm.samplings()
-            .iter()
-            .all(|sampling| *sampling == Some(SamplingOverride::deterministic())),
-        "every utility request decodes greedily: the same passages must yield the same patch, \
-         not one that depends on the chat temperature"
+    assert_eq!(
+        llm.samplings(),
+        vec![
+            None,
+            None,
+            Some(SamplingOverride::deterministic()),
+            Some(SamplingOverride::deterministic()),
+        ],
+        "thinking extraction defers to the backend's thinking sampling profile rather than greedy decoding, \
+         while non-thinking review and summary decode greedily"
     );
     assert_eq!(port.commits(), 1);
     assert_eq!(port.watermark(), 4);
