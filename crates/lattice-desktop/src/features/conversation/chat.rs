@@ -51,6 +51,7 @@ pub(crate) mod transcript;
 mod research_job;
 pub mod retrieval;
 pub mod router;
+mod scope;
 #[cfg(test)]
 pub(crate) use research_job::saved_by_a_turn;
 pub use research_job::{
@@ -79,9 +80,10 @@ use self::persistence::{
 use self::prompting::PromptMessageBuilder;
 pub use self::retrieval::RetrievalSubTimingMetrics;
 use self::retrieval::{
-    citation_ids_by_chunk, confine_document_context, deduplicate_sources,
-    load_recent_document_metadata, run_retrieval_pipeline, RouterDecisionOutcome,
+    citation_ids_by_chunk, deduplicate_sources, load_recent_document_metadata,
+    RouterDecisionOutcome,
 };
+use self::scope::ScopeSnapshot;
 pub use self::source_snapshots::CapturedSourcesDto;
 use self::tool_loop::run_agentic_tool_loop;
 pub use self::tool_loop::ToolLoopTimingMetrics;

@@ -25,6 +25,7 @@ pub(super) struct PreparedTurn {
     /// What the request asked for, widened by an explicit document focus.
     pub(super) requested_flags: SearchFlags,
     pub(super) recorder: TurnRecorder,
+    pub(super) scope: ScopeSnapshot,
     pub(super) focus: FocusScope,
     pub(super) source: Option<TurnSource>,
     /// The conversation's scope for this turn; the turn keeps what it mints.
@@ -202,22 +203,6 @@ pub(super) async fn prepare_turn(
             Some("searches wider, follows up on what it finds, and may go back for more".into()),
         );
     }
-    // Resolved once, against the conversation's space scope. A request may
-    // narrow what the turn reads; it may never widen it.
-    let focus = FocusScope::resolve(
-        container,
-        &conv_id,
-        tool_preferences.and_then(|preferences| preferences.focus_document_ids.as_ref()),
-        search_flags.closed_book,
-    )
-    .await;
-    // A surviving focus forces the vault search; so does a focus that survived
-    // nothing, since only that path reports why the turn read nothing.
-    let search_flags = SearchFlags {
-        force_kb_search: search_flags.force_kb_search || focus.is_requested(),
-        user_requested_kb: search_flags.user_requested_kb || focus.is_requested(),
-        ..search_flags
-    };
     let names = open_names(container, &conv_id).await?;
     // An Explorer conversation reads a folder beside the chat. The stored root
     // is the boundary for every folder tool, and the open file the request
@@ -256,7 +241,24 @@ pub(super) async fn prepare_turn(
     // The memory plan takes the system prompt as a typed policy rather than
     // the `System:` context entry.
     let system_prompt = system_prompt.unwrap_or_default();
-    let document_context = confine_document_context(container, &conv_id, document_context).await;
+    // Resolved once per turn: space scope, focus intersection, confined
+    // document context, and recent document metadata share one DB scope read.
+    let (scope, document_context) = ScopeSnapshot::resolve(
+        container,
+        &conv_id,
+        tool_preferences.and_then(|preferences| preferences.focus_document_ids.as_ref()),
+        document_context,
+        search_flags.closed_book,
+    )
+    .await;
+    let focus = scope.focus.clone();
+    // A surviving focus forces the vault search; so does a focus that survived
+    // nothing, since only that path reports why the turn read nothing.
+    let search_flags = SearchFlags {
+        force_kb_search: search_flags.force_kb_search || focus.is_requested(),
+        user_requested_kb: search_flags.user_requested_kb || focus.is_requested(),
+        ..search_flags
+    };
     // Pages linked to the conversation are outside material too.
     let linked_web_sources_context =
         linked_web_sources_context.filter(|_| !search_flags.closed_book);
@@ -301,6 +303,7 @@ pub(super) async fn prepare_turn(
         standalone_question: None,
         requested_flags: search_flags,
         recorder,
+        scope,
         focus,
         source,
         names,
@@ -426,6 +429,7 @@ pub(super) async fn resume_turn(
         standalone_question: None,
         requested_flags: flags,
         recorder,
+        scope: ScopeSnapshot::default(),
         focus,
         source,
         names,
@@ -525,6 +529,7 @@ impl PreparedTurn {
             standalone_question: None,
             requested_flags: SearchFlags::from_preferences(None),
             recorder: TurnRecorder::silent(conv_id, turn_id),
+            scope: ScopeSnapshot::default(),
             focus: FocusScope::default(),
             source: None,
             names: Arc::new(TurnNames::unstored()),

@@ -25,6 +25,7 @@ pub(super) async fn run_retrieval_pipeline(
     conversation_document_context: &[lattice_core::domain::conversation::DocumentReference],
     evidence: EvidenceBudget,
     attachment_digest: Option<&str>,
+    scope_snapshot: Option<&crate::features::conversation::chat::scope::ScopeSnapshot>,
 ) -> RetrievalPipelineOutcome {
     let retrieval_start = Instant::now();
     let ChatTurn {
@@ -107,6 +108,14 @@ pub(super) async fn run_retrieval_pipeline(
         )
         .await;
     }
+    if outcome.short_circuit_response.is_none()
+        && retrieval_plan.route_action == RouterAction::UseLastDocument
+        && outcome.followup_context.is_none()
+        && !search_flags.skip_auto_kb
+        && router_decision.router_may_search
+    {
+        retrieval_plan.should_search_kb = true;
+    }
     // The follow-up document is charged before the passages and pages are sized
     // from what is left.
     let mut evidence = evidence;
@@ -142,6 +151,7 @@ pub(super) async fn run_retrieval_pipeline(
             search_settings.similarity_threshold,
             tuning,
             &turn_cancellation.turn_token(request_id),
+            scope_snapshot,
         )
         .await;
         (kb_outcome, elapsed_ms(kb_retrieval_start))
