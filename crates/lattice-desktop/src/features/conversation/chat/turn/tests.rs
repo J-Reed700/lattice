@@ -840,10 +840,7 @@ fn a_source_s_passages_join_the_turn_s_numbered_passages() {
     let passage_pos = message.find("[s1] Document:").expect("passage marker");
     let question_pos = message.find("Question:").expect("question line");
     assert!(passage_pos < question_pos, "{message}");
-    assert!(
-        message.ends_with("translating any passage in another."),
-        "{message}"
-    );
+    assert!(message.ends_with("missing from the excerpts."), "{message}");
     assert!(!message.ends_with("Answer:"), "{message}");
     assert_eq!(prompt.sources[0].citation_id, Some(1));
     assert_eq!(prompt.sources[0].document_id, "course:version-1");

@@ -173,22 +173,19 @@ fn a_message_with_passages_places_context_first_and_rules_after_the_question_and
     .build();
 
     let context_pos = prompt.find("Context:\n").expect("context heading");
+    let check_pos = prompt
+        .find("Read every supplied passage")
+        .expect("read-every-passage rule");
+    let lang_pos = prompt
+        .find("write in the language of the question")
+        .expect("language rule");
     let question_pos = prompt
         .find("Question: When was the chimney swept?")
         .expect("question line");
-    let check_pos = prompt
-        .find("Check every supplied passage")
-        .expect("check-every-passage rule");
-    let lang_pos = prompt
-        .find("Write in the language of the question")
-        .expect("language rule");
-    assert!(context_pos < question_pos, "{prompt}");
-    assert!(question_pos < check_pos, "{prompt}");
+    assert!(context_pos < check_pos, "{prompt}");
     assert!(check_pos < lang_pos, "{prompt}");
-    assert!(
-        prompt.ends_with("translating any passage in another."),
-        "{prompt}"
-    );
+    assert!(lang_pos < question_pos, "{prompt}");
+    assert!(prompt.ends_with("missing from the excerpts."), "{prompt}");
     assert!(!prompt.ends_with("Answer:"), "{prompt}");
     assert!(
         !prompt.contains("Citation rule:"),
@@ -203,9 +200,9 @@ fn a_message_with_passages_places_context_first_and_rules_after_the_question_and
     let hybrid_rule = hybrid_frame
         .find("from general knowledge without adding citations")
         .expect("hybrid rule");
-    assert!(hybrid_q < hybrid_rule, "{hybrid_frame}");
+    assert!(hybrid_rule < hybrid_q, "{hybrid_frame}");
     assert!(
-        hybrid_frame.ends_with("translating any passage in another."),
+        hybrid_frame.ends_with("missing from the excerpts."),
         "{hybrid_frame}"
     );
 
@@ -216,9 +213,9 @@ fn a_message_with_passages_places_context_first_and_rules_after_the_question_and
     let strict_rule = strict_frame
         .find("using only the provided context")
         .expect("strict rule");
-    assert!(strict_q < strict_rule, "{strict_frame}");
+    assert!(strict_rule < strict_q, "{strict_frame}");
     assert!(
-        strict_frame.ends_with("translating any passage in another."),
+        strict_frame.ends_with("missing from the excerpts."),
         "{strict_frame}"
     );
 }

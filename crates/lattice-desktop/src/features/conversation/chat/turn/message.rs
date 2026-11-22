@@ -280,16 +280,16 @@ mod tests {
         let passage_pos = rendered
             .find("[2] Document: d2.md")
             .expect("numbered passage");
+        let rules_pos = rendered
+            .find("Read every supplied passage")
+            .expect("answering rules");
         let question_pos = rendered
             .find("Question: When does the contract renew?")
             .expect("question line");
-        let rules_pos = rendered
-            .find("Check every supplied passage")
-            .expect("answering rules");
-        assert!(passage_pos < question_pos, "{rendered}");
-        assert!(question_pos < rules_pos, "{rendered}");
+        assert!(passage_pos < rules_pos, "{rendered}");
+        assert!(rules_pos < question_pos, "{rendered}");
         assert!(
-            rendered.ends_with("translating any passage in another."),
+            rendered.ends_with("missing from the excerpts."),
             "{rendered}"
         );
         assert!(!rendered.ends_with("Answer:"), "{rendered}");
