@@ -124,7 +124,13 @@ fn a_thinking_request_turns_it_on_and_passes_only_a_real_effort_through() {
     let body = thinking(None);
     assert_eq!(body["chat_template_kwargs"]["enable_thinking"], true);
     assert!(body.get("reasoning_effort").is_none());
+    assert!(body.get("thinking_budget_tokens").is_none());
+    assert_eq!(thinking(Some("low"))["reasoning_effort"], "low");
+    assert_eq!(thinking(Some("low"))["thinking_budget_tokens"], 1_024);
     assert_eq!(thinking(Some("high"))["reasoning_effort"], "high");
+    assert!(thinking(Some("high"))
+        .get("thinking_budget_tokens")
+        .is_none());
     assert!(thinking(Some("none")).get("reasoning_effort").is_none());
 }
 

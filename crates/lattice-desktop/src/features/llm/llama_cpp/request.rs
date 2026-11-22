@@ -93,6 +93,12 @@ impl LlamaCppLlm {
             .filter(|effort| thinks && request.thinking == ThinkingMode::On && *effort != "none")
         {
             body.insert("reasoning_effort".into(), json!(effort));
+            // Templates such as Qwen 3.5 read `enable_thinking` but ignore
+            // `reasoning_effort`; `thinking_budget_tokens` bounds thinking at
+            // the sampler level across every llama-server model.
+            if effort == "low" {
+                body.insert("thinking_budget_tokens".into(), json!(1_024));
+            }
         }
         if !request.tools().is_empty() {
             body.insert("tools".into(), tool_specs(request.tools()));
