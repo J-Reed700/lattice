@@ -271,4 +271,26 @@ describe('TangentConversation', () => {
     act(() => h.scope?.clearError());
     expect(h.scope?.error).toBeNull();
   });
+
+  it('does not show the global main-chat error or clear it when dismissing inside a tangent', async () => {
+    const clearGlobalError = vi.fn();
+    h.base = {
+      ...h.base,
+      error: 'Main chat failed',
+      clearError: clearGlobalError,
+    };
+    h.fetchBookmarks.mockRejectedValue(new Error('Tangent bookmarks unreadable'));
+    renderTangent();
+    await ready();
+    await waitFor(() => expect(h.scope?.error).toBe('Tangent bookmarks unreadable'));
+
+    act(() => h.scope?.clearError());
+    expect(h.scope?.error).toBeNull();
+    expect(clearGlobalError).not.toHaveBeenCalled();
+
+    // Without a scoped error, global error still stays out of the tangent scope.
+    h.fetchBookmarks.mockResolvedValue([]);
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: conversationKeys.bookmarks('t1') }); });
+    await waitFor(() => expect(h.scope?.error).toBeNull());
+  });
 });

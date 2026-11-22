@@ -1223,7 +1223,7 @@ async fn conclude_handles_cancelled_partial_and_failed_outcomes_cleanly() {
 
     assert!(matches!(partial_err, AppError::Cancelled(_)));
 
-    // 2. Cancelled turn with zero tokens: user completed + cancelled=true, no assistant reply, Ok returned.
+    // 2. Cancelled turn with zero tokens: user failed + cancelled=true, no assistant reply, Cancelled returned.
     let empty_user = service
         .add_message_with_status(
             &conv_id,
@@ -1326,10 +1326,11 @@ async fn conclude_handles_cancelled_partial_and_failed_outcomes_cleanly() {
     assert_eq!(saved_partial_assistant.status, "completed");
 
     let saved_empty_user = messages.iter().find(|m| m.id == empty_user.id).unwrap();
-    assert_eq!(saved_empty_user.status, "completed");
+    assert_eq!(saved_empty_user.status, "failed");
     let saved_empty_meta: serde_json::Value =
         serde_json::from_str(saved_empty_user.metadata.as_deref().unwrap()).unwrap();
     assert_eq!(saved_empty_meta["cancelled"], true);
+    assert!(saved_empty_meta.get("error").is_none());
     assert_eq!(
         messages
             .iter()

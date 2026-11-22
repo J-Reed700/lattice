@@ -311,7 +311,8 @@ async fn commit_turn(
 }
 
 /// Persists a partial assistant reply produced before the user stopped the turn,
-/// marking the pending user question `"completed"` with `"cancelled": true`.
+/// or marks the unanswered user question failed with `"cancelled": true` when no
+/// assistant text was emitted.
 pub(super) async fn finalize_cancelled_partial_turn(
     container: &dyn ChatRuntime,
     turn: ChatTurn<'_>,
@@ -609,19 +610,17 @@ pub(crate) async fn mark_user_message_failed_with_reason(
     }
 }
 
-/// Marks a stopped turn's persisted user message completed (preserving existing
-/// metadata like `requestId` and recording `"cancelled": true`) so a user-initiated
-/// stop never shows `"Message didn't send"`.
+/// Marks a stopped turn's unanswered pending user message failed (preserving
+/// existing metadata like `requestId` and recording `"cancelled": true`) so it
+/// does not enter future prompt context, offers "Try again", and renders as
+/// stopped rather than `"Message didn't send"`.
 pub(super) async fn mark_user_message_cancelled(
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     user_message_id: &str,
 ) {
-    if let Err(e) = conv_service
-        .update_message_status(user_message_id, "completed".to_string())
-        .await
-    {
+    if let Err(e) = conv_service.fail_pending_turn(user_message_id).await {
         warn!(
-            "Failed to update stopped user message status to 'completed': {}",
+            "Failed to update stopped user message status to 'failed': {}",
             e
         );
         return;

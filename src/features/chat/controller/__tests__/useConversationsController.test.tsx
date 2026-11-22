@@ -1075,7 +1075,7 @@ describe('useConversationsController optimistic cleanup', () => {
     });
   });
 
-  it('leaves both global composerDraft and scoped tangent drafts untouched when a scoped turn is stopped', async () => {
+  it('restores a stopped scoped prompt to its own draft without overwriting main composerDraft', async () => {
     conversationUiStore.setState({ activeConversationId: 'other-global-chat', composerDraft: 'Keep my main draft' });
     setDraft(conversationDraftKey('scoped-tangent-1'), '');
     let resolveChat: ((value: unknown) => void) | undefined;
@@ -1096,7 +1096,31 @@ describe('useConversationsController optimistic cleanup', () => {
     });
 
     expect(conversationUiStore.getState().composerDraft).toBe('Keep my main draft');
-    expect(useDraftStore.getState().drafts[conversationDraftKey('scoped-tangent-1')] ?? '').toBe('');
+    expect(useDraftStore.getState().drafts[conversationDraftKey('scoped-tangent-1')]).toBe('Scoped stop question');
+  });
+
+  it('restores a stopped scoped prompt to its own draft when no main conversation is active', async () => {
+    conversationUiStore.setState({ activeConversationId: null, composerDraft: null });
+    setDraft(conversationDraftKey('scoped-tutor-1'), '');
+    let resolveChat: ((value: unknown) => void) | undefined;
+    api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveChat = resolve; }));
+    api.getConversationMessages = vi.fn().mockResolvedValue({ ok: true, data: { messages: [] } });
+    api.cancelChatGeneration = vi.fn().mockResolvedValue({ ok: true, data: null });
+
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
+
+    let sending!: Promise<unknown>;
+    act(() => { sending = result.current.sendMessage('Tutor stop question', 'scoped-tutor-1'); });
+    await waitFor(() => expect(api.chatWithConversation).toHaveBeenCalled());
+
+    await act(async () => { await result.current.cancelGeneration('scoped-tutor-1'); });
+    await act(async () => {
+      resolveChat?.({ ok: false, error: 'Cancelled', details: { code: ErrorCode.CANCELLED } });
+      await sending;
+    });
+
+    expect(conversationUiStore.getState().composerDraft).toBeNull();
+    expect(useDraftStore.getState().drafts[conversationDraftKey('scoped-tutor-1')]).toBe('Tutor stop question');
   });
 
   it('dismisses queryError when clearError is called until a new query error occurs', async () => {

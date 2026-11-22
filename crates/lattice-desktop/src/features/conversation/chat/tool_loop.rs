@@ -624,6 +624,7 @@ pub(super) async fn run_agentic_tool_loop_with_partial(
             });
         }
 
+        emitter.discard_round_partial();
         if let Err(error) = calls
             .run_round(
                 &tool_calls,

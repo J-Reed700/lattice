@@ -49,7 +49,6 @@ export function ScopedConversationProvider({
   const isLoading = useConversationsStore((state) => state.isLoading);
   const isLoadingBookmarks = useConversationsStore((state) => state.isLoadingBookmarks);
   const inFlightGenerations = useConversationsStore((state) => state.inFlightGenerations);
-  const error = useConversationsStore((state) => state.error);
   const optimisticMessages = useConversationsStore((state) => state.optimisticMessages);
   const liveRetrieval = useConversationsStore((state) => state.liveRetrieval);
   const liveSteps = useConversationsStore((state) => state.liveSteps);
@@ -106,7 +105,6 @@ export function ScopedConversationProvider({
   const deleteMessage = useConversationsStore((state) => state.deleteMessage);
   const deleteConversation = useConversationsStore((state) => state.deleteConversation);
   const dismissFailedMessage = useConversationsStore((state) => state.dismissFailedMessage);
-  const clearError = useConversationsStore((state) => state.clearError);
   const messagesQuery = useQuery({ queryKey: conversationKeys.messages(id), queryFn: () => fetchMessages(id, api) });
   const detailQuery = useQuery({ queryKey: conversationKeys.detail(id), queryFn: () => fetchConversationDetail(id, api) });
   const bookmarksQuery = useQuery({ queryKey: conversationKeys.bookmarks(id), queryFn: () => fetchBookmarks(id, undefined, api) });
@@ -123,11 +121,10 @@ export function ScopedConversationProvider({
   const visibleScopedQueryError =
     scopedQueryError && scopedQueryError !== dismissedQueryError ? scopedQueryError : null;
   const clearScopedError = useCallback(() => {
-    clearError?.();
     if (scopedQueryError) {
       setDismissedQueryError(scopedQueryError);
     }
-  }, [clearError, scopedQueryError]);
+  }, [scopedQueryError]);
   const sending = inFlightGenerations.has(id);
   const wasSending = useRef(false);
   useStopSpeechOnChange(id);
@@ -158,7 +155,7 @@ export function ScopedConversationProvider({
       searchQuery,
       isLoading,
       isLoadingBookmarks,
-      error: error ?? visibleScopedQueryError?.message ?? null,
+      error: visibleScopedQueryError?.message ?? null,
       inFlightGenerations,
       optimisticMessages: scopedOptimisticMessages,
       liveRetrieval,
@@ -241,7 +238,6 @@ export function ScopedConversationProvider({
     deleteMessage,
     dismissFailedMessage,
     documentSpaceMembershipsByDocumentId,
-    error,
     visibleScopedQueryError?.message,
     filterMode,
     forkConversation,

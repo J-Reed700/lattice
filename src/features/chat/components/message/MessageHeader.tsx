@@ -20,6 +20,7 @@ export function MessageHeader({
   isUser,
   isPending,
   isFailed,
+  isCancelled = false,
   errorMessage,
   isLastTurn,
   isBusy,
@@ -44,6 +45,7 @@ export function MessageHeader({
   isUser: boolean;
   isPending: boolean;
   isFailed: boolean;
+  isCancelled?: boolean;
   errorMessage: string | undefined;
   isLastTurn: boolean;
   isBusy: boolean;
@@ -86,10 +88,17 @@ export function MessageHeader({
           </span>
         )}
         {isFailed && (
-          <span className="inline-flex min-w-0 items-center gap-1 text-xs text-[hsl(var(--danger-fg))]">
-            <AlertCircle className="h-3 w-3 shrink-0" />
-            <span className="break-words">{errorMessage || "Message didn't send"}</span>
-          </span>
+          isCancelled && !errorMessage ? (
+            <span className="text-xs text-[hsl(var(--text-muted))]">Stopped</span>
+          ) : (
+            <span className="inline-flex min-w-0 items-center gap-1 text-xs text-[hsl(var(--danger-fg))]">
+              <AlertCircle className="h-3 w-3 shrink-0" />
+              <span className="break-words">{errorMessage || "Message didn't send"}</span>
+            </span>
+          )
+        )}
+        {!isUser && !isPending && !isFailed && isCancelled && (
+          <span className="text-xs text-[hsl(var(--text-muted))]">Stopped</span>
         )}
         {/* Only the last question: regenerate re-asks whatever came last. */}
         {isFailed && isUser && (isLastTurn || 'tempId' in message) && conversationId && (

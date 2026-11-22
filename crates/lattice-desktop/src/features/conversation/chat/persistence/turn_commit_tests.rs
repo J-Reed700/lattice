@@ -415,7 +415,7 @@ async fn mark_user_message_failed_with_reason_preserves_request_id_and_records_e
 }
 
 #[tokio::test]
-async fn cancelled_turn_marks_user_completed_with_cancelled_metadata() {
+async fn cancelled_turn_marks_user_failed_with_cancelled_metadata() {
     let (service, pool, id, _user_id) = service_with_pending_question().await;
     let zero_user = service
         .add_message_with_metadata(
@@ -429,7 +429,7 @@ async fn cancelled_turn_marks_user_completed_with_cancelled_metadata() {
         .await
         .unwrap();
     mark_user_message_cancelled(&service, &zero_user.id).await;
-    assert_eq!(status_of(&pool, &zero_user.id).await, "completed");
+    assert_eq!(status_of(&pool, &zero_user.id).await, "failed");
 
     let user_meta_raw: String =
         sqlx::query_scalar("SELECT metadata FROM conversation_messages WHERE id=?")
@@ -486,7 +486,7 @@ async fn cancelled_partial_turn_with_empty_reply_marks_user_cancelled_instead_of
     .await
     .unwrap();
 
-    assert_eq!(status_of(&pool, &user_id).await, "completed");
+    assert_eq!(status_of(&pool, &user_id).await, "failed");
     let user_meta_raw: String =
         sqlx::query_scalar("SELECT metadata FROM conversation_messages WHERE id=?")
             .bind(&user_id)

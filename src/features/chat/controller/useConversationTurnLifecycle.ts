@@ -79,15 +79,16 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
     onFailure?: (_error: string, _refreshed?: ConversationMessage[]) => void;
     retryContext?: OptimisticMessage['retryContext'];
     replacesFailedTempId?: string;
+    ownsComposerWhenActiveNull?: boolean;
   }): Promise<GenerationOutcome> => {
     const {
       conversationId: requestConversationId, content, showUserBubble, invoke, onFailure,
-      retryContext, replacesFailedTempId,
+      retryContext, replacesFailedTempId, ownsComposerWhenActiveNull = false,
     } = options;
     const state = conversationUiStore.getState();
     const ownsComposer = () => {
       const activeId = conversationUiStore.getState().activeConversationId;
-      return activeId === requestConversationId || (activeId === null && state.activeConversationId === null);
+      return activeId === requestConversationId || (activeId === null && ownsComposerWhenActiveNull);
     };
     if (state.inFlightGenerations.has(requestConversationId)) {
       setUiError('A response is already being generated for this conversation.');
@@ -354,9 +355,16 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
           // copy. Hand it back to the composer rather than lose it.
           const lastUser = [...refreshed].reverse().find(message => message.role === 'user');
           const questionLost = showUserBubble && lastUser?.content !== content;
-          conversationUiStore.setState(questionLost && ownsComposer()
-            ? { error: null, composerDraft: content }
-            : { error: null });
+          if (questionLost) {
+            if (ownsComposer()) {
+              conversationUiStore.setState({ error: null, composerDraft: content });
+            } else {
+              setDraft(conversationDraftKey(requestConversationId), content);
+              conversationUiStore.setState({ error: null });
+            }
+          } else {
+            conversationUiStore.setState({ error: null });
+          }
           return 'cancelled';
         }
         const detail: unknown = result.details?.details;
@@ -516,6 +524,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
     attachmentImages?: ChatImage[]
   ) => {
     const state = conversationUiStore.getState();
+    const usedFallback = conversationId == null && state.activeConversationId == null;
     // The fallback is a Chat conversation: a bound chat is never continued
     // away from what it is bound to.
     const requestConversationId = conversationId
@@ -535,6 +544,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
       conversationId: requestConversationId,
       content,
       showUserBubble: true,
+      ownsComposerWhenActiveNull: usedFallback,
       invoke: requestId => api.chatWithConversation(
         requestConversationId,
         content,

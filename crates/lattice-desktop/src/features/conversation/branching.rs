@@ -312,14 +312,12 @@ pub async fn regenerate_response_impl(
                 .then(|| crate::features::conversation::chat::human_readable_error(&error));
             let restore_metadata =
                 with_outcome_metadata(metadata, cancelled, error_reason.as_deref());
-            let status = if cancelled { "completed" } else { "failed" };
-            let restored = restore_lifted_question_with_status(
+            let restored = restore_lifted_question(
                 branches.as_ref(),
                 &conversation_id,
                 baseline,
                 &content,
                 restore_metadata.as_deref(),
-                status,
             )
             .await;
             if let Some(message_id) = restored.filter(|_| !image_ids.is_empty()) {
@@ -448,10 +446,10 @@ fn with_outcome_metadata(
     Some(serde_json::Value::Object(map).to_string())
 }
 
-/// Puts a lifted question back on the thread after a failed regenerate, only
-/// when the turn failed before saving it again (the thread no longer than when
-/// it was lifted). Returns the id of the question it put back, if any.
-#[cfg(test)]
+/// Puts a lifted question back on the thread after a failed or cancelled
+/// regenerate, only when the turn ended before saving it again (the thread no
+/// longer than when it was lifted). Returns the id of the question it put back,
+/// if any.
 async fn restore_lifted_question(
     branches: &dyn ConversationBranches,
     conversation_id: &str,
@@ -459,28 +457,8 @@ async fn restore_lifted_question(
     content: &str,
     metadata: Option<&str>,
 ) -> Option<String> {
-    restore_lifted_question_with_status(
-        branches,
-        conversation_id,
-        baseline,
-        content,
-        metadata,
-        "failed",
-    )
-    .await
-}
-
-async fn restore_lifted_question_with_status(
-    branches: &dyn ConversationBranches,
-    conversation_id: &str,
-    baseline: Option<usize>,
-    content: &str,
-    metadata: Option<&str>,
-    status: &str,
-) -> Option<String> {
     let Some(baseline) = baseline else {
-        return insert_restored_question(branches, conversation_id, content, metadata, status)
-            .await;
+        return insert_failed_question(branches, conversation_id, content, metadata).await;
     };
     let saved = match branches.get_messages(conversation_id).await {
         Ok(messages) => messages.len() > baseline,
@@ -496,15 +474,14 @@ async fn restore_lifted_question_with_status(
     if saved {
         return None;
     }
-    insert_restored_question(branches, conversation_id, content, metadata, status).await
+    insert_failed_question(branches, conversation_id, content, metadata).await
 }
 
-async fn insert_restored_question(
+async fn insert_failed_question(
     branches: &dyn ConversationBranches,
     conversation_id: &str,
     content: &str,
     metadata: Option<&str>,
-    status: &str,
 ) -> Option<String> {
     match branches
         .add_message_with_status(
@@ -513,7 +490,7 @@ async fn insert_restored_question(
             content,
             0,
             metadata,
-            status,
+            "failed",
         )
         .await
     {
@@ -662,34 +639,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn restored_question_preserves_failure_reason_or_marks_cancelled_completed() {
+    async fn restored_question_preserves_failure_reason_or_marks_cancelled_failed() {
         let (repo, id) = thread().await;
         let err_meta = with_outcome_metadata(
             Some(r#"{"requestId":"r-err","cancelled":true}"#.into()),
             false,
             Some("Backend timeout"),
         );
-        restore_lifted_question_with_status(
-            &repo,
-            &id,
-            Some(0),
-            "retry me",
-            err_meta.as_deref(),
-            "failed",
-        )
-        .await;
+        restore_lifted_question(&repo, &id, Some(0), "retry me", err_meta.as_deref()).await;
 
         let cancel_meta =
             with_outcome_metadata(Some(r#"{"requestId":"r-stop"}"#.into()), true, None);
-        restore_lifted_question_with_status(
-            &repo,
-            &id,
-            Some(1),
-            "stopped me",
-            cancel_meta.as_deref(),
-            "completed",
-        )
-        .await;
+        restore_lifted_question(&repo, &id, Some(1), "stopped me", cancel_meta.as_deref()).await;
 
         let messages = repo.get_messages(&id).await.unwrap();
         assert_eq!(messages.len(), 2);
@@ -700,10 +661,11 @@ mod tests {
         assert_eq!(meta0["error"], "Backend timeout");
         assert!(meta0.get("cancelled").is_none());
 
-        assert_eq!(messages[1].status, "completed");
+        assert_eq!(messages[1].status, "failed");
         let meta1: serde_json::Value =
             serde_json::from_str(messages[1].metadata.as_deref().unwrap()).unwrap();
         assert_eq!(meta1["requestId"], "r-stop");
         assert_eq!(meta1["cancelled"], true);
+        assert!(meta1.get("error").is_none());
     }
 }

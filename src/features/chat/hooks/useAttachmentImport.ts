@@ -90,35 +90,37 @@ export function useAttachmentImport({
   const isImporting = useIsStagedFilesImporting(conversationId);
   const [attachingPictures, setAttachingPictures] = useState(0);
   const pictures = useStagedPictures(conversationId);
-  const importAbortRef = useRef<AbortController | null>(null);
   const conversationIdRef = useRef(conversationId);
   conversationIdRef.current = conversationId;
-  const activeJobRef = useRef<{
+  const activeJobsRef = useRef(new Map<string, {
     jobId: string | null;
     targetConversationId: string;
     controller: AbortController;
     explicitlyCancelled: boolean;
-  } | null>(null);
+  }>());
 
-  useEffect(() => () => {
-    importAbortRef.current?.abort();
-    importAbortRef.current = null;
-    if (conversationId) {
-      useStagedFilesStore.getState().setImporting(conversationId, false);
-    }
-  }, [conversationId]);
+  useEffect(() => {
+    const jobs = activeJobsRef.current;
+    return () => {
+      for (const [targetId, active] of jobs) {
+        active.controller.abort();
+        useStagedFilesStore.getState().setImporting(targetId, false);
+      }
+      jobs.clear();
+    };
+  }, []);
 
   const cancelImport = useCallback(() => {
-    const active = activeJobRef.current;
+    const targetId = conversationIdRef.current;
+    const active = targetId ? activeJobsRef.current.get(targetId) : undefined;
     if (active) {
       active.explicitlyCancelled = true;
       useStagedFilesStore.getState().setImporting(active.targetConversationId, false);
       if (active.jobId) {
         void Promise.resolve(api.cancelBatchJob(active.jobId)).catch(() => undefined);
       }
+      active.controller.abort();
     }
-    importAbortRef.current?.abort();
-    importAbortRef.current = null;
   }, [api]);
 
   // Pictures go to the backend now, not at send: the composer shows the
@@ -176,19 +178,20 @@ export function useAttachmentImport({
 
   const importStaged = useCallback(async (): Promise<ImportedAttachments | null> => {
     const targetConversationId = conversationId;
-    if (!targetConversationId || staged.length === 0 || isImporting) return null;
+    const targetSpaceId = scopedSpaceId;
+    if (!targetConversationId || staged.length === 0 || isImporting || activeJobsRef.current.has(targetConversationId)) {
+      return null;
+    }
     const stagedSnapshot = [...staged];
     const stagedNames = stagedSnapshot.map((file) => file.name);
     const controller = new AbortController();
-    importAbortRef.current?.abort();
-    importAbortRef.current = controller;
     const jobState = {
       jobId: null as string | null,
       targetConversationId,
       controller,
       explicitlyCancelled: false,
     };
-    activeJobRef.current = jobState;
+    activeJobsRef.current.set(targetConversationId, jobState);
     useStagedFilesStore.getState().setImporting(targetConversationId, true);
     try {
       // Attached, not filed. These documents belong to this conversation: the
@@ -219,7 +222,7 @@ export function useAttachmentImport({
         timeoutMs: BATCH_POLL_TIMEOUT_MS,
         signal: controller.signal,
       });
-      if (outcome.kind === 'cancelled' || controller.signal.aborted || conversationIdRef.current !== targetConversationId) {
+      if (outcome.kind === 'cancelled' || controller.signal.aborted) {
         return null;
       }
       if (outcome.kind === 'unreachable') {
@@ -231,19 +234,14 @@ export function useAttachmentImport({
       // Scoping only applies to a conversation that already has its own space.
       // Creating one behind the user's back would silently narrow every future
       // answer in this thread.
-      if (documentIds.length > 0 && scopedSpaceId) {
-        await api.setDocumentsSpaceMembership(documentIds, scopedSpaceId, true);
+      if (documentIds.length > 0 && targetSpaceId) {
+        await api.setDocumentsSpaceMembership(documentIds, targetSpaceId, true);
       }
 
       await queryClient.invalidateQueries({
         queryKey: conversationKeys.linkedDocuments(targetConversationId),
       });
       void loadConversationLinkedDocuments(targetConversationId);
-
-      // Keep staged files intact if the user cancelled or switched conversations before send.
-      if (controller.signal.aborted || conversationIdRef.current !== targetConversationId) {
-        return null;
-      }
 
       const clearTarget = () => {
         if (targetConversationId === conversationIdRef.current) {
@@ -261,6 +259,7 @@ export function useAttachmentImport({
       // "Attached", not "Added": these files belong to this conversation, not
       // to the library, and the wording is the only place the user learns that
       // before they go looking for them in the library.
+      let result: ImportedAttachments | null;
       if (outcome.kind === 'pending') {
         // Still indexing at the deadline. Send only with ids to read: chips
         // without ids would promise files the answer never sees.
@@ -274,7 +273,7 @@ export function useAttachmentImport({
         toast.info(`Still attaching ${requested} file${requested !== 1 ? 's' : ''}`, {
           message: "They'll appear in this conversation when indexing finishes.",
         });
-        return { names: stagedNames, documentIds };
+        result = { names: stagedNames, documentIds };
       } else if (outcome.added === 0) {
         toast.error("Couldn't attach these files", {
           message: `${outcome.failed || requested} failed to import.`,
@@ -288,14 +287,18 @@ export function useAttachmentImport({
               ? `${outcome.failed} couldn't be read. The rest are indexing now.`
               : 'Only this conversation can see them. Add them to your library from Sources.',
         });
-        return { names: stagedNames, documentIds };
+        result = { names: stagedNames, documentIds };
       }
+
+      // If the user switched conversations before the import finished, keep the
+      // attached files on targetConversationId without firing a turn elsewhere.
+      if (controller.signal.aborted || conversationIdRef.current !== targetConversationId) {
+        return null;
+      }
+      return result;
     } finally {
-      if (activeJobRef.current === jobState) {
-        activeJobRef.current = null;
-      }
-      if (importAbortRef.current === controller) {
-        importAbortRef.current = null;
+      if (activeJobsRef.current.get(targetConversationId) === jobState) {
+        activeJobsRef.current.delete(targetConversationId);
       }
       useStagedFilesStore.getState().setImporting(targetConversationId, false);
     }

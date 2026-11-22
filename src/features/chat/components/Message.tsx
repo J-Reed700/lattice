@@ -67,22 +67,32 @@ export const Message = memo(({
   const isUser = message.role === 'user';
   const isPending = message.status === 'pending';
   const isFailed = message.status === 'failed';
-  const errorMessage = useMemo(() => {
-    if ('error' in message && typeof message.error === 'string' && message.error.trim()) {
-      return message.error.trim();
-    }
-    if (isFailed && 'metadata' in message && message.metadata) {
+  const { errorMessage, isCancelled } = useMemo(() => {
+    let parsedError: string | undefined;
+    let cancelled = false;
+    if ('metadata' in message && message.metadata) {
       try {
         const parsed: unknown = JSON.parse(message.metadata);
-        if (parsed && typeof parsed === 'object' && 'error' in parsed && typeof parsed.error === 'string') {
-          const trimmed = parsed.error.trim();
-          if (trimmed) return trimmed;
+        if (parsed && typeof parsed === 'object') {
+          if ('error' in parsed && typeof parsed.error === 'string') {
+            const trimmed = parsed.error.trim();
+            if (trimmed) parsedError = trimmed;
+          }
+          if ('cancelled' in parsed && parsed.cancelled === true) {
+            cancelled = true;
+          }
         }
       } catch {
         // Malformed historical metadata
       }
     }
-    return undefined;
+    const directError = 'error' in message && typeof message.error === 'string' && message.error.trim()
+      ? message.error.trim()
+      : undefined;
+    return {
+      errorMessage: directError ?? (isFailed ? parsedError : undefined),
+      isCancelled: cancelled,
+    };
   }, [isFailed, message]);
 
   const messageId = 'id' in message ? message.id : undefined;
@@ -262,6 +272,7 @@ export const Message = memo(({
           isUser={isUser}
           isPending={isPending}
           isFailed={isFailed}
+          isCancelled={isCancelled}
           errorMessage={errorMessage}
           isLastTurn={isLastTurn}
           isBusy={isBusy}

@@ -72,6 +72,18 @@ impl<'a> StreamEmitter<'a> {
         self.send(pieces)
     }
 
+    /// Discards pre-tool filler from a tool-calling round so stopping during
+    /// tool execution or a later round does not save it as the answer.
+    pub(super) fn discard_round_partial(&self) {
+        if let Err(error) = self.flush() {
+            warn!(error = %error, "Failed to flush tool round before discarding partial text");
+        }
+        self.written
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+    }
+
     fn send(&self, pieces: Vec<Piece>) -> Result<()> {
         for piece in pieces {
             let event = ChatStreamEventDto::new(&self.conversation_id, &self.request_id);

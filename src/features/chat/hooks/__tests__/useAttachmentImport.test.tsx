@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useAttachmentImport } from '@/features/chat/hooks/useAttachmentImport';
 import { useStagedPicturesStore } from '@/features/chat/images/stagedPictures';
+import { useStagedFilesStore } from '@/features/chat/stores/stagedFilesStore';
 
 const api = vi.hoisted(() => ({
   startBatchFileImport: vi.fn(),
@@ -179,11 +180,20 @@ describe('attaching staged files to a conversation', () => {
     expect(drop.clear).not.toHaveBeenCalled();
   });
 
-  it('keeps staged files on targetConversationId when switching threads before send', async () => {
+  it('keeps polling and finishes linking attachments on targetConversationId without firing a send after switching threads', async () => {
+    let pollSignal: AbortSignal | undefined;
     let resolvePoll: ((value: { kind: 'finished'; documentIds: string[]; added: number; failed: number }) => void) | undefined;
-    poll.mockImplementation(() => new Promise((resolve) => {
-      resolvePoll = resolve;
-    }));
+    poll.mockImplementation((_jobId: string, opts: { signal: AbortSignal }) => {
+      pollSignal = opts.signal;
+      return new Promise((resolve) => {
+        opts.signal.addEventListener('abort', () => resolve({ kind: 'cancelled' } as never), { once: true });
+        resolvePoll = resolve;
+      });
+    });
+    useStagedFilesStore.setState({
+      byConversation: { 'conversation-1': [{ path: '/tmp/a.pdf', name: 'a.pdf' }] },
+      importingByConversation: {},
+    });
     const { result, rerender } = renderHook(
       ({ id }: { id: string | null }) =>
         useAttachmentImport({ dropTargetRef: { current: null }, conversationId: id, scopedSpaceId: null }),
@@ -198,8 +208,12 @@ describe('attaching staged files to a conversation', () => {
       await Promise.resolve();
     });
 
-    // Switch conversation before import finishes.
+    // Switch conversation before import finishes: poll must NOT abort, and conversation-2 is idle.
     rerender({ id: 'conversation-2' });
+    expect(pollSignal?.aborted).toBe(false);
+    expect(api.cancelBatchJob).not.toHaveBeenCalled();
+    expect(result.current.isImporting).toBe(false);
+    expect(useStagedFilesStore.getState().importingByConversation['conversation-1']).toBe(true);
 
     let outcome: unknown = 'unset';
     await act(async () => {
@@ -208,6 +222,9 @@ describe('attaching staged files to a conversation', () => {
     });
 
     expect(outcome).toBeNull();
+    expect(loadConversationLinkedDocuments).toHaveBeenCalledWith('conversation-1');
+    expect(useStagedFilesStore.getState().byConversation['conversation-1']).toBeUndefined();
+    expect(useStagedFilesStore.getState().importingByConversation['conversation-1']).toBeUndefined();
     expect(drop.clear).not.toHaveBeenCalled();
   });
 });

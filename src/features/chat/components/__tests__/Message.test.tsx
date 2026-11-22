@@ -496,6 +496,48 @@ describe('a question that failed to send', () => {
     );
     expect(screen.getByText('Context window overflow')).toBeInTheDocument();
   });
+
+  it('shows Stopped and Try again (without "Message didn\'t send") on a stopped unanswered question', () => {
+    regenerateResponse.mockClear();
+    render(
+      <Message
+        isLastTurn
+        message={{
+          id: 'q-stopped',
+          role: 'user',
+          content: 'Why was I stopped?',
+          status: 'failed',
+          metadata: JSON.stringify({ requestId: 'req-stop', cancelled: true }),
+          createdAt: new Date().toISOString(),
+          conversationId: 'conversation',
+        } as Parameters<typeof Message>[0]['message']}
+      />
+    );
+
+    expect(screen.getByText('Stopped')).toBeInTheDocument();
+    expect(screen.queryByText("Message didn't send")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(regenerateResponse).toHaveBeenCalledWith('conversation');
+  });
+
+  it('shows Stopped on a partial assistant reply saved on Stop', () => {
+    render(
+      <Message
+        isLastTurn
+        message={{
+          id: 'a-stopped',
+          role: 'assistant',
+          content: 'Entropy measures ',
+          status: 'completed',
+          metadata: JSON.stringify({ cancelled: true }),
+          createdAt: new Date().toISOString(),
+          conversationId: 'conversation',
+        } as Parameters<typeof Message>[0]['message']}
+      />
+    );
+
+    expect(screen.getByText('Stopped')).toBeInTheDocument();
+  });
 });
 
 describe('the files a message brought in', () => {
