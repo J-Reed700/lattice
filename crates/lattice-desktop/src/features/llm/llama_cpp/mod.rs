@@ -669,6 +669,11 @@ pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
             );
         }
     }
+    let raw_content = message
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let cleaned_content = streaming::strip_unmatched_think_close(raw_content);
     // Reasoning is shown, not replayed. Carried through a tool loop it soon
     // outweighs everything else in the prompt. Dropping it costs the server a
     // re-read of the newest turn's visible output, which it cached with the
@@ -676,6 +681,9 @@ pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
     if let Some(object) = assistant.as_object_mut() {
         object.remove("reasoning_content");
         object.remove("reasoning");
+        if let Some(cleaned) = &cleaned_content {
+            object.insert("content".into(), json!(cleaned));
+        }
     }
     let reasoning = ["reasoning_content", "reasoning"]
         .iter()
@@ -684,11 +692,7 @@ pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
         .filter(|text| !text.is_empty())
         .map(str::to_owned);
     Ok(CompletionResponse {
-        text: message
-            .get("content")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .into(),
+        text: cleaned_content.unwrap_or_else(|| raw_content.to_owned()),
         reasoning,
         tool_calls: calls,
         finish_reason: finish_reason.into(),

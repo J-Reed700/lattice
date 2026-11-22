@@ -1956,3 +1956,102 @@ async fn an_answer_larger_than_the_room_left_is_cut_to_fit_not_refused() {
     let body: Value = serde_json::from_slice(&sent.body).unwrap();
     assert_eq!(body["max_tokens"], json!(1_072));
 }
+
+#[test]
+fn unmatched_think_close_drops_trailing_duplicate_without_touching_explicit_think_blocks() {
+    let mut decoder = streaming::Decoder::for_completion();
+    let mut streamed = String::new();
+    for frame in [
+        json!({"choices":[{"delta":{"content":"The stopcock is under the sink [s1].\n"}}]}),
+        json!({"choices":[{"delta":{"content":"</th"}}]}),
+        json!({"choices":[{"delta":{"content":"ink>"}}]}),
+        json!({"choices":[{"delta":{"content":"\n\nThe stopcock is under the sink [s1]."}}]}),
+        json!({"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":20}}),
+    ] {
+        for piece in decoder
+            .push(format!("data: {frame}\n\n").as_bytes())
+            .unwrap()
+        {
+            streamed.push_str(&piece);
+        }
+    }
+    for piece in decoder.push(b"data: [DONE]\n\n").unwrap() {
+        streamed.push_str(&piece);
+    }
+    assert!(!streamed.contains("</think>"), "{streamed}");
+    assert_eq!(streamed, "The stopcock is under the sink [s1].\n");
+    let response = decoder.into_response().unwrap();
+    assert_eq!(response.text, "The stopcock is under the sink [s1].");
+    assert_eq!(
+        assistant(&response)["content"],
+        json!("The stopcock is under the sink [s1].")
+    );
+
+    let non_stream = parse_completion(json!({
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": "The stopcock is under the sink [s1].\n</think>\n\nThe stopcock is under the sink [s1]."
+            },
+            "finish_reason": "stop"
+        }]
+    }))
+    .unwrap();
+    assert_eq!(non_stream.text, "The stopcock is under the sink [s1].");
+    assert_eq!(
+        assistant(&non_stream)["content"],
+        json!("The stopcock is under the sink [s1].")
+    );
+
+    let leading = parse_completion(json!({
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": "</think>\n\nClean answer [s2]."
+            },
+            "finish_reason": "stop"
+        }]
+    }))
+    .unwrap();
+    assert_eq!(leading.text, "Clean answer [s2].");
+
+    let explicit = parse_completion(json!({
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": "<think>\ninternal reasoning\n</think>\n\nPublic answer."
+            },
+            "finish_reason": "stop"
+        }]
+    }))
+    .unwrap();
+    assert_eq!(
+        explicit.text,
+        "<think>\ninternal reasoning\n</think>\n\nPublic answer."
+    );
+
+    let mut angle_decoder = streaming::Decoder::for_completion();
+    let mut angle_streamed = String::new();
+    for ch in "2 < 3 and <code>x <".bytes() {
+        let piece_str = std::str::from_utf8(std::slice::from_ref(&ch)).unwrap();
+        let ev = json!({"choices":[{"delta":{"content":piece_str}}]});
+        for piece in angle_decoder
+            .push(format!("data: {ev}\n\n").as_bytes())
+            .unwrap()
+        {
+            angle_streamed.push_str(&piece);
+        }
+    }
+    let fin = json!({"choices":[{"delta":{},"finish_reason":"stop"}]});
+    for piece in angle_decoder
+        .push(format!("data: {fin}\n\ndata: [DONE]\n\n").as_bytes())
+        .unwrap()
+    {
+        angle_streamed.push_str(&piece);
+    }
+    assert_eq!(angle_streamed, "2 < 3 and <code>x <");
+    assert_eq!(
+        angle_decoder.into_response().unwrap().text,
+        "2 < 3 and <code>x <"
+    );
+}

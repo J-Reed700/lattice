@@ -8,6 +8,143 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+const THINK_OPEN: &str = "<think>";
+const THINK_CLOSE: &str = "</think>";
+
+/// Strips an unmatched `</think>` from `content` when no `<think>` block was
+/// opened inside `content` (for example when `enable_thinking: false` closed
+/// `<think></think>` in the prompt, yet a hybrid model still emitted `</think>`
+/// after its answer and began repeating itself). Returns `None` when `content`
+/// needs no repair.
+pub(crate) fn strip_unmatched_think_close(content: &str) -> Option<String> {
+    let mut rest = content;
+    let mut stripped_leading = false;
+    loop {
+        let trimmed = rest.trim_start();
+        if trimmed.starts_with(THINK_OPEN) {
+            return stripped_leading.then(|| rest.to_owned());
+        }
+        if let Some(after) = trimmed.strip_prefix(THINK_CLOSE) {
+            rest = after.trim_start_matches(['\r', '\n']);
+            stripped_leading = true;
+            continue;
+        }
+        break;
+    }
+    if let Some((before, _after)) = rest.split_once(THINK_CLOSE) {
+        return Some(before.trim_end().to_owned());
+    }
+    stripped_leading.then(|| rest.to_owned())
+}
+
+fn trailing_prefix_len(haystack: &str, needle: &str) -> usize {
+    let max_len = haystack.len().min(needle.len().saturating_sub(1));
+    for len in (1..=max_len).rev() {
+        let start = haystack.len() - len;
+        if haystack.is_char_boundary(start) && needle.starts_with(&haystack[start..]) {
+            return len;
+        }
+    }
+    0
+}
+
+#[derive(Default)]
+enum ContentMode {
+    #[default]
+    Leading,
+    Passthrough,
+    Filtering,
+    Closed,
+}
+
+#[derive(Default)]
+struct ContentFilter {
+    mode: ContentMode,
+    pending: String,
+    stripped_leading_close: bool,
+}
+
+impl ContentFilter {
+    fn closed_unmatched_think(&self) -> bool {
+        matches!(self.mode, ContentMode::Closed)
+    }
+
+    fn push(&mut self, chunk: &str) -> String {
+        if chunk.is_empty() {
+            return String::new();
+        }
+        match self.mode {
+            ContentMode::Closed => String::new(),
+            ContentMode::Passthrough => chunk.to_owned(),
+            ContentMode::Filtering => self.filter_body(chunk),
+            ContentMode::Leading => {
+                self.pending.push_str(chunk);
+                loop {
+                    if self.stripped_leading_close {
+                        let trimmed_breaks = self.pending.trim_start_matches(['\r', '\n']);
+                        if trimmed_breaks.is_empty() {
+                            self.pending.clear();
+                            return String::new();
+                        }
+                        if trimmed_breaks.len() != self.pending.len() {
+                            self.pending = trimmed_breaks.to_owned();
+                        }
+                        self.stripped_leading_close = false;
+                    }
+                    let trimmed = self.pending.trim_start();
+                    if trimmed.is_empty() {
+                        return String::new();
+                    }
+                    if trimmed.starts_with(THINK_OPEN) {
+                        self.mode = ContentMode::Passthrough;
+                        return std::mem::take(&mut self.pending);
+                    }
+                    if let Some(after) = trimmed.strip_prefix(THINK_CLOSE) {
+                        self.pending = after.trim_start_matches(['\r', '\n']).to_owned();
+                        self.stripped_leading_close = self.pending.is_empty();
+                        continue;
+                    }
+                    if THINK_OPEN.starts_with(trimmed) || THINK_CLOSE.starts_with(trimmed) {
+                        return String::new();
+                    }
+                    self.mode = ContentMode::Filtering;
+                    let buffered = std::mem::take(&mut self.pending);
+                    return self.filter_body(&buffered);
+                }
+            }
+        }
+    }
+
+    fn filter_body(&mut self, chunk: &str) -> String {
+        self.pending.push_str(chunk);
+        if let Some((before, _after)) = self.pending.split_once(THINK_CLOSE) {
+            let out = before.to_owned();
+            self.pending.clear();
+            self.mode = ContentMode::Closed;
+            return out;
+        }
+        let hold = trailing_prefix_len(&self.pending, THINK_CLOSE);
+        let emit_len = self.pending.len() - hold;
+        if emit_len == 0 {
+            return String::new();
+        }
+        let rest = self.pending.split_off(emit_len);
+        std::mem::replace(&mut self.pending, rest)
+    }
+
+    fn flush(&mut self) -> String {
+        match self.mode {
+            ContentMode::Closed => {
+                self.pending.clear();
+                String::new()
+            }
+            ContentMode::Leading | ContentMode::Passthrough | ContentMode::Filtering => {
+                std::mem::take(&mut self.pending)
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Decoder {
     buffer: Vec<u8>,
@@ -18,6 +155,7 @@ pub(crate) struct Decoder {
     finish_reason: Option<String>,
     allow_tool_calls: bool,
     content: String,
+    content_filter: ContentFilter,
     reasoning: BTreeMap<String, String>,
     /// Reasoning received since the caller last drained it. The aggregate
     /// above becomes the response's displayable reasoning (it is not
@@ -340,6 +478,11 @@ impl Decoder {
                 continue;
             };
             if data.trim() == "[DONE]" {
+                let tail = self.content_filter.flush();
+                if !tail.is_empty() {
+                    self.content.push_str(&tail);
+                    text.push(tail);
+                }
                 self.done = true;
                 break;
             }
@@ -364,7 +507,8 @@ impl Decoder {
                 .and_then(Value::as_array)
                 .and_then(|c| c.first())
             {
-                if let Some(reason) = choice.get("finish_reason").and_then(Value::as_str) {
+                let finish_reason = choice.get("finish_reason").and_then(Value::as_str);
+                if let Some(reason) = finish_reason {
                     // Running out of answer room still leaves an answer. The
                     // reason travels with the text so the caller decides what
                     // a cut-short answer is worth; failing here threw it away.
@@ -377,12 +521,28 @@ impl Decoder {
                     }
                     self.finish_reason = Some(reason.into());
                 }
-                if self.content.is_empty()
+                let was_empty = self.content.is_empty();
+                if let Some(content) = choice
+                    .pointer("/delta/content")
+                    .and_then(Value::as_str)
+                    .filter(|c| !c.is_empty())
+                {
+                    let emitted = self.content_filter.push(content);
+                    if !emitted.is_empty() {
+                        self.content.push_str(&emitted);
+                        text.push(emitted);
+                    }
+                }
+                if finish_reason.is_some() {
+                    let tail = self.content_filter.flush();
+                    if !tail.is_empty() {
+                        self.content.push_str(&tail);
+                        text.push(tail);
+                    }
+                }
+                if was_empty
+                    && !self.content.is_empty()
                     && self.first_logprobs.is_none()
-                    && choice
-                        .pointer("/delta/content")
-                        .and_then(Value::as_str)
-                        .is_some_and(|content| !content.is_empty())
                     && !["reasoning_content", "reasoning"].iter().any(|key| {
                         choice
                             .get("delta")
@@ -396,14 +556,6 @@ impl Decoder {
                         .is_some()
                         .then(|| choice.get("logprobs").cloned())
                         .flatten();
-                }
-                if let Some(content) = choice
-                    .pointer("/delta/content")
-                    .and_then(Value::as_str)
-                    .filter(|c| !c.is_empty())
-                {
-                    self.content.push_str(content);
-                    text.push(content.into());
                 }
                 // Keep the reasoning for display; the replayed turn drops it.
                 for key in ["reasoning_content", "reasoning"] {
@@ -505,9 +657,14 @@ impl Decoder {
     ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
         self.finish()?;
         let timings = self.timings;
+        let content = if self.content_filter.closed_unmatched_think() {
+            self.content.trim_end().to_owned()
+        } else {
+            self.content
+        };
         let mut message = serde_json::Map::from_iter([
             ("role".into(), json!("assistant")),
-            ("content".into(), json!(self.content)),
+            ("content".into(), json!(content)),
         ]);
         for (key, value) in self.reasoning {
             message.insert(key, json!(value));
