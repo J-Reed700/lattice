@@ -621,3 +621,58 @@ async fn an_unrecorded_write_of_lattices_own_is_not_an_outside_edit() {
         .unwrap()
         .contains("third"));
 }
+
+/// A change outside Lattice that leaves the note's text alone, such as a new
+/// tag, is no conflict: Lattice's edit is written and the new tag is kept.
+#[tokio::test]
+async fn an_outside_change_to_the_tags_alone_keeps_the_lattice_edit() {
+    let (pool, db, _dir, target, suppression, app_handle) = own_write_fixture().await;
+    pass_over_n1(&db, &suppression, &app_handle, &target).await;
+
+    let tagged = "---\nid: n1\ntitle: \"T1\"\ncreated_at: 2026-11-19T00:00:00Z\nupdated_at: 2026-11-19T00:01:00Z\ntags: [\"bread\"]\n---\n\nfirst";
+    tokio::fs::write(&target, tagged).await.unwrap();
+    sqlx::query("UPDATE daily_notes_workspace SET content = 'edited in Lattice' WHERE id = 'n1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let outside = pass_over_n1(&db, &suppression, &app_handle, &target).await;
+
+    let notes: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, content FROM daily_notes_workspace ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(notes, [("n1".to_string(), "edited in Lattice".to_string())]);
+    let on_disk = tokio::fs::read_to_string(&target).await.unwrap();
+    assert!(on_disk.contains("edited in Lattice"), "{on_disk}");
+    assert!(on_disk.contains("tags: [\"bread\"]"), "{on_disk}");
+    assert_eq!(outside, None);
+}
+
+/// A note queued again with no edit in Lattice, as the backfill does when the
+/// vault is switched on, takes the file's text and makes no copy.
+#[tokio::test]
+async fn a_note_queued_again_without_an_edit_takes_the_files_text() {
+    let (pool, db, _dir, target, suppression, app_handle) = own_write_fixture().await;
+    pass_over_n1(&db, &suppression, &app_handle, &target).await;
+
+    let outside = "---\nid: n1\ntitle: \"T1\"\ncreated_at: 2026-11-19T00:00:00Z\nupdated_at: 2026-11-19T00:05:00Z\ntags: []\n---\n\nedited outside";
+    tokio::fs::write(&target, outside).await.unwrap();
+    super::super::repository::enqueue_all(&db).await.unwrap();
+
+    pass_over_n1(&db, &suppression, &app_handle, &target).await;
+
+    let notes: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, content FROM daily_notes_workspace ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(notes, [("n1".to_string(), "edited outside".to_string())]);
+    let on_disk = tokio::fs::read_to_string(&target).await.unwrap();
+    assert_eq!(on_disk, outside);
+    assert!(super::super::repository::pending(&db)
+        .await
+        .unwrap()
+        .is_empty());
+}
