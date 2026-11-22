@@ -1157,6 +1157,8 @@ export async function installLearningStudioBackend(page: Page) {
         return program;
       },
       list_learning_programs: () => [program.summary],
+      // Studio reads the backend's outline runs when it opens; journeys follow their own run's channel.
+      list_learning_outline_runs: () => ({ active: [], recentOutcomes: [] }),
       // No journey opens a tangent from a lesson, so every program lists none.
       list_learning_tangents: (): LearningTangentDto[] => [],
       set_conversation_course: (): null => null,
