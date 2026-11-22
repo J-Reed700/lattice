@@ -625,3 +625,41 @@ async fn resolved_scope_snapshot_is_reused_without_querying_document_scope() {
     assert_eq!(kb_outcome.searched_documents, 0);
     assert_eq!(valid_records_runtime.loader_counts.embedding_calls(), 0);
 }
+
+#[tokio::test]
+async fn numbered_clause_question_plans_opening_documents_upfront() {
+    let utility = Scripted::new([CompletionResponse::from_text(
+        r#"{"queries":[{"query":"Guide clause 24.111"}],"opening_document_ids":["d1"],"start_at_beginning":"false"}"#,
+    )]);
+    let runtime = FakeRuntime {
+        vault: Some(TestVault {
+            records: records_with_documents(true).await,
+            search: Arc::new(FixedSearch {
+                passages: sufficient_passages(),
+            }),
+        }),
+        utility_llm: Some(utility.clone()),
+        embedding: Some(Arc::new(FakeEmbedding)),
+        ..FakeRuntime::default()
+    };
+
+    let outcome = run_turn(
+        &runtime,
+        "req-numbered-clause",
+        "What does the paragraph following clause 24.111 in Guide say?",
+        None,
+        &new_search_decision(),
+        SearchFlags {
+            force_kb_search: true,
+            ..SearchFlags::default()
+        },
+        &[],
+        None,
+    )
+    .await;
+
+    assert!(outcome.kb_attempted);
+    assert_eq!(runtime.loader_counts.utility_loader_calls(), 1);
+    assert_eq!(utility.requests().len(), 1);
+    assert!(!outcome.sub_timings.kb_planner_skipped);
+}

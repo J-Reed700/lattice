@@ -304,6 +304,13 @@ pub(super) fn whole_document_intent(question: &str) -> bool {
         .any(|phrase| lower.contains(phrase))
 }
 
+/// Whether `question` names a specific numbered clause or section (such as
+/// `24.111` or `4.2`), where multiple documents in a library may share the same
+/// numbering and upfront planning identifies which document owns it.
+pub(super) fn has_section_identifiers(question: &str) -> bool {
+    !section_identifiers(question).is_empty()
+}
+
 /// Lets the summary tier choose which documents the turn opens with, only when
 /// the request is about documents as wholes and the tier returned something.
 /// Similarity picks which documents; an explicit reading order still decides

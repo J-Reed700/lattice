@@ -221,47 +221,57 @@ pub(super) async fn run_kb_retrieval(
                 plan
             } else if super::corpus_plan::whole_document_intent(validated_message)
                 || standalone_question.is_some_and(super::corpus_plan::whole_document_intent)
+                || super::corpus_plan::has_section_identifiers(validated_message)
+                || standalone_question.is_some_and(super::corpus_plan::has_section_identifiers)
             {
-                // Whole-document and collection-structure questions cannot be answered by
-                // passage similarity alone, so plan opening documents upfront when available.
-                if let Ok(Some(utility)) = (container.utility_llm_loader())().await {
-                    timings.kb_planner_skipped = false;
-                    planned(
-                        container,
-                        conv_service,
-                        conversation_id,
-                        validated_message,
-                        utility.as_ref(),
-                        &catalog,
-                        &scope,
-                        &summaries.summaries,
-                        &mut planner_turn,
-                        cancel,
-                    )
-                    .await
-                } else {
-                    info!("Utility planner unavailable; using immediate local retrieval plan");
-                    timings.kb_planner_skipped = true;
-                    super::corpus_plan::fallback_with_catalog(validated_message, &catalog)
-                }
-            } else {
-                // Optimistic Pass 1: run local hybrid retrieval first with zero LLM calls,
-                // escalating to the utility planner only if sufficiency falls short.
+                // Whole-document, collection-structure, and numbered-clause questions cannot be
+                // disambiguated by passage similarity alone, so plan opening documents upfront.
+                planned_or_fallback(
+                    container,
+                    conv_service,
+                    conversation_id,
+                    validated_message,
+                    &catalog,
+                    &scope,
+                    &summaries.summaries,
+                    &mut planner_turn,
+                    &mut timings,
+                    cancel,
+                )
+                .await
+            } else if let Some((plan, anchors)) =
+                planner_skip_plan(conv_service, conversation_id, validated_message, &catalog).await
+            {
                 timings.kb_planner_skipped = true;
-                if let Some((plan, anchors)) =
-                    planner_skip_plan(conv_service, conversation_id, validated_message, &catalog)
-                        .await
-                {
-                    info!(
-                        conversation_id = conversation_id,
-                        shared_anchor_terms = ?anchors,
-                        queries = ?plan.queries,
-                        "retrieval: planner skipped — short message continues the previous turn"
-                    );
-                    plan
-                } else {
-                    super::corpus_plan::fallback_with_catalog(validated_message, &catalog)
-                }
+                info!(
+                    conversation_id = conversation_id,
+                    shared_anchor_terms = ?anchors,
+                    queries = ?plan.queries,
+                    "retrieval: planner skipped — short message continues the previous turn"
+                );
+                plan
+            } else if has_prior_turn(conv_service, conversation_id).await {
+                // Multi-turn follow-ups, topic shifts, and returns to earlier turns without
+                // shared immediate anchors need conversation-history planning upfront so
+                // indirect entity/document references reach Pass 1.
+                planned_or_fallback(
+                    container,
+                    conv_service,
+                    conversation_id,
+                    validated_message,
+                    &catalog,
+                    &scope,
+                    &summaries.summaries,
+                    &mut planner_turn,
+                    &mut timings,
+                    cancel,
+                )
+                .await
+            } else {
+                // Optimistic Pass 1 on standalone first turns: run local hybrid retrieval with
+                // zero LLM calls, escalating to the utility planner only if sufficiency falls short.
+                timings.kb_planner_skipped = true;
+                super::corpus_plan::fallback_with_catalog(validated_message, &catalog)
             };
             (plan, catalog)
         }
@@ -753,6 +763,62 @@ async fn corrective_pass(
             None
         }
     }
+}
+
+/// Loads the utility planner when available, falling back to the local catalog
+/// plan when no utility model is configured.
+#[allow(clippy::too_many_arguments)]
+async fn planned_or_fallback(
+    container: &dyn ChatRuntime,
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
+    conversation_id: &str,
+    validated_message: &str,
+    catalog: &[CorpusDocument],
+    scope: &super::SpaceDocumentScope,
+    summaries: &std::collections::HashMap<String, String>,
+    planner_turn: &mut super::corpus_plan::PlannerTurn<'_>,
+    timings: &mut super::RetrievalSubTimingMetrics,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> super::corpus_plan::CorpusSearchPlan {
+    if let Ok(Some(utility)) = (container.utility_llm_loader())().await {
+        timings.kb_planner_skipped = false;
+        planned(
+            container,
+            conv_service,
+            conversation_id,
+            validated_message,
+            utility.as_ref(),
+            catalog,
+            scope,
+            summaries,
+            planner_turn,
+            cancel,
+        )
+        .await
+    } else {
+        info!("Utility planner unavailable; using immediate local retrieval plan");
+        timings.kb_planner_skipped = true;
+        super::corpus_plan::fallback_with_catalog(validated_message, catalog)
+    }
+}
+
+/// Whether the conversation already has a completed assistant reply, meaning the
+/// current message is part of a multi-turn exchange rather than a standalone first turn.
+async fn has_prior_turn(
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
+    conversation_id: &str,
+) -> bool {
+    conv_service
+        .get_conversation(conversation_id)
+        .await
+        .ok()
+        .flatten()
+        .is_some_and(|aggregate| {
+            aggregate.messages().iter().any(|message| {
+                message.role == lattice_core::domain::conversation::MessageRole::Assistant
+                    && message.is_completed()
+            })
+        })
 }
 
 /// The plan a skipped planner would have produced, when the message is short
