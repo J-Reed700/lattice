@@ -43,6 +43,29 @@ describe('useDownloadPhase', () => {
     expect(result.current).toBe('idle');
   });
 
+  it('goes idle immediately when a row first sees a Completed download more than 60s after completion', () => {
+    const poll = vi.fn();
+    const { result, rerender } = renderHook(
+      ({ download }: { download: DownloadStatus | null }) => useDownloadPhase({ ready: false, download, poll }),
+      { initialProps: { download: null as DownloadStatus | null } }
+    );
+    expect(result.current).toBe('idle');
+
+    // Two minutes later, the row receives a download that completed 70s ago.
+    vi.setSystemTime(NOW + 120_000);
+    const completed70sAgo: DownloadStatus = {
+      id: 'a',
+      state: 'Completed',
+      completed_at: new Date(NOW + 50_000).toISOString(),
+    } as DownloadStatus;
+    rerender({ download: completed70sAgo });
+
+    act(() => { vi.advanceTimersByTime(0); });
+    expect(result.current).toBe('idle');
+    act(() => { vi.advanceTimersByTime(5000); });
+    expect(poll).not.toHaveBeenCalled();
+  });
+
   it('does not poll when ready or never downloaded', () => {
     const poll = vi.fn();
     renderHook(() => useDownloadPhase({ ready: true, download: completedAgo(1000), poll }));

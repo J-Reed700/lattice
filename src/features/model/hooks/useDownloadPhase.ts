@@ -31,11 +31,11 @@ export function useDownloadPhase({ ready, download, poll }: Options): DownloadPh
   useEffect(() => {
     if (completedAt === null) return;
     const end = completedAt + FINISHING_WINDOW_MS;
-    const remaining = end - Date.now();
-    if (remaining <= 0) return;
+    if (now >= end) return;
+    const remaining = Math.max(0, end - Date.now());
     const timer = setTimeout(() => setNow(Math.max(Date.now(), end)), remaining);
     return () => clearTimeout(timer);
-  }, [completedAt]);
+  }, [completedAt, now]);
 
   const finishing = phase === 'finishing';
   useEffect(() => {
