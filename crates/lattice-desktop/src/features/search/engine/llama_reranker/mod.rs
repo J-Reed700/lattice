@@ -106,6 +106,13 @@ impl LlamaReranker {
         *self.resting_until.lock() = None;
     }
 
+    /// Stop the server, if one runs, so nothing holds the model file open. A
+    /// query already in flight finishes on it first; the next query starts one
+    /// again if the file is there.
+    pub async fn release(&self) {
+        *self.server.lock().await = None;
+    }
+
     /// The GGUF it serves.
     pub fn gguf(&self) -> PathBuf {
         self.serving.read().gguf.clone()

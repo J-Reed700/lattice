@@ -217,6 +217,10 @@ export const learningApi = {
   cancelLearningOutline: (requestId: string): Promise<ApiResult<boolean>> =>
     learningCall('cancel_learning_outline', { requestId }),
 
+  listLearningOutlineRuns: (): Promise<
+    ApiResult<Wire.LearningOutlineRunsSnapshotDto>
+  > => learningCall('list_learning_outline_runs'),
+
   acceptLearningProgram: (
     request: Wire.AcceptLearningProgramRequestDto,
   ): Promise<ApiResult<Wire.LearningProgramDto>> =>

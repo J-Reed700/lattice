@@ -4,15 +4,20 @@
  * feature's store.
  */
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
-import { Check, Pause, Volume2 } from 'lucide-react';
+import { Pause, Volume2 } from 'lucide-react';
 
 import { PageHeader, SettingsRow, SettingsSection, settingsFieldClass } from '@/components/ui';
 import { useApi } from '@/contexts/ApiContext';
+import { DownloadFailure } from '@/features/model/components/Downloads/DownloadFailure';
+import { InlineDownloadStatus } from '@/features/model/components/Downloads/InlineDownloadStatus';
+import { InstalledDownload } from '@/features/model/components/Downloads/InstalledDownload';
 import { useAggregatedDownloads } from '@/features/model/hooks/useAggregatedDownloads';
+import { useDownloadPhase } from '@/features/model/hooks/useDownloadPhase';
 import { useDownloadState } from '@/features/model/hooks/useDownloadState';
+import { useRemoveDownloadedModel } from '@/features/model/hooks/useRemoveDownloadedModel';
 import { SPEECH_STATUS_QUERY_KEY, stopSpeaking, useSpeaker, useSpeechPlayback, useSpeechStatusQuery } from '@/features/speech/hooks/useSpeech';
 import { SPEEDS, useSpeechPrefsStore } from '@/features/speech/stores/speechPrefsStore';
 import type { SpeechAccentDto } from '@/lib/bindings';
@@ -34,27 +39,28 @@ interface DownloadRowProps {
   modelId: string;
   name: string;
   hint: string;
+  /** What removing it frees, in bytes. */
+  bytes: number;
+  /** What stops working once it is removed. */
+  removeConsequence: string;
   ready: boolean;
+  /** The speech status has been re-read since this page opened. */
+  statusFetched: boolean;
+  refreshStatus: () => unknown;
 }
 
 /** One catalog entry: its download, its progress, or that it is here. */
-function DownloadRow({ modelId, name, hint, ready }: DownloadRowProps) {
+function DownloadRow({ modelId, name, hint, bytes, removeConsequence, ready, statusFetched, refreshStatus }: DownloadRowProps) {
   const api = useApi();
   const queryClient = useQueryClient();
   const addToast = useToastStore((state) => state.addToast);
-  const { getDownloadsByModel } = useDownloadState();
+  const { getDownloadsByModel, downloadsSettled } = useDownloadState();
+  const removeModel = useRemoveDownloadedModel();
   const [starting, setStarting] = useState(false);
 
   const { aggregated, standalone } = useAggregatedDownloads(getDownloadsByModel(modelId));
   const download = aggregated[0] ?? standalone[0] ?? null;
-  const downloading = download !== null && ['Pending', 'Downloading', 'Paused'].includes(download.state);
-  const percent = Math.round(download?.percentage ?? 0);
-
-  useEffect(() => {
-    if (download?.state === 'Completed' && !ready) {
-      void queryClient.invalidateQueries({ queryKey: SPEECH_STATUS_QUERY_KEY });
-    }
-  }, [download?.state, ready, queryClient]);
+  const phase = useDownloadPhase({ ready, download, poll: refreshStatus });
 
   const startDownload = async () => {
     setStarting(true);
@@ -76,21 +82,25 @@ function DownloadRow({ modelId, name, hint, ready }: DownloadRowProps) {
   return (
     <SettingsRow label={name} hint={hint}>
       {ready ? (
-        <span className="inline-flex items-center gap-1.5 text-sm text-text-secondary">
-          <Check className="h-4 w-4 text-accent" aria-hidden="true" />
-          Downloaded
-        </span>
-      ) : downloading ? (
-        <div className="flex w-full max-w-[240px] flex-col gap-1" role="status" aria-label={`Downloading ${name}`}>
-          <progress className="h-1.5 w-full accent-accent" max={100} value={percent} />
-          <span className="text-xs tabular-nums text-text-muted">
-            {download.state === 'Paused' ? 'Paused' : `Downloading… ${percent}%`}
-          </span>
-        </div>
+        <InstalledDownload
+          name={name}
+          consequence={removeConsequence}
+          size={formatBytes(bytes)}
+          onRemove={async () => {
+            // A preview mid-sentence would fail once its files are gone.
+            stopSpeaking();
+            await removeModel(modelId, SPEECH_STATUS_QUERY_KEY);
+          }}
+        />
+      ) : (phase === 'live' || phase === 'finishing') && download ? (
+        <InlineDownloadStatus download={download} finishing={phase === 'finishing'} label={`Downloading ${name}`} />
       ) : (
-        <button type="button" className={PRIMARY_BUTTON_CLASS} aria-label={`Download ${name}`} disabled={starting} onClick={() => void startDownload()}>
-          {starting ? 'Starting…' : 'Download'}
-        </button>
+        <div className="flex flex-col items-end gap-1">
+          <button type="button" className={PRIMARY_BUTTON_CLASS} aria-label={`Download ${name}`} disabled={starting || !statusFetched || !downloadsSettled} onClick={() => void startDownload()}>
+            {starting ? 'Starting…' : 'Download'}
+          </button>
+          <DownloadFailure download={download} />
+        </div>
       )}
     </SettingsRow>
   );
@@ -100,7 +110,7 @@ export function ReadAloudTab() {
   const { voice, speed, setVoice, setSpeed } = useSpeechPrefsStore();
   const speak = useSpeaker();
   const playback = useSpeechPlayback();
-  const { data: speech, isError, refetch } = useSpeechStatusQuery();
+  const { data: speech, isError, refetch, isFetchedAfterMount } = useSpeechStatusQuery({ refetchOnMount: 'always' });
 
   const preview = (id: string, name: string) => {
     if (playback.sourceId === previewId(id)) return;
@@ -123,12 +133,20 @@ export function ReadAloudTab() {
               modelId={speech.modelId}
               name={speech.modelName}
               ready={speech.modelReady}
+              statusFetched={isFetchedAfterMount}
+              refreshStatus={refetch}
+              bytes={speech.downloadBytes}
+              removeConsequence="Read aloud stops until you download it again. The extra voices need it too."
               hint={`${formatBytes(speech.downloadBytes)} once, then it works offline. ${speech.license} licence.`}
             />
             <DownloadRow
               modelId={speech.voicePack.modelId}
               name={speech.voicePack.modelName}
               ready={speech.voicePack.ready}
+              statusFetched={isFetchedAfterMount}
+              refreshStatus={refetch}
+              bytes={speech.voicePack.downloadBytes}
+              removeConsequence="The American voices and the British men go. The four British women stay."
               hint={`The American voices and the British men. ${formatBytes(speech.voicePack.downloadBytes)} more. ${speech.modelName} is not fetched again.`}
             />
           </>

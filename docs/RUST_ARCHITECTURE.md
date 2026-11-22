@@ -49,8 +49,8 @@ belong to their respective adapters, not the sync contracts.
 - Modules used by one feature live in it: conversation memory
   (`features/conversation/memory/`), the chat intent classifier and router
   (`conversation/chat/{intent,router}.rs`), the article extractor and stealth
-  fetching (`features/web/services/{article_extractor,stealth}.rs`), and the
-  model manager (`features/model_management/model_manager`).
+  fetching (`features/web/services/{article_extractor,stealth}.rs`). Model
+  files are fetched by the shared download manager (`features/download`).
 - Domain values that the application layer depends on (search value objects
   and results, conversation aggregates, download sessions and snapshots, QA
   interpretation types, model download events) live in `domain/`, not in a

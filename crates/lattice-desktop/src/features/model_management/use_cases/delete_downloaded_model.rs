@@ -1,5 +1,6 @@
 //! Deletes a downloaded model record and optionally the file.
 
+use lattice_core::domain::download::part_path;
 use lattice_core::domain::models::curated::chat_model_vision;
 use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::shared::error::{AppError, Result};
@@ -20,15 +21,21 @@ const RETRY_BASE_DELAY_MS: u64 = 10;
 /// Remove the catalog vision projector downloaded beside `model_path`. The
 /// whole model directory usually goes with the model; this covers the
 /// single-file fallback, which would otherwise leave the projector behind.
+/// An interrupted download's `.part` file goes too.
 async fn remove_vision_projector(model_path: &Path) {
     let Some(vision) = chat_model_vision(model_path) else {
         return;
     };
-    match fs::remove_file(&vision.projector_path).await {
-        Ok(()) => info!(path = %vision.projector_path.display(), "Vision projector deleted"),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => {
-            error!(error = %e, path = %vision.projector_path.display(), "Failed to delete vision projector")
+    for path in [
+        vision.projector_path.clone(),
+        part_path(&vision.projector_path),
+    ] {
+        match fs::remove_file(&path).await {
+            Ok(()) => info!(path = %path.display(), "Vision projector deleted"),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                error!(error = %e, path = %path.display(), "Failed to delete vision projector")
+            }
         }
     }
 }

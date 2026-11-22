@@ -78,6 +78,11 @@ impl Container {
         Arc::clone(self.core.file_access_config())
     }
 
+    /// The search reranker, shared with hybrid search.
+    pub fn reranker(&self) -> Arc<crate::features::search::engine::llama_reranker::LlamaReranker> {
+        Arc::clone(self.search.reranker())
+    }
+
     /// Get the models directory path
     ///
     /// Returns the path where AI models are stored (app_data_dir/models)
@@ -113,14 +118,6 @@ impl Container {
             .join("gguf-headers");
         crate::features::model_management::header_source::HuggingFaceHeaderSource::new(cache)
             .map(std::sync::Arc::new)
-    }
-
-    /// The manager that fetches and inspects the models kept under
-    /// [`Self::models_path`].
-    pub fn model_manager(
-        &self,
-    ) -> Arc<dyn crate::infrastructure::services::traits::ModelManagerTrait> {
-        Arc::clone(self.system.model_manager())
     }
 
     /// Reads what a local model file records about itself in its header.

@@ -57,6 +57,7 @@ fn request(destination: PathBuf) -> DownloadRequest {
         model_name: None,
         model_id: None,
         model_file_name: None,
+        expected_bytes: None,
     }
 }
 

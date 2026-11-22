@@ -166,3 +166,35 @@ describe('fileNameWithinModel', () => {
     expect(fileNameWithinModel({ destination: '/tmp/file.bin', model_id: null })).toBe('file.bin');
   });
 });
+
+describe('applyDownloadSnapshot for a row first seen in an event', () => {
+  const single = (overrides: Partial<TauriEvents.Downloads.Single> = {}): TauriEvents.Downloads.Single => ({
+    kind: 'single', id: 's-9', filename: 'rerank.gguf', bytesDownloaded: 5, totalBytes: 100, bytesPerSecond: 1,
+    percentage: 5, etaSeconds: null, status: 'downloading', ...overrides,
+  });
+
+  it('takes its destination and name from the payload', () => {
+    const next = applyDownloadSnapshot(new Map(), single({ destination: '/models/rerank/rerank.gguf', modelName: 'Qwen3 Reranker' }));
+    expect(next.get('s-9')).toMatchObject({ destination: '/models/rerank/rerank.gguf', model_name: 'Qwen3 Reranker' });
+  });
+
+  it('falls back to the file name for an older payload', () => {
+    const next = applyDownloadSnapshot(new Map(), single());
+    expect(next.get('s-9')).toMatchObject({ destination: 'rerank.gguf', model_name: 'rerank.gguf' });
+  });
+
+  it('maps paused and cancelled batch files', () => {
+    const batch: TauriEvents.Downloads.Batch = {
+      kind: 'batch', id: 'm', groupName: 'M',
+      files: [
+        { id: 'a', filename: 'a.bin', bytesDownloaded: 1, totalBytes: 10, status: 'paused' },
+        { id: 'b', filename: 'b.bin', bytesDownloaded: 1, totalBytes: 10, status: 'cancelled' },
+      ],
+      totalFiles: 2, completedFiles: 0, aggregateBytesDownloaded: 2, aggregateTotalBytes: 20, aggregateBytesPerSecond: 0,
+      aggregatePercentage: 10, aggregateEtaSeconds: null, status: 'paused',
+    };
+    const next = applyDownloadSnapshot(new Map(), batch);
+    expect(next.get('m:a.bin')?.state).toBe('Paused');
+    expect(next.get('m:b.bin')?.state).toBe('Cancelled');
+  });
+});

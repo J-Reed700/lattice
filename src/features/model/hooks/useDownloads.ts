@@ -197,12 +197,16 @@ const toDownloadStatus = (
 ): DownloadStatus => {
   const now = new Date().toISOString();
   const modelId = identity.modelId ?? identity.existing?.model_id;
-  const modelName = identity.modelName ?? identity.existing?.model_name ?? modelId ?? snapshot.filename;
+  const modelName = identity.modelName
+    ?? identity.existing?.model_name
+    ?? snapshot.modelName
+    ?? modelId
+    ?? snapshot.filename;
   const isTerminal = ['completed', 'error', 'cancelled'].includes(snapshot.status);
   return {
     id,
     url: identity.existing?.url || snapshot.filename,
-    destination: identity.existing?.destination || snapshot.filename,
+    destination: snapshot.destination || identity.existing?.destination || snapshot.filename,
     state: toDownloadState(snapshot.status),
     bytes_downloaded: snapshot.bytesDownloaded,
     total_bytes: snapshot.totalBytes,

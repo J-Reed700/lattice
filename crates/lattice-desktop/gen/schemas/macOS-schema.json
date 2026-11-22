@@ -5325,6 +5325,12 @@
           "markdownDescription": "Enables the interrupt_learning_assessment_form command without any pre-configured scope."
         },
         {
+          "description": "Enables the list_learning_outline_runs command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-list-learning-outline-runs",
+          "markdownDescription": "Enables the list_learning_outline_runs command without any pre-configured scope."
+        },
+        {
           "description": "Enables the list_learning_programs command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-list-learning-programs",
@@ -6363,6 +6369,12 @@
           "markdownDescription": "Denies the interrupt_learning_assessment_form command without any pre-configured scope."
         },
         {
+          "description": "Denies the list_learning_outline_runs command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-list-learning-outline-runs",
+          "markdownDescription": "Denies the list_learning_outline_runs command without any pre-configured scope."
+        },
+        {
           "description": "Denies the list_learning_programs command without any pre-configured scope.",
           "type": "string",
           "const": "learning:deny-list-learning-programs",
@@ -7125,6 +7137,12 @@
           "markdownDescription": "Enables the warm_up_learning_model command without any pre-configured scope."
         },
         {
+          "description": "Enables the warmup_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:allow-warmup-status",
+          "markdownDescription": "Enables the warmup_status command without any pre-configured scope."
+        },
+        {
           "description": "Denies the check_first_run_status command without any pre-configured scope.",
           "type": "string",
           "const": "model:deny-check-first-run-status",
@@ -7323,6 +7341,12 @@
           "markdownDescription": "Denies the warm_up_learning_model command without any pre-configured scope."
         },
         {
+          "description": "Denies the warmup_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "model:deny-warmup-status",
+          "markdownDescription": "Denies the warmup_status command without any pre-configured scope."
+        },
+        {
           "description": "Enables the check_llm_health command without any pre-configured scope.",
           "type": "string",
           "const": "qa:allow-check-llm-health",
@@ -7413,6 +7437,12 @@
           "markdownDescription": "Enables the hybrid_search command without any pre-configured scope."
         },
         {
+          "description": "Enables the remove_reranker command without any pre-configured scope.",
+          "type": "string",
+          "const": "search:allow-remove-reranker",
+          "markdownDescription": "Enables the remove_reranker command without any pre-configured scope."
+        },
+        {
           "description": "Enables the reranker_status command without any pre-configured scope.",
           "type": "string",
           "const": "search:allow-reranker-status",
@@ -7471,6 +7501,12 @@
           "type": "string",
           "const": "search:deny-hybrid-search",
           "markdownDescription": "Denies the hybrid_search command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remove_reranker command without any pre-configured scope.",
+          "type": "string",
+          "const": "search:deny-remove-reranker",
+          "markdownDescription": "Denies the remove_reranker command without any pre-configured scope."
         },
         {
           "description": "Denies the reranker_status command without any pre-configured scope.",

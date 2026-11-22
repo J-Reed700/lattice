@@ -157,6 +157,8 @@ export const useDownloadState = () => {
     listenerError,
     setListenerError,
     isLoading: downloadsQuery.isLoading,
+    // The list has answered at least once; a row must not offer a download before.
+    downloadsSettled: !downloadsQuery.isPending,
     error: downloadsQuery.error?.message ?? null,
     setDownload,
     updateDownloadProgress,

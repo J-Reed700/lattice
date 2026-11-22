@@ -137,7 +137,9 @@ pub use system_info::{
 };
 pub use tag_service::{DocumentLockGuard, TagServiceTrait};
 pub use text_search_port::TextSearchPort;
-pub use transcription_port::{Transcript, TranscriptSegment, TranscriptionPort};
+pub use transcription_port::{
+    ActiveTranscriptionModel, Transcript, TranscriptSegment, TranscriptionPort,
+};
 pub use update_checker_port::{UpdateCheckerPort, UpdateInfoData};
 pub use vector_search_port::VectorSearchPort;
 pub use web_service::WebServiceTrait;

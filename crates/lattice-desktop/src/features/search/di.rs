@@ -237,7 +237,7 @@ pub async fn build_with_compression(
     let search_enrichment_service = Arc::new(SearchEnrichmentService::new(database.clone()))
         as Arc<dyn SearchEnrichmentServiceTrait>;
     let reranker = Arc::new(LlamaReranker::new(
-        lattice_core::domain::models::curated::CURATED_RERANKER.path_in(&models_path),
+        crate::features::search::reranker_setup::reranker_gguf_path(&models_path),
         rerank_starter,
     )?);
 

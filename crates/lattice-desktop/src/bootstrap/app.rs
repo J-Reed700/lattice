@@ -488,10 +488,10 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
         crate::features::download::commands::DownloadCommandState::new(download_manager);
     tracing::info!("Download management initialized");
 
-    // Resume any queued sessions left in pending state from earlier attempts.
-    if let Err(e) = download_state.manager.process_pending_queue().await {
-        tracing::warn!("Failed to process pending download queue on startup: {}", e);
-    }
+    // Nothing to drain here: the queue lives only in memory. Startup
+    // reconciliation pauses sessions a previous run left queued and fails the
+    // ones it left mid-transfer, so the user resumes or retries them, and the
+    // loop above promotes whatever is queued from now on.
 
     let embedding_state = crate::features::embedding::commands::EmbeddingState::new(
         container.embedding_runtime.clone(),

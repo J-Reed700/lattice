@@ -99,6 +99,7 @@ async fn test_download_follows_redirects() {
             resume_from: None,
             progress_callback: None,
             auth_token: None,
+            known_total: None,
         })
         .await
         .unwrap();

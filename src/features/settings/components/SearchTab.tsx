@@ -4,7 +4,7 @@ import { PageHeader, SettingsRow, SettingsSection, settingsFieldClass, Switch } 
 import { toast } from '@/stores/toastStore';
 import type { SearchSettings as ApiSearchSettings } from '@/types/api/settings';
 
-import { describeReranker, formatDownloadSize } from './rerankerStatus';
+import { RerankerRow } from './RerankerRow';
 import { RetrievalTuningSection } from './RetrievalTuningSection';
 import {
   clamp,
@@ -16,10 +16,6 @@ import {
   type VectorCompression,
 } from './searchSettingsOptions';
 import { NUMBER_FIELD_CLASS, SWITCH_CLASS } from './settingsStyles';
-import {
-  useDownloadRerankerMutation,
-  useRerankerStatusQuery,
-} from '../hooks/useRerankerQuery';
 import { useSettingsQuery, useUpdateSettingsMutation } from '../hooks/useSettingsQuery';
 
 export { describeReranker, formatDownloadSize } from './rerankerStatus';
@@ -27,8 +23,6 @@ export { describeReranker, formatDownloadSize } from './rerankerStatus';
 export function SearchTab() {
   const { data: settings, isPending, refetch } = useSettingsQuery();
   const { mutate: updateSettings } = useUpdateSettingsMutation();
-  const { data: rerankerStatus } = useRerankerStatusQuery();
-  const downloadReranker = useDownloadRerankerMutation();
   const [showAdvancedTuning, setShowAdvancedTuning] = useState(false);
   // A half-typed number is UI state, so each field may hold a draft while it
   // has focus. Everything else reads the query — the repository is the source
@@ -120,23 +114,7 @@ export function SearchTab() {
       <PageHeader title="Search" description="Shape how Lattice finds and ranks information in your library." />
 
       <SettingsSection title="Retrieval">
-        <SettingsRow
-          label="Reranker"
-          hint={describeReranker(rerankerStatus, downloadReranker.error)}
-        >
-          {rerankerStatus && !rerankerStatus.installed ? (
-            <button
-              type="button"
-              onClick={() => downloadReranker.mutate()}
-              disabled={downloadReranker.isPending}
-              className="h-8 shrink-0 rounded-sm border border-border-default px-2.5 text-sm text-text-primary transition-colors duration-fast hover:border-accent disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {downloadReranker.isPending
-                ? 'Downloading…'
-                : `Download (${formatDownloadSize(rerankerStatus.downloadBytes)})`}
-            </button>
-          ) : null}
-        </SettingsRow>
+        <RerankerRow />
 
         <SettingsRow
           label="Read web pages"

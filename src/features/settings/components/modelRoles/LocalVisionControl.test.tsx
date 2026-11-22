@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -11,17 +11,20 @@ import { LocalVisionControl } from './LocalVisionControl';
 
 const hooks = vi.hoisted(() => ({
   downloads: [] as DownloadStatus[],
+  settled: true,
+  modelsFetched: true,
   start: vi.fn(),
+  resume: vi.fn(),
   refresh: vi.fn(),
   update: vi.fn(),
   settings: undefined as ReturnType<typeof makeAppSettings> | undefined,
 }));
 
-vi.mock('@/features/model/hooks/useDownloadState', () => ({ useDownloadState: () => ({ downloads: hooks.downloads }) }));
+vi.mock('@/features/model/hooks/useDownloadState', () => ({ useDownloadState: () => ({ downloads: hooks.downloads, downloadsSettled: hooks.settled }) }));
 vi.mock('@/features/model/hooks/useDownloads', () => ({
-  useDownloadActions: () => ({ startVisionProjectorDownload: hooks.start }),
+  useDownloadActions: () => ({ startVisionProjectorDownload: hooks.start, resumeDownload: hooks.resume }),
 }));
-vi.mock('./ModelRolesContext', () => ({ useModelRoles: () => ({ refresh: hooks.refresh }) }));
+vi.mock('./ModelRolesContext', () => ({ useModelRoles: () => ({ refresh: hooks.refresh, modelsFetchedAfterMount: hooks.modelsFetched }) }));
 vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({
   useSettingsQuery: () => ({ data: hooks.settings }),
   useUpdateSettingsMutation: () => ({ mutateAsync: hooks.update, isPending: false }),
@@ -33,7 +36,7 @@ const model: DownloadedModel = {
   use_count: 0, is_active_for_chat: true, is_active_for_embedding: false, is_active_for_utility: false, backend: 'local',
 };
 const vision = (overrides: Partial<DownloadedVisionDto> = {}): DownloadedVisionDto => ({
-  projector_downloaded: false, enabled: true, projector_bytes: 921_000_000,
+  projector_downloaded: false, enabled: true, projector_bytes: 921_000_000, projector_path: '/models/qwen3.5-9b/mmproj.gguf',
   geometry: { kind: 'grid', token_side: 32, min_pixels: 65536, max_pixels: 2097152, overhead_tokens: 2 },
   ...overrides,
 });
@@ -47,6 +50,8 @@ const projectorDownload = (overrides: Partial<DownloadStatus>): DownloadStatus =
 beforeEach(() => {
   vi.clearAllMocks();
   hooks.downloads = [];
+  hooks.settled = true;
+  hooks.modelsFetched = true;
   hooks.settings = makeAppSettings();
 });
 
@@ -61,21 +66,66 @@ describe('LocalVisionControl', () => {
     expect(screen.queryByRole('switch')).toBeNull();
   });
 
-  it('follows the projector download the download list reports', () => {
-    hooks.downloads = [projectorDownload({})];
+  it('holds the button until the download list has settled', () => {
+    hooks.settled = false;
+    render(<LocalVisionControl model={model} vision={vision()} />);
+    expect(screen.getByRole('button', { name: 'Download vision projector (878 MB)' })).toBeDisabled();
+  });
+
+  it('holds the button until the model list has been re-read', () => {
+    hooks.modelsFetched = false;
+    render(<LocalVisionControl model={model} vision={vision()} />);
+    expect(screen.getByRole('button', { name: 'Download vision projector (878 MB)' })).toBeDisabled();
+  });
+
+  it('says why the last attempt failed', () => {
+    hooks.downloads = [projectorDownload({ state: 'Failed', error_message: 'Disk full.' })];
+    render(<LocalVisionControl model={model} vision={vision()} />);
+    expect(screen.getByText("Couldn't download: Disk full.")).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Download vision projector (878 MB)' })).toBeEnabled();
+  });
+
+  it('follows the projector download the download list reports, matched by its path', () => {
+    hooks.downloads = [projectorDownload({ destination: '\\models\\qwen3.5-9b\\mmproj.gguf' })];
     render(<LocalVisionControl model={model} vision={vision()} />);
 
-    expect(screen.getByRole('progressbar', { name: 'Vision projector download' })).toHaveAttribute('aria-valuenow', '42');
-    expect(screen.getByRole('status')).toHaveTextContent('42% of 878 MB');
+    expect((screen.getByRole('progressbar') as HTMLProgressElement).value).toBe(42);
+    expect(screen.getByRole('status', { name: 'Downloading the vision projector' })).toHaveTextContent('Downloading… 42%');
     expect(screen.queryByRole('switch')).toBeNull();
   });
 
-  it('re-reads the model once the projector is on disk', () => {
-    hooks.downloads = [projectorDownload({ state: 'Completed', percentage: 100 })];
-    hooks.start.mockResolvedValue(null);
+  it('resumes a paused projector download', async () => {
+    hooks.downloads = [projectorDownload({ state: 'Paused' })];
+    hooks.resume.mockResolvedValue(undefined);
     render(<LocalVisionControl model={model} vision={vision()} />);
 
-    expect(hooks.refresh).toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Resume' }));
+    expect(hooks.resume).toHaveBeenCalledWith('dl-1');
+  });
+
+  it('ignores a download for some other file', () => {
+    hooks.downloads = [projectorDownload({ destination: '/models/other/mmproj.gguf' })];
+    render(<LocalVisionControl model={model} vision={vision()} />);
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('says Finishing… and keeps re-reading the model after the projector completes', () => {
+    vi.useFakeTimers();
+    try {
+      hooks.downloads = [projectorDownload({ state: 'Completed', percentage: 100, completed_at: new Date().toISOString() })];
+      render(<LocalVisionControl model={model} vision={vision()} />);
+      expect(screen.getByRole('status')).toHaveTextContent('Finishing…');
+      act(() => { vi.advanceTimersByTime(2000); });
+      expect(hooks.refresh).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('offers the download again once a finished projector has not landed within the window', () => {
+    hooks.downloads = [projectorDownload({ state: 'Completed', percentage: 100, completed_at: new Date(Date.now() - 120_000).toISOString() })];
+    render(<LocalVisionControl model={model} vision={vision()} />);
+    expect(screen.getByRole('button', { name: 'Download vision projector (878 MB)' })).toBeEnabled();
   });
 
   it('lets a downloaded projector be switched off, keeping the rest of the model settings', async () => {

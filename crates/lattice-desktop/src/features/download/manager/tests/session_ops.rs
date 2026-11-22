@@ -67,6 +67,7 @@ async fn test_start_download() -> Result<(), Box<dyn std::error::Error>> {
             model_name: None,
             model_id: None,
             model_file_name: None,
+            expected_bytes: None,
         })
         .await?;
 
@@ -122,6 +123,7 @@ async fn batch_is_fully_registered_before_first_started_event(
                 model_name: Some("Qwen embedding".to_string()),
                 model_id: Some("qwen-embedding".to_string()),
                 model_file_name: Some(format!("model-{index}.bin")),
+                expected_bytes: None,
             }],
         });
     }
@@ -171,6 +173,7 @@ async fn test_pause_and_resume() -> Result<(), Box<dyn std::error::Error>> {
             model_name: None,
             model_id: None,
             model_file_name: None,
+            expected_bytes: None,
         })
         .await?;
 
@@ -248,6 +251,7 @@ async fn test_cancel_download() -> Result<(), Box<dyn std::error::Error>> {
             model_name: None,
             model_id: None,
             model_file_name: None,
+            expected_bytes: None,
         })
         .await?;
 
@@ -350,6 +354,7 @@ async fn test_list_downloads() -> Result<(), Box<dyn std::error::Error>> {
             model_name: None,
             model_id: None,
             model_file_name: None,
+            expected_bytes: None,
         })
         .await?;
 
@@ -362,6 +367,7 @@ async fn test_list_downloads() -> Result<(), Box<dyn std::error::Error>> {
             model_name: None,
             model_id: None,
             model_file_name: None,
+            expected_bytes: None,
         })
         .await?;
 
@@ -450,6 +456,7 @@ async fn a_new_download_supersedes_a_dead_session_for_the_same_file(
             model_name: None,
             model_id: None,
             model_file_name: None,
+            expected_bytes: None,
         })
         .await?;
 
