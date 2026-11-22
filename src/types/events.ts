@@ -112,6 +112,7 @@ export namespace EventSchemas {
     export const NoteConflict = z.discriminatedUnion('kind', [
       z.object({
         kind: z.literal('keptCopy'),
+        id: z.string(),
         noteId: z.string(),
         noteTitle: z.string(),
         copyId: z.string(),
@@ -119,11 +120,13 @@ export namespace EventSchemas {
       }),
       z.object({
         kind: z.literal('setAside'),
+        id: z.string(),
         noteId: z.string(),
         noteTitle: z.string(),
         setAsidePath: z.string(),
       }),
     ]);
+    export type NoteConflict = z.infer<typeof NoteConflict>;
   }
 
   export namespace WebPageSnapshot {

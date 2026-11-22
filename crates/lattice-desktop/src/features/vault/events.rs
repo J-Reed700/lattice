@@ -51,44 +51,48 @@ pub(crate) fn emit_watcher_error(app_handle: &AppHandleCell, error: &str) {
     );
 }
 
-pub(crate) enum NoteConflict<'a> {
+/// Tell the frontend a rescan declined to delete, so the user finds out from
+/// the UI rather than from noticing missing notes later.
+pub(crate) fn emit_rescan_blocked(
+    app_handle: &AppHandleCell,
+    reason: &str,
+    candidates: usize,
+    total_rows: usize,
+) {
+    emit(
+        app_handle,
+        "vault:rescan-blocked",
+        serde_json::json!({
+            "reason": reason,
+            "candidates": candidates,
+            "totalRows": total_rows,
+        }),
+    );
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum VaultConflictDto {
+    #[serde(rename_all = "camelCase")]
     KeptCopy {
-        note_id: &'a str,
-        note_title: &'a str,
-        copy_id: &'a str,
-        copy_title: &'a str,
+        id: String,
+        note_id: String,
+        note_title: String,
+        copy_id: String,
+        copy_title: String,
     },
+    #[serde(rename_all = "camelCase")]
     SetAside {
-        note_id: &'a str,
-        note_title: &'a str,
-        set_aside_path: &'a Path,
+        id: String,
+        note_id: String,
+        note_title: String,
+        set_aside_path: String,
     },
 }
 
-pub(crate) fn emit_note_conflict(app_handle: &AppHandleCell, conflict: NoteConflict<'_>) {
-    let payload = match conflict {
-        NoteConflict::KeptCopy {
-            note_id,
-            note_title,
-            copy_id,
-            copy_title,
-        } => serde_json::json!({
-            "kind": "keptCopy",
-            "noteId": note_id,
-            "noteTitle": note_title,
-            "copyId": copy_id,
-            "copyTitle": copy_title,
-        }),
-        NoteConflict::SetAside {
-            note_id,
-            note_title,
-            set_aside_path,
-        } => serde_json::json!({
-            "kind": "setAside",
-            "noteId": note_id,
-            "noteTitle": note_title,
-            "setAsidePath": set_aside_path.display().to_string(),
-        }),
-    };
-    emit(app_handle, "vault:note-conflict", payload);
+pub(crate) fn emit_note_conflict(app_handle: &AppHandleCell, conflict: &VaultConflictDto) {
+    match serde_json::to_value(conflict) {
+        Ok(payload) => emit(app_handle, "vault:note-conflict", payload),
+        Err(error) => tracing::warn!(%error, "failed to serialize vault:note-conflict event"),
+    }
 }

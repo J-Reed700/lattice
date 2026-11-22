@@ -44,7 +44,7 @@ export const ToastContainer: React.FC = () => {
       flexDirection: 'column',
       gap: '12px',
       maxHeight: '100vh',
-      overflow: 'hidden',
+      overflowY: 'auto',
     };
 
     switch (config.position) {

@@ -4,6 +4,7 @@
 //! are built in `Container::new`; the accessors over them belong to this
 //! feature.
 
+use crate::features::vault::events::VaultConflictDto;
 use crate::features::vault::watcher::RescanSummary;
 use crate::features::vault::writeback::VaultWriterHandle;
 use crate::interfaces::di::Container;
@@ -61,5 +62,14 @@ impl Container {
             Some(&self.vault_writer),
         )
         .await
+    }
+
+    pub async fn list_vault_conflicts(&self) -> Result<Vec<VaultConflictDto>> {
+        crate::features::vault::repository::list_vault_conflicts(self.core.database()).await
+    }
+
+    pub async fn dismiss_vault_conflicts(&self, ids: Vec<String>) -> Result<()> {
+        crate::features::vault::repository::dismiss_vault_conflicts(self.core.database(), &ids)
+            .await
     }
 }

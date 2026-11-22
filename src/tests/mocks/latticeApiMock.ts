@@ -262,6 +262,8 @@ export function createVaultAPIMock() {
       ok: true,
       data: note,
     })),
+    listVaultConflicts: vi.fn().mockResolvedValue({ ok: true, data: [] }),
+    dismissVaultConflicts: vi.fn().mockResolvedValue({ ok: true, data: null }),
 
     // Branching, starters, and passage references
     listConversationTangents: vi.fn().mockResolvedValue({ ok: true, data: [] }),

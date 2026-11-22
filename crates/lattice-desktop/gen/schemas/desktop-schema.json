@@ -7989,10 +7989,34 @@
           "markdownDescription": "Denies the get_version_info command without any pre-configured scope."
         },
         {
+          "description": "Enables the dismiss_vault_conflicts command without any pre-configured scope.",
+          "type": "string",
+          "const": "vault:allow-dismiss-vault-conflicts",
+          "markdownDescription": "Enables the dismiss_vault_conflicts command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_vault_conflicts command without any pre-configured scope.",
+          "type": "string",
+          "const": "vault:allow-list-vault-conflicts",
+          "markdownDescription": "Enables the list_vault_conflicts command without any pre-configured scope."
+        },
+        {
           "description": "Enables the rescan_vault command without any pre-configured scope.",
           "type": "string",
           "const": "vault:allow-rescan-vault",
           "markdownDescription": "Enables the rescan_vault command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the dismiss_vault_conflicts command without any pre-configured scope.",
+          "type": "string",
+          "const": "vault:deny-dismiss-vault-conflicts",
+          "markdownDescription": "Denies the dismiss_vault_conflicts command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_vault_conflicts command without any pre-configured scope.",
+          "type": "string",
+          "const": "vault:deny-list-vault-conflicts",
+          "markdownDescription": "Denies the list_vault_conflicts command without any pre-configured scope."
         },
         {
           "description": "Denies the rescan_vault command without any pre-configured scope.",

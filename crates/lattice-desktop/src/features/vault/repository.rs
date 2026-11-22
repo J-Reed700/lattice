@@ -1,4 +1,5 @@
 //! Durable, coalesced vault write intentions. Bodies remain in the notes table.
+use super::events::VaultConflictDto;
 use crate::infrastructure::persistence::repositories::workspace_notes::{
     note_from_row, timestamp_from_row, DailyNotesRepository, NOTE_COLUMNS,
 };
@@ -34,19 +35,16 @@ pub(super) struct Synced<'a> {
 }
 
 pub(super) fn note_text_sha256(title: &str, content: &str) -> String {
+    let title = super::parse::normalize_line_endings(title);
+    let content = super::parse::normalize_line_endings(content);
     lattice_core::shared::hash::sha256_hex(format!("{}:{title}{content}", title.len()).as_bytes())
-}
-
-pub(super) struct KeptCopy {
-    pub id: String,
-    pub title: String,
 }
 
 pub(super) enum Reconciled {
     /// A newer Lattice edit replaced the write; nothing changed.
     Superseded,
     TookFile {
-        kept_copy: Option<KeptCopy>,
+        conflict: Option<VaultConflictDto>,
     },
 }
 
@@ -75,8 +73,44 @@ pub(super) async fn acknowledge(db: &Database, write: &PendingWrite) -> Result<(
     Ok(())
 }
 
+async fn backfill_missing_text_hashes_in_tx(tx: &mut WriteTx) -> Result<()> {
+    let missing: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT m.note_id, n.title, n.content \
+         FROM vault_mirror_state m \
+         JOIN daily_notes_workspace n ON n.id = m.note_id \
+         WHERE m.mirrored_text_sha256 IS NULL \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM vault_write_outbox o \
+               WHERE o.note_id = m.note_id AND o.mirror_complete = 0 \
+           )",
+    )
+    .fetch_all(&mut **tx)
+    .await?;
+    for (note_id, title, content) in missing {
+        let text_sha256 = note_text_sha256(&title, &content);
+        sqlx::query(
+            "UPDATE vault_mirror_state \
+             SET mirrored_text_sha256 = ? \
+             WHERE note_id = ? AND mirrored_text_sha256 IS NULL",
+        )
+        .bind(&text_sha256)
+        .bind(&note_id)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
+pub(super) async fn backfill_missing_text_hashes(db: &Database) -> Result<()> {
+    let mut tx = db.begin_write().await?;
+    backfill_missing_text_hashes_in_tx(&mut tx).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 pub(super) async fn enqueue_all(db: &Database) -> Result<()> {
     let mut tx = db.begin_write().await?;
+    backfill_missing_text_hashes_in_tx(&mut tx).await?;
     sqlx::query("INSERT INTO vault_write_outbox(note_id, revision) SELECT id, lower(hex(randomblob(16))) FROM daily_notes_workspace WHERE true ON CONFLICT(note_id) DO UPDATE SET revision = excluded.revision, mirror_complete = 0, retry_at = 0")
         .execute(&mut *tx).await?;
     tx.commit().await?;
@@ -87,6 +121,15 @@ pub(super) async fn mark_mirrored(
     db: &Database,
     write: &PendingWrite,
     synced: Option<Synced<'_>>,
+) -> Result<()> {
+    mark_mirrored_with_conflict(db, write, synced, None).await
+}
+
+pub(super) async fn mark_mirrored_with_conflict(
+    db: &Database,
+    write: &PendingWrite,
+    synced: Option<Synced<'_>>,
+    conflict: Option<&VaultConflictDto>,
 ) -> Result<()> {
     let mut tx = db.begin_write().await?;
     sqlx::query(
@@ -105,6 +148,9 @@ pub(super) async fn mark_mirrored(
                 .execute(&mut *tx)
                 .await?;
         }
+    }
+    if let Some(conflict) = conflict {
+        record_conflict_in_tx(&mut tx, conflict).await?;
     }
     tx.commit().await?;
     Ok(())
@@ -237,26 +283,42 @@ pub(super) async fn reconcile_external_note_and_mark_mirrored(
         .try_map(note_from_row)
         .fetch_optional(&mut *tx)
         .await?;
-    let mut kept_copy = None;
+    let mut conflict = None;
     if let Some(row) = row {
+        let same_text = (
+            super::parse::normalize_line_endings(&row.title).as_ref(),
+            super::parse::normalize_line_endings(&row.content).as_ref(),
+        ) == (
+            super::parse::normalize_line_endings(note.title).as_ref(),
+            super::parse::normalize_line_endings(note.content).as_ref(),
+        );
         if write.mirrored_text_sha256.as_deref()
             != Some(note_text_sha256(&row.title, &row.content).as_str())
-            && (row.title.as_str(), row.content.as_str()) != (note.title, note.content)
+            && !same_text
         {
             let now = now_db_timestamp();
             let copy = WorkspaceNoteRecord {
                 id: uuid::Uuid::new_v4().to_string(),
                 revision: 0,
-                title: format!("{} (conflicted copy {})", row.title, &now[..10]),
+                title: format!(
+                    "{} (conflicted copy {})",
+                    row.title,
+                    now.get(..10).unwrap_or(&now)
+                ),
                 created_at: now.clone(),
                 updated_at: now,
                 ..row
             };
             DailyNotesRepository::insert_in_transaction(&mut tx, &copy).await?;
-            kept_copy = Some(KeptCopy {
-                id: copy.id,
-                title: copy.title,
-            });
+            let recorded = VaultConflictDto::KeptCopy {
+                id: uuid::Uuid::new_v4().to_string(),
+                note_id: note.id.to_string(),
+                note_title: note.title.to_string(),
+                copy_id: copy.id,
+                copy_title: copy.title,
+            };
+            record_conflict_in_tx(&mut tx, &recorded).await?;
+            conflict = Some(recorded);
         }
     }
     sqlx::query(
@@ -301,7 +363,113 @@ pub(super) async fn reconcile_external_note_and_mark_mirrored(
     )
     .await?;
     tx.commit().await?;
-    Ok(Reconciled::TookFile { kept_copy })
+    Ok(Reconciled::TookFile { conflict })
+}
+
+async fn record_conflict_in_tx(tx: &mut WriteTx, conflict: &VaultConflictDto) -> Result<()> {
+    let created_at = now_db_timestamp();
+    match conflict {
+        VaultConflictDto::KeptCopy {
+            id,
+            note_id,
+            note_title,
+            copy_id,
+            copy_title,
+        } => {
+            sqlx::query(
+                "INSERT INTO vault_conflicts \
+                 (id, kind, note_id, note_title, copy_id, copy_title, set_aside_path, created_at) \
+                 VALUES (?, 'keptCopy', ?, ?, ?, ?, NULL, ?)",
+            )
+            .bind(id)
+            .bind(note_id)
+            .bind(note_title)
+            .bind(copy_id)
+            .bind(copy_title)
+            .bind(&created_at)
+            .execute(&mut **tx)
+            .await?;
+        }
+        VaultConflictDto::SetAside {
+            id,
+            note_id,
+            note_title,
+            set_aside_path,
+        } => {
+            sqlx::query(
+                "INSERT INTO vault_conflicts \
+                 (id, kind, note_id, note_title, copy_id, copy_title, set_aside_path, created_at) \
+                 VALUES (?, 'setAside', ?, ?, NULL, NULL, ?, ?)",
+            )
+            .bind(id)
+            .bind(note_id)
+            .bind(note_title)
+            .bind(set_aside_path)
+            .bind(&created_at)
+            .execute(&mut **tx)
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) async fn list_vault_conflicts(db: &Database) -> Result<Vec<VaultConflictDto>> {
+    use sqlx::Row;
+    let mut read = db.begin_read().await?;
+    let conflicts = sqlx::query(
+        "SELECT id, kind, note_id, note_title, copy_id, copy_title, set_aside_path \
+         FROM vault_conflicts ORDER BY rowid ASC",
+    )
+    .try_map(|row: sqlx::sqlite::SqliteRow| {
+        let id: String = row.try_get("id")?;
+        let kind: String = row.try_get("kind")?;
+        let note_id: String = row.try_get("note_id")?;
+        let note_title: String = row.try_get("note_title")?;
+        match kind.as_str() {
+            "keptCopy" => Ok(VaultConflictDto::KeptCopy {
+                id,
+                note_id,
+                note_title,
+                copy_id: row
+                    .try_get::<Option<String>, _>("copy_id")?
+                    .unwrap_or_default(),
+                copy_title: row
+                    .try_get::<Option<String>, _>("copy_title")?
+                    .unwrap_or_default(),
+            }),
+            "setAside" => Ok(VaultConflictDto::SetAside {
+                id,
+                note_id,
+                note_title,
+                set_aside_path: row
+                    .try_get::<Option<String>, _>("set_aside_path")?
+                    .unwrap_or_default(),
+            }),
+            other => Err(sqlx::Error::Decode(Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("unknown vault conflict kind: {other}"),
+            )))),
+        }
+    })
+    .fetch_all(&mut *read)
+    .await?;
+    read.commit().await?;
+    Ok(conflicts)
+}
+
+pub(crate) async fn dismiss_vault_conflicts(db: &Database, ids: &[String]) -> Result<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let mut tx = db.begin_write().await?;
+    for id in ids {
+        sqlx::query("DELETE FROM vault_conflicts WHERE id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(())
 }
 
 pub(crate) async fn find_note_document_id(db: &Database, note_id: &str) -> Result<Option<String>> {

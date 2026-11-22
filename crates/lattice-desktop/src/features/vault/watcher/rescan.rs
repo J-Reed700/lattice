@@ -9,8 +9,11 @@ use lattice_core::shared::persistence::timestamps::parse_db_timestamp;
 use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 
-use super::{import_one, AppHandleCell, RescanLock, WriteSuppressionRegistry};
-use crate::features::vault::events::emit_note_imported;
+use super::{
+    import_one_outcome, is_set_aside_conflict_file, AppHandleCell, ImportOutcome, RescanLock,
+    WriteSuppressionRegistry,
+};
+use crate::features::vault::events::{emit_note_imported, emit_rescan_blocked};
 
 const RESCAN_SEEN_CHUNK: usize = 250;
 
@@ -86,7 +89,9 @@ pub async fn rescan_vault(
         };
 
         let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("md") {
+        if path.extension().and_then(|s| s.to_str()) != Some("md")
+            || is_set_aside_conflict_file(&path)
+        {
             continue;
         }
         scanned += 1;
@@ -127,8 +132,16 @@ pub async fn rescan_vault(
         };
 
         if needs_import {
-            if let Some(imported_id) = import_one(&path, &database, &app_handle, vault_writer).await
-            {
+            let seen_id =
+                match import_one_outcome(&path, &database, &app_handle, vault_writer).await {
+                    ImportOutcome::Imported(id) => {
+                        imported += 1;
+                        Some(id)
+                    }
+                    ImportOutcome::UnchangedOrSkipped(id) => Some(id),
+                    ImportOutcome::Ignored => None,
+                };
+            if let Some(imported_id) = seen_id {
                 if Some(imported_id.as_str()) != stem {
                     seen_batch.push(imported_id);
                     if seen_batch.len() >= RESCAN_SEEN_CHUNK {
@@ -145,7 +158,6 @@ pub async fn rescan_vault(
                     }
                 }
             }
-            imported += 1;
         }
     }
 
@@ -381,30 +393,4 @@ pub(super) fn ghost_sweep_block_reason(
     }
 
     None
-}
-
-/// Tell the frontend a rescan declined to delete, so the user finds out from
-/// the UI rather than from noticing missing notes later.
-fn emit_rescan_blocked(
-    app_handle: &AppHandleCell,
-    reason: &str,
-    candidates: usize,
-    total_rows: usize,
-) {
-    use tauri::Emitter;
-    let guard = match app_handle.read() {
-        Ok(g) => g,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let Some(handle) = guard.as_ref() else {
-        return;
-    };
-    let payload = serde_json::json!({
-        "reason": reason,
-        "candidates": candidates,
-        "totalRows": total_rows,
-    });
-    if let Err(e) = handle.emit("vault:rescan-blocked", payload) {
-        tracing::warn!(error = %e, "failed to emit vault:rescan-blocked event");
-    }
 }

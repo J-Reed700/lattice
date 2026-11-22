@@ -692,3 +692,237 @@ async fn a_note_queued_again_without_an_edit_takes_the_files_text() {
         .unwrap()
         .is_empty());
 }
+
+#[tokio::test]
+async fn obsidian_frontmatter_with_bom_block_tags_unquoted_title_crlf_and_extra_keys_is_preserved()
+{
+    let (pool, db, dir, target, suppression, app_handle) = own_write_fixture().await;
+    pass_over_n1(&db, &suppression, &app_handle, &target).await;
+
+    let obsidian_file = "\u{feff}---\r\nid: n1\r\ntitle: T1\r\ncreated_at: 2026-11-19T00:00:00Z\r\nupdated_at: 2026-11-19T00:01:00Z\r\ntags:\r\n  - research\r\n  - 'deep dive'\r\naliases:\r\n  - Note One\r\nstatus: draft\r\n---\r\n\r\nfirst";
+    tokio::fs::write(&target, obsidian_file).await.unwrap();
+    sqlx::query("UPDATE daily_notes_workspace SET content = 'edited in Lattice' WHERE id = 'n1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let outside = pass_over_n1(&db, &suppression, &app_handle, &target).await;
+    assert_eq!(outside, None);
+
+    let on_disk = tokio::fs::read_to_string(&target).await.unwrap();
+    assert!(on_disk.contains("edited in Lattice"), "{on_disk}");
+    assert!(
+        on_disk.contains("tags: [\"research\", \"deep dive\"]"),
+        "{on_disk}"
+    );
+    assert!(
+        on_disk.contains("aliases:\n  - Note One\nstatus: draft"),
+        "{on_disk}"
+    );
+
+    let mut note_files = Vec::new();
+    let mut entries = tokio::fs::read_dir(dir.path().join("notes")).await.unwrap();
+    while let Some(entry) = entries.next_entry().await.unwrap() {
+        note_files.push(entry.file_name().to_string_lossy().to_string());
+    }
+    assert_eq!(
+        note_files,
+        vec!["n1.md".to_string()],
+        "must not set file aside"
+    );
+    assert!(super::super::repository::list_vault_conflicts(&db)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn crlf_conversion_alone_does_not_create_conflicted_copy() {
+    let (pool, db, _dir, target, suppression, app_handle) = own_write_fixture().await;
+    sqlx::query("UPDATE daily_notes_workspace SET content = 'line one\nline two' WHERE id = 'n1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pass_over_n1(&db, &suppression, &app_handle, &target).await;
+
+    let crlf_disk = "---\r\nid: n1\r\ntitle: \"T1\"\r\ncreated_at: 2026-11-19T00:00:00Z\r\nupdated_at: 2026-11-19T00:01:00Z\r\ntags: [\"bread\"]\r\n---\r\n\r\nline one\r\nline two";
+    tokio::fs::write(&target, crlf_disk).await.unwrap();
+    sqlx::query(
+        "UPDATE daily_notes_workspace SET content = 'line one\nline two\nline three' WHERE id = 'n1'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let outside = pass_over_n1(&db, &suppression, &app_handle, &target).await;
+    assert_eq!(outside, None);
+
+    let notes: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, content FROM daily_notes_workspace ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        notes,
+        [(
+            "n1".to_string(),
+            "line one\nline two\nline three".to_string()
+        )]
+    );
+    let on_disk = tokio::fs::read_to_string(&target).await.unwrap();
+    assert!(on_disk.contains("tags: [\"bread\"]"), "{on_disk}");
+    assert!(super::super::repository::list_vault_conflicts(&db)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn null_mirrored_text_sha256_is_backfilled_without_spurious_conflict_on_reenable() {
+    let (pool, db, _dir, target, suppression, app_handle) = own_write_fixture().await;
+    pass_over_n1(&db, &suppression, &app_handle, &target).await;
+
+    // Simulate a pre-migration row where mirrored_text_sha256 is NULL.
+    sqlx::query("UPDATE vault_mirror_state SET mirrored_text_sha256 = NULL WHERE note_id = 'n1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // User disables vault, edits file externally, and re-enables vault (enqueue_all).
+    let outside = "---\nid: n1\ntitle: \"T1\"\ncreated_at: 2026-11-19T00:00:00Z\nupdated_at: 2026-11-19T00:05:00Z\ntags: []\n---\n\nedited outside";
+    tokio::fs::write(&target, outside).await.unwrap();
+    super::super::repository::enqueue_all(&db).await.unwrap();
+
+    pass_over_n1(&db, &suppression, &app_handle, &target).await;
+
+    let notes: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, content FROM daily_notes_workspace ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(notes, [("n1".to_string(), "edited outside".to_string())]);
+    assert!(super::super::repository::list_vault_conflicts(&db)
+        .await
+        .unwrap()
+        .is_empty());
+
+    // Also verify startup backfill handles tag-only external edits alongside Lattice edits.
+    sqlx::query("UPDATE vault_mirror_state SET mirrored_text_sha256 = NULL WHERE note_id = 'n1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    super::super::repository::backfill_missing_text_hashes(&db)
+        .await
+        .unwrap();
+    let tagged = "---\nid: n1\ntitle: \"T1\"\ncreated_at: 2026-11-19T00:00:00Z\nupdated_at: 2026-11-19T00:05:00Z\ntags: [\"bread\"]\n---\n\nedited outside";
+    tokio::fs::write(&target, tagged).await.unwrap();
+    sqlx::query("UPDATE daily_notes_workspace SET content = 'edited in Lattice' WHERE id = 'n1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pass_over_n1(&db, &suppression, &app_handle, &target).await;
+
+    let notes_after: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, content FROM daily_notes_workspace ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        notes_after,
+        [("n1".to_string(), "edited in Lattice".to_string())]
+    );
+    assert!(super::super::repository::list_vault_conflicts(&db)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn conflict_notices_persist_for_startup_and_only_record_after_set_aside_writeback_succeeds() {
+    let (pool, db, _dir, target, suppression, app_handle) = own_write_fixture().await;
+    pass_over_n1(&db, &suppression, &app_handle, &target).await;
+
+    // 1. Failing writeback after set_aside must NOT record a SetAside conflict notice.
+    let pasted = "pasted over, no front matter";
+    tokio::fs::write(&target, pasted).await.unwrap();
+    sqlx::query("UPDATE daily_notes_workspace SET content = 'edited in Lattice' WHERE id = 'n1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let write = super::super::repository::pending(&db)
+        .await
+        .unwrap()
+        .remove(0);
+    let note = super::super::repository::workspace_notes(&db)
+        .get("n1")
+        .await
+        .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER fail_mirror_record BEFORE UPDATE ON vault_write_outbox \
+         BEGIN SELECT RAISE(ABORT, 'injected'); END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert!(
+        mirror_note_to_disk(&db, &suppression, &app_handle, &write, &note, &target)
+            .await
+            .is_err()
+    );
+    sqlx::query("DROP TRIGGER fail_mirror_record")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        super::super::repository::list_vault_conflicts(&db)
+            .await
+            .unwrap()
+            .is_empty(),
+        "failed write-back must not record a premature setAside conflict notice"
+    );
+
+    // 2. Successful set_aside + writeback records the SetAside conflict and dismisses cleanly.
+    tokio::fs::write(&target, pasted).await.unwrap();
+    pass_over_n1(&db, &suppression, &app_handle, &target).await;
+    let conflicts = super::super::repository::list_vault_conflicts(&db)
+        .await
+        .unwrap();
+    assert_eq!(conflicts.len(), 1);
+    let set_aside_id = match &conflicts[0] {
+        super::super::events::VaultConflictDto::SetAside {
+            id,
+            note_id,
+            set_aside_path,
+            ..
+        } => {
+            assert_eq!(note_id, "n1");
+            assert!(set_aside_path.contains(".replaced-"));
+            id.clone()
+        }
+        other => panic!("expected SetAside conflict, got {other:?}"),
+    };
+    super::super::repository::dismiss_vault_conflicts(&db, &[set_aside_id])
+        .await
+        .unwrap();
+    assert!(super::super::repository::list_vault_conflicts(&db)
+        .await
+        .unwrap()
+        .is_empty());
+
+    // 3. KeptCopy conflict is also persisted atomically with the conflicted copy.
+    let outside = "---\nid: n1\ntitle: \"T1\"\ncreated_at: 2026-11-19T00:00:00Z\nupdated_at: 2026-11-19T00:05:00Z\ntags: []\n---\n\nedited outside";
+    tokio::fs::write(&target, outside).await.unwrap();
+    sqlx::query("UPDATE daily_notes_workspace SET content = 'conflict copy text' WHERE id = 'n1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pass_over_n1(&db, &suppression, &app_handle, &target).await;
+    let conflicts = super::super::repository::list_vault_conflicts(&db)
+        .await
+        .unwrap();
+    assert_eq!(conflicts.len(), 1);
+    assert!(matches!(
+        conflicts[0],
+        super::super::events::VaultConflictDto::KeptCopy { .. }
+    ));
+}
