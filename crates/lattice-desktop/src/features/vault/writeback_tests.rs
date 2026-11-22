@@ -467,3 +467,157 @@ async fn mirror_preserves_existing_frontmatter_tags_and_skips_clobbering_externa
         .unwrap()
         .is_empty());
 }
+
+/// A note edited in its file and in Lattice before Lattice's write landed
+/// keeps both: the note takes the file's text, and Lattice's text becomes a
+/// copy in the same journal, queued to be written as its own file.
+#[tokio::test]
+async fn an_edit_on_both_sides_keeps_both_versions() {
+    let (pool, db, _dir, target, suppression, app_handle) = own_write_fixture().await;
+    pass_over_n1(&db, &suppression, &app_handle, &target).await;
+
+    let outside = "---\nid: n1\ntitle: \"T1\"\ncreated_at: 2026-11-19T00:00:00Z\nupdated_at: 2026-11-19T00:05:00Z\ntags: []\n---\n\nedited outside";
+    tokio::fs::write(&target, outside).await.unwrap();
+    sqlx::query("UPDATE daily_notes_workspace SET content = 'edited in Lattice' WHERE id = 'n1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    pass_over_n1(&db, &suppression, &app_handle, &target).await;
+
+    let notes: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, title, content, journal_id FROM daily_notes_workspace \
+         ORDER BY id = 'n1' DESC, id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(notes.len(), 2, "{notes:?}");
+    assert_eq!(notes[0].0, "n1");
+    assert_eq!(notes[0].2, "edited outside");
+    let copy = &notes[1];
+    assert_eq!(copy.2, "edited in Lattice");
+    assert!(copy.1.starts_with("T1 ("), "{copy:?}");
+    assert_eq!(copy.3, notes[0].3);
+    let on_disk = tokio::fs::read_to_string(&target).await.unwrap();
+    assert!(on_disk.contains("edited outside"), "{on_disk}");
+    let queued: Vec<String> = super::super::repository::pending(&db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|write| write.note_id)
+        .collect();
+    assert_eq!(queued, [copy.0.clone()]);
+}
+
+/// A file replaced outside Lattice by something that is no longer this note
+/// is set aside beside it, untouched, and the note is written back to its own
+/// file.
+#[tokio::test]
+async fn a_file_that_is_no_longer_the_note_is_set_aside() {
+    let (pool, db, dir, target, suppression, app_handle) = own_write_fixture().await;
+    pass_over_n1(&db, &suppression, &app_handle, &target).await;
+
+    let pasted = "pasted over, no front matter";
+    tokio::fs::write(&target, pasted).await.unwrap();
+    sqlx::query("UPDATE daily_notes_workspace SET content = 'edited in Lattice' WHERE id = 'n1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    pass_over_n1(&db, &suppression, &app_handle, &target).await;
+
+    let on_disk = tokio::fs::read_to_string(&target).await.unwrap();
+    assert!(on_disk.contains("edited in Lattice"), "{on_disk}");
+    let mut kept = Vec::new();
+    let mut entries = tokio::fs::read_dir(dir.path().join("notes")).await.unwrap();
+    while let Some(entry) = entries.next_entry().await.unwrap() {
+        let path = entry.path();
+        if path != target && tokio::fs::read_to_string(&path).await.unwrap() == pasted {
+            kept.push(path);
+        }
+    }
+    assert_eq!(kept.len(), 1, "the replaced file is kept beside the note");
+    let note = super::super::repository::workspace_notes(&db)
+        .get("n1")
+        .await
+        .unwrap();
+    assert_eq!(note.content, "edited in Lattice");
+}
+
+/// Lattice's write of one save lands but is never recorded, and the write of
+/// the next save is begun but never lands. The file then holds Lattice's own
+/// earlier text, not an outside edit, so the newer save is written over it
+/// rather than reverted to it.
+#[cfg(unix)]
+#[tokio::test]
+async fn an_unrecorded_write_of_lattices_own_is_not_an_outside_edit() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (pool, db, dir, target, suppression, app_handle) = own_write_fixture().await;
+    pass_over_n1(&db, &suppression, &app_handle, &target).await;
+
+    sqlx::query("UPDATE daily_notes_workspace SET content = 'second' WHERE id = 'n1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let w2 = super::super::repository::pending(&db)
+        .await
+        .unwrap()
+        .remove(0);
+    let n2 = super::super::repository::workspace_notes(&db)
+        .get("n1")
+        .await
+        .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER fail_mirror_record BEFORE UPDATE ON vault_write_outbox \
+         BEGIN SELECT RAISE(ABORT, 'injected'); END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert!(
+        mirror_note_to_disk(&db, &suppression, &app_handle, &w2, &n2, &target)
+            .await
+            .is_err()
+    );
+    sqlx::query("DROP TRIGGER fail_mirror_record")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(tokio::fs::read_to_string(&target)
+        .await
+        .unwrap()
+        .contains("second"));
+
+    sqlx::query("UPDATE daily_notes_workspace SET content = 'third' WHERE id = 'n1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let w3 = super::super::repository::pending(&db)
+        .await
+        .unwrap()
+        .remove(0);
+    let n3 = super::super::repository::workspace_notes(&db)
+        .get("n1")
+        .await
+        .unwrap();
+    let notes_dir = dir.path().join("notes");
+    std::fs::set_permissions(&notes_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let landed = mirror_note_to_disk(&db, &suppression, &app_handle, &w3, &n3, &target).await;
+    std::fs::set_permissions(&notes_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(landed.is_err(), "the write of 'third' must not land");
+
+    pass_over_n1(&db, &suppression, &app_handle, &target).await;
+
+    let notes: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, content FROM daily_notes_workspace ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(notes, [("n1".to_string(), "third".to_string())]);
+    assert!(tokio::fs::read_to_string(&target)
+        .await
+        .unwrap()
+        .contains("third"));
+}
