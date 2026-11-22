@@ -426,6 +426,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             code_review_languages,
             course_drills,
             start_practice_build,
+            cancel_practice_build,
             start_practice_session,
             get_practice_session,
             move_practice_stage,

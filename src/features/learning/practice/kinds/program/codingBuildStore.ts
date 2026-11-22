@@ -70,6 +70,13 @@ export async function listActivePracticeBuildJob(programId: string): Promise<Wir
   }
 }
 
+/** Stops an abandoned build on the backend; one that already finished is left alone. */
+function cancelAbandonedBuild(jobId: string) {
+  void programApi.cancelBuild(jobId).catch((error: unknown) => {
+    console.warn('[codingBuildStore] Could not cancel the abandoned build:', getErrorMessage(error));
+  });
+}
+
 let listenerUnsubscribe: (() => void) | null = null;
 const buildRequestTokens = new Map<string, number>();
 const sessionRequestTokens = new Map<string, number>();
@@ -254,6 +261,8 @@ export const useCodingBuildStore = create<CodingBuildStore>((set, get) => {
           focus: choice.focus ?? null,
         });
         if (buildRequestTokens.get(programId) !== requestToken) {
+          // Discarded while the build was being queued: stop it as well.
+          cancelAbandonedBuild(result.jobId);
           set((state) => ({
             ignoredJobIds: {
               ...state.ignoredJobIds,
@@ -356,7 +365,9 @@ export const useCodingBuildStore = create<CodingBuildStore>((set, get) => {
     },
 
     discardBuild: (programId) => {
-      const jobId = get().handles[programId]?.jobId;
+      const handle = get().handles[programId];
+      const jobId = handle?.jobId ?? null;
+      if (jobId && handle?.phase.kind === 'building') cancelAbandonedBuild(jobId);
       buildRequestTokens.set(programId, (buildRequestTokens.get(programId) ?? 0) + 1);
       sessionRequestTokens.set(programId, (sessionRequestTokens.get(programId) ?? 0) + 1);
       inFlightBuildPrograms.delete(programId);

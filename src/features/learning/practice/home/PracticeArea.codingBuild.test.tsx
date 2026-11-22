@@ -13,6 +13,7 @@ import { usePracticeView } from './usePracticeView';
 
 const mocks = vi.hoisted(() => ({
   startBuild: vi.fn(),
+  cancelBuild: vi.fn(),
   startSession: vi.fn(),
   listJobs: vi.fn(),
   subscribers: new Set<(job: Wire.JobDto) => void>(),
@@ -41,7 +42,7 @@ vi.mock('@/features/jobs/api', () => ({
   },
 }));
 vi.mock('@/features/learning/practice/kinds/program/programApi', () => ({
-  programApi: { startBuild: mocks.startBuild },
+  programApi: { startBuild: mocks.startBuild, cancelBuild: mocks.cancelBuild },
 }));
 vi.mock('@/features/learning/practice/session/sessionApi', () => ({
   sessionApi: { startSession: mocks.startSession },
@@ -134,6 +135,8 @@ describe('PracticeArea coding build lifecycle (real CodingEntry + store)', () =>
     mocks.subscribers.clear();
     mocks.openedSessions = [];
     mocks.listJobs.mockResolvedValue({ ok: true, data: [] });
+    mocks.cancelBuild.mockReset();
+    mocks.cancelBuild.mockResolvedValue(null);
   });
 
   it('discards the cancelled coding build handle so the next coding choice starts fresh with its new settings', async () => {
@@ -160,6 +163,8 @@ describe('PracticeArea coding build lifecycle (real CodingEntry + store)', () =>
 
     await screen.findByTestId('practice-home');
     expect(screen.queryByRole('region', { name: 'Coding build status' })).not.toBeInTheDocument();
+    // The abandoned build is stopped on the backend, not only hidden.
+    expect(mocks.cancelBuild).toHaveBeenCalledExactlyOnceWith('job-old');
 
     const cardAfterCancel = screen.getByTestId('card-code');
     await user.selectOptions(within(cardAfterCancel).getByRole('combobox', { name: 'Difficulty' }), 'hard');

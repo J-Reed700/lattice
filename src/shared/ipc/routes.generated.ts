@@ -42,6 +42,7 @@ export const COMMAND_PLUGINS = {
   cancel_learning_outline: 'learning',
   cancel_learning_pack_import_preview: 'learning',
   cancel_learning_practical_run: 'learning',
+  cancel_practice_build: 'learning',
   capture_learning_source_snapshot: 'learning',
   capture_reference: 'dailynotes',
   capture_web_page_snapshot: 'web',
