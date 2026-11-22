@@ -293,8 +293,9 @@ async fn insufficient_pass_1_escalates_to_utility_llm_once_and_fuses_results() {
         .any(|source| source.content.contains("layered Rust architecture")));
 }
 
-async fn run_turn(
+async fn run_turn_in_conversation(
     runtime: &FakeRuntime,
+    conversation_id: &str,
     request_id: &str,
     message: &str,
     standalone_question: Option<&str>,
@@ -305,12 +306,12 @@ async fn run_turn(
 ) -> RetrievalPipelineOutcome {
     let conversations: Arc<dyn ConversationServiceTrait> = runtime.conversations.clone();
     let llm: Arc<dyn LLMPort> = Scripted::new([]);
-    let recorder = TurnRecorder::silent(CONVERSATION, request_id);
+    let recorder = TurnRecorder::silent(conversation_id, request_id);
     run_retrieval_pipeline_with_scope(
         runtime,
         ChatTurn {
             conv_service: &conversations,
-            conversation_id: CONVERSATION,
+            conversation_id,
             request_id,
             message,
             standalone_question,
@@ -328,6 +329,30 @@ async fn run_turn(
         doc_context,
         EvidenceBudget::new(20_000),
         None,
+        scope,
+    )
+    .await
+}
+
+async fn run_turn(
+    runtime: &FakeRuntime,
+    request_id: &str,
+    message: &str,
+    standalone_question: Option<&str>,
+    decision: &RouterDecisionOutcome,
+    flags: SearchFlags,
+    doc_context: &[lattice_core::domain::conversation::DocumentReference],
+    scope: Option<&crate::features::conversation::chat::scope::ScopeSnapshot>,
+) -> RetrievalPipelineOutcome {
+    run_turn_in_conversation(
+        runtime,
+        CONVERSATION,
+        request_id,
+        message,
+        standalone_question,
+        decision,
+        flags,
+        doc_context,
         scope,
     )
     .await
@@ -662,4 +687,329 @@ async fn numbered_clause_question_plans_opening_documents_upfront() {
     assert_eq!(runtime.loader_counts.utility_loader_calls(), 1);
     assert_eq!(utility.requests().len(), 1);
     assert!(!outcome.sub_timings.kb_planner_skipped);
+}
+
+fn sufficient_passages_with(content: &str) -> Vec<SearchResultDto> {
+    (0..3)
+        .map(|index| SearchResultDto {
+            id: format!("doc-1-hit-{index}"),
+            content: content.to_string(),
+            position: Some(index),
+            ..sample_passage()
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn explicit_clause_references_plan_upfront_while_ordinary_numbers_stay_optimistic() {
+    for clause_query in [
+        "What does clause 12 say?",
+        "Check section 7 in the architecture guide.",
+        "What is required by Article 5?",
+        "Look at § 4.2 for the warranty term.",
+        "Compare Section 3.1.2 with the summary.",
+    ] {
+        let utility = Scripted::new([CompletionResponse::from_text(
+            r#"{"queries":[{"query":"Guide section lookup"}],"opening_document_ids":["d1"],"start_at_beginning":"false"}"#,
+        )]);
+        let runtime = FakeRuntime {
+            vault: Some(TestVault {
+                records: records_with_documents(true).await,
+                search: Arc::new(FixedSearch {
+                    passages: sufficient_passages_with(&format!(
+                        "Guide section lookup details: {clause_query}"
+                    )),
+                }),
+            }),
+            utility_llm: Some(utility.clone()),
+            embedding: Some(Arc::new(FakeEmbedding)),
+            ..FakeRuntime::default()
+        };
+
+        let outcome = run_turn(
+            &runtime,
+            "req-explicit-clause",
+            clause_query,
+            None,
+            &new_search_decision(),
+            SearchFlags {
+                force_kb_search: true,
+                ..SearchFlags::default()
+            },
+            &[],
+            None,
+        )
+        .await;
+
+        assert_eq!(
+            runtime.loader_counts.utility_loader_calls(),
+            1,
+            "{clause_query}"
+        );
+        assert_eq!(utility.requests().len(), 1, "{clause_query}");
+        assert!(!outcome.sub_timings.kb_planner_skipped, "{clause_query}");
+    }
+
+    for (ordinary_number_query, passage_text) in [
+        (
+            "What was the company revenue in 2024?",
+            "The company revenue in 2024 reached $42 million across divisions.",
+        ),
+        (
+            "What is the 3.5 GPA scholarship threshold?",
+            "Students meeting the 3.5 GPA scholarship threshold remain eligible.",
+        ),
+        (
+            "How does Python 3.12 handle typed dicts?",
+            "Python 3.12 handles typed dicts via TypedDict unpacking rules.",
+        ),
+    ] {
+        let utility = Scripted::new([]);
+        let runtime = FakeRuntime {
+            vault: Some(TestVault {
+                records: records_with_documents(true).await,
+                search: Arc::new(FixedSearch {
+                    passages: sufficient_passages_with(passage_text),
+                }),
+            }),
+            utility_llm: Some(utility.clone()),
+            embedding: Some(Arc::new(FakeEmbedding)),
+            ..FakeRuntime::default()
+        };
+
+        let outcome = run_turn(
+            &runtime,
+            "req-ordinary-number",
+            ordinary_number_query,
+            None,
+            &new_search_decision(),
+            SearchFlags {
+                force_kb_search: true,
+                ..SearchFlags::default()
+            },
+            &[],
+            None,
+        )
+        .await;
+
+        assert_eq!(
+            runtime.loader_counts.utility_loader_calls(),
+            0,
+            "{ordinary_number_query}"
+        );
+        assert!(utility.requests().is_empty(), "{ordinary_number_query}");
+        assert!(
+            outcome.sub_timings.kb_planner_skipped,
+            "{ordinary_number_query}"
+        );
+    }
+}
+
+fn doc_1_scope_snapshot() -> crate::features::conversation::chat::scope::ScopeSnapshot {
+    crate::features::conversation::chat::scope::ScopeSnapshot {
+        space: Some(SpaceDocumentScope {
+            space_id: DEFAULT_SPACE_ID.to_string(),
+            document_ids: HashSet::from(["doc-1".to_string()]),
+        }),
+        resolved: true,
+        focus: crate::features::conversation::chat::focus::FocusScope::default(),
+        recent_document: None,
+        load_ms: 5,
+    }
+}
+
+async fn seed_multi_turn_conversation(runtime: &FakeRuntime, turns: &[(&str, &str)]) -> String {
+    let conversation = runtime
+        .conversations
+        .create_conversation("Multi-turn thread".into(), None)
+        .await
+        .unwrap();
+    for (user_msg, assistant_msg) in turns {
+        runtime
+            .conversations
+            .add_user_message(conversation.id.as_str(), (*user_msg).into(), 10)
+            .await
+            .unwrap();
+        runtime
+            .conversations
+            .add_assistant_message(conversation.id.as_str(), (*assistant_msg).into(), 20)
+            .await
+            .unwrap();
+    }
+    conversation.id.to_string()
+}
+
+#[tokio::test]
+async fn multi_turn_independent_topic_skips_planner_upfront() {
+    let utility = Scripted::new([]);
+    let runtime = FakeRuntime {
+        vault: Some(TestVault {
+            records: records_with_documents(true).await,
+            search: Arc::new(FixedSearch {
+                passages: sufficient_passages_with(
+                    "Architecture for severity-1 outage failover uses automated multi-region routing.",
+                ),
+            }),
+        }),
+        utility_llm: Some(utility.clone()),
+        embedding: Some(Arc::new(FakeEmbedding)),
+        ..FakeRuntime::default()
+    };
+    let conv_id = seed_multi_turn_conversation(
+        &runtime,
+        &[(
+            "What is the relocation reimbursement limit for new hires?",
+            "Employees moving more than 50 miles receive up to $5,000 in relocation reimbursement.",
+        )],
+    )
+    .await;
+    let snapshot = doc_1_scope_snapshot();
+
+    let outcome = run_turn_in_conversation(
+        &runtime,
+        &conv_id,
+        "req-multiturn-independent",
+        "What is the architecture for severity-1 outage failover?",
+        None,
+        &new_search_decision(),
+        SearchFlags {
+            force_kb_search: true,
+            ..SearchFlags::default()
+        },
+        &[],
+        Some(&snapshot),
+    )
+    .await;
+
+    assert!(outcome.kb_attempted);
+    assert_eq!(runtime.loader_counts.utility_loader_calls(), 0);
+    assert!(utility.requests().is_empty());
+    assert!(outcome.sub_timings.kb_planner_skipped);
+}
+
+#[tokio::test]
+async fn multi_turn_short_anchored_followup_uses_planner_skip_plan() {
+    let utility = Scripted::new([]);
+    let runtime = FakeRuntime {
+        vault: Some(TestVault {
+            records: records_with_documents(true).await,
+            search: Arc::new(FixedSearch {
+                passages: sufficient_passages_with(
+                    "Relocation reimbursement exceptions apply with VP approval.",
+                ),
+            }),
+        }),
+        utility_llm: Some(utility.clone()),
+        embedding: Some(Arc::new(FakeEmbedding)),
+        ..FakeRuntime::default()
+    };
+    let conv_id = seed_multi_turn_conversation(
+        &runtime,
+        &[(
+            "What is the relocation reimbursement schedule?",
+            "Relocation reimbursement covers moving expenses when employees transfer offices.",
+        )],
+    )
+    .await;
+    let snapshot = doc_1_scope_snapshot();
+
+    let outcome = run_turn_in_conversation(
+        &runtime,
+        &conv_id,
+        "req-multiturn-anchored",
+        "Any exceptions for relocation reimbursement?",
+        None,
+        &new_search_decision(),
+        SearchFlags {
+            force_kb_search: true,
+            force_followup_mode: true,
+            ..SearchFlags::default()
+        },
+        &[],
+        Some(&snapshot),
+    )
+    .await;
+
+    assert!(outcome.kb_attempted);
+    assert_eq!(runtime.loader_counts.utility_loader_calls(), 0);
+    assert!(utility.requests().is_empty());
+    assert!(outcome.sub_timings.kb_planner_skipped);
+}
+
+#[tokio::test]
+async fn multi_turn_unanchored_followups_and_returns_plan_upfront() {
+    let snapshot = doc_1_scope_snapshot();
+    let turns = [
+        (
+            "What is the relocation reimbursement clause?",
+            "Employees leaving within 12 months repay relocation reimbursement to Apex Relocation.",
+        ),
+        (
+            "What is the incident response SLA?",
+            "Severity-1 outages have a 15-minute response target.",
+        ),
+    ];
+
+    for (req_id, message, standalone, force_followup) in [
+        (
+            "req-unanchored-pronoun",
+            "Is there any way round that?",
+            None,
+            false,
+        ),
+        (
+            "req-distant-return",
+            "Back to the relocation: when does that supplier's master agreement next renew?",
+            None,
+            false,
+        ),
+        (
+            "req-triage-flagged-followup",
+            "Do contractors qualify under the same terms?",
+            Some("Do contractors qualify for Apex Relocation reimbursement under the master agreement?"),
+            true,
+        ),
+    ] {
+        let utility = Scripted::new([CompletionResponse::from_text(
+            r#"{"queries":[{"query":"Apex Relocation master agreement"}],"opening_document_ids":["d1"],"start_at_beginning":"false"}"#,
+        )]);
+        let passage_text = format!(
+            "Apex Relocation master agreement renewal and waiver terms. {message} {}",
+            standalone.unwrap_or_default()
+        );
+        let runtime = FakeRuntime {
+            vault: Some(TestVault {
+                records: records_with_documents(true).await,
+                search: Arc::new(FixedSearch {
+                    passages: sufficient_passages_with(&passage_text),
+                }),
+            }),
+            utility_llm: Some(utility.clone()),
+            embedding: Some(Arc::new(FakeEmbedding)),
+            ..FakeRuntime::default()
+        };
+        let conv_id = seed_multi_turn_conversation(&runtime, &turns).await;
+
+        let outcome = run_turn_in_conversation(
+            &runtime,
+            &conv_id,
+            req_id,
+            message,
+            standalone,
+            &new_search_decision(),
+            SearchFlags {
+                force_kb_search: true,
+                force_followup_mode: force_followup,
+                ..SearchFlags::default()
+            },
+            &[],
+            Some(&snapshot),
+        )
+        .await;
+
+        assert!(outcome.kb_attempted, "{req_id}");
+        assert_eq!(runtime.loader_counts.utility_loader_calls(), 1, "{req_id}");
+        assert_eq!(utility.requests().len(), 1, "{req_id}");
+        assert!(!outcome.sub_timings.kb_planner_skipped, "{req_id}");
+    }
 }

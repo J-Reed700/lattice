@@ -1310,3 +1310,44 @@ fn openai_calls_with_no_or_broken_arguments_do_not_fail_the_reply() {
             .is_some()
     );
 }
+
+#[test]
+fn non_thinking_sampling_applies_only_to_non_thinking_cloud_models() {
+    use lattice_core::application::ports::llm_port::SamplingOverride;
+
+    let body_for = |provider, model: &str, effort: Option<&str>| {
+        let settings = LLMSettingsDto {
+            provider,
+            model: model.into(),
+            ..Default::default()
+        };
+        let llm = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
+        llm.uncut_body(
+            &legacy::completion(legacy::Completion {
+                thinking: ThinkingMode::On,
+                reasoning_effort: effort.map(str::to_owned),
+                sampling: None,
+                non_thinking_sampling: Some(SamplingOverride::deterministic()),
+                ..Default::default()
+            }),
+            false,
+        )
+        .unwrap()
+    };
+
+    let chat = body_for(LLMProvider::Openai, "gpt-4o-mini", Some("low"));
+    assert_eq!(chat["temperature"], 0.0, "{chat}");
+    assert_eq!(chat["top_p"], 1.0, "{chat}");
+
+    let reasoning = body_for(LLMProvider::Openai, "o3", Some("low"));
+    assert!(reasoning.get("temperature").is_none(), "{reasoning}");
+    assert!(reasoning.get("top_p").is_none(), "{reasoning}");
+
+    let google_off = body_for(LLMProvider::Google, "gemini-2.5-flash", Some("none"));
+    assert_eq!(google_off["temperature"], 0.0, "{google_off}");
+    assert_eq!(google_off["top_p"], 1.0, "{google_off}");
+
+    let google_on = body_for(LLMProvider::Google, "gemini-2.5-flash", Some("low"));
+    assert!(google_on.get("temperature").is_none(), "{google_on}");
+    assert!(google_on.get("top_p").is_none(), "{google_on}");
+}

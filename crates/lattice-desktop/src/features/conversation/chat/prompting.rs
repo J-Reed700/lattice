@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use lattice_core::application::contracts::search::SearchResultDto;
 use lattice_core::application::contracts::settings::{
     LLMPromptSettingsDto, DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE, DEFAULT_RAG_PROMPT_TEMPLATE,
@@ -45,6 +47,10 @@ pub(super) struct PromptMessageBuilder<'a> {
     deep_research_searches: Option<Vec<String>>,
     /// Some of the evidence the turn found was left out to fit the window.
     evidence_cut: bool,
+    /// Whether this turn actually offers document lookup/read tools
+    /// (`get_document`, `read_more`, `semantic_search`). Default templates omit
+    /// "do not answer yet: call ..." directives when false.
+    document_tools_available: bool,
 }
 
 impl<'a> PromptMessageBuilder<'a> {
@@ -76,7 +82,13 @@ impl<'a> PromptMessageBuilder<'a> {
             thin_kb_reason: None,
             deep_research_searches: None,
             evidence_cut: false,
+            document_tools_available: true,
         }
+    }
+
+    pub(super) fn with_document_tools(mut self, available: bool) -> Self {
+        self.document_tools_available = available;
+        self
     }
 
     /// Say that evidence the turn found was left out because the model's
@@ -191,11 +203,13 @@ impl<'a> PromptMessageBuilder<'a> {
             && self.linked_web_sources_context.is_none()
         {
             if let Some(context_text) = self.followup_context.as_deref() {
-                return render_prompt_template(
-                    evidence_template(self.prompt_settings, self.source, self.strict_sources),
-                    context_text,
-                    self.question,
+                let template = resolved_evidence_template(
+                    self.prompt_settings,
+                    self.source,
+                    self.strict_sources,
+                    self.document_tools_available,
                 );
+                return render_prompt_template(template.as_ref(), context_text, self.question);
             }
         }
 
@@ -265,12 +279,25 @@ user's own files."
             }
         }
         if self.evidence_cut && context_sections.len() > 1 {
-            context_sections.push(EVIDENCE_CUT_NOTE.to_string());
+            context_sections.push(
+                if self.document_tools_available {
+                    EVIDENCE_CUT_NOTE
+                } else {
+                    EVIDENCE_CUT_NO_TOOLS_NOTE
+                }
+                .to_string(),
+            );
         }
 
         if context_sections.len() > 1 {
+            let template = resolved_evidence_template(
+                self.prompt_settings,
+                self.source,
+                self.strict_sources,
+                self.document_tools_available,
+            );
             return render_prompt_template(
-                evidence_template(self.prompt_settings, self.source, self.strict_sources),
+                template.as_ref(),
                 &context_sections.join("\n\n"),
                 self.question,
             );
@@ -316,9 +343,13 @@ Do not mention the knowledge base unless asked.\n\nQuestion: {question}",
         }
 
         if self.strict_sources && self.evidence_cut {
+            let tool_hint = if self.document_tools_available {
+                " Use the document search and read tools if they are available before concluding evidence is missing."
+            } else {
+                ""
+            };
             return format!(
-                "Sources-only mode is on, and evidence was found for this turn, but the model's context window had no room to carry any of it. \
-Use the document search and read tools if they are available before concluding evidence is missing. \
+                "Sources-only mode is on, and evidence was found for this turn, but the model's context window had no room to carry any of it.{tool_hint} \
 Do not answer from general knowledge.\n\nQuestion: {question}",
                 question = self.question
             );
@@ -356,10 +387,15 @@ Do not answer from general knowledge. Explain this clearly in one sentence and o
     /// and evidence cut for room are different outcomes and must not be conflated.
     fn retrieval_note(&self) -> String {
         if self.evidence_cut {
-            return "Evidence was found for this turn, but the model's context window had no room \
+            return if self.document_tools_available {
+                "Evidence was found for this turn, but the model's context window had no room \
 to carry any of it. Say so, and use the document search and read tools if they are available, \
 rather than describing this as a search that found nothing."
-                .to_string();
+            } else {
+                "Evidence was found for this turn, but the model's context window had no room \
+to carry any of it. Say so rather than describing this as a search that found nothing."
+            }
+            .to_string();
         }
         let outcome = if let Some(reason) = self.kb_unavailable_reason.as_deref() {
             format!(
@@ -405,6 +441,10 @@ const EVIDENCE_CUT_NOTE: &str =
 out because the model's context window could not hold it. If what is here does not settle the \
 question, use the document search and read tools before concluding the evidence is missing.";
 
+const EVIDENCE_CUT_NO_TOOLS_NOTE: &str =
+    "Context window: Lower-ranked evidence found for this turn was left \
+out because the model's context window could not hold it.";
+
 /// Kept beside the passages rather than only in the system prompt so smaller
 /// models apply it while reading the evidence. This is deliberately about the
 /// shape of evidence, not any domain or fixture: a practical question often
@@ -422,42 +462,70 @@ broader one.";
 ///
 /// The turn's budget charges this as the message before it sizes the
 /// evidence, because it is what the evidence travels in.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn evidence_frame(
     prompt_settings: &LLMPromptSettingsDto,
     question: &str,
     source: Option<TurnSourcePolicy>,
     strict_sources: bool,
 ) -> String {
-    render_prompt_template(
-        evidence_template(prompt_settings, source, strict_sources),
-        CONTINUITY_NOTE,
-        question,
-    )
+    evidence_frame_with_tools(prompt_settings, question, source, strict_sources, true)
 }
+
+pub(super) fn evidence_frame_with_tools(
+    prompt_settings: &LLMPromptSettingsDto,
+    question: &str,
+    source: Option<TurnSourcePolicy>,
+    strict_sources: bool,
+    document_tools_available: bool,
+) -> String {
+    let template = resolved_evidence_template(
+        prompt_settings,
+        source,
+        strict_sources,
+        document_tools_available,
+    );
+    render_prompt_template(template.as_ref(), CONTINUITY_NOTE, question)
+}
+
+const STRICT_TOOL_DIRECTIVE: &str = "When the supplied excerpts already answer the question, do not call tools. If the excerpts leave any part of the question unanswered — including when excerpts from a matching document omit the section or detail asked about — do not answer yet: call get_document (passing only the bracketed source label, such as [s1], never a filename), read_more (passing the bracketed continuation handle), or semantic_search first. ";
+const HYBRID_TOOL_DIRECTIVE: &str = "When the supplied excerpts already answer the question, do not call tools. If the excerpts are incomplete for a question about the user's documents — including when excerpts from a matching document omit the section or detail asked about — do not answer yet: call get_document (passing only the bracketed source label, such as [s1], never a filename), read_more (passing the bracketed continuation handle), or semantic_search first. ";
+const CLOSING_TOOL_DIRECTIVE: &str =
+    ", or call a document tool first if a needed section or detail is missing from the excerpts.";
 
 /// The template an evidence-carrying message renders in: the source's own,
 /// such as an Explorer folder's; either built-in default template switched
 /// between strict (`DEFAULT_RAG_PROMPT_TEMPLATE`) and hybrid
-/// (`DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE`) based on `strict_sources`; or else
-/// the user's custom `rag_prompt_template` verbatim.
-fn evidence_template(
-    prompt_settings: &LLMPromptSettingsDto,
+/// (`DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE`) based on `strict_sources` (stripping
+/// document-tool call orders when no document tools are offered); or else the
+/// user's custom `rag_prompt_template` verbatim.
+fn resolved_evidence_template<'a>(
+    prompt_settings: &'a LLMPromptSettingsDto,
     source: Option<TurnSourcePolicy>,
     strict_sources: bool,
-) -> &str {
+    document_tools_available: bool,
+) -> Cow<'a, str> {
     if let Some(template) = source.and_then(|source| source.evidence_template) {
-        return template;
+        return Cow::Borrowed(template);
     }
     if prompt_settings.rag_prompt_template == DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE
         || prompt_settings.rag_prompt_template == DEFAULT_RAG_PROMPT_TEMPLATE
     {
-        return if strict_sources {
+        let base = if strict_sources {
             DEFAULT_RAG_PROMPT_TEMPLATE
         } else {
             DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE
         };
+        if document_tools_available {
+            return Cow::Borrowed(base);
+        }
+        let adapted = base
+            .replace(STRICT_TOOL_DIRECTIVE, "")
+            .replace(HYBRID_TOOL_DIRECTIVE, "")
+            .replace(CLOSING_TOOL_DIRECTIVE, ".");
+        return Cow::Owned(adapted);
     }
-    &prompt_settings.rag_prompt_template
+    Cow::Borrowed(&prompt_settings.rag_prompt_template)
 }
 
 /// What a deep-research turn is asked to do with the rounds it has left: go

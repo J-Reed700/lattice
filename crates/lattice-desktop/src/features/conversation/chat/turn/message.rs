@@ -44,6 +44,7 @@ pub(super) struct MessageFrame {
     pub(super) kb_unavailable_reason: Option<String>,
     pub(super) kb_attempted: bool,
     pub(super) sufficiency: Option<SufficiencyVerdict>,
+    pub(super) document_tools_available: bool,
 }
 
 /// The turn's message, its evidence best first.
@@ -157,6 +158,7 @@ impl TurnMessage {
         .with_kb_attempted(frame.kb_attempted)
         .with_kb_sufficiency(frame.sufficiency.as_ref())
         .with_evidence_cut(kept.len() < self.items.len())
+        .with_document_tools(frame.document_tools_available)
         .build()
     }
 
@@ -204,6 +206,7 @@ mod tests {
             kb_unavailable_reason: None,
             kb_attempted: true,
             sufficiency: None,
+            document_tools_available: true,
         }
     }
 
@@ -325,5 +328,39 @@ mod tests {
         let mut all: Vec<SourceDto> = (1..=6).map(|id| source(Some(id))).collect();
         message().keep_sources(6, &mut all);
         assert_eq!(all.len(), 6, "nothing is dropped when everything fits");
+    }
+
+    #[test]
+    fn omits_document_tool_directives_for_default_templates_when_document_tools_are_unavailable() {
+        for strict_sources in [false, true] {
+            let mut frame = frame();
+            frame.flags.strict_sources = strict_sources;
+            frame.document_tools_available = false;
+            let rendered = TurnMessage::new(frame)
+                .with_library(vec![passage(1)])
+                .render(1);
+
+            for forbidden in [
+                "do not answer yet: call get_document",
+                "get_document",
+                "read_more",
+                "semantic_search",
+                "call a document tool first",
+                "do not call tools",
+            ] {
+                assert!(
+                    !rendered.contains(forbidden),
+                    "strict={strict_sources}: unexpected {forbidden:?} in {rendered}"
+                );
+            }
+            assert!(
+                rendered.contains("Answer only the latest question above directly (never repeat an earlier turn's answer)."),
+                "strict={strict_sources}: {rendered}"
+            );
+            assert!(
+                rendered.contains("[1] Document: d1.md"),
+                "strict={strict_sources}: {rendered}"
+            );
+        }
     }
 }

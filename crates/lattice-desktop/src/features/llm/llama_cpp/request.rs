@@ -42,7 +42,7 @@ impl LlamaCppLlm {
         // A caller's explicit override wins field by field; what it leaves
         // unset comes from the profile of the mode the model runs in.
         let profile = generation.profile(thinks);
-        let sampling = request.sampling.unwrap_or_default();
+        let sampling = fitted.effective_sampling().unwrap_or_default();
         let mut body = serde_json::Map::from_iter([
             ("model".into(), json!(self.config.model)),
             ("messages".into(), json!(messages)),

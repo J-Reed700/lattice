@@ -781,7 +781,24 @@ fn course_turn(runtime: &FakeRuntime, source: TurnSource) -> PreparedTurn {
 }
 
 fn rendered(
+    runtime: &FakeRuntime,
     turn: &PreparedTurn,
+    passages: Vec<SourcePassage>,
+    evidence: lattice_core::application::services::context_assembler::EvidenceBudget,
+) -> RenderedPrompt {
+    rendered_with_flags(
+        runtime,
+        turn,
+        SearchFlags::from_preferences(None),
+        passages,
+        evidence,
+    )
+}
+
+fn rendered_with_flags(
+    runtime: &FakeRuntime,
+    turn: &PreparedTurn,
+    flags: SearchFlags,
     passages: Vec<SourcePassage>,
     evidence: lattice_core::application::services::context_assembler::EvidenceBudget,
 ) -> RenderedPrompt {
@@ -802,8 +819,9 @@ fn rendered(
     };
     let (sink, _) = recording_sink();
     super::assemble::render_prompt(
+        runtime,
         turn,
-        SearchFlags::from_preferences(None),
+        flags,
         None,
         carried,
         retrieved,
@@ -817,10 +835,14 @@ fn rendered(
 #[test]
 fn a_source_s_passages_join_the_turn_s_numbered_passages() {
     use lattice_core::application::services::context_assembler::EvidenceBudget;
-    let runtime = FakeRuntime::default();
+    let runtime = FakeRuntime {
+        tools: Some(Arc::new(LibraryTools)),
+        ..FakeRuntime::default()
+    };
     let turn = course_turn(&runtime, Arc::new(Course::new()));
 
     let prompt = rendered(
+        &runtime,
         &turn,
         vec![passage("chunk-1", "Fusion sums reciprocal ranks.")],
         EvidenceBudget::new(10_000),
@@ -856,6 +878,7 @@ fn a_source_s_passage_the_budget_cut_is_no_source() {
     let turn = course_turn(&runtime, Arc::new(Course::new()));
 
     let prompt = rendered(
+        &runtime,
         &turn,
         vec![passage("chunk-1", &"word ".repeat(400))],
         EvidenceBudget::new(5),
@@ -1154,4 +1177,126 @@ fn zero_claim_turns_skip_background_verification_with_immediate_metadata() {
     assert_eq!(pending_strict["pending"], true);
     assert_eq!(pending_strict["groundingMode"], "strict");
     assert!(pending_strict.get("citedOnly").is_none());
+}
+
+struct WithoutTools;
+
+#[async_trait::async_trait]
+impl LLMPort for WithoutTools {
+    async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
+        unreachable!("only prompt rendering")
+    }
+    fn model_name(&self) -> &str {
+        "no-tools"
+    }
+    fn max_context_tokens(&self) -> usize {
+        32_768
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+    fn supports_tool_calling(&self) -> bool {
+        false
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
+}
+
+#[test]
+fn render_prompt_omits_tool_call_orders_when_no_document_tools_are_offered() {
+    use lattice_core::application::services::context_assembler::EvidenceBudget;
+
+    let runtime = FakeRuntime {
+        tools: Some(Arc::new(LibraryTools)),
+        ..FakeRuntime::default()
+    };
+
+    // Case 1: Model does not support tool calling.
+    let mut no_tools_turn = PreparedTurn::for_test(
+        "conv-no-tools",
+        "req-no-tools",
+        Arc::new(WithoutTools),
+        runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
+    )
+    .unwrap();
+    no_tools_turn.source = Some(Arc::new(Course::new()));
+    let no_tools_prompt = rendered(
+        &runtime,
+        &no_tools_turn,
+        vec![passage("chunk-1", "Fusion sums reciprocal ranks.")],
+        EvidenceBudget::new(10_000),
+    );
+    for forbidden in [
+        "do not answer yet",
+        "get_document",
+        "read_more",
+        "semantic_search",
+        "call a document tool first",
+    ] {
+        assert!(
+            !no_tools_prompt.enhanced_message.contains(forbidden),
+            "no-tools model saw {forbidden:?}: {}",
+            no_tools_prompt.enhanced_message
+        );
+    }
+
+    // Case 2: Runtime without registered tools offers no document tools.
+    let no_registry_runtime = FakeRuntime::default();
+    let no_registry_turn = course_turn(&no_registry_runtime, Arc::new(Course::new()));
+    let no_registry_prompt = rendered(
+        &no_registry_runtime,
+        &no_registry_turn,
+        vec![passage("chunk-1", "Fusion sums reciprocal ranks.")],
+        EvidenceBudget::new(10_000),
+    );
+    assert!(
+        !no_registry_prompt.enhanced_message.contains("get_document"),
+        "turn with no registered tools still ordered get_document: {}",
+        no_registry_prompt.enhanced_message
+    );
+
+    // Explorer folder turns still offer `get_document`/`read_more` for named documents.
+    let folder_turn = course_turn(&runtime, Arc::new(Folder));
+    let folder_prompt = rendered(
+        &runtime,
+        &folder_turn,
+        vec![passage("chunk-1", "Fusion sums reciprocal ranks.")],
+        EvidenceBudget::new(10_000),
+    );
+    assert!(
+        folder_prompt.enhanced_message.contains("get_document"),
+        "folder turn with get_document still needs document-read instructions: {}",
+        folder_prompt.enhanced_message
+    );
+
+    // Case 3: Closed-book turn strips external/library document tools.
+    let mut course = PreparedTurn::for_test(
+        "conv-closed-book",
+        "req-closed-book",
+        Arc::new(ToolCalling),
+        runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
+    )
+    .unwrap();
+    course.source = Some(Arc::new(Course::new()));
+    let closed_book_prompt = rendered_with_flags(
+        &runtime,
+        &course,
+        SearchFlags {
+            closed_book: true,
+            ..SearchFlags::from_preferences(None)
+        },
+        vec![passage("chunk-1", "Fusion sums reciprocal ranks.")],
+        EvidenceBudget::new(10_000),
+    );
+    assert!(
+        !closed_book_prompt.enhanced_message.contains("get_document"),
+        "closed-book turn still ordered get_document: {}",
+        closed_book_prompt.enhanced_message
+    );
 }

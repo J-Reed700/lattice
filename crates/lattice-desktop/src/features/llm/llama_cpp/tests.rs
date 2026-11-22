@@ -2055,3 +2055,183 @@ fn unmatched_think_close_drops_trailing_duplicate_without_touching_explicit_thin
         "2 < 3 and <code>x <"
     );
 }
+
+fn decode_stream_chunks(chunks: &[&str], finish_reason: &str) -> (String, String) {
+    let mut decoder = streaming::Decoder::for_completion();
+    let mut streamed = String::new();
+    for chunk in chunks {
+        let ev = json!({"choices":[{"delta":{"content":chunk}}]});
+        for piece in decoder.push(format!("data: {ev}\n\n").as_bytes()).unwrap() {
+            streamed.push_str(&piece);
+        }
+    }
+    let fin = json!({"choices":[{"delta":{},"finish_reason":finish_reason}]});
+    for piece in decoder
+        .push(format!("data: {fin}\n\ndata: [DONE]\n\n").as_bytes())
+        .unwrap()
+    {
+        streamed.push_str(&piece);
+    }
+    let final_text = decoder.into_response().unwrap().text;
+    (streamed, final_text)
+}
+
+fn parse_non_stream_text(content: &str) -> String {
+    parse_completion(json!({
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": content
+            },
+            "finish_reason": "stop"
+        }]
+    }))
+    .unwrap()
+    .text
+}
+
+#[test]
+fn unmatched_think_close_preserves_prose_code_and_json_mentions() {
+    let cases = [
+        (
+            "prose",
+            vec![
+                "The model emits ",
+                "</th",
+                "ink>",
+                " to finish hidden reasoning.",
+            ],
+        ),
+        (
+            "markdown_fence",
+            vec!["```xml\n", "</think>", "\n```\nUse that closing tag."],
+        ),
+        (
+            "memory_json",
+            vec![
+                "{\"memories\":[{\"text\":\"Discussed ",
+                "</think>",
+                " tag handling\"}]}",
+            ],
+        ),
+        (
+            "trailing_inline",
+            vec!["The closing marker is ", "</think>"],
+        ),
+    ];
+
+    for (label, chunks) in cases {
+        let full = chunks.concat();
+        let (streamed, stream_text) = decode_stream_chunks(&chunks, "stop");
+        assert_eq!(streamed, full, "{label}: streamed");
+        assert_eq!(stream_text, full, "{label}: stream response");
+        assert_eq!(parse_non_stream_text(&full), full, "{label}: non-stream");
+    }
+}
+
+#[test]
+fn unmatched_think_close_preserves_leaked_reasoning_followed_by_real_answer() {
+    let leaked_chunks = [
+        "Let me check section 4 carefully.\n",
+        "</th",
+        "ink>\n",
+        "The stopcock is under the sink [s1].",
+    ];
+    let full = leaked_chunks.concat();
+    let (streamed, stream_text) = decode_stream_chunks(&leaked_chunks, "stop");
+    assert_eq!(streamed, full);
+    assert_eq!(stream_text, full);
+    assert_eq!(parse_non_stream_text(&full), full);
+
+    let overlapping_chunks = [
+        "First check the manual\n",
+        "</think>\n",
+        "First check the manual carefully, then turn clockwise [s1].",
+    ];
+    let overlapping_full = overlapping_chunks.concat();
+    let (streamed_overlap, overlap_text) = decode_stream_chunks(&overlapping_chunks, "stop");
+    assert_eq!(streamed_overlap, overlapping_full);
+    assert_eq!(overlap_text, overlapping_full);
+    assert_eq!(parse_non_stream_text(&overlapping_full), overlapping_full);
+}
+
+#[test]
+fn unmatched_think_close_handles_mid_content_think_blocks_and_confirmed_replays() {
+    let mid_chunks = [
+        "Intro line.\n",
+        "<thi",
+        "nk>\nscratchpad\n",
+        "</th",
+        "ink>\nFinal answer.",
+    ];
+    let mid_full = mid_chunks.concat();
+    let (streamed_mid, mid_text) = decode_stream_chunks(&mid_chunks, "stop");
+    assert_eq!(streamed_mid, mid_full);
+    assert_eq!(mid_text, mid_full);
+    assert_eq!(parse_non_stream_text(&mid_full), mid_full);
+
+    let leading_chunks = [
+        "</th",
+        "ink>\n",
+        "<think>\nreasoning\n</think>\n\nPublic answer.",
+    ];
+    let (streamed_leading, leading_text) = decode_stream_chunks(&leading_chunks, "stop");
+    assert_eq!(
+        streamed_leading,
+        "<think>\nreasoning\n</think>\n\nPublic answer."
+    );
+    assert_eq!(
+        leading_text,
+        "<think>\nreasoning\n</think>\n\nPublic answer."
+    );
+    assert_eq!(
+        parse_non_stream_text(&leading_chunks.concat()),
+        "<think>\nreasoning\n</think>\n\nPublic answer."
+    );
+
+    let think_then_replay = [
+        "<think>\nreasoning\n</think>\n",
+        "The answer [s1].\n",
+        "</think>\n\nThe answer [s1].",
+    ];
+    let (streamed_tr, tr_text) = decode_stream_chunks(&think_then_replay, "stop");
+    assert_eq!(
+        streamed_tr,
+        "<think>\nreasoning\n</think>\nThe answer [s1].\n"
+    );
+    assert_eq!(tr_text, "<think>\nreasoning\n</think>\nThe answer [s1].");
+    assert_eq!(
+        parse_non_stream_text(&think_then_replay.concat()),
+        "<think>\nreasoning\n</think>\nThe answer [s1]."
+    );
+
+    let prose_then_replay = [
+        "Explain </think> safely.\n",
+        "</think>\n\nExplain </think> safely.",
+    ];
+    let (streamed_pr, pr_text) = decode_stream_chunks(&prose_then_replay, "stop");
+    assert_eq!(streamed_pr, "Explain </think> safely.\n");
+    assert_eq!(pr_text, "Explain </think> safely.");
+    assert_eq!(
+        parse_non_stream_text(&prose_then_replay.concat()),
+        "Explain </think> safely."
+    );
+
+    let truncated_replay = [
+        "The stopcock is under the sink [s1]. Turn clockwise to shut off.\n",
+        "</think>\n\nThe stopcock is under the sink",
+    ];
+    let (streamed_len, len_text) = decode_stream_chunks(&truncated_replay, "length");
+    assert_eq!(
+        streamed_len,
+        "The stopcock is under the sink [s1]. Turn clockwise to shut off.\n"
+    );
+    assert_eq!(
+        len_text,
+        "The stopcock is under the sink [s1]. Turn clockwise to shut off."
+    );
+    assert_eq!(
+        parse_non_stream_text(&truncated_replay.concat()),
+        "The stopcock is under the sink [s1]. Turn clockwise to shut off."
+    );
+}

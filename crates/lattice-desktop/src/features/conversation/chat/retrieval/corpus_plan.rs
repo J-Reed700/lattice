@@ -24,6 +24,7 @@ mod shortlist;
 pub(crate) use health::PlannerHealth;
 pub(super) use health::PlannerTurn;
 pub(in crate::features::conversation::chat) use library_search::fused_search;
+#[cfg(test)]
 use library_search::section_identifiers;
 pub(super) use library_search::{append_context, fuse_passes, retrieve};
 pub(super) use planner::{plan, plan_correction, shortlist_candidates, CorrectionRequest};
@@ -270,7 +271,7 @@ pub(super) fn ordered_learning_plan(
     if beginning
         && !lower.contains(" about ")
         && !lower.contains(" on ")
-        && section_identifiers(question).is_empty()
+        && !has_section_identifiers(question)
         && group_ids.len() == 1
         && catalog
             .iter()
@@ -304,11 +305,14 @@ pub(super) fn whole_document_intent(question: &str) -> bool {
         .any(|phrase| lower.contains(phrase))
 }
 
-/// Whether `question` names a specific numbered clause or section (such as
-/// `24.111` or `4.2`), where multiple documents in a library may share the same
-/// numbering and upfront planning identifies which document owns it.
+/// Whether `question` explicitly names a numbered clause, section, article, or
+/// legal subsection identifier (such as `clause 12`, `section 7`, `§ 4.2`, or
+/// `706.07(a)`), where multiple documents in a library may share numbering and
+/// upfront planning identifies which document owns it.
 pub(super) fn has_section_identifiers(question: &str) -> bool {
-    !section_identifiers(question).is_empty()
+    lattice_core::domain::value_objects::section_identifier::SectionIdentifier::has_explicit_reference(
+        question,
+    )
 }
 
 /// Lets the summary tier choose which documents the turn opens with, only when
@@ -406,6 +410,192 @@ pub(super) fn followup_plan(
     .validate(catalog)
     .ok()?;
     Some((plan, shared))
+}
+
+fn contains_ascii_phrase(haystack: &str, phrase: &str) -> bool {
+    let mut start = 0;
+    while let Some(offset) = haystack[start..].find(phrase) {
+        let idx = start + offset;
+        let end = idx + phrase.len();
+        let before_ok = haystack[..idx]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_ascii_alphanumeric());
+        let after_ok = haystack[end..]
+            .chars()
+            .next()
+            .is_none_or(|c| !c.is_ascii_alphanumeric());
+        if before_ok && after_ok {
+            return true;
+        }
+        start = idx + 1;
+        while !haystack.is_char_boundary(start) {
+            start += 1;
+        }
+    }
+    false
+}
+
+fn trim_followup_punctuation(token: &str) -> &str {
+    token.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '\'')
+}
+
+/// Whether `message` carries anaphoric pronouns, back-reference phrases, or
+/// elliptical continuations that likely rely on an earlier conversation turn
+/// (so multi-turn retrieval should plan with history upfront when no short
+/// immediate-anchor continuation applies).
+pub(super) fn looks_like_unanchored_followup(message: &str) -> bool {
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let normalized: String = trimmed
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+
+    const PHRASES: &[&str] = &[
+        "back to",
+        "last turn",
+        "prior turn",
+        "previous turn",
+        "earlier turn",
+        "mentioned earlier",
+        "discussed earlier",
+        "asked earlier",
+        "said earlier",
+        "what about",
+        "how about",
+        "way round",
+        "way around",
+        "around that",
+        "round that",
+        "about that",
+        "from that",
+        "for that",
+        "on that",
+        "in that",
+        "to that",
+        "with that",
+        "after that",
+        "before that",
+        "despite that",
+        "besides that",
+        "do that",
+        "did that",
+        "does that",
+        "that one",
+        "those ones",
+        "either of",
+        "neither of",
+        "both of",
+        "former",
+        "latter",
+        "instead",
+        "the same",
+        "same one",
+    ];
+    if PHRASES
+        .iter()
+        .any(|phrase| contains_ascii_phrase(&normalized, phrase))
+    {
+        return true;
+    }
+
+    const ELLIPTICAL_STARTS: &[&str] = &[
+        "and ",
+        "but ",
+        "so ",
+        "or ",
+        "also ",
+        "why?",
+        "why ",
+        "when?",
+        "where?",
+        "how?",
+        "who?",
+        "what if ",
+        "even if ",
+        "which one",
+        "any exception",
+        "any caveat",
+    ];
+    if ELLIPTICAL_STARTS
+        .iter()
+        .any(|prefix| normalized.starts_with(prefix) || normalized == prefix.trim_end())
+    {
+        return true;
+    }
+
+    const REF_NOUNS: &[&str] = &[
+        "supplier",
+        "vendor",
+        "agreement",
+        "contract",
+        "document",
+        "doc",
+        "file",
+        "policy",
+        "section",
+        "clause",
+        "article",
+        "rule",
+        "report",
+        "client",
+        "company",
+        "case",
+        "option",
+        "plan",
+        "limit",
+        "deadline",
+        "person",
+        "project",
+    ];
+    // Preserve case so uppercase "IT" (Information Technology) is not treated
+    // as an anaphoric pronoun.
+    let tokens: Vec<&str> = trimmed.split_whitespace().collect();
+    for (idx, raw) in tokens.iter().enumerate() {
+        let stripped = trim_followup_punctuation(raw);
+        if stripped.is_empty() || stripped == "IT" {
+            continue;
+        }
+        let lower = stripped.to_ascii_lowercase();
+        if matches!(
+            lower.as_str(),
+            "it" | "its"
+                | "it's"
+                | "itself"
+                | "they"
+                | "them"
+                | "their"
+                | "theirs"
+                | "themselves"
+                | "he"
+                | "him"
+                | "his"
+                | "she"
+                | "her"
+                | "hers"
+                | "these"
+                | "those"
+        ) {
+            return true;
+        }
+        if matches!(lower.as_str(), "that" | "this") {
+            let ends_clause =
+                raw.trim_end().ends_with(['?', '.', ',', '!', ':', ';']) || idx + 1 == tokens.len();
+            let next_ref_noun = tokens.get(idx + 1).is_some_and(|next| {
+                let next_clean = trim_followup_punctuation(next).to_ascii_lowercase();
+                let next_base = next_clean.strip_suffix("'s").unwrap_or(&next_clean);
+                REF_NOUNS.contains(&next_base)
+            });
+            if ends_clause || next_ref_noun {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 #[cfg(test)]

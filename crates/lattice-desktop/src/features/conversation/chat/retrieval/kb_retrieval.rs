@@ -198,10 +198,18 @@ pub(super) async fn run_kb_retrieval(
                     "retrieval: planner skipped — short message continues the previous turn"
                 );
                 plan
-            } else if has_prior_turn(conv_service, conversation_id).await {
-                // Multi-turn follow-ups, topic shifts, and returns to earlier turns without
-                // shared immediate anchors need conversation-history planning upfront so
-                // indirect entity/document references reach Pass 1.
+            } else if needs_prior_turn_planning(
+                conv_service,
+                conversation_id,
+                &search_flags,
+                standalone_question,
+                validated_message,
+            )
+            .await
+            {
+                // Multi-turn follow-ups, returns to earlier turns, and anaphoric
+                // prompts without shared immediate anchors need conversation-history
+                // planning upfront so indirect entity/document references reach Pass 1.
                 planned_or_fallback(
                     container,
                     conv_service,
@@ -750,8 +758,28 @@ async fn planned_or_fallback(
     }
 }
 
+/// Whether a non-first turn needs conversation-history planning upfront instead
+/// of optimistic single-turn Pass 1 retrieval. Clearly self-contained new topics
+/// (`!force_followup_mode`, no `standalone_question`, no follow-up/anaphoric cues)
+/// keep the zero-LLM Pass 1 fast path and escalate only if sufficiency fails.
+async fn needs_prior_turn_planning(
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
+    conversation_id: &str,
+    search_flags: &super::SearchFlags,
+    standalone_question: Option<&str>,
+    validated_message: &str,
+) -> bool {
+    let may_need_prior_context = search_flags.force_followup_mode
+        || standalone_question.is_some()
+        || super::corpus_plan::looks_like_unanchored_followup(validated_message);
+    if !may_need_prior_context {
+        return false;
+    }
+    has_prior_turn(conv_service, conversation_id).await
+}
+
 /// Whether the conversation already has a completed assistant reply, meaning the
-/// current message is part of a multi-turn exchange rather than a standalone first turn.
+/// current message has earlier turns available for follow-up resolution.
 async fn has_prior_turn(
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     conversation_id: &str,

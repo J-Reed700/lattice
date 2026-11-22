@@ -113,6 +113,10 @@ pub struct CallOptions {
     pub cancel: Option<CancellationToken>,
     pub cache_key: Option<String>,
     pub sampling: Option<SamplingOverride>,
+    /// Fallback sampling applied when the resolved backend runs with thinking
+    /// off (e.g., `ThinkingOverride::Off`, `AlwaysOff`, or a non-reasoning model),
+    /// while leaving thinking models on their own sampling profile.
+    pub non_thinking_sampling: Option<SamplingOverride>,
     pub time_budget: Option<Duration>,
     /// No elapsed-time limit, for cancellable work a slow model must not
     /// fail. Stall detection and retry limits still apply.

@@ -523,3 +523,34 @@ fn a_schema_of_handles_is_enforced_and_sent_as_written() {
         *schema.as_json()
     );
 }
+
+#[test]
+fn non_thinking_sampling_applies_only_when_resolved_thinking_is_off() {
+    let request = legacy::completion(legacy::Completion {
+        input: user("Extract structured memories"),
+        thinking: ThinkingMode::On,
+        non_thinking_sampling: Some(SamplingOverride::deterministic()),
+        ..Default::default()
+    });
+
+    // When the model thinks, non_thinking_sampling yields to its thinking profile.
+    let thinking_client = local_client(ThinkingPolicy::PerRequest, ThinkingOverrideDto::Auto);
+    let thinking_body = body_of(&thinking_client, &request).unwrap();
+    assert!(
+        close(sampling(&thinking_body), (1.0, 0.95, 20, 1.5, 1.0)),
+        "{thinking_body}"
+    );
+
+    // When the user turns thinking off or the model cannot think, the request
+    // falls back to deterministic decoding instead of chat temperature (0.7).
+    for client in [
+        local_client(ThinkingPolicy::PerRequest, ThinkingOverrideDto::Off),
+        local_client(ThinkingPolicy::AlwaysOff, ThinkingOverrideDto::Auto),
+    ] {
+        let non_thinking_body = body_of(&client, &request).unwrap();
+        assert!(
+            close(sampling(&non_thinking_body), (0.0, 1.0, 1, 0.0, 1.0)),
+            "{non_thinking_body}"
+        );
+    }
+}

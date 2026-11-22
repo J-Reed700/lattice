@@ -860,8 +860,11 @@ pub async fn extract_segments(
     let mut options = deadline.call_options()?;
     options.thinking = ThinkingMode::On;
     // Thinking models enter repetition loops under greedy decoding; let the
-    // backend's thinking profile supply sampling and bound effort to "low".
+    // backend's thinking profile supply sampling while non-thinking backends
+    // fall back to deterministic decoding instead of chat temperature.
     options.sampling = None;
+    options.non_thinking_sampling =
+        Some(lattice_core::application::ports::llm_port::SamplingOverride::deterministic());
     options.reasoning_effort = Some("low".to_owned());
     let transport = Metered::new(&Plain);
     let asked = ask::<MemoryExtraction>(
