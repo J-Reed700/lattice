@@ -19,10 +19,11 @@ function sameModelRef(
 /** Above the course builder when no usable Learning model is set: the one click that fixes it, before the goal is typed. */
 export function LearningModelNotice() {
   const settings = useSettingsQuery().data?.llm;
-  const { downloadedModels } = useDownloadedModels();
+  const { downloadedModels, isLoading: modelsLoading, error: modelsError } = useDownloadedModels();
   const { chatModel, adopt, isPending } = useAdoptChatModel(settings, downloadedModels);
   const navigate = useAppNavigate();
   if (!settings) return null;
+  if (settings.learningModel?.kind === 'local' && (Boolean(modelsLoading) || modelsError != null)) return null;
   const state = learningModelState(settings, downloadedModels);
   if (state.kind === 'set') return null;
   const canAdoptChat = Boolean(

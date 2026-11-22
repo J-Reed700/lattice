@@ -18,17 +18,18 @@ const HEADINGS = { 2: ['h2', 'h3', 'h4'], 4: ['h4', 'h5', 'h6'] } as const;
  * pick the file, preview it as a move (`DEFAULT_CONFLICT_POLICY`), and offer
  * the choices the backend says clear what blocks it. Nothing is written before Apply.
  */
-export function ImportCourseFlow({ headingLevel, onImported }: { headingLevel: keyof typeof HEADINGS; onImported(programId: string, title: string): void }) {
+export function ImportCourseFlow({ headingLevel, programId, onImported }: { headingLevel: keyof typeof HEADINGS; programId?: string; onImported(programId: string, title: string): void }) {
   const [Heading, PreviewHeading, PartHeading] = HEADINGS[headingLevel];
   const ids = useId();
   const api = useApi();
   const client = useQueryClient();
-  const mountedRef = useRef(true);
+  const scope = programId ?? 'standalone';
   const onImportedRef = useRef(onImported);
   onImportedRef.current = onImported;
 
   const state = usePortabilityRunStore((store) => store.importFlow);
   const markMounted = usePortabilityRunStore((store) => store.markImportMounted);
+  const dismissFeedback = usePortabilityRunStore((store) => store.dismissImportFeedback);
   const setApplyConfirm = usePortabilityRunStore((store) => store.setImportApplyConfirm);
   const chooseAndPreview = usePortabilityRunStore((store) => store.chooseAndPreviewImportFile);
   const retryPreview = usePortabilityRunStore((store) => store.retryImportPreview);
@@ -37,24 +38,33 @@ export function ImportCourseFlow({ headingLevel, onImported }: { headingLevel: k
   const applyImport = usePortabilityRunStore((store) => store.applyImport);
 
   useEffect(() => {
-    mountedRef.current = true;
     markMounted(true);
     return () => {
-      mountedRef.current = false;
       markMounted(false);
     };
   }, [markMounted]);
 
-  const { pendingAction, preview, applyConfirm, failure, notice, retryPreview: keptPreview, retryApply: keptApply } = state;
+  const handledImportSeqRef = useRef(state.importSeq);
+  useEffect(() => {
+    if (state.importSeq <= handledImportSeqRef.current || !state.lastImported) return;
+    handledImportSeqRef.current = state.importSeq;
+    onImportedRef.current(state.lastImported.programId, state.lastImported.title);
+  }, [state.importSeq, state.lastImported]);
+
+  const sameScope = state.scope === null || state.scope === scope;
+  const { pendingAction } = state;
+  const preview = sameScope ? state.preview : null;
+  const applyConfirm = sameScope ? state.applyConfirm : false;
+  const failure = sameScope ? state.failure : null;
+  const notice = sameScope ? state.notice : '';
+  const keptPreview = sameScope ? state.retryPreview : null;
+  const keptApply = sameScope ? state.retryApply : null;
   const busy = pendingAction !== null;
-  const previewPending = pendingAction === 'preview' || pendingAction === 'choosing';
-  const applyPending = pendingAction === 'apply';
+  const previewPending = sameScope && (pendingAction === 'preview' || pendingAction === 'choosing');
+  const applyPending = sameScope && pendingAction === 'apply';
 
   const runApply = async () => {
-    const imported = await applyImport(api, client);
-    if (imported && mountedRef.current) {
-      onImportedRef.current(imported.programId, imported.title);
-    }
+    await applyImport(api, client);
   };
 
   const blocked = preview ? blockedConflicts(preview) : [];
@@ -70,21 +80,32 @@ export function ImportCourseFlow({ headingLevel, onImported }: { headingLevel: k
   return <section aria-labelledby={`${ids}-heading`} data-testid="import-course-flow" className="min-w-0 rounded-2xl border border-border bg-surface p-4 sm:p-6">
     <div className="flex items-center gap-2"><Upload size={16} className="text-accent" /><div><p className="text-[10px] font-semibold uppercase tracking-[.14em] text-accent">Import</p><Heading id={`${ids}-heading`} className="font-serif text-xl text-text-primary">Bring a course to this computer</Heading></div></div>
     <p className="mt-2 text-xs leading-5 text-text-secondary">Choose a course file exported from Lattice. You see what it contains and every change it would make before anything is written, and the course opens where you left off.</p>
-    <button type="button" disabled={busy} onClick={() => void chooseAndPreview(api, client)} className="mt-4 inline-flex items-center gap-2 rounded-full border border-accent/35 px-4 py-2.5 text-xs font-semibold text-accent disabled:opacity-50">{previewPending ? 'Checking the file…' : 'Choose a course file…'}</button>
+    <button type="button" disabled={busy} onClick={() => void chooseAndPreview(api, client, scope)} className="mt-4 inline-flex items-center gap-2 rounded-full border border-accent/35 px-4 py-2.5 text-xs font-semibold text-accent disabled:opacity-50">{previewPending ? 'Checking the file…' : 'Choose a course file…'}</button>
 
-    {failure && <RetryAlert className="mt-4" message={failure.message} disabled={busy} retry={failedRetry} />}
+    {failure && <RetryAlert className="mt-4" message={failure.message} disabled={busy} retry={failedRetry} onDismiss={!busy ? dismissFeedback : undefined} />}
     {notice && (
       <div role="status" className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-600/20 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-800">
         <span>{notice}</span>
-        {state.lastImported && !applyPending && (
-          <button
-            type="button"
-            onClick={() => onImportedRef.current(state.lastImported!.programId, state.lastImported!.title)}
-            className="shrink-0 rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-accent-fg"
-          >
-            Open course
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {sameScope && state.lastImported && !applyPending && (
+            <button
+              type="button"
+              onClick={() => onImportedRef.current(state.lastImported!.programId, state.lastImported!.title)}
+              className="shrink-0 rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-accent-fg"
+            >
+              Open course
+            </button>
+          )}
+          {!applyPending && (
+            <button
+              type="button"
+              onClick={dismissFeedback}
+              className="shrink-0 text-xs font-semibold underline"
+            >
+              Dismiss
+            </button>
+          )}
+        </div>
       </div>
     )}
 

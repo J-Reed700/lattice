@@ -74,7 +74,7 @@ export function PracticalWorkbenchPanel({
   const [composerOpened, setComposerOpened] = useState(false);
   const [dismissedComposerId, setDismissedComposerId] = useState<string | null>(null);
   const openRequest = composer && composer.id !== dismissedComposerId ? composer : null;
-  const composerOpen = composerOpened || (!generatePending && openRequest !== null);
+  const composerOpen = composerOpened || openRequest !== null;
   const setComposerOpen = (open: boolean) => {
     setComposerOpened(open);
     if (!open && composer) setDismissedComposerId(composer.id);
@@ -90,12 +90,20 @@ export function PracticalWorkbenchPanel({
   const [simulation, setSimulation] =
     useState<LearningSimulationSessionDto | { newAttemptFor: string } | null>(null);
   const [seenActivityId, setSeenActivityId] = useState(activityId);
+  const explicitOpenGenerationRef = useRef<string | null>(
+    activityId && generation?.status === 'succeeded' && generation.lessonId === lesson?.id && generation.activityId !== activityId
+      ? generation.activityId
+      : null,
+  );
   if (activityId !== seenActivityId) {
     setSeenActivityId(activityId);
     if (activityId) {
       setSelectedId(activityId);
       setSelectedRunId(null);
       setSimulation(null);
+      if (generation?.status === 'succeeded' && generation.lessonId === lesson?.id && generation.activityId !== activityId) {
+        explicitOpenGenerationRef.current = generation.activityId;
+      }
     }
   }
   const [runError, setRunError] = useState<string | null>(null);
@@ -196,6 +204,11 @@ export function PracticalWorkbenchPanel({
   // Place after useLearningLabDraft so its load effect populates context.loadPromise before flush() runs on mount.
   useEffect(() => {
     if (!generation || !lesson || generation.status !== 'succeeded' || generation.lessonId !== lesson.id) return;
+    if (explicitOpenGenerationRef.current === generation.activityId) {
+      explicitOpenGenerationRef.current = null;
+      dismissGeneration(programId, lesson.id);
+      return;
+    }
     if (!generatedActivityPresent) return;
     let cancelled = false;
     void (async () => {
@@ -480,6 +493,7 @@ export function PracticalWorkbenchPanel({
           returnFocusRef={newActivityRef}
           onClose={() => {
             setComposerOpen(false);
+            if (generation?.status === 'failed' && lesson) dismissGeneration(programId, lesson.id);
           }}
           onRequestRuntimeSetup={() => {
             setComposerOpen(false);

@@ -229,4 +229,30 @@ describe('PracticeHome', () => {
     await user.click(within(banner).getByRole('button', { name: 'Dismiss' }));
     expect(screen.queryByRole('region', { name: 'Coding build status' })).not.toBeInTheDocument();
   });
+
+  it('lets the learner dismiss a ready coding build banner', async () => {
+    const user = userEvent.setup();
+    useCodingBuildStore.setState({
+      handles: {
+        'course-1': {
+          programId: 'course-1',
+          choice: { form: 'build', setting: 'coached', language: 'python', difficulty: 'easy' },
+          operationId: 'op-1',
+          startOperationId: 'sop-1',
+          jobId: 'job-1',
+          step: 3,
+          phase: { kind: 'ready', sessionId: 'session-old' },
+          activityId: 'activity-1',
+          seenJobs: {},
+        },
+      },
+    });
+    show();
+    const banner = screen.getByRole('region', { name: 'Coding build status' });
+    expect(banner).toHaveTextContent('Your coding problem is ready.');
+    expect(within(banner).getByRole('button', { name: 'Open problem' })).toBeVisible();
+    await user.click(within(banner).getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByRole('region', { name: 'Coding build status' })).not.toBeInTheDocument();
+    expect(useCodingBuildStore.getState().handles['course-1']).toBeUndefined();
+  });
 });

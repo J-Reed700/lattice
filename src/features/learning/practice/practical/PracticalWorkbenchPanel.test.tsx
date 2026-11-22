@@ -6,7 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LEARNER_TEXT_MAX_CHARS } from "@/features/learning/model/learnerTextLimit";
-import { resetPracticalGenerationStore } from "@/features/learning/practice/practical/practicalGenerationStore";
+import { resetPracticalGenerationStore, usePracticalGenerationStore } from "@/features/learning/practice/practical/practicalGenerationStore";
 import { type ComposerRequest, PracticalWorkbenchPanel } from "@/features/learning/practice/practical/PracticalWorkbenchPanel";
 import type { LearningLessonDto, LearningProgramDto } from "@/lib/bindings";
 import { deferred } from "@/tests/deferred";
@@ -954,5 +954,78 @@ describe("Learning Studio Labs & simulations", () => {
     await user.click(within(dialog).getByRole("button", { name: "Generate activity" }));
 
     expect(await screen.findByRole("heading", { name: "Acme staff interview" })).toBeInTheDocument();
+  });
+
+  it("preserves form edits and error inside a composer opened from Practice home when generation fails", async () => {
+    const user = userEvent.setup();
+    const pending = deferred<ReturnType<typeof fail>>();
+    mocks.generate.mockReturnValueOnce(pending.promise);
+
+    renderPractical(undefined, {
+      composer: { id: "req-home-1", kind: "incident", brief: "Initial brief" },
+    });
+
+    const dialog = await screen.findByRole("dialog");
+    const focusInput = within(dialog).getByLabelText("Your focus for this activity");
+    await user.clear(focusInput);
+    await user.type(focusInput, "Custom user edits");
+    await user.click(within(dialog).getByRole("button", { name: "Generate activity" }));
+
+    // Dialog stays mounted during generation instead of unmounting on generatePending.
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /Generating/ })).toBeDisabled();
+
+    await act(async () => {
+      pending.resolve(fail("Model timed out."));
+    });
+
+    const reopenedDialog = screen.getByRole("dialog");
+    expect(within(reopenedDialog).getByLabelText("Your focus for this activity")).toHaveValue("Custom user edits");
+    expect(within(reopenedDialog).getByRole("alert")).toHaveTextContent("Model timed out.");
+    expect(within(reopenedDialog).getByRole("button", { name: "Retry generation" })).toBeEnabled();
+  });
+
+  it("does not show the generation failure a second time as a banner after closing the dialog", async () => {
+    const user = userEvent.setup();
+    mocks.generate.mockResolvedValueOnce(fail("Generation failed."));
+
+    renderPractical();
+    await user.click(await screen.findByRole("button", { name: "New activity" }));
+    const dialog = screen.getByRole("dialog");
+    await user.selectOptions(within(dialog).getByLabelText("Activity type"), "incident");
+    await user.type(within(dialog).getByLabelText("Your focus for this activity"), "Triage outage");
+    await user.click(within(dialog).getByRole("button", { name: "Generate activity" }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Generation failed.");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByText(/The activity could not be prepared/)).not.toBeInTheDocument();
+  });
+
+  it("does not let a leftover succeeded generation override an explicitly opened activity", async () => {
+    const older = activity({ id: "activity-old", title: "Explicitly opened lab" });
+    const newer = activity({ id: "activity-new", title: "Leftover generated lab" });
+    mocks.workspace.mockResolvedValue(ok(workspace({ activities: [newer, older] })));
+
+    usePracticalGenerationStore.setState({
+      generations: {
+        "program-1:lesson-1": {
+          key: "program-1:lesson-1",
+          programId: "program-1",
+          lessonId: "lesson-1",
+          status: "succeeded",
+          kind: "code_lab",
+          role: null,
+          company: null,
+          activityId: "activity-new",
+          error: null,
+        },
+      },
+    });
+
+    renderPractical(undefined, { activityId: "activity-old" });
+    expect(await screen.findByRole("heading", { name: "Explicitly opened lab" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Explicitly opened lab/ })).toHaveAttribute("aria-pressed", "true");
+    expect(usePracticalGenerationStore.getState().generations["program-1:lesson-1"]).toBeUndefined();
   });
 });

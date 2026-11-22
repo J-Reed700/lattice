@@ -269,7 +269,14 @@ describe('Review topics', () => {
     expect(await within(card('Valves')).findByRole('alert')).toHaveTextContent('Model timed out revising Valve topics');
     view2.unmount();
 
-    renderScreen();
+    const view3 = renderScreen();
     expect(await within(card('Valves')).findByRole('alert')).toHaveTextContent('Model timed out revising Valve topics');
+    await user.click(within(card('Valves')).getByRole('button', { name: 'Dismiss' }));
+    expect(within(card('Valves')).queryByRole('alert')).not.toBeInTheDocument();
+    view3.unmount();
+
+    renderScreen();
+    await screen.findByRole('article', { name: 'Valves' });
+    expect(within(card('Valves')).queryByRole('alert')).not.toBeInTheDocument();
   });
 });

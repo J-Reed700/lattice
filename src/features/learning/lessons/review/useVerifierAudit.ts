@@ -57,7 +57,8 @@ export function useLessonAudit(programId: string, lessonId: string, enabled = tr
       const activeJob = plan?.jobs?.some(
         (job) =>
           (job.status === 'pending' || job.status === 'running') &&
-          (Boolean(job.lessonIds?.includes(lessonId)) || job.kind === 'lesson_preparation'),
+          job.kind === 'lesson_preparation' &&
+          Boolean(job.lessonIds?.includes(lessonId)),
       );
       return activeJob ? 2_000 : false;
     },

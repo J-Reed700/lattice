@@ -84,10 +84,11 @@ function EditForm({ topics, busy, onSave, onCancel }: { topics: PlannedLesson; b
   );
 }
 
-function TopicCard({ title, written, error, entry, form, busy, selected, onToggle, onForm, onEdit, onChange, onUndo }: {
+function TopicCard({ title, written, error, onDismissError, entry, form, busy, selected, onToggle, onForm, onEdit, onChange, onUndo }: {
   title: string;
   written: boolean;
   error: unknown;
+  onDismissError?: () => void;
   entry: CoursePlanEntryDto;
   form: Form['kind'] | null;
   busy: boolean;
@@ -117,8 +118,17 @@ function TopicCard({ title, written, error, entry, form, busy, selected, onToggl
           {previous && <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onUndo}>Undo</Button>}
         </div>
       )}
-      {editable && form === 'ask' && <AskForChange busy={busy} error={error} onSend={onChange} onCancel={() => onForm(null)} />}
-      {error && form !== 'ask' ? <PlainError error={error} className="mt-3 rounded-xl bg-danger-muted p-3 text-sm text-text-primary" /> : null}
+      {editable && form === 'ask' && <AskForChange busy={busy} error={error} onSend={onChange} onCancel={() => { onDismissError?.(); onForm(null); }} />}
+      {error && form !== 'ask' ? (
+        <div className="mt-3 flex flex-wrap items-start justify-between gap-2 rounded-xl bg-danger-muted p-3 text-sm text-text-primary">
+          <PlainError error={error} className="min-w-0 flex-1" />
+          {onDismissError && (
+            <button type="button" onClick={onDismissError} className="shrink-0 text-xs font-semibold underline">
+              Dismiss
+            </button>
+          )}
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -133,6 +143,7 @@ export function TopicsReviewScreen({ program, onBack }: { program: LearningProgr
   const [bulkOpen, setBulkOpen] = useState(false);
   const runState = useTopicsChangeStore((state) => state.runs[programId]);
   const runTopicsAction = useTopicsChangeStore((state) => state.runAction);
+  const clearFailure = useTopicsChangeStore((state) => state.clearFailure);
   const failure = runState?.failure ?? null;
   const view: CoursePlanViewDto | undefined = planQuery.data;
   const entries = useMemo(() => new Map((view?.entries ?? []).map((entry) => [entry.topics.lessonId, entry])), [view]);
@@ -165,12 +176,19 @@ export function TopicsReviewScreen({ program, onBack }: { program: LearningProgr
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-5 py-6 sm:px-8">
       <div className="flex items-center gap-3">
-        <Button type="button" variant="ghost" size="sm" onClick={onBack}><ArrowLeft size={15} /> Back</Button>
+        <Button type="button" variant="ghost" size="sm" onClick={() => { clearFailure(programId); onBack(); }}><ArrowLeft size={15} /> Back</Button>
         <h1 className="font-serif text-2xl text-text-primary">Review topics</h1>
       </div>
       {shownError ? <PlainError error={shownError} className="rounded-xl bg-danger-muted p-4 text-sm text-text-primary" /> : null}
       {runState?.pendingAt ? <p role="status" className="rounded-xl border border-border bg-surface px-4 py-3 text-sm text-text-secondary">Applying your topic change…</p> : null}
-      {failure?.at === SELECTION && !bulkOpen ? <PlainError error={failure.error} className="rounded-xl bg-danger-muted p-4 text-sm text-text-primary" /> : null}
+      {failure?.at === SELECTION && !bulkOpen ? (
+        <div className="flex flex-wrap items-start justify-between gap-2 rounded-xl bg-danger-muted p-4 text-sm text-text-primary">
+          <PlainError error={failure.error} className="min-w-0 flex-1" />
+          <button type="button" onClick={() => clearFailure(programId)} className="shrink-0 text-xs font-semibold underline">
+            Dismiss
+          </button>
+        </div>
+      ) : null}
       {view?.state !== 'planned' ? <CoursePlanStatus programId={programId} /> : program.modules.map((module) => {
         const lessons = module.lessons.filter((lesson) => entries.has(lesson.id));
         if (lessons.length === 0) return null;
@@ -179,10 +197,14 @@ export function TopicsReviewScreen({ program, onBack }: { program: LearningProgr
             <h2 className="text-sm font-semibold text-text-secondary">{module.title}</h2>
             {lessons.map((lesson) => (
               <TopicCard key={lesson.id} title={lesson.title} written={lesson.preparation !== 'outline'} error={failure?.at === lesson.id ? failure.error : null}
+                onDismissError={() => clearFailure(programId)}
                 entry={entries.get(lesson.id)!} busy={busy}
                 form={form?.lessonId === lesson.id ? form.kind : null} selected={selection.isSelected(lesson.id)}
                 onToggle={(shiftKey) => selection.toggle(lesson.id, { shiftKey })}
-                onForm={(kind) => setForm(kind ? { lessonId: lesson.id, kind, outlineRevision: view!.outlineRevision, entryRevision: entries.get(lesson.id)!.entryRevision } : null)}
+                onForm={(kind) => {
+                  if (failure?.at === lesson.id) clearFailure(programId);
+                  setForm(kind ? { lessonId: lesson.id, kind, outlineRevision: view!.outlineRevision, entryRevision: entries.get(lesson.id)!.entryRevision } : null);
+                }}
                 onEdit={(topics) => editEntry(form!, topics)}
                 onChange={(instruction) => askChange(lesson.id, [lesson.id], instruction)}
                 onUndo={() => void undoEntry(entries.get(lesson.id)!)} />
@@ -191,9 +213,9 @@ export function TopicsReviewScreen({ program, onBack }: { program: LearningProgr
         );
       })}
       {bulkOpen && selection.selected.size > 0 && (
-        <AskForChange busy={busy} error={failure?.at === SELECTION ? failure.error : null} onSend={(instruction) => askChange(SELECTION, [...selection.selected], instruction)} onCancel={() => setBulkOpen(false)} />
+        <AskForChange busy={busy} error={failure?.at === SELECTION ? failure.error : null} onSend={(instruction) => askChange(SELECTION, [...selection.selected], instruction)} onCancel={() => { clearFailure(programId); setBulkOpen(false); }} />
       )}
-      <SelectionBar count={selection.selected.size} noun={['lesson', 'lessons']} busy={busy} onClear={() => { selection.clear(); setBulkOpen(false); }}
+      <SelectionBar count={selection.selected.size} noun={['lesson', 'lessons']} busy={busy} onClear={() => { clearFailure(programId); selection.clear(); setBulkOpen(false); }}
         actions={[{ label: 'Ask for a change', onClick: () => setBulkOpen(true) }]} />
     </div>
   );

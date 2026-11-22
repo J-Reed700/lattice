@@ -593,6 +593,69 @@ describe('The course progress line', () => {
     expect(failedCard.getByText('Preparation failed')).toBeVisible();
   });
 
+  it('suppresses failed lesson preparation jobs once the lesson is ready or superseded by a newer job', async () => {
+    const readyCourse = course();
+    readyCourse.modules[0].lessons[0].preparation = 'ready';
+    showCourse(readyCourse, [
+      lessonJob('lesson-1', {
+        id: 'job-failed-old',
+        status: 'failed',
+        error: 'Stale preparation error',
+        createdAt: 100,
+        finishedAt: 150,
+        activity: { lessonTitle: 'The heart as a pump' } as unknown as LearningGenerationJob['activity'],
+      }),
+      lessonJob('lesson-1', {
+        id: 'job-completed-new',
+        status: 'completed',
+        createdAt: 200,
+        finishedAt: 250,
+      }),
+    ]);
+
+    expect(await screen.findByText('Lessons complete')).toBeVisible();
+    await waitFor(() => expect(api.plan).toHaveBeenCalled());
+    expect(screen.queryByText(/Lesson preparation failed/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry lesson preparation' })).not.toBeInTheDocument();
+
+    // Even when only the failed job remains in the list, a ready lesson must not show the failure banner.
+    api.plan.mockResolvedValue({
+      ok: true,
+      data: {
+        programId: 'program-1',
+        jobs: [
+          lessonJob('lesson-1', {
+            id: 'job-failed-only',
+            status: 'failed',
+            error: 'Stale preparation error',
+            createdAt: 100,
+            finishedAt: 150,
+            activity: { lessonTitle: 'The heart as a pump' } as unknown as LearningGenerationJob['activity'],
+          }),
+        ],
+      },
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <ProgramWorkspace
+          program={readyCourse}
+          onBack={vi.fn()}
+          onOpenProgram={vi.fn()}
+          onAccept={vi.fn()}
+          acceptPending={false}
+          onPrepare={vi.fn()}
+          preparePending={false}
+          onComplete={vi.fn()}
+          completePending={false}
+        />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(api.plan).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText(/Lesson preparation failed/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry lesson preparation' })).not.toBeInTheDocument();
+  });
+
   it('notifies onReaderContextChange when switching tabs so ReaderPane resets', async () => {
     const user = userEvent.setup();
     const onReaderContextChange = vi.fn();

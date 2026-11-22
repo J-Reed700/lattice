@@ -4,7 +4,7 @@ import { AlertCircle, Check, Circle, Loader2 } from 'lucide-react';
 
 import type * as Wire from '@/lib/bindings';
 
-import { useCodingBuildStore } from './codingBuildStore';
+import { sameCodingBuildChoice, useCodingBuildStore } from './codingBuildStore';
 import { SETTING_NAMES } from '../../session/practiceNames';
 
 export interface CodingBuildChoice {
@@ -54,13 +54,14 @@ export function CodingEntry({ programId, choice, onReady, onCancel }: CodingEntr
   const currentPhase = handle?.phase;
   const phaseKind = currentPhase?.kind;
   const readySessionId = currentPhase?.kind === 'ready' ? currentPhase.sessionId : null;
+  const handleMatchesChoice = handle ? sameCodingBuildChoice(handle.choice, choice) : false;
   const activityId = handle?.activityId ?? null;
   useEffect(() => {
-    if (phaseKind === 'ready' && readySessionId) {
+    if (phaseKind === 'ready' && readySessionId && handleMatchesChoice) {
       clearHandle(programId);
       latest.current.onReady(readySessionId);
     }
-  }, [clearHandle, phaseKind, programId, readySessionId]);
+  }, [clearHandle, handleMatchesChoice, phaseKind, programId, readySessionId]);
   useEffect(() => {
     if (phaseKind === 'built' && activityId) {
       void launchSession();

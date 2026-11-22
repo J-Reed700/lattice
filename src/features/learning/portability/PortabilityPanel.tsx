@@ -86,7 +86,7 @@ export function PortabilityPanel({ programId, onImported }: { programId: string;
         </div>
       </section>
 
-      <ImportCourseFlow headingLevel={4} onImported={(importedId) => onImported?.(importedId)} />
+      <ImportCourseFlow headingLevel={4} programId={programId} onImported={(importedId) => onImported?.(importedId)} />
     </div>
 
     <section className="rounded-2xl border border-border bg-surface p-4 sm:p-6"><div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[.14em] text-text-muted">History</p><h4 className="font-serif text-xl text-text-primary">Recent bundles</h4></div><span className="rounded-full bg-background px-3 py-1 text-[10px] text-text-muted">{workspace.data?.exports.length ?? 0} exports · {workspace.data?.imports.length ?? 0} imports</span></div>

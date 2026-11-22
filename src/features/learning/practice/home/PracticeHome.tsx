@@ -171,9 +171,11 @@ export function PracticeHome({ programId, goal, lessonId, onStart, onOpenTarget,
   const due = usePracticeDue(programId);
   const history = usePracticeHistory(programId);
   const codingBuild = useCodingBuildStore((store) => store.handles[programId]);
+  const ignoredJobs = useCodingBuildStore((store) => store.ignoredJobIds[programId]);
   const attachBackendJob = useCodingBuildStore((store) => store.attachBackendJob);
   const clearCodingBuild = useCodingBuildStore((store) => store.clearHandle);
   const activeBuildJob = usePracticeBuildJob(programId);
+  const visibleActiveBuildJob = activeBuildJob && !ignoredJobs?.[activeBuildJob.id] ? activeBuildJob : null;
 
   const fit = fitState(fitStatus.fit, PROGRAM_KIND_ID);
   const profile = profileState.profile ?? null;
@@ -193,7 +195,7 @@ export function PracticeHome({ programId, goal, lessonId, onStart, onOpenTarget,
   const showActiveBuild =
     codingBuild?.phase.kind === 'building' ||
     codingBuild?.phase.kind === 'starting' ||
-    Boolean(activeBuildJob && !codingBuild);
+    Boolean(visibleActiveBuildJob && !codingBuild);
   const showBuiltReady = codingBuild?.phase.kind === 'built' || codingBuild?.phase.kind === 'ready';
   const showBuildFailed = codingBuild?.phase.kind === 'failed';
 
@@ -225,8 +227,8 @@ export function PracticeHome({ programId, goal, lessonId, onStart, onOpenTarget,
               <button
                 type="button"
                 onClick={() => {
-                  if (activeBuildJob && !codingBuild) {
-                    attachBackendJob(programId, activeBuildJob, fallbackChoice);
+                  if (visibleActiveBuildJob && !codingBuild) {
+                    attachBackendJob(programId, visibleActiveBuildJob, fallbackChoice);
                     onResumeBuild?.(fallbackChoice);
                   } else if (codingBuild) {
                     onResumeBuild?.(codingBuild.choice);
@@ -238,13 +240,22 @@ export function PracticeHome({ programId, goal, lessonId, onStart, onOpenTarget,
               </button>
             )}
             {showBuiltReady && codingBuild && (
-              <button
-                type="button"
-                onClick={() => onResumeBuild?.(codingBuild.choice)}
-                className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-accent px-3.5 text-xs font-semibold text-accent-fg hover:opacity-90"
-              >
-                Open problem
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => onResumeBuild?.(codingBuild.choice)}
+                  className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-accent px-3.5 text-xs font-semibold text-accent-fg hover:opacity-90"
+                >
+                  Open problem
+                </button>
+                <button
+                  type="button"
+                  onClick={() => clearCodingBuild(programId)}
+                  className="inline-flex min-h-10 items-center rounded-lg border border-border-default px-3 text-xs font-medium text-text-secondary hover:bg-surface-raised"
+                >
+                  Dismiss
+                </button>
+              </>
             )}
             {showBuildFailed && codingBuild && (
               <>

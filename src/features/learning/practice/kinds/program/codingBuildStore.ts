@@ -40,14 +40,28 @@ export function isCodingBuildActive(handle: CodingBuildHandle | undefined): bool
   return Boolean(handle && (handle.phase.kind === 'building' || handle.phase.kind === 'starting'));
 }
 
+export function sameCodingBuildChoice(a: CodingBuildChoice, b: CodingBuildChoice): boolean {
+  return (
+    (a.lessonId ?? null) === (b.lessonId ?? null) &&
+    a.form === b.form &&
+    a.setting === b.setting &&
+    a.language === b.language &&
+    a.difficulty === b.difficulty &&
+    (a.focus ?? null) === (b.focus ?? null) &&
+    (a.budgetSeconds ?? null) === (b.budgetSeconds ?? null)
+  );
+}
+
 export async function listActivePracticeBuildJob(programId: string): Promise<Wire.JobDto | null> {
   try {
     const result = await apiCall('list_jobs', { kinds: [PRACTICE_BUILD_JOB_KIND] });
     if (!result.ok || !Array.isArray(result.data)) return null;
+    const ignored = useCodingBuildStore.getState().ignoredJobIds[programId];
     return (
       result.data.find(
         (job) =>
           isCodingBuildSubject(job.subjectId, programId) &&
+          !ignored?.[job.id] &&
           (job.status === 'pending' || job.status === 'running'),
       ) ?? null
     );
@@ -58,6 +72,7 @@ export async function listActivePracticeBuildJob(programId: string): Promise<Wir
 
 let listenerUnsubscribe: (() => void) | null = null;
 const buildRequestTokens = new Map<string, number>();
+const sessionRequestTokens = new Map<string, number>();
 const inFlightBuildPrograms = new Set<string>();
 const startingSessionPrograms = new Set<string>();
 
@@ -75,11 +90,13 @@ function ensureGlobalJobListener() {
 
 interface CodingBuildStore {
   handles: Record<string, CodingBuildHandle>;
+  ignoredJobIds: Record<string, Record<string, true>>;
   ensureBuild: (programId: string, choice: CodingBuildChoice, forceNew?: boolean) => Promise<void>;
   attachBackendJob: (programId: string, job: Wire.JobDto, fallbackChoice: CodingBuildChoice) => void;
   receiveJobStatus: (job: Wire.JobDto) => void;
   startSessionForBuild: (programId: string) => Promise<string | null>;
   clearHandle: (programId: string) => void;
+  discardBuild: (programId: string) => void;
 }
 
 export const useCodingBuildStore = create<CodingBuildStore>((set, get) => {
@@ -144,6 +161,7 @@ export const useCodingBuildStore = create<CodingBuildStore>((set, get) => {
 
   return {
     handles: {},
+    ignoredJobIds: {},
 
     attachBackendJob: (programId, job, fallbackChoice) => {
       ensureGlobalJobListener();
@@ -184,7 +202,7 @@ export const useCodingBuildStore = create<CodingBuildStore>((set, get) => {
           existing.phase.kind === 'building'
           || existing.phase.kind === 'starting'
           || existing.phase.kind === 'built'
-          || existing.phase.kind === 'ready'
+          || (existing.phase.kind === 'ready' && sameCodingBuildChoice(existing.choice, choice))
         ) {
           return;
         }
@@ -235,7 +253,15 @@ export const useCodingBuildStore = create<CodingBuildStore>((set, get) => {
           difficulty: choice.difficulty,
           focus: choice.focus ?? null,
         });
-        if (buildRequestTokens.get(programId) !== requestToken) return;
+        if (buildRequestTokens.get(programId) !== requestToken) {
+          set((state) => ({
+            ignoredJobIds: {
+              ...state.ignoredJobIds,
+              [programId]: { ...(state.ignoredJobIds[programId] ?? {}), [result.jobId]: true },
+            },
+          }));
+          return;
+        }
 
         patchHandle(programId, (handle) => {
           if (handle.operationId !== operationId) return handle;
@@ -279,6 +305,8 @@ export const useCodingBuildStore = create<CodingBuildStore>((set, get) => {
       const current = get().handles[programId];
       if (!current?.activityId) return null;
       if (startingSessionPrograms.has(programId)) return null;
+      const sessionToken = (sessionRequestTokens.get(programId) ?? 0) + 1;
+      sessionRequestTokens.set(programId, sessionToken);
       startingSessionPrograms.add(programId);
 
       patchHandle(programId, (handle) => ({
@@ -294,23 +322,31 @@ export const useCodingBuildStore = create<CodingBuildStore>((set, get) => {
           setting: current.choice.setting,
           budgetSeconds: current.choice.budgetSeconds ?? null,
         });
+        if (sessionRequestTokens.get(programId) !== sessionToken) return null;
         patchHandle(programId, (handle) => ({
           ...handle,
           phase: { kind: 'ready', sessionId: session.sessionId },
         }));
         return session.sessionId;
       } catch (error) {
+        if (sessionRequestTokens.get(programId) !== sessionToken) return null;
         patchHandle(programId, (handle) => ({
           ...handle,
           phase: { kind: 'failed', message: getErrorMessage(error), stage: 'start' },
         }));
         return null;
       } finally {
-        startingSessionPrograms.delete(programId);
+        if (sessionRequestTokens.get(programId) === sessionToken) {
+          startingSessionPrograms.delete(programId);
+        }
       }
     },
 
     clearHandle: (programId) => {
+      buildRequestTokens.set(programId, (buildRequestTokens.get(programId) ?? 0) + 1);
+      sessionRequestTokens.set(programId, (sessionRequestTokens.get(programId) ?? 0) + 1);
+      inFlightBuildPrograms.delete(programId);
+      startingSessionPrograms.delete(programId);
       set((state) => {
         if (!(programId in state.handles)) return state;
         const next = { ...state.handles };
@@ -318,16 +354,36 @@ export const useCodingBuildStore = create<CodingBuildStore>((set, get) => {
         return { handles: next };
       });
     },
+
+    discardBuild: (programId) => {
+      const jobId = get().handles[programId]?.jobId;
+      buildRequestTokens.set(programId, (buildRequestTokens.get(programId) ?? 0) + 1);
+      sessionRequestTokens.set(programId, (sessionRequestTokens.get(programId) ?? 0) + 1);
+      inFlightBuildPrograms.delete(programId);
+      startingSessionPrograms.delete(programId);
+      set((state) => {
+        const nextHandles = { ...state.handles };
+        delete nextHandles[programId];
+        const nextIgnored = jobId
+          ? {
+              ...state.ignoredJobIds,
+              [programId]: { ...(state.ignoredJobIds[programId] ?? {}), [jobId]: true as const },
+            }
+          : state.ignoredJobIds;
+        return { handles: nextHandles, ignoredJobIds: nextIgnored };
+      });
+    },
   };
 });
 
 export function resetCodingBuildStore() {
   buildRequestTokens.clear();
+  sessionRequestTokens.clear();
   inFlightBuildPrograms.clear();
   startingSessionPrograms.clear();
   if (listenerUnsubscribe) {
     listenerUnsubscribe();
     listenerUnsubscribe = null;
   }
-  useCodingBuildStore.setState({ handles: {} });
+  useCodingBuildStore.setState({ handles: {}, ignoredJobIds: {} });
 }

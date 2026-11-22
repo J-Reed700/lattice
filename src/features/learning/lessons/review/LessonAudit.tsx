@@ -48,8 +48,22 @@ export function AuditLessonNow({ programId, lessonId }: { programId: string; les
         {run.isPending ? 'Auditing…' : 'Audit this lesson now'}
       </button>
       <span className="text-text-muted">{optIn.blocked ?? `Sends this lesson to ${optIn.destination ?? 'your Verifier'}; a dispute sends it back to Needs your review.`}</span>
-      {run.data && <p role="status" className="w-full text-text-secondary">{resultLine(run.data)}</p>}
-      {run.error && <p role="alert" className="w-full text-rose-700">{run.error.message}</p>}
+      {run.data && (
+        <div className="flex w-full flex-wrap items-center justify-between gap-2">
+          <p role="status" className="text-text-secondary">{resultLine(run.data)}</p>
+          <button type="button" onClick={run.reset} className="shrink-0 font-medium text-text-muted underline hover:text-text-primary">
+            Dismiss
+          </button>
+        </div>
+      )}
+      {run.error && (
+        <div className="flex w-full flex-wrap items-center justify-between gap-2 text-rose-700">
+          <p role="alert">{run.error.message}</p>
+          <button type="button" onClick={run.reset} className="shrink-0 font-medium underline">
+            Dismiss
+          </button>
+        </div>
+      )}
       <div className="w-full"><LessonAuditLine programId={programId} lessonId={lessonId} /></div>
     </div>
   );

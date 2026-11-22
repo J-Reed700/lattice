@@ -5,10 +5,10 @@ import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { learningClaimReviewKey } from '@/features/learning/api/learningQueryKeys';
+import { learningClaimReviewKey, learningPlanKey } from '@/features/learning/api/learningQueryKeys';
 import { AuditLessonNow, LessonAuditLine } from '@/features/learning/lessons/review/LessonAudit';
 import { resetLessonAuditStore } from '@/features/learning/lessons/review/lessonAuditStore';
-import type { LearningLessonAuditDto, LearningLessonAuditResultDto } from '@/lib/bindings';
+import type { LearningLessonAuditDto, LearningLessonAuditResultDto, LearningPlanDto } from '@/lib/bindings';
 import { deferred } from '@/tests/deferred';
 
 const api = vi.hoisted(() => ({
@@ -77,6 +77,49 @@ describe('LessonAudit persistence and polling', () => {
 
     render(<AuditLessonNow programId="program-1" lessonId="lesson-1" />, { wrapper });
     expect(await screen.findByRole('status')).toHaveTextContent('The Verifier disputes 2 statements');
+    await user.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('does not poll lesson audit when lesson_preparation is running only for a different lesson', async () => {
+    vi.useFakeTimers();
+    api.lessonAudit.mockResolvedValue(ok(null));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData<LearningPlanDto>(learningPlanKey('program-1'), {
+      programId: 'program-1',
+      jobs: [
+        {
+          id: 'job-other',
+          programId: 'program-1',
+          operationId: 'op-1',
+          kind: 'lesson_preparation',
+          payloadSha256: 'hash',
+          baseRevisionNumber: 1,
+          status: 'running',
+          progressCompleted: 0,
+          progressTotal: 1,
+          progressMessage: '',
+          activity: null,
+          resultId: null,
+          heldLessonIds: [],
+          lessonIds: ['lesson-2'],
+          error: null,
+          retryOfJobId: null,
+          createdAt: 1,
+          startedAt: 1,
+          finishedAt: null,
+          endedByUpdate: false,
+        },
+      ],
+    } as unknown as LearningPlanDto);
+    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+
+    render(<LessonAuditLine programId="program-1" lessonId="lesson-1" />, { wrapper });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(api.lessonAudit).toHaveBeenCalledTimes(1);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(6_500); });
+    expect(api.lessonAudit).toHaveBeenCalledTimes(1);
   });
 
   it('polls running LessonAuditLine and invalidates claim review when audit completes', async () => {

@@ -50,7 +50,7 @@ import { useRepairLearningOutline } from '@/features/learning/workspace/useLearn
 import { CitationVisibilityToggle } from '@/features/reading/components/CitationVisibilityToggle';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import { useEffectiveTheme } from '@/hooks/useApplyTheme';
-import type { LearningLessonDto, LearningModuleDto, LearningProgramDto } from '@/lib/bindings';
+import type { LearningGenerationJob, LearningLessonDto, LearningModuleDto, LearningProgramDto } from '@/lib/bindings';
 import { flushPendingSaves } from '@/lib/pendingSaves';
 import type { StudyDestination, StudyTab } from '@/lib/studyActivity';
 
@@ -158,13 +158,38 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
     showCitations && program.sources.length > 0,
   );
   const visibleOutlineEvidence = showCitations && !outlineEvidence.isError ? outlineEvidence.data : null;
+  const allLessons = program.modules.flatMap((m) => m.lessons.map((lesson) => ({ module: m, lesson })));
+  const readyLessonIds = new Set(
+    allLessons
+      .filter(({ lesson }) => lesson.preparation === 'ready' || lesson.completed)
+      .map(({ lesson }) => lesson.id),
+  );
   const preparationPlan = useLearningPlan(activeProgram ? program.summary.id : '', preparePending);
   const preparationJobs = currentPreparationJobs(preparationPlan.data?.jobs ?? []).filter((job) => !job.endedByUpdate).sort((a, b) => b.createdAt - a.createdAt);
   const queue = preparationQueue(preparationPlan.data?.jobs ?? []);
-  const preparationJob = queue.find((job) => job.status === 'running') ?? queue[0] ?? preparationJobs[0];
-  const queuedMore = queue.filter((job) => job.id !== preparationJob?.id).length;
   const queuedLessonIds = new Set(queue.flatMap((job) => job.lessonIds ?? []));
-  const failedPreparationJobs = preparationJobs.filter(
+  const isFailedJobResolvedOrSuperseded = (job: LearningGenerationJob) => {
+    const ids = job.lessonIds ?? [];
+    if (ids.length === 0) return false;
+    return ids.every(
+      (id) =>
+        readyLessonIds.has(id)
+        || queuedLessonIds.has(id)
+        || preparationJobs.some(
+          (other) =>
+            other.id !== job.id
+            && (other.createdAt > job.createdAt
+              || (other.createdAt === job.createdAt && (other.status === 'completed' || other.status === 'pending' || other.status === 'running')))
+            && (other.lessonIds?.includes(id) || heldLessonIds(other).includes(id)),
+        ),
+    );
+  };
+  const visiblePreparationJobs = preparationJobs.filter(
+    (job) => !(job.status === 'failed' && isFailedJobResolvedOrSuperseded(job)),
+  );
+  const preparationJob = queue.find((job) => job.status === 'running') ?? queue[0] ?? visiblePreparationJobs[0];
+  const queuedMore = queue.filter((job) => job.id !== preparationJob?.id).length;
+  const failedPreparationJobs = visiblePreparationJobs.filter(
     (job) =>
       job.status === 'failed'
       && job.id !== preparationJob?.id
@@ -179,7 +204,6 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   const currentModule = program.modules.find((m) => m.id === moduleId) ?? program.modules[0];
   const planJobs = preparationPlan.data?.jobs ?? [];
   const unqueuedInModule = unqueuedLessons(currentModule?.lessons ?? [], planJobs);
-  const allLessons = program.modules.flatMap((m) => m.lessons.map((lesson) => ({ module: m, lesson })));
   const courseLine = coursePreparationLine(coursePreparation(allLessons.map(({ lesson }) => lesson), planJobs));
   const paceMinutes = preparationPaceMinutes(planJobs);
   const currentLesson = lessonId ? (currentModule?.lessons.find((l) => l.id === lessonId) ?? currentModule?.lessons[0]) : undefined;

@@ -38,6 +38,7 @@ export interface ExportAllRunState {
 }
 
 export interface ImportFlowRunState {
+  scope: string | null;
   pendingAction: ImportPendingAction;
   preview: LearningPackImportPreviewDto | null;
   applyConfirm: boolean;
@@ -86,6 +87,7 @@ function initialExportAllState(): ExportAllRunState {
 
 function initialImportFlowState(): ImportFlowRunState {
   return {
+    scope: null,
     pendingAction: null,
     preview: null,
     applyConfirm: false,
@@ -114,8 +116,9 @@ interface PortabilityRunStore {
 
   markImportMounted: (mounted: boolean) => void;
   dismissImportBanner: () => void;
+  dismissImportFeedback: () => void;
   setImportApplyConfirm: (open: boolean) => void;
-  chooseAndPreviewImportFile: (api: ApiClient, client: QueryClient) => Promise<void>;
+  chooseAndPreviewImportFile: (api: ApiClient, client: QueryClient, scope?: string) => Promise<void>;
   retryImportPreview: (api: ApiClient, client: QueryClient) => Promise<void>;
   chooseImportPolicy: (api: ApiClient, client: QueryClient, policy: LearningPackConflictPolicy) => Promise<void>;
   abandonImportPreview: (api: ApiClient, client: QueryClient) => Promise<void>;
@@ -269,11 +272,36 @@ export const usePortabilityRunStore = create<PortabilityRunStore>((set, get) => 
         };
       }),
     dismissImportBanner: () => patchImportFlow({ finishedWhileAway: false }),
+    dismissImportFeedback: () =>
+      set((state) => {
+        if (state.importFlow.pendingAction !== null) return state;
+        return {
+          importFlow: {
+            ...state.importFlow,
+            notice: '',
+            failure: null,
+            finishedWhileAway: false,
+            lastImported: null,
+            retryPreview: null,
+            retryApply: null,
+            preview: state.importFlow.preview?.status === 'applied' ? null : state.importFlow.preview,
+          },
+        };
+      }),
     setImportApplyConfirm: (open) => patchImportFlow({ applyConfirm: open }),
 
-    chooseAndPreviewImportFile: async (api, client) => {
-      if (get().importFlow.pendingAction !== null) return;
-      patchImportFlow({ pendingAction: 'choosing', failure: null, notice: '', applyConfirm: false });
+    chooseAndPreviewImportFile: async (api, client, scope = 'standalone') => {
+      const current = get().importFlow;
+      if (current.pendingAction !== null) return;
+      const scopeChanged = current.scope !== null && current.scope !== scope;
+      patchImportFlow({
+        scope,
+        pendingAction: 'choosing',
+        failure: null,
+        notice: '',
+        applyConfirm: false,
+        ...(scopeChanged ? { preview: null, retryPreview: null, retryApply: null, lastImported: null } : {}),
+      });
       try {
         const chosen = await promptChooseCourseFile();
         if (!chosen) {

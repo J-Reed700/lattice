@@ -336,4 +336,65 @@ describe('Importing a course onto this computer', () => {
     expect(mocks.onImported).toHaveBeenCalledWith('course-1', 'Field biology');
     view3.unmount();
   });
+
+  it('still triggers onImported when remounted while apply is still in progress', async () => {
+    const user = userEvent.setup();
+    const applyDefer = deferred<ReturnType<typeof ok>>();
+    mocks.apply.mockReturnValueOnce(applyDefer.promise);
+
+    const view1 = renderFlow();
+    await user.click(screen.getByRole('button', { name: 'Choose a course file…' }));
+    await user.click(await screen.findByRole('button', { name: 'Apply these changes' }));
+    await user.click(screen.getByRole('button', { name: 'Confirm import' }));
+    view1.unmount();
+
+    const onImportedMount2 = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <ImportCourseFlow headingLevel={2} onImported={onImportedMount2} />
+      </QueryClientProvider>,
+    );
+
+    await act(async () => {
+      applyDefer.resolve(ok(workspace('course-1', [previewOf({ previewId: mocks.apply.mock.calls[0][0].previewId, sourcePath: '/Volumes/USB/field-biology.lattice-learning', conflictPolicy: 'merge_safe' }, { status: 'applied' })])));
+    });
+
+    await waitFor(() => expect(onImportedMount2).toHaveBeenCalledWith('course-1', 'Field biology'));
+  });
+
+  it('allows dismissing import notices and failures, and scopes import notices to their course', async () => {
+    const user = userEvent.setup();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } } });
+    const viewA = render(
+      <QueryClientProvider client={client}>
+        <ImportCourseFlow headingLevel={4} programId="course-a" onImported={mocks.onImported} />
+      </QueryClientProvider>,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Choose a course file…' }));
+    await user.click(await screen.findByRole('button', { name: 'Apply these changes' }));
+    await user.click(screen.getByRole('button', { name: 'Confirm import' }));
+    expect(await screen.findByRole('status')).toHaveTextContent('“Field biology” is ready on this computer.');
+
+    // Switching to course B must not display course A's import notice.
+    viewA.unmount();
+    const viewB = render(
+      <QueryClientProvider client={client}>
+        <ImportCourseFlow headingLevel={4} programId="course-b" onImported={mocks.onImported} />
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    viewB.unmount();
+
+    // Returning to course A lets the user dismiss the notice.
+    render(
+      <QueryClientProvider client={client}>
+        <ImportCourseFlow headingLevel={4} programId="course-a" onImported={mocks.onImported} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByRole('status')).toHaveTextContent('“Field biology” is ready on this computer.');
+    await user.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
 });
