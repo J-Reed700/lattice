@@ -362,6 +362,21 @@ jobs:
           "TMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
           "TEMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
 
+      - name: Diagnosis - Defender and the temporary folder
+        if: matrix.os == 'windows-latest'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Get-MpComputerStatus | Format-List AMRunningMode, AMProductVersion, RealTimeProtectionEnabled, OnAccessProtectionEnabled, BehaviorMonitorEnabled, IoavProtectionEnabled
+          $pref = Get-MpPreference
+          "DisableRealtimeMonitoring: $($pref.DisableRealtimeMonitoring)"
+          "ExclusionPath: $($pref.ExclusionPath -join '; ')"
+          "ExclusionProcess: $($pref.ExclusionProcess -join '; ')"
+          Get-Item $env:RUNNER_TEMP | Format-List FullName, Attributes
+          (Get-Acl $env:RUNNER_TEMP).Access | Format-Table IdentityReference, FileSystemRights, AccessControlType, IsInherited -AutoSize
+          fltmc filters
+          Get-Volume -DriveLetter D | Format-List FileSystem, Size, SizeRemaining
+
       - name: Sample memory through the tests
         if: runner.os == 'Linux'
         run: nohup bash scripts/ci/sample_memory.sh "$RUNNER_TEMP/test-memory.tsv" > /dev/null 2>&1 &
@@ -374,6 +389,20 @@ jobs:
           # this step only, because rust-cache hashes the job's CARGO_* variables into its key.
           CARGO_BUILD_JOBS: ${{ runner.os == 'Linux' && '1' || 'default' }}
         run: cargo nextest run --locked ${{ env.PACKAGE_ARGS }} --features lattice-desktop/bindings-export --lib --bins --tests --no-fail-fast --profile ci
+
+      - name: Diagnosis - temp file churn with nothing else running
+        if: ${{ !cancelled() && matrix.os == 'windows-latest' }}
+        continue-on-error: true
+        working-directory: crates/lattice-desktop
+        run: cargo nextest run --locked ${{ env.PACKAGE_ARGS }} --features lattice-desktop/bindings-export --lib --bins --tests --no-fail-fast --profile ci -E 'binary(=tempfile_access_denied_diag)'
+
+      - name: Diagnosis - the flaky module at sixteen times its cases, alone
+        if: ${{ !cancelled() && matrix.os == 'windows-latest' }}
+        continue-on-error: true
+        working-directory: crates/lattice-desktop
+        env:
+          PROPTEST_CASES: 4096
+        run: cargo nextest run --locked ${{ env.PACKAGE_ARGS }} --features lattice-desktop/bindings-export --lib --bins --tests --no-fail-fast --profile ci -E 'package(lattice-core) & test(file_metadata)'
 
       - name: Memory peaks during the tests
         if: ${{ !cancelled() && runner.os == 'Linux' }}
