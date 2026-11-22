@@ -9,6 +9,8 @@ import { createCitationMap } from '@/utils/citations';
 interface CitationInteractionOptions {
   sources: SourceWithMetadata[];
   ownerKey: string;
+  /** Originating conversation ID (tangent-aware) for web snapshot attribution. */
+  conversationId?: string | null;
   /** Whether the text's numbers stand for these sources (chat: an assistant message with sources). */
   numbered: boolean;
   showCitations: boolean;
@@ -23,7 +25,7 @@ interface CitationInteractionOptions {
 
 /** Owns citation navigation and the text's delegated interactions. */
 export function useCitationInteractions({
-  sources, ownerKey, numbered, showCitations, claims, codeRefs,
+  sources, ownerKey, conversationId = null, numbered, showCitations, claims, codeRefs,
 }: CitationInteractionOptions) {
   const openReader = useReaderStore((state) => state.open);
   const readerSession = useReaderStore((state) => state.session);
@@ -38,11 +40,21 @@ export function useCitationInteractions({
   );
 
   const openCitation = useCallback(
-    (index: number, occurrence: number | null = null) => {
+    (index: number, occurrence: number | null = null, excerptChunkId: string | null = null) => {
       if (index < 0 || !ownerKey) return;
-      openReader(ownerKey, citationSources, index, occurrence);
+      const target = citationSources[index];
+      const resolvedConversationId = target?.conversationId ?? conversationId;
+      const options = {
+        ...(excerptChunkId ? { excerptChunkId } : {}),
+        ...(resolvedConversationId ? { conversationId: resolvedConversationId } : {}),
+      };
+      if (Object.keys(options).length > 0) {
+        openReader(ownerKey, citationSources, index, occurrence, options);
+      } else {
+        openReader(ownerKey, citationSources, index, occurrence);
+      }
     },
-    [ownerKey, openReader, citationSources]
+    [ownerKey, openReader, citationSources, conversationId]
   );
 
   /**
@@ -50,19 +62,41 @@ export function useCitationInteractions({
    *
    * `occurrence` is the mark that was clicked, when one was: the answer cites a
    * source from several sentences and the reader opens on the one that was meant.
+   * `excerptChunkId` identifies a specific excerpt within a multi-excerpt source.
    */
   const openSource = useCallback(
-    (source: SourceWithMetadata, occurrence: number | null = null) => {
+    (source: SourceWithMetadata, occurrence: number | null = null, excerptChunkId?: string) => {
       const index = citationSources.findIndex((candidate) => candidate.chunkId === source.chunkId);
+      const target = index >= 0 ? citationSources[index] : undefined;
+      const resolvedConversationId = source.conversationId ?? target?.conversationId ?? conversationId;
+      const needsStandaloneSource =
+        index < 0 ||
+        Boolean(
+          excerptChunkId &&
+          target &&
+          excerptChunkId !== target.chunkId &&
+          !target.chunkExcerpts?.some((chunk) => chunk.chunkId === excerptChunkId) &&
+          source.chunkExcerpts?.some((chunk) => chunk.chunkId === excerptChunkId)
+        );
       // A passage the answer never numbered — two chunks that share a citation
       // id keep one of them out of the map — still opens, on its own.
-      if (index < 0) {
-        if (ownerKey) openReader(ownerKey, [source], 0, occurrence);
+      if (needsStandaloneSource) {
+        if (ownerKey) {
+          const options = {
+            ...(excerptChunkId ? { excerptChunkId } : {}),
+            ...(resolvedConversationId ? { conversationId: resolvedConversationId } : {}),
+          };
+          if (Object.keys(options).length > 0) {
+            openReader(ownerKey, [source], 0, occurrence, options);
+          } else {
+            openReader(ownerKey, [source], 0, occurrence);
+          }
+        }
         return;
       }
-      openCitation(index, occurrence);
+      openCitation(index, occurrence, excerptChunkId ?? null);
     },
-    [citationSources, openCitation, openReader, ownerKey]
+    [citationSources, conversationId, openCitation, openReader, ownerKey]
   );
 
   // Inline `[n]` chips live inside the rendered answer, so they are handled by

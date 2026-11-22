@@ -53,4 +53,23 @@ describe('pollAttachmentImport', () => {
     const outcome = await pollAttachmentImport('job', { ...options(getStatus), now: () => t });
     expect(outcome).toEqual({ kind: 'pending', documentIds: ['doc-2'] });
   });
+
+  it('wakes immediately from the default sleep timer when aborted via signal', async () => {
+    const controller = new AbortController();
+    const getStatus = vi.fn().mockResolvedValue({ ok: true, data: job({}) });
+
+    const startedAt = Date.now();
+    const promise = pollAttachmentImport('job', {
+      getStatus,
+      intervalMs: 10_000,
+      timeoutMs: 60_000,
+      signal: controller.signal,
+    });
+    controller.abort();
+    const outcome = await promise;
+
+    expect(outcome).toEqual({ kind: 'cancelled' });
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(getStatus).not.toHaveBeenCalled();
+  });
 });

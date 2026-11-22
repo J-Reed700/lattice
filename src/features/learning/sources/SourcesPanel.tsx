@@ -1,33 +1,33 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
+import { useQueryClient } from '@tanstack/react-query';
 import { BookOpen, Check, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Clock3, FileText, Globe2, Plus, RefreshCw, Search, ShieldAlert, Upload, X } from 'lucide-react';
 
 
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { useApi } from '@/contexts/ApiContext';
 import { progressLine, recheckLine } from '@/features/learning/lessons/review/claimReviewCopy';
 import { addedByLabel } from '@/features/learning/lessons/review/claimReviewPresentation';
-import { useRetry } from '@/features/learning/practice/shared/useRetry';
 import { LearningDocumentPicker, type LearningDocumentSelection } from '@/features/learning/sources/LearningDocumentPicker';
 import { SavedSourcePreview } from '@/features/learning/sources/SavedSourcePreview';
 import { SourceCleanup } from '@/features/learning/sources/SourceCleanup';
+import {
+  EMPTY_SOURCE_PROGRAM_RUN,
+  type SourceRetryOperation,
+  useSourceRecheckStore,
+} from '@/features/learning/sources/sourceRecheckStore';
 import { SourceTrustSection } from '@/features/learning/sources/trust/SourceTrustSection';
 import { TrustLevelChip } from '@/features/learning/sources/trust/TrustBadge';
 import { LEVEL_WORD, TRUST_LEVELS } from '@/features/learning/sources/trust/trustPresentation';
 import { useSourceTrust } from '@/features/learning/sources/trust/useSourceTrust';
 import {
-  useAddLearningDocumentSource,
-  useAddLearningTextSource,
-  useAddLearningWebSource,
-  useAdoptLearningSourceVersion,
   useLearningSourceVersion,
   useLearningSourceWorkspace,
-  useRefreshLearningSource,
   useSearchLearningSources,
-  useUpdateLearningSourcePolicy,
 } from '@/features/learning/sources/useLearningSources';
 import { useSavedSourceReader } from '@/features/learning/sources/useSavedSourceReader';
 import { useReaderClosesWithOwner } from '@/features/reading/hooks/useReaderClosesWithOwner';
-import { newId } from '@/lib/api';
+import { newId, unwrap } from '@/lib/api';
 import type {
   AddLearningDocumentSourceRequestDto,
   AddLearningTextSourceRequestDto,
@@ -39,12 +39,11 @@ import type {
   LearningTrustLevel,
   RefreshLearningSourceRequestDto,
   UpdateLearningSourcePolicyRequestDto,
-  WaitingClaimsRecheckDto,
 } from '@/lib/bindings';
 
 type AddKind = 'web' | 'document' | 'paste';
 type Filter = 'all' | 'updates' | 'pinned' | 'attention';
-type RetryOperation = { kind: string; fingerprint: string; request: Record<string, unknown> };
+type RetryOperation = SourceRetryOperation;
 const EMPTY_SOURCES: LearningSourceLibraryItemDto[] = [];
 /** How many sources the Library list shows at once; the choice is kept across programs and restarts. */
 export const SOURCE_PAGE_SIZES = [10, 25, 50, 100] as const;
@@ -80,20 +79,19 @@ export function SourcesPanel({ programId, active = true, onOpenReview }: {
   /** Opens the review of the course's held lessons, after a new source re-checked their claims. */
   onOpenReview?: () => void;
 }) {
+  const api = useApi();
+  const client = useQueryClient();
   const workspace = useLearningSourceWorkspace(programId);
-  // Whether a source added here is checked against the course's waiting claims; on unless the user unticks it.
-  const [checkWaiting, setCheckWaiting] = useState(true);
-  const [recheckProgress, setRecheckProgress] = useState<ClaimAttachProgressDto | null>(null);
-  const waitingCheck = { checkWaiting, onProgress: setRecheckProgress };
-  const addWeb = useAddLearningWebSource(waitingCheck);
-  const addDocument = useAddLearningDocumentSource(waitingCheck);
-  const addText = useAddLearningTextSource(waitingCheck);
-  // What checking the course's waiting claims against the source just added found (§3.6).
-  const [recheck, setRecheck] = useState<WaitingClaimsRecheckDto | null>(null);
-  const rechecked = <T extends { recheck: WaitingClaimsRecheckDto | null }>(data: T) => { setRecheck(data.recheck); setRecheckProgress(null); return data; };
-  const refresh = useRefreshLearningSource();
-  const adopt = useAdoptLearningSourceVersion();
-  const updatePolicy = useUpdateLearningSourcePolicy();
+  const runState = useSourceRecheckStore((store) => store.programRuns[programId] ?? EMPTY_SOURCE_PROGRAM_RUN);
+  const setCheckWaitingInStore = useSourceRecheckStore((store) => store.setCheckWaiting);
+  const setDismissedInStore = useSourceRecheckStore((store) => store.setDismissed);
+  const runProgramOperation = useSourceRecheckStore((store) => store.runProgramOperation);
+  const retryProgramOperation = useSourceRecheckStore((store) => store.retryProgramOperation);
+
+  const { busy: mutationBusy, checkWaiting, recheckProgress, recheck, error: runError, conflict: runConflict, retryKind, retryItem, dismissed } = runState;
+  const setCheckWaiting = (value: boolean) => setCheckWaitingInStore(programId, value);
+  const setDismissed = (value: boolean) => setDismissedInStore(programId, value);
+
   const [selectedId, setSelectedId] = useState('');
   const [selectedVersionId, setSelectedVersionId] = useState('');
   const reader = useSavedSourceReader(programId);
@@ -117,22 +115,25 @@ export function SourcesPanel({ programId, active = true, onOpenReview }: {
   const [pastePublisher, setPastePublisher] = useState('');
   const [pasteText, setPasteText] = useState('');
   const [formError, setFormError] = useState('');
-  const [lastKind, setLastKind] = useState('');
-  const [dismissed, setDismissed] = useState(false);
   const preparedAddRef = useRef<RetryOperation | null>(null);
-  const lastItemRef = useRef<RetryOperation | null>(null);
-  const operation = useRetry(async (item: RetryOperation, call: (request: Record<string, unknown>) => Promise<unknown>) => {
-    await call(item.request);
-    lastItemRef.current = null;
-    if (item.kind.startsWith('add-')) setAddOpen(false);
-    return true;
-  });
-  const mutationBusy = operation.busy;
-  const operationMessage = dismissed ? '' : (operation.error ?? '');
-  const reloadRequired = !dismissed && operation.conflict;
-  const retryOperation = operationMessage ? { kind: lastKind } : null;
+  const lastItemRef = useRef<RetryOperation | null>(retryItem);
+  if (retryItem && retryItem !== lastItemRef.current) lastItemRef.current = retryItem;
+
+  const operationMessage = dismissed ? '' : (runError ?? '');
+  const reloadRequired = !dismissed && runConflict;
+  const retryOperation = operationMessage && retryItem ? { kind: retryKind ?? '' } : null;
   const addTriggerRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+
+  const executeSourceOperation = (kind: string, request: Record<string, unknown>, onProgress: (update: ClaimAttachProgressDto) => void) => {
+    const waitingCheck = { checkWaiting, onProgress };
+    if (kind === 'add-web') return api.addLearningWebSource(request as unknown as AddLearningWebSourceRequestDto, waitingCheck).then(unwrap);
+    if (kind === 'add-document') return api.addLearningDocumentSource(request as unknown as AddLearningDocumentSourceRequestDto, waitingCheck).then(unwrap);
+    if (kind === 'add-text') return api.addLearningTextSource(request as unknown as AddLearningTextSourceRequestDto, waitingCheck).then(unwrap);
+    if (kind.startsWith('refresh:')) return api.refreshLearningSource(request as unknown as RefreshLearningSourceRequestDto).then(unwrap);
+    if (kind.startsWith('adopt:')) return api.adoptLearningSourceVersion(request as unknown as AdoptLearningSourceVersionRequestDto).then(unwrap);
+    return api.updateLearningSourcePolicy(request as unknown as UpdateLearningSourcePolicyRequestDto).then(unwrap);
+  };
 
   useEffect(() => { const timer = window.setTimeout(() => setQuery(searchText.trim()), 220); return () => window.clearTimeout(timer); }, [searchText]);
   useLayoutEffect(() => {
@@ -194,7 +195,6 @@ export function SourcesPanel({ programId, active = true, onOpenReview }: {
   const perform = async <T extends Record<string, unknown>>(
     kind: string,
     payload: Omit<T, 'operationId'> | T,
-    call: (request: T) => Promise<unknown>,
   ) => {
     const { operationId: providedOperationId, ...requestPayload } = payload as T & { operationId?: string };
     const fingerprint = JSON.stringify(requestPayload);
@@ -203,9 +203,12 @@ export function SourcesPanel({ programId, active = true, onOpenReview }: {
       ? previous
       : { kind, fingerprint, request: { ...requestPayload, operationId: providedOperationId ?? newId() } };
     lastItemRef.current = item;
-    setLastKind(kind);
-    setDismissed(false);
-    return (await operation.run(item, call as (request: Record<string, unknown>) => Promise<unknown>)) === true;
+    const ok = await runProgramOperation(programId, client, item, (req, onProgress) => executeSourceOperation(kind, req, onProgress));
+    if (ok) {
+      lastItemRef.current = null;
+      if (kind.startsWith('add-')) setAddOpen(false);
+    }
+    return ok;
   };
 
   const addRequest = <T extends Record<string, unknown>>(
@@ -246,37 +249,37 @@ export function SourcesPanel({ programId, active = true, onOpenReview }: {
       try { url = new URL(webUrl.trim()); } catch { setFormError('Enter a complete web address, such as https://example.org/article.'); return; }
       if (!['http:', 'https:'].includes(url.protocol)) { setFormError('Use an http or https web address.'); return; }
       const request = addRequest<AddLearningWebSourceRequestDto>('add-web', { programId, url: url.href, freshnessPolicy: webPolicy });
-      const ok = await perform<AddLearningWebSourceRequestDto>('add-web', request, (body) => addWeb.mutateAsync(body as AddLearningWebSourceRequestDto).then(rechecked));
+      const ok = await perform<AddLearningWebSourceRequestDto>('add-web', request);
       if (ok) { preparedAddRef.current = null; setWebUrl(''); setAddOpen(false); }
       return;
     }
     if (addKind === 'document') {
       if (!documentId) { setFormError('Choose a document from your Library.'); return; }
       const request = addRequest<AddLearningDocumentSourceRequestDto>('add-document', { programId, documentId });
-      const ok = await perform<AddLearningDocumentSourceRequestDto>('add-document', request, (body) => addDocument.mutateAsync(body as AddLearningDocumentSourceRequestDto).then(rechecked));
+      const ok = await perform<AddLearningDocumentSourceRequestDto>('add-document', request);
       if (ok) { preparedAddRef.current = null; setDocumentId(); setAddOpen(false); }
       return;
     }
     if (!pasteTitle.trim()) { setFormError('Give this saved text a title.'); return; }
     if (!pasteText.trim()) { setFormError('Paste some text to save.'); return; }
     const request = addRequest<AddLearningTextSourceRequestDto>('add-text', { programId, title: pasteTitle.trim(), publisher: pastePublisher.trim() || null, text: pasteText });
-    const ok = await perform<AddLearningTextSourceRequestDto>('add-text', request, (body) => addText.mutateAsync(body as AddLearningTextSourceRequestDto).then(rechecked));
+    const ok = await perform<AddLearningTextSourceRequestDto>('add-text', request);
     if (ok) { preparedAddRef.current = null; setPasteTitle(''); setPastePublisher(''); setPasteText(''); setAddOpen(false); }
   };
 
   const runRefresh = async (source: LearningSourceLibraryItemDto) => {
     const request: Omit<RefreshLearningSourceRequestDto, 'operationId'> = { programId, sourceId: source.id, expectedRevision: source.revision };
-    await perform<RefreshLearningSourceRequestDto>(`refresh:${source.id}`, request, (body) => refresh.mutateAsync(body as RefreshLearningSourceRequestDto));
+    await perform<RefreshLearningSourceRequestDto>(`refresh:${source.id}`, request);
   };
   const runAdopt = async (source: LearningSourceLibraryItemDto) => {
     if (!source.pendingVersionId) return;
     const request: Omit<AdoptLearningSourceVersionRequestDto, 'operationId'> = { programId, sourceId: source.id, versionId: source.pendingVersionId, expectedRevision: source.revision };
-    const ok = await perform<AdoptLearningSourceVersionRequestDto>(`adopt:${source.id}`, request, (body) => adopt.mutateAsync(body as AdoptLearningSourceVersionRequestDto));
+    const ok = await perform<AdoptLearningSourceVersionRequestDto>(`adopt:${source.id}`, request);
     if (ok) setSelectedVersionId(source.pendingVersionId);
   };
   const runPolicy = async (source: LearningSourceLibraryItemDto, policy: LearningSourcePolicy) => {
     const request: Omit<UpdateLearningSourcePolicyRequestDto, 'operationId'> = { programId, sourceId: source.id, freshnessPolicy: policy, expectedRevision: source.revision };
-    await perform<UpdateLearningSourcePolicyRequestDto>(`policy:${source.id}`, request, (body) => updatePolicy.mutateAsync(body as UpdateLearningSourcePolicyRequestDto));
+    await perform<UpdateLearningSourcePolicyRequestDto>(`policy:${source.id}`, request);
   };
 
   if (workspace.isLoading) return <div role="status" className="rounded-2xl border border-border bg-surface p-8 text-sm text-text-muted">Opening the source library…</div>;
@@ -291,6 +294,7 @@ export function SourcesPanel({ programId, active = true, onOpenReview }: {
       ].map(([label, count]) => <div key={label} className="rounded-xl border border-white/70 bg-white/50 px-3 py-2.5 dark:border-white/10 dark:bg-black/10"><div className="text-[9px] font-semibold uppercase tracking-wider text-text-muted">{label}</div><div className="mt-1 font-serif text-xl tabular-nums text-text-primary">{count}</div></div>)}</div>
     </header>
 
+    {!addOpen && mutationBusy && <p role="status" className="mb-4 rounded-xl border border-border bg-surface px-4 py-3 text-sm text-text-secondary">{recheckProgress ? progressLine(recheckProgress) : 'Saving source…'}</p>}
     {recheckLine(recheck) && <p role="status" className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-border bg-surface px-4 py-3 text-sm text-text-primary">
       <span>{recheckLine(recheck)}</span>
       {onOpenReview && <button type="button" onClick={onOpenReview} className="font-medium text-accent underline underline-offset-2">Open the review</button>}
@@ -298,7 +302,7 @@ export function SourcesPanel({ programId, active = true, onOpenReview }: {
 
     <SourceCleanup programId={programId} notSources={workspace.data?.notSources ?? []} unusedResearch={workspace.data?.unusedResearch ?? []} />
 
-    {(operationMessage || reloadRequired) && <div role="alert" className="mb-4 rounded-xl border border-danger-muted bg-danger-muted p-4 text-sm text-danger-fg"><p>{reloadRequired ? 'This source changed elsewhere. Reload the latest version before trying again.' : operationMessage}</p><div className="mt-3 flex flex-wrap gap-2">{retryOperation && !reloadRequired && <button type="button" onClick={operation.retry} className="rounded-full bg-accent px-4 py-2 text-xs font-semibold text-accent-fg">Try again</button>}{reloadRequired && <button type="button" onClick={() => { setDismissed(true); void workspace.refetch(); }} className="rounded-full border border-danger-fg px-4 py-2 text-xs font-semibold">Reload sources</button>}</div></div>}
+    {(operationMessage || reloadRequired) && <div role="alert" className="mb-4 rounded-xl border border-danger-muted bg-danger-muted p-4 text-sm text-danger-fg"><p>{reloadRequired ? 'This source changed elsewhere. Reload the latest version before trying again.' : operationMessage}</p><div className="mt-3 flex flex-wrap gap-2">{retryOperation && !reloadRequired && <button type="button" onClick={() => void retryProgramOperation(programId, client, (req, onProgress) => executeSourceOperation(retryOperation.kind, req, onProgress))} className="rounded-full bg-accent px-4 py-2 text-xs font-semibold text-accent-fg">Try again</button>}{reloadRequired && <button type="button" onClick={() => { setDismissed(true); void workspace.refetch(); }} className="rounded-full border border-danger-fg px-4 py-2 text-xs font-semibold">Reload sources</button>}</div></div>}
 
     <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(230px,0.36fr)_minmax(0,1fr)]">
       <aside className="min-w-0 rounded-2xl border border-border bg-surface p-4 sm:p-5">

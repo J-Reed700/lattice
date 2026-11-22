@@ -145,6 +145,7 @@ export function applyDownloadSnapshot(
     if (isLateProgress(existingEntry?.[1], snapshot.status)) return current;
     const storeKey = existingEntry?.[0] ?? snapshot.id;
     next.set(storeKey, toDownloadStatus(snapshot.id, snapshot, {
+      modelId: snapshot.modelId ?? existingEntry?.[1]?.model_id ?? undefined,
       existing: existingEntry?.[1],
     }));
     return next;
@@ -173,6 +174,12 @@ export function applyDownloadSnapshot(
         : 0,
       etaSeconds: snapshot.aggregateEtaSeconds,
       status: file.status,
+      errorMessage:
+        file.status === 'error'
+          ? file.errorMessage !== undefined
+            ? file.errorMessage
+            : (existing?.error_message ?? null)
+          : null,
     };
     next.set(storeKey, toDownloadStatus(file.id, fileSnapshot, {
       modelId: snapshot.id,
@@ -196,7 +203,7 @@ const toDownloadStatus = (
   identity: SnapshotIdentity = {}
 ): DownloadStatus => {
   const now = new Date().toISOString();
-  const modelId = identity.modelId ?? identity.existing?.model_id;
+  const modelId = identity.modelId ?? snapshot.modelId ?? identity.existing?.model_id;
   const modelName = identity.modelName
     ?? identity.existing?.model_name
     ?? snapshot.modelName
@@ -213,7 +220,12 @@ const toDownloadStatus = (
     bytes_per_second: snapshot.bytesPerSecond,
     percentage: snapshot.percentage,
     eta_seconds: snapshot.etaSeconds,
-    error_message: identity.existing?.error_message ?? null,
+    error_message:
+      snapshot.status === 'error'
+        ? snapshot.errorMessage !== undefined
+          ? snapshot.errorMessage
+          : (identity.existing?.error_message ?? null)
+        : (snapshot.errorMessage ?? null),
     retry_count: identity.existing?.retry_count ?? 0,
     created_at: identity.existing?.created_at ?? now,
     started_at: identity.existing?.started_at ?? null,

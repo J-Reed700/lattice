@@ -2,9 +2,10 @@ import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { useCloudApiKeyMutation } from '@/features/settings/hooks/useSettingsQuery';
 import { VaultAPI } from '@/lib/api';
 import type { DownloadedModel } from '@/types/downloadedModels';
 
@@ -20,7 +21,7 @@ function renderModels() {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   );
-  return renderHook(() => useDownloadedModels(), { wrapper });
+  return { queryClient, ...renderHook(() => useDownloadedModels(), { wrapper }) };
 }
 
 describe('useDownloadedModels', () => {
@@ -49,5 +50,45 @@ describe('useDownloadedModels', () => {
     await expect(result.current.isModelDownloaded('qwen3-4b')).resolves.toBe(true);
     await expect(result.current.isModelDownloaded('missing')).resolves.toBe(false);
     expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('invalidates settings, active-models, and course index queries on embedding change and model delete', async () => {
+    api.setActiveEmbeddingModel = vi.fn().mockResolvedValue({ ok: true, data: undefined });
+    api.deleteDownloadedModel = vi.fn().mockResolvedValue({ ok: true, data: undefined });
+    const { result, queryClient } = renderModels();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    await act(() => result.current.setActiveEmbeddingModel('row-1'));
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['downloaded-models'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['settings'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['active-models'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['learning', 'course-index'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['course-index-status'] });
+
+    invalidateSpy.mockClear();
+    await act(() => result.current.deleteDownloadedModel('row-1'));
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['downloaded-models'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['settings'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['active-models'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['learning', 'course-index'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['course-index-status'] });
+  });
+
+  it('invalidates settings, active-models, and course index queries when saving a cloud API key', async () => {
+    api.setCloudApiKey = vi.fn().mockResolvedValue({ ok: true, data: undefined });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useCloudApiKeyMutation(), { wrapper });
+
+    await act(() => result.current.setCloudApiKey({ provider: 'openai', key: 'sk-test' }));
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['settings'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['active-models'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['learning', 'course-index'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['course-index-status'] });
   });
 });

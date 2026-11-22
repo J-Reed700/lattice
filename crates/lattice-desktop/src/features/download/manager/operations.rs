@@ -8,8 +8,9 @@ use super::task::{send_control_event, send_terminal_event};
 use crate::infrastructure::adapters::fs::model_paths::ModelPaths;
 use async_trait::async_trait;
 use lattice_core::application::ports::download_manager::{
-    DownloadBatchItem, DownloadEvent, DownloadManager, DownloadRequest,
+    is_huggingface_url, DownloadBatchItem, DownloadEvent, DownloadManager, DownloadRequest,
 };
+use lattice_core::application::services::credentials::CredentialKey;
 use lattice_core::domain::download::{DownloadError, DownloadSession, DownloadState};
 use lattice_core::shared::path_safety::reject_parent_components;
 use std::sync::Arc;
@@ -138,7 +139,15 @@ impl DownloadManager for DownloadManagerService {
 
         session.resume()?;
         self.refuse_if_destination_live(&session).await?;
+        let partial_bytes = self.valid_partial_bytes(&session).await;
+        if partial_bytes != session.progress().bytes_downloaded() {
+            session.update_progress(partial_bytes, 0.0);
+        }
         self.repository.update(&session).await?;
+
+        if let Some(token) = self.resolve_auth_token(session.url(), None).await {
+            self.auth_tokens.write().await.insert(id.to_string(), token);
+        }
 
         {
             let mut queue = self.download_queue.write().await;
@@ -216,14 +225,17 @@ impl DownloadManager for DownloadManagerService {
         // not delete the file underneath its active transfer.
         session.manual_retry()?;
         self.refuse_if_destination_live(&session).await?;
-        // A session with a checksum keeps its `.part`: the final hash catches
-        // a bad prefix, and the retry resumes instead of starting over. With
-        // no checksum nothing could catch one, so the retry starts clean.
-        if session.checksum().is_none() {
-            self.discard_working_file(&session).await;
-        }
+        // Preserve valid `.part` files even when `checksum` is `None` (e.g.,
+        // custom HuggingFace GGUFs): `HttpDownloadEngine` uses HTTP Range
+        // (`206 Partial Content` vs `200 OK` reset) and validates final length.
+        let partial_bytes = self.valid_partial_bytes(&session).await;
+        session.update_progress(partial_bytes, 0.0);
 
         self.repository.update(&session).await?;
+
+        if let Some(token) = self.resolve_auth_token(session.url(), None).await {
+            self.auth_tokens.write().await.insert(id.to_string(), token);
+        }
 
         // Queue for download (reuse existing queue logic)
         {
@@ -424,12 +436,16 @@ impl DownloadManagerService {
             )));
         }
 
+        let auth_token = self
+            .resolve_auth_token(&request.url, request.auth_token)
+            .await;
+
         let file_size = match request.expected_bytes {
             Some(bytes) => Some(bytes),
             None => {
                 let (file_size, _final_url) = self
                     .engine
-                    .get_file_size(&request.url)
+                    .get_file_size(&request.url, auth_token.as_deref())
                     .await
                     .inspect_err(|error| {
                         // The user sees a plain sentence; keep the cause.
@@ -466,7 +482,7 @@ impl DownloadManagerService {
 
         Ok(PreparedDownload {
             session,
-            auth_token: request.auth_token,
+            auth_token,
         })
     }
 
@@ -510,6 +526,15 @@ impl DownloadManagerService {
         if registering.is_empty() {
             return Ok(ids);
         }
+        for download in &mut registering {
+            // Preserve valid `.part` files across re-downloads even without a
+            // checksum; discard empty or oversized `.part` files so they start clean.
+            let partial_bytes = self.valid_partial_bytes(&download.session).await;
+            if partial_bytes > 0 {
+                download.session.update_progress(partial_bytes, 0.0);
+            }
+        }
+
         let sessions: Vec<DownloadSession> = registering
             .iter()
             .map(|download| download.session.clone())
@@ -525,13 +550,6 @@ impl DownloadManagerService {
         }
 
         for download in registering {
-            // Bytes already on disk are reused only when a checksum can vouch
-            // for them: a session with none starts from nothing.
-            if download.session.checksum().is_none() {
-                self.file_cleanup
-                    .delete_file_best_effort(&download.session.working_path())
-                    .await;
-            }
             let id = download.session.id().to_string();
             if let Some(token) = download.auth_token {
                 self.auth_tokens.write().await.insert(id.clone(), token);
@@ -611,6 +629,57 @@ impl DownloadManagerService {
         self.file_cleanup
             .delete_file_best_effort(&session.working_path())
             .await;
+    }
+
+    /// Returns the existing `.part` file length if it is valid for resuming
+    /// (`0 < len <= total_bytes`, or `len > 0` when `total_bytes` is unknown).
+    /// Empty or oversized `.part` files are removed so the transfer starts clean.
+    async fn valid_partial_bytes(&self, session: &DownloadSession) -> u64 {
+        let part = session.working_path();
+        match tokio::fs::metadata(&part).await {
+            Ok(meta) if meta.is_file() => {
+                let len = meta.len();
+                let oversized = session
+                    .progress()
+                    .total_bytes()
+                    .is_some_and(|total| len > total);
+                if len == 0 || oversized {
+                    self.file_cleanup.delete_file_best_effort(&part).await;
+                    0
+                } else {
+                    len
+                }
+            }
+            _ => 0,
+        }
+    }
+
+    /// Returns `explicit` when provided, or reloads the stored HuggingFace
+    /// token from `CredentialsPort` for HuggingFace hosts so pause/resume,
+    /// retry, and restarts authenticate without persisting tokens to SQLite.
+    pub(super) async fn resolve_auth_token(
+        &self,
+        url: &str,
+        explicit: Option<String>,
+    ) -> Option<String> {
+        if let Some(token) = explicit.filter(|token| !token.trim().is_empty()) {
+            return Some(token);
+        }
+        if !is_huggingface_url(url) {
+            return None;
+        }
+        let credentials = self.credentials.as_ref()?;
+        match credentials
+            .get_api_key(CredentialKey::HuggingFaceToken.as_str())
+            .await
+        {
+            Ok(Some(token)) if !token.trim().is_empty() => Some(token),
+            Ok(_) => None,
+            Err(error) => {
+                warn!(%error, "Failed to read HuggingFace token from credentials store");
+                None
+            }
+        }
     }
 }
 

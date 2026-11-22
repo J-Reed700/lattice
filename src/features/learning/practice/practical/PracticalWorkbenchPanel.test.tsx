@@ -6,8 +6,10 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LEARNER_TEXT_MAX_CHARS } from "@/features/learning/model/learnerTextLimit";
+import { resetPracticalGenerationStore } from "@/features/learning/practice/practical/practicalGenerationStore";
 import { type ComposerRequest, PracticalWorkbenchPanel } from "@/features/learning/practice/practical/PracticalWorkbenchPanel";
 import type { LearningLessonDto, LearningProgramDto } from "@/lib/bindings";
+import { deferred } from "@/tests/deferred";
 
 
 const mocks = vi.hoisted(() => ({
@@ -210,6 +212,7 @@ function renderPractical(chosenLesson = lesson, extra: { activityId?: string | n
 describe("Learning Studio Labs & simulations", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    resetPracticalGenerationStore();
     mocks.workspace.mockResolvedValue(ok(workspace()));
     const drafts = new Map<string, { programId: string; activityId: string; activityRevision: number; draftRevision: number; files: Array<{ path: string; content: string }>; updatedAt: number | null }>();
     mocks.getDraft.mockImplementation(async (request) => ok(drafts.get(request.activityId) ?? { ...request, draftRevision: 0, files: [{ path: file.path, content: file.content }], updatedAt: null }));
@@ -807,5 +810,120 @@ describe("Learning Studio Labs & simulations", () => {
     expect(await screen.findByText("Feedback from the saved attempt.")).toBeVisible();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Finish interview" })).not.toBeInTheDocument();
+  });
+
+  it("rehydrates active generation, preserves errors across unmount/remount until dismissed, and updates cache while unmounted", async () => {
+    const user = userEvent.setup();
+    const first = deferred<ReturnType<typeof ok>>();
+    let createdId = "";
+    mocks.generate.mockImplementationOnce((req: { activityId: string }) => {
+      createdId = req.activityId;
+      return first.promise;
+    });
+
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const view1 = render(<PracticalWorkbenchPanel program={program} lesson={lesson} />, { wrapper });
+    await user.click(await screen.findByRole("button", { name: "New activity" }));
+    const dialog = screen.getByRole("dialog");
+    await user.selectOptions(within(dialog).getByLabelText("Activity type"), "interview");
+    await user.type(within(dialog).getByLabelText("Company name"), "Acme");
+    await user.click(within(dialog).getByRole("button", { name: "Generate activity" }));
+    await user.keyboard("{Escape}");
+    expect(await screen.findByText(/Preparing your interview/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "New activity" })).toBeDisabled();
+    view1.unmount();
+
+    const view2 = render(<PracticalWorkbenchPanel program={program} lesson={lesson} />, { wrapper });
+    expect(await screen.findByText(/Preparing your interview/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "New activity" })).toBeDisabled();
+    view2.unmount();
+
+    const createdActivity = activity({ id: createdId, title: "Acme interview" });
+    mocks.workspace.mockResolvedValue(ok(workspace({ activities: [activity(), createdActivity] })));
+    await act(async () => {
+      first.resolve(ok(workspace({ activities: [activity(), createdActivity] })));
+    });
+
+    const view3 = render(<PracticalWorkbenchPanel program={program} lesson={lesson} />, { wrapper });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Acme interview/ })).toHaveAttribute("aria-pressed", "true");
+    });
+    expect(screen.getByRole("button", { name: "New activity" })).toBeEnabled();
+    view3.unmount();
+
+    // Error persistence across unmount/remount until dismissed
+    const second = deferred<ReturnType<typeof fail>>();
+    mocks.generate.mockReturnValueOnce(second.promise);
+    const view4 = render(<PracticalWorkbenchPanel program={program} lesson={lesson} />, { wrapper });
+    await user.click(await screen.findByRole("button", { name: "New activity" }));
+    const dialog2 = screen.getByRole("dialog");
+    await user.selectOptions(within(dialog2).getByLabelText("Activity type"), "interview");
+    await user.type(within(dialog2).getByLabelText("Company name"), "Beta");
+    await user.click(within(dialog2).getByRole("button", { name: "Generate activity" }));
+    view4.unmount();
+
+    await act(async () => {
+      second.resolve(fail("Model timed out."));
+    });
+
+    const view5 = render(<PracticalWorkbenchPanel program={program} lesson={lesson} />, { wrapper });
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("The activity could not be prepared: Model timed out.");
+    await user.click(within(alert).getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    view5.unmount();
+
+    render(<PracticalWorkbenchPanel program={program} lesson={lesson} />, { wrapper });
+    await screen.findByRole("button", { name: "New activity" });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("does not select a completed activity when the user is viewing a different lesson", async () => {
+    const user = userEvent.setup();
+    const otherLesson = { ...lesson, id: "lesson-2", title: "Lesson Two" } as LearningLessonDto;
+    const otherActivity = activity({ id: "activity-other", lessonId: "lesson-2", title: "Other lesson activity" });
+    let capturedActivityId = "";
+    const genDefer = deferred<ReturnType<typeof ok>>();
+    mocks.workspace.mockResolvedValue(ok(workspace({ activities: [activity(), otherActivity] })));
+    mocks.generate.mockImplementation((req: { activityId: string }) => {
+      capturedActivityId = req.activityId;
+      return genDefer.promise;
+    });
+
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const view = render(<PracticalWorkbenchPanel program={program} lesson={lesson} />, { wrapper });
+    await user.click(await screen.findByRole("button", { name: "New activity" }));
+    const dialog = screen.getByRole("dialog");
+    await user.selectOptions(within(dialog).getByLabelText("Activity type"), "interview");
+    await user.type(within(dialog).getByLabelText("Company name"), "Acme");
+    await user.click(within(dialog).getByRole("button", { name: "Generate activity" }));
+    await user.keyboard("{Escape}");
+
+    // Switch to lesson-2 while lesson-1 generation is still running
+    view.rerender(<PracticalWorkbenchPanel program={program} lesson={otherLesson} />);
+    expect(await screen.findByRole("button", { name: /Other lesson activity/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "New activity" })).toBeEnabled();
+
+    const finishedActivity = activity({ id: capturedActivityId, lessonId: "lesson-1", title: "Lesson 1 interview" });
+    await act(async () => {
+      genDefer.resolve(ok(workspace({ activities: [activity(), otherActivity, finishedActivity] })));
+    });
+
+    // Still viewing lesson-2's activity, not replaced by lesson-1's newly generated activity
+    expect(screen.getByRole("button", { name: /Other lesson activity/ })).toHaveAttribute("aria-pressed", "true");
+
+    // Returning to lesson-1 selects the newly finished activity
+    view.rerender(<PracticalWorkbenchPanel program={program} lesson={lesson} />);
+    expect(await screen.findByRole("button", { name: /Lesson 1 interview/ })).toHaveAttribute("aria-pressed", "true");
   });
 });

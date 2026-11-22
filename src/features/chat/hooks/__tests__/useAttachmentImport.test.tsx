@@ -10,6 +10,7 @@ import { useStagedPicturesStore } from '@/features/chat/images/stagedPictures';
 const api = vi.hoisted(() => ({
   startBatchFileImport: vi.fn(),
   getBatchJobStatus: vi.fn(),
+  cancelBatchJob: vi.fn().mockResolvedValue({ ok: true, data: 0 }),
   setDocumentsSpaceMembership: vi.fn(),
   attachMessageImages: vi.fn(),
   releaseMessageImages: vi.fn(),
@@ -146,6 +147,67 @@ describe('attaching staged files to a conversation', () => {
     await act(async () => { imported = await result.current.importStaged(); });
 
     expect(imported).toBeNull();
+    expect(drop.clear).not.toHaveBeenCalled();
+  });
+
+  it('cancels the active batch job and preserves staged files when cancelImport is called', async () => {
+    let resolvePoll: ((value: { kind: 'cancelled' }) => void) | undefined;
+    poll.mockImplementation((_jobId: string, opts: { signal: AbortSignal }) => new Promise((resolve) => {
+      opts.signal.addEventListener('abort', () => resolve({ kind: 'cancelled' }), { once: true });
+      resolvePoll = resolve;
+    }));
+    const { result } = render();
+
+    let pending: Promise<unknown> | undefined;
+    act(() => {
+      pending = result.current.importStaged();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    act(() => {
+      result.current.cancelImport?.();
+    });
+    await act(async () => {
+      resolvePoll?.({ kind: 'cancelled' });
+      await pending;
+    });
+
+    expect(api.cancelBatchJob).toHaveBeenCalledWith('job-1');
+    expect(result.current.isImporting).toBe(false);
+    expect(drop.clear).not.toHaveBeenCalled();
+  });
+
+  it('keeps staged files on targetConversationId when switching threads before send', async () => {
+    let resolvePoll: ((value: { kind: 'finished'; documentIds: string[]; added: number; failed: number }) => void) | undefined;
+    poll.mockImplementation(() => new Promise((resolve) => {
+      resolvePoll = resolve;
+    }));
+    const { result, rerender } = renderHook(
+      ({ id }: { id: string | null }) =>
+        useAttachmentImport({ dropTargetRef: { current: null }, conversationId: id, scopedSpaceId: null }),
+      { initialProps: { id: 'conversation-1' as string | null }, wrapper },
+    );
+
+    let pending: Promise<unknown> | undefined;
+    act(() => {
+      pending = result.current.importStaged();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Switch conversation before import finishes.
+    rerender({ id: 'conversation-2' });
+
+    let outcome: unknown = 'unset';
+    await act(async () => {
+      resolvePoll?.({ kind: 'finished', documentIds: ['doc-a'], added: 1, failed: 0 });
+      outcome = await pending;
+    });
+
+    expect(outcome).toBeNull();
     expect(drop.clear).not.toHaveBeenCalled();
   });
 });

@@ -178,4 +178,26 @@ describe('Lesson card review state', () => {
     </MemoryRouter></QueryClientProvider>);
     expect(await screen.findByRole('button', { name: 'Check my thinking' })).toBeVisible();
   });
+
+  it('surfaces a failed lesson preparation job on the LessonCard row instead of plain Outline', async () => {
+    const failedJob: LearningGenerationJob = {
+      ...held,
+      id: 'job-failed',
+      status: 'failed',
+      progressCompleted: 0,
+      progressTotal: 1,
+      progressMessage: '',
+      heldLessonIds: [],
+      lessonIds: ['lesson-1'],
+      error: 'Model context limit exceeded while drafting.',
+      finishedAt: 2,
+    };
+    api.plan.mockResolvedValue({ ok: true, data: { jobs: [failedJob] } });
+    api.review.mockResolvedValue(noReview);
+    show(lesson);
+    const row = screen.getByRole('article');
+    expect(await within(row).findByText('Preparation failed')).toBeVisible();
+    expect(within(row).queryByText('Outline')).not.toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Retry' })).toBeVisible();
+  });
 });

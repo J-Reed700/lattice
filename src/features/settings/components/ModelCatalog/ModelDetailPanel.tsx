@@ -13,7 +13,12 @@ import { ArrowLeft } from 'lucide-react';
 
 import { useApi } from '@/contexts/ApiContext';
 import { DOWNLOADED_MODELS_QUERY_KEY, useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
-import { useDownloadState } from '@/features/model/hooks/useDownloadState';
+import { useDownloadActions } from '@/features/model/hooks/useDownloads';
+import {
+  type ModelDownloadSummary,
+  summarizeModelDownloads,
+  useDownloadState,
+} from '@/features/model/hooks/useDownloadState';
 import { useShownFits } from '@/features/model/hooks/useModelFits';
 import { fitLabel, fitUsage } from '@/features/model/utils/fitText';
 import { startModelDownload } from '@/features/settings/hooks/startModelDownload';
@@ -163,9 +168,20 @@ function ModelDetailContent({
   const [isSettingEmbeddingModel, setIsSettingEmbeddingModel] = useState(false);
   const [isSettingRouterModel, setIsSettingRouterModel] = useState(false);
 
-  const { getActiveDownloadForModel, hasActiveDownloadForModel } = useDownloadState();
-  const activeDownload = getActiveDownloadForModel(metadata.id);
-  const hasActiveDownload = hasActiveDownloadForModel(metadata.id);
+  const { getActiveDownloadForModel, hasActiveDownloadForModel, getDownloadsByModel } = useDownloadState();
+  const { resumeDownload, retryDownload } = useDownloadActions();
+  const hasDownloadSummary = typeof getDownloadsByModel === 'function';
+  const activeDownload: ModelDownloadSummary | null = hasDownloadSummary
+    ? summarizeModelDownloads(getDownloadsByModel(metadata.id))
+    : getActiveDownloadForModel(metadata.id);
+  const hasActiveDownload = hasDownloadSummary
+    ? Boolean(
+        activeDownload &&
+          (activeDownload.state === 'Downloading' ||
+            activeDownload.state === 'Pending' ||
+            activeDownload.state === 'Paused'),
+      )
+    : hasActiveDownloadForModel(metadata.id);
   const isDownloading = hasActiveDownload && activeDownload?.state === 'Downloading';
   const isRouterActive = routerModelId === metadata.id;
   const isLlmCategory = metadata.category === 'LLM';
@@ -341,6 +357,45 @@ function ModelDetailContent({
     }
   };
 
+  const handleResume = async () => {
+    if (!activeDownload || isStartingDownload) return;
+    setIsStartingDownload(true);
+    try {
+      const files = activeDownload.files ?? [activeDownload];
+      for (const file of files) {
+        if (file.state === 'Paused') await resumeDownload(file.id);
+      }
+    } catch (error) {
+      addToast({
+        type: 'error',
+        title: "Couldn't resume the download",
+        message: getErrorMessage(error),
+      });
+    } finally {
+      setIsStartingDownload(false);
+    }
+  };
+
+  const handleRetry = async () => {
+    if (!activeDownload || isStartingDownload) return;
+    setIsStartingDownload(true);
+    try {
+      const files = activeDownload.files ?? [activeDownload];
+      for (const file of files) {
+        if (file.state === 'Failed') await retryDownload(file.id);
+        else if (file.state === 'Paused') await resumeDownload(file.id);
+      }
+    } catch (error) {
+      addToast({
+        type: 'error',
+        title: "Couldn't retry the download",
+        message: getErrorMessage(error),
+      });
+    } finally {
+      setIsStartingDownload(false);
+    }
+  };
+
   const size = formatSize(metadata.size_gb);
   const headerMeta = [
     CATEGORY_LABELS[metadata.category],
@@ -369,6 +424,42 @@ function ModelDetailContent({
     if (isCheckingDownload) return <span className="text-sm text-text-muted">Checking…</span>;
     if (isDownloaded) return <span className="text-sm text-text-muted">Downloaded</span>;
     if (isStartingDownload) return <span className="text-sm text-text-muted">Starting…</span>;
+    if (activeDownload?.state === 'Paused') {
+      const percentage = activeDownload.percentage;
+      return (
+        <div className="flex items-center gap-2">
+          <span className="text-sm tabular-nums text-text-muted">
+            {percentage != null ? `Paused · ${Math.round(percentage)}%` : 'Paused'}
+          </span>
+          <button
+            type="button"
+            onClick={handleAsyncEvent(handleResume)}
+            className={PRIMARY_BUTTON_CLASS}
+          >
+            Resume
+          </button>
+        </div>
+      );
+    }
+    if (activeDownload?.state === 'Pending') {
+      const percentage = activeDownload.percentage;
+      return (
+        <span className="text-sm tabular-nums text-text-muted">
+          {percentage != null && percentage > 0 ? `Queued · ${Math.round(percentage)}%` : 'Queued'}
+        </span>
+      );
+    }
+    if (activeDownload?.state === 'Failed') {
+      return (
+        <button
+          type="button"
+          onClick={handleAsyncEvent(handleRetry)}
+          className={PRIMARY_BUTTON_CLASS}
+        >
+          Retry download
+        </button>
+      );
+    }
     if (isDownloading || hasActiveDownload) {
       const percentage = activeDownload?.percentage;
       return (
@@ -402,6 +493,14 @@ function ModelDetailContent({
 
         {incompatibilityReason ? (
           <p className="max-w-[70ch] text-sm text-danger-fg">{incompatibilityReason}</p>
+        ) : null}
+
+        {!isDownloaded && activeDownload?.state === 'Failed' ? (
+          <p role="status" className="max-w-[70ch] text-sm text-danger-fg">
+            {activeDownload.error_message
+              ? `Download failed: ${activeDownload.error_message}`
+              : 'Download failed.'}
+          </p>
         ) : null}
 
         <div className="flex flex-wrap items-center gap-2 pt-1">

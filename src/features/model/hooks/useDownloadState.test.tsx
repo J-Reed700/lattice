@@ -8,7 +8,7 @@ import { useDownloadStore } from '@/features/model/stores/downloadStore';
 import type { DownloadStatus } from '@/types/downloads';
 
 import { DOWNLOADS_QUERY_KEY } from './useDownloads';
-import { useDownloadState } from './useDownloadState';
+import { summarizeModelDownloads, useDownloadState } from './useDownloadState';
 
 const api = vi.hoisted(() => ({ listDownloads: vi.fn() }));
 vi.mock('@/lib/api', () => ({ default: api, VaultAPI: api }));
@@ -177,5 +177,34 @@ describe('useDownloadState', () => {
     act(() => result.current.setListenerError('event stream closed'));
     expect(result.current.listenerError).toBe('event stream closed');
     await waitFor(() => expect(result.current.isLoading).toBe(false));
+  });
+});
+
+describe('summarizeModelDownloads', () => {
+  it('prefers Downloading > Failed > Paused > Pending across multi-file batches', () => {
+    const downloading = summarizeModelDownloads([
+      row('f1', { model_id: 'bge', state: 'Paused', bytes_downloaded: 50, total_bytes: 100 }),
+      row('f2', { model_id: 'bge', state: 'Downloading', bytes_downloaded: 25, total_bytes: 100 }),
+    ]);
+    expect(downloading).toMatchObject({ state: 'Downloading', percentage: 37.5 });
+    expect(downloading?.files).toHaveLength(2);
+
+    const failed = summarizeModelDownloads([
+      row('f1', { model_id: 'bge', state: 'Paused', bytes_downloaded: 50, total_bytes: 100 }),
+      row('f2', { model_id: 'bge', state: 'Failed', bytes_downloaded: 10, total_bytes: 100, error_message: 'HTTP 401' }),
+    ]);
+    expect(failed).toMatchObject({ state: 'Failed', error_message: 'HTTP 401', percentage: 30 });
+
+    const paused = summarizeModelDownloads([
+      row('f1', { model_id: 'bge', state: 'Completed', bytes_downloaded: 100, total_bytes: 100 }),
+      row('f2', { model_id: 'bge', state: 'Paused', bytes_downloaded: 50, total_bytes: 100 }),
+    ]);
+    expect(paused).toMatchObject({ state: 'Paused', percentage: 75 });
+
+    expect(
+      summarizeModelDownloads([
+        row('f1', { model_id: 'bge', state: 'Cancelled' }),
+      ]),
+    ).toBeNull();
   });
 });

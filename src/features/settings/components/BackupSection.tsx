@@ -23,6 +23,7 @@ import { Archive, Download, Upload } from 'lucide-react';
 
 import { ConfirmDialog } from '@/components/ConfirmDialog/ConfirmDialog';
 import { SettingsRow, SettingsSection } from '@/components/ui';
+import { useRestoreLockoutStore } from '@/features/backup/restoreLockoutStore';
 import {
   isIndexingActive,
   useIndexingStatusQuery,
@@ -84,8 +85,15 @@ export function BackupSection() {
   const disableArchive = useDisableArchiveMutation();
 
   const [pendingRestore, setPendingRestore] = useState<BackupInfo | null>(null);
-  const [restored, setRestored] = useState(false);
-  const [restoredFromArchive, setRestoredFromArchive] = useState(false);
+  const restored = useRestoreLockoutStore(
+    (state) => state.isDatabaseRestoredRestartRequired,
+  );
+  const restoredFromArchive = useRestoreLockoutStore(
+    (state) => state.restoredFromArchive,
+  );
+  const markRestored = useRestoreLockoutStore(
+    (state) => state.markDatabaseRestoredRestartRequired,
+  );
 
   const [wizardMode, setWizardMode] = useState<ArchiveWizardMode | null>(null);
   const [secretPrompt, setSecretPrompt] = useState(false);
@@ -141,8 +149,7 @@ export function BackupSection() {
               setSecretPrompt(false);
               setSecret('');
               setSecretError(null);
-              setRestored(true);
-              setRestoredFromArchive(true);
+              markRestored(true);
               toast.success('Backup restored', {
                 message: 'Quit and reopen Lattice.',
                 duration: 10000,
@@ -173,7 +180,7 @@ export function BackupSection() {
         },
       });
     },
-    [restoreArchive],
+    [markRestored, restoreArchive],
   );
 
   const paletteCommands = useMemo<PaletteCommand[]>(
@@ -234,7 +241,7 @@ export function BackupSection() {
     restoreBackup.mutate(target.path, {
       onSuccess: () => {
         setPendingRestore(null);
-        setRestored(true);
+        markRestored(false);
         toast.success('Backup restored', {
           message: 'Quit and reopen Lattice.',
           duration: 10000,

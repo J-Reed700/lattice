@@ -1,12 +1,12 @@
-import { lazy, Suspense, useCallback, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { PenLine } from 'lucide-react';
 import { Outlet, useLocation } from 'react-router';
 
 import { useAppNavigate } from '@/hooks/useAppNavigate';
 
+import { useRestoreLockoutStore } from '../features/backup/restoreLockoutStore';
 import { useDeepResearchJobs } from '../features/jobs/research';
-import { QuickCaptureDialog } from '../features/journal/components/QuickCaptureDialog';
 import { useJournalSyntheses } from '../features/journal/synthesis/api';
 import { useSynthesisPanel } from '../features/journal/synthesis/synthesisPanel';
 import { CommandPalette } from '../features/palette/components/CommandPalette';
@@ -17,6 +17,10 @@ import { NEW_ITEM_EVENT } from '../shared/newItemEvent';
 import { readClipboardText } from '../utils/clipboard';
 
 import type { PaletteCommand } from '../features/palette/stores/paletteCommandsStore';
+
+const QuickCaptureDialog = lazy(async () => ({
+  default: (await import('../features/journal/components/QuickCaptureDialog')).QuickCaptureDialog,
+}));
 
 const SynthesisProgress = lazy(async () => ({
   default: (await import('../features/journal/synthesis/SynthesisProgress')).SynthesisProgress,
@@ -35,6 +39,15 @@ export function RootLayout() {
   const syntheses = useJournalSyntheses();
   const savedSynthesis = useSynthesisPanel(state => state.saved !== null);
   const hasSynthesis = savedSynthesis || (syntheses.data?.length ?? 0) > 0;
+  const isDatabaseRestoredRestartRequired = useRestoreLockoutStore(
+    (state) => state.isDatabaseRestoredRestartRequired,
+  );
+  const lockoutRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (isDatabaseRestoredRestartRequired) {
+      lockoutRef.current?.focus();
+    }
+  }, [isDatabaseRestoredRestartRequired]);
   useDeepResearchJobs();
   const [capture, setCapture] = useState<{ open: boolean; clipboard: string | null }>({
     open: false,
@@ -84,7 +97,7 @@ export function RootLayout() {
     [location.pathname, navigate, openCapture],
   );
 
-  useKeyboardShortcuts(globalShortcuts, { enabled: true });
+  useKeyboardShortcuts(globalShortcuts, { enabled: !isDatabaseRestoredRestartRequired });
 
   const paletteCommands = useMemo<PaletteCommand[]>(
     () => [
@@ -103,21 +116,52 @@ export function RootLayout() {
 
   return (
     <>
-      <Outlet />
-      {hasSynthesis && (
+      <div className="contents" inert={isDatabaseRestoredRestartRequired || undefined}>
+        <Outlet />
+        {hasSynthesis && (
+          <Suspense fallback={null}>
+            <SynthesisProgress />
+          </Suspense>
+        )}
+      </div>
+      {!isDatabaseRestoredRestartRequired && <CommandPalette />}
+      {capture.open && !isDatabaseRestoredRestartRequired && (
         <Suspense fallback={null}>
-          <SynthesisProgress />
+          <QuickCaptureDialog
+            open={capture.open}
+            clipboard={capture.clipboard}
+            onClose={closeCapture}
+            onOpenPage={(noteId) =>
+              navigate(`/journals?${new URLSearchParams({ noteId }).toString()}`)
+            }
+          />
         </Suspense>
       )}
-      <CommandPalette />
-      <QuickCaptureDialog
-        open={capture.open}
-        clipboard={capture.clipboard}
-        onClose={closeCapture}
-        onOpenPage={(noteId) =>
-          navigate(`/journals?${new URLSearchParams({ noteId }).toString()}`)
-        }
-      />
+      {isDatabaseRestoredRestartRequired && (
+        <div
+          ref={lockoutRef}
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="restore-lockout-title"
+          aria-describedby="restore-lockout-desc"
+          tabIndex={-1}
+          onKeyDown={(e) => {
+            if (e.key === 'Tab' || e.key === 'Escape') {
+              e.preventDefault();
+            }
+          }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-bg/90 p-6 backdrop-blur-xs focus:outline-hidden"
+        >
+          <div className="w-full max-w-sm rounded-lg border border-border-subtle bg-surface-raised p-6 shadow-md">
+            <h2 id="restore-lockout-title" className="text-base font-medium text-text-primary">
+              Restart required
+            </h2>
+            <p id="restore-lockout-desc" className="mt-2 text-sm text-text-secondary">
+              Backup restored. Quit Lattice and open it again to use the restored library.
+            </p>
+          </div>
+        </div>
+      )}
     </>
   );
 }

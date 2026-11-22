@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PROGRAM_KIND_ID } from '@/features/learning/practice/kinds';
+import { resetCodingBuildStore, useCodingBuildStore } from '@/features/learning/practice/kinds/program/codingBuildStore';
 import type * as Wire from '@/lib/bindings';
 
 import { PracticeHome, type PracticeHomeProps } from './PracticeHome';
@@ -14,6 +15,7 @@ const data = vi.hoisted(() => ({
   fit: undefined as unknown,
   due: [] as unknown[],
   history: { items: [] as unknown[], continueItem: null as unknown },
+  buildJob: null as Wire.JobDto | null,
 }));
 
 vi.mock('./usePracticeData', () => ({
@@ -21,6 +23,7 @@ vi.mock('./usePracticeData', () => ({
   usePracticeFit: () => ({ fit: data.fit, checking: false, error: null, retry: vi.fn() }),
   usePracticeDue: () => ({ items: data.due, loading: false, error: null, retry: vi.fn() }),
   usePracticeHistory: () => ({ ...data.history, loading: false, error: null, retry: vi.fn() }),
+  usePracticeBuildJob: () => data.buildJob,
 }));
 
 const fitOf = (fit: Wire.KindFit): Wire.PracticeFitDto => ({ kinds: [{ kind: PROGRAM_KIND_ID, fit, reason: null }] });
@@ -58,10 +61,12 @@ function show(overrides: Partial<PracticeHomeProps> = {}) {
 const cardTitles = () => screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent?.trim());
 
 beforeEach(() => {
+  resetCodingBuildStore();
   data.profile = profile();
   data.fit = fitOf('fits');
   data.due = [];
   data.history = { items: [], continueItem: null };
+  data.buildJob = null;
 });
 
 afterEach(() => localStorage.clear());
@@ -168,5 +173,60 @@ describe('PracticeHome', () => {
     const props = show();
     await user.click(screen.getByRole('button', { name: 'Code labs and simulations' }));
     expect(props.onOpenWorkbench).toHaveBeenCalled();
+  });
+
+  it('surfaces an active backend coding build job and reattaches to it on Open build', async () => {
+    const user = userEvent.setup();
+    data.buildJob = {
+      id: 'job-99',
+      kind: 'learning.practice_build',
+      subjectId: 'course-1:coding',
+      status: 'running',
+      progressCurrent: 1,
+      progressTotal: 3,
+      progressMessage: '',
+      activity: null,
+      resultRef: null,
+      errorCode: null,
+      error: null,
+      retryOfJobId: null,
+      retryCount: 0,
+      retryNotBefore: null,
+      createdAt: 1,
+      startedAt: 1,
+      finishedAt: null,
+      revision: 1,
+    };
+    const onResumeBuild = vi.fn();
+    show({ onResumeBuild });
+    const banner = screen.getByRole('region', { name: 'Coding build status' });
+    expect(banner).toHaveTextContent('Building your coding problem…');
+    await user.click(within(banner).getByRole('button', { name: 'Open build' }));
+    expect(useCodingBuildStore.getState().handles['course-1']?.jobId).toBe('job-99');
+    expect(onResumeBuild).toHaveBeenCalled();
+  });
+
+  it('surfaces a failed coding build banner and lets the learner dismiss it', async () => {
+    const user = userEvent.setup();
+    useCodingBuildStore.setState({
+      handles: {
+        'course-1': {
+          programId: 'course-1',
+          choice: { form: 'build', setting: 'coached', language: 'python', difficulty: 'easy' },
+          operationId: 'op-1',
+          startOperationId: 'sop-1',
+          jobId: 'job-1',
+          step: 1,
+          phase: { kind: 'failed', message: 'Tests did not pass.', stage: 'build' },
+          activityId: null,
+          seenJobs: {},
+        },
+      },
+    });
+    show();
+    const banner = screen.getByRole('region', { name: 'Coding build status' });
+    expect(banner).toHaveTextContent('Tests did not pass.');
+    await user.click(within(banner).getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByRole('region', { name: 'Coding build status' })).not.toBeInTheDocument();
   });
 });

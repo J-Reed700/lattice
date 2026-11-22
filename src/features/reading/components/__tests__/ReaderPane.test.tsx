@@ -13,8 +13,12 @@ import type { SourceWithMetadata } from '@/types/conversation';
 
 // The document itself is `SourceReaderBody`'s business and is tested through
 // the reader it is shown in; this file is about the pane around it.
+const readerBodySpy = vi.hoisted(() => vi.fn());
 vi.mock('@/features/reading/components/SourceReaderBody', () => ({
-  SourceReaderBody: () => <div data-testid="reader-body">Document</div>,
+  SourceReaderBody: (props: unknown) => {
+    readerBodySpy(props);
+    return <div data-testid="reader-body">Document</div>;
+  },
 }));
 vi.mock('@/features/reading/components/FilePreviewModal', () => ({
   FilePreviewModal: () => <div data-testid="reader-overlay">Document</div>,
@@ -172,5 +176,37 @@ describe('closing the reader', () => {
     rerender(<ReaderPane {...WIDE} resetKey="conversation-2" />);
 
     expect(useReaderStore.getState().session).toBeNull();
+  });
+
+  it('locates the clicked excerptChunkId when a source carries multiple excerpts and threads conversationId', () => {
+    readerBodySpy.mockClear();
+    const multiExcerptSource: SourceWithMetadata = {
+      ...source,
+      content: 'Primary excerpt text',
+      chunkExcerpts: [
+        { chunkId: 'chunk-1', excerpt: 'Primary excerpt text', pageNumber: 1, chunkIndex: 0, score: 0.9 },
+        { chunkId: 'chunk-2', excerpt: 'Second clicked excerpt text', pageNumber: 4, chunkIndex: 3, score: 0.8 },
+      ],
+    };
+
+    render(<ReaderPane {...WIDE} />);
+    act(() => {
+      useReaderStore.getState().open('message-1', [multiExcerptSource], 0, null, {
+        excerptChunkId: 'chunk-2',
+        conversationId: 'tangent-99',
+      });
+    });
+
+    expect(readerBodySpy).toHaveBeenCalled();
+    const lastProps = readerBodySpy.mock.calls.at(-1)?.[0] as {
+      initialLocator?: { text?: string; page?: number; chunkIndex?: number };
+      conversationId?: string | null;
+    };
+    expect(lastProps.initialLocator).toMatchObject({
+      text: 'Second clicked excerpt text',
+      page: 4,
+      chunkIndex: 3,
+    });
+    expect(lastProps.conversationId).toBe('tangent-99');
   });
 });

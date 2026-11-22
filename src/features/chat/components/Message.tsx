@@ -67,7 +67,23 @@ export const Message = memo(({
   const isUser = message.role === 'user';
   const isPending = message.status === 'pending';
   const isFailed = message.status === 'failed';
-  const errorMessage = 'error' in message ? message.error : undefined;
+  const errorMessage = useMemo(() => {
+    if ('error' in message && typeof message.error === 'string' && message.error.trim()) {
+      return message.error.trim();
+    }
+    if (isFailed && 'metadata' in message && message.metadata) {
+      try {
+        const parsed: unknown = JSON.parse(message.metadata);
+        if (parsed && typeof parsed === 'object' && 'error' in parsed && typeof parsed.error === 'string') {
+          const trimmed = parsed.error.trim();
+          if (trimmed) return trimmed;
+        }
+      } catch {
+        // Malformed historical metadata
+      }
+    }
+    return undefined;
+  }, [isFailed, message]);
 
   const messageId = 'id' in message ? message.id : undefined;
   const conversationId = 'conversationId' in message ? message.conversationId : undefined;
@@ -201,7 +217,8 @@ export const Message = memo(({
     handleBodyClick, handleBodyMouseOver, handleBodyMouseLeave,
     hoveredSource, hoveredVerdict, activeEvidence, hasEvidenceMargin, setLit,
   } = useMessageEvidence({
-    sources, ownerKey: messageId ?? domMessageId ?? '', isAssistantWithSources,
+    sources, ownerKey: messageId ?? domMessageId ?? '', conversationId: conversationId ?? activeConversationId ?? null,
+    isAssistantWithSources,
     showCitations, claimVerdicts, showsCodeRefs, revealInExplorer: revealInFolder, openInExplorer: openInFolder,
   });
   const figures = useChatFigures(message, citationMap);
@@ -280,6 +297,7 @@ export const Message = memo(({
           isPending={!isUser && isPending}
           isWriting={message.content.trim().length > 0}
           verification={verificationSummary ?? null}
+          conversationId={conversationId ?? activeConversationId ?? null}
         />
 
         {/* Body prose — tiptap.css styles inherit `font-family` from this wrapper. */}

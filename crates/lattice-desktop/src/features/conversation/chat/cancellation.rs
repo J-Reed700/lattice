@@ -189,7 +189,7 @@ pub(super) fn cancelled_error() -> AppError {
 }
 
 /// Whether a turn ended because it was stopped, not because it failed.
-pub(super) fn is_cancellation(error: &AppError) -> bool {
+pub(in crate::features::conversation) fn is_cancellation(error: &AppError) -> bool {
     matches!(error, AppError::Cancelled(_))
 }
 

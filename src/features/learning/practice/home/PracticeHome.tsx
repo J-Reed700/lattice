@@ -1,8 +1,10 @@
 import { useCallback, useId, useMemo, useState } from 'react';
 
-import { ArrowRight, Bot, Code2, FileSearch, MessageSquare, Sparkles, Users, type LucideIcon } from 'lucide-react';
+import { ArrowRight, Bot, Code2, FileSearch, Loader2, MessageSquare, Sparkles, Users, type LucideIcon } from 'lucide-react';
 
 import { PROGRAM_KIND_ID } from '@/features/learning/practice/kinds';
+import { useCodingBuildStore } from '@/features/learning/practice/kinds/program/codingBuildStore';
+import type { CodingBuildChoice } from '@/features/learning/practice/kinds/program/CodingEntry';
 import { StatusLine } from '@/features/learning/practice/shared/StatusLine';
 import type * as Wire from '@/lib/bindings';
 
@@ -29,7 +31,7 @@ import {
 } from './practiceChoices';
 import { PreparingFor } from './PreparingFor';
 import { StartSentence, type ChoiceSlot, type SentencePart } from './StartSentence';
-import { usePracticeDue, usePracticeFit, usePracticeHistory, usePracticeProfile } from './usePracticeData';
+import { usePracticeBuildJob, usePracticeDue, usePracticeFit, usePracticeHistory, usePracticeProfile } from './usePracticeData';
 
 export interface PracticeHomeProps {
   programId: string;
@@ -39,6 +41,7 @@ export interface PracticeHomeProps {
   onOpenTarget: (target: HistoryTarget) => void;
   onStartDue: (item: Wire.DueItemDto) => void;
   onOpenWorkbench: () => void;
+  onResumeBuild?: (choice: CodingBuildChoice) => void;
 }
 
 const ICONS: Record<CardId, LucideIcon> = { explain: MessageSquare, spot: FileSearch, code: Code2, mock: Bot, role: Users };
@@ -162,11 +165,15 @@ function Card({ id, programId, definition, promise, badge, onStart }: CardProps)
 }
 
 /** The Practice page: what the learner is preparing for, where they stopped, what is due, five cards, and their history. */
-export function PracticeHome({ programId, goal, lessonId, onStart, onOpenTarget, onStartDue, onOpenWorkbench }: PracticeHomeProps) {
+export function PracticeHome({ programId, goal, lessonId, onStart, onOpenTarget, onStartDue, onOpenWorkbench, onResumeBuild }: PracticeHomeProps) {
   const profileState = usePracticeProfile(programId);
   const fitStatus = usePracticeFit(programId);
   const due = usePracticeDue(programId);
   const history = usePracticeHistory(programId);
+  const codingBuild = useCodingBuildStore((store) => store.handles[programId]);
+  const attachBackendJob = useCodingBuildStore((store) => store.attachBackendJob);
+  const clearCodingBuild = useCodingBuildStore((store) => store.clearHandle);
+  const activeBuildJob = usePracticeBuildJob(programId);
 
   const fit = fitState(fitStatus.fit, PROGRAM_KIND_ID);
   const profile = profileState.profile ?? null;
@@ -176,8 +183,90 @@ export function PracticeHome({ programId, goal, lessonId, onStart, onOpenTarget,
   const context = { lessonId, profile };
   const continueItem: HistoryItem | null = history.continueItem;
 
+  const fallbackChoice: CodingBuildChoice = {
+    lessonId,
+    form: 'build',
+    setting: 'coached',
+    language: CODING_LANGUAGE,
+    difficulty: 'easy',
+  };
+  const showActiveBuild =
+    codingBuild?.phase.kind === 'building' ||
+    codingBuild?.phase.kind === 'starting' ||
+    Boolean(activeBuildJob && !codingBuild);
+  const showBuiltReady = codingBuild?.phase.kind === 'built' || codingBuild?.phase.kind === 'ready';
+  const showBuildFailed = codingBuild?.phase.kind === 'failed';
+
   return (
     <div data-testid="practice-home" className="space-y-8">
+      {(showActiveBuild || showBuiltReady || showBuildFailed) && (
+        <section
+          aria-label="Coding build status"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border-default bg-surface p-4"
+        >
+          <div className="min-w-0 flex-1">
+            {showActiveBuild ? (
+              <p role="status" className="flex items-center gap-2 text-sm font-medium text-text-primary">
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-accent" aria-hidden="true" />
+                Building your coding problem…
+              </p>
+            ) : showBuiltReady ? (
+              <p role="status" className="text-sm font-medium text-text-primary">
+                Your coding problem is ready.
+              </p>
+            ) : codingBuild?.phase.kind === 'failed' ? (
+              <p role="alert" className="text-sm text-danger-fg">
+                {codingBuild.phase.message}
+              </p>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {showActiveBuild && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (activeBuildJob && !codingBuild) {
+                    attachBackendJob(programId, activeBuildJob, fallbackChoice);
+                    onResumeBuild?.(fallbackChoice);
+                  } else if (codingBuild) {
+                    onResumeBuild?.(codingBuild.choice);
+                  }
+                }}
+                className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-accent px-3.5 text-xs font-semibold text-accent-fg hover:opacity-90"
+              >
+                Open build
+              </button>
+            )}
+            {showBuiltReady && codingBuild && (
+              <button
+                type="button"
+                onClick={() => onResumeBuild?.(codingBuild.choice)}
+                className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-accent px-3.5 text-xs font-semibold text-accent-fg hover:opacity-90"
+              >
+                Open problem
+              </button>
+            )}
+            {showBuildFailed && codingBuild && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onResumeBuild?.(codingBuild.choice)}
+                  className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-accent px-3.5 text-xs font-semibold text-accent-fg hover:opacity-90"
+                >
+                  View build
+                </button>
+                <button
+                  type="button"
+                  onClick={() => clearCodingBuild(programId)}
+                  className="inline-flex min-h-10 items-center rounded-lg border border-border-default px-3 text-xs font-medium text-text-secondary hover:bg-surface-raised"
+                >
+                  Dismiss
+                </button>
+              </>
+            )}
+          </div>
+        </section>
+      )}
       <PreparingFor
         programId={programId}
         goal={goal}

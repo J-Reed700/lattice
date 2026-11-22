@@ -13,7 +13,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Skeleton } from '@/components/Skeleton';
 import { useApi } from '@/contexts/ApiContext';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
-import { useDownloadState } from '@/features/model/hooks/useDownloadState';
+import { useDownloadActions } from '@/features/model/hooks/useDownloads';
+import { summarizeModelDownloads, useDownloadState, type ModelDownloadSummary } from '@/features/model/hooks/useDownloadState';
 import { useShownFits } from '@/features/model/hooks/useModelFits';
 import { startModelDownload } from '@/features/settings/hooks/startModelDownload';
 import { useHuggingFaceTokenStatusQuery } from '@/features/settings/hooks/useHuggingFaceTokenQuery';
@@ -57,7 +58,8 @@ export function ModelListView({
 }: ModelListViewProps) {
   const api = useApi();
   const { downloadedModels } = useDownloadedModels();
-  const { getActiveDownloadForModel } = useDownloadState();
+  const { getActiveDownloadForModel, getDownloadsByModel } = useDownloadState();
+  const { resumeDownload, retryDownload } = useDownloadActions();
   const { data: tokenStatus } = useHuggingFaceTokenStatusQuery();
   const addToast = useToastStore((state) => state.addToast);
   const queryClient = useQueryClient();
@@ -92,6 +94,66 @@ export function ModelListView({
       }
     },
     [addToast, api, queryClient, startingIds],
+  );
+
+  const handleResume = useCallback(
+    async (model: ModelRecommendation, summary: ModelDownloadSummary | null) => {
+      if (!summary) return;
+      const modelId = model.model.id;
+      if (startingIds.has(modelId)) return;
+      setStartingIds((previous) => new Set(previous).add(modelId));
+      try {
+        const files = summary.files ?? [summary];
+        for (const file of files) {
+          if (file.state === 'Paused') await resumeDownload(file.id);
+        }
+      } catch (err) {
+        addToast({
+          type: 'error',
+          title: "Couldn't resume the download",
+          message: err instanceof Error ? err.message : String(err),
+        });
+      } finally {
+        setStartingIds((previous) => {
+          const next = new Set(previous);
+          next.delete(modelId);
+          return next;
+        });
+      }
+    },
+    [addToast, resumeDownload, startingIds],
+  );
+
+  const handleRetry = useCallback(
+    async (model: ModelRecommendation, summary: ModelDownloadSummary | null) => {
+      if (!summary) {
+        await handleDownload(model);
+        return;
+      }
+      const modelId = model.model.id;
+      if (startingIds.has(modelId)) return;
+      setStartingIds((previous) => new Set(previous).add(modelId));
+      try {
+        const files = summary.files ?? [summary];
+        for (const file of files) {
+          if (file.state === 'Failed') await retryDownload(file.id);
+          else if (file.state === 'Paused') await resumeDownload(file.id);
+        }
+      } catch (err) {
+        addToast({
+          type: 'error',
+          title: "Couldn't retry the download",
+          message: err instanceof Error ? err.message : String(err),
+        });
+      } finally {
+        setStartingIds((previous) => {
+          const next = new Set(previous);
+          next.delete(modelId);
+          return next;
+        });
+      }
+    },
+    [addToast, handleDownload, resumeDownload, retryDownload, startingIds],
   );
 
   if (loading) {
@@ -145,21 +207,28 @@ export function ModelListView({
       page={page}
       onPageChange={onPageChange}
       onBrowseCategory={onBrowseCategory}
-      renderModel={(model) => (
-        <ModelRow
-          key={model.model.id}
-          model={model}
-          fit={fitByRow.get(model)}
-          compact={overview}
-          onSelect={() => onModelSelect(model)}
-          isDownloaded={downloadedIds.has(model.model.id)}
-          activeDownload={getActiveDownloadForModel(model.model.id)}
-          isStarting={startingIds.has(model.model.id)}
-          onDownload={() => void handleDownload(model)}
-          hasHfToken={tokenStatus?.isSet ?? false}
-          onAddToken={onAddToken}
-        />
-      )}
+      renderModel={(model) => {
+        const downloadSummary = getDownloadsByModel
+          ? summarizeModelDownloads(getDownloadsByModel(model.model.id))
+          : getActiveDownloadForModel(model.model.id);
+        return (
+          <ModelRow
+            key={model.model.id}
+            model={model}
+            fit={fitByRow.get(model)}
+            compact={overview}
+            onSelect={() => onModelSelect(model)}
+            isDownloaded={downloadedIds.has(model.model.id)}
+            activeDownload={downloadSummary}
+            isStarting={startingIds.has(model.model.id)}
+            onDownload={() => void handleDownload(model)}
+            onResume={() => void handleResume(model, downloadSummary)}
+            onRetry={() => void handleRetry(model, downloadSummary)}
+            hasHfToken={tokenStatus?.isSet ?? false}
+            onAddToken={onAddToken}
+          />
+        );
+      }}
     />
   );
 }

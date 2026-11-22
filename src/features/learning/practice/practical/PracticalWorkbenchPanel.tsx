@@ -1,16 +1,18 @@
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Beaker, CircleHelp, LoaderCircle, Plus } from "lucide-react";
 
 import { useApi } from '@/contexts/ApiContext';
-import { invalidateLearningSourceDependents } from "@/features/learning/api/learningInvalidation";
-import { learningPracticalWorkspaceKey as workspaceKey } from "@/features/learning/api/learningQueryKeys";
 import { ActivityBrief } from "@/features/learning/practice/practical/ActivityBrief";
 import { ActivityComposer } from "@/features/learning/practice/practical/ActivityComposer";
 import { ActivityShelf } from "@/features/learning/practice/practical/ActivityShelf";
 import { ArtifactEditor } from "@/features/learning/practice/practical/ArtifactEditor";
 import { InterviewDrill } from "@/features/learning/practice/practical/InterviewDrill";
+import {
+  practicalGenerationKey,
+  usePracticalGenerationStore,
+} from "@/features/learning/practice/practical/practicalGenerationStore";
 import { isSimulationKind } from "@/features/learning/practice/practical/practicalWorkbenchHelpers";
 import { RunHistory } from "@/features/learning/practice/practical/RunHistory";
 import { RunOutput } from "@/features/learning/practice/practical/RunOutput";
@@ -20,7 +22,6 @@ import { useLearningLabDraft } from "@/features/learning/practice/practical/useL
 import { usePracticalWorkspace } from "@/features/learning/practice/practical/usePracticalWorkspace";
 import { newId, unwrap } from "@/lib/api";
 import type {
-  GenerateLearningPracticalActivityRequestDto,
   LearningLabFile,
   LearningSimulationSessionDto,
   StartLearningPracticalRunRequestDto,
@@ -58,32 +59,28 @@ export function PracticalWorkbenchPanel({
   const programId = program.summary.id;
   const query = usePracticalWorkspace(programId);
   const client = useQueryClient();
-  const generate = useMutation({
-    retry: false,
-    mutationFn: async (request: GenerateLearningPracticalActivityRequestDto) =>
-      unwrap(await api.generateLearningPracticalActivity(request)),
-    onSuccess: (data) => {
-      client.setQueryData(workspaceKey(programId), data);
-    },
-    onSettled: (_data, _error, request) => {
-      // Research can save useful evidence even when a later model call fails.
-      if (request.kind === "interview") {
-        void invalidateLearningSourceDependents(client, programId);
-        void client.invalidateQueries({
-          queryKey: ["learning-sources", programId],
-        });
-      }
-    },
-  });
+  const generationKey = lesson ? practicalGenerationKey(programId, lesson.id) : '';
+  const generation = usePracticalGenerationStore((store) =>
+    generationKey ? store.generations[generationKey] : undefined,
+  );
+  const startGeneration = usePracticalGenerationStore((store) => store.startGeneration);
+  const dismissGeneration = usePracticalGenerationStore((store) => store.dismissGeneration);
+  const generatePending = generation?.status === 'running';
+  const generateError = generation?.status === 'failed' ? generation.error : null;
+  const currentLessonIdRef = useRef<string | null>(lesson?.id ?? null);
+  currentLessonIdRef.current = lesson?.id ?? null;
   const [selectedId, setSelectedId] = useState<string | null>(activityId);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [composerOpened, setComposerOpened] = useState(false);
   const [dismissedComposerId, setDismissedComposerId] = useState<string | null>(null);
   const openRequest = composer && composer.id !== dismissedComposerId ? composer : null;
-  const composerOpen = composerOpened || openRequest !== null;
+  const composerOpen = composerOpened || (!generatePending && openRequest !== null);
   const setComposerOpen = (open: boolean) => {
     setComposerOpened(open);
     if (!open && composer) setDismissedComposerId(composer.id);
+  };
+  const openComposer = () => {
+    if (!generatePending) setComposerOpen(true);
   };
   const newActivityRef = useRef<HTMLButtonElement>(null);
   const [runtimeSetupRequest, setRuntimeSetupRequest] = useState(0);
@@ -112,10 +109,10 @@ export function PracticalWorkbenchPanel({
     runId: string;
   } | null>(null);
   const workspace = query.data;
-  const activities =
-    workspace?.activities.filter(
-      (item) => !lesson || item.lessonId === lesson.id,
-    ) ?? [];
+  const activities = useMemo(
+    () => workspace?.activities.filter((item) => !lesson || item.lessonId === lesson.id) ?? [],
+    [workspace?.activities, lesson],
+  );
   const activeActivity =
     activities.find((item) => item.id === selectedId) ?? activities[0];
   const savedSimulation = workspace?.simulations.find(
@@ -191,6 +188,27 @@ export function PracticalWorkbenchPanel({
       .filter((file) => file.role === "starter" && file.editable)
       .map((file) => ({ path: file.path, content: file.content })) ?? [],
   });
+  const draftFlushRef = useRef(draft.flush);
+  draftFlushRef.current = draft.flush;
+  const activeActivityIdRef = useRef<string | null>(activeActivity?.id ?? null);
+  activeActivityIdRef.current = activeActivity?.id ?? null;
+  // Place after useLearningLabDraft so its load effect populates context.loadPromise before flush() runs on mount.
+  useEffect(() => {
+    if (!generation || !lesson || generation.status !== 'succeeded' || generation.lessonId !== lesson.id) return;
+    if (!activities.some((item) => item.id === generation.activityId)) return;
+    let cancelled = false;
+    void (async () => {
+      if (activeActivityIdRef.current && activeActivityIdRef.current !== generation.activityId) {
+        if (!await draftFlushRef.current()) return;
+      }
+      if (cancelled || currentLessonIdRef.current !== generation.lessonId) return;
+      setSelectedId(generation.activityId);
+      setSelectedRunId(null);
+      setSimulation(null);
+      dismissGeneration(programId, lesson.id);
+    })();
+    return () => { cancelled = true; };
+  }, [activities, dismissGeneration, generation, lesson, programId]);
   const editorFiles = draft.files;
   const selectedFile = editorFiles.find((file) => file.path === selectedFilePath) ?? editorFiles[0];
 
@@ -282,8 +300,8 @@ export function PracticalWorkbenchPanel({
           <button
             ref={newActivityRef}
             type="button"
-            disabled={lesson?.preparation !== "ready" || generate.isPending}
-            onClick={() => setComposerOpen(true)}
+            disabled={lesson?.preparation !== "ready" || generatePending}
+            onClick={openComposer}
             className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-full bg-accent px-4 py-2 text-xs font-semibold text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-45"
           >
             <Plus size={14} aria-hidden="true" /> New activity
@@ -292,18 +310,27 @@ export function PracticalWorkbenchPanel({
       </header>
 
       {/* The dialog can close while an activity is prepared; say what is happening, and what failed. */}
-      {!composerOpen && generate.isPending && (
+      {!composerOpen && generatePending && (
         <p role="status" className="flex items-center gap-2 rounded-xl border border-border-default bg-surface px-4 py-3 text-sm text-text-secondary">
           <LoaderCircle size={15} className="shrink-0 animate-spin text-accent" />
-          {generate.variables?.kind === "interview"
+          {generation?.kind === "interview"
             ? "Preparing your interview… Company research and question planning can take several minutes."
             : "Preparing your activity…"}
         </p>
       )}
-      {!composerOpen && generate.isError && (
-        <p role="alert" className="rounded-xl bg-danger-muted px-4 py-3 text-sm text-danger-fg">
-          The activity could not be prepared: {getErrorMessage(generate.error)}
-        </p>
+      {!composerOpen && generateError !== null && (
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-danger-muted px-4 py-3 text-sm text-danger-fg">
+          <span>The activity could not be prepared: {getErrorMessage(generateError)}</span>
+          {lesson && (
+            <button
+              type="button"
+              onClick={() => dismissGeneration(programId, lesson.id)}
+              className="shrink-0 text-xs font-semibold underline"
+            >
+              Dismiss
+            </button>
+          )}
+        </div>
       )}
 
       <RuntimeSetupPanel
@@ -317,8 +344,8 @@ export function PracticalWorkbenchPanel({
           lesson={lesson}
           activities={activities}
           activeActivity={activeActivity}
-          generatePending={generate.isPending}
-          onCreate={() => setComposerOpen(true)}
+          generatePending={generatePending}
+          onCreate={openComposer}
           onSelectActivity={async (activity) => {
             if (!await draft.flush()) return;
             setSelectedId(activity.id);
@@ -452,8 +479,6 @@ export function PracticalWorkbenchPanel({
           returnFocusRef={newActivityRef}
           onClose={() => {
             setComposerOpen(false);
-            // An error the dialog already showed need not linger below it.
-            if (!generate.isPending) generate.reset();
           }}
           onRequestRuntimeSetup={() => {
             setComposerOpen(false);
@@ -463,10 +488,12 @@ export function PracticalWorkbenchPanel({
             if (!await draft.flush()) {
               throw new Error("Save the current activity's edits before creating another activity. Close this dialog to retry saving.");
             }
-            await generate.mutateAsync(request);
-            setSelectedId(request.activityId);
-            setSelectedRunId(null);
-            setSimulation(null);
+            await startGeneration(api, client, request);
+            if (currentLessonIdRef.current === request.lessonId) {
+              setSelectedId(request.activityId);
+              setSelectedRunId(null);
+              setSimulation(null);
+            }
           }}
         />
       )}

@@ -1,12 +1,13 @@
 import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CONFLICT_POLICIES } from '@/features/learning/portability/conflictPolicies';
 import { ImportCourseFlow } from '@/features/learning/portability/ImportCourseFlow';
+import { resetPortabilityRunStore } from '@/features/learning/portability/portabilityRunStore';
 import { deferred } from '@/tests/deferred';
 
 const mocks = vi.hoisted(() => ({ open: vi.fn(), preview: vi.fn(), apply: vi.fn(), cancel: vi.fn(), flush: vi.fn(), onImported: vi.fn() }));
@@ -54,6 +55,7 @@ function renderFlow() {
 describe('Importing a course onto this computer', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    resetPortabilityRunStore();
     mocks.open.mockResolvedValue('/Volumes/USB/field-biology.lattice-learning');
     mocks.flush.mockResolvedValue(true);
     respondByPolicy({});
@@ -296,5 +298,42 @@ describe('Importing a course onto this computer', () => {
     await user.click(screen.getByRole('button', { name: 'Confirm import' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('could not be saved before importing');
     expect(mocks.apply).not.toHaveBeenCalled();
+  });
+
+  it('preserves preview, applying state, completion notice, and errors across unmount and remount without calling stale onImported', async () => {
+    const user = userEvent.setup();
+    const previewDefer = deferred<ReturnType<typeof ok>>();
+    mocks.preview.mockReturnValueOnce(previewDefer.promise);
+
+    const view1 = renderFlow();
+    await user.click(screen.getByRole('button', { name: 'Choose a course file…' }));
+    expect(screen.getByRole('button', { name: 'Checking the file…' })).toBeDisabled();
+    view1.unmount();
+
+    const view2 = renderFlow();
+    expect(screen.getByRole('button', { name: 'Checking the file…' })).toBeDisabled();
+    await act(async () => {
+      previewDefer.resolve(ok(workspace('course-1', [previewOf({ previewId: mocks.preview.mock.calls[0][0].previewId, sourcePath: '/Volumes/USB/field-biology.lattice-learning', conflictPolicy: 'merge_safe' })])));
+    });
+    expect(await screen.findByRole('heading', { level: 3, name: 'Field biology' })).toBeVisible();
+
+    const applyDefer = deferred<ReturnType<typeof ok>>();
+    mocks.apply.mockReturnValueOnce(applyDefer.promise);
+    await user.click(screen.getByRole('button', { name: 'Apply these changes' }));
+    await user.click(await screen.findByRole('button', { name: 'Confirm import' }));
+    expect(screen.getByRole('button', { name: 'Applying…' })).toBeDisabled();
+    view2.unmount();
+
+    await act(async () => {
+      applyDefer.resolve(ok(workspace('course-1', [previewOf({ previewId: mocks.apply.mock.calls[0][0].previewId, sourcePath: '/Volumes/USB/field-biology.lattice-learning', conflictPolicy: 'merge_safe' }, { status: 'applied' })])));
+    });
+    expect(mocks.onImported).not.toHaveBeenCalled();
+
+    const view3 = renderFlow();
+    expect(screen.getByRole('status')).toHaveTextContent('“Field biology” is ready on this computer.');
+    expect(mocks.apply).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole('button', { name: 'Open course' }));
+    expect(mocks.onImported).toHaveBeenCalledWith('course-1', 'Field biology');
+    view3.unmount();
   });
 });

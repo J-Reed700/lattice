@@ -385,3 +385,60 @@ async fn a_question_claims_its_staged_pictures() {
     assert_eq!(metadata["images"][0]["originalName"], "shot-1.png");
     assert_eq!(metadata["picturesSeen"], false);
 }
+
+#[tokio::test]
+async fn mark_user_message_failed_with_reason_preserves_request_id_and_records_error() {
+    let (service, pool, id, _user_id) = service_with_pending_question().await;
+    let user = service
+        .add_message_with_metadata(
+            &id,
+            MessageRole::User,
+            "second".into(),
+            1,
+            "pending".into(),
+            Some(r#"{"requestId":"req-err-1"}"#.into()),
+        )
+        .await
+        .unwrap();
+
+    mark_user_message_failed_with_reason(&service, &user.id, Some("Model quota exceeded")).await;
+
+    assert_eq!(status_of(&pool, &user.id).await, "failed");
+    let raw: String = sqlx::query_scalar("SELECT metadata FROM conversation_messages WHERE id=?")
+        .bind(&user.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let metadata: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(metadata["requestId"], "req-err-1");
+    assert_eq!(metadata["error"], "Model quota exceeded");
+}
+
+#[tokio::test]
+async fn cancelled_turn_marks_user_completed_with_cancelled_metadata() {
+    let (service, pool, id, _user_id) = service_with_pending_question().await;
+    let zero_user = service
+        .add_message_with_metadata(
+            &id,
+            MessageRole::User,
+            "q2".into(),
+            1,
+            "pending".into(),
+            Some(r#"{"requestId":"req-cancel-0"}"#.into()),
+        )
+        .await
+        .unwrap();
+    mark_user_message_cancelled(&service, &zero_user.id).await;
+    assert_eq!(status_of(&pool, &zero_user.id).await, "completed");
+
+    let user_meta_raw: String =
+        sqlx::query_scalar("SELECT metadata FROM conversation_messages WHERE id=?")
+            .bind(&zero_user.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let user_meta: serde_json::Value = serde_json::from_str(&user_meta_raw).unwrap();
+    assert_eq!(user_meta["requestId"], "req-cancel-0");
+    assert_eq!(user_meta["cancelled"], true);
+    assert!(user_meta.get("error").is_none());
+}

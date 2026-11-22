@@ -4,10 +4,15 @@ import { COMMAND_PLUGINS } from '@/shared/ipc/routes.generated';
 import { mockIPC } from '@/tests/setup';
 
 import { backupApi } from './client';
+import { useRestoreLockoutStore } from '../restoreLockoutStore';
 
 const lastCall = () => mockIPC.mock.calls.at(-1) as [string, Record<string, unknown>];
 
-beforeEach(() => { mockIPC.mockReset(); mockIPC.mockResolvedValue({}); });
+beforeEach(() => {
+  mockIPC.mockReset();
+  mockIPC.mockResolvedValue({});
+  useRestoreLockoutStore.getState().resetRestoreLockout();
+});
 
 describe('backupApi', () => {
   it('sends every method to a registered command through the plugin that owns it', async () => {
@@ -38,5 +43,30 @@ describe('backupApi', () => {
     await expect(backupApi.listBackups()).resolves.toEqual({ ok: true, data: [] });
     mockIPC.mockRejectedValueOnce(new Error('backups folder unreadable'));
     await expect(backupApi.listBackups()).resolves.toMatchObject({ ok: false, error: 'backups folder unreadable' });
+  });
+
+  it('sets restore lockout state only when restoreBackup or restoreArchive restores the database', async () => {
+    mockIPC.mockRejectedValueOnce(new Error('corrupt backup'));
+    await backupApi.restoreBackup('/backups/bad.db');
+    expect(useRestoreLockoutStore.getState().isDatabaseRestoredRestartRequired).toBe(false);
+
+    mockIPC.mockResolvedValueOnce({ success: true, restoredCount: 10, message: null });
+    await backupApi.restoreBackup('/backups/good.db');
+    expect(useRestoreLockoutStore.getState().isDatabaseRestoredRestartRequired).toBe(true);
+    expect(useRestoreLockoutStore.getState().restoredFromArchive).toBe(false);
+
+    useRestoreLockoutStore.getState().resetRestoreLockout();
+    mockIPC.mockResolvedValueOnce({ outcome: 'needs_secret', restartRequired: false });
+    await backupApi.restoreArchive(null);
+    expect(useRestoreLockoutStore.getState().isDatabaseRestoredRestartRequired).toBe(false);
+
+    mockIPC.mockResolvedValueOnce({ outcome: 'cancelled', restartRequired: false });
+    await backupApi.restoreArchive(null);
+    expect(useRestoreLockoutStore.getState().isDatabaseRestoredRestartRequired).toBe(false);
+
+    mockIPC.mockResolvedValueOnce({ outcome: 'restored', restartRequired: true });
+    await backupApi.restoreArchive('secret');
+    expect(useRestoreLockoutStore.getState().isDatabaseRestoredRestartRequired).toBe(true);
+    expect(useRestoreLockoutStore.getState().restoredFromArchive).toBe(true);
   });
 });

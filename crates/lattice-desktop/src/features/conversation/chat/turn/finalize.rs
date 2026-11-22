@@ -162,6 +162,64 @@ pub(super) async fn finalize_turn(
     Ok(chat_response)
 }
 
+/// Persists a partial streamed reply when the user presses Stop so neither the
+/// prompt nor already-streamed tokens are lost or marked failed.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn finalize_cancelled_turn(
+    container: &dyn ChatRuntime,
+    turn: &PreparedTurn,
+    generated: GeneratedAnswer,
+    router: Option<TurnRouterDto>,
+    user_message_id: &str,
+    flow_start: Instant,
+    metrics: &ConversationFlowTimingMetrics,
+) -> Result<()> {
+    let GeneratedAnswer {
+        response,
+        sources,
+        retrieval_trace,
+        mut tokens,
+        memory_usage,
+        ..
+    } = generated;
+    if let Err(error) = turn.names.save().await {
+        tracing::warn!(%error, "Failed to save turn names for cancelled partial reply");
+    }
+    let reply = ReplyText::read(
+        &turn.names,
+        reply_text::markers(turn.source.as_ref()),
+        &response,
+    );
+    if tokens.completion.is_none() {
+        tokens.completion = Some(turn.llm.count_tokens(&reply.text) as u64);
+    }
+    let turn_record = TurnRecordDto {
+        model: Some(turn.model.clone()),
+        steps: turn.recorder.steps(),
+        timing: TurnTimingDto {
+            total_ms: elapsed_ms(flow_start),
+            router_ms: metrics.router_ms,
+            retrieval_ms: metrics.retrieval_pipeline_ms,
+            generation_ms: metrics.generation_ms,
+            verification_ms: 0,
+            tool_ms: generation_subtimings_or_default(metrics).tool_execution_ms,
+        },
+        tokens,
+        router,
+    };
+    crate::features::conversation::chat::persistence::finalize_cancelled_partial_turn(
+        container,
+        turn.chat_turn(),
+        user_message_id,
+        reply,
+        sources,
+        memory_usage,
+        retrieval_trace,
+        Some(turn_record),
+    )
+    .await
+}
+
 pub(super) fn grounding_mode_for(turn: &PreparedTurn, flags: SearchFlags) -> Option<&'static str> {
     turn.source.is_none().then_some(if flags.strict_sources {
         "strict"

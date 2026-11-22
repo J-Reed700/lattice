@@ -28,6 +28,7 @@ export namespace EventSchemas {
       bytesDownloaded: z.number(),
       totalBytes: z.number(),
       status: z.enum(['pending', 'downloading', 'paused', 'completed', 'error', 'cancelled']),
+      errorMessage: z.string().nullable().optional(),
     });
 
     export const Single = z.object({
@@ -42,7 +43,9 @@ export namespace EventSchemas {
       status: z.enum(['pending', 'downloading', 'paused', 'completed', 'error', 'cancelled']),
       // Absent from older payloads.
       destination: z.string().optional(),
+      modelId: z.string().nullable().optional(),
       modelName: z.string().nullable().optional(),
+      errorMessage: z.string().nullable().optional(),
     });
 
     export const Batch = z.object({
@@ -172,6 +175,7 @@ export namespace TauriEvents {
       bytesDownloaded: number;
       totalBytes: number;
       status: FileStatus;
+      errorMessage?: string | null;
     }
 
     /**
@@ -192,7 +196,9 @@ export namespace TauriEvents {
       status: DownloadStatus;
       /** The full final path; absent from older payloads. */
       destination?: string;
+      modelId?: string | null;
       modelName?: string | null;
+      errorMessage?: string | null;
     }
 
     /**

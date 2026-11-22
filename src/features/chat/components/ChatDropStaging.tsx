@@ -15,10 +15,11 @@ import type { ChatImage } from '@/types/conversation';
  * of the stored file, and say so when the model answering cannot see them.
  */
 export interface ChatDropStagingProps {
-  staged: StagedFile[];
+  staged: readonly StagedFile[];
   isImporting: boolean;
   onRemove: (_path: string) => void;
   onClear: () => void;
+  onCancelImport?: () => void;
   pictures?: readonly ChatImage[];
   isAttachingPictures?: boolean;
   onRemovePicture?: (_id: string) => void;
@@ -33,6 +34,7 @@ export function ChatDropStaging({
   isImporting,
   onRemove,
   onClear,
+  onCancelImport,
   pictures = [],
   isAttachingPictures = false,
   onRemovePicture,
@@ -114,8 +116,8 @@ export function ChatDropStaging({
           <div className="flex shrink-0 items-center gap-3">
             <button
               type="button"
-              onClick={onClear}
-              disabled={isImporting}
+              onClick={isImporting ? onCancelImport : onClear}
+              disabled={isImporting && !onCancelImport}
               className="text-[hsl(var(--text-muted))] transition-colors duration-fast hover:text-[hsl(var(--text-secondary))] disabled:cursor-not-allowed disabled:opacity-50"
             >
               Cancel

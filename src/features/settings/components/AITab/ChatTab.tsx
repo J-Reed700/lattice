@@ -101,6 +101,11 @@ export function ChatTab() {
   // The value is write-only: the saved one never comes back, only whether
   // one is set (`authValueSet`), so a blank value field means "keep the stored one".
   const headerValueStored = authValueSet.ollama;
+  const savedOllamaHeaderName = llmSettings?.ollamaAuthHeaderName ?? "";
+  const isOllamaHeaderHalfConfigured =
+    !headerValueStored && Boolean(savedOllamaHeaderName.trim());
+  const showClearOllamaHeader =
+    headerValueStored || Boolean(savedOllamaHeaderName.trim());
   const isHeaderPartialPair =
     (trimmedHeaderName !== "" && trimmedHeaderValue === "" && !headerValueStored) ||
     (trimmedHeaderName === "" && trimmedHeaderValue !== "");
@@ -270,7 +275,14 @@ export function ChatTab() {
       {llmSettings && isCloudProvider(provider) && <CloudConnection key={provider} provider={provider}
         model={llmSettings.model} onSaveModel={(model) => saveLlmUpdates({ model })} />}
 
-      {llmSettings && (provider === "llamacpp" || provider === "auto" || llmSettings.llamaCpp?.url.trim()) && <LlamaCppConnection />}
+      {llmSettings && (
+        provider === "llamacpp" ||
+        provider === "auto" ||
+        Boolean(llmSettings.llamaCpp?.url.trim()) ||
+        Boolean(llmSettings.llamaCpp?.authHeaderName?.trim()) ||
+        llmSettings.learningModel?.kind === "llama_cpp" ||
+        llmSettings.utilityModel?.kind === "llama_cpp"
+      ) && <LlamaCppConnection />}
 
       {llmSettings && showOllamaSettings ? (
         <SettingsSection title="Ollama server">
@@ -390,9 +402,11 @@ export function ChatTab() {
               <SettingsRow
                 label="Auth header"
                 hint={
-                  isHeaderPartialPair
-                    ? "Fill in both name and value, or clear both."
-                    : undefined
+                  isOllamaHeaderHalfConfigured
+                    ? "Header name is saved without a value in Keychain. Enter a value or click Clear header."
+                    : isHeaderPartialPair
+                      ? "Fill in both name and value, or clear both."
+                      : undefined
                 }
                 stacked
               >
@@ -416,7 +430,7 @@ export function ChatTab() {
                     aria-label="Auth header value"
                     className={INPUT_CLASS}
                   />
-                  {headerValueStored ? (
+                  {showClearOllamaHeader ? (
                     <button
                       type="button"
                       onClick={() => void handleClearHeader()}

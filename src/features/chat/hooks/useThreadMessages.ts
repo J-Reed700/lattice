@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 
+import { persistedRequestIds } from '@/features/chat/controller/optimisticMessages';
 import type { ConversationsState } from '@/shared/conversations/conversationsStore.types';
 import type { ConversationMessage, OptimisticMessage } from '@/types/conversation';
 
@@ -25,12 +26,14 @@ export function useThreadMessages(
   const messages = useMemo(() => {
     if (!activeConversationId) return [];
 
+    const persistedIds = persistedRequestIds(realMessages);
     const candidates = Array.isArray(optimisticMessages)
       ? optimisticMessages
       : Array.from((optimisticMessages as ConversationsState['optimisticMessages']).values());
     const optimisticForConversation = candidates.filter(
       (message) =>
-        message.conversationId === activeConversationId || message.conversationId === 'temp'
+        (message.conversationId === activeConversationId || message.conversationId === 'temp') &&
+        !(message.role === 'user' && message.requestId && persistedIds.has(message.requestId))
     );
     return [...realMessages, ...optimisticForConversation];
   }, [activeConversationId, realMessages, optimisticMessages]);

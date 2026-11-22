@@ -217,6 +217,18 @@ describe('TangentConversation', () => {
       await ready();
       expect(conversationUiStore.getState().optimisticMessages.has('tmp')).toBe(true);
     });
+
+    it('prunes a pending optimistic bubble once the tangent has persisted that requestId', async () => {
+      const pending = { tempId: 'tmp-pending', conversationId: 't1', role: 'user', content: 'In flight?', status: 'pending', requestId: 'req-inflight' };
+      conversationUiStore.setState({ optimisticMessages: new Map([['tmp-pending', pending]]) } as never);
+      h.fetchMessages.mockResolvedValue([
+        ...inherited,
+        message('m5', 'user', 'In flight?', { status: 'pending', metadata: JSON.stringify({ requestId: 'req-inflight' }) }),
+      ]);
+      renderTangent();
+      await ready();
+      await waitFor(() => expect(conversationUiStore.getState().optimisticMessages.has('tmp-pending')).toBe(false));
+    });
   });
 
   describe('when a turn ends', () => {
@@ -249,5 +261,14 @@ describe('TangentConversation', () => {
     stop.mockClear();
     unmount();
     expect(stop).toHaveBeenCalled();
+  });
+
+  it('exposes and dismisses scoped query errors inside the tangent without leaking silently', async () => {
+    h.fetchBookmarks.mockRejectedValue(new Error('Bookmarks unreadable'));
+    renderTangent();
+    await ready();
+    await waitFor(() => expect(h.scope?.error).toBe('Bookmarks unreadable'));
+    act(() => h.scope?.clearError());
+    expect(h.scope?.error).toBeNull();
   });
 });

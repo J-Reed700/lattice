@@ -5,12 +5,26 @@
  */
 export type RetryEntry<T> = { fingerprint: string; request: T };
 
-function newId() {
+export function newRequestId() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
     const random = Math.floor(Math.random() * 16);
     return (char === 'x' ? random : (random & 3) | 8).toString(16);
   });
+}
+
+/**
+ * Computes the next retry entry without relying on a React ref so module stores
+ * can preserve idempotent request IDs across unmounts.
+ */
+export function nextRetryEntry<P extends object, E extends object>(
+  kept: RetryEntry<P & E> | null | undefined,
+  payload: P,
+  extra: (id: () => string) => E,
+): RetryEntry<P & E> {
+  const fingerprint = JSON.stringify(payload);
+  if (kept?.fingerprint === fingerprint) return kept;
+  return { fingerprint, request: { ...payload, ...extra(newRequestId) } };
 }
 
 /**
@@ -24,10 +38,7 @@ export function idempotentEntry<K extends PropertyKey, P extends object, E exten
   payload: P,
   extra: (id: () => string) => E,
 ): RetryEntry<P & E> {
-  const fingerprint = JSON.stringify(payload);
-  const kept = ref.current[key];
-  if (kept?.fingerprint === fingerprint) return kept;
-  const entry = { fingerprint, request: { ...payload, ...extra(newId) } };
+  const entry = nextRetryEntry(ref.current[key] as RetryEntry<P & E> | undefined, payload, extra);
   ref.current[key] = entry;
   return entry;
 }

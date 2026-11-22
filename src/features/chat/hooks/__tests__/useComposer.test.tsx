@@ -182,6 +182,76 @@ describe('the composer', () => {
     expect(store.sendMessage).not.toHaveBeenCalled();
     expect(takePictures).not.toHaveBeenCalled();
     expect(result.current.input).toBe('What does it say?');
+    expect(result.current.isImportingAttachments).toBe(false);
+  });
+
+  it('tracks isImportingAttachments during slow importStaged and blocks double submission', async () => {
+    let resolveImport: ((value: { names: string[]; documentIds: string[] } | null) => void) | undefined;
+    const importStaged = vi.fn(
+      () => new Promise<{ names: string[]; documentIds: string[] } | null>((resolve) => {
+        resolveImport = resolve;
+      }),
+    );
+    const { result } = render({ staged: [{ path: '/tmp/slow.pdf', name: 'slow.pdf' }], importStaged, takePictures: () => [] });
+    act(() => result.current.setInput('Read slow file'));
+
+    let pendingSubmit: Promise<void> | undefined;
+    act(() => {
+      pendingSubmit = result.current.handleSubmit(submit);
+    });
+    expect(result.current.isImportingAttachments).toBe(true);
+
+    // Second submit while importing must be ignored.
+    await act(async () => { await result.current.handleSubmit(submit); });
+    expect(importStaged).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveImport?.({ names: ['slow.pdf'], documentIds: ['doc-slow'] });
+      await pendingSubmit;
+    });
+
+    expect(result.current.isImportingAttachments).toBe(false);
+    expect(store.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('prevents a stale import finally block from clearing a newly switched conversation import state', async () => {
+    let resolveConvA: ((value: null) => void) | undefined;
+    let resolveConvB: ((value: { names: string[]; documentIds: string[] } | null) => void) | undefined;
+    const importStaged = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<null>((resolve) => { resolveConvA = resolve; }))
+      .mockImplementationOnce(() => new Promise<{ names: string[]; documentIds: string[] } | null>((resolve) => { resolveConvB = resolve; }));
+    const { result, rerender } = render({ staged: [{ path: '/tmp/a.pdf', name: 'a.pdf' }], importStaged, takePictures: () => [] });
+
+    act(() => result.current.setInput('From conv A'));
+    let submitA: Promise<void> | undefined;
+    act(() => { submitA = result.current.handleSubmit(submit); });
+    expect(result.current.isImportingAttachments).toBe(true);
+
+    rerender({ id: 'conversation-2' });
+    expect(result.current.isImportingAttachments).toBe(false);
+
+    act(() => result.current.setInput('From conv B'));
+    let submitB: Promise<void> | undefined;
+    act(() => { submitB = result.current.handleSubmit(submit); });
+    expect(result.current.isImportingAttachments).toBe(true);
+
+    // Resolving old conv-A import must NOT clear conv-B's isImportingAttachments!
+    await act(async () => {
+      resolveConvA?.(null);
+      await submitA;
+    });
+    expect(result.current.isImportingAttachments).toBe(true);
+
+    await act(async () => {
+      resolveConvB?.({ names: ['a.pdf'], documentIds: ['doc-b'] });
+      await submitB;
+    });
+    expect(result.current.isImportingAttachments).toBe(false);
+    expect(store.sendMessage).toHaveBeenCalledTimes(1);
+    expect(store.sendMessage).toHaveBeenCalledWith(
+      'From conv B', 'conversation-2', expect.anything(), ['a.pdf'], ['doc-b'], undefined,
+    );
   });
 
   it('sends a query-mode turn with every source switched on', () => {

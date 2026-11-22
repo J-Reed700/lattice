@@ -7,6 +7,7 @@ import { OPEN_PALETTE_EVENT } from '@/features/palette/hooks/useCommandPalette';
 import { usePaletteCommandsStore } from '@/features/palette/stores/paletteCommandsStore';
 import { VaultAPI } from '@/lib/api';
 import { useToastStore } from '@/stores/toastStore';
+import { deferred } from '@/tests/deferred';
 import { logger } from '@/utils/logger';
 
 import { CommandPalette } from '../CommandPalette';
@@ -205,12 +206,33 @@ describe('CommandPalette actions', () => {
     expect(api.openFile).toHaveBeenCalledTimes(1);
   });
 
-  it('reruns a recent search on the search screen and can clear them', async () => {
-    localStorage.setItem('lattice-command-palette', JSON.stringify({ recentSearches: [{ id: 's1', label: 'photosynthesis', timestamp: 1 }], recentDocuments: [] }));
+  it('closes immediately before awaiting long-running Add files or Add folder indexing', async () => {
+    const fileIndex = deferred<{ ok: true; data: null }>();
+    api.selectMultipleFiles.mockResolvedValue(['/notes/large.pdf']);
+    api.indexFile.mockReturnValue(fileIndex.promise);
     renderPalette();
     await open();
-    choose('photosynthesis');
-    expect(location()).toBe('/search');
+    choose('Add files');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await waitFor(() => expect(api.indexFile).toHaveBeenCalledWith('/notes/large.pdf'));
+    await act(async () => { fileIndex.resolve({ ok: true, data: null }); });
+
+    const folderIndex = deferred<{ ok: true; data: null }>();
+    api.selectFolder.mockResolvedValue('/books');
+    api.startIndexing.mockReturnValue(folderIndex.promise);
+    await open();
+    choose('Add folder');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await waitFor(() => expect(api.startIndexing).toHaveBeenCalledWith('/books', true));
+    await act(async () => { folderIndex.resolve({ ok: true, data: null }); });
+  });
+
+  it('reruns a recent search on the search screen with ?q= and can clear them', async () => {
+    localStorage.setItem('lattice-command-palette', JSON.stringify({ recentSearches: [{ id: 's1', label: 'photosynthesis & light', timestamp: 1 }], recentDocuments: [] }));
+    renderPalette();
+    await open();
+    choose('photosynthesis & light');
+    expect(location()).toBe('/search?q=photosynthesis%20%26%20light');
 
     await open();
     choose('Clear recent searches');

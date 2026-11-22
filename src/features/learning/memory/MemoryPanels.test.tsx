@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 
 import { NotebookPanel, RecallPanel } from '@/features/learning/memory/MemoryPanels';
+import { resetRecallGenerationStore } from '@/features/learning/memory/recallGenerationStore';
 import { useLearningMemory } from '@/features/learning/memory/useLearningMemory';
 import type { LearningMemoryDto, LearningProgramDto, StudyCardDto, WorkspaceNoteDto } from '@/lib/bindings';
 
@@ -78,6 +79,7 @@ function draft(id = 'draft-1', origin: 'generated' | 'manual' = 'generated') {
 describe('Learning Studio notebook and recall', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    resetRecallGenerationStore();
     api.getLearningMemory.mockResolvedValue(ok(memory()));
     api.ensureLearningLessonNote.mockResolvedValue(ok(memory({ lessonNotes: [{ lessonId: lesson.id, note }] })));
     api.updateWorkspaceNote.mockImplementation(async (updated: WorkspaceNoteDto) => ok({ ...updated, revision: updated.revision + 1 }));
@@ -405,5 +407,47 @@ describe('Learning Studio notebook and recall', () => {
     await user.click(screen.getByRole('button', { name: /good/i }));
     expect(await screen.findByText('You are caught up')).toBeVisible();
     expect(api.reviewStudyCard.mock.calls.map((call) => [call[0].cardId, call[0].rating, call[0].expectedReviews])).toEqual([['card-1', 'again', 0], ['card-2', 'good', 0], ['card-1', 'good', 1]]);
+  });
+
+  it('preserves Recall draft generation state and errors across unmount and updates cache on completion', async () => {
+    const user = userEvent.setup();
+    let resolveRun!: (v: unknown) => void;
+    api.generateLearningCardDrafts
+      .mockImplementationOnce(() => new Promise((r) => { resolveRun = r; }))
+      .mockResolvedValueOnce(fail('Model busy'));
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } } });
+    const renderHarness = () => render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <RecallHarness />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const view1 = renderHarness();
+    await user.click(await screen.findByRole('button', { name: 'Generate drafts' }));
+    expect(screen.getByRole('button', { name: 'Generating…' })).toBeDisabled();
+
+    view1.unmount();
+    const view2 = renderHarness();
+    expect(await screen.findByRole('button', { name: 'Generating…' })).toBeDisabled();
+    expect(api.generateLearningCardDrafts).toHaveBeenCalledTimes(1);
+
+    resolveRun(ok(memory({ drafts: [draft()] })));
+    expect(await screen.findByDisplayValue('How does the idea work?')).toBeVisible();
+
+    view2.unmount();
+    const view3 = renderHarness();
+    await user.click(await screen.findByRole('button', { name: 'Generate drafts' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Model busy');
+
+    view3.unmount();
+    renderHarness();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Model busy');
+
+    // Lesson-scoped: another lesson does not inherit lesson-1's error, and Dismiss clears it.
+    await user.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });

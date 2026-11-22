@@ -1,6 +1,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { useRestoreLockoutStore } from '@/features/backup/restoreLockoutStore';
 import { selectPaletteGroups, usePaletteCommandsStore } from '@/features/palette/stores/paletteCommandsStore';
 
 import { useJournalPaletteCommands, useJournalShortcuts } from '../useJournalCommands';
@@ -48,6 +49,7 @@ describe('useJournalShortcuts', () => {
   let input: HTMLInputElement;
 
   beforeEach(() => {
+    useRestoreLockoutStore.getState().resetRestoreLockout();
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(NOW);
     input = document.createElement('input');
@@ -61,7 +63,7 @@ describe('useJournalShortcuts', () => {
   function setup(selectedId: string | null, list = entries) {
     const options = {
       entries: list, selectedId, setSelectedId: vi.fn(), saveNow: vi.fn().mockResolvedValue(true),
-      handleNewPage: vi.fn().mockResolvedValue(undefined), setSidebarCollapsed: vi.fn(),
+      setSidebarCollapsed: vi.fn(),
     };
     const view = renderHook(() => useJournalShortcuts(options));
     return { ...options, ...view };
@@ -80,12 +82,25 @@ describe('useJournalShortcuts', () => {
     expect(s.saveNow).toHaveBeenCalledTimes(1);
   });
 
-  it('starts a new page with Cmd+N, but not while typing', () => {
+  it('does not handle Cmd+N directly (RootLayout owns global Mod+N via NEW_ITEM_EVENT)', () => {
+    const onNew = vi.fn();
     const s = setup(null);
+    window.addEventListener('new-item', onNew);
     press({ key: 'n', metaKey: true }, input);
-    expect(s.handleNewPage).not.toHaveBeenCalled();
     press({ key: 'N', ctrlKey: true });
-    expect(s.handleNewPage).toHaveBeenCalledTimes(1);
+    expect(s.saveNow).not.toHaveBeenCalled();
+    expect(s.setSelectedId).not.toHaveBeenCalled();
+    expect(onNew).not.toHaveBeenCalled();
+    window.removeEventListener('new-item', onNew);
+  });
+
+  it('ignores journal shortcuts while database restore lockout is active', () => {
+    useRestoreLockoutStore.getState().markDatabaseRestoredRestartRequired(false);
+    const s = setup('b');
+    press({ key: 's', metaKey: true }, input);
+    press({ key: 'j' });
+    expect(s.saveNow).not.toHaveBeenCalled();
+    expect(s.setSelectedId).not.toHaveBeenCalled();
   });
 
   it('moves through entries with j/k and the arrows, clamped at both ends', () => {

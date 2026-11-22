@@ -70,7 +70,7 @@ export function TangentPanel({ tangent, chat: Chat, onPromoted }: {
       </div>
     </div>
     <TangentConversation conversationId={id} inheritedCount={tangent.contextMessageCount} onTurnEnd={refreshTangents}>
-      <Chat embedded autoFocus startersNote={STARTERS_NOTE} />
+      <Chat embedded showErrorBanner autoFocus startersNote={STARTERS_NOTE} />
     </TangentConversation>
   </>;
 }

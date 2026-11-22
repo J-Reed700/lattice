@@ -33,4 +33,56 @@ describe('useThreadMessages', () => {
     const { result } = renderHook(() => useThreadMessages('c2', conversations, new Map()));
     expect(result.current.messages).toEqual([]);
   });
+
+  it('deduplicates pending or completed optimistic user bubbles matching a persisted requestId', () => {
+    const withRequestId = [
+      {
+        id: 'c1',
+        messages: [
+          {
+            id: 'm-persisted',
+            conversationId: 'c1',
+            role: 'user',
+            content: 'Explain gravity',
+            status: 'pending',
+            metadata: JSON.stringify({ requestId: 'req-dup-1' }),
+          },
+        ],
+      },
+    ] as never;
+    const dupOptimistic = new Map([
+      [
+        'tmp-dup',
+        {
+          tempId: 'tmp-dup',
+          conversationId: 'c1',
+          role: 'user',
+          content: 'Explain gravity',
+          status: 'pending',
+          requestId: 'req-dup-1',
+        },
+      ],
+      [
+        'tmp-other',
+        {
+          tempId: 'tmp-other',
+          conversationId: 'c1',
+          role: 'user',
+          content: 'Unsent follow-up',
+          status: 'pending',
+          requestId: 'req-unsent',
+        },
+      ],
+    ]) as never;
+
+    const { result } = renderHook(() => useThreadMessages('c1', withRequestId, dupOptimistic));
+    expect(result.current.messages.map((m) => m.content)).toEqual([
+      'Explain gravity',
+      'Unsent follow-up',
+    ]);
+    expect(result.current.messages.map((m) => result.current.getMessageKey(m))).toEqual([
+      'm-persisted',
+      'tmp-other',
+    ]);
+  });
 });

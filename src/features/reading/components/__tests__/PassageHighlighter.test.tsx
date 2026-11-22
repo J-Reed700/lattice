@@ -111,4 +111,45 @@ describe('PassageHighlighter', () => {
     expect(host.querySelectorAll('.lattice-passage-term')).toHaveLength(0);
     host.remove();
   });
+
+  it('waits until loading finishes and highlights the passage once document content renders', async () => {
+    const onMatch = vi.fn();
+    const { rerender, getByTestId } = render(
+      <PassageHighlighter locator={{ text: PASSAGE }} isLoading contentKey="" onMatch={onMatch}>
+        <div data-testid="spinner">Loading...</div>
+      </PassageHighlighter>
+    );
+
+    // Must not get stuck on 'none' while the spinner is visible.
+    expect(onMatch).not.toHaveBeenCalled();
+
+    rerender(
+      <PassageHighlighter locator={{ text: PASSAGE }} isLoading={false} contentKey={PASSAGE} onMatch={onMatch}>
+        {CONTENT}
+      </PassageHighlighter>
+    );
+
+    await waitFor(() => expect(onMatch).toHaveBeenCalledWith('exact'));
+    expect(getByTestId('p2').classList.contains('lattice-passage-block')).toBe(true);
+  });
+
+  it('re-locates via MutationObserver when child content mounts asynchronously after initial render', async () => {
+    const onMatch = vi.fn();
+    const { container } = render(
+      <PassageHighlighter locator={{ text: PASSAGE }} isLoading={false} onMatch={onMatch}>
+        <div data-testid="async-host" />
+      </PassageHighlighter>
+    );
+
+    await waitFor(() => expect(onMatch).toHaveBeenCalledWith('none'));
+    onMatch.mockClear();
+
+    const host = container.querySelector('[data-testid="async-host"]')!;
+    const p = document.createElement('p');
+    p.textContent = PASSAGE;
+    host.appendChild(p);
+
+    await waitFor(() => expect(onMatch).toHaveBeenCalledWith('exact'));
+    expect(p.classList.contains('lattice-passage-block')).toBe(true);
+  });
 });

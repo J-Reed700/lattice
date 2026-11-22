@@ -86,9 +86,9 @@ export function MessageHeader({
           </span>
         )}
         {isFailed && (
-          <span className="inline-flex items-center gap-1 text-xs text-[hsl(var(--danger-fg))]">
-            <AlertCircle className="h-3 w-3" />
-            {errorMessage || "Message didn't send"}
+          <span className="inline-flex min-w-0 items-center gap-1 text-xs text-[hsl(var(--danger-fg))]">
+            <AlertCircle className="h-3 w-3 shrink-0" />
+            <span className="break-words">{errorMessage || "Message didn't send"}</span>
           </span>
         )}
         {/* Only the last question: regenerate re-asks whatever came last. */}

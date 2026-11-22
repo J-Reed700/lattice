@@ -2,15 +2,16 @@ import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { listen } from '@tauri-apps/api/event';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CourseIndexNotice, describeCourseIndex, describeIndexingMeanwhile, EMBEDDING_SETTINGS } from '@/features/learning/sources/CourseIndexNotice';
+import { DOWNLOADED_MODELS_QUERY_KEY } from '@/features/model/hooks/useDownloadedModels';
 import type { CourseIndexStatusDto, JobDto } from '@/lib/bindings';
 
-const api = vi.hoisted(() => ({ status: vi.fn() }));
-vi.mock('@/lib/api', () => ({ default: { courseIndexStatus: api.status } }));
+const api = vi.hoisted(() => ({ status: vi.fn(), downloadedModels: vi.fn() }));
+vi.mock('@/lib/api', () => ({ default: { courseIndexStatus: api.status, getDownloadedModels: api.downloadedModels } }));
 
 const ok = <T,>(data: T) => ({ ok: true as const, data });
 type Indexing = Extract<CourseIndexStatusDto, { state: 'indexing' }>;
@@ -27,6 +28,7 @@ function show(status: CourseIndexStatusDto) {
 describe('Course index notice', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    api.downloadedModels.mockResolvedValue(ok([]));
   });
 
   it('words every state, and says nothing once the course is ready', () => {
@@ -128,5 +130,24 @@ describe('Course index notice', () => {
     handler!({ payload: { kind: 'learning.course_index', subjectId: 'program-1', status: 'running' } as JobDto, event: 'jobs://status', id: 4 });
     await waitFor(() => expect(notice).toHaveTextContent('less than a minute left'));
     expect(notice).toHaveTextContent('13,200 of 13,457 passages');
+  });
+
+  it('re-queries course_index_status immediately when an embedding model becomes active or remounting from noEmbeddingModel', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 5 * 60 * 1000 } } });
+    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}><MemoryRouter>{children}</MemoryRouter></QueryClientProvider>;
+    api.status.mockResolvedValueOnce(ok({ state: 'noEmbeddingModel' })).mockResolvedValueOnce(ok(indexing()));
+
+    const view = render(<CourseIndexNotice programId="program-1" />, { wrapper });
+    expect(await screen.findByRole('status')).toHaveTextContent('Choose an embedding model in Settings');
+    view.unmount();
+
+    api.downloadedModels.mockResolvedValueOnce(ok([{ id: 'embed-1', is_active_for_embedding: true }]));
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: DOWNLOADED_MODELS_QUERY_KEY });
+    });
+
+    render(<CourseIndexNotice programId="program-1" />, { wrapper });
+    expect(await screen.findByRole('status', { name: 'Course index' })).toHaveTextContent('Indexing this course’s references');
+    expect(api.status).toHaveBeenCalledTimes(2);
   });
 });

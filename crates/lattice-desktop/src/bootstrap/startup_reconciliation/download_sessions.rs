@@ -10,9 +10,9 @@ use tracing::{error, info, warn};
 /// Reconcile stale download sessions on app startup
 ///
 /// Finds downloads stuck in "Downloading" state (from app crash) or still
-/// "Pending" (queued in memory only, so a restart loses them). Interrupted
-/// transfers are marked Failed; orphaned queued rows are marked Paused so the
-/// user can resume them.
+/// "Pending" (queued in memory only, so a restart loses them). Both are marked
+/// Paused (preserving `.part` byte progress if present on disk, or 0 if
+/// missing) so the user can resume them.
 pub async fn reconcile_stale_downloads(
     repository: Arc<dyn DownloadRepository>,
     startup_ts: DateTime<Utc>,
@@ -49,15 +49,26 @@ pub async fn reconcile_stale_downloads(
     for mut session in stale_sessions {
         let session_id = session.id().to_string();
 
-        // A normal quit leaves queued files Pending, and failing them would
-        // make the model saga fail the whole model. Paused keeps them
-        // resumable; only an interrupted transfer is a failure.
-        let result = if session.state() == &DownloadState::Pending {
-            session.pause()
-        } else {
-            session.fail("App restarted while downloading".to_string())
+        // No transfer survives a restart; mark both Pending and Downloading
+        // sessions Paused and align recorded progress with any `.part` on disk.
+        let part_bytes = match tokio::fs::metadata(session.working_path()).await {
+            Ok(meta) if meta.is_file() => {
+                let len = meta.len();
+                if session
+                    .progress()
+                    .total_bytes()
+                    .is_some_and(|total| len > total)
+                {
+                    0
+                } else {
+                    len
+                }
+            }
+            _ => 0,
         };
-        match result {
+        session.update_progress(part_bytes, 0.0);
+
+        match session.pause() {
             Ok(_) => match repository.update(&session).await {
                 Ok(_) => {
                     info!("Reconciled stale download: {}", session_id);
@@ -68,7 +79,7 @@ pub async fn reconcile_stale_downloads(
                 }
             },
             Err(e) => {
-                error!("Failed to mark session {} as failed: {}", session_id, e);
+                error!("Failed to pause stale session {}: {}", session_id, e);
             }
         }
     }
@@ -189,7 +200,8 @@ mod tests {
 
         assert_eq!(reconciled, 1);
         let session = repository.get("interrupted").await.unwrap().unwrap();
-        assert_eq!(session.state(), &DownloadState::Failed);
+        assert_eq!(session.state(), &DownloadState::Paused);
+        assert_eq!(session.error_message(), None);
     }
 
     #[tokio::test]
@@ -284,11 +296,45 @@ mod tests {
             "SqliteDownloadRepository must preserve updated_at so stale Downloading rows are reconciled"
         );
         let updated = repository.get("sqlite-interrupted").await.unwrap().unwrap();
-        assert_eq!(updated.state(), &DownloadState::Failed);
-        assert_eq!(
-            updated.error_message(),
-            Some("App restarted while downloading")
-        );
+        assert_eq!(updated.state(), &DownloadState::Paused);
+        assert_eq!(updated.progress().bytes_downloaded(), 0);
+        assert_eq!(updated.error_message(), None);
+    }
+
+    #[tokio::test]
+    async fn interrupted_downloading_session_preserves_part_bytes_as_paused() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("model.gguf");
+        std::fs::write(
+            lattice_core::domain::download::part_path(&destination),
+            vec![3u8; 640],
+        )
+        .unwrap();
+
+        let mut session = DownloadSession::new(
+            "with-part".to_string(),
+            "https://example.com/model.gguf".to_string(),
+            destination,
+            Some(1000),
+            None,
+        )
+        .unwrap();
+        session.start().unwrap();
+        session.update_progress(400, 100.0);
+
+        let repository = Arc::new(MockDownloadRepository::new());
+        repository.create(&session).await.unwrap();
+        let startup = Utc::now() + chrono::Duration::milliseconds(5);
+
+        let reconciled = reconcile_stale_downloads(repository.clone(), startup)
+            .await
+            .unwrap();
+
+        assert_eq!(reconciled, 1);
+        let after = repository.get("with-part").await.unwrap().unwrap();
+        assert_eq!(after.state(), &DownloadState::Paused);
+        assert_eq!(after.progress().bytes_downloaded(), 640);
+        assert_eq!(after.error_message(), None);
     }
 
     #[tokio::test]
@@ -318,10 +364,8 @@ mod tests {
         assert_eq!(queued.state(), &DownloadState::Paused);
         assert_eq!(queued.error_message(), None);
         let interrupted = repository.get("interrupted").await.unwrap().unwrap();
-        assert_eq!(
-            interrupted.error_message(),
-            Some("App restarted while downloading")
-        );
+        assert_eq!(interrupted.state(), &DownloadState::Paused);
+        assert_eq!(interrupted.error_message(), None);
     }
 
     #[tokio::test]

@@ -311,20 +311,78 @@ fn inspect_prefix(bytes: &[u8]) -> PrefixVerdict {
     PrefixVerdict::Compatible
 }
 
+fn may_forward_compatibility_auth(source: &str, target: &str) -> bool {
+    let (Ok(source), Ok(target)) = (url::Url::parse(source), url::Url::parse(target)) else {
+        return false;
+    };
+    if source.origin() == target.origin() {
+        return true;
+    }
+    let is_trusted_hf = |host: &str| {
+        let host = host.trim_end_matches('.').to_ascii_lowercase();
+        host == "huggingface.co"
+            || host.ends_with(".huggingface.co")
+            || host == "hf.co"
+            || host.ends_with(".hf.co")
+    };
+    match (source.host_str(), target.host_str()) {
+        (Some(source_host), Some(target_host)) => {
+            is_trusted_hf(source_host) && is_trusted_hf(target_host)
+        }
+        _ => false,
+    }
+}
+
 /// Read a bounded prefix, including when a server ignores Range. Never buffer a
 /// whole GGUF to decide whether downloading it is worthwhile.
 pub(crate) async fn check_download(url: &str, token: Option<&str>) -> Result<()> {
+    const MAX_REDIRECTS: usize = 10;
     let client = lattice_core::shared::http::reqwest_client_builder()
         .timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| AppError::Network("Could not start the model compatibility check".into()))?;
-    let mut request = client
-        .get(url)
-        .header("Range", format!("bytes=0-{}", HEADER_LIMIT - 1));
-    if let Some(token) = token {
-        request = request.bearer_auth(token);
+
+    let mut current_url = url.to_string();
+    let mut final_response = None;
+    for hop in 0..=MAX_REDIRECTS {
+        let mut request = client
+            .get(&current_url)
+            .header("Range", format!("bytes=0-{}", HEADER_LIMIT - 1));
+        if let Some(token) = token.filter(|_| may_forward_compatibility_auth(url, &current_url)) {
+            request = request.bearer_auth(token);
+        }
+        let response = request.send().await.map_err(|_| {
+            AppError::Network(
+                "Could not read the model header to check compatibility. Please retry.".into(),
+            )
+        })?;
+        if response.status().is_redirection() {
+            if let Some(location) = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+            {
+                if hop == MAX_REDIRECTS {
+                    return Err(AppError::Network(
+                        "The model compatibility check followed too many redirects. Please retry."
+                            .into(),
+                    ));
+                }
+                let base = url::Url::parse(&current_url)
+                    .map_err(|_| AppError::Network("The model download URL is invalid.".into()))?;
+                current_url = base
+                    .join(location)
+                    .map_err(|_| AppError::Network("The model redirect URL is invalid.".into()))?
+                    .to_string();
+                continue;
+            }
+        }
+        final_response = Some(response);
+        break;
     }
-    let response = request.send().await.map_err(|_| {
+
+    let response = final_response.ok_or_else(|| {
         AppError::Network(
             "Could not read the model header to check compatibility. Please retry.".into(),
         )
@@ -451,6 +509,74 @@ mod tests {
         )
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn check_download_strips_auth_on_untrusted_redirect_and_forwards_on_same_origin() {
+        let source = MockServer::start().await;
+        let untrusted = MockServer::start().await;
+
+        // Same-origin redirect keeps Authorization.
+        Mock::given(method("GET"))
+            .and(path("/redirect-same"))
+            .and(header("authorization", "Bearer test-token"))
+            .respond_with(ResponseTemplate::new(302).insert_header("location", "/target-same"))
+            .expect(1)
+            .mount(&source)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/target-same"))
+            .and(header("authorization", "Bearer test-token"))
+            .respond_with(ResponseTemplate::new(206).set_body_bytes(gguf("llama")))
+            .expect(1)
+            .mount(&source)
+            .await;
+        check_download(
+            &format!("{}/redirect-same", source.uri()),
+            Some("test-token"),
+        )
+        .await
+        .unwrap();
+
+        // Cross-origin untrusted redirect strips Authorization.
+        Mock::given(method("GET"))
+            .and(path("/redirect-ext"))
+            .and(header("authorization", "Bearer test-token"))
+            .respond_with(
+                ResponseTemplate::new(302)
+                    .insert_header("location", format!("{}/target-ext", untrusted.uri())),
+            )
+            .expect(1)
+            .mount(&source)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/target-ext"))
+            .and(wiremock::matchers::header_exists("authorization"))
+            .respond_with(ResponseTemplate::new(400))
+            .expect(0)
+            .mount(&untrusted)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/target-ext"))
+            .respond_with(ResponseTemplate::new(206).set_body_bytes(gguf("llama")))
+            .expect(1)
+            .mount(&untrusted)
+            .await;
+        check_download(
+            &format!("{}/redirect-ext", source.uri()),
+            Some("test-token"),
+        )
+        .await
+        .unwrap();
+
+        assert!(may_forward_compatibility_auth(
+            "https://hf.co./org/repo/resolve/main/m.gguf",
+            "https://huggingface.co/org/repo/resolve/main/m.gguf"
+        ));
+        assert!(!may_forward_compatibility_auth(
+            "https://huggingface.co/org/repo/resolve/main/m.gguf",
+            "https://s3.amazonaws.com/bucket/m.gguf"
+        ));
     }
 
     #[tokio::test]

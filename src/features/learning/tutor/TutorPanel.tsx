@@ -20,11 +20,12 @@ import { useTutorChats } from './useTutorChats';
  * everything a chat has here. A turn may rate cards and save notes, so when one
  * ends what Recall and the Notebook show is read again.
  */
-export function TutorPanel({ program, lesson, onCourseChanged }: {
+export function TutorPanel({ program, lesson, onCourseChanged, onActiveChatChange }: {
   program: LearningProgramDto;
   /** The lesson the workspace is on: a new chat can start from it. */
   lesson?: LearningLessonDto;
   onCourseChanged?: () => void;
+  onActiveChatChange?: (chatId: string | null) => void;
 }) {
   const programId = program.summary.id;
   const chats = useTutorChats(programId, program.summary.title);
@@ -33,6 +34,10 @@ export function TutorPanel({ program, lesson, onCourseChanged }: {
   const sending = useConversationsStore((state) =>
     Boolean(chats.activeId && state.inFlightGenerations.has(chats.activeId)));
   const wasSending = useRef(false);
+
+  useEffect(() => {
+    onActiveChatChange?.(chats.activeId);
+  }, [chats.activeId, onActiveChatChange]);
 
   useEffect(() => {
     if (wasSending.current && !sending) {

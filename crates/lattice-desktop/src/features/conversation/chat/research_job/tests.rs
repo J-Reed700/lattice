@@ -469,7 +469,10 @@ async fn the_chat_stop_cancels_a_running_research_job() {
         .find(|message| message.id == attempt.assembled.user_message_id)
         .unwrap()
         .clone();
-    assert_eq!(question.status, "failed", "the question is left retryable");
+    assert_eq!(
+        question.status, "completed",
+        "a stopped prompt is marked completed rather than failed"
+    );
     jobs.close();
     jobs.drain().await;
 }
@@ -793,8 +796,8 @@ async fn a_resumed_research_turn_stopped_before_it_registers_fails_its_question(
     assert!(llm.requests().is_empty(), "the model is never asked");
     assert_eq!(
         question_status(&runtime, &attempt).await,
-        "failed",
-        "the question is left retryable"
+        "completed",
+        "a stopped turn completes the user prompt instead of marking it failed"
     );
     jobs.close();
     jobs.drain().await;
@@ -1175,8 +1178,8 @@ async fn stopping_a_research_job_that_never_started_fails_its_question() {
     );
     assert_eq!(
         question_status(&runtime, &attempt).await,
-        "failed",
-        "the question is left retryable"
+        "completed",
+        "a stopped turn completes the user prompt instead of marking it failed"
     );
     jobs.close();
     jobs.drain().await;

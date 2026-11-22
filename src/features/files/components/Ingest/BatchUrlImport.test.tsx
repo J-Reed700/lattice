@@ -2,7 +2,9 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { resetBatchUrlImport } from '@/features/files/hooks/batchUrlImportRunner';
 import { VaultAPI } from '@/lib/api';
+import { useToastStore } from '@/stores/toastStore';
 import { deferred } from '@/tests/deferred';
 import type { ApiResult } from '@/types';
 import type { BatchJobStatus } from '@/types/api/batch';
@@ -12,7 +14,11 @@ import { cancelBatchJob, getBatchJobStatus, startBatchUrlImport } from '@/utils/
 import { BatchUrlImport } from './BatchUrlImport';
 
 vi.mock('@/lib/api', () => {
-  const mockApi = { fetchUrlPreview: vi.fn() };
+  const mockApi = {
+    fetchUrlPreview: vi.fn(),
+    listBatchJobs: vi.fn(),
+    getCorpusShape: vi.fn(),
+  };
   return { VaultAPI: mockApi, default: mockApi };
 });
 vi.mock('@/utils/batchImport', () => ({ startBatchUrlImport: vi.fn(), getBatchJobStatus: vi.fn(), cancelBatchJob: vi.fn() }));
@@ -32,9 +38,13 @@ const completed = () => status({ status: 'completed', completedItems: 2, items: 
 beforeEach(() => {
   vi.useFakeTimers();
   vi.resetAllMocks();
+  resetBatchUrlImport();
+  useToastStore.setState({ toasts: [] });
   vi.spyOn(console, 'error').mockImplementation(() => {});
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.mocked(VaultAPI.fetchUrlPreview).mockImplementation(async url => ({ ok: true, data: preview(url) }));
+  vi.mocked(VaultAPI.listBatchJobs).mockResolvedValue({ ok: true, data: [] });
+  vi.mocked(VaultAPI.getCorpusShape).mockResolvedValue({ ok: true, data: { total: 2, byType: [], grownLast7Days: 2 } as never });
   vi.mocked(startBatchUrlImport).mockResolvedValue('job-1');
   vi.mocked(getBatchJobStatus).mockResolvedValue(status());
   vi.mocked(cancelBatchJob).mockResolvedValue(2);
@@ -203,13 +213,22 @@ it('uses completed counts when an older backend omits per-item details', async (
   expect(onImportComplete).toHaveBeenCalledExactlyOnceWith({ successful: 1, failed: 1 });
 });
 
-it('does not start polling when unmounted before the native job ID returns', async () => {
+it('continues polling when unmounted before the native job ID returns and fires a one-shot toast on completion', async () => {
   const pending = deferred<string>();
   vi.mocked(startBatchUrlImport).mockReturnValue(pending.promise);
+  vi.mocked(getBatchJobStatus).mockResolvedValue(completed());
   const { unmount } = show(); await paste(); await start(); unmount();
-  await act(async () => { pending.resolve('background-job'); });
-  expect(getBatchJobStatus).not.toHaveBeenCalled();
+  await act(async () => { pending.resolve('background-job'); await vi.advanceTimersByTimeAsync(0); });
+  expect(getBatchJobStatus).toHaveBeenCalledWith('background-job', VaultAPI);
   expect(cancelBatchJob).not.toHaveBeenCalled();
+  expect(useToastStore.getState().toasts).toHaveLength(1);
+  expect(useToastStore.getState().toasts[0]).toMatchObject({ type: 'success' });
+
+  // Remounting later shows the completed state without re-firing the toast.
+  show();
+  await tick(0);
+  expect(screen.getAllByText('Imported')).toHaveLength(2);
+  expect(useToastStore.getState().toasts).toHaveLength(1);
 });
 
 it('cancels the native job and prevents a late poll from reporting success', async () => {
@@ -238,12 +257,116 @@ it('keeps the job visible when native cancellation fails and allows cancelling a
   expect(cancelBatchJob).toHaveBeenCalledTimes(2);
 });
 
-it('stops renderer polling on unmount while leaving the background job intact', async () => {
+it('keeps polling across unmount/remount, preserves live progress, and fires toast once while unmounted', async () => {
+  vi.mocked(getBatchJobStatus)
+    .mockResolvedValueOnce(status({ completedItems: 1, progress: 50, items: [
+      { itemId: 'a', target: URL_A, status: 'completed', documentId: 'doc-a' },
+      { itemId: 'b', target: URL_B, status: 'processing', documentId: null },
+    ] }))
+    .mockResolvedValueOnce(status({ status: 'completed', completedItems: 1, failedItems: 1, items: [
+      { itemId: 'a', target: URL_A, status: 'completed', documentId: 'doc-a' },
+      { itemId: 'b', target: URL_B, status: 'failed', errorMessage: 'Timeout', documentId: null },
+    ] }));
   const { unmount, onImportComplete } = show(); await paste(); await start();
-  unmount(); await tick(10000);
-  expect(getBatchJobStatus).toHaveBeenCalledOnce();
+  unmount();
+  await tick(800);
+  expect(getBatchJobStatus).toHaveBeenCalledTimes(2);
   expect(cancelBatchJob).not.toHaveBeenCalled();
   expect(onImportComplete).not.toHaveBeenCalled();
+  expect(useToastStore.getState().toasts).toEqual([
+    expect.objectContaining({ type: 'error', title: "Couldn't import 1 URLs" }),
+  ]);
+
+  show();
+  await tick(0);
+  expect(screen.getByText('Imported')).toBeInTheDocument();
+  expect(screen.getByText('Failed — Timeout')).toBeInTheDocument();
+});
+
+it('preserves urlText, items, progress, and errors across tab or route switches while running', async () => {
+  vi.mocked(getBatchJobStatus)
+    .mockResolvedValueOnce(status({ completedItems: 1, progress: 50, items: [
+      { itemId: 'a', target: URL_A, status: 'completed', documentId: 'doc-a' },
+      { itemId: 'b', target: URL_B, status: 'processing', documentId: null },
+    ] }))
+    .mockRejectedValueOnce(new Error('Transient network error'));
+
+  const first = show();
+  await paste();
+  await start();
+  first.unmount();
+
+  await tick(800);
+  show();
+  await tick(0);
+
+  expect(screen.getByRole('textbox')).toHaveValue(`${URL_A}\n${URL_B}`);
+  expect(screen.getByText('Imported')).toBeInTheDocument();
+  expect(screen.getByText('Importing…')).toBeInTheDocument();
+  expect(screen.getByRole('alert')).toHaveTextContent('Transient network error');
+  expect(screen.getByRole('button', { name: 'Retry status' })).toBeEnabled();
+});
+
+it('reattaches to an active backend url_import job on mount and blocks duplicate runs', async () => {
+  vi.mocked(VaultAPI.listBatchJobs).mockResolvedValue({
+    ok: true,
+    data: [{ id: 'backend-job', jobId: 'backend-job', jobType: 'url_import', status: 'running', totalItems: 2, completedItems: 1, failedItems: 0 }] as never,
+  });
+  vi.mocked(getBatchJobStatus).mockResolvedValue(status({
+    id: 'backend-job',
+    jobId: 'backend-job',
+    completedItems: 1,
+    progress: 50,
+    items: [
+      { itemId: 'a', target: URL_A, status: 'completed', documentId: 'doc-a' },
+      { itemId: 'b', target: URL_B, status: 'running', documentId: null },
+    ],
+  }));
+
+  show();
+  await tick(0);
+
+  expect(getBatchJobStatus).toHaveBeenCalledWith('backend-job', VaultAPI);
+  expect(screen.getByText('Imported')).toBeInTheDocument();
+  expect(screen.getByText('Importing…')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /^Import/ })).toBeDisabled();
+  expect(startBatchUrlImport).not.toHaveBeenCalled();
+});
+
+it('does not start a duplicate batch URL job when an active backend job is detected at start time and clears the notice on completion', async () => {
+  show();
+  await paste();
+  vi.mocked(VaultAPI.listBatchJobs).mockResolvedValue({
+    ok: true,
+    data: [{ id: 'existing-job', jobId: 'existing-job', jobType: 'url_import', status: 'running', totalItems: 2, completedItems: 0, failedItems: 0 }] as never,
+  });
+  await start();
+
+  expect(startBatchUrlImport).not.toHaveBeenCalled();
+  expect(getBatchJobStatus).toHaveBeenCalledWith('existing-job', VaultAPI);
+  expect(screen.getByRole('alert')).toHaveTextContent('A batch URL import is already in progress.');
+
+  vi.mocked(getBatchJobStatus).mockResolvedValueOnce(completed());
+  await tick(800);
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+});
+
+it('releases busy state on poll timeout so subsequent retries or new runs are not deadlocked', async () => {
+  vi.mocked(getBatchJobStatus).mockResolvedValue(status({ completedItems: 1, progress: 50, items: [
+    { itemId: 'a', target: URL_A, status: 'completed', documentId: 'doc-a' },
+    { itemId: 'b', target: URL_B, status: 'processing', documentId: null },
+  ] }));
+  show();
+  await paste();
+  await start();
+  await tick(180800);
+  expect(screen.getByRole('alert')).toHaveTextContent('Import status timed out');
+
+  vi.mocked(getBatchJobStatus).mockResolvedValueOnce(completed());
+  fireEvent.click(screen.getByRole('button', { name: 'Retry status' }));
+  await tick(0);
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(screen.getAllByText('Imported')).toHaveLength(2);
 });
 
 it('does not overwrite completed rows when the remaining work times out', async () => {

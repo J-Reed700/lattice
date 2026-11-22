@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 
@@ -22,8 +22,28 @@ const h = vi.hoisted(() => ({
     setActiveEmbeddingModel: vi.fn(),
     warmUpActiveChatModel: vi.fn(),
   },
-  activeDownload: undefined as undefined | { state: string; percentage?: number },
+  activeDownload: undefined as undefined | { state: string; percentage?: number; error_message?: string | null; id?: string },
+  downloadsByModel: undefined as undefined | Array<{
+    id: string;
+    url: string;
+    destination: string;
+    state: 'Pending' | 'Downloading' | 'Paused' | 'Completed' | 'Failed' | 'Cancelled';
+    bytes_downloaded: number;
+    total_bytes: number | null;
+    bytes_per_second: number;
+    percentage: number | null;
+    eta_seconds: number | null;
+    error_message: string | null;
+    retry_count: number;
+    created_at: string;
+    started_at: string | null;
+    completed_at: string | null;
+    model_name: string | null;
+    model_id: string | null;
+  }>,
   hasActiveDownload: false,
+  resumeDownload: vi.fn(),
+  retryDownload: vi.fn(),
   settings: undefined as undefined | { llm: { provider: string } },
   updateSettings: vi.fn(),
   addToast: vi.fn(),
@@ -37,12 +57,23 @@ vi.mock('@/features/model/hooks/useDownloadedModels', () => ({
   useDownloadedModels: () => h.downloaded,
   DOWNLOADED_MODELS_QUERY_KEY: ['downloaded-models'],
 }));
-vi.mock('@/features/model/hooks/useDownloadState', () => ({
-  useDownloadState: () => ({
-    getActiveDownloadForModel: () => h.activeDownload,
-    hasActiveDownloadForModel: () => h.hasActiveDownload,
+vi.mock('@/features/model/hooks/useDownloads', () => ({
+  useDownloadActions: () => ({
+    resumeDownload: h.resumeDownload,
+    retryDownload: h.retryDownload,
   }),
 }));
+vi.mock('@/features/model/hooks/useDownloadState', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/features/model/hooks/useDownloadState')>();
+  return {
+    ...actual,
+    useDownloadState: () => ({
+      getActiveDownloadForModel: () => h.activeDownload,
+      hasActiveDownloadForModel: () => h.hasActiveDownload,
+      ...(h.downloadsByModel !== undefined ? { getDownloadsByModel: () => h.downloadsByModel } : {}),
+    }),
+  };
+});
 vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({
   useSettingsQuery: () => ({ data: h.settings }),
   useUpdateSettingsMutation: () => ({ mutateAsync: h.updateSettings }),
@@ -108,7 +139,10 @@ describe('ModelDetailPanel', () => {
     h.capabilities = { total_ram_gb: 32, vram_gb: null, gpu_type: 'AppleSilicon', gpu_acceleration: 'Metal', available_disk_gb: 500 };
     h.hfToken = undefined;
     h.activeDownload = undefined;
+    h.downloadsByModel = undefined;
     h.hasActiveDownload = false;
+    h.resumeDownload.mockResolvedValue(undefined);
+    h.retryDownload.mockResolvedValue(undefined);
     h.settings = { llm: { provider: 'local' } };
     h.downloaded.isModelDownloaded.mockResolvedValue(false);
     h.downloaded.setActiveChatModel.mockResolvedValue(undefined);
@@ -234,6 +268,71 @@ describe('ModelDetailPanel', () => {
       h.activeDownload = { state: 'Queued' };
       renderPanel(recommendation());
       expect(await screen.findByText('Downloading…')).toBeInTheDocument();
+    });
+
+    it('shows Paused and Pending states and wires Resume / Retry for multi-file batches', async () => {
+      h.downloadsByModel = [
+        {
+          id: 'f-done',
+          url: 'https://example.invalid/config.json',
+          destination: '/tmp/config.json',
+          state: 'Completed',
+          bytes_downloaded: 100,
+          total_bytes: 100,
+          bytes_per_second: 0,
+          percentage: 100,
+          eta_seconds: null,
+          error_message: null,
+          retry_count: 0,
+          created_at: '2026-09-05T00:00:00Z',
+          started_at: '2026-09-05T00:00:00Z',
+          completed_at: '2026-09-05T00:01:00Z',
+          model_name: 'Saga 7B',
+          model_id: 'saga-7b-q4',
+        },
+        {
+          id: 'f-paused',
+          url: 'https://example.invalid/weights.bin',
+          destination: '/tmp/weights.bin',
+          state: 'Paused',
+          bytes_downloaded: 20,
+          total_bytes: 100,
+          bytes_per_second: 0,
+          percentage: 20,
+          eta_seconds: null,
+          error_message: null,
+          retry_count: 0,
+          created_at: '2026-09-05T00:00:00Z',
+          started_at: '2026-09-05T00:00:00Z',
+          completed_at: null,
+          model_name: 'Saga 7B',
+          model_id: 'saga-7b-q4',
+        },
+      ];
+      renderPanel(recommendation());
+      expect(await screen.findByText('Paused · 60%')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Resume' }));
+      await waitFor(() => expect(h.resumeDownload).toHaveBeenCalledWith('f-paused'));
+      cleanup();
+
+      h.downloadsByModel = [
+        {
+          ...h.downloadsByModel[1],
+          id: 'f-failed',
+          state: 'Failed',
+          error_message: 'HTTP 401',
+        },
+      ];
+      renderPanel(recommendation());
+      fireEvent.click(await screen.findByRole('button', { name: 'Retry download' }));
+      await waitFor(() => expect(h.retryDownload).toHaveBeenCalledWith('f-failed'));
+      cleanup();
+
+      h.downloadsByModel = undefined;
+      h.hasActiveDownload = true;
+      h.activeDownload = { state: 'Pending' };
+      renderPanel(recommendation());
+      expect(await screen.findByText('Queued')).toBeInTheDocument();
     });
 
     it('rechecks the disk when a download completes', async () => {

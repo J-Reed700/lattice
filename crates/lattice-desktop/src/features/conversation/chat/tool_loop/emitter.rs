@@ -25,6 +25,8 @@ pub(super) struct StreamEmitter<'a> {
     markers: Markers,
     /// Splits the reply text of the generation round in progress into text and references.
     round: Mutex<Splitter>,
+    /// Reply text emitted so far (with markers preserved), so a user stop keeps partial tokens.
+    written: Mutex<String>,
 }
 
 impl<'a> StreamEmitter<'a> {
@@ -43,6 +45,7 @@ impl<'a> StreamEmitter<'a> {
             names,
             round: Mutex::new(Splitter::new(markers.clone())),
             markers,
+            written: Mutex::new(String::new()),
         }
     }
 
@@ -72,27 +75,64 @@ impl<'a> StreamEmitter<'a> {
     fn send(&self, pieces: Vec<Piece>) -> Result<()> {
         for piece in pieces {
             let event = ChatStreamEventDto::new(&self.conversation_id, &self.request_id);
-            self.emit(match piece {
-                Piece::Text(text) => ChatStreamEventDto {
-                    content: Some(text),
-                    ..event
-                },
-                Piece::Reference(reference) if reference.prefix == Picture::PREFIX => {
+            let (written_part, dto) = match piece {
+                Piece::Text(text) => (
+                    text.clone(),
                     ChatStreamEventDto {
-                        content: Some(
-                            picture_line(&reference, &self.request_id)
-                                .unwrap_or_else(|| reply::written(&[Piece::Reference(reference)])),
-                        ),
+                        content: Some(text),
                         ..event
-                    }
+                    },
+                ),
+                Piece::Reference(reference) if reference.prefix == Picture::PREFIX => {
+                    let line = picture_line(&reference, &self.request_id)
+                        .unwrap_or_else(|| reply::written(&[Piece::Reference(reference)]));
+                    (
+                        line.clone(),
+                        ChatStreamEventDto {
+                            content: Some(line),
+                            ..event
+                        },
+                    )
                 }
-                Piece::Reference(reference) => ChatStreamEventDto {
-                    reference: Some(super::super::reply_text::wire(&reference)),
-                    ..event
-                },
-            })?;
+                Piece::Reference(reference) => {
+                    let marker = reply::written(&[Piece::Reference(reference.clone())]);
+                    (
+                        marker,
+                        ChatStreamEventDto {
+                            reference: Some(super::super::reply_text::wire(&reference)),
+                            ..event
+                        },
+                    )
+                }
+            };
+            self.written
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push_str(&written_part);
+            self.emit(dto)?;
         }
         Ok(())
+    }
+
+    /// Ends a cancelled turn's stream once and returns any non-whitespace partial
+    /// reply already written to the bubble.
+    pub(super) fn finish_cancelled(&mut self) -> Option<String> {
+        if !self.done_sent {
+            if let Err(e) = self.flush() {
+                warn!(error = %e, "Failed to flush cancelled reply");
+            }
+            self.done_sent = true;
+            if let Err(e) = self.emit(ChatStreamEventDto {
+                done: true,
+                status: Some("cancelled".to_owned()),
+                ..ChatStreamEventDto::new(&self.conversation_id, &self.request_id)
+            }) {
+                warn!(error = %e, "Failed to emit stream cancellation");
+            }
+        }
+        let written =
+            std::mem::take(&mut *self.written.lock().unwrap_or_else(PoisonError::into_inner));
+        (!written.trim().is_empty()).then_some(written)
     }
 
     /// Emit the terminal event. Idempotent, so belt-and-braces calls on

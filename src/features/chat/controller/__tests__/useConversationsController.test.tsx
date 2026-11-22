@@ -13,6 +13,7 @@ import { VaultAPI } from '@/lib/api';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import type { ConversationsState } from '@/shared/conversations/conversationsStore.types';
+import { conversationDraftKey, setDraft, useDraftStore } from '@/shared/drafts/drafts';
 import { stubGlobalChatModelWrites } from '@/tests/fixtures/globalChatModelWrites';
 import { ErrorCode } from '@/types/api/errorCodes';
 
@@ -1072,6 +1073,40 @@ describe('useConversationsController optimistic cleanup', () => {
       expect(result.current.documentSpaceMembershipsByDocumentId.has('doc-1')).toBe(false);
       expect(conversationUiStore.getState().requestedMembershipDocumentIds.size).toBe(MAX_OBSERVED_MEMBERSHIPS);
     });
+  });
+
+  it('restores an unsaved prompt into the scoped draft store when stopped during retrieval outside the active global chat', async () => {
+    conversationUiStore.setState({ activeConversationId: 'other-global-chat' });
+    setDraft(conversationDraftKey('scoped-tangent-1'), '');
+    let resolveChat: ((value: unknown) => void) | undefined;
+    api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveChat = resolve; }));
+    api.getConversationMessages = vi.fn().mockResolvedValue({ ok: true, data: { messages: [] } });
+    api.cancelChatGeneration = vi.fn().mockResolvedValue({ ok: true, data: null });
+
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
+
+    let sending!: Promise<unknown>;
+    act(() => { sending = result.current.sendMessage('Scoped stop question', 'scoped-tangent-1'); });
+    await waitFor(() => expect(api.chatWithConversation).toHaveBeenCalled());
+
+    await act(async () => { await result.current.cancelGeneration('scoped-tangent-1'); });
+    await act(async () => {
+      resolveChat?.({ ok: false, error: 'Cancelled', details: { code: ErrorCode.CANCELLED } });
+      await sending;
+    });
+
+    expect(useDraftStore.getState().drafts[conversationDraftKey('scoped-tangent-1')]).toBe('Scoped stop question');
+  });
+
+  it('dismisses queryError when clearError is called until a new query error occurs', async () => {
+    api.listConversationsExplorer = vi.fn().mockResolvedValue({ ok: false, error: 'Network down' });
+    api.listConversations = vi.fn().mockResolvedValue({ ok: false, error: 'Network down' });
+
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.error).toBe('Network down'));
+
+    act(() => result.current.clearError());
+    expect(result.current.error).toBeNull();
   });
 
 });

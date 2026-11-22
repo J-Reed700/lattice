@@ -42,7 +42,7 @@ function setup(getTranscriptionStatus: () => Promise<unknown>) {
       </QueryClientProvider>
     </ApiProvider>,
   );
-  return { api, user: userEvent.setup() };
+  return { api, queryClient: client, user: userEvent.setup() };
 }
 
 const answers = (modelReady: boolean) => vi.fn(async () => ({ ok: true as const, data: status(modelReady) }));
@@ -55,7 +55,8 @@ describe('ListeningModelSection', () => {
   });
 
   it('offers Whisper for voice conversations, with its size and licence', async () => {
-    const { user } = setup(answers(false));
+    const { user, queryClient } = setup(answers(false));
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
     const download = await screen.findByRole('button', { name: 'Download the listening model' });
     await waitFor(() => expect(download).toBeEnabled());
     expect(screen.getByText('Whisper Tiny')).toBeInTheDocument();
@@ -66,6 +67,8 @@ describe('ListeningModelSection', () => {
       expect.objectContaining({ metadata: expect.objectContaining({ id: 'whisper-tiny-q8', category: 'Transcription' }) }),
       expect.anything(),
     );
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['downloads'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['transcription', 'status'] });
   });
 
   it('names the listening model that is already here', async () => {

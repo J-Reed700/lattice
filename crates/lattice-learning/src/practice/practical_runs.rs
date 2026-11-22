@@ -12,7 +12,7 @@ use lattice_core::shared::{
     runtime::background::BackgroundTasks,
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -25,6 +25,7 @@ use tokio_util::sync::CancellationToken;
 #[derive(Clone, Default)]
 pub struct PracticalRunRegistry {
     active: Arc<Mutex<HashMap<String, CancellationToken>>>,
+    generating: Arc<Mutex<HashSet<(String, String)>>>,
 }
 
 impl PracticalRunRegistry {
@@ -34,6 +35,29 @@ impl PracticalRunRegistry {
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, CancellationToken>> {
         self.active.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn lock_generating(&self) -> std::sync::MutexGuard<'_, HashSet<(String, String)>> {
+        self.generating.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Acquires a single-flight activity generation guard per `(program_id, lesson_id)`.
+    pub fn acquire_generation_guard(
+        &self,
+        program_id: &str,
+        lesson_id: &str,
+    ) -> Result<PracticalGenerationGuard> {
+        let key = (program_id.to_owned(), lesson_id.to_owned());
+        let mut set = self.lock_generating();
+        if !set.insert(key.clone()) {
+            return Err(AppError::Conflict(
+                "A practical activity is already being generated for this lesson. Wait for it to finish before starting another.".into(),
+            ));
+        }
+        Ok(PracticalGenerationGuard {
+            key,
+            registry: self.clone(),
+        })
     }
 
     fn register(&self, id: &str, token: CancellationToken) -> Result<ActiveRun> {
@@ -64,6 +88,17 @@ struct ActiveRun {
 impl Drop for ActiveRun {
     fn drop(&mut self) {
         self.registry.lock().remove(&self.id);
+    }
+}
+
+pub struct PracticalGenerationGuard {
+    key: (String, String),
+    registry: PracticalRunRegistry,
+}
+
+impl Drop for PracticalGenerationGuard {
+    fn drop(&mut self) {
+        self.registry.lock_generating().remove(&self.key);
     }
 }
 
@@ -339,5 +374,32 @@ mod tests {
         assert!(original.is_cancelled());
         drop(guard);
         assert!(runs.token(&id).is_none());
+    }
+
+    #[test]
+    fn practical_generation_guard_blocks_duplicate_lesson_runs_and_releases_on_drop() {
+        let runs = PracticalRunRegistry::new();
+        let first = runs
+            .acquire_generation_guard("program-1", "lesson-1")
+            .expect("first guard should acquire");
+
+        let duplicate = runs.acquire_generation_guard("program-1", "lesson-1");
+        assert!(matches!(duplicate, Err(AppError::Conflict(_))));
+
+        let other_lesson = runs
+            .acquire_generation_guard("program-1", "lesson-2")
+            .expect("different lesson should acquire concurrently");
+        let other_program = runs
+            .acquire_generation_guard("program-2", "lesson-1")
+            .expect("different program should acquire concurrently");
+
+        drop(first);
+        let reacquired = runs
+            .acquire_generation_guard("program-1", "lesson-1")
+            .expect("dropped guard should release slot");
+        drop(reacquired);
+        drop(other_lesson);
+        drop(other_program);
+        assert!(runs.lock_generating().is_empty());
     }
 }

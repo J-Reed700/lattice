@@ -301,7 +301,7 @@ export function ChatView() {
       ) : (
         <ConversationSidebar onCollapse={() => setSidebarCollapsed(true)} />
       )}
-      <ChatPanel />
+      <ChatPanel showErrorBanner={sidebarCollapsed} />
       <ReaderPane rowWidth={row.width} availableWidth={row.available} resetKey={activeConversationId} />
       <ConversationSpotlight isOpen={isSpotlightOpen} onClose={() => setIsSpotlightOpen(false)} />
     </div>

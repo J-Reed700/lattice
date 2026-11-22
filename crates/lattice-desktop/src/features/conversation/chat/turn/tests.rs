@@ -1154,3 +1154,198 @@ fn zero_claim_turns_skip_background_verification_with_immediate_metadata() {
     assert_eq!(pending_strict["groundingMode"], "strict");
     assert!(pending_strict.get("citedOnly").is_none());
 }
+
+#[tokio::test]
+async fn conclude_handles_cancelled_partial_and_failed_outcomes_cleanly() {
+    use crate::features::conversation::chat::ports::ChatStorage;
+
+    let llm: Arc<dyn LLMPort> = Arc::new(Unanswering {
+        asked: tokio::sync::Notify::new(),
+    });
+    let runtime = FakeRuntime::default();
+    let service = runtime.conversation_service();
+    let conv_id = service
+        .create_conversation("Cancel test".into(), None)
+        .await
+        .unwrap()
+        .id
+        .to_string();
+
+    // 1. Cancelled turn with partial tokens: user completed + cancelled=true, assistant saved, Ok returned.
+    let partial_user = service
+        .add_message_with_metadata(
+            &conv_id,
+            lattice_core::domain::conversation::MessageRole::User,
+            "Explain entropy".into(),
+            2,
+            "pending".into(),
+            Some(r#"{"requestId":"req-cancel-partial"}"#.into()),
+        )
+        .await
+        .unwrap();
+    let partial_turn = PreparedTurn::for_test(
+        &conv_id,
+        "turn-cancel-partial",
+        Arc::clone(&llm),
+        runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
+    )
+    .unwrap();
+    let (sink, _) = recording_sink();
+    let answered_partial = Answered {
+        flags: SearchFlags::from_preferences(None),
+        router: None,
+        user_message_id: partial_user.id.clone(),
+        message_tokens: 2,
+        flow_start: std::time::Instant::now(),
+    };
+    let partial_err = conclude(
+        &runtime,
+        &partial_turn,
+        None,
+        answered_partial,
+        Ok(generate::GenerateOutcome::Cancelled {
+            error: AppError::Cancelled("stopped".into()),
+            partial: Some(generate::GeneratedAnswer {
+                response: "Entropy measures ".into(),
+                sources: Vec::new(),
+                retrieval_trace: None,
+                tokens: TurnTokensDto::default(),
+                memory_usage: None,
+                summary_refold: None,
+            }),
+        }),
+        &sink,
+        ConversationFlowTimingMetrics::default(),
+    )
+    .await
+    .expect_err("cancelled turn propagates Cancelled after persisting partial turn");
+
+    assert!(matches!(partial_err, AppError::Cancelled(_)));
+
+    // 2. Cancelled turn with zero tokens: user completed + cancelled=true, no assistant reply, Ok returned.
+    let empty_user = service
+        .add_message_with_status(
+            &conv_id,
+            lattice_core::domain::conversation::MessageRole::User,
+            "Explain enthalpy".into(),
+            2,
+            "pending".into(),
+        )
+        .await
+        .unwrap();
+    let empty_turn = PreparedTurn::for_test(
+        &conv_id,
+        "turn-cancel-empty",
+        Arc::clone(&llm),
+        runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
+    )
+    .unwrap();
+    let answered_empty = Answered {
+        flags: SearchFlags::from_preferences(None),
+        router: None,
+        user_message_id: empty_user.id.clone(),
+        message_tokens: 2,
+        flow_start: std::time::Instant::now(),
+    };
+    let empty_err = conclude(
+        &runtime,
+        &empty_turn,
+        None,
+        answered_empty,
+        Ok(generate::GenerateOutcome::Cancelled {
+            error: AppError::Cancelled("stopped".into()),
+            partial: None,
+        }),
+        &sink,
+        ConversationFlowTimingMetrics::default(),
+    )
+    .await
+    .expect_err("cancelled turn propagates Cancelled after completing user message");
+    assert!(matches!(empty_err, AppError::Cancelled(_)));
+
+    // 3. Failed turn persists human-readable reason inside user message metadata.
+    let fail_user = service
+        .add_message_with_metadata(
+            &conv_id,
+            lattice_core::domain::conversation::MessageRole::User,
+            "Broken prompt".into(),
+            2,
+            "pending".into(),
+            Some(r#"{"requestId":"req-fail"}"#.into()),
+        )
+        .await
+        .unwrap();
+    let fail_turn = PreparedTurn::for_test(
+        &conv_id,
+        "turn-fail",
+        llm,
+        runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
+    )
+    .unwrap();
+    let answered_fail = Answered {
+        flags: SearchFlags::from_preferences(None),
+        router: None,
+        user_message_id: fail_user.id.clone(),
+        message_tokens: 2,
+        flow_start: std::time::Instant::now(),
+    };
+    let fail_result = conclude(
+        &runtime,
+        &fail_turn,
+        None,
+        answered_fail,
+        Err(AppError::InvalidState("Provider rate limit".into())),
+        &sink,
+        ConversationFlowTimingMetrics::default(),
+    )
+    .await;
+    assert!(fail_result.is_err());
+
+    let messages = runtime
+        .conversation_branches()
+        .get_messages(&conv_id)
+        .await
+        .unwrap();
+    let saved_partial_user = messages.iter().find(|m| m.id == partial_user.id).unwrap();
+    assert_eq!(saved_partial_user.status, "completed");
+    let saved_partial_meta: serde_json::Value =
+        serde_json::from_str(saved_partial_user.metadata.as_deref().unwrap()).unwrap();
+    assert_eq!(saved_partial_meta["requestId"], "req-cancel-partial");
+    assert_eq!(saved_partial_meta["cancelled"], true);
+
+    let saved_partial_assistant = messages
+        .iter()
+        .find(|m| {
+            m.role == lattice_core::domain::conversation::MessageRole::Assistant
+                && m.content == "Entropy measures "
+        })
+        .expect("partial assistant reply saved");
+    assert_eq!(saved_partial_assistant.status, "completed");
+
+    let saved_empty_user = messages.iter().find(|m| m.id == empty_user.id).unwrap();
+    assert_eq!(saved_empty_user.status, "completed");
+    let saved_empty_meta: serde_json::Value =
+        serde_json::from_str(saved_empty_user.metadata.as_deref().unwrap()).unwrap();
+    assert_eq!(saved_empty_meta["cancelled"], true);
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|m| m.role == lattice_core::domain::conversation::MessageRole::Assistant)
+            .count(),
+        1,
+        "zero-token cancellation must not create an empty assistant message"
+    );
+
+    let saved_fail_user = messages.iter().find(|m| m.id == fail_user.id).unwrap();
+    assert_eq!(saved_fail_user.status, "failed");
+    let saved_fail_meta: serde_json::Value =
+        serde_json::from_str(saved_fail_user.metadata.as_deref().unwrap()).unwrap();
+    assert_eq!(saved_fail_meta["requestId"], "req-fail");
+    assert!(saved_fail_meta["error"]
+        .as_str()
+        .unwrap()
+        .contains("Provider rate limit"));
+}

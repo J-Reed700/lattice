@@ -11,6 +11,7 @@ import {
   useOutlineElapsedSeconds,
 } from '@/features/learning/curriculum/OutlineGenerationProgress';
 import { StudyHabitsBar, type FrameworkAction } from '@/features/learning/habits';
+import { usePortabilityRunStore } from '@/features/learning/portability/portabilityRunStore';
 import { FlashcardsSection } from '@/features/learning/recall/flashcards/FlashcardsSection';
 import { CourseTangentsSection } from '@/features/learning/tangents/CourseTangentsSection';
 import type { LearningOutlineProgressDto, LearningProgramSummaryDto } from '@/lib/bindings';
@@ -103,6 +104,108 @@ function CoursePath() {
   </svg>;
 }
 
+function PortabilityBanner({ onOpen, onImport, onExport }: {
+  onOpen: (id: string) => void;
+  onImport: () => void;
+  onExport: () => void;
+}) {
+  const exportAll = usePortabilityRunStore((store) => store.exportAll);
+  const importFlow = usePortabilityRunStore((store) => store.importFlow);
+  const dismissExportAll = usePortabilityRunStore((store) => store.dismissExportAllBanner);
+  const dismissImport = usePortabilityRunStore((store) => store.dismissImportBanner);
+
+  const showExport = exportAll.pending || exportAll.finishedWhileAway;
+  const showImport = importFlow.pendingAction === 'apply' || importFlow.finishedWhileAway;
+  if (!showExport && !showImport) return null;
+
+  const exportedCount = exportAll.result?.exported.length ?? 0;
+  const failedCount = exportAll.result?.failed.length ?? 0;
+  const totalCount = exportedCount + failedCount;
+
+  return <div className="mb-6 space-y-3">
+    {showExport && (
+      <section role="region" aria-label="Course export status" className="rounded-xl border border-accent/30 bg-accent/5 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            {exportAll.pending ? (
+              <p role="status" className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+                <LoaderCircle size={16} className="shrink-0 animate-spin text-accent" aria-hidden="true" />
+                Exporting all courses…
+              </p>
+            ) : exportAll.error ? (
+              <p role="alert" className="text-sm text-rose-700">
+                Course export failed: {exportAll.error}
+              </p>
+            ) : exportAll.result ? (
+              <p role="status" className="text-sm text-text-primary">
+                {totalCount === 0
+                  ? 'Export complete: there are no courses to export yet.'
+                  : `Exported ${exportedCount} of ${totalCount} ${totalCount === 1 ? 'course' : 'courses'} to ${exportAll.result.destinationDir}.`}
+              </p>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" type="button" onClick={onExport} className="studio-button studio-button-primary">
+              View export
+            </Button>
+            {!exportAll.pending && (
+              <Button variant="outline" type="button" onClick={dismissExportAll} className="studio-button">
+                Dismiss
+              </Button>
+            )}
+          </div>
+        </div>
+      </section>
+    )}
+    {showImport && (
+      <section role="region" aria-label="Course import status" className="rounded-xl border border-accent/30 bg-accent/5 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            {importFlow.pendingAction === 'apply' ? (
+              <p role="status" className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+                <LoaderCircle size={16} className="shrink-0 animate-spin text-accent" aria-hidden="true" />
+                Importing course…
+              </p>
+            ) : importFlow.failure ? (
+              <p role="alert" className="text-sm text-rose-700">
+                Course import failed: {importFlow.failure.message}
+              </p>
+            ) : importFlow.lastImported ? (
+              <p role="status" className="text-sm text-text-primary">
+                “{importFlow.lastImported.title}” is ready on this computer.
+              </p>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {importFlow.pendingAction !== 'apply' && importFlow.lastImported && !importFlow.failure && (
+              <Button
+                variant="outline"
+                type="button"
+                onClick={() => {
+                  const id = importFlow.lastImported!.programId;
+                  dismissImport();
+                  onOpen(id);
+                }}
+                className="studio-button studio-button-primary"
+              >
+                Open course
+              </Button>
+            )}
+            <Button variant="outline" type="button" onClick={onImport} className="studio-button">
+              View import
+            </Button>
+            {importFlow.pendingAction !== 'apply' && (
+              <Button variant="outline" type="button" onClick={dismissImport} className="studio-button">
+                Dismiss
+              </Button>
+            )}
+          </div>
+        </div>
+      </section>
+    )}
+  </div>;
+}
+
 export function ProgramLibrary({ programs, loading, error, onRetry, onOpen, onBuild, onImport, onExport, onSelectFramework, onOpenDestination, flashcardsRef, outlineGeneration }: {
   programs?: LearningProgramSummaryDto[];
   loading: boolean;
@@ -129,6 +232,7 @@ export function ProgramLibrary({ programs, loading, error, onRetry, onOpen, onBu
       </div>
     </header>
     {outlineGeneration?.isPending && <OutlineGenerationBanner generation={outlineGeneration} />}
+    <PortabilityBanner onOpen={onOpen} onImport={onImport} onExport={onExport} />
     {!outlineGeneration?.isPending && outlineGeneration?.error && (
       <div className="mb-6 rounded-xl border border-rose-500/25 bg-rose-500/5 p-4">
         <PlainError error={outlineGeneration.error} className="text-sm text-rose-700" />

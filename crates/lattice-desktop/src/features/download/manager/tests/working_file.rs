@@ -244,7 +244,7 @@ async fn cancel_deletes_the_part() {
 }
 
 #[tokio::test]
-async fn retry_keeps_the_part_with_a_checksum_and_deletes_it_without_one() {
+async fn retry_keeps_valid_part_with_or_without_checksum() {
     let f = fixture();
     f.engine.set_stall(true);
     for (name, sum) in [("with.gguf", Some(checksum('a'))), ("without.gguf", None)] {
@@ -258,11 +258,12 @@ async fn retry_keeps_the_part_with_a_checksum_and_deletes_it_without_one() {
 
         f.manager.retry_download(&id).await.unwrap();
 
-        assert_eq!(
+        assert!(
             part_path(&destination).exists(),
-            sum.is_some(),
-            "{name}: .part kept only when a checksum can vouch for it"
+            "{name}: valid .part should be preserved on retry"
         );
+        let session = f.repository.get(&id).await.unwrap().unwrap();
+        assert_eq!(session.progress().bytes_downloaded(), 300);
     }
 }
 
@@ -431,20 +432,40 @@ async fn a_failed_rename_fails_the_session_and_keeps_the_part() {
 }
 
 #[tokio::test]
-async fn a_session_with_no_checksum_does_not_reuse_leftover_bytes() {
+async fn a_session_with_no_checksum_preserves_valid_part_and_discards_oversized_part() {
     let f = fixture();
     f.engine.set_stall(true);
 
-    // A leftover `.part` is deleted when the new session registers.
+    // A valid `.part` (0 < len <= total_bytes) is preserved and resumed.
     let with_part = f.dir.path().join("a.gguf");
     std::fs::write(part_path(&with_part), vec![1u8; 400]).unwrap();
     f.manager
         .start_download(request(&with_part, None))
         .await
         .unwrap();
-    assert!(!part_path(&with_part).exists());
+    assert!(part_path(&with_part).exists());
+    let first = first_call(&f).await;
+    assert_eq!(first.resume_from, Some(400));
 
-    // An in-place partial is not migrated.
+    // An oversized `.part` (len > total_bytes) is discarded so it starts clean.
+    let f_oversized = fixture();
+    f_oversized.engine.set_stall(true);
+    let oversized = f_oversized.dir.path().join("oversized.gguf");
+    std::fs::write(part_path(&oversized), vec![1u8; 1500]).unwrap();
+    let mut oversized_req = request(&oversized, None);
+    oversized_req.url = "https://example.com/oversized.gguf".into();
+    f_oversized
+        .engine
+        .set_file_size("https://example.com/oversized.gguf", Some(1000));
+    f_oversized
+        .manager
+        .start_download(oversized_req)
+        .await
+        .unwrap();
+    let oversized_call = first_call(&f_oversized).await;
+    assert_eq!(oversized_call.resume_from, None);
+
+    // An in-place partial (at destination, not `.part`) is not migrated without a checksum.
     let in_place = f.dir.path().join("b.gguf");
     std::fs::write(&in_place, vec![1u8; 500]).unwrap();
     let mut second = request(&in_place, None);

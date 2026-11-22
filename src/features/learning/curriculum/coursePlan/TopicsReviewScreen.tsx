@@ -6,6 +6,7 @@ import { PlainError } from '@/components/PlainError';
 import { Button } from '@/components/ui/button';
 import { CoursePlanStatus, IDEAS_SEPARATOR } from '@/features/learning/curriculum/coursePlan/PlannedTopics';
 import { TopicLists } from '@/features/learning/curriculum/coursePlan/TopicLists';
+import { useTopicsChangeStore } from '@/features/learning/curriculum/coursePlan/topicsChangeStore';
 import {
   useChangeCoursePlanEntries,
   useCoursePlan,
@@ -17,7 +18,6 @@ import { useReviewSelection } from '@/features/learning/lessons/review/useReview
 import type { CoursePlanEntryDto, CoursePlanViewDto, LearningProgramDto, PlannedLesson } from '@/lib/bindings';
 
 type Form = { lessonId: string; kind: 'edit' | 'ask'; outlineRevision: number; entryRevision: number };
-type Failure = { at: string | 'selection'; error: unknown };
 const SELECTION = 'selection';
 type ListKey = 'ideas' | 'terms' | 'actions';
 
@@ -131,23 +131,16 @@ export function TopicsReviewScreen({ program, onBack }: { program: LearningProgr
   const undo = useUndoCoursePlanEntry();
   const [form, setForm] = useState<Form | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
-  const [failure, setFailure] = useState<Failure | null>(null);
+  const runState = useTopicsChangeStore((state) => state.runs[programId]);
+  const runTopicsAction = useTopicsChangeStore((state) => state.runAction);
+  const failure = runState?.failure ?? null;
   const view: CoursePlanViewDto | undefined = planQuery.data;
   const entries = useMemo(() => new Map((view?.entries ?? []).map((entry) => [entry.topics.lessonId, entry])), [view]);
   const lessonKeys = program.modules.flatMap((module) => module.lessons).filter((lesson) => entries.get(lesson.id)?.editable).map((lesson) => lesson.id);
   const selection = useReviewSelection(lessonKeys);
-  const busy = edit.isPending || change.isPending || undo.isPending;
+  const busy = edit.isPending || change.isPending || undo.isPending || Boolean(runState?.pendingAt);
 
-  const run = async (at: string, action: () => Promise<unknown>) => {
-    setFailure(null);
-    try {
-      await action();
-      return true;
-    } catch (caught) {
-      setFailure({ at, error: caught });
-      return false;
-    }
-  };
+  const run = (at: string, action: () => Promise<unknown>) => runTopicsAction(programId, at, action);
   const editEntry = (opened: Form, topics: PlannedLesson) => run(opened.lessonId, async () => {
     await edit.mutateAsync({ programId, outlineRevision: opened.outlineRevision, expectedEntryRevision: opened.entryRevision, topics });
     setForm(null);
@@ -176,6 +169,8 @@ export function TopicsReviewScreen({ program, onBack }: { program: LearningProgr
         <h1 className="font-serif text-2xl text-text-primary">Review topics</h1>
       </div>
       {shownError ? <PlainError error={shownError} className="rounded-xl bg-danger-muted p-4 text-sm text-text-primary" /> : null}
+      {runState?.pendingAt ? <p role="status" className="rounded-xl border border-border bg-surface px-4 py-3 text-sm text-text-secondary">Applying your topic change…</p> : null}
+      {failure?.at === SELECTION && !bulkOpen ? <PlainError error={failure.error} className="rounded-xl bg-danger-muted p-4 text-sm text-text-primary" /> : null}
       {view?.state !== 'planned' ? <CoursePlanStatus programId={programId} /> : program.modules.map((module) => {
         const lessons = module.lessons.filter((lesson) => entries.has(lesson.id));
         if (lessons.length === 0) return null;

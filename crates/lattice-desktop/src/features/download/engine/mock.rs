@@ -23,6 +23,7 @@ pub struct MockDownloadEngine {
     /// Makes `get_file_size` wait on this signal, so a test can hold a HEAD in flight.
     size_gate: Arc<Mutex<Option<Arc<tokio::sync::Notify>>>>,
     size_calls: Arc<Mutex<usize>>,
+    size_call_history: Arc<Mutex<Vec<(String, Option<String>)>>>,
 }
 
 impl MockDownloadEngine {
@@ -40,6 +41,7 @@ impl MockDownloadEngine {
             write_len: Arc::new(Mutex::new(None)),
             size_gate: Arc::new(Mutex::new(None)),
             size_calls: Arc::new(Mutex::new(0)),
+            size_call_history: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -58,6 +60,11 @@ impl MockDownloadEngine {
     /// How many times `get_file_size` was called.
     pub fn file_size_calls(&self) -> usize {
         *self.size_calls.lock().unwrap()
+    }
+
+    /// Recorded `(url, auth_token)` pairs passed to `get_file_size`.
+    pub fn get_file_size_calls(&self) -> Vec<(String, Option<String>)> {
+        self.size_call_history.lock().unwrap().clone()
     }
 
     /// Park `download` indefinitely so pause/cancel can be tested
@@ -224,8 +231,16 @@ impl DownloadEngine for MockDownloadEngine {
         }
     }
 
-    async fn get_file_size(&self, url: &str) -> Result<(Option<u64>, String), DownloadError> {
+    async fn get_file_size(
+        &self,
+        url: &str,
+        auth_token: Option<&str>,
+    ) -> Result<(Option<u64>, String), DownloadError> {
         *self.size_calls.lock().unwrap() += 1;
+        self.size_call_history
+            .lock()
+            .unwrap()
+            .push((url.to_string(), auth_token.map(str::to_string)));
         let gate = self.size_gate.lock().unwrap().clone();
         if let Some(gate) = gate {
             gate.notified().await;

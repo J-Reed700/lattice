@@ -100,6 +100,25 @@ describe('ChatTab', () => {
       expect(screen.getByRole('region', { name: 'llama.cpp connection' })).toBeInTheDocument();
       expect(screen.getByText('Ollama server')).toBeInTheDocument();
     });
+
+    it('keeps llama.cpp visible when learningModel or utilityModel uses llama_cpp', () => {
+      h.llm.llmSettings = settings({
+        provider: 'local',
+        llamaCpp: { url: '', model: '', authHeaderName: '' },
+        learningModel: { kind: 'llama_cpp', model: 'gemma-27b' },
+      });
+      const first = render(<ChatTab />);
+      expect(screen.getByRole('region', { name: 'llama.cpp connection' })).toBeInTheDocument();
+      first.unmount();
+
+      h.llm.llmSettings = settings({
+        provider: 'ollama',
+        llamaCpp: { url: '', model: '', authHeaderName: '' },
+        utilityModel: { kind: 'llama_cpp', model: 'qwen-7b' },
+      });
+      render(<ChatTab />);
+      expect(screen.getByRole('region', { name: 'llama.cpp connection' })).toBeInTheDocument();
+    });
   });
 
   describe('cloud connection', () => {
@@ -312,6 +331,18 @@ describe('ChatTab', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Set header' }));
       await waitFor(() => expect(h.llm.saveLlmUpdates).toHaveBeenCalledWith({ ollamaAuthHeaderName: 'Authorization' }));
       expect(h.llm.saveAuthHeaderValue).toHaveBeenCalledWith('ollama', `Basic ${btoa('ada:lovelace')}`);
+    });
+
+    it('surfaces Clear header and an inline warning when an Ollama header name has no Keychain value', async () => {
+      h.llm.llmSettings = settings({ ollamaAuthHeaderName: 'Authorization' });
+      h.llm.authValueSet = { ollama: false, llamaCpp: false };
+      render(<ChatTab />);
+      expect(
+        screen.getByText('Header name is saved without a value in Keychain. Enter a value or click Clear header.'),
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Clear header' }));
+      await waitFor(() => expect(h.llm.saveLlmUpdates).toHaveBeenCalledWith({ ollamaAuthHeaderName: '' }));
+      expect(h.llm.saveAuthHeaderValue).toHaveBeenCalledWith('ollama', null);
     });
   });
 

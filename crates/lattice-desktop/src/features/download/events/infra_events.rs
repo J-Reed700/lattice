@@ -139,6 +139,7 @@ impl DownloadEventBridge {
         // durable session row survives a full channel or process restart.
         // Reconcile a bounded keyset page until the saga's model_files write
         // matches the session state.
+        let bridge_startup_ts = chrono::Utc::now();
         let mut reconciliation_cursor: Option<String> = None;
         let mut reconciliation_tick = Box::pin(tokio::time::sleep(std::time::Duration::ZERO));
 
@@ -215,7 +216,15 @@ impl DownloadEventBridge {
                                         state = ?session.state(),
                                         "Replaying terminal download state whose model file has not been reconciled"
                                     );
-                                    self.handle_infrastructure_event(event).await;
+                                    // Suppress download:failed alert banners only for pre-existing
+                                    // historical sessions from before this bridge started; runtime
+                                    // failures caught by reconciliation still surface alerts.
+                                    let emit_failed_alert = should_emit_reconciled_failed_alert(
+                                        session.updated_at(),
+                                        &bridge_startup_ts,
+                                    );
+                                    self.process_infrastructure_event(event, emit_failed_alert)
+                                        .await;
                                 }
                             }
                             reconciliation_tick.as_mut().reset(tokio::time::Instant::now() + delay);
@@ -305,6 +314,17 @@ impl DownloadEventBridge {
     /// Handle infrastructure events from DownloadManager (file-level events)
     /// Converts to snapshot and emits
     async fn handle_infrastructure_event(&self, manager_event: manager_port::DownloadEvent) {
+        self.process_infrastructure_event(manager_event, true).await;
+    }
+
+    /// Bridges a manager event to `DownloadSaga`, updates UI snapshots, and
+    /// optionally emits `download:failed` (suppressed when replaying historical
+    /// terminal sessions during background reconciliation).
+    async fn process_infrastructure_event(
+        &self,
+        manager_event: manager_port::DownloadEvent,
+        emit_failed_alert: bool,
+    ) {
         let terminal_event = is_terminal_manager_event(&manager_event);
         // Bridge manager events into domain download events so DownloadSaga can
         // update model_files/model status atomically.
@@ -312,16 +332,18 @@ impl DownloadEventBridge {
             tracing::warn!("Failed to publish domain download event: {}", e);
         }
 
-        if let manager_port::DownloadEvent::Failed { id, error } = &manager_event {
-            if let Err(e) = self
-                .emitter
-                .emit_failed(DownloadFailedEvent {
-                    id: id.clone(),
-                    error: error.clone(),
-                })
-                .await
-            {
-                tracing::error!("Failed to emit download:failed event: {}", e);
+        if emit_failed_alert {
+            if let manager_port::DownloadEvent::Failed { id, error } = &manager_event {
+                if let Err(e) = self
+                    .emitter
+                    .emit_failed(DownloadFailedEvent {
+                        id: id.clone(),
+                        error: error.clone(),
+                    })
+                    .await
+                {
+                    tracing::error!("Failed to emit download:failed event: {}", e);
+                }
             }
         }
 
@@ -503,6 +525,13 @@ fn is_terminal_manager_event(event: &manager_port::DownloadEvent) -> bool {
             | manager_port::DownloadEvent::Failed { .. }
             | manager_port::DownloadEvent::Cancelled { .. }
     )
+}
+
+fn should_emit_reconciled_failed_alert(
+    session_updated_at: &chrono::DateTime<chrono::Utc>,
+    bridge_startup_ts: &chrono::DateTime<chrono::Utc>,
+) -> bool {
+    session_updated_at >= bridge_startup_ts
 }
 
 fn model_file_name_for_session(

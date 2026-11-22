@@ -38,7 +38,15 @@ import '@/features/chat/components/turn/research-deck.css';
  * Nothing here is drawn for a turn that did not go to the web: those steps
  * render as the plain rows they always were.
  */
-export function ResearchDeck({ steps, live }: { steps: readonly TurnStep[]; live: boolean }) {
+export function ResearchDeck({
+  steps,
+  live,
+  conversationId = null,
+}: {
+  steps: readonly TurnStep[];
+  live: boolean;
+  conversationId?: string | null;
+}) {
   const deck = useMemo(() => deckOf(steps), [steps]);
   // Only what the reader chose. The default — newest card open — is derived,
   // so a card that arrives mid-turn takes the front without an effect.
@@ -75,6 +83,7 @@ export function ResearchDeck({ steps, live }: { steps: readonly TurnStep[]; live
             open={open}
             title={numbered ? `Round ${item.round}` : deck.deepResearch ? 'Deep research' : 'Web search'}
             onToggle={() => setChosen(previous => new Map(previous).set(item.round, !open))}
+            conversationId={conversationId}
           />
         );
       })}
@@ -151,11 +160,13 @@ function RoundCard({
   title,
   open,
   onToggle,
+  conversationId,
 }: {
   round: DeckRound;
   title: string;
   open: boolean;
   onToggle: () => void;
+  conversationId: string | null;
 }) {
   const line = roundLine(round);
   return (
@@ -195,7 +206,7 @@ function RoundCard({
             {round.pages.length > 0 ? (
               <ul className="deck-pages" aria-label="Pages">
                 {round.pages.map((page, index) => (
-                  <PageRow key={page.url} page={page} index={index} />
+                  <PageRow key={page.url} page={page} index={index} conversationId={conversationId} />
                 ))}
               </ul>
             ) : (
@@ -222,7 +233,15 @@ const STATE_WORD: Record<DeckPage['state'], string> = {
   failed: 'could not be read',
 };
 
-function PageRow({ page, index }: { page: DeckPage; index: number }) {
+function PageRow({
+  page,
+  index,
+  conversationId,
+}: {
+  page: DeckPage;
+  index: number;
+  conversationId: string | null;
+}) {
   const style = { '--i': index, '--hue': hostHue(page.host) } as CSSProperties;
 
   const handleOpenPage = () => {
@@ -230,7 +249,14 @@ function PageRow({ page, index }: { page: DeckPage; index: number }) {
       url: page.url,
       title: page.title ?? page.host,
     });
-    useReaderStore.getState().open('research-deck', [source], 0);
+    const scopedSource = conversationId ? { ...source, conversationId } : source;
+    useReaderStore.getState().open(
+      'research-deck',
+      [scopedSource],
+      0,
+      null,
+      conversationId ? { conversationId } : undefined,
+    );
   };
 
   return (

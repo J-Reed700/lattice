@@ -4,6 +4,8 @@ import { studyActivityCall } from '@/lib/studyActivity';
 import type { CommandArgList, CommandName } from '@/shared/ipc/transport';
 import { unwrapApiResult } from '@/types/api/result';
 
+import { invalidatePracticeQueries } from '../session/sessionApi';
+
 async function call<C extends CommandName>(command: C, ...args: CommandArgList<C>): Promise<Wire.CommandResults[C]> {
   return unwrapApiResult(await studyActivityCall('learning', command, ...args));
 }
@@ -29,6 +31,7 @@ export const practiceHomeApi = {
   startPracticeSession: async (programId: string, activityId: string): Promise<string> => {
     const request: Wire.StartPracticeSessionRequestDto = { operationId: newId(), programId, activityId, setting: 'coached', budgetSeconds: null };
     const session = await call('start_practice_session', { request });
+    invalidatePracticeQueries(programId);
     return session.sessionId;
   },
 };

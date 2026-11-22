@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router';
+import { MemoryRouter, useLocation, useNavigate } from 'react-router';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { toast } from '@/stores/toastStore';
@@ -111,6 +111,45 @@ describe('Settings', () => {
     await user.click(indexingTab);
 
     expect(screen.getByRole('heading', { level: 1, name: 'Indexing' })).toBeInTheDocument();
+  });
+
+  it('keeps ?tab= in sync so navigating to /settings?tab=indexing re-activates Indexing after switching tabs', async () => {
+    const user = userEvent.setup();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+
+    function Harness() {
+      const navigate = useNavigate();
+      const location = useLocation();
+      return (
+        <>
+          <button type="button" onClick={() => navigate('/settings?tab=indexing')}>
+            Jump to indexing
+          </button>
+          <output aria-label="settings-location">{location.pathname + location.search}</output>
+          <Settings />
+        </>
+      );
+    }
+
+    render(
+      <MemoryRouter initialEntries={['/settings?tab=indexing']}>
+        <QueryClientProvider client={client}>
+          <Harness />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Indexing' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Vault' }));
+    expect(screen.getByRole('heading', { level: 1, name: 'Vault' })).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'settings-location' })).toHaveTextContent('/settings?tab=vault');
+
+    await user.click(screen.getByRole('button', { name: 'Jump to indexing' }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Indexing' })).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'settings-location' })).toHaveTextContent('/settings?tab=indexing');
   });
 
   describe('Export functionality', () => {

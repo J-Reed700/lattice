@@ -30,6 +30,9 @@ export function LlamaCppConnection() {
     setModels([]);
   };
   const stored = authValueSet.llamaCpp;
+  const savedHeaderName = saved?.authHeaderName ?? '';
+  const hasHalfConfiguredHeader = !stored && Boolean(savedHeaderName.trim());
+  const showClearHeader = stored || Boolean(savedHeaderName.trim());
   const typedValue = valueDraft.trim();
   const connection = { url: draft.url.trim(), model: draft.model.trim(),
     authHeaderName: draft.authHeaderName.trim() };
@@ -82,7 +85,15 @@ export function LlamaCppConnection() {
       <input id="llamaCppHeaderName" className={INPUT_CLASS} value={draft.authHeaderName}
         placeholder="Authorization" onChange={event => update('authHeaderName', event.target.value)} disabled={testing} />
     </SettingsRow>
-    <SettingsRow label="llama.cpp auth header value" htmlFor="llamaCppHeaderValue">
+    <SettingsRow
+      label="llama.cpp auth header value"
+      htmlFor="llamaCppHeaderValue"
+      hint={
+        hasHalfConfiguredHeader
+          ? 'Auth header name is saved without a value in Keychain. Enter a value or click Clear header.'
+          : undefined
+      }
+    >
       <input id="llamaCppHeaderValue" type="password" autoComplete="off" className={INPUT_CLASS}
         value={valueDraft} placeholder={stored ? 'Value is set. Type to replace it' : 'Basic … or Bearer …'}
         onChange={event => { setValueDraft(event.target.value); setModels([]); }} disabled={testing} />
@@ -91,7 +102,7 @@ export function LlamaCppConnection() {
       <button type="button" aria-label="Test llama.cpp connection" className={SECONDARY_BUTTON_CLASS} disabled={testing} onClick={() => void test()}>
         {testing ? 'Testing…' : 'Test connection'}
       </button>
-      {stored ? <button type="button" className={SECONDARY_BUTTON_CLASS} disabled={testing} onClick={() => void clearHeader()}>Clear header</button> : null}
+      {showClearHeader ? <button type="button" className={SECONDARY_BUTTON_CLASS} disabled={testing} onClick={() => void clearHeader()}>Clear header</button> : null}
       <button type="button" className={SECONDARY_BUTTON_CLASS} disabled={testing} onClick={() => void save()}>Save connection</button>
     </div>
   </SettingsSection>;

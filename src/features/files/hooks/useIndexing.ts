@@ -16,6 +16,8 @@ export interface IndexingOperation {
   status: 'pending' | 'processing' | 'completed' | 'cancelled' | 'error';
   error?: string;
   items?: BatchJobItem[];
+  /** True when rehydrated from an already-finished historical job on mount. */
+  restoredFromHistory?: boolean;
 }
 
 /** How soon a status read that failed is tried again. */
@@ -116,6 +118,7 @@ export function useIndexing(): UseIndexingReturn {
           error: undefined,
           items: result.data.items || existing?.items,
           currentFile: currentItem?.target || currentItem?.url,
+          restoredFromHistory: existing?.restoredFromHistory,
         });
         return next;
       });
@@ -144,14 +147,22 @@ export function useIndexing(): UseIndexingReturn {
       updateOperations((prev) => {
         const next = new Map(prev);
         for (const job of jobs) {
-          if (job.jobType !== 'file_import' || (!['pending', 'running'].includes(job.status) && job.failedItems === 0)) continue;
+          const normalizedStatus = job.status.toLowerCase();
+          const isActive = ['pending', 'running', 'processing', 'in_progress'].includes(normalizedStatus);
+          if (job.jobType !== 'file_import' || (!isActive && job.failedItems === 0)) continue;
           const id = job.jobId || job.id;
           if (next.has(id)) continue;
           reattached.push(id);
           next.set(id, {
-            id, totalFiles: job.totalItems,
-            successfulFiles: job.completedItems, failedFiles: job.failedItems,
-            processedFiles: job.completedItems + job.failedItems, status: 'processing',
+            id,
+            totalFiles: job.totalItems,
+            successfulFiles: job.completedItems,
+            failedFiles: job.failedItems,
+            processedFiles: job.completedItems + job.failedItems,
+            status: isActive
+              ? (normalizedStatus === 'pending' ? 'pending' : 'processing')
+              : 'error',
+            restoredFromHistory: !isActive,
           });
         }
         return next;

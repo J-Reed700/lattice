@@ -10,7 +10,7 @@ import { BatchFileImport } from '@/features/files/components/Ingest/BatchFileImp
 import { BatchUrlImport } from '@/features/files/components/Ingest/BatchUrlImport';
 import { ImportHistory } from '@/features/files/components/Ingest/ImportHistory';
 import { UrlImport } from '@/features/files/components/Ingest/UrlImport';
-import { useFileBrowserStore } from '@/features/files/stores/fileBrowserStore';
+import { openLibraryRoot } from '@/features/files/hooks/batchUrlImportRunner';
 import { useToast } from '@/hooks/useToast';
 import type { ApiClient } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -47,25 +47,6 @@ const loadCorpusShapeSafe = async (api: ApiClient): Promise<CorpusShapeDto | nul
   } catch {
     return null;
   }
-};
-
-/**
- * Navigate without a router hook.
- *
- * The hub is rendered bare in its own tests, so it must not require a router
- * context to mount. Pushing the URL and replaying it as a popstate is what the
- * browser does on Back, and the router handles it the same way — no import of
- * the route table, no cycle.
- */
-const openLibrary = (): void => {
-  const library = useFileBrowserStore.getState();
-  library.setScope({ kind: 'all' });
-  library.setSearchQuery('');
-  library.setFilterByType(null);
-  library.setFilterBySource('all');
-  library.clearContentSearch();
-  window.history.pushState({}, '', '/files');
-  window.dispatchEvent(new PopStateEvent('popstate'));
 };
 
 const triggerClass = cn(
@@ -116,7 +97,7 @@ export const IngestHub: FC<IngestHubProps> = ({
       const summary = composeIngestSummary(noun, count, shape);
       toast.success(summary.title, {
         ...(summary.message ? { message: summary.message } : {}),
-        action: { label: 'Open Library', onClick: openLibrary },
+        action: { label: 'Open Library', onClick: openLibraryRoot },
       });
     })();
   };

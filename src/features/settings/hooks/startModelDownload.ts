@@ -9,6 +9,7 @@
 import { type QueryClient } from '@tanstack/react-query';
 
 import { DOWNLOADED_MODELS_QUERY_KEY } from '@/features/model/hooks/useDownloadedModels';
+import { DOWNLOADS_QUERY_KEY } from '@/features/model/hooks/useDownloads';
 import { embeddingBlockReason } from '@/features/settings/components/ModelCatalog/catalogUtils';
 import { VaultAPI, type ApiClient } from '@/lib/api';
 import { useToastStore } from '@/stores/toastStore';
@@ -63,6 +64,7 @@ export async function startModelDownload({
       title: 'Download started',
       message: metadata.name,
     });
+    voidAsync(() => queryClient.invalidateQueries({ queryKey: DOWNLOADS_QUERY_KEY }))();
   } else if (response.status === 'already_downloaded') {
     addToast({
       type: 'info',

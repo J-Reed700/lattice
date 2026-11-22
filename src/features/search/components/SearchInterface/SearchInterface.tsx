@@ -1,4 +1,6 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+
+import { useInRouterContext, useLocation, useSearchParams } from 'react-router';
 
 import { PageHeader, SidebarTabs } from '@/components/ui';
 import { useApi } from '@/contexts/ApiContext';
@@ -33,8 +35,48 @@ const SEARCH_MODES: ReadonlyArray<{ id: SearchMode; label: string }> = [
  */
 
 export function SearchInterface() {
+  const inRouter = useInRouterContext();
+  return inRouter ? <SearchInterfaceWithRouter /> : <SearchInterfaceBody initialUrlQuery="" />;
+}
+
+function SearchInterfaceWithRouter() {
+  const [searchParams] = useSearchParams();
+  const location = useLocation();
+  const urlQuery = searchParams.get('q') ?? '';
+  return (
+    <SearchInterfaceBody
+      initialUrlQuery={urlQuery}
+      syncedUrlQuery={urlQuery}
+      locationKey={location.key}
+    />
+  );
+}
+
+interface SearchInterfaceBodyProps {
+  initialUrlQuery: string;
+  syncedUrlQuery?: string;
+  locationKey?: string;
+}
+
+function SearchInterfaceBody({
+  initialUrlQuery,
+  syncedUrlQuery,
+  locationKey,
+}: SearchInterfaceBodyProps) {
   const api = useApi();
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(initialUrlQuery);
+  const lastSyncRef = useRef({ syncedUrlQuery, locationKey });
+
+  useEffect(() => {
+    const prev = lastSyncRef.current;
+    if (prev.syncedUrlQuery === syncedUrlQuery && prev.locationKey === locationKey) {
+      return;
+    }
+    lastSyncRef.current = { syncedUrlQuery, locationKey };
+    if (syncedUrlQuery !== undefined && (syncedUrlQuery !== '' || prev.syncedUrlQuery)) {
+      setQuery(syncedUrlQuery);
+    }
+  }, [syncedUrlQuery, locationKey]);
   const [searchMode, setSearchMode] = useState<SearchMode>('hybrid');
   const [previewTarget, setPreviewTarget] = useState<ResolvedReaderTarget | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);

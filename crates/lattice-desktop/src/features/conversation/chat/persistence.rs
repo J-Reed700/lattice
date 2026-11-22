@@ -224,7 +224,7 @@ pub(super) async fn finalize_successful_turn(
         serde_json::to_string(&serde_json::Value::Object(metadata_payload)).ok()
     };
 
-    let mut assistant_msg = match commit_turn(
+    let saved = match commit_turn(
         conv_service,
         conversation_id,
         user_message_id,
@@ -240,6 +240,7 @@ pub(super) async fn finalize_successful_turn(
             return Err(error);
         }
     };
+    let mut assistant_msg = saved;
     attach_turn_images(container, conv_service, request_id, &mut assistant_msg).await;
 
     record_cited_web_sources(container, conversation_id, &sources).await;
@@ -301,10 +302,83 @@ async fn commit_turn(
     {
         Ok(message) => Ok(message),
         Err(error) => {
-            mark_user_message_failed(conv_service, user_message_id).await;
+            let reason = human_readable_error(&error);
+            mark_user_message_failed_with_reason(conv_service, user_message_id, Some(&reason))
+                .await;
             Err(error)
         }
     }
+}
+
+/// Persists a partial assistant reply produced before the user stopped the turn,
+/// marking the pending user question `"completed"` with `"cancelled": true`.
+pub(super) async fn finalize_cancelled_partial_turn(
+    container: &dyn ChatRuntime,
+    turn: ChatTurn<'_>,
+    user_message_id: &str,
+    reply: ReplyText,
+    sources: Vec<SourceDto>,
+    memory_usage: Option<serde_json::Value>,
+    retrieval_trace: Option<RetrievalTraceDto>,
+    turn_record: Option<TurnRecordDto>,
+) -> Result<()> {
+    let ChatTurn {
+        conv_service,
+        conversation_id,
+        request_id,
+        llm,
+        ..
+    } = turn;
+    let assistant_response = reply.text.clone();
+    if assistant_response.trim().is_empty() {
+        return Ok(());
+    }
+    let response_tokens = llm.count_tokens(&assistant_response);
+    let mut metadata_payload = serde_json::Map::new();
+    metadata_payload.insert("references".to_string(), reply.metadata());
+    metadata_payload.insert("cancelled".to_string(), serde_json::json!(true));
+    if !sources.is_empty() {
+        metadata_payload.insert("sources".to_string(), serde_json::json!(&sources));
+    }
+    if let Some(memory) = memory_usage {
+        metadata_payload.insert("memory".into(), memory);
+    }
+    if let Some(trace) = retrieval_trace {
+        metadata_payload.insert("retrieval".to_string(), serde_json::json!(trace));
+    }
+    if let Some(record) = turn_record {
+        metadata_payload.insert("turn".to_string(), serde_json::json!(record));
+    }
+    let metadata = serde_json::to_string(&serde_json::Value::Object(metadata_payload)).ok();
+
+    let mut assistant_msg = match commit_turn(
+        conv_service,
+        conversation_id,
+        user_message_id,
+        assistant_response,
+        response_tokens as i64,
+        metadata,
+    )
+    .await
+    {
+        Ok(message) => message,
+        Err(error) => {
+            release_turn_images(container, request_id).await;
+            return Err(error);
+        }
+    };
+    if let Err(error) = conv_service
+        .set_message_metadata_fields(
+            user_message_id,
+            vec![("cancelled".to_string(), serde_json::json!(true))],
+        )
+        .await
+    {
+        warn!(%error, "Failed to mark stopped user message metadata as cancelled");
+    }
+    attach_turn_images(container, conv_service, request_id, &mut assistant_msg).await;
+    record_cited_web_sources(container, conversation_id, &sources).await;
+    Ok(())
 }
 
 /// The conversation as it stands after the commit. The answer is already
@@ -489,15 +563,77 @@ pub(super) async fn release_turn_images(container: &dyn ChatRuntime, request_id:
     }
 }
 
+/// Extracts the same human-readable error text the IPC layer exposes so it
+/// can be persisted in message metadata without leaking raw internals.
+pub(crate) fn human_readable_error(error: &AppError) -> String {
+    let api = lattice_core::shared::ipc::ApiError::from(error.clone());
+    match api
+        .details
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(details) => details.to_string(),
+        None => api.message,
+    }
+}
+
+#[cfg(test)]
 pub(super) async fn mark_user_message_failed(
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
     user_message_id: &str,
 ) {
-    conv_service
-        .fail_pending_turn(user_message_id)
+    mark_user_message_failed_with_reason(conv_service, user_message_id, None).await;
+}
+
+pub(crate) async fn mark_user_message_failed_with_reason(
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
+    user_message_id: &str,
+    reason: Option<&str>,
+) {
+    if let Err(e) = conv_service.fail_pending_turn(user_message_id).await {
+        warn!("Failed to update message status to 'failed': {}", e);
+        return;
+    }
+    if let Some(reason) = reason.map(str::trim).filter(|value| !value.is_empty()) {
+        if let Err(e) = conv_service
+            .set_message_metadata_fields(
+                user_message_id,
+                vec![("error".to_string(), serde_json::json!(reason))],
+            )
+            .await
+        {
+            warn!("Failed to record message failure reason: {}", e);
+        }
+    }
+}
+
+/// Marks a stopped turn's persisted user message completed (preserving existing
+/// metadata like `requestId` and recording `"cancelled": true`) so a user-initiated
+/// stop never shows `"Message didn't send"`.
+pub(super) async fn mark_user_message_cancelled(
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
+    user_message_id: &str,
+) {
+    if let Err(e) = conv_service
+        .update_message_status(user_message_id, "completed".to_string())
         .await
-        .map_err(|e| warn!("Failed to update message status to 'failed': {}", e))
-        .ok();
+    {
+        warn!(
+            "Failed to update stopped user message status to 'completed': {}",
+            e
+        );
+        return;
+    }
+    if let Err(e) = conv_service
+        .set_message_metadata_fields(
+            user_message_id,
+            vec![("cancelled".to_string(), serde_json::json!(true))],
+        )
+        .await
+    {
+        warn!("Failed to record cancelled metadata on user message: {}", e);
+    }
 }
 
 fn spawn_memory_indexing(

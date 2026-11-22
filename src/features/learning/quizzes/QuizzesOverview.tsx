@@ -17,7 +17,7 @@ import type { LearningModuleQuizzesDto, LearningProgramDto, LearningQuizOverview
 const card = 'rounded-2xl border border-border bg-surface px-5 shadow-sm sm:px-6';
 const headerButton = quietPill.replace('px-4', 'px-3');
 
-function OverviewHeader({ overview, onSettings, onPrepareAll, preparable }: { overview: LearningQuizOverviewDto; onSettings: () => void; onPrepareAll: () => void; preparable: number }) {
+function OverviewHeader({ overview, onSettings, onPrepareAll, preparable, preparingAll }: { overview: LearningQuizOverviewDto; onSettings: () => void; onPrepareAll: () => void; preparable: number; preparingAll: boolean }) {
   const { settings, quizzesPassed, quizzesTotal } = overview;
   return <header className={`${parchmentBand} overflow-hidden rounded-2xl border px-5 py-5 sm:px-7`}>
     <div className="grid items-start gap-5 md:grid-cols-[minmax(0,1fr)_auto]">
@@ -33,7 +33,7 @@ function OverviewHeader({ overview, onSettings, onPrepareAll, preparable }: { ov
         <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-black/10 dark:bg-white/10"><div className="h-full rounded-full bg-accent transition-all" style={{ width: `${quizzesTotal ? (quizzesPassed / quizzesTotal) * 100 : 0}%` }} /></div>
         <div className="mt-3 flex flex-wrap gap-1.5 md:flex-nowrap md:justify-end">
           <button type="button" onClick={onSettings} className={headerButton}><Settings2 size={14} aria-hidden="true" /> Settings</button>
-          {preparable > 0 && <button type="button" onClick={onPrepareAll} className={headerButton}><Sparkles size={14} aria-hidden="true" /> Prepare all</button>}
+          {preparable > 0 && <button type="button" disabled={preparingAll} onClick={onPrepareAll} className={headerButton}><Sparkles size={14} aria-hidden="true" /> {preparingAll ? 'Preparing all…' : 'Prepare all'}</button>}
         </div>
       </div>
     </div>
@@ -87,10 +87,10 @@ export function QuizzesOverview({ program, formId, onFormIdChange, focusModuleId
   const data = overview.data;
   const readyLessons = new Set(program.modules.flatMap((module) => module.lessons.filter((lesson) => lesson.preparation === 'ready').map((lesson) => lesson.id)));
   const preparable = allQuizStatuses(data).filter((status) => (status.bankStatus === 'not_prepared' || status.bankStatus === 'failed') && (status.scope.kind !== 'lesson' || readyLessons.has(status.scope.id ?? '')));
-  const prepareAll = async () => { for (const status of preparable) await launcher.prepareBank(status); };
+  const prepareAll = () => launcher.prepareAll(preparable);
 
   return <div className="space-y-5" data-testid="quizzes-overview">
-    <OverviewHeader overview={data} preparable={preparable.length} onSettings={() => setSettingsOpen((open) => !open)} onPrepareAll={() => void prepareAll()} />
+    <OverviewHeader overview={data} preparable={preparable.length} preparingAll={launcher.preparingAll} onSettings={() => setSettingsOpen((open) => !open)} onPrepareAll={() => void prepareAll()} />
     {settingsOpen && <QuizSettingsCard programId={program.summary.id} settings={data.settings} onClose={() => setSettingsOpen(false)} />}
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(280px,340px)]">
       <div className="min-w-0 space-y-4">

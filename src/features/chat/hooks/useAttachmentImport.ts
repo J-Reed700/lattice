@@ -1,4 +1,4 @@
-import { useCallback, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -12,6 +12,10 @@ import {
   useStagedPictures,
 } from '@/features/chat/images/stagedPictures';
 import { pollAttachmentImport } from '@/features/chat/model/attachmentImportPoll';
+import {
+  useIsStagedFilesImporting,
+  useStagedFilesStore,
+} from '@/features/chat/stores/stagedFilesStore';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
@@ -35,7 +39,7 @@ export interface ImportedAttachments {
 export interface AttachmentImport {
   isDragging: boolean;
   /** Documents, imported when the message is sent. */
-  staged: StagedFile[];
+  staged: readonly StagedFile[];
   isImporting: boolean;
   remove: (_path: string) => void;
   /** Drops every staged document and picture: the draft's attachments are discarded. */
@@ -48,6 +52,8 @@ export interface AttachmentImport {
   takePictures: () => ChatImage[];
   /** The file dialog, for people who would rather not drag. */
   chooseFiles: () => Promise<void>;
+  /** Cancel an in-progress attachment import, leaving staged files intact. */
+  cancelImport?: () => void;
   /**
    * Import the staged files into the vault and link them to this conversation.
    *
@@ -81,9 +87,39 @@ export function useAttachmentImport({
   const api = useApi();
   const queryClient = useQueryClient();
   const loadConversationLinkedDocuments = useConversationsStore((state) => state.loadConversationLinkedDocuments);
-  const [isImporting, setIsImporting] = useState(false);
+  const isImporting = useIsStagedFilesImporting(conversationId);
   const [attachingPictures, setAttachingPictures] = useState(0);
   const pictures = useStagedPictures(conversationId);
+  const importAbortRef = useRef<AbortController | null>(null);
+  const conversationIdRef = useRef(conversationId);
+  conversationIdRef.current = conversationId;
+  const activeJobRef = useRef<{
+    jobId: string | null;
+    targetConversationId: string;
+    controller: AbortController;
+    explicitlyCancelled: boolean;
+  } | null>(null);
+
+  useEffect(() => () => {
+    importAbortRef.current?.abort();
+    importAbortRef.current = null;
+    if (conversationId) {
+      useStagedFilesStore.getState().setImporting(conversationId, false);
+    }
+  }, [conversationId]);
+
+  const cancelImport = useCallback(() => {
+    const active = activeJobRef.current;
+    if (active) {
+      active.explicitlyCancelled = true;
+      useStagedFilesStore.getState().setImporting(active.targetConversationId, false);
+      if (active.jobId) {
+        void Promise.resolve(api.cancelBatchJob(active.jobId)).catch(() => undefined);
+      }
+    }
+    importAbortRef.current?.abort();
+    importAbortRef.current = null;
+  }, [api]);
 
   // Pictures go to the backend now, not at send: the composer shows the
   // stored file, and the turn reads the rows the send names.
@@ -104,7 +140,12 @@ export function useAttachmentImport({
     add: addStagedPaths,
     clear: clearStagedFiles,
     remove,
-  } = useChatFileDrop(dropTargetRef, (paths) => void stagePictures(paths), (path) => !isPicturePath(path));
+  } = useChatFileDrop(
+    dropTargetRef,
+    (paths) => void stagePictures(paths),
+    (path) => !isPicturePath(path),
+    conversationId,
+  );
 
   const chooseFiles = useCallback(async () => {
     try {
@@ -134,20 +175,41 @@ export function useAttachmentImport({
   );
 
   const importStaged = useCallback(async (): Promise<ImportedAttachments | null> => {
-    if (!conversationId || staged.length === 0 || isImporting) return null;
-    const stagedNames = staged.map((file) => file.name);
-    setIsImporting(true);
+    const targetConversationId = conversationId;
+    if (!targetConversationId || staged.length === 0 || isImporting) return null;
+    const stagedSnapshot = [...staged];
+    const stagedNames = stagedSnapshot.map((file) => file.name);
+    const controller = new AbortController();
+    importAbortRef.current?.abort();
+    importAbortRef.current = controller;
+    const jobState = {
+      jobId: null as string | null,
+      targetConversationId,
+      controller,
+      explicitlyCancelled: false,
+    };
+    activeJobRef.current = jobState;
+    useStagedFilesStore.getState().setImporting(targetConversationId, true);
     try {
       // Attached, not filed. These documents belong to this conversation: the
       // turn can read and cite them, but they stay out of the library and out
       // of every other chat's searches, and they go when this chat goes. The
       // "Add to library" action on the attachment is what files them for good.
       const started = await api.startBatchFileImport(
-        staged.map((file) => file.path),
-        conversationId
+        stagedSnapshot.map((file) => file.path),
+        targetConversationId
       );
       if (!started.ok) {
-        toast.error("Couldn't add these files", { message: started.error });
+        if (!controller.signal.aborted) {
+          toast.error("Couldn't add these files", { message: started.error });
+        }
+        return null;
+      }
+      jobState.jobId = started.data;
+      if (controller.signal.aborted) {
+        if (jobState.explicitlyCancelled) {
+          void Promise.resolve(api.cancelBatchJob(started.data)).catch(() => undefined);
+        }
         return null;
       }
 
@@ -155,7 +217,11 @@ export function useAttachmentImport({
         getStatus: api.getBatchJobStatus,
         intervalMs: BATCH_POLL_INTERVAL_MS,
         timeoutMs: BATCH_POLL_TIMEOUT_MS,
+        signal: controller.signal,
       });
+      if (outcome.kind === 'cancelled' || controller.signal.aborted || conversationIdRef.current !== targetConversationId) {
+        return null;
+      }
       if (outcome.kind === 'unreachable') {
         toast.error("Couldn't confirm these files were attached", { message: outcome.error });
         return null;
@@ -170,11 +236,24 @@ export function useAttachmentImport({
       }
 
       await queryClient.invalidateQueries({
-        queryKey: conversationKeys.linkedDocuments(conversationId),
+        queryKey: conversationKeys.linkedDocuments(targetConversationId),
       });
-      void loadConversationLinkedDocuments(conversationId);
+      void loadConversationLinkedDocuments(targetConversationId);
 
-      const requested = staged.length;
+      // Keep staged files intact if the user cancelled or switched conversations before send.
+      if (controller.signal.aborted || conversationIdRef.current !== targetConversationId) {
+        return null;
+      }
+
+      const clearTarget = () => {
+        if (targetConversationId === conversationIdRef.current) {
+          clearStagedFiles();
+        } else {
+          useStagedFilesStore.getState().clear(targetConversationId);
+        }
+      };
+
+      const requested = stagedSnapshot.length;
       // Report what the job actually did. Saying "Attached 4 files" after the
       // batch failed, or after we stopped waiting, is a claim we cannot make.
       // Files stay staged on a total failure so the send can be retried.
@@ -191,7 +270,7 @@ export function useAttachmentImport({
           });
           return null;
         }
-        clearStagedFiles();
+        clearTarget();
         toast.info(`Still attaching ${requested} file${requested !== 1 ? 's' : ''}`, {
           message: "They'll appear in this conversation when indexing finishes.",
         });
@@ -202,7 +281,7 @@ export function useAttachmentImport({
         });
         return null;
       } else {
-        clearStagedFiles();
+        clearTarget();
         toast.success(`Attached ${outcome.added} file${outcome.added !== 1 ? 's' : ''}`, {
           message:
             outcome.failed > 0
@@ -212,7 +291,13 @@ export function useAttachmentImport({
         return { names: stagedNames, documentIds };
       }
     } finally {
-      setIsImporting(false);
+      if (activeJobRef.current === jobState) {
+        activeJobRef.current = null;
+      }
+      if (importAbortRef.current === controller) {
+        importAbortRef.current = null;
+      }
+      useStagedFilesStore.getState().setImporting(targetConversationId, false);
     }
   }, [conversationId, staged, isImporting, api, scopedSpaceId, queryClient, loadConversationLinkedDocuments, clearStagedFiles]);
 
@@ -227,6 +312,7 @@ export function useAttachmentImport({
     removePicture,
     takePictures,
     chooseFiles,
+    cancelImport,
     importStaged,
   };
 }

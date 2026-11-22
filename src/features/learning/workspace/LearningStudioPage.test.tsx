@@ -6,6 +6,7 @@ import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { programBuilderDraftKeys } from '@/features/learning/curriculum/programBuilderDraft';
+import { resetPortabilityRunStore, usePortabilityRunStore } from '@/features/learning/portability/portabilityRunStore';
 import { PROGRAM_KIND_ID } from '@/features/learning/practice/kinds';
 import { formItem, quizForm, quizOverview } from '@/features/learning/quizzes/quizTestData';
 import { LearningStudioPage } from '@/features/learning/workspace/LearningStudioPage';
@@ -145,6 +146,7 @@ describe('Learning Studio program workflow', () => {
   afterEach(() => activityClient.removeQueries({ queryKey: STUDY_ACTIVITY_KEY }));
   beforeEach(() => {
     vi.resetAllMocks();
+    resetPortabilityRunStore();
     localStorage.clear();
     mocks.documents.mockReturnValue([{ id: 'document-1', fileName: 'Field guide.pdf', filePath: '/Field guide.pdf', fileType: 'pdf', category: 'document', language: 'en', modifiedAt: '', indexedAt: '', wordCount: 12, web: false, typeBucket: 'PDF' } satisfies DocumentMetadata]);
     mocks.memory.mockResolvedValue(ok({ programId: 'program-1', journalId: null, lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0 }));
@@ -719,7 +721,7 @@ describe('Learning Studio program workflow', () => {
     expect(await screen.findByRole('button', { name: 'Import a course…' })).toBeVisible();
   });
 
-  it('keeps the export-all screen open until its results arrive', async () => {
+  it('allows leaving export-all while exporting and keeps its status until results arrive', async () => {
     const user = userEvent.setup();
     const exporting = deferred<{ ok: true; data: ExportAllLearningPacksResultDto }>();
     mocks.list.mockResolvedValue(ok([]));
@@ -728,13 +730,13 @@ describe('Learning Studio program workflow', () => {
     await user.click(await screen.findByRole('button', { name: 'Export all courses…' }));
     await user.click(screen.getByRole('button', { name: 'Choose folder and export' }));
     expect(await screen.findByRole('button', { name: 'Exporting courses…' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'All programs' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'All programs' })).toBeEnabled();
     await act(async () => { exporting.resolve(ok({ outcome: 'exported', destinationDir: '/Volumes/USB', exported: [{ programId: 'program-1', title: 'A thoughtful course', path: '/Volumes/USB/A thoughtful course.lattice-learning' }], failed: [] })); });
     expect(await screen.findByText(/Exported 1 of 1 course to/)).toBeVisible();
     expect(screen.getByRole('button', { name: 'All programs' })).toBeEnabled();
   });
 
-  it('keeps the export-all screen when another task is opened from the activity panel during the export', async () => {
+  it('allows opening another task from the activity panel during export-all and surfaces completion in background', async () => {
     const user = userEvent.setup();
     const exporting = deferred<{ ok: true; data: ExportAllLearningPacksResultDto }>();
     const active = program('active', true);
@@ -751,17 +753,12 @@ describe('Learning Studio program workflow', () => {
       destination: { programId: active.summary.id, tab: 'practical', lessonId: 'lesson-2' },
     }]));
     await user.click(await screen.findByRole('button', { name: 'Open task' }));
-    expect(screen.getByText('Your courses are still being exported. Open the task again when the export finishes.')).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Export all courses' })).toBeVisible();
-    expect(mocks.get).not.toHaveBeenCalled();
-    expect(mocks.flush).not.toHaveBeenCalled();
+    expect(await screen.findByRole('textbox', { name: 'Lab scratchpad' })).toBeVisible();
 
     await act(async () => { exporting.resolve(ok({ outcome: 'exported', destinationDir: '/Volumes/USB', exported: [{ programId: active.summary.id, title: 'A thoughtful course', path: '/Volumes/USB/A thoughtful course.lattice-learning' }], failed: [] })); });
-    expect(await screen.findByText(/Exported 1 of 1 course to/)).toBeVisible();
-    expect(screen.queryByText(/still being exported/)).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /Expand activity/ }));
-    await user.click(screen.getByRole('button', { name: 'Open task' }));
-    expect(await screen.findByRole('textbox', { name: 'Lab scratchpad' })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'All programs' }));
+    const banner = await screen.findByRole('region', { name: 'Course export status' });
+    expect(banner).toHaveTextContent('Exported 1 of 1 course to /Volumes/USB.');
   });
 
   it('gives a draft course an Import & export menu so it can be exported', async () => {
@@ -922,5 +919,133 @@ describe('Learning Studio program workflow', () => {
       await screen.findByRole('tablist', { name: 'Program workspace' });
       expect(localStorage.getItem('lattice.studio.lastCourse')).toBe('program-2');
     });
+  });
+
+  it('opens export-all and import screens via ?screen= deep-links and from StudyActivityPanel View result', async () => {
+    const user = userEvent.setup();
+    mocks.list.mockResolvedValue(ok([]));
+    show('/studio?screen=export-all');
+    expect(await screen.findByRole('heading', { name: 'Export all courses' })).toBeVisible();
+    await waitFor(() => expect(screen.getByTestId('search').textContent).toBe(''));
+
+    await user.click(screen.getByRole('button', { name: 'All programs' }));
+    expect(await screen.findByRole('heading', { name: 'Your programs' })).toBeVisible();
+
+    act(() => activityClient.setQueryData<StudyActivity[]>(STUDY_ACTIVITY_KEY, [{
+      id: 'export-all-activity',
+      command: 'export_all_learning_packs',
+      title: 'Exporting all your courses',
+      detail: 'Exporting courses',
+      involves: ['Choose a folder'],
+      status: 'completed',
+      startedAt: Date.now() - 2000,
+      finishedAt: Date.now(),
+      destination: { tab: 'portability', screen: 'export-all' },
+    }]));
+    await user.click(await screen.findByRole('button', { name: 'View result' }));
+    expect(await screen.findByRole('heading', { name: 'Export all courses' })).toBeVisible();
+  });
+
+  it('opens import via ?screen=import and allows All programs while exporting all', async () => {
+    const user = userEvent.setup();
+    mocks.list.mockResolvedValue(ok([]));
+    act(() => {
+      usePortabilityRunStore.setState((s) => ({
+        exportAll: { ...s.exportAll, pending: true },
+      }));
+    });
+    show('/studio?screen=import');
+    expect(await screen.findByRole('button', { name: 'Complete test import' })).toBeVisible();
+    const back = screen.getByRole('button', { name: 'All programs' });
+    expect(back).toBeEnabled();
+    await user.click(back);
+    expect(await screen.findByRole('region', { name: 'Course export status' })).toHaveTextContent('Exporting all courses…');
+    await user.click(screen.getByRole('button', { name: 'View export' }));
+    expect(await screen.findByRole('heading', { name: 'Export all courses' })).toBeVisible();
+  });
+
+  it('surfaces a completed portability banner on ProgramLibrary when exportAll finishes while away', async () => {
+    const user = userEvent.setup();
+    const exporting = deferred<{ ok: true; data: ExportAllLearningPacksResultDto }>();
+    mocks.list.mockResolvedValue(ok([]));
+    mocks.exportAll.mockReturnValueOnce(exporting.promise);
+    const view = show('/studio?screen=export-all');
+    await user.click(await screen.findByRole('button', { name: 'Choose folder and export' }));
+    expect(screen.getByRole('button', { name: 'Exporting courses…' })).toBeDisabled();
+    view.unmount();
+
+    await act(async () => {
+      exporting.resolve(ok({
+        outcome: 'exported',
+        destinationDir: '/Volumes/USB',
+        exported: [{ programId: 'p1', title: 'Course One', path: '/Volumes/USB/Course One.lattice-learning' }],
+        failed: [],
+      }));
+    });
+
+    show('/studio');
+    const banner = await screen.findByRole('region', { name: 'Course export status' });
+    expect(banner).toHaveTextContent('Exported 1 of 1 course to /Volumes/USB.');
+    await user.click(within(banner).getByRole('button', { name: 'View export' }));
+    expect(await screen.findByRole('heading', { name: 'Export all courses' })).toBeVisible();
+    expect(screen.getByRole('status')).toHaveTextContent('Exported 1 of 1 course to /Volumes/USB.');
+  });
+
+  it('still prepares Module 1 after Start this course even if LearningStudioPage unmounts before accept resolves', async () => {
+    const user = userEvent.setup();
+    const draft = program('draft');
+    const accepting = deferred<{ ok: true; data: LearningProgramDto }>();
+    mocks.list.mockResolvedValue(ok([summary(draft)]));
+    mocks.get.mockResolvedValue(ok(draft));
+    mocks.accept.mockReturnValueOnce(accepting.promise);
+    mocks.prepareModule.mockResolvedValueOnce(ok({ id: 'job-m1' }));
+
+    const view = show();
+    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
+    await user.click(await screen.findByRole('button', { name: 'Start this course' }));
+    expect(mocks.accept).toHaveBeenCalledTimes(1);
+
+    // Navigate away right after clicking Start this course.
+    view.unmount();
+
+    await act(async () => {
+      accepting.resolve(ok(program('active')));
+    });
+
+    await waitFor(() => expect(mocks.prepareModule).toHaveBeenCalledWith({
+      programId: 'program-1',
+      moduleId: 'module-1',
+      expectedRevision: 1,
+    }));
+  });
+
+  it('exits an open course back to ProgramLibrary and scrolls to flashcards for ?section=flashcards', async () => {
+    const scrollSpy = vi.fn();
+    Element.prototype.scrollIntoView = scrollSpy;
+    try {
+      const current = program('active', true);
+      mocks.list.mockResolvedValue(ok([summary(current)]));
+      mocks.get.mockResolvedValue(ok(current));
+
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } } });
+      const router = createMemoryRouter(
+        [{ path: '/studio', element: <><LearningStudioPage /><Where /></> }],
+        { initialEntries: ['/studio'] },
+      );
+      render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
+
+      await userEvent.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
+      expect(await screen.findByRole('heading', { name: 'A thoughtful course' })).toBeVisible();
+
+      await act(async () => {
+        await router.navigate('/studio?section=flashcards');
+      });
+
+      expect(await screen.findByRole('button', { name: /A thoughtful course/ })).toBeVisible();
+      await waitFor(() => expect(scrollSpy).toHaveBeenCalled());
+      await waitFor(() => expect(screen.getByTestId('search')).toHaveTextContent(''));
+    } finally {
+      Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
+    }
   });
 });

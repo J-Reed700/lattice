@@ -18,7 +18,7 @@ vi.mock('@/features/model/hooks/useCloudModels', () => ({ useCloudModelCatalogs:
 const api = VaultAPI as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
 const state = vi.hoisted(() => ({
-  conversations: [] as Array<{ id: string; modelChoice?: ChatModelChoice }>,
+  conversations: [] as Array<{ id: string; modelChoice?: ChatModelChoice; messages?: Array<{ role: string; status?: string }> }>,
   regenerateResponse: vi.fn(),
   setConversationModelChoice: vi.fn(),
 }));
@@ -135,5 +135,22 @@ describe('Try with another model', () => {
     expect(toast.title).toBe('Stopped Ornith-1.5-9B');
     expect(toast.message).toBe("You stopped the answer. This chat's model is unchanged.");
     expect(toast.action).toBeUndefined();
+  });
+
+  it('does not claim the question is back in the composer when the failed user message stayed in the thread', async () => {
+    state.conversations = [
+      {
+        id: 'chat-a',
+        modelChoice: { kind: 'default' },
+        messages: [{ role: 'user', status: 'failed' }],
+      },
+    ];
+    state.regenerateResponse = vi.fn().mockResolvedValue('failed' satisfies GenerationOutcome);
+    const result = render();
+    await act(() => result.current.handleRegenerate());
+    const [toast] = useToastStore.getState().toasts;
+    expect(toast.title).toBe("Couldn't regenerate");
+    expect(toast.message).not.toBe('Your question is back in the composer.');
+    expect(toast.message).toContain('stayed in the thread');
   });
 });
