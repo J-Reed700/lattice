@@ -52,7 +52,7 @@ describe('useDownloadedModels', () => {
     expect(invoke).not.toHaveBeenCalled();
   });
 
-  it('invalidates settings, active-models, and course index queries on embedding change and model delete', async () => {
+  it('invalidates settings, active-models, downloads, and course index queries on embedding change and model delete', async () => {
     api.setActiveEmbeddingModel = vi.fn().mockResolvedValue({ ok: true, data: undefined });
     api.deleteDownloadedModel = vi.fn().mockResolvedValue({ ok: true, data: undefined });
     const { result, queryClient } = renderModels();
@@ -63,15 +63,16 @@ describe('useDownloadedModels', () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['settings'] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['active-models'] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['learning', 'course-index'] });
-    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['course-index-status'] });
+    expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['course-index-status'] });
 
     invalidateSpy.mockClear();
     await act(() => result.current.deleteDownloadedModel('row-1'));
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['downloads'] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['downloaded-models'] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['settings'] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['active-models'] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['learning', 'course-index'] });
-    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['course-index-status'] });
+    expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['course-index-status'] });
   });
 
   it('invalidates settings, active-models, and course index queries when saving a cloud API key', async () => {
@@ -89,6 +90,6 @@ describe('useDownloadedModels', () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['settings'] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['active-models'] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['learning', 'course-index'] });
-    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['course-index-status'] });
+    expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['course-index-status'] });
   });
 });

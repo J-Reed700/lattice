@@ -106,6 +106,7 @@ export function ModelListView({
         const files = summary.files ?? [summary];
         for (const file of files) {
           if (file.state === 'Paused') await resumeDownload(file.id);
+          else if (file.state === 'Cancelled') await retryDownload(file.id);
         }
       } catch (err) {
         addToast({
@@ -121,7 +122,7 @@ export function ModelListView({
         });
       }
     },
-    [addToast, resumeDownload, startingIds],
+    [addToast, resumeDownload, retryDownload, startingIds],
   );
 
   const handleRetry = useCallback(
@@ -136,7 +137,7 @@ export function ModelListView({
       try {
         const files = summary.files ?? [summary];
         for (const file of files) {
-          if (file.state === 'Failed') await retryDownload(file.id);
+          if (file.state === 'Failed' || file.state === 'Cancelled') await retryDownload(file.id);
           else if (file.state === 'Paused') await resumeDownload(file.id);
         }
       } catch (err) {

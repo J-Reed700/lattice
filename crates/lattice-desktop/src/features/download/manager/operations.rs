@@ -137,11 +137,21 @@ impl DownloadManager for DownloadManagerService {
             .await?
             .ok_or_else(|| DownloadError::SessionNotFound(id.to_string()))?;
 
+        let was_paused = session.state() == &DownloadState::Paused;
         session.resume()?;
         self.refuse_if_destination_live(&session).await?;
-        let partial_bytes = self.valid_partial_bytes(&session).await;
-        if partial_bytes != session.progress().bytes_downloaded() {
-            session.update_progress(partial_bytes, 0.0);
+        if session.checksum().is_none()
+            && (!was_paused || session.progress().bytes_downloaded() == 0)
+        {
+            // Without a checksum we only resume bytes written by a cleanly
+            // paused session; a failed or 0-byte session must start clean.
+            self.discard_working_file(&session).await;
+            session.update_progress(0, 0.0);
+        } else {
+            let partial_bytes = self.valid_partial_bytes(&session).await;
+            if partial_bytes != session.progress().bytes_downloaded() {
+                session.update_progress(partial_bytes, 0.0);
+            }
         }
         self.repository.update(&session).await?;
 
@@ -225,11 +235,16 @@ impl DownloadManager for DownloadManagerService {
         // not delete the file underneath its active transfer.
         session.manual_retry()?;
         self.refuse_if_destination_live(&session).await?;
-        // Preserve valid `.part` files even when `checksum` is `None` (e.g.,
-        // custom HuggingFace GGUFs): `HttpDownloadEngine` uses HTTP Range
-        // (`206 Partial Content` vs `200 OK` reset) and validates final length.
-        let partial_bytes = self.valid_partial_bytes(&session).await;
-        session.update_progress(partial_bytes, 0.0);
+        // A session with a checksum keeps its valid `.part`: the final hash
+        // catches a bad prefix, and the retry resumes instead of starting over.
+        // With no checksum nothing could catch a changed upstream file or stale
+        // prefix, so the retry starts clean.
+        if session.checksum().is_none() {
+            self.discard_working_file(&session).await;
+        } else {
+            let partial_bytes = self.valid_partial_bytes(&session).await;
+            session.update_progress(partial_bytes, 0.0);
+        }
 
         self.repository.update(&session).await?;
 
@@ -527,11 +542,20 @@ impl DownloadManagerService {
             return Ok(ids);
         }
         for download in &mut registering {
-            // Preserve valid `.part` files across re-downloads even without a
-            // checksum; discard empty or oversized `.part` files so they start clean.
-            let partial_bytes = self.valid_partial_bytes(&download.session).await;
-            if partial_bytes > 0 {
-                download.session.update_progress(partial_bytes, 0.0);
+            if download.session.checksum().is_none() {
+                // Bytes already on disk are reused only when a checksum can
+                // vouch for them: a session with none starts from nothing.
+                self.file_cleanup
+                    .delete_file_best_effort(&download.session.working_path())
+                    .await;
+            } else {
+                // Preserve valid `.part` files across re-downloads when a
+                // checksum will verify the assembled file; discard empty or
+                // oversized `.part` files so they start clean.
+                let partial_bytes = self.valid_partial_bytes(&download.session).await;
+                if partial_bytes > 0 {
+                    download.session.update_progress(partial_bytes, 0.0);
+                }
             }
         }
 

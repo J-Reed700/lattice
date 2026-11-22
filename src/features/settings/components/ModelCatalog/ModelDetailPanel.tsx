@@ -364,6 +364,7 @@ function ModelDetailContent({
       const files = activeDownload.files ?? [activeDownload];
       for (const file of files) {
         if (file.state === 'Paused') await resumeDownload(file.id);
+        else if (file.state === 'Cancelled') await retryDownload(file.id);
       }
     } catch (error) {
       addToast({
@@ -382,7 +383,7 @@ function ModelDetailContent({
     try {
       const files = activeDownload.files ?? [activeDownload];
       for (const file of files) {
-        if (file.state === 'Failed') await retryDownload(file.id);
+        if (file.state === 'Failed' || file.state === 'Cancelled') await retryDownload(file.id);
         else if (file.state === 'Paused') await resumeDownload(file.id);
       }
     } catch (error) {
@@ -422,7 +423,9 @@ function ModelDetailContent({
     }
     if (!hasDownloadSource) return null;
     if (isCheckingDownload) return <span className="text-sm text-text-muted">Checking…</span>;
-    if (isDownloaded || activeDownload?.state === 'Completed') return <span className="text-sm text-text-muted">Downloaded</span>;
+    if (isDownloaded || (downloadedFromCheck !== false && activeDownload?.state === 'Completed')) {
+      return <span className="text-sm text-text-muted">Downloaded</span>;
+    }
     if (isStartingDownload) return <span className="text-sm text-text-muted">Starting…</span>;
     if (activeDownload?.state === 'Paused') {
       const percentage = activeDownload.percentage;

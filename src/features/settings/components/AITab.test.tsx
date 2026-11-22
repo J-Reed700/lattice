@@ -63,6 +63,7 @@ const mockLlmSettings: LlmSettingsContextValue = {
   isLoading: false,
   saveLlmUpdates: vi.fn().mockResolvedValue(true),
   authValueSet: { ollama: false, llamaCpp: false },
+  authValueStatus: 'ready',
   saveAuthHeaderValue: vi.fn().mockResolvedValue(true),
   reload: vi.fn(),
 };

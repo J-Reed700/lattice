@@ -318,6 +318,9 @@ fn may_forward_compatibility_auth(source: &str, target: &str) -> bool {
     if source.origin() == target.origin() {
         return true;
     }
+    if source.scheme() != "https" || target.scheme() != "https" {
+        return false;
+    }
     let is_trusted_hf = |host: &str| {
         let host = host.trim_end_matches('.').to_ascii_lowercase();
         host == "huggingface.co"
@@ -576,6 +579,10 @@ mod tests {
         assert!(!may_forward_compatibility_auth(
             "https://huggingface.co/org/repo/resolve/main/m.gguf",
             "https://s3.amazonaws.com/bucket/m.gguf"
+        ));
+        assert!(!may_forward_compatibility_auth(
+            "https://huggingface.co/org/repo/resolve/main/m.gguf",
+            "http://cdn-lfs.hf.co/bucket/m.gguf"
         ));
     }
 

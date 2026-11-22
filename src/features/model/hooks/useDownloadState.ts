@@ -26,11 +26,16 @@ export function summarizeModelDownloads(downloads: readonly DownloadStatus[]): M
 
   const unfinished = nonCancelled.filter((download) => download.state !== 'Completed');
   if (unfinished.length === 0) {
+    // A Completed file alongside a Cancelled sibling is an incomplete batch,
+    // never a finished model download.
+    if (downloads.some((download) => download.state === 'Cancelled')) {
+      return null;
+    }
     return nonCancelled[0];
   }
 
   const representative = unfinished[0];
-  if (nonCancelled.length === 1) {
+  if (downloads.length === 1) {
     return representative;
   }
 
@@ -59,7 +64,7 @@ export function summarizeModelDownloads(downloads: readonly DownloadStatus[]): M
     total_bytes: totalBytes > 0 ? totalBytes : representative.total_bytes,
     percentage,
     error_message: errorMessage,
-    files: [...nonCancelled],
+    files: [...downloads],
   };
 }
 

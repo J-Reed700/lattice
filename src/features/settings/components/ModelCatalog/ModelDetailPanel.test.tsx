@@ -343,6 +343,59 @@ describe('ModelDetailPanel', () => {
       expect(h.downloaded.isModelDownloaded.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
 
+    it('retries both Failed and Cancelled sibling files and ignores stale Completed state once disk check returns false', async () => {
+      h.downloadsByModel = [
+        {
+          id: 'f-failed',
+          url: 'https://example.invalid/weights.bin',
+          destination: '/tmp/weights.bin',
+          state: 'Failed',
+          bytes_downloaded: 20,
+          total_bytes: 100,
+          bytes_per_second: 0,
+          percentage: 20,
+          eta_seconds: null,
+          error_message: 'HTTP 500',
+          retry_count: 0,
+          created_at: '2026-09-05T00:00:00Z',
+          started_at: '2026-09-05T00:00:00Z',
+          completed_at: null,
+          model_name: 'Saga 7B',
+          model_id: 'saga-7b-q4',
+        },
+        {
+          id: 'f-cancelled',
+          url: 'https://example.invalid/tokenizer.json',
+          destination: '/tmp/tokenizer.json',
+          state: 'Cancelled',
+          bytes_downloaded: 0,
+          total_bytes: 100,
+          bytes_per_second: 0,
+          percentage: 0,
+          eta_seconds: null,
+          error_message: null,
+          retry_count: 0,
+          created_at: '2026-09-05T00:00:00Z',
+          started_at: null,
+          completed_at: null,
+          model_name: 'Saga 7B',
+          model_id: 'saga-7b-q4',
+        },
+      ];
+      renderPanel(recommendation());
+      fireEvent.click(await screen.findByRole('button', { name: 'Retry download' }));
+      await waitFor(() => expect(h.retryDownload).toHaveBeenCalledWith('f-failed'));
+      expect(h.retryDownload).toHaveBeenCalledWith('f-cancelled');
+      cleanup();
+
+      h.downloadsByModel = undefined;
+      h.activeDownload = { state: 'Completed' };
+      h.downloaded.isModelDownloaded.mockResolvedValue(false);
+      renderPanel(recommendation());
+      expect(await screen.findByRole('button', { name: 'Download' })).toBeInTheDocument();
+      expect(screen.queryByText('Downloaded')).not.toBeInTheDocument();
+    });
+
     it('keeps the control usable when the disk check fails', async () => {
       const error = vi.spyOn(console, 'error').mockImplementation(() => {});
       h.downloaded.isModelDownloaded.mockRejectedValue(new Error('fs error'));

@@ -10,6 +10,25 @@ use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, error, info, warn};
 
+enum TransferAttemptError {
+    Download(DownloadError),
+    EtagChanged,
+}
+
+impl From<DownloadError> for TransferAttemptError {
+    fn from(error: DownloadError) -> Self {
+        Self::Download(error)
+    }
+}
+
+fn strong_etag(headers: &header::HeaderMap) -> Option<String> {
+    let value = headers.get(header::ETAG)?.to_str().ok()?.trim();
+    if value.is_empty() || value.starts_with("W/") || value.starts_with("w/") {
+        return None;
+    }
+    Some(value.to_string())
+}
+
 impl HttpDownloadEngine {
     async fn compute_file_sha256(&self, path: &Path) -> Result<String, DownloadError> {
         let mut file = File::open(path).await.map_err(|e| {
@@ -98,6 +117,7 @@ impl HttpDownloadEngine {
         const BACKOFF_DELAYS: [u64; 5] = [1, 2, 4, 8, 12];
 
         let mut resume_from = initial_resume_from;
+        let mut expected_etag: Option<String> = None;
         let mut last_error = None;
 
         for attempt in 0..MAX_RETRIES {
@@ -117,18 +137,31 @@ impl HttpDownloadEngine {
             }
 
             match self
-                .download_impl(
+                .download_impl_with_etag(
                     url,
                     destination,
                     resume_from,
                     progress_callback.clone(),
                     auth_token,
                     expected_total_bytes,
+                    &mut expected_etag,
                 )
                 .await
             {
                 Ok(result) => return Ok(result),
-                Err(e) => {
+                Err(TransferAttemptError::EtagChanged) => {
+                    warn!(
+                        url = %url,
+                        "Remote file ETag changed during partial resume; restarting from byte 0"
+                    );
+                    let _ = tokio::fs::remove_file(destination).await;
+                    resume_from = None;
+                    expected_etag = None;
+                    last_error = Some(DownloadError::ValidationFailed(
+                        "Remote file changed during download".to_string(),
+                    ));
+                }
+                Err(TransferAttemptError::Download(e)) => {
                     if Self::is_retryable_error(&e) {
                         last_error = Some(e);
 
@@ -164,11 +197,15 @@ impl HttpDownloadEngine {
         url: &str,
         start_byte: Option<u64>,
         auth_token: Option<&String>,
+        if_range_etag: Option<&str>,
     ) -> Result<Response, DownloadError> {
         let mut request = self.client.get(url);
 
         if let Some(start) = start_byte {
             request = request.header(header::RANGE, format!("bytes={}-", start));
+            if let Some(etag) = if_range_etag {
+                request = request.header(header::IF_RANGE, etag);
+            }
         }
 
         if let Some(token) = auth_token {
@@ -181,6 +218,7 @@ impl HttpDownloadEngine {
             .map_err(|e| DownloadError::NetworkError(format!("Request failed: {}", WithCauses(&e))))
     }
 
+    #[cfg(test)]
     pub(super) async fn download_impl(
         &self,
         url: &str,
@@ -190,6 +228,36 @@ impl HttpDownloadEngine {
         auth_token: Option<&String>,
         expected_total_bytes: Option<u64>,
     ) -> Result<DownloadResult, DownloadError> {
+        let mut expected_etag = None;
+        self.download_impl_with_etag(
+            url,
+            destination,
+            resume_from,
+            progress_callback,
+            auth_token,
+            expected_total_bytes,
+            &mut expected_etag,
+        )
+        .await
+        .map_err(|err| match err {
+            TransferAttemptError::Download(e) => e,
+            TransferAttemptError::EtagChanged => {
+                DownloadError::ValidationFailed("Remote file changed during download".to_string())
+            }
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn download_impl_with_etag(
+        &self,
+        url: &str,
+        destination: &PathBuf,
+        resume_from: Option<u64>,
+        progress_callback: Option<ProgressCallback>,
+        auth_token: Option<&String>,
+        expected_total_bytes: Option<u64>,
+        expected_etag: &mut Option<String>,
+    ) -> Result<DownloadResult, TransferAttemptError> {
         let start_time = Instant::now();
 
         info!(url = %url, "Starting download");
@@ -198,12 +266,13 @@ impl HttpDownloadEngine {
             if total > 0 && offset == total {
                 return self
                     .complete_from_local_file(url, destination, total, progress_callback.as_ref())
-                    .await;
+                    .await
+                    .map_err(Into::into);
             }
         }
 
         let response = self
-            .send_request_with_range(url, resume_from, auth_token)
+            .send_request_with_range(url, resume_from, auth_token, expected_etag.as_deref())
             .await?;
 
         let status = response.status();
@@ -234,7 +303,22 @@ impl HttpDownloadEngine {
             return Err(DownloadError::HttpError {
                 status: status_code,
                 message: error_message,
-            });
+            }
+            .into());
+        }
+
+        let response_etag = strong_etag(response.headers());
+        if status == StatusCode::PARTIAL_CONTENT {
+            if let (Some(expected), Some(actual)) =
+                (expected_etag.as_deref(), response_etag.as_deref())
+            {
+                if expected != actual {
+                    return Err(TransferAttemptError::EtagChanged);
+                }
+            }
+        }
+        if expected_etag.is_none() || status != StatusCode::PARTIAL_CONTENT {
+            *expected_etag = response_etag;
         }
 
         // Use expected_total_bytes from HEAD request instead of response Content-Length
@@ -329,7 +413,8 @@ impl HttpDownloadEngine {
             );
             return Err(DownloadError::ValidationFailed(
                 "Download completed but no data was written (0 bytes)".to_string(),
-            ));
+            )
+            .into());
         }
 
         if let Some(expected_total) = total_bytes {
@@ -346,7 +431,8 @@ impl HttpDownloadEngine {
                 return Err(DownloadError::NetworkError(format!(
                     "Stream ended prematurely: downloaded {} bytes of expected {} bytes",
                     actual_downloaded, expected_download
-                )));
+                ))
+                .into());
             }
 
             if actual_downloaded != expected_download {
@@ -359,7 +445,8 @@ impl HttpDownloadEngine {
                 return Err(DownloadError::ValidationFailed(format!(
                     "Downloaded {} bytes but expected {} bytes",
                     actual_downloaded, expected_download
-                )));
+                ))
+                .into());
             }
         }
 

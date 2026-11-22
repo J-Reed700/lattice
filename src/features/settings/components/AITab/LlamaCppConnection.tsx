@@ -16,7 +16,7 @@ const DEFAULT_CONNECTION: LlamaCppSettingsDto = {
 
 export function LlamaCppConnection() {
   const api = useApi();
-  const { llmSettings, authValueSet, saveLlmUpdates, saveAuthHeaderValue } = useLlmSettings();
+  const { llmSettings, authValueSet, authValueStatus = 'ready', saveLlmUpdates, saveAuthHeaderValue } = useLlmSettings();
   const saved = llmSettings?.llamaCpp;
   const [draft, setDraft] = useState<LlamaCppSettingsDto>(saved ?? DEFAULT_CONNECTION);
   // The value is write-only: the saved one never comes back, only whether one is set (`authValueSet`).
@@ -31,13 +31,18 @@ export function LlamaCppConnection() {
   };
   const stored = authValueSet.llamaCpp;
   const savedHeaderName = saved?.authHeaderName ?? '';
-  const hasHalfConfiguredHeader = !stored && Boolean(savedHeaderName.trim());
-  const showClearHeader = stored || Boolean(savedHeaderName.trim());
+  const hasSavedHeaderName = Boolean(savedHeaderName.trim());
+  const authStatusKnown = authValueStatus === 'ready';
+  const hasHalfConfiguredHeader = authStatusKnown && !stored && hasSavedHeaderName;
+  const showClearHeader = authStatusKnown && (stored || hasSavedHeaderName);
   const typedValue = valueDraft.trim();
   const connection = { url: draft.url.trim(), model: draft.model.trim(),
     authHeaderName: draft.authHeaderName.trim() };
+  const keepsExistingSavedHeader =
+    !authStatusKnown && hasSavedHeaderName && connection.authHeaderName === savedHeaderName.trim();
+  const hasConfiguredValue = Boolean(typedValue) || stored || keepsExistingSavedHeader;
   const save = async () => {
-    if (Boolean(connection.authHeaderName) !== Boolean(typedValue || stored)) {
+    if (Boolean(connection.authHeaderName) !== hasConfiguredValue) {
       toast.error('Set both authentication header fields, or clear both');
       return;
     }
@@ -91,11 +96,24 @@ export function LlamaCppConnection() {
       hint={
         hasHalfConfiguredHeader
           ? 'Auth header name is saved without a value in Keychain. Enter a value or click Clear header.'
-          : undefined
+          : authValueStatus === 'loading' && hasSavedHeaderName
+            ? 'Checking Keychain for the saved header value…'
+            : authValueStatus === 'error' && hasSavedHeaderName
+              ? 'Couldn’t check Keychain status. Saved header settings are preserved.'
+              : undefined
       }
     >
       <input id="llamaCppHeaderValue" type="password" autoComplete="off" className={INPUT_CLASS}
-        value={valueDraft} placeholder={stored ? 'Value is set. Type to replace it' : 'Basic … or Bearer …'}
+        value={valueDraft}
+        placeholder={
+          stored
+            ? 'Value is set. Type to replace it'
+            : authValueStatus === 'loading' && hasSavedHeaderName
+              ? 'Checking Keychain…'
+              : authValueStatus === 'error' && hasSavedHeaderName
+                ? 'Keychain status unavailable. Type to replace'
+                : 'Basic … or Bearer …'
+        }
         onChange={event => { setValueDraft(event.target.value); setModels([]); }} disabled={testing} />
     </SettingsRow>
     <div className="flex justify-end gap-2 py-3">

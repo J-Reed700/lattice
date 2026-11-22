@@ -4,6 +4,7 @@ import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/r
 import { type UnlistenFn } from '@tauri-apps/api/event';
 
 import { useApi } from '@/contexts/ApiContext';
+import { DOWNLOADS_QUERY_KEY } from '@/features/model/hooks/useDownloads';
 import { LOADED_MODELS_QUERY_KEY } from '@/features/model/hooks/useLoadedModels';
 import { SETTINGS_QUERY_KEY } from '@/features/settings/hooks/useSettingsQuery';
 import { VaultAPI, type ApiClient } from '@/lib/api';
@@ -16,7 +17,6 @@ import { handleAsyncEvent } from '@/utils/promiseHandlers';
 export const DOWNLOADED_MODELS_QUERY_KEY = ['downloaded-models'] as const;
 const ACTIVE_MODELS_ROOT_KEY = ['active-models'] as const;
 const COURSE_INDEX_ROOT_KEY = ['learning', 'course-index'] as const;
-const COURSE_INDEX_STATUS_ROOT_KEY = ['course-index-status'] as const;
 
 async function loadDownloadedModels(api: ApiClient = VaultAPI): Promise<DownloadedModel[]> {
   const result = await api.getDownloadedModels();
@@ -68,7 +68,6 @@ export const useDownloadedModels = (options: { refetchOnMount?: 'always' } = {})
     await Promise.all([
       invalidateModels(),
       queryClient.invalidateQueries({ queryKey: COURSE_INDEX_ROOT_KEY }),
-      queryClient.invalidateQueries({ queryKey: COURSE_INDEX_STATUS_ROOT_KEY }),
     ]);
   }, [invalidateModels, queryClient]);
 
@@ -119,7 +118,12 @@ export const useDownloadedModels = (options: { refetchOnMount?: 'always' } = {})
       const result = await api.deleteDownloadedModel(id, deleteFile);
       if (!result.ok) throw new Error(result.error);
     },
-    onSuccess: invalidateModelsAndCourseIndex,
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: DOWNLOADS_QUERY_KEY }),
+        invalidateModelsAndCourseIndex(),
+      ]);
+    },
   });
 
   const isModelDownloaded = useCallback(async (modelId: string): Promise<boolean> => {

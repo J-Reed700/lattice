@@ -48,6 +48,9 @@ fn may_forward_authorization(source: &str, target: &str) -> bool {
     if source.origin() == target.origin() {
         return true;
     }
+    if source.scheme() != "https" || target.scheme() != "https" {
+        return false;
+    }
 
     match (source.host_str(), target.host_str()) {
         (Some(source_host), Some(target_host)) => {

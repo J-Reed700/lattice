@@ -105,7 +105,6 @@ export function useCloudApiKeyMutation() {
       void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: ['active-models'] });
       void queryClient.invalidateQueries({ queryKey: ['learning', 'course-index'] });
-      void queryClient.invalidateQueries({ queryKey: ['course-index-status'] });
     },
   });
   return { setCloudApiKey: save.mutateAsync };

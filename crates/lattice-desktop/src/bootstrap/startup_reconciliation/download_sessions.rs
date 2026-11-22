@@ -50,21 +50,28 @@ pub async fn reconcile_stale_downloads(
         let session_id = session.id().to_string();
 
         // No transfer survives a restart; mark both Pending and Downloading
-        // sessions Paused and align recorded progress with any `.part` on disk.
-        let part_bytes = match tokio::fs::metadata(session.working_path()).await {
-            Ok(meta) if meta.is_file() => {
-                let len = meta.len();
-                if session
-                    .progress()
-                    .total_bytes()
-                    .is_some_and(|total| len > total)
-                {
-                    0
-                } else {
-                    len
+        // sessions Paused. Preserve `.part` progress only when a checksum can
+        // verify the bytes after restart; checksumless downloads discard `.part`
+        // so an upstream change cannot splice stale bytes into a completed file.
+        let part_bytes = if session.checksum().is_some() {
+            match tokio::fs::metadata(session.working_path()).await {
+                Ok(meta) if meta.is_file() => {
+                    let len = meta.len();
+                    if session
+                        .progress()
+                        .total_bytes()
+                        .is_some_and(|total| len > total)
+                    {
+                        0
+                    } else {
+                        len
+                    }
                 }
+                _ => 0,
             }
-            _ => 0,
+        } else {
+            let _ = tokio::fs::remove_file(session.working_path()).await;
+            0
         };
         session.update_progress(part_bytes, 0.0);
 
@@ -302,7 +309,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn interrupted_downloading_session_preserves_part_bytes_as_paused() {
+    async fn interrupted_downloading_session_preserves_part_bytes_as_paused_when_checksummed() {
+        use lattice_core::domain::download::{Checksum, ChecksumAlgorithm};
+
         let dir = tempfile::tempdir().unwrap();
         let destination = dir.path().join("model.gguf");
         std::fs::write(
@@ -311,12 +320,13 @@ mod tests {
         )
         .unwrap();
 
+        let checksum = Checksum::new(ChecksumAlgorithm::Sha256, "a".repeat(64)).unwrap();
         let mut session = DownloadSession::new(
             "with-part".to_string(),
             "https://example.com/model.gguf".to_string(),
             destination,
             Some(1000),
-            None,
+            Some(checksum),
         )
         .unwrap();
         session.start().unwrap();
@@ -335,6 +345,40 @@ mod tests {
         assert_eq!(after.state(), &DownloadState::Paused);
         assert_eq!(after.progress().bytes_downloaded(), 640);
         assert_eq!(after.error_message(), None);
+    }
+
+    #[tokio::test]
+    async fn interrupted_checksumless_session_discards_part_bytes_as_paused() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("checksumless.gguf");
+        let part = lattice_core::domain::download::part_path(&destination);
+        std::fs::write(&part, vec![3u8; 640]).unwrap();
+
+        let mut session = DownloadSession::new(
+            "checksumless-part".to_string(),
+            "https://example.com/checksumless.gguf".to_string(),
+            destination,
+            Some(1000),
+            None,
+        )
+        .unwrap();
+        session.start().unwrap();
+        session.update_progress(400, 100.0);
+
+        let repository = Arc::new(MockDownloadRepository::new());
+        repository.create(&session).await.unwrap();
+        let startup = Utc::now() + chrono::Duration::milliseconds(5);
+
+        let reconciled = reconcile_stale_downloads(repository.clone(), startup)
+            .await
+            .unwrap();
+
+        assert_eq!(reconciled, 1);
+        let after = repository.get("checksumless-part").await.unwrap().unwrap();
+        assert_eq!(after.state(), &DownloadState::Paused);
+        assert_eq!(after.progress().bytes_downloaded(), 0);
+        assert_eq!(after.error_message(), None);
+        assert!(!part.exists());
     }
 
     #[tokio::test]

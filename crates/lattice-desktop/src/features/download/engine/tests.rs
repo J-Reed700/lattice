@@ -74,6 +74,14 @@ fn authorization_is_not_forwarded_to_untrusted_redirects() {
         "https://models.example.com/file",
         "https://models.example.com/other"
     ));
+    assert!(!may_forward_authorization(
+        "https://huggingface.co/org/model/resolve/main/model.gguf",
+        "http://cdn-lfs.hf.co/file"
+    ));
+    assert!(!may_forward_authorization(
+        "https://huggingface.co/org/model/resolve/main/model.gguf",
+        "http://hf.co/file"
+    ));
 }
 
 fn temp_path(file_name: &str) -> PathBuf {
@@ -756,4 +764,51 @@ async fn get_file_size_strips_auth_on_untrusted_redirect_without_linked_size() {
         .expect("redirect to untrusted host should succeed without leaking auth header");
     assert_eq!(size, Some(32768));
     assert_eq!(final_url, format!("{}/blob.gguf", untrusted.uri()));
+}
+
+#[tokio::test]
+async fn retry_sends_if_range_etag_and_restarts_clean_when_upstream_changes() {
+    use wiremock::{
+        matchers::{header, method, path},
+        Mock, MockServer, ResponseTemplate,
+    };
+
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let part = dir.path().join("model.gguf.part");
+    let url = format!("{}/model.gguf", server.uri());
+
+    // First attempt returns 200 with ETag "v1" and a truncated body (60 bytes vs expected 100),
+    // triggering a retryable premature-stream-end error after writing the partial bytes.
+    Mock::given(method("GET"))
+        .and(path("/model.gguf"))
+        .and(wiremock::matchers::header_exists("range"))
+        .and(header("if-range", "\"v1\""))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("etag", "\"v2\"")
+                .set_body_bytes(vec![0xBBu8; 100]),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/model.gguf"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("etag", "\"v1\"")
+                .set_body_bytes(vec![0xAAu8; 60]),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let engine = HttpDownloadEngine::new().unwrap();
+    let result = engine
+        .download_with_retry(&url, &part, None, None, None, Some(100))
+        .await
+        .expect("If-Range mismatch 200 OK should restart clean");
+
+    assert_eq!(result.bytes_downloaded, 100);
+    assert_eq!(std::fs::read(&part).unwrap(), vec![0xBBu8; 100]);
 }

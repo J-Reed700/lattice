@@ -8,7 +8,7 @@ import { render } from '@/tests/renderWithQueryClient';
 import { ChatTab } from './ChatTab';
 
 const h = vi.hoisted(() => ({
-  llm: { llmSettings: null as null | Record<string, any>, isLoading: false, authValueSet: { ollama: false, llamaCpp: false }, saveLlmUpdates: vi.fn(), saveAuthHeaderValue: vi.fn(), reload: vi.fn() },
+  llm: { llmSettings: null as null | Record<string, any>, isLoading: false, authValueSet: { ollama: false, llamaCpp: false }, authValueStatus: 'ready' as 'loading' | 'error' | 'ready', saveLlmUpdates: vi.fn(), saveAuthHeaderValue: vi.fn(), reload: vi.fn() },
   models: { downloadedModels: [] as Record<string, string>[], activeEmbeddingModel: null as null | Record<string, string> },
   active: { activeModels: null as ActiveModels | null },
   probe: vi.fn(),
@@ -51,6 +51,7 @@ describe('ChatTab', () => {
     vi.clearAllMocks();
     h.llm.isLoading = false;
     h.llm.authValueSet = { ollama: false, llamaCpp: false };
+    h.llm.authValueStatus = 'ready';
     h.llm.llmSettings = settings();
     h.llm.saveLlmUpdates.mockResolvedValue(true);
     h.llm.saveAuthHeaderValue.mockResolvedValue(true);
@@ -343,6 +344,37 @@ describe('ChatTab', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Clear header' }));
       await waitFor(() => expect(h.llm.saveLlmUpdates).toHaveBeenCalledWith({ ollamaAuthHeaderName: '' }));
       expect(h.llm.saveAuthHeaderValue).toHaveBeenCalledWith('ollama', null);
+    });
+
+    it('hides broken-header warning and Clear header while Keychain status is loading or errored', async () => {
+      h.llm.llmSettings = settings({ ollamaAuthHeaderName: 'Authorization' });
+      h.llm.authValueSet = { ollama: false, llamaCpp: false };
+      h.llm.authValueStatus = 'loading';
+      const { rerender } = render(<ChatTab />);
+      expect(
+        screen.queryByText('Header name is saved without a value in Keychain. Enter a value or click Clear header.'),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Clear header' })).not.toBeInTheDocument();
+      expect(screen.getByText('Checking Keychain for the saved header value…')).toBeInTheDocument();
+
+      h.llm.authValueStatus = 'error';
+      rerender(<ChatTab />);
+      expect(
+        screen.queryByText('Header name is saved without a value in Keychain. Enter a value or click Clear header.'),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Clear header' })).not.toBeInTheDocument();
+      expect(screen.getByText('Couldn’t check Keychain status. Saved header settings are preserved.')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Save Ollama connection' }));
+      await waitFor(() =>
+        expect(h.llm.saveLlmUpdates).toHaveBeenCalledWith({
+          ollamaConfigured: true,
+          ollamaUrl: 'http://garden.local:11434',
+          model: 'mistral',
+          ollamaUtilityModel: '',
+          ollamaAuthHeaderName: 'Authorization',
+        }),
+      );
     });
   });
 
