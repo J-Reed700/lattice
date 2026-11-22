@@ -420,50 +420,58 @@ pub(super) async fn triage_turn_with_scope(
 
     if can_route_recent_doc && using_default_router_template {
         let router_start = Instant::now();
-        let step = recorder.begin(TurnStepKind::Route, "Deciding how to answer", None);
-        let classifier_llm = match (container.utility_llm_loader())().await {
-            Ok(Some(utility)) => utility,
-            Ok(None) => Arc::clone(chat_llm),
-            Err(e) => {
-                warn!(
-                    error = %e,
-                    "Utility LLM load failed — skipping unified turn triage"
-                );
-                recorder.end(
-                    &step,
-                    TurnStepState::Failed,
-                    Some("Could not load the model that decides; searching afresh".to_string()),
-                );
-                metrics.router_ms = elapsed_ms(router_start);
-                return Ok(TurnTriageOutcome {
-                    inferred: InferredIntent::as_requested(requested_flags),
-                    decision: RouterDecisionOutcome {
-                        action: RouterAction::NewSearch,
-                        recent_doc_meta: recent_doc,
-                        clarify_message: None,
-                        router_may_search,
-                    },
-                    record: None,
-                });
+        let step = recorder.begin_guarded(TurnStepKind::Route, "Deciding how to answer", None);
+        let classifier_llm = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(super::cancellation::cancelled_error()),
+            loaded = (container.utility_llm_loader())() => match loaded {
+                Ok(Some(utility)) => utility,
+                Ok(None) => Arc::clone(chat_llm),
+                Err(e) => {
+                    if cancel.is_cancelled() {
+                        return Err(super::cancellation::cancelled_error());
+                    }
+                    warn!(
+                        error = %e,
+                        "Utility LLM load failed — skipping unified turn triage"
+                    );
+                    step.failed(Some(
+                        "Could not load the model that decides; searching afresh".to_string(),
+                    ));
+                    metrics.router_ms = elapsed_ms(router_start);
+                    return Ok(TurnTriageOutcome {
+                        inferred: InferredIntent::as_requested(requested_flags),
+                        decision: RouterDecisionOutcome {
+                            action: RouterAction::NewSearch,
+                            recent_doc_meta: recent_doc,
+                            clarify_message: None,
+                            router_may_search,
+                        },
+                        record: None,
+                    });
+                }
             }
         };
         let recent_title = recent_doc
             .as_ref()
             .map(|meta| meta.title.as_str())
             .unwrap_or_default();
-        let classifier = IntentClassifier::new(classifier_llm).with_cancellation(cancel);
+        let classifier = IntentClassifier::new(classifier_llm).with_cancellation(cancel.clone());
         let triage_input =
             classifier.input_for_recent_document(validated_message, context, recent_title);
-        let triage = classifier
-            .triage_with_recent_document(&triage_input, recent_title)
-            .await;
+        let triage = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(super::cancellation::cancelled_error()),
+            triage = classifier.triage_with_recent_document(&triage_input, recent_title) => triage,
+        };
+        if cancel.is_cancelled() {
+            return Err(super::cancellation::cancelled_error());
+        }
 
         if triage.used_fallback {
-            recorder.end(
-                &step,
-                TurnStepState::Failed,
-                Some("No decision from the model; searching afresh".to_string()),
-            );
+            step.failed(Some(
+                "No decision from the model; searching afresh".to_string(),
+            ));
             metrics.router_ms = elapsed_ms(router_start);
             return Ok(TurnTriageOutcome {
                 inferred: InferredIntent::as_requested(requested_flags),
@@ -496,14 +504,10 @@ pub(super) async fn triage_turn_with_scope(
             } else {
                 router_action_label(&RouterAction::NewSearch)
             };
-            recorder.end(
-                &step,
-                TurnStepState::Done,
-                Some(format!(
-                    "{outcome} · {:.0}% confident",
-                    triage.intent.confidence * 100.0
-                )),
-            );
+            step.done(Some(format!(
+                "{outcome} · {:.0}% confident",
+                triage.intent.confidence * 100.0
+            )));
             metrics.router_ms = elapsed_ms(router_start);
             return Ok(TurnTriageOutcome {
                 inferred: InferredIntent {
@@ -557,15 +561,11 @@ pub(super) async fn triage_turn_with_scope(
             None
         };
         let action_code = router_action_code(&action);
-        recorder.end(
-            &step,
-            TurnStepState::Done,
-            Some(format!(
-                "{} · {:.0}% confident",
-                router_action_label(&action),
-                triage.intent.confidence * 100.0
-            )),
-        );
+        step.done(Some(format!(
+            "{} · {:.0}% confident",
+            router_action_label(&action),
+            triage.intent.confidence * 100.0
+        )));
         metrics.router_ms = elapsed_ms(router_start);
         return Ok(TurnTriageOutcome {
             inferred: InferredIntent {
@@ -706,20 +706,28 @@ async fn resolve_router_decision_with_recent(
         has_recent_document: recent_doc_meta.is_some(),
         recent_document_title: recent_doc_meta.as_ref().map(|m| m.title.clone()),
     };
-    let step = recorder.begin(TurnStepKind::Route, "Deciding how to answer", None);
-    let router_llm = container.get_or_load_router_llm().await?;
-    let router = RouterService::new(router_llm, router_settings.clone()).with_cancellation(cancel);
-    let decision = router.route(router_input).await;
+    let step = recorder.begin_guarded(TurnStepKind::Route, "Deciding how to answer", None);
+    let router_llm = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Err(super::cancellation::cancelled_error()),
+        loaded = container.get_or_load_router_llm() => loaded,
+    }?;
+    let router =
+        RouterService::new(router_llm, router_settings.clone()).with_cancellation(cancel.clone());
+    let decision = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Err(super::cancellation::cancelled_error()),
+        decision = router.route(router_input) => decision,
+    };
+    if cancel.is_cancelled() {
+        return Err(super::cancellation::cancelled_error());
+    }
     let action = router_action_code(&decision.action);
-    recorder.end(
-        &step,
-        TurnStepState::Done,
-        Some(format!(
-            "{} · {:.0}% confident",
-            router_action_label(&decision.action),
-            decision.confidence * 100.0
-        )),
-    );
+    step.done(Some(format!(
+        "{} · {:.0}% confident",
+        router_action_label(&decision.action),
+        decision.confidence * 100.0
+    )));
 
     Ok((
         RouterDecisionOutcome {

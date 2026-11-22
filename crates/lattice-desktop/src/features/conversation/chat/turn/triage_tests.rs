@@ -830,3 +830,131 @@ async fn every_triage_outcome_closes_its_route_step() {
         assert_eq!(steps[0].state, expected_state, "{reply}");
     }
 }
+
+/// A model that notifies when a call starts and either stops on the request's
+/// cancellation token (returning `AppError::Cancelled`, like a real provider)
+/// or blocks (like one that ignores it).
+struct WaitForStop {
+    started: Arc<tokio::sync::Notify>,
+    respect_cancel: bool,
+}
+
+#[async_trait]
+impl LLMPort for WaitForStop {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        self.started.notify_one();
+        if self.respect_cancel {
+            if let Some(cancel) = request.cancel.as_ref() {
+                cancel.cancelled().await;
+                return Err(lattice_core::shared::error::AppError::Cancelled(
+                    "stopped".into(),
+                ));
+            }
+        }
+        std::future::pending::<()>().await;
+        unreachable!()
+    }
+    fn model_name(&self) -> &str {
+        "wait-for-stop"
+    }
+    fn max_context_tokens(&self) -> usize {
+        32_768
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
+}
+
+/// Pressing Stop while routing closes the Route step as failed without
+/// claiming `"No decision from the model; searching afresh"`, on both the
+/// unified triage path and the custom-template router path.
+#[tokio::test]
+async fn pressing_stop_during_routing_closes_route_step_as_cancelled_failure() {
+    for respect_cancel in [true, false] {
+        let started = Arc::new(tokio::sync::Notify::new());
+        let runtime = FakeRuntime {
+            utility_llm: Some(Arc::new(WaitForStop {
+                started: Arc::clone(&started),
+                respect_cancel,
+            })),
+            router_llm: Some(Scripted::new([])),
+            ..FakeRuntime::default()
+        };
+        let turn = turn_with_recent_doc(&runtime, Scripted::new([]), "Tell me more");
+        let mut metrics = ConversationFlowTimingMetrics::default();
+
+        let stop = async {
+            started.notified().await;
+            assert!(runtime
+                .turn_cancellation
+                .request_cancel("triage-conv", Some("triage-turn")));
+        };
+        let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::join!(
+                classify::triage_turn(&runtime, &turn, None, &mut metrics),
+                stop
+            )
+        })
+        .await
+        .expect("Stop ends routing immediately");
+
+        let error = result.err().expect("a stopped triage must cancel");
+        assert!(
+            matches!(error, lattice_core::shared::error::AppError::Cancelled(_)),
+            "{error}"
+        );
+        let steps = route_steps(&turn);
+        assert_eq!(steps.len(), 1, "{steps:?}");
+        assert_eq!(steps[0].state, TurnStepState::Failed);
+        assert_eq!(steps[0].result, None);
+    }
+
+    // Custom-template router path: Stop during `router.route` must also fail
+    // the Route step with no result rather than marking it Done as a fallback.
+    let started = Arc::new(tokio::sync::Notify::new());
+    let runtime = FakeRuntime {
+        utility_llm: Some(Scripted::new([CompletionResponse::from_text(
+            r#"{"needsKnowledgeBase":true,"needsWeb":false,"isFollowup":true,"standaloneQuestion":"More on Roadmap","confidence":0.9}"#,
+        )])),
+        router_llm: Some(Arc::new(WaitForStop {
+            started: Arc::clone(&started),
+            respect_cancel: true,
+        })),
+        ..FakeRuntime::default()
+    };
+    let mut turn = turn_with_recent_doc(&runtime, Scripted::new([]), "Expand section 2");
+    turn.settings.llm.router.prompt_template =
+        "Custom router: {query} / {recent_document_title}".to_string();
+    let mut metrics = ConversationFlowTimingMetrics::default();
+
+    let stop = async {
+        started.notified().await;
+        assert!(runtime
+            .turn_cancellation
+            .request_cancel("triage-conv", Some("triage-turn")));
+    };
+    let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        tokio::join!(
+            classify::triage_turn(&runtime, &turn, None, &mut metrics),
+            stop
+        )
+    })
+    .await
+    .expect("Stop ends custom routing immediately");
+
+    let error = result.err().expect("a stopped router must cancel");
+    assert!(
+        matches!(error, lattice_core::shared::error::AppError::Cancelled(_)),
+        "{error}"
+    );
+    let steps = route_steps(&turn);
+    assert_eq!(steps.len(), 1, "{steps:?}");
+    assert_eq!(steps[0].state, TurnStepState::Failed);
+    assert_eq!(steps[0].result, None);
+}
