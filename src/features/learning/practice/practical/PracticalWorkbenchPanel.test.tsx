@@ -926,4 +926,33 @@ describe("Learning Studio Labs & simulations", () => {
     view.rerender(<PracticalWorkbenchPanel program={program} lesson={lesson} />);
     expect(await screen.findByRole("button", { name: /Lesson 1 interview/ })).toHaveAttribute("aria-pressed", "true");
   });
+
+  it("renders a newly generated interview even when the mock backend mutates workspace.activities in place before returning a clone", async () => {
+    const user = userEvent.setup();
+    const sharedState = workspace({ activities: [] });
+    mocks.workspace.mockImplementation(async () => ok(sharedState));
+    mocks.generate.mockImplementation(async (req: { activityId: string; lessonId: string }) => {
+      sharedState.activities.unshift(
+        activity({
+          id: req.activityId,
+          lessonId: req.lessonId,
+          kind: "interview",
+          title: "Acme staff interview",
+          runtimeKind: "none",
+          runtimeProfileId: null,
+          files: [],
+        }),
+      );
+      return ok(structuredClone(sharedState));
+    });
+
+    renderPractical();
+    await user.click(await screen.findByRole("button", { name: "New activity" }));
+    const dialog = screen.getByRole("dialog");
+    await user.selectOptions(within(dialog).getByLabelText("Activity type"), "interview");
+    await user.type(within(dialog).getByLabelText("Company name"), "Acme");
+    await user.click(within(dialog).getByRole("button", { name: "Generate activity" }));
+
+    expect(await screen.findByRole("heading", { name: "Acme staff interview" })).toBeInTheDocument();
+  });
 });

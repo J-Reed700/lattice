@@ -113,7 +113,7 @@ describe('Settings', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Indexing' })).toBeInTheDocument();
   });
 
-  it('keeps ?tab= in sync so navigating to /settings?tab=indexing re-activates Indexing after switching tabs', async () => {
+  it('consumes ?tab= while keeping /settings clean so repeated /settings?tab=indexing deep-links re-activate Indexing', async () => {
     const user = userEvent.setup();
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -142,14 +142,19 @@ describe('Settings', () => {
     );
 
     expect(screen.getByRole('heading', { level: 1, name: 'Indexing' })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole('status', { name: 'settings-location' })).toHaveTextContent('/settings'),
+    );
 
     await user.click(screen.getByRole('button', { name: 'Vault' }));
     expect(screen.getByRole('heading', { level: 1, name: 'Vault' })).toBeInTheDocument();
-    expect(screen.getByRole('status', { name: 'settings-location' })).toHaveTextContent('/settings?tab=vault');
+    expect(screen.getByRole('status', { name: 'settings-location' })).toHaveTextContent('/settings');
 
     await user.click(screen.getByRole('button', { name: 'Jump to indexing' }));
     expect(await screen.findByRole('heading', { level: 1, name: 'Indexing' })).toBeInTheDocument();
-    expect(screen.getByRole('status', { name: 'settings-location' })).toHaveTextContent('/settings?tab=indexing');
+    await waitFor(() =>
+      expect(screen.getByRole('status', { name: 'settings-location' })).toHaveTextContent('/settings'),
+    );
   });
 
   describe('Export functionality', () => {

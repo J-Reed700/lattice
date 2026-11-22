@@ -331,6 +331,7 @@ pub(super) async fn finalize_cancelled_partial_turn(
     } = turn;
     let assistant_response = reply.text.clone();
     if assistant_response.trim().is_empty() {
+        mark_user_message_cancelled(conv_service, user_message_id).await;
         return Ok(());
     }
     let response_tokens = llm.count_tokens(&assistant_response);

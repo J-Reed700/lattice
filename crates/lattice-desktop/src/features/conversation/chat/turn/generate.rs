@@ -29,7 +29,7 @@ pub(super) enum GenerateOutcome {
 
 /// `research` saves each round of a research turn, and resumes one after the
 /// rounds it saved.
-#[allow(dead_code)]
+#[cfg(test)]
 pub(super) async fn generate_answer(
     container: &dyn ChatRuntime,
     turn: &PreparedTurn,

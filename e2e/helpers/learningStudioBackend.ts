@@ -1157,6 +1157,7 @@ export async function installLearningStudioBackend(page: Page) {
         return program;
       },
       list_learning_programs: () => [program.summary],
+      list_learning_outline_runs: () => ({ active: [], recentOutcomes: [] }),
       // No journey opens a tangent from a lesson, so every program lists none.
       list_learning_tangents: (): LearningTangentDto[] => [],
       set_conversation_course: (): null => null,
@@ -2386,7 +2387,8 @@ export async function installLearningStudioBackend(page: Page) {
       },
       get_learning_practical_draft: (args) => practicalDraft('get_learning_practical_draft', args),
       save_learning_practical_draft: (args) => practicalDraft('save_learning_practical_draft', args),
-      get_learning_practical_workspace: () => state.practicalWorkspace,
+      get_learning_practical_workspace: () => structuredClone(state.practicalWorkspace),
+      list_jobs: () => [],
       get_learning_practice_profile: (args) => practiceProfile(getRequest<{ programId: string }>(args).programId),
       save_learning_practice_profile: (args) => {
         const request = getRequest<{ programId: string; details: string; language: string | null; interviewAt: number | null; company: string | null; role: string | null; expectedRevision: number }>(args);

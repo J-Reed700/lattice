@@ -94,7 +94,7 @@ impl DownloadEventBridge {
                     percentage: Some(0.0),
                     eta_seconds: None,
                     status: DownloadStatus::Pending,
-                    error_message: session.error_message().map(str::to_string),
+                    error_message: None,
                 }))
             }
             ME::Progress {
@@ -148,7 +148,7 @@ impl DownloadEventBridge {
                     percentage,
                     eta_seconds,
                     status: DownloadStatus::Downloading,
-                    error_message: session.error_message().map(str::to_string),
+                    error_message: None,
                 }))
             }
             ME::Paused { id } => {
@@ -193,7 +193,7 @@ impl DownloadEventBridge {
                     percentage,
                     eta_seconds: None,
                     status: DownloadStatus::Paused,
-                    error_message: session.error_message().map(str::to_string),
+                    error_message: None,
                 }))
             }
             ME::Resumed { id } => {
@@ -220,6 +220,12 @@ impl DownloadEventBridge {
                 } else {
                     None
                 };
+                let status = status_for(session.state());
+                let error_message = if matches!(status, DownloadStatus::Error) {
+                    session.error_message().map(str::to_string)
+                } else {
+                    None
+                };
 
                 Ok(DownloadEvent::from_single(SingleFileSnapshot {
                     id,
@@ -237,8 +243,8 @@ impl DownloadEventBridge {
                     bytes_per_second: 0,
                     percentage,
                     eta_seconds: None,
-                    status: status_for(session.state()),
-                    error_message: session.error_message().map(str::to_string),
+                    status,
+                    error_message,
                 }))
             }
             ME::Completed { id } => {
@@ -340,7 +346,7 @@ impl DownloadEventBridge {
                     percentage,
                     eta_seconds: None,
                     status: DownloadStatus::Cancelled,
-                    error_message: session.error_message().map(str::to_string),
+                    error_message: None,
                 }))
             }
         }

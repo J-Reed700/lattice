@@ -1075,8 +1075,8 @@ describe('useConversationsController optimistic cleanup', () => {
     });
   });
 
-  it('restores an unsaved prompt into the scoped draft store when stopped during retrieval outside the active global chat', async () => {
-    conversationUiStore.setState({ activeConversationId: 'other-global-chat' });
+  it('leaves both global composerDraft and scoped tangent drafts untouched when a scoped turn is stopped', async () => {
+    conversationUiStore.setState({ activeConversationId: 'other-global-chat', composerDraft: 'Keep my main draft' });
     setDraft(conversationDraftKey('scoped-tangent-1'), '');
     let resolveChat: ((value: unknown) => void) | undefined;
     api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveChat = resolve; }));
@@ -1095,7 +1095,8 @@ describe('useConversationsController optimistic cleanup', () => {
       await sending;
     });
 
-    expect(useDraftStore.getState().drafts[conversationDraftKey('scoped-tangent-1')]).toBe('Scoped stop question');
+    expect(conversationUiStore.getState().composerDraft).toBe('Keep my main draft');
+    expect(useDraftStore.getState().drafts[conversationDraftKey('scoped-tangent-1')] ?? '').toBe('');
   });
 
   it('dismisses queryError when clearError is called until a new query error occurs', async () => {

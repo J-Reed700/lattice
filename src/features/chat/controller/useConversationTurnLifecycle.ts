@@ -354,16 +354,9 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
           // copy. Hand it back to the composer rather than lose it.
           const lastUser = [...refreshed].reverse().find(message => message.role === 'user');
           const questionLost = showUserBubble && lastUser?.content !== content;
-          if (questionLost) {
-            if (ownsComposer()) {
-              conversationUiStore.setState({ error: null, composerDraft: content });
-            } else {
-              setDraft(conversationDraftKey(requestConversationId), content);
-              conversationUiStore.setState({ error: null });
-            }
-          } else {
-            conversationUiStore.setState({ error: null });
-          }
+          conversationUiStore.setState(questionLost && ownsComposer()
+            ? { error: null, composerDraft: content }
+            : { error: null });
           return 'cancelled';
         }
         const detail: unknown = result.details?.details;

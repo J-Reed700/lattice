@@ -4,7 +4,7 @@
  * Icon-led navigation and grouped settings in a responsive reading column.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { Archive, Boxes, ChevronRight, Download, FileText, FolderOpen, Globe, Layers3, MessageCircle, Palette, RotateCcw, Scale, ScanLine, Search, ShieldCheck, SlidersHorizontal, Upload, Volume2, Wrench, type LucideIcon } from 'lucide-react';
 import { useSearchParams } from 'react-router';
@@ -104,19 +104,15 @@ export function Settings() {
     requestedTab && tabIds.has(requestedTab) ? requestedTab as SettingsTab : 'search'
   );
   useEffect(() => {
-    if (requestedTab && tabIds.has(requestedTab)) setActiveTab(requestedTab as SettingsTab);
-  }, [requestedTab]);
+    if (!requestedTab) return;
+    if (tabIds.has(requestedTab)) {
+      setActiveTab(requestedTab as SettingsTab);
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete('tab');
+    setSearchParams(next, { replace: true });
+  }, [requestedTab, searchParams, setSearchParams]);
 
-  const selectTab = useCallback(
-    (tab: SettingsTab) => {
-      setActiveTab(tab);
-      if (searchParams.get('tab') === tab) return;
-      const next = new URLSearchParams(searchParams);
-      next.set('tab', tab);
-      setSearchParams(next, { replace: true });
-    },
-    [searchParams, setSearchParams],
-  );
   const [showResetDialog, setShowResetDialog] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
@@ -131,12 +127,12 @@ export function Settings() {
     const handleNavigate = (event: Event) => {
       const detail = (event as CustomEvent<{ tab?: string }>).detail;
       if (detail?.tab && tabIds.has(detail.tab)) {
-        selectTab(detail.tab as SettingsTab);
+        setActiveTab(detail.tab as SettingsTab);
       }
     };
     window.addEventListener('settings:navigate-tab', handleNavigate);
     return () => window.removeEventListener('settings:navigate-tab', handleNavigate);
-  }, [selectTab]);
+  }, []);
 
   const handleReset = async () => {
     setIsResetting(true);
@@ -221,7 +217,7 @@ export function Settings() {
                   <button
                     key={tab.id}
                     type="button"
-                    onClick={() => selectTab(tab.id)}
+                    onClick={() => setActiveTab(tab.id)}
                     aria-current={isActive ? 'page' : undefined}
                     className={cn(
                       'relative mb-0.5 flex min-h-8 w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-left text-ui transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',

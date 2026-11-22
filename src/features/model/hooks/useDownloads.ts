@@ -225,7 +225,7 @@ const toDownloadStatus = (
         ? snapshot.errorMessage !== undefined
           ? snapshot.errorMessage
           : (identity.existing?.error_message ?? null)
-        : (snapshot.errorMessage ?? null),
+        : null,
     retry_count: identity.existing?.retry_count ?? 0,
     created_at: identity.existing?.created_at ?? now,
     started_at: identity.existing?.started_at ?? null,

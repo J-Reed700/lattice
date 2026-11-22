@@ -442,3 +442,57 @@ async fn cancelled_turn_marks_user_completed_with_cancelled_metadata() {
     assert_eq!(user_meta["cancelled"], true);
     assert!(user_meta.get("error").is_none());
 }
+
+#[tokio::test]
+async fn cancelled_partial_turn_with_empty_reply_marks_user_cancelled_instead_of_pending() {
+    use crate::features::conversation::chat::focus::FocusScope;
+    use crate::features::conversation::chat::test_runtime::FakeRuntime;
+    use crate::features::conversation::chat::turn_record::TurnRecorder;
+
+    let (service, pool, id, user_id) = service_with_pending_question().await;
+    let runtime = FakeRuntime::default();
+    let llm: Arc<dyn lattice_core::application::ports::LLMPort> =
+        Arc::new(crate::features::llm::engine::factory::MockLLMPort::new());
+    let focus = FocusScope::default();
+    let recorder = TurnRecorder::silent(&id, "req-empty-partial");
+    let names = std::sync::Arc::new(
+        lattice_core::application::services::model_contract::kept::TurnNames::unstored(),
+    );
+
+    finalize_cancelled_partial_turn(
+        &runtime,
+        ChatTurn {
+            conv_service: &service,
+            conversation_id: &id,
+            request_id: "req-empty-partial",
+            message: "question?",
+            standalone_question: None,
+            llm: &llm,
+            highlight_terms: &[],
+            focus: &focus,
+            recorder: &recorder,
+            names: &names,
+        },
+        &user_id,
+        ReplyText {
+            text: "   ".into(),
+            ..Default::default()
+        },
+        Vec::new(),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(status_of(&pool, &user_id).await, "completed");
+    let user_meta_raw: String =
+        sqlx::query_scalar("SELECT metadata FROM conversation_messages WHERE id=?")
+            .bind(&user_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let user_meta: serde_json::Value = serde_json::from_str(&user_meta_raw).unwrap();
+    assert_eq!(user_meta["cancelled"], true);
+}

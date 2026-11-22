@@ -69,7 +69,7 @@ export function ModelRow({
   const compactMeta = [formatSize(metadata.size_gb), downloads ? `${downloads} downloads` : null].filter(Boolean).join(' · ');
 
   const renderAction = () => {
-    if (isDownloaded) {
+    if (isDownloaded || activeDownload?.state === 'Completed') {
       return <span className="inline-flex items-center gap-1.5 rounded-md bg-success-muted px-2 py-1 text-xs font-medium text-success-fg"><Check className="h-3.5 w-3.5" aria-hidden="true" />Downloaded</span>;
     }
 

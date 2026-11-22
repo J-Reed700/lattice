@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Beaker, CircleHelp, LoaderCircle, Plus } from "lucide-react";
@@ -109,9 +109,10 @@ export function PracticalWorkbenchPanel({
     runId: string;
   } | null>(null);
   const workspace = query.data;
-  const activities = useMemo(
-    () => workspace?.activities.filter((item) => !lesson || item.lessonId === lesson.id) ?? [],
-    [workspace?.activities, lesson],
+  const activities =
+    workspace?.activities.filter((item) => !lesson || item.lessonId === lesson.id) ?? [];
+  const generatedActivityPresent = Boolean(
+    generation && activities.some((item) => item.id === generation.activityId),
   );
   const activeActivity =
     activities.find((item) => item.id === selectedId) ?? activities[0];
@@ -195,7 +196,7 @@ export function PracticalWorkbenchPanel({
   // Place after useLearningLabDraft so its load effect populates context.loadPromise before flush() runs on mount.
   useEffect(() => {
     if (!generation || !lesson || generation.status !== 'succeeded' || generation.lessonId !== lesson.id) return;
-    if (!activities.some((item) => item.id === generation.activityId)) return;
+    if (!generatedActivityPresent) return;
     let cancelled = false;
     void (async () => {
       if (activeActivityIdRef.current && activeActivityIdRef.current !== generation.activityId) {
@@ -208,7 +209,7 @@ export function PracticalWorkbenchPanel({
       dismissGeneration(programId, lesson.id);
     })();
     return () => { cancelled = true; };
-  }, [activities, dismissGeneration, generation, lesson, programId]);
+  }, [dismissGeneration, generatedActivityPresent, generation, lesson, programId]);
   const editorFiles = draft.files;
   const selectedFile = editorFiles.find((file) => file.path === selectedFilePath) ?? editorFiles[0];
 

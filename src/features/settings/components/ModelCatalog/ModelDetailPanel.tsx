@@ -422,7 +422,7 @@ function ModelDetailContent({
     }
     if (!hasDownloadSource) return null;
     if (isCheckingDownload) return <span className="text-sm text-text-muted">Checking…</span>;
-    if (isDownloaded) return <span className="text-sm text-text-muted">Downloaded</span>;
+    if (isDownloaded || activeDownload?.state === 'Completed') return <span className="text-sm text-text-muted">Downloaded</span>;
     if (isStartingDownload) return <span className="text-sm text-text-muted">Starting…</span>;
     if (activeDownload?.state === 'Paused') {
       const percentage = activeDownload.percentage;

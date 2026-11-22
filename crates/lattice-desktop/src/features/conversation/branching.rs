@@ -451,7 +451,7 @@ fn with_outcome_metadata(
 /// Puts a lifted question back on the thread after a failed regenerate, only
 /// when the turn failed before saving it again (the thread no longer than when
 /// it was lifted). Returns the id of the question it put back, if any.
-#[allow(dead_code)]
+#[cfg(test)]
 async fn restore_lifted_question(
     branches: &dyn ConversationBranches,
     conversation_id: &str,

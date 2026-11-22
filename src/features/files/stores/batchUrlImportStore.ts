@@ -95,12 +95,3 @@ export const useBatchUrlImportStore = create<BatchUrlImportState>((set) => ({
       lastRunResult: null,
     }),
 }));
-
-/**
- * Navigate to the library root without requiring a router context.
- * Used by ingest completion toasts even after leaving the ingest route.
- */
-export const openLibraryFromIngest = (): void => {
-  window.history.pushState({}, '', '/files');
-  window.dispatchEvent(new PopStateEvent('popstate'));
-};
