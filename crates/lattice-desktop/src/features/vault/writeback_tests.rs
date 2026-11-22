@@ -189,6 +189,12 @@ async fn failed_index_action_keeps_the_durable_write_for_retry() {
     .execute(&pool)
     .await
     .unwrap();
+    sqlx::raw_sql(include_str!(
+        "../../../migrations/20261122000000_vault_mirror_text.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO daily_notes_workspace VALUES ('note', 'Title', 'body')")
         .execute(&pool)
         .await
@@ -198,9 +204,16 @@ async fn failed_index_action_keeps_the_durable_write_for_retry() {
         .unwrap()
         .remove(0);
 
-    super::super::repository::mark_mirrored(&db, &write, Some("sha"))
-        .await
-        .unwrap();
+    super::super::repository::mark_mirrored(
+        &db,
+        &write,
+        Some(super::super::repository::Synced {
+            file_sha256: "sha",
+            text_sha256: "text",
+        }),
+    )
+    .await
+    .unwrap();
     assert!(
         settle_write(&db, &write, Err("simulated index failure".into()))
             .await
@@ -462,10 +475,13 @@ async fn mirror_preserves_existing_frontmatter_tags_and_skips_clobbering_externa
         .unwrap();
     assert_eq!(converged_note.content, "obsidian edit v2");
     settle_write(&db, &stale_write, Ok(())).await.unwrap();
-    assert!(super::super::repository::pending(&db)
+    let queued = super::super::repository::pending(&db).await.unwrap();
+    assert_eq!(queued.len(), 1, "only the kept copy waits to be written");
+    let copy = super::super::repository::workspace_notes(&db)
+        .get(&queued[0].note_id)
         .await
-        .unwrap()
-        .is_empty());
+        .unwrap();
+    assert_eq!(copy.content, "stale app edit");
 }
 
 /// A note edited in its file and in Lattice before Lattice's write landed

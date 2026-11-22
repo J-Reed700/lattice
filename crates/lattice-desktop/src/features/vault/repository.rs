@@ -1,10 +1,13 @@
 //! Durable, coalesced vault write intentions. Bodies remain in the notes table.
 use crate::infrastructure::persistence::repositories::workspace_notes::{
-    timestamp_from_row, DailyNotesRepository,
+    note_from_row, timestamp_from_row, DailyNotesRepository, NOTE_COLUMNS,
 };
-use lattice_core::application::contracts::notes::{NoteTimestampRecord, VaultNoteUpsert};
+use lattice_core::application::contracts::notes::{
+    NoteTimestampRecord, VaultNoteUpsert, WorkspaceNoteRecord,
+};
 use lattice_core::application::ports::WorkspaceNotesPort;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::timestamps::now_db_timestamp;
 use lattice_core::shared::persistence::{Database, WriteTx};
 
 /// The notes table the vault mirrors, seen only through its port.
@@ -19,12 +22,38 @@ pub(super) struct PendingWrite {
     pub mirror_complete: bool,
     pub last_mirrored_sha256: Option<String>,
     pub writing_sha256: Option<String>,
+    pub mirrored_text_sha256: Option<String>,
+}
+
+/// What one sync with a note's file left behind: the file's digest and the
+/// digest of the note's title and text in it.
+#[derive(Clone, Copy)]
+pub(super) struct Synced<'a> {
+    pub file_sha256: &'a str,
+    pub text_sha256: &'a str,
+}
+
+pub(super) fn note_text_sha256(title: &str, content: &str) -> String {
+    lattice_core::shared::hash::sha256_hex(format!("{}:{title}{content}", title.len()).as_bytes())
+}
+
+pub(super) struct KeptCopy {
+    pub id: String,
+    pub title: String,
+}
+
+pub(super) enum Reconciled {
+    /// A newer Lattice edit replaced the write; nothing changed.
+    Superseded,
+    TookFile {
+        kept_copy: Option<KeptCopy>,
+    },
 }
 
 pub(super) async fn pending(db: &Database) -> Result<Vec<PendingWrite>> {
     let mut read = db.begin_read().await?;
     let writes = sqlx::query_as(
-        "SELECT o.note_id, o.revision, o.mirror_complete, m.last_mirrored_sha256, m.writing_sha256 \
+        "SELECT o.note_id, o.revision, o.mirror_complete, m.last_mirrored_sha256, m.writing_sha256, m.mirrored_text_sha256 \
          FROM vault_write_outbox o \
          LEFT JOIN vault_mirror_state m ON m.note_id = o.note_id \
          WHERE o.retry_at <= unixepoch() ORDER BY o.rowid LIMIT 64",
@@ -57,7 +86,7 @@ pub(super) async fn enqueue_all(db: &Database) -> Result<()> {
 pub(super) async fn mark_mirrored(
     db: &Database,
     write: &PendingWrite,
-    sha256_hex: Option<&str>,
+    synced: Option<Synced<'_>>,
 ) -> Result<()> {
     let mut tx = db.begin_write().await?;
     sqlx::query(
@@ -68,8 +97,8 @@ pub(super) async fn mark_mirrored(
     .bind(&write.revision)
     .execute(&mut *tx)
     .await?;
-    match sha256_hex {
-        Some(sha) => record_baseline(&mut tx, &write.note_id, sha).await?,
+    match synced {
+        Some(synced) => record_baseline(&mut tx, &write.note_id, synced).await?,
         None => {
             sqlx::query("DELETE FROM vault_mirror_state WHERE note_id = ?")
                 .bind(&write.note_id)
@@ -81,26 +110,42 @@ pub(super) async fn mark_mirrored(
     Ok(())
 }
 
-pub(super) async fn begin_mirror(db: &Database, note_id: &str, sha256_hex: &str) -> Result<()> {
+pub(super) async fn begin_mirror(
+    db: &Database,
+    note_id: &str,
+    own_unrecorded: Option<Synced<'_>>,
+    writing_sha256: &str,
+) -> Result<()> {
     let mut tx = db.begin_write().await?;
-    sqlx::query("UPDATE vault_mirror_state SET writing_sha256 = ? WHERE note_id = ?")
-        .bind(sha256_hex)
-        .bind(note_id)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "UPDATE vault_mirror_state SET \
+         last_mirrored_sha256 = COALESCE(?, last_mirrored_sha256), \
+         mirrored_text_sha256 = COALESCE(?, mirrored_text_sha256), \
+         writing_sha256 = ? \
+         WHERE note_id = ?",
+    )
+    .bind(own_unrecorded.map(|s| s.file_sha256))
+    .bind(own_unrecorded.map(|s| s.text_sha256))
+    .bind(writing_sha256)
+    .bind(note_id)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(())
 }
 
-async fn record_baseline(tx: &mut WriteTx, note_id: &str, sha256_hex: &str) -> Result<()> {
+async fn record_baseline(tx: &mut WriteTx, note_id: &str, synced: Synced<'_>) -> Result<()> {
     sqlx::query(
-        "INSERT INTO vault_mirror_state (note_id, last_mirrored_sha256, writing_sha256) \
-         VALUES (?, ?, NULL) \
+        "INSERT INTO vault_mirror_state (note_id, last_mirrored_sha256, mirrored_text_sha256, writing_sha256) \
+         VALUES (?, ?, ?, NULL) \
          ON CONFLICT(note_id) DO UPDATE SET \
-         last_mirrored_sha256 = excluded.last_mirrored_sha256, writing_sha256 = NULL",
+         last_mirrored_sha256 = excluded.last_mirrored_sha256, \
+         mirrored_text_sha256 = excluded.mirrored_text_sha256, \
+         writing_sha256 = NULL",
     )
     .bind(note_id)
-    .bind(sha256_hex)
+    .bind(synced.file_sha256)
+    .bind(synced.text_sha256)
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -150,33 +195,78 @@ pub(super) async fn upsert_from_vault_if_unqueued(
         .bind(note.id)
         .execute(&mut *tx)
         .await?;
-        record_baseline(&mut tx, note.id, sha256_hex).await?;
+        record_baseline(
+            &mut tx,
+            note.id,
+            Synced {
+                file_sha256: sha256_hex,
+                text_sha256: &note_text_sha256(note.title, note.content),
+            },
+        )
+        .await?;
     }
     tx.commit().await?;
     Ok(imported)
 }
 
-/// Reconcile SQLite `daily_notes_workspace` to match an externally edited
-/// markdown file preserved during a queued writeback conflict, and mark the
-/// outbox entry mirrored while preserving `write.revision` so `acknowledge`
-/// settles cleanly. Returns `true` when SQLite was updated.
+/// Reconcile the note to an externally edited file found during a queued
+/// writeback, mark the outbox entry mirrored at `write.revision` so
+/// `acknowledge` settles it, and keep Lattice's text as a new note when it
+/// changed since the last sync and differs from the file's.
 pub(super) async fn reconcile_external_note_and_mark_mirrored(
     db: &Database,
     write: &PendingWrite,
     note: VaultNoteUpsert<'_>,
-    sha256_hex: &str,
-) -> Result<bool> {
+    file_sha256: &str,
+) -> Result<Reconciled> {
     let mut tx = db.begin_write().await?;
-    let result = sqlx::query(
+    let queued: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM vault_write_outbox WHERE note_id = ? AND revision = ?)",
+    )
+    .bind(note.id)
+    .bind(&write.revision)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !queued {
+        tx.commit().await?;
+        return Ok(Reconciled::Superseded);
+    }
+    let query = format!("SELECT {NOTE_COLUMNS} FROM daily_notes_workspace WHERE id = ?");
+    let row: Option<WorkspaceNoteRecord> = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
+        .bind(note.id)
+        .try_map(note_from_row)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let mut kept_copy = None;
+    if let Some(row) = row {
+        if write.mirrored_text_sha256.as_deref()
+            != Some(note_text_sha256(&row.title, &row.content).as_str())
+            && (row.title.as_str(), row.content.as_str()) != (note.title, note.content)
+        {
+            let now = now_db_timestamp();
+            let copy = WorkspaceNoteRecord {
+                id: uuid::Uuid::new_v4().to_string(),
+                revision: 0,
+                title: format!("{} (conflicted copy {})", row.title, &now[..10]),
+                created_at: now.clone(),
+                updated_at: now,
+                ..row
+            };
+            DailyNotesRepository::insert_in_transaction(&mut tx, &copy).await?;
+            kept_copy = Some(KeptCopy {
+                id: copy.id,
+                title: copy.title,
+            });
+        }
+    }
+    sqlx::query(
         r#"
         INSERT INTO daily_notes_workspace (id, title, content, created_at, updated_at)
-        SELECT ?, ?, ?, ?, ?
-        WHERE EXISTS (SELECT 1 FROM vault_write_outbox WHERE note_id = ? AND revision = ?)
+        VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             title = excluded.title,
             content = excluded.content,
             updated_at = excluded.updated_at
-        WHERE EXISTS (SELECT 1 FROM vault_write_outbox WHERE note_id = ? AND revision = ?)
         "#,
     )
     .bind(note.id)
@@ -184,10 +274,6 @@ pub(super) async fn reconcile_external_note_and_mark_mirrored(
     .bind(note.content)
     .bind(note.created_at)
     .bind(note.updated_at)
-    .bind(note.id)
-    .bind(&write.revision)
-    .bind(note.id)
-    .bind(&write.revision)
     .execute(&mut *tx)
     .await
     .map_err(|error| {
@@ -196,21 +282,26 @@ pub(super) async fn reconcile_external_note_and_mark_mirrored(
             note.id
         ))
     })?;
-    let reconciled = result.rows_affected() > 0;
-    if reconciled {
-        sqlx::query(
-            "UPDATE vault_write_outbox \
-             SET mirror_complete = 1, revision = ?, retry_at = 0 \
-             WHERE note_id = ?",
-        )
-        .bind(&write.revision)
-        .bind(note.id)
-        .execute(&mut *tx)
-        .await?;
-        record_baseline(&mut tx, note.id, sha256_hex).await?;
-    }
+    sqlx::query(
+        "UPDATE vault_write_outbox \
+         SET mirror_complete = 1, revision = ?, retry_at = 0 \
+         WHERE note_id = ?",
+    )
+    .bind(&write.revision)
+    .bind(note.id)
+    .execute(&mut *tx)
+    .await?;
+    record_baseline(
+        &mut tx,
+        note.id,
+        Synced {
+            file_sha256,
+            text_sha256: &note_text_sha256(note.title, note.content),
+        },
+    )
+    .await?;
     tx.commit().await?;
-    Ok(reconciled)
+    Ok(Reconciled::TookFile { kept_copy })
 }
 
 pub(crate) async fn find_note_document_id(db: &Database, note_id: &str) -> Result<Option<String>> {
@@ -382,6 +473,12 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        sqlx::raw_sql(include_str!(
+            "../../../migrations/20261122000000_vault_mirror_text.sql"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
         let mut transaction = pool.begin().await.unwrap();
         sqlx::query("INSERT INTO daily_notes_workspace VALUES ('rolled-back', 'Title', 'body')")
             .execute(&mut *transaction)
@@ -439,6 +536,12 @@ mod tests {
         .unwrap();
         sqlx::raw_sql(include_str!(
             "../../../migrations/20261121010000_vault_mirror_writing.sql"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::raw_sql(include_str!(
+            "../../../migrations/20261122000000_vault_mirror_text.sql"
         ))
         .execute(&pool)
         .await

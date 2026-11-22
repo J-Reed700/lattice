@@ -162,7 +162,7 @@ impl VaultWatcherHandle {
                 error = %e,
                 "vault watcher: vault folder doesn't exist and couldn't be created"
             );
-            emit_watcher_error(
+            super::events::emit_watcher_error(
                 &self.inner.app_handle,
                 &format!(
                     "Vault folder '{}' could not be created: {}",
@@ -259,7 +259,7 @@ async fn run_watcher(
         }) {
             Ok(watcher) => watcher,
             Err(error) => {
-                emit_watcher_error(
+                super::events::emit_watcher_error(
                     &app_handle,
                     &format!("Vault watcher failed to start: {error}"),
                 );
@@ -273,7 +273,7 @@ async fn run_watcher(
             error = %e,
             "vault watcher: failed to watch vault root"
         );
-        emit_watcher_error(
+        super::events::emit_watcher_error(
             &app_handle,
             &format!(
                 "Vault watcher couldn't watch '{}': {}",
@@ -324,7 +324,7 @@ async fn run_watcher(
             )
             .await
             {
-                emit_watcher_error(&app_handle, &error.to_string());
+                super::events::emit_watcher_error(&app_handle, &error.to_string());
             }
         }
         for path in paths {
@@ -482,7 +482,7 @@ pub(crate) async fn import_one(
                 path = %path.display(),
                 "vault watcher: imported external edit"
             );
-            emit_note_imported(app_handle, &parsed.id);
+            super::events::emit_note_imported(app_handle, &parsed.id);
             if let Some(writer) = vault_writer {
                 super::writeback::spawn_sync_workspace_note(writer);
             }
@@ -572,7 +572,7 @@ async fn handle_external_delete(
                 path = %path.display(),
                 "vault watcher: deleted note (external rm)"
             );
-            emit_note_imported(app_handle, id);
+            super::events::emit_note_imported(app_handle, id);
             if let Some(writer) = vault_writer {
                 super::writeback::spawn_delete_workspace_note(writer);
             }
@@ -589,36 +589,6 @@ async fn handle_external_delete(
             error = %e,
             "vault watcher: SQL delete failed"
         ),
-    }
-}
-
-fn emit_note_imported(app_handle: &AppHandleCell, note_id: &str) {
-    use tauri::Emitter;
-    let guard = match app_handle.read() {
-        Ok(g) => g,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let Some(handle) = guard.as_ref() else {
-        return;
-    };
-    let payload = serde_json::json!({ "noteId": note_id });
-    if let Err(e) = handle.emit("vault:note-imported", payload) {
-        tracing::warn!(error = %e, "failed to emit vault:note-imported event");
-    }
-}
-
-fn emit_watcher_error(app_handle: &AppHandleCell, error: &str) {
-    use tauri::Emitter;
-    let guard = match app_handle.read() {
-        Ok(g) => g,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let Some(handle) = guard.as_ref() else {
-        return;
-    };
-    let payload = serde_json::json!({ "error": error });
-    if let Err(e) = handle.emit("vault:watcher-error", payload) {
-        tracing::warn!(error = %e, "failed to emit vault:watcher-error event");
     }
 }
 

@@ -9,7 +9,8 @@ use lattice_core::shared::persistence::timestamps::parse_db_timestamp;
 use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 
-use super::{emit_note_imported, import_one, AppHandleCell, RescanLock, WriteSuppressionRegistry};
+use super::{import_one, AppHandleCell, RescanLock, WriteSuppressionRegistry};
+use crate::features::vault::events::emit_note_imported;
 
 const RESCAN_SEEN_CHUNK: usize = 250;
 
