@@ -77,7 +77,9 @@ impl TranscribeSpeechUseCase {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use lattice_core::application::ports::transcription_port::{Transcript, TranscriptSegment};
+    use lattice_core::application::ports::transcription_port::{
+        ActiveTranscriptionModel, Transcript, TranscriptSegment,
+    };
     use std::path::Path;
     use std::sync::Mutex;
 
@@ -114,7 +116,7 @@ mod tests {
             Ok(!self.missing)
         }
 
-        async fn active_model_name(&self) -> Result<Option<String>> {
+        async fn active_model(&self) -> Result<Option<ActiveTranscriptionModel>> {
             Ok(None)
         }
     }

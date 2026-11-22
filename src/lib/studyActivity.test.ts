@@ -96,7 +96,7 @@ describe('Study request activity', () => {
   });
 
   it('does not duplicate existing progress or mistake a queued job for completed work', () => {
-    for (const command of ['prepare_learning_lesson', 'generate_learning_program', 'repair_learning_outline', 'start_learning_generation_job', 'retry_learning_generation_job', 'start_learning_practical_run']) {
+    for (const command of ['prepare_learning_lesson', 'generate_learning_program', 'repair_learning_outline', 'list_learning_outline_runs', 'start_learning_generation_job', 'retry_learning_generation_job', 'start_learning_practical_run']) {
       expect(beginStudyActivity('learning', command)).toBeUndefined();
     }
     expect(beginStudyActivity('conversation', 'send_message')).toBeUndefined();

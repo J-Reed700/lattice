@@ -6,8 +6,6 @@ use crate::features::search::trait_def::SearchEnrichmentServiceTrait;
 use crate::features::tags::mocks::MockTagService;
 use crate::features::web::mocks::MockWebIngestionService;
 use crate::features::web::{WebIngestionResult, WebIngestionServiceTrait};
-use crate::infrastructure::services::mocks::MockModelManager;
-use crate::infrastructure::services::traits::ModelManagerTrait;
 use lattice_core::application::ports::EmbeddingPort;
 
 #[tokio::test]
@@ -96,81 +94,6 @@ async fn test_mock_tag_service() {
     let tag2 = service.get_or_create("rust", "#000000").await.unwrap();
     assert_eq!(tag.id(), tag2.id());
     assert_eq!(tag2.color(), "#ff5733"); // Original color preserved
-}
-
-#[tokio::test]
-async fn test_mock_model_manager_defaults() {
-    let manager = MockModelManager::new();
-
-    // By default, the reranker should be ready
-    assert!(manager.is_reranker_ready().await);
-    assert_eq!(manager.get_download_progress(), Some(1.0));
-}
-
-#[tokio::test]
-async fn test_mock_model_manager_ensure_reranker() {
-    let manager = MockModelManager::new();
-
-    // Initially not ready
-    manager.set_reranker_ready(false);
-    assert!(!manager.is_reranker_ready().await);
-
-    // Ensure makes it ready
-    let path = manager.ensure_reranker_available().await.unwrap();
-    assert!(manager.is_reranker_ready().await);
-    assert_eq!(
-        path,
-        std::path::PathBuf::from("/mock/models/reranker/reranker.gguf")
-    );
-}
-
-#[tokio::test]
-async fn test_mock_model_manager_paths() {
-    let manager = MockModelManager::new();
-
-    let reranker_path = manager.get_reranker_path();
-
-    assert_eq!(
-        reranker_path,
-        std::path::PathBuf::from("/mock/models/reranker/reranker.gguf")
-    );
-}
-
-#[tokio::test]
-async fn test_mock_model_manager_custom_dir() {
-    let custom_dir = std::path::PathBuf::from("/custom/path");
-    let manager = MockModelManager::with_model_dir(custom_dir.clone());
-
-    assert_eq!(
-        manager.get_reranker_path(),
-        custom_dir.join("reranker/reranker.gguf")
-    );
-}
-
-#[tokio::test]
-async fn test_mock_model_manager_download_progress() {
-    let manager = MockModelManager::new();
-
-    // Default is complete
-    assert_eq!(manager.get_download_progress(), Some(1.0));
-
-    manager.set_download_progress(Some(0.5));
-    assert_eq!(manager.get_download_progress(), Some(0.5));
-
-    manager.set_download_progress(None);
-    assert_eq!(manager.get_download_progress(), None);
-}
-
-#[tokio::test]
-async fn test_mock_model_manager_cancel_download() {
-    let manager = MockModelManager::new();
-
-    manager.set_download_progress(Some(0.3));
-    assert_eq!(manager.get_download_progress(), Some(0.3));
-
-    // Cancel should clear progress
-    manager.cancel_download();
-    assert_eq!(manager.get_download_progress(), None);
 }
 
 #[tokio::test]

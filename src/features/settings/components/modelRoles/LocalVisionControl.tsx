@@ -7,64 +7,41 @@
  * pause and failure are the ones every model download shows.
  */
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 import { Eye } from 'lucide-react';
 
 import { Switch } from '@/components/ui';
+import { DownloadFailure } from '@/features/model/components/Downloads/DownloadFailure';
+import { InlineDownloadStatus } from '@/features/model/components/Downloads/InlineDownloadStatus';
+import { useDownloadPhase } from '@/features/model/hooks/useDownloadPhase';
 import { useDownloadActions } from '@/features/model/hooks/useDownloads';
 import { useDownloadState } from '@/features/model/hooks/useDownloadState';
+import { latestDownloadFor } from '@/features/model/utils/downloadPhase';
 import { useSettingsQuery, useUpdateSettingsMutation } from '@/features/settings/hooks/useSettingsQuery';
 import type { DownloadedVisionDto, JsonValue } from '@/lib/bindings';
 import { toast } from '@/stores/toastStore';
 import type { DownloadedModel } from '@/types/downloadedModels';
-import type { DownloadStatus } from '@/types/downloads';
 
 import { useModelRoles } from './ModelRolesContext';
 import { SECONDARY_BUTTON_CLASS, SWITCH_CLASS } from '../settingsStyles';
-
-/** The projector's name beside the weights, as the backend writes it. */
-const PROJECTOR_FILE = 'mmproj.gguf';
-
-const ACTIVE: ReadonlySet<DownloadStatus['state']> = new Set(['Pending', 'Downloading', 'Paused']);
 
 export function formatProjectorSize(bytes: number): string {
   const mb = bytes / (1024 * 1024);
   return mb < 1024 ? `${mb.toFixed(0)} MB` : `${(mb / 1024).toFixed(1)} GB`;
 }
 
-const normalize = (path: string) => path.replace(/\\/g, '/');
-
-/** Where the projector lands: the folder that holds the weights. */
-function projectorPath(weights: string): string {
-  const path = normalize(weights);
-  return `${path.slice(0, path.lastIndexOf('/') + 1)}${PROJECTOR_FILE}`;
-}
-
 export function LocalVisionControl({ model, vision }: { model: DownloadedModel; vision: DownloadedVisionDto }) {
   const { data: settings } = useSettingsQuery();
   const { mutateAsync: updateSettings, isPending: isSaving } = useUpdateSettingsMutation();
-  const { downloads } = useDownloadState();
+  const { downloads, downloadsSettled } = useDownloadState();
   const { startVisionProjectorDownload } = useDownloadActions();
-  const { refresh } = useModelRoles();
-  const [startedId, setStartedId] = useState<string | null>(null);
+  const { refresh, modelsFetchedAfterMount } = useModelRoles();
   const [isStarting, setIsStarting] = useState(false);
 
-  // The one this row started, else the latest download of this model's
-  // projector (one started before the page was opened, say).
-  const target = projectorPath(model.file_path);
-  const download = downloads.find((candidate) => candidate.id === startedId)
-    ?? downloads
-      .filter((candidate) => normalize(candidate.destination) === target && candidate.state !== 'Cancelled')
-      .sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
-    ?? null;
-  const isDownloading = download !== null && ACTIVE.has(download.state);
-  const completed = download?.state === 'Completed';
-
+  const download = latestDownloadFor(downloads, vision.projector_path);
   // A finished projector changes what the model row reports; re-read it.
-  useEffect(() => {
-    if (completed && !vision.projector_downloaded) void refresh();
-  }, [completed, vision.projector_downloaded, refresh]);
+  const phase = useDownloadPhase({ ready: vision.projector_downloaded, download, poll: refresh });
 
   const startDownload = async () => {
     setIsStarting(true);
@@ -72,7 +49,6 @@ export function LocalVisionControl({ model, vision }: { model: DownloadedModel; 
       const downloadId = await startVisionProjectorDownload(model.id);
       // None means it is already on disk: the model row only needs to catch up.
       if (downloadId === null) await refresh();
-      else setStartedId(downloadId);
     } catch (error) {
       toast.error("Couldn't download the vision projector", {
         message: error instanceof Error ? error.message : String(error),
@@ -120,29 +96,10 @@ export function LocalVisionControl({ model, vision }: { model: DownloadedModel; 
     );
   }
 
-  if (isDownloading && download) {
-    const percent = download.percentage ?? (download.total_bytes ? (download.bytes_downloaded / download.total_bytes) * 100 : null);
+  if ((phase === 'live' || phase === 'finishing') && download) {
     return (
-      <div className="mt-2 max-w-sm text-xs" role="status">
-        <div className="flex items-center justify-between gap-3 text-text-secondary">
-          <span>{download.state === 'Paused' ? 'Vision projector paused' : 'Downloading vision projector…'}</span>
-          <span className="tabular-nums text-text-muted">
-            {percent === null ? size : `${Math.round(percent)}% of ${size}`}
-          </span>
-        </div>
-        <div
-          className="mt-1 h-1 overflow-hidden rounded-full bg-surface-sunken"
-          role="progressbar"
-          aria-label="Vision projector download"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={percent === null ? undefined : Math.round(percent)}
-        >
-          <div
-            className="h-full rounded-full bg-accent transition-[width] duration-base"
-            style={{ width: `${percent ?? 0}%` }}
-          />
-        </div>
+      <div className="mt-2">
+        <InlineDownloadStatus download={download} finishing={phase === 'finishing'} label="Downloading the vision projector" />
       </div>
     );
   }
@@ -152,16 +109,14 @@ export function LocalVisionControl({ model, vision }: { model: DownloadedModel; 
       <button
         type="button"
         onClick={() => void startDownload()}
-        disabled={isStarting}
+        disabled={isStarting || !downloadsSettled || !modelsFetchedAfterMount}
         className={`${SECONDARY_BUTTON_CLASS} h-7 gap-1.5 px-2.5 text-xs`}
       >
         <Eye className="h-3.5 w-3.5" aria-hidden="true" />
         {isStarting ? 'Starting…' : `Download vision projector (${size})`}
       </button>
       {download?.state === 'Failed' ? (
-        <span role="alert" className="text-danger-fg">
-          The last attempt failed{download.error_message ? `: ${download.error_message}` : '.'}
-        </span>
+        <DownloadFailure download={download} />
       ) : (
         <span className="text-text-muted">Lets this model see the pictures you attach.</span>
       )}

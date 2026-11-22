@@ -5,7 +5,7 @@
 //! depends on rather than on a concrete manager. The download feature's
 //! `DownloadManagerService` implements it.
 
-use crate::domain::download::{Checksum, DownloadError, DownloadSession};
+use crate::domain::download::{Checksum, ChecksumAlgorithm, DownloadError, DownloadSession};
 use async_trait::async_trait;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -23,6 +23,39 @@ pub struct DownloadRequest {
     /// This may contain a safe subdirectory such as `onnx/model.onnx` and
     /// must not be re-derived from the destination basename.
     pub model_file_name: Option<String>,
+    /// The file's size when the caller already knows it. The manager then uses
+    /// it as the session's total and skips the HEAD request that would
+    /// otherwise size the file, so the start call returns at once.
+    pub expected_bytes: Option<u64>,
+}
+
+impl DownloadRequest {
+    /// A request for one file whose checksum and size are published ahead of
+    /// time (the reranker, a vision projector). The SHA-256 is verified once
+    /// the bytes are down, and the known size spares the start call a HEAD
+    /// request. `display_name` is what the drawer and Activity show: these
+    /// files have no model record, so it travels without a model id.
+    pub fn pinned(
+        url: impl Into<String>,
+        destination: impl Into<PathBuf>,
+        sha256_hex: &str,
+        bytes: u64,
+        display_name: impl Into<String>,
+    ) -> Result<Self, DownloadError> {
+        Ok(Self {
+            url: url.into(),
+            destination: destination.into(),
+            checksum: Some(Checksum::new(
+                ChecksumAlgorithm::Sha256,
+                sha256_hex.to_string(),
+            )?),
+            auth_token: None,
+            model_name: Some(display_name.into()),
+            model_id: None,
+            model_file_name: None,
+            expected_bytes: Some(bytes),
+        })
+    }
 }
 
 /// One file in a model batch, with URLs ordered from preferred to fallback.
@@ -99,4 +132,36 @@ pub trait DownloadManager: Send + Sync {
     async fn process_pending_queue(&self) -> Result<(), DownloadError>;
 
     fn subscribe_to_events(&self) -> Arc<RwLock<Option<mpsc::Receiver<DownloadEvent>>>>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::download::ChecksumAlgorithm;
+
+    #[test]
+    fn a_pinned_request_carries_its_checksum_size_and_name_but_no_model() {
+        let request = DownloadRequest::pinned(
+            "https://example.com/r.gguf",
+            "/models/r.gguf",
+            &"AB".repeat(32),
+            639,
+            "Reranker",
+        )
+        .unwrap();
+
+        let checksum = request.checksum.as_ref().unwrap();
+        assert_eq!(checksum.algorithm(), &ChecksumAlgorithm::Sha256);
+        assert_eq!(checksum.value(), "ab".repeat(32));
+        assert_eq!(request.expected_bytes, Some(639));
+        assert_eq!(request.model_name.as_deref(), Some("Reranker"));
+        assert_eq!(request.model_id, None);
+        assert_eq!(request.model_file_name, None);
+        assert_eq!(request.auth_token, None);
+    }
+
+    #[test]
+    fn a_pinned_request_rejects_a_malformed_checksum() {
+        assert!(DownloadRequest::pinned("https://e.com/r", "/m/r", "abc", 1, "R").is_err());
+    }
 }

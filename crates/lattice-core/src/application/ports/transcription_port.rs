@@ -37,6 +37,15 @@ pub struct Transcript {
     pub duration_ms: u64,
 }
 
+/// The transcription model that would be used.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveTranscriptionModel {
+    /// Catalog id, to remove or download the model with.
+    pub model_id: String,
+    /// Display name.
+    pub name: String,
+}
+
 /// Port for transcribing audio on-device.
 #[async_trait]
 pub trait TranscriptionPort: Send + Sync {
@@ -58,6 +67,6 @@ pub trait TranscriptionPort: Send + Sync {
     /// This repository query neither scans the filesystem nor loads the model.
     async fn is_ready(&self) -> Result<bool, AppError>;
 
-    /// Display name of the model that would be used, if any.
-    async fn active_model_name(&self) -> Result<Option<String>, AppError>;
+    /// The model that would be used, if one is downloaded.
+    async fn active_model(&self) -> Result<Option<ActiveTranscriptionModel>, AppError>;
 }

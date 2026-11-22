@@ -95,9 +95,9 @@ pub struct ChatModelVision {
 
 impl ChatModelVision {
     /// Whether a projector file of `on_disk_bytes` is the whole download. The
-    /// download manager writes into the destination as bytes arrive and
-    /// deletes a file whose digest does not match, so a file of the pinned
-    /// size is a finished, verified one and anything shorter is in progress.
+    /// download manager writes a `.part` file and renames it onto the
+    /// destination only once its size and digest check out, so a file of the
+    /// pinned size is a finished, verified one.
     pub fn is_complete(&self, on_disk_bytes: u64) -> bool {
         on_disk_bytes == self.projector.size_bytes
     }

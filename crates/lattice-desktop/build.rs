@@ -144,6 +144,7 @@ fn main() {
                     "batch_search",
                     "reranker_status",
                     "download_reranker",
+                    "remove_reranker",
                 ]),
             )
             .plugin(
@@ -524,6 +525,7 @@ fn main() {
                     "generate_learning_program",
                     "cancel_learning_outline",
                     "repair_learning_outline",
+                    "list_learning_outline_runs",
                     "accept_learning_program",
                     "prepare_learning_lesson",
                     "prepare_learning_module",

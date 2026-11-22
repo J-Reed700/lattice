@@ -63,12 +63,17 @@ pub async fn generate_learning_program(
     service::validate_request(&request).map_err(ApiError::from)?;
     let run = container
         .outline_run_registry()
-        .register(request_id, move |update| {
-            let _ = on_progress.send(update);
-        })
+        .register_generate(
+            request_id,
+            request.goal.clone(),
+            request.course_depth,
+            move |update| {
+                let _ = on_progress.send(update);
+            },
+        )
         .map_err(ApiError::from)?;
     let progress = &run.progress;
-    progress
+    match progress
         .run(async {
             progress
                 .stage(crate::features::learning::outline_progress::OutlineStage::ReadingSources);
@@ -107,7 +112,18 @@ pub async fn generate_learning_program(
             .await
         })
         .await
-        .map_err(|error| progress.api_error(error))
+    {
+        Ok(program) => {
+            run.record_completed(&program.summary.id);
+            Ok(program)
+        }
+        Err(error) => {
+            let cancelled = matches!(error, lattice_core::shared::error::AppError::Cancelled(_));
+            let api_error = progress.api_error(error);
+            run.record_failed(&api_error, cancelled);
+            Err(api_error)
+        }
+    }
 }
 
 #[tauri::command]
@@ -127,12 +143,12 @@ pub async fn repair_learning_outline(
     })?;
     let run = container
         .outline_run_registry()
-        .register(request_id, move |update| {
+        .register_repair(request_id, request.program_id.clone(), move |update| {
             let _ = on_progress.send(update);
         })
         .map_err(ApiError::from)?;
     let progress = &run.progress;
-    progress
+    match progress
         .run(async {
             progress.stage(crate::features::learning::outline_progress::OutlineStage::LoadingModel);
             let pin = patiently(progress.as_ref(), Backoff::default(), |_| {
@@ -160,7 +176,26 @@ pub async fn repair_learning_outline(
             .await
         })
         .await
-        .map_err(|error| progress.api_error(error))
+    {
+        Ok(program) => {
+            run.record_completed(&program.summary.id);
+            Ok(program)
+        }
+        Err(error) => {
+            let cancelled = matches!(error, lattice_core::shared::error::AppError::Cancelled(_));
+            let api_error = progress.api_error(error);
+            run.record_failed(&api_error, cancelled);
+            Err(api_error)
+        }
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn list_learning_outline_runs(
+    container: State<'_, Container>,
+) -> Result<crate::features::learning::outline_progress::LearningOutlineRunsSnapshotDto, ApiError> {
+    Ok(container.outline_run_registry().snapshot_runs())
 }
 
 #[tauri::command]

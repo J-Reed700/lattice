@@ -7,12 +7,14 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use tokio::time::Duration;
 
+mod coalescing;
 mod concurrency;
 mod failure_modes;
 mod lifecycle_events;
 mod resume_offset;
 mod session_ops;
 mod transfer;
+mod working_file;
 
 /// Bounded database polling for asynchronous tests.
 ///

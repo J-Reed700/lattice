@@ -28,10 +28,14 @@ export const downloadedModelsQueryOptions = (api: ApiClient = VaultAPI) =>
     staleTime: 30_000,
   });
 
-export const useDownloadedModels = () => {
+/**
+ * `refetchOnMount: 'always'` lets a settings page insist on a fresh list: a
+ * projector or reranker finishing sends no event that refreshes it.
+ */
+export const useDownloadedModels = (options: { refetchOnMount?: 'always' } = {}) => {
   const api = useApi();
   const queryClient = useQueryClient();
-  const modelsQuery = useQuery(downloadedModelsQueryOptions(api));
+  const modelsQuery = useQuery({ ...downloadedModelsQueryOptions(api), refetchOnMount: options.refetchOnMount });
   const downloadedModels = useMemo(() => modelsQuery.data ?? [], [modelsQuery.data]);
   const activeEmbeddingModel = useMemo(
     () => downloadedModels.find((model) => model.is_active_for_embedding) ?? null,
@@ -125,6 +129,7 @@ export const useDownloadedModels = () => {
     downloadedModelMap,
     activeEmbeddingModel,
     isLoading: modelsQuery.isLoading,
+    isFetchedAfterMount: modelsQuery.isFetchedAfterMount,
     error: modelsQuery.error?.message ?? null,
     fetchDownloadedModels: refresh,
     isModelDownloaded,

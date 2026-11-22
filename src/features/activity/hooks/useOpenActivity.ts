@@ -29,6 +29,8 @@ export function useOpenActivity(onOpened: () => void) {
       } else if (target.type === 'folder') {
         useExplorerStore.getState().setRoot({ root: target.root, name: target.name });
         navigate('/explorer');
+      } else if (target.type === 'studio_builder') {
+        navigate('/studio?builder=1');
       } else {
         navigate(`/chat?${new URLSearchParams({ conversationId: target.conversation }).toString()}`);
       }

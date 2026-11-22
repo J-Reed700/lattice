@@ -137,6 +137,7 @@ impl DownloadModelUseCase {
                     model_name: Some(meta.name.clone()),
                     model_id: Some(model_id.to_string()),
                     model_file_name: Some(file.filename.clone()),
+                    expected_bytes: None,
                 }],
             });
         }
@@ -153,6 +154,7 @@ impl DownloadModelUseCase {
         {
             Ok(ids) => ids,
             Err(error) => {
+                warn!(model_id = %model_id, %error, "Model download could not be prepared");
                 let failed_files: Vec<(&str, Option<i64>)> = plan
                     .iter()
                     .map(|file| (file.filename.as_str(), None))
@@ -160,7 +162,7 @@ impl DownloadModelUseCase {
                 self.record_failed(model_id, &failed_files).await?;
                 return Err(AppError::Network(format!(
                     "Failed to prepare model download: {}",
-                    error
+                    error.user_message()
                 )));
             }
         };
@@ -172,8 +174,16 @@ impl DownloadModelUseCase {
         );
 
         // Prefer the sizes the download manager measured over catalog estimates.
-        let mut detected_total_size_bytes = 0u64;
+        // Items sharing a destination, or already live from an earlier call,
+        // come back as the same id: count each session once.
+        let mut unique_ids: Vec<&String> = Vec::with_capacity(ids.len());
         for download_id in &ids {
+            if !unique_ids.contains(&download_id) {
+                unique_ids.push(download_id);
+            }
+        }
+        let mut detected_total_size_bytes = 0u64;
+        for download_id in unique_ids {
             if let Ok(Some(session)) = self.download_manager.get_download_status(download_id).await
             {
                 if let Some(total_bytes) = session.progress().total_bytes() {

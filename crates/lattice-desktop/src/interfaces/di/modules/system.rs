@@ -37,10 +37,6 @@ use lattice_core::application::ports::{
     BackupPort, EmbeddingPort, SettingsRepositoryPort, SystemInfoPort,
 };
 
-// Service Traits
-use crate::features::model_management::model_manager::ModelManager;
-use crate::infrastructure::services::traits::ModelManagerTrait;
-
 /// System module for application-wide operations
 ///
 /// The cache feature has no DI of its own: its commands operate on the query
@@ -54,10 +50,6 @@ pub struct SystemModule {
     health: crate::features::health::di::HealthDi,
     stats: crate::features::stats::di::StatsDi,
     initialization: crate::features::initialization::di::InitializationDi,
-
-    // The reranker is downloaded on demand rather than at boot, so a command
-    // needs to reach the manager long after startup is over.
-    model_manager: Arc<dyn ModelManagerTrait>,
 
     // System-info adapter stays here — it's a shared infra concern
     // with no dedicated feature slice.
@@ -88,8 +80,6 @@ impl SystemModule {
             Arc::clone(core.background()),
         );
 
-        let models_path = core.data_dir().join("models");
-        let model_manager = Arc::new(ModelManager::new(models_path)?) as Arc<dyn ModelManagerTrait>;
         let initialization =
             crate::features::initialization::di::build(database.clone(), initialization_db_path);
 
@@ -106,7 +96,6 @@ impl SystemModule {
                 )),
             ),
             initialization,
-            model_manager,
             system_info: Arc::new(SystemInfoAdapter::new(backend_devices))
                 as Arc<dyn SystemInfoPort>,
         })
@@ -119,10 +108,6 @@ impl SystemModule {
 
     pub fn initialize_database_use_case(&self) -> &Arc<InitializeDatabaseUseCase> {
         &self.initialization.initialize_database_use_case
-    }
-
-    pub fn model_manager(&self) -> &Arc<dyn ModelManagerTrait> {
-        &self.model_manager
     }
 
     // Settings use case getters

@@ -178,8 +178,11 @@ impl TranscriptionPort for DirectWhisperPort {
         Ok(true)
     }
 
-    async fn active_model_name(&self) -> Result<Option<String>, AppError> {
-        Ok(Some("Whisper (e2e)".to_string()))
+    async fn active_model(&self) -> Result<Option<ActiveTranscriptionModel>, AppError> {
+        Ok(Some(ActiveTranscriptionModel {
+            model_id: "whisper-e2e".to_string(),
+            name: "Whisper (e2e)".to_string(),
+        }))
     }
 }
 

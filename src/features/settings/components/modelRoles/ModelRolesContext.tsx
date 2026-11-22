@@ -40,6 +40,8 @@ interface ModelRolesContextValue {
   /** What a chat on the Settings default and utility work run on now. */
   activeModels: ActiveModels | null;
   isLoading: boolean;
+  /** The model list has been re-read since this page opened. */
+  modelsFetchedAfterMount: boolean;
   /** Why the last refresh failed; null once one succeeds. */
   error: string | null;
   /** Refresh the model list from the backend. */
@@ -75,6 +77,7 @@ export function ModelRolesProvider({ children }: ProviderProps) {
   const {
     downloadedModels: models = EMPTY_MODELS,
     isLoading = false,
+    isFetchedAfterMount: modelsFetchedAfterMount = false,
     error = null,
     fetchDownloadedModels,
     setActiveChatModel,
@@ -83,7 +86,7 @@ export function ModelRolesProvider({ children }: ProviderProps) {
     clearActiveChatModel,
     clearActiveEmbeddingModel,
     clearActiveUtilityModel,
-  } = useDownloadedModels();
+  } = useDownloadedModels({ refetchOnMount: 'always' });
 
   const refresh = useCallback(async () => {
     try {
@@ -199,12 +202,13 @@ export function ModelRolesProvider({ children }: ProviderProps) {
       llmSettings,
       activeModels,
       isLoading,
+      modelsFetchedAfterMount,
       error,
       refresh,
       assignRole,
       assignUtilityReference,
     };
-  }, [models, chatProvider, llmSettings, activeModels, isLoading, error, refresh, assignRole, assignUtilityReference]);
+  }, [models, chatProvider, llmSettings, activeModels, isLoading, modelsFetchedAfterMount, error, refresh, assignRole, assignUtilityReference]);
 
   return <ModelRolesContext.Provider value={value}>{children}</ModelRolesContext.Provider>;
 }

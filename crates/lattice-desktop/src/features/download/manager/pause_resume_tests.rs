@@ -35,6 +35,7 @@ async fn start_one(
             model_name: None,
             model_id: None,
             model_file_name: None,
+            expected_bytes: None,
         })
         .await
         .expect("start download")

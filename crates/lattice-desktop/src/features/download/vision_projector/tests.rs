@@ -141,6 +141,15 @@ async fn a_missing_projector_is_fetched_beside_the_weights_with_its_digest() {
         "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/mmproj-F16.gguf"
     );
     assert!(request.checksum.is_some());
+    assert_eq!(
+        request.expected_bytes,
+        Some(918_166_080),
+        "the pinned size spares the manager a HEAD request"
+    );
+    assert_eq!(
+        request.model_name.as_deref(),
+        Some("Qwen 3.5 9B vision projector")
+    );
     assert!(request.model_id.is_none(), "no model record waits on it");
 }
 

@@ -21,33 +21,22 @@ impl From<crate::domain::download::DownloadError> for AppError {
             DownloadError::SessionNotFound(id) => {
                 AppError::NotFound(format!("Download session not found: {}", id))
             }
-            DownloadError::ChecksumMismatch { expected, actual } => AppError::InvalidData(format!(
-                "Checksum mismatch: expected {}, got {}",
-                expected, actual
-            )),
-            DownloadError::NetworkError(msg) => AppError::Network(msg),
-            DownloadError::IoError(msg) => AppError::FileSystem(msg),
+            // These reach the user as a toast, so each carries the plain
+            // sentence; the raw detail (hashes, URLs, OS errors) is logged
+            // where the error arises.
+            DownloadError::ChecksumMismatch { .. } => AppError::InvalidData(e.user_message()),
+            DownloadError::NetworkError(_) => AppError::Network(e.user_message()),
+            DownloadError::IoError(_) => AppError::FileSystem(e.user_message()),
             DownloadError::Cancelled => AppError::Other("Download cancelled".to_string()),
-            DownloadError::MaxRetriesExceeded => {
-                AppError::Other("Maximum retry attempts exceeded".to_string())
-            }
-            DownloadError::HttpError { status, message } => {
-                AppError::Network(format!("HTTP error {}: {}", status, message))
-            }
-            DownloadError::InvalidResponse(msg) => {
-                AppError::Network(format!("Invalid HTTP response: {}", msg))
-            }
+            DownloadError::MaxRetriesExceeded => AppError::Other(e.user_message()),
+            DownloadError::HttpError { .. } => AppError::Network(e.user_message()),
+            DownloadError::InvalidResponse(_) => AppError::Network(e.user_message()),
             DownloadError::ValidationFailed(msg) => AppError::ValidationFailed(msg),
             DownloadError::EngineInitializationError(msg) => {
                 AppError::InternalError(format!("Failed to initialize download engine: {}", msg))
             }
-            DownloadError::InsufficientDiskSpace {
-                required,
-                available,
-            } => AppError::FileSystem(format!(
-                "Insufficient disk space: required {} bytes, available {} bytes",
-                required, available
-            )),
+            DownloadError::DestinationBusy(_) => AppError::InvalidState(e.user_message()),
+            DownloadError::InsufficientDiskSpace { .. } => AppError::FileSystem(e.user_message()),
         }
     }
 }

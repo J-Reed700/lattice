@@ -74,6 +74,7 @@ async fn test_download_queue_respects_limits() -> Result<(), Box<dyn std::error:
             model_name: None,
             model_id: None,
             model_file_name: None,
+            expected_bytes: None,
         };
 
         let id = manager.start_download(request).await?;
@@ -162,6 +163,7 @@ async fn test_concurrent_downloads_isolated() -> Result<(), Box<dyn std::error::
             model_name: None,
             model_id: None,
             model_file_name: None,
+            expected_bytes: None,
         };
 
         let id = manager.start_download(request).await?;

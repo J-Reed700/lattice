@@ -8,8 +8,6 @@ type Callbacks = { onError?: (error: Error) => void; onSettled?: () => void };
 const h = vi.hoisted(() => ({
   query: {} as Record<string, any>,
   update: vi.fn(),
-  reranker: undefined as unknown,
-  download: { mutate: vi.fn(), isPending: false, error: null },
   toast: { error: vi.fn() },
   tuningProps: null as null | Record<string, any>,
 }));
@@ -17,11 +15,8 @@ vi.mock('../hooks/useSettingsQuery', () => ({
   useSettingsQuery: () => h.query,
   useUpdateSettingsMutation: () => ({ mutate: h.update }),
 }));
-vi.mock('../hooks/useRerankerQuery', () => ({
-  useRerankerStatusQuery: () => ({ data: h.reranker }),
-  useDownloadRerankerMutation: () => h.download,
-}));
 vi.mock('@/stores/toastStore', () => ({ toast: h.toast }));
+vi.mock('./RerankerRow', () => ({ RerankerRow: () => null }));
 vi.mock('./RetrievalTuningSection', () => ({
   RetrievalTuningSection: (props: Record<string, any>) => { h.tuningProps = props; return null; },
 }));
@@ -46,8 +41,6 @@ describe('SearchTab fields', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     h.query = { data: { search: search() }, isPending: false, refetch: vi.fn() };
-    h.reranker = { installed: true, downloadBytes: 0 };
-    h.download = { mutate: vi.fn(), isPending: false, error: null };
   });
 
   it('shows loading, then a retry when settings cannot be read', () => {
@@ -59,17 +52,6 @@ describe('SearchTab fields', () => {
     render(<SearchTab />);
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(h.query.refetch).toHaveBeenCalled();
-  });
-
-  it('offers the reranker download, and shows it in progress', () => {
-    h.reranker = { installed: false, downloadBytes: 120 * 1024 * 1024 };
-    const first = render(<SearchTab />);
-    fireEvent.click(screen.getByRole('button', { name: /^Download \(/ }));
-    expect(h.download.mutate).toHaveBeenCalled();
-    first.unmount();
-    h.download = { mutate: vi.fn(), isPending: true, error: null };
-    render(<SearchTab />);
-    expect(screen.getByRole('button', { name: 'Downloading…' })).toBeDisabled();
   });
 
   it('saves switches straight away', () => {

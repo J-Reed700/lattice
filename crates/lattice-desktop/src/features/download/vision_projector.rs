@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use lattice_core::application::ports::download_manager::{DownloadManager, DownloadRequest};
-use lattice_core::domain::download::{Checksum, ChecksumAlgorithm};
 use lattice_core::domain::models::curated::chat_model_vision;
 use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::shared::error::{AppError, Result};
@@ -49,24 +48,31 @@ pub async fn start_vision_projector_download_impl(
     if vision.is_complete(on_disk) {
         return Ok(VisionProjectorDownloadDto { download_id: None });
     }
-    let checksum = vision
-        .projector
-        .checksum
-        .clone()
-        .map(|digest| Checksum::new(ChecksumAlgorithm::Sha256, digest))
-        .transpose()
-        .map_err(|e| AppError::InvalidState(format!("Invalid projector checksum: {e}")))?;
-    let download_id = manager
-        .start_download(DownloadRequest {
+    let name = format!("{} vision projector", vision.model_name);
+    let request = match vision.projector.checksum.as_deref() {
+        Some(digest) => DownloadRequest::pinned(
+            vision.projector.url.clone(),
+            vision.projector_path.clone(),
+            digest,
+            vision.projector.size_bytes,
+            name,
+        )
+        .map_err(|e| AppError::InvalidState(format!("Invalid projector checksum: {e}")))?,
+        // The catalog pins every projector; one without a digest still knows its size.
+        None => DownloadRequest {
             url: vision.projector.url.clone(),
             destination: vision.projector_path.clone(),
-            checksum,
+            checksum: None,
             auth_token: None,
-            model_name: Some(format!("{} vision projector", vision.model_name)),
+            model_name: Some(name),
             // Not a model of its own: no model record waits on this file.
             model_id: None,
             model_file_name: None,
-        })
+            expected_bytes: Some(vision.projector.size_bytes),
+        },
+    };
+    let download_id = manager
+        .start_download(request)
         .await
         .map_err(AppError::from)?;
     info!(

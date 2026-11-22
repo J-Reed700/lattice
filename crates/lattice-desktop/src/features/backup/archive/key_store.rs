@@ -10,7 +10,7 @@
 //! key, so the passphrase or the 24-word recovery code can always get it back.
 
 use std::path::{Path, PathBuf};
-use std::sync::Once;
+use std::sync::{Mutex, MutexGuard, Once};
 
 use base64::prelude::{Engine as _, BASE64_STANDARD};
 use zeroize::Zeroize;
@@ -41,6 +41,16 @@ fn warn_fallback_once(reason: &str) {
     });
 }
 
+fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn clone_master_key(key: &MasterKey) -> MasterKey {
+    MasterKey::from_bytes(*key.as_bytes())
+}
+
 /// Loads, stores and clears the backup master key. Deliberately not a trait:
 /// there is exactly one implementation and the fallback is part of it.
 pub struct MasterKeyStore {
@@ -48,6 +58,9 @@ pub struct MasterKeyStore {
     app_data_dir: PathBuf,
     /// Tests force the file fallback by clearing this.
     use_keyring: bool,
+    /// Per-instance session cache: `None` = uncached, `Some(None)` = confirmed absent,
+    /// `Some(Some(key))` = cached key.
+    cached: Mutex<Option<Option<MasterKey>>>,
 }
 
 impl MasterKeyStore {
@@ -55,7 +68,9 @@ impl MasterKeyStore {
         Self {
             service: KEYRING_SERVICE.to_string(),
             app_data_dir,
-            use_keyring: true,
+            use_keyring:
+                !crate::infrastructure::security::keyring_storage::should_isolate_os_keyring(),
+            cached: Mutex::new(None),
         }
     }
 
@@ -67,6 +82,7 @@ impl MasterKeyStore {
             service,
             app_data_dir,
             use_keyring,
+            cached: Mutex::new(None),
         }
     }
 
@@ -77,8 +93,22 @@ impl MasterKeyStore {
             .join(KEY_FILE_NAME)
     }
 
-    /// Keyring first, then the file. `Ok(None)` means this device has no key.
+    /// Keyring first, then the file (cached per `MasterKeyStore` instance).
+    /// `Ok(None)` means this device has no key.
     pub fn load(&self) -> Result<Option<MasterKey>, ArchiveError> {
+        {
+            let guard = lock_unpoisoned(&self.cached);
+            if let Some(cached) = guard.as_ref() {
+                return Ok(cached.as_ref().map(clone_master_key));
+            }
+        }
+
+        let loaded = self.load_uncached()?;
+        *lock_unpoisoned(&self.cached) = Some(loaded.as_ref().map(clone_master_key));
+        Ok(loaded)
+    }
+
+    fn load_uncached(&self) -> Result<Option<MasterKey>, ArchiveError> {
         if self.use_keyring {
             match self.load_from_keyring() {
                 Ok(Some(key)) => return Ok(Some(key)),
@@ -104,6 +134,9 @@ impl MasterKeyStore {
             self.store_in_file(&encoded)
         };
         encoded.zeroize();
+        if result.is_ok() {
+            *lock_unpoisoned(&self.cached) = Some(Some(clone_master_key(key)));
+        }
         result
     }
 
@@ -117,11 +150,15 @@ impl MasterKeyStore {
                 }
             }
         }
-        match std::fs::remove_file(self.fallback_path()) {
+        let file_result = match std::fs::remove_file(self.fallback_path()) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(ArchiveError::Io(e)),
+        };
+        if file_result.is_ok() {
+            *lock_unpoisoned(&self.cached) = Some(None);
         }
+        file_result
     }
 
     /// Any error here sends `load` to the file fallback; it is only logged.
@@ -276,5 +313,41 @@ mod tests {
         std::fs::write(store.fallback_path(), "not base64 at all!!!").unwrap();
 
         assert!(store.load().is_err());
+    }
+
+    #[test]
+    fn new_isolates_from_os_keyring_in_tests() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MasterKeyStore::new(dir.path().to_path_buf());
+        assert!(!store.use_keyring);
+
+        let key = MasterKey::from_bytes([5u8; 32]);
+        store.store(&key).unwrap();
+        assert!(store.fallback_path().exists());
+        assert_eq!(store.load().unwrap().unwrap().as_bytes(), key.as_bytes());
+    }
+
+    #[test]
+    fn load_caches_result_and_store_clear_update_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = file_only_store(dir.path());
+
+        // Cache miss -> caches None.
+        assert!(store.load().unwrap().is_none());
+
+        // Write behind the cache's back; cached None is still returned without re-reading disk.
+        std::fs::create_dir_all(store.fallback_path().parent().unwrap()).unwrap();
+        std::fs::write(store.fallback_path(), BASE64_STANDARD.encode([3u8; 32])).unwrap();
+        assert!(store.load().unwrap().is_none());
+
+        // store() updates the cache immediately.
+        let key = MasterKey::from_bytes([4u8; 32]);
+        store.store(&key).unwrap();
+        std::fs::remove_file(store.fallback_path()).unwrap();
+        assert_eq!(store.load().unwrap().unwrap().as_bytes(), key.as_bytes());
+
+        // clear() updates the cache to None immediately.
+        store.clear().unwrap();
+        assert!(store.load().unwrap().is_none());
     }
 }

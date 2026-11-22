@@ -21,6 +21,7 @@ fn request(url: &str, name: &str, token: &str) -> DownloadRequest {
         model_name: None,
         model_id: None,
         model_file_name: None,
+        expected_bytes: None,
     }
 }
 

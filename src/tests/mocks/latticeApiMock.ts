@@ -184,6 +184,7 @@ export function createVaultAPIMock() {
         installed: false,
         modelName: 'Qwen/Qwen3-Reranker-0.6B',
         downloadBytes: 639_153_184,
+        path: '/models/reranker/qwen3-reranker-0.6b.gguf',
       },
     }),
     downloadReranker: vi.fn().mockResolvedValue({
@@ -192,6 +193,16 @@ export function createVaultAPIMock() {
         installed: true,
         modelName: 'Qwen/Qwen3-Reranker-0.6B',
         downloadBytes: 639_153_184,
+        path: '/models/reranker/qwen3-reranker-0.6b.gguf',
+      },
+    }),
+    removeReranker: vi.fn().mockResolvedValue({
+      ok: true,
+      data: {
+        installed: false,
+        modelName: 'Qwen/Qwen3-Reranker-0.6B',
+        downloadBytes: 639_153_184,
+        path: '/models/reranker/qwen3-reranker-0.6b.gguf',
       },
     }),
     getRemoteAuthHeaderStatus: vi.fn().mockResolvedValue({ ok: true, data: { ollama: false, llamaCpp: false } }),
