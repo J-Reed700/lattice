@@ -111,10 +111,14 @@ pub(in super::super) async fn retrieve(
     // whole-space fusion follows it.
     let share = limit.div_ceil(2);
     if !identifiers.is_empty() {
+        let mut section_passages = repository
+            .retrieval_section_passages(&identifiers, &scope.document_ids)
+            .await?;
+        if !reading_ids.is_empty() {
+            section_passages.sort_by_key(|passage| !reading_ids.contains(&passage.document_id));
+        }
         results.extend(
-            repository
-                .retrieval_section_passages(&identifiers, &scope.document_ids)
-                .await?
+            section_passages
                 .into_iter()
                 .map(|p| passage_result(p, "section_lookup")),
         );
