@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useRestoreLockoutStore } from '@/features/backup/restoreLockoutStore';
 import { selectPaletteGroups, usePaletteCommandsStore } from '@/features/palette/stores/paletteCommandsStore';
+import { NEW_ITEM_EVENT } from '@/shared/newItemEvent';
 
 import { useJournalPaletteCommands, useJournalShortcuts } from '../useJournalCommands';
 
@@ -85,13 +86,13 @@ describe('useJournalShortcuts', () => {
   it('does not handle Cmd+N directly (RootLayout owns global Mod+N via NEW_ITEM_EVENT)', () => {
     const onNew = vi.fn();
     const s = setup(null);
-    window.addEventListener('new-item', onNew);
+    window.addEventListener(NEW_ITEM_EVENT, onNew);
     press({ key: 'n', metaKey: true }, input);
     press({ key: 'N', ctrlKey: true });
     expect(s.saveNow).not.toHaveBeenCalled();
     expect(s.setSelectedId).not.toHaveBeenCalled();
     expect(onNew).not.toHaveBeenCalled();
-    window.removeEventListener('new-item', onNew);
+    window.removeEventListener(NEW_ITEM_EVENT, onNew);
   });
 
   it('ignores journal shortcuts while database restore lockout is active', () => {

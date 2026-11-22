@@ -120,6 +120,14 @@ export function PassageHighlighter({
     let observer: MutationObserver | null = null;
     let retryFrame = 0;
     let observerTimeout: ReturnType<typeof setTimeout> | undefined;
+    let didApproximateScroll = false;
+    let lastReportedTier: PassageMatchTier | null = null;
+
+    const reportOnce = (tier: PassageMatchTier) => {
+      if (lastReportedTier === tier) return;
+      lastReportedTier = tier;
+      report(tier);
+    };
 
     const clearMarks = () => {
       while (markedBlocks.length > 0) {
@@ -155,13 +163,16 @@ export function PassageHighlighter({
 
       if (hitStart < 0) {
         if (typeof chunkIndex === 'number') {
-          const scroller = nearestScrollable(container);
-          if (scroller) {
-            scroller.scrollTop = approximateScrollRatio(chunkIndex) * scroller.scrollHeight;
+          if (!didApproximateScroll && haystack.length > 0) {
+            const scroller = nearestScrollable(container);
+            if (scroller) {
+              scroller.scrollTop = approximateScrollRatio(chunkIndex) * scroller.scrollHeight;
+              didApproximateScroll = true;
+            }
           }
-          report('approximate');
+          reportOnce('approximate');
         } else {
-          report('none');
+          reportOnce('none');
         }
         return false;
       }
@@ -172,7 +183,7 @@ export function PassageHighlighter({
       const endBlock = endSpan ? nearestBlock(endSpan.node, container) : null;
 
       if (!startBlock) {
-        report('none');
+        reportOnce('none');
         return false;
       }
 
@@ -196,7 +207,7 @@ export function PassageHighlighter({
         block: 'center',
         behavior: prefersReducedMotion() ? 'auto' : 'smooth',
       });
-      report('exact');
+      reportOnce('exact');
       return true;
     };
 

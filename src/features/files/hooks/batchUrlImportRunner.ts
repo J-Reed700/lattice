@@ -15,6 +15,7 @@ import { cancelBatchJob, getBatchJobStatus, startBatchUrlImport } from '@/utils/
 
 const BATCH_POLL_INTERVAL_MS = 800;
 const BATCH_POLL_TIMEOUT_MS = 180000;
+const MAX_CONSECUTIVE_POLL_ERRORS = 5;
 const ACTIVE_JOB_STATUSES = new Set(['pending', 'running', 'processing', 'in_progress']);
 
 function formatInvokeError(err: unknown): string {
@@ -136,17 +137,22 @@ let busy = false;
 let cancelling = false;
 let pollTimer: ReturnType<typeof setTimeout> | undefined;
 let parseTimer: ReturnType<typeof setTimeout> | undefined;
+let lastParsedText = '';
+let parsePending = false;
 let retryPollFn: (() => Promise<void>) | null = null;
 let notifiedRunId: number | null = null;
+const notifiedJobIds = new Set<string>();
 let onImportCompleteHandler: ((results: BatchUrlImportResults) => void) | null = null;
 
 function notifyCompletionOnce(
   run: number,
+  jobId: string,
   results: BatchUrlImportResults,
   api: ApiClient,
 ): void {
-  if (notifiedRunId === run) return;
+  if (notifiedRunId === run || notifiedJobIds.has(jobId)) return;
   notifiedRunId = run;
+  notifiedJobIds.add(jobId);
 
   if (onImportCompleteHandler) {
     onImportCompleteHandler(results);
@@ -175,7 +181,9 @@ function startPollingJob(
   api: ApiClient,
   initialRunError: string | null = null,
 ): void {
-  let startedAt = Date.now();
+  let lastProgressAt = Date.now();
+  let lastProgressSignature: string | null = null;
+  let consecutiveErrors = 0;
   let selected = selectedSnapshot;
   let itemIdsByTarget = new Map(selected.map((item) => [item.url, item.id]));
   useBatchUrlImportStore.setState({ runError: initialRunError });
@@ -194,15 +202,20 @@ function startPollingJob(
       const status = await getBatchJobStatus(jobId, api);
       if (runCounter !== run) return;
 
+      consecutiveErrors = 0;
+
       if (selected.length === 0 && Array.isArray(status.items) && status.items.length > 0) {
         const currentItems = useBatchUrlImportStore.getState().items;
         if (currentItems.length === 0) {
           const hydrated = hydrateItemsFromBackend(status.items);
           selected = hydrated.items;
           itemIdsByTarget = new Map(selected.map((item) => [item.url, item.id]));
+          const nextUrlText = useBatchUrlImportStore.getState().urlText || hydrated.urlText;
+          lastParsedText = nextUrlText;
+          parsePending = false;
           useBatchUrlImportStore.setState({
             items: hydrated.items,
-            urlText: useBatchUrlImportStore.getState().urlText || hydrated.urlText,
+            urlText: nextUrlText,
           });
         } else {
           selected = currentItems.filter((item) => item.selected);
@@ -213,17 +226,29 @@ function startPollingJob(
       const normalizedStatus = status.status?.toLowerCase?.() ?? '';
       const completedCount = status.completedItems ?? status.completed_items ?? 0;
       const failedCount = status.failedItems ?? status.failed_items ?? 0;
-      const totalCount = status.totalItems ?? status.total_items ?? selected.length;
+      const backendTotal = status.totalItems ?? status.total_items;
+      const totalCount = backendTotal ?? selected.length;
       const processedCount = completedCount + failedCount;
       const computedProgress = totalCount > 0
         ? Math.min(100, Math.round((processedCount / totalCount) * 100))
         : 0;
 
+      const itemSignature = Array.isArray(status.items)
+        ? status.items.map((entry) => `${entry.itemId}:${entry.status}`).join(',')
+        : '';
+      const progressSignature = `${normalizedStatus}|${completedCount}|${failedCount}|${totalCount}|${itemSignature}`;
+      if (lastProgressSignature !== progressSignature) {
+        lastProgressSignature = progressSignature;
+        lastProgressAt = Date.now();
+      }
+
       useBatchUrlImportStore.setState({
+        runError: null,
         progress: Number.isFinite(status.progress) ? status.progress : computedProgress,
         importStats: {
           success: completedCount,
           error: failedCount,
+          total: totalCount,
         },
       });
 
@@ -248,13 +273,11 @@ function startPollingJob(
         });
       }
 
-      const reachedTerminalStatus = ['completed', 'failed', 'cancelled', 'canceled'].includes(
+      const reachedTerminalStatus = ['completed', 'failed', 'cancelled', 'canceled', 'interrupted'].includes(
         normalizedStatus,
       );
-      const reachedExpectedCount =
-        (totalCount > 0 && processedCount >= totalCount) ||
-        (selected.length > 0 && processedCount >= selected.length);
-      const timedOut = Date.now() - startedAt >= BATCH_POLL_TIMEOUT_MS;
+      const reachedExpectedCount = totalCount > 0 && processedCount >= totalCount;
+      const timedOut = Date.now() - lastProgressAt >= BATCH_POLL_TIMEOUT_MS;
 
       if (timedOut && !reachedTerminalStatus && !reachedExpectedCount) {
         console.warn('[BatchImport] Polling timed out', { jobId, status });
@@ -283,9 +306,8 @@ function startPollingJob(
           progress: 100,
           isImporting: false,
           runError: null,
-          lastRunResult: results,
         });
-        notifyCompletionOnce(run, results, api);
+        notifyCompletionOnce(run, jobId, results, api);
         return;
       }
 
@@ -296,16 +318,32 @@ function startPollingJob(
     } catch (error) {
       if (runCounter !== run) return;
       console.error('[BatchImport] Polling error:', error);
+      consecutiveErrors += 1;
+      const message = formatInvokeError(error);
+      if (consecutiveErrors < MAX_CONSECUTIVE_POLL_ERRORS) {
+        useBatchUrlImportStore.setState({
+          isImporting: true,
+          runError: message,
+        });
+        clearTimeout(pollTimer);
+        pollTimer = setTimeout(() => {
+          void pollJobStatus();
+        }, BATCH_POLL_INTERVAL_MS);
+        return;
+      }
       busy = false;
       useBatchUrlImportStore.setState({
         isImporting: false,
-        runError: formatInvokeError(error),
+        runError: message,
       });
     }
   };
 
   retryPollFn = async () => {
-    startedAt = Date.now();
+    clearTimeout(pollTimer);
+    pollTimer = undefined;
+    lastProgressAt = Date.now();
+    consecutiveErrors = 0;
     busy = true;
     useBatchUrlImportStore.setState({
       runError: null,
@@ -370,6 +408,8 @@ async function fetchItemPreview(
 
 function parseUrlsIntoStore(text: string, api: ApiClient): void {
   const generation = ++parseGeneration;
+  lastParsedText = text;
+  parsePending = false;
   const urls = extractUrls(text);
   const newItems: BatchImportItem[] = urls.map((url, index) => ({
     id: `${Date.now()}-${index}-${Math.random()}`,
@@ -401,6 +441,7 @@ async function findActiveBackendUrlJob(api: ApiClient): Promise<string | null> {
 }
 
 export function setBatchUrlText(text: string, api: ApiClient): void {
+  parsePending = true;
   useBatchUrlImportStore.getState().setUrlTextOnly(text);
   clearTimeout(parseTimer);
   parseTimer = setTimeout(() => {
@@ -410,6 +451,16 @@ export function setBatchUrlText(text: string, api: ApiClient): void {
 
 export function cancelPendingBatchUrlParse(): void {
   clearTimeout(parseTimer);
+  parseTimer = undefined;
+}
+
+export function flushPendingBatchUrlParse(api: ApiClient): void {
+  const state = useBatchUrlImportStore.getState();
+  if (busy || state.isImporting || state.activeJobId !== null) return;
+  if (!parsePending && state.urlText === lastParsedText) return;
+  clearTimeout(parseTimer);
+  parseTimer = undefined;
+  parseUrlsIntoStore(state.urlText, api);
 }
 
 export function registerBatchUrlCompleteHandler(
@@ -425,11 +476,27 @@ export function registerBatchUrlCompleteHandler(
 
 export async function reattachActiveBatchUrlJob(api: ApiClient): Promise<void> {
   const state = useBatchUrlImportStore.getState();
-  if (busy || state.isImporting || state.activeJobId !== null) return;
+  if (
+    busy ||
+    state.isImporting ||
+    state.activeJobId !== null ||
+    state.items.length > 0 ||
+    state.urlText.trim().length > 0
+  ) {
+    return;
+  }
   const jobId = await findActiveBackendUrlJob(api);
-  if (!jobId) return;
+  if (!jobId || notifiedJobIds.has(jobId)) return;
   const latest = useBatchUrlImportStore.getState();
-  if (busy || latest.isImporting || latest.activeJobId !== null) return;
+  if (
+    busy ||
+    latest.isImporting ||
+    latest.activeJobId !== null ||
+    latest.items.length > 0 ||
+    latest.urlText.trim().length > 0
+  ) {
+    return;
+  }
 
   busy = true;
   const run = ++runCounter;
@@ -438,12 +505,20 @@ export async function reattachActiveBatchUrlJob(api: ApiClient): Promise<void> {
     activeJobId: jobId,
     runError: null,
   });
-  startPollingJob(jobId, run, latest.items.filter((item) => item.selected), api);
+  startPollingJob(jobId, run, [], api);
 }
 
 export async function startBatchUrlImportRun(api: ApiClient): Promise<void> {
   const initial = useBatchUrlImportStore.getState();
   if (busy || initial.isImporting || initial.activeJobId !== null) return;
+  const selected = initial.items.filter(
+    (item) => item.selected && (item.status === 'ready' || item.status === 'error'),
+  );
+
+  if (selected.length === 0) {
+    return;
+  }
+
   busy = true;
   const run = ++runCounter;
 
@@ -451,42 +526,13 @@ export async function startBatchUrlImportRun(api: ApiClient): Promise<void> {
     isImporting: true,
     runError: null,
     progress: 0,
-    importStats: { success: 0, error: 0 },
-    lastRunResult: null,
+    importStats: { success: 0, error: 0, total: selected.length },
   });
-
-  const existingBackendJobId = await findActiveBackendUrlJob(api);
-  if (runCounter !== run) return;
-  if (existingBackendJobId) {
-    useBatchUrlImportStore.setState({
-      activeJobId: existingBackendJobId,
-      isImporting: true,
-    });
-    startPollingJob(
-      existingBackendJobId,
-      run,
-      useBatchUrlImportStore.getState().items.filter((item) => item.selected),
-      api,
-      'A batch URL import is already in progress.',
-    );
-    return;
-  }
-
-  const state = useBatchUrlImportStore.getState();
-  const selected = state.items.filter(
-    (item) => item.selected && (item.status === 'ready' || item.status === 'error'),
-  );
-
-  if (selected.length === 0) {
-    busy = false;
-    useBatchUrlImportStore.setState({ isImporting: false });
-    return;
-  }
 
   try {
     const jobId = await startBatchUrlImport(
       selected.map((item) => item.url),
-      { extractArticle: state.options.extractArticle },
+      { extractArticle: initial.options.extractArticle },
       api,
     );
     if (runCounter !== run) return;
@@ -550,8 +596,11 @@ export function resetBatchUrlImport(): void {
   clearTimeout(parseTimer);
   pollTimer = undefined;
   parseTimer = undefined;
+  lastParsedText = '';
+  parsePending = false;
   retryPollFn = null;
   notifiedRunId = null;
+  notifiedJobIds.clear();
   onImportCompleteHandler = null;
   useBatchUrlImportStore.getState().resetState();
 }

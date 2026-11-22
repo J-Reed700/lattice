@@ -20,6 +20,7 @@ import { useApi } from '@/contexts/ApiContext';
 import {
   cancelBatchUrlImport,
   cancelPendingBatchUrlParse,
+  flushPendingBatchUrlParse,
   reattachActiveBatchUrlJob,
   registerBatchUrlCompleteHandler,
   retryBatchUrlPoll,
@@ -92,6 +93,7 @@ export const BatchUrlImport: FC<BatchUrlImportProps> = ({ onImportComplete }) =>
   );
 
   useEffect(() => {
+    flushPendingBatchUrlParse(api);
     void reattachActiveBatchUrlJob(api);
   }, [api]);
 
@@ -150,7 +152,7 @@ export const BatchUrlImport: FC<BatchUrlImportProps> = ({ onImportComplete }) =>
       {runError && (
         <div className="mt-4 text-sm text-danger-fg">
           <p role="alert">{runError}</p>
-          {activeJobId && !isImporting && (
+          {activeJobId && (
             <button
               type="button"
               disabled={isCancelling}
@@ -166,8 +168,8 @@ export const BatchUrlImport: FC<BatchUrlImportProps> = ({ onImportComplete }) =>
       {hasActiveJob && (
         <div className="mt-4 flex items-center justify-between text-sm text-text-muted">
           <span className="tabular-nums">
-            Importing… {importStats.success + importStats.error} of {selectedItems.length} ·{' '}
-            {Math.round(progress)}%
+            Importing… {importStats.success + importStats.error} of{' '}
+            {importStats.total ?? selectedItems.length} · {Math.round(progress)}%
           </span>
           <button
             type="button"

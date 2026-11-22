@@ -104,6 +104,15 @@ describe('useIndexing progress', () => {
     expect(result.current.getOperation('job')).toMatchObject({ status: 'completed', successfulFiles: 1, error: undefined });
   });
 
+  it('maps interrupted batch jobs to error rather than leaving them processing', async () => {
+    api.listBatchJobs.mockResolvedValue({ ok: true, data: [{ id: 'job', jobType: 'file_import', status: 'running', totalItems: 1, completedItems: 0, failedItems: 0 }] });
+    api.getBatchJobStatus.mockResolvedValue({ ok: true, data: { status: 'interrupted', totalItems: 1, completedItems: 0, failedItems: 1, items: [] } });
+    const { result } = renderHook(() => useIndexing());
+    await settle();
+    expect(result.current.getOperation('job')).toMatchObject({ status: 'error' });
+    expect(result.current.isIndexing).toBe(false);
+  });
+
   it('cancels an active batch without inventing an outcome for the file still in flight', async () => {
     api.listBatchJobs.mockResolvedValue({ ok: true, data: [{ id: 'job', jobType: 'file_import', status: 'running', totalItems: 2, completedItems: 0, failedItems: 0 }] });
     api.getBatchJobStatus.mockResolvedValue({ ok: true, data: {

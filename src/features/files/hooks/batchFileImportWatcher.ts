@@ -20,8 +20,15 @@ interface PendingCollectionAssignment {
   claimed: boolean;
 }
 
+const STATUS_RETRY_MS = 1000;
+const MAX_STATUS_RETRIES = 10;
+
 const pendingAssignments = new Map<string, PendingCollectionAssignment>();
 const handledCompletionJobs = new Set<string>();
+const inFlightChecks = new Set<string>();
+const recheckQueued = new Set<string>();
+const retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const retryCounts = new Map<string, number>();
 
 let activeListenerPromise: Promise<UnlistenFn> | null = null;
 let resolvedUnlisten: UnlistenFn | null = null;
@@ -42,10 +49,38 @@ function teardownListener(): void {
 
 function removePendingJob(jobId: string): void {
   pendingAssignments.delete(jobId);
-  useBatchFileImportStore.getState().removeJobCollection(jobId);
+  recheckQueued.delete(jobId);
+  retryCounts.delete(jobId);
+  const timer = retryTimers.get(jobId);
+  if (timer !== undefined) {
+    clearTimeout(timer);
+    retryTimers.delete(jobId);
+  }
   if (pendingAssignments.size === 0) {
     teardownListener();
   }
+}
+
+function scheduleRetry(jobId: string): void {
+  const entry = pendingAssignments.get(jobId);
+  if (!entry || entry.claimed) return;
+  const attempts = (retryCounts.get(jobId) ?? 0) + 1;
+  if (attempts > MAX_STATUS_RETRIES) {
+    removePendingJob(jobId);
+    return;
+  }
+  retryCounts.set(jobId, attempts);
+  const existingTimer = retryTimers.get(jobId);
+  if (existingTimer !== undefined) {
+    clearTimeout(existingTimer);
+  }
+  retryTimers.set(
+    jobId,
+    setTimeout(() => {
+      retryTimers.delete(jobId);
+      void checkPendingJobStatus(jobId);
+    }, STATUS_RETRY_MS),
+  );
 }
 
 async function fallbackAddDocuments(
@@ -85,22 +120,31 @@ function executeCollectionAssignment(
 async function checkPendingJobStatus(jobId: string): Promise<void> {
   const entry = pendingAssignments.get(jobId);
   if (!entry || entry.claimed) return;
+  if (inFlightChecks.has(jobId)) {
+    recheckQueued.add(jobId);
+    return;
+  }
   const api = entry.api ?? listenerApi;
   if (!api || typeof api.getBatchJobStatus !== 'function') return;
 
+  inFlightChecks.add(jobId);
   try {
     const result = await api.getBatchJobStatus(jobId);
-    if (!result.ok) return;
     const current = pendingAssignments.get(jobId);
     if (!current || current.claimed) return;
+    if (!result.ok) {
+      scheduleRetry(jobId);
+      return;
+    }
 
+    retryCounts.delete(jobId);
     const normalized = result.data.status.toLowerCase();
     if (normalized === 'cancelled' || normalized === 'canceled') {
       removePendingJob(jobId);
       return;
     }
 
-    if (!['completed', 'success', 'failed', 'error'].includes(normalized)) {
+    if (!['completed', 'success', 'failed', 'error', 'interrupted'].includes(normalized)) {
       return;
     }
 
@@ -115,6 +159,12 @@ async function checkPendingJobStatus(jobId: string): Promise<void> {
     executeCollectionAssignment(current, documentIds);
   } catch (error) {
     console.error('[batchFileImportWatcher] Failed to check batch job status:', error);
+    scheduleRetry(jobId);
+  } finally {
+    inFlightChecks.delete(jobId);
+    if (recheckQueued.delete(jobId) && pendingAssignments.has(jobId)) {
+      void checkPendingJobStatus(jobId);
+    }
   }
 }
 
@@ -126,6 +176,7 @@ function ensureJobStatusListener(api: ApiClient): void {
   const promise = listen<{ id?: string }>(JOB_STATUS_EVENT, (event) => {
     const jobId = event.payload?.id;
     if (!jobId || !pendingAssignments.has(jobId)) return;
+    retryCounts.delete(jobId);
     void checkPendingJobStatus(jobId);
   })
     .then((fn) => {
@@ -168,8 +219,10 @@ export function registerJobCollectionWatcher(params: {
     addDocuments,
     claimed: false,
   });
-  useBatchFileImportStore.getState().setJobCollection(jobId, collectionId);
   ensureJobStatusListener(api);
+  if (resolvedUnlisten) {
+    void checkPendingJobStatus(jobId);
+  }
 }
 
 /**
@@ -234,6 +287,13 @@ export function claimFileImportCompletionNotification(jobId: string): boolean {
 export function resetBatchFileImportWorkflow(): void {
   pendingAssignments.clear();
   handledCompletionJobs.clear();
+  inFlightChecks.clear();
+  recheckQueued.clear();
+  retryCounts.clear();
+  for (const timer of retryTimers.values()) {
+    clearTimeout(timer);
+  }
+  retryTimers.clear();
   teardownListener();
   useBatchFileImportStore.getState().reset();
 }

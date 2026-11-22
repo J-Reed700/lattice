@@ -260,6 +260,7 @@ function mapBatchStatus(status: BatchJobStatus): IndexingOperation['status'] {
       return (status.failedItems ?? status.failed_items ?? 0) > 0 ? 'error' : 'completed';
     case 'failed':
     case 'error':
+    case 'interrupted':
       return 'error';
     case 'cancelled':
     case 'canceled':

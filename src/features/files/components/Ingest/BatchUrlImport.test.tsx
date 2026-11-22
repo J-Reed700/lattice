@@ -72,12 +72,17 @@ it('deduplicates URLs, adds HTTPS to bare hosts and rejects malformed or unsafe 
   expect(VaultAPI.fetchUrlPreview).toHaveBeenCalledWith(URL_B);
 });
 
-it('cancels a pending parse on unmount before it can start any preview requests', async () => {
+it('cancels a pending parse on unmount before it can start any preview requests, and parses restored text on remount', async () => {
   const { unmount } = show();
   fireEvent.change(screen.getByRole('textbox'), { target: { value: URL_A } });
   unmount();
   await tick(1000);
   expect(VaultAPI.fetchUrlPreview).not.toHaveBeenCalled();
+
+  show();
+  await tick(0);
+  expect(VaultAPI.fetchUrlPreview).toHaveBeenCalledExactlyOnceWith(URL_A);
+  expect(screen.getByRole('button', { name: 'Import 1 URL' })).toBeEnabled();
 });
 
 it('discards an old preview after the input changes', async () => {
@@ -333,21 +338,32 @@ it('reattaches to an active backend url_import job on mount and blocks duplicate
   expect(startBatchUrlImport).not.toHaveBeenCalled();
 });
 
-it('does not start a duplicate batch URL job when an active backend job is detected at start time and clears the notice on completion', async () => {
-  show();
-  await paste();
+it('starts the user pasted URLs in their own job even when another backend url_import job is running', async () => {
   vi.mocked(VaultAPI.listBatchJobs).mockResolvedValue({
     ok: true,
-    data: [{ id: 'existing-job', jobId: 'existing-job', jobType: 'url_import', status: 'running', totalItems: 2, completedItems: 0, failedItems: 0 }] as never,
+    data: [{ id: 'existing-job', jobId: 'existing-job', jobType: 'url_import', status: 'running', totalItems: 5, completedItems: 2, failedItems: 0 }] as never,
   });
+  vi.mocked(startBatchUrlImport).mockResolvedValueOnce('user-job-2');
+  vi.mocked(getBatchJobStatus).mockResolvedValueOnce(status({
+    id: 'user-job-2',
+    jobId: 'user-job-2',
+    status: 'completed',
+    totalItems: 2,
+    completedItems: 2,
+    items: [
+      { itemId: 'a', target: URL_A, status: 'completed', documentId: 'doc-a' },
+      { itemId: 'b', target: URL_B, status: 'completed', documentId: 'doc-b' },
+    ],
+  }));
+
+  const { onImportComplete } = show();
+  await paste();
   await start();
 
-  expect(startBatchUrlImport).not.toHaveBeenCalled();
-  expect(getBatchJobStatus).toHaveBeenCalledWith('existing-job', VaultAPI);
-  expect(screen.getByRole('alert')).toHaveTextContent('A batch URL import is already in progress.');
-
-  vi.mocked(getBatchJobStatus).mockResolvedValueOnce(completed());
-  await tick(800);
+  expect(startBatchUrlImport).toHaveBeenCalledExactlyOnceWith([URL_A, URL_B], { extractArticle: true }, VaultAPI);
+  expect(getBatchJobStatus).toHaveBeenCalledWith('user-job-2', VaultAPI);
+  expect(getBatchJobStatus).not.toHaveBeenCalledWith('existing-job', VaultAPI);
+  expect(onImportComplete).toHaveBeenCalledExactlyOnceWith({ successful: 2, failed: 0 });
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 });
 

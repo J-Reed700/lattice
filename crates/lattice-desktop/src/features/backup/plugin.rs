@@ -94,15 +94,27 @@ pub async fn plugin_create_backup(
     })
 }
 
+async fn attach_restart_required_if_closed(
+    mut api_error: ApiError,
+    container: &Container,
+) -> ApiError {
+    if !container.database().is_reachable().await {
+        api_error.details = Some("restart_required".to_string());
+    }
+    api_error
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn plugin_restore_backup(
     request: RestoreBackupRequestDto,
     container: State<'_, Container>,
 ) -> Result<RestoreBackupResultDto, ApiError> {
-    backup::restore_backup_impl(request.backup_path, &container)
-        .await
-        .map_err(ApiError::from)?;
+    if let Err(err) = backup::restore_backup_impl(request.backup_path, &container).await {
+        return Err(
+            attach_restart_required_if_closed(ApiError::from(err), container.inner()).await,
+        );
+    }
 
     Ok(RestoreBackupResultDto {
         success: true,
@@ -387,7 +399,14 @@ pub async fn plugin_restore_archive<R: Runtime>(
         service.forget_restore_source().await;
     }
 
-    result.map_err(backup::restore_api_error)
+    match result {
+        Ok(dto) => Ok(dto),
+        Err(err) => Err(attach_restart_required_if_closed(
+            backup::restore_api_error(err),
+            container.inner(),
+        )
+        .await),
+    }
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
@@ -410,4 +429,29 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             plugin_restore_archive,
         ])
         .build()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::common::{cleanup_test_resources, setup_test_container};
+
+    #[tokio::test]
+    async fn attach_restart_required_only_marks_closed_database_errors() {
+        let container = setup_test_container().await.expect("test container");
+        let data_dir = container.core.data_dir().to_path_buf();
+
+        let open_err =
+            attach_restart_required_if_closed(ApiError::internal("corrupt backup"), &container)
+                .await;
+        assert_eq!(open_err.details, None);
+
+        container.database().close().await;
+        let closed_err =
+            attach_restart_required_if_closed(ApiError::internal("rename failed"), &container)
+                .await;
+        assert_eq!(closed_err.details.as_deref(), Some("restart_required"));
+
+        let _ = cleanup_test_resources(&data_dir);
+    }
 }

@@ -42,11 +42,65 @@ export function RootLayout() {
   const isDatabaseRestoredRestartRequired = useRestoreLockoutStore(
     (state) => state.isDatabaseRestoredRestartRequired,
   );
+  const restoreFailed = useRestoreLockoutStore((state) => state.restoreFailed);
   const lockoutRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (isDatabaseRestoredRestartRequired) {
-      lockoutRef.current?.focus();
-    }
+    if (!isDatabaseRestoredRestartRequired) return;
+
+    lockoutRef.current?.focus();
+
+    // Mark every sibling portal root on document.body (e.g. Radix Dialog/Popover
+    // portals) inert so portaled UI outside <Outlet> cannot stay interactive.
+    const modified = new Set<Element>();
+    const markBodyChildrenInert = () => {
+      for (const child of Array.from(document.body.children)) {
+        if (lockoutRef.current && child.contains(lockoutRef.current)) continue;
+        if (!child.hasAttribute('inert')) {
+          child.setAttribute('inert', '');
+          modified.add(child);
+        }
+      }
+    };
+    markBodyChildrenInert();
+
+    const observer =
+      typeof MutationObserver !== 'undefined'
+        ? new MutationObserver(markBodyChildrenInert)
+        : null;
+    observer?.observe(document.body, { childList: true });
+
+    // Capture-phase window listeners intercept before any window/document
+    // keydown/keyup handlers (e.g. FlashcardSession, palette, reader Esc).
+    const blockKeyEvent = (event: KeyboardEvent) => {
+      if (event.key === 'Tab' || event.key === 'Escape') {
+        event.preventDefault();
+      }
+      event.stopImmediatePropagation();
+    };
+    const keepFocusInLockout = (event: FocusEvent) => {
+      const target = event.target;
+      if (
+        lockoutRef.current &&
+        target instanceof Node &&
+        !lockoutRef.current.contains(target)
+      ) {
+        lockoutRef.current.focus();
+      }
+    };
+
+    window.addEventListener('keydown', blockKeyEvent, true);
+    window.addEventListener('keyup', blockKeyEvent, true);
+    document.addEventListener('focusin', keepFocusInLockout, true);
+
+    return () => {
+      observer?.disconnect();
+      for (const child of modified) {
+        child.removeAttribute('inert');
+      }
+      window.removeEventListener('keydown', blockKeyEvent, true);
+      window.removeEventListener('keyup', blockKeyEvent, true);
+      document.removeEventListener('focusin', keepFocusInLockout, true);
+    };
   }, [isDatabaseRestoredRestartRequired]);
   useDeepResearchJobs();
   const [capture, setCapture] = useState<{ open: boolean; clipboard: string | null }>({
@@ -150,14 +204,16 @@ export function RootLayout() {
               e.preventDefault();
             }
           }}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-bg/90 p-6 backdrop-blur-xs focus:outline-hidden"
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-bg/90 p-6 backdrop-blur-xs focus:outline-hidden"
         >
           <div className="w-full max-w-sm rounded-lg border border-border-subtle bg-surface-raised p-6 shadow-md">
             <h2 id="restore-lockout-title" className="text-base font-medium text-text-primary">
               Restart required
             </h2>
             <p id="restore-lockout-desc" className="mt-2 text-sm text-text-secondary">
-              Backup restored. Quit Lattice and open it again to use the restored library.
+              {restoreFailed
+                ? 'Restore failed after closing the library connection. Quit Lattice and open it again to reconnect.'
+                : 'Backup restored. Quit Lattice and open it again to use the restored library.'}
             </p>
           </div>
         </div>

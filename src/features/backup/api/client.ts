@@ -46,6 +46,8 @@ export const backupApi = {
     });
     if (result.ok && result.data.success !== false) {
       useRestoreLockoutStore.getState().markDatabaseRestoredRestartRequired(false);
+    } else if (!result.ok && result.details?.details === 'restart_required') {
+      useRestoreLockoutStore.getState().markDatabaseRestoredRestartRequired(false, true);
     }
     return result;
   },
@@ -144,6 +146,8 @@ export const backupApi = {
     });
     if (result.ok && result.data.outcome === 'restored') {
       useRestoreLockoutStore.getState().markDatabaseRestoredRestartRequired(true);
+    } else if (!result.ok && result.details?.details === 'restart_required') {
+      useRestoreLockoutStore.getState().markDatabaseRestoredRestartRequired(true, true);
     }
     return result;
   },

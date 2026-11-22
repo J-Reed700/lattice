@@ -306,6 +306,63 @@ describe('BatchFileImport flows', () => {
 
       await waitFor(() => expect(mocks.collectionActions.addDocuments).toHaveBeenCalledWith('k1', ['doc-99']));
     });
+
+    it('retries a failed status read after unmount and cleans up on interrupted jobs without leaking listeners', async () => {
+      vi.useFakeTimers();
+      try {
+        mocks.collectionsQuery.data = [collection('k1', 'Kitchen')];
+        mocks.getOperation.mockReturnValue({
+          id: 'job-retry',
+          status: 'processing',
+          totalFiles: 2,
+          processedFiles: 0,
+          successfulFiles: 0,
+          failedFiles: 0,
+          items: [
+            { target: '/a/one.pdf', status: 'processing' },
+            { target: '/a/two.pdf', status: 'pending' },
+          ],
+        });
+        mocks.startBatchImport.mockResolvedValueOnce({ ok: true, data: 'job-retry' });
+        mocks.getBatchJobStatus
+          .mockResolvedValueOnce({ ok: false, error: 'transient db error 1' })
+          .mockResolvedValueOnce({ ok: false, error: 'transient db error 2' })
+          .mockResolvedValueOnce({
+            ok: true,
+            data: {
+              status: 'interrupted',
+              items: [
+                { target: '/a/one.pdf', status: 'completed', documentId: 'doc-1' },
+                { target: '/a/two.pdf', status: 'cancelled', documentId: null },
+              ],
+            },
+          });
+
+        const { unmount } = renderImport();
+        fireEvent.change(screen.getByLabelText('Add to collection'), { target: { value: 'k1' } });
+        await choose(['/a/one.pdf', '/a/two.pdf']);
+        await press('Import 2 files');
+        unmount();
+
+        await act(async () => {
+          for (const handler of mocks.jobEvents) {
+            handler({ payload: { id: 'job-retry' } });
+          }
+          await Promise.resolve();
+        });
+        expect(mocks.collectionActions.addDocuments).not.toHaveBeenCalled();
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1000);
+          await Promise.resolve();
+        });
+
+        expect(mocks.collectionActions.addDocuments).toHaveBeenCalledWith('k1', ['doc-1']);
+        expect(mocks.jobEvents.size).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   describe('starting an import', () => {

@@ -68,5 +68,30 @@ describe('backupApi', () => {
     await backupApi.restoreArchive('secret');
     expect(useRestoreLockoutStore.getState().isDatabaseRestoredRestartRequired).toBe(true);
     expect(useRestoreLockoutStore.getState().restoredFromArchive).toBe(true);
+    expect(useRestoreLockoutStore.getState().restoreFailed).toBe(false);
+  });
+
+  it('activates restore lockout when restoreBackup or restoreArchive fails after closing the database pool', async () => {
+    mockIPC.mockRejectedValueOnce({
+      code: 'FILE_SYSTEM_ERROR',
+      message: 'Failed to rename restored database',
+      details: 'restart_required',
+    });
+    const backupRes = await backupApi.restoreBackup('/backups/bad-swap.db');
+    expect(backupRes.ok).toBe(false);
+    expect(useRestoreLockoutStore.getState().isDatabaseRestoredRestartRequired).toBe(true);
+    expect(useRestoreLockoutStore.getState().restoreFailed).toBe(true);
+
+    useRestoreLockoutStore.getState().resetRestoreLockout();
+    mockIPC.mockRejectedValueOnce({
+      code: 'FILE_SYSTEM_ERROR',
+      message: 'Vault restore failed after DB swap',
+      details: 'restart_required',
+    });
+    const archiveRes = await backupApi.restoreArchive('secret');
+    expect(archiveRes.ok).toBe(false);
+    expect(useRestoreLockoutStore.getState().isDatabaseRestoredRestartRequired).toBe(true);
+    expect(useRestoreLockoutStore.getState().restoredFromArchive).toBe(true);
+    expect(useRestoreLockoutStore.getState().restoreFailed).toBe(true);
   });
 });

@@ -31,8 +31,7 @@ interface BatchUrlImportState {
   isCancelling: boolean;
   runError: string | null;
   progress: number;
-  importStats: { success: number; error: number };
-  lastRunResult: BatchUrlImportResults | null;
+  importStats: { success: number; error: number; total?: number };
 
   setUrlTextOnly: (urlText: string) => void;
   setExtractArticle: (extractArticle: boolean) => void;
@@ -52,7 +51,6 @@ export const useBatchUrlImportStore = create<BatchUrlImportState>((set) => ({
   runError: null,
   progress: 0,
   importStats: { success: 0, error: 0 },
-  lastRunResult: null,
 
   setUrlTextOnly: (urlText) => set({ urlText }),
 
@@ -92,6 +90,5 @@ export const useBatchUrlImportStore = create<BatchUrlImportState>((set) => ({
       runError: null,
       progress: 0,
       importStats: { success: 0, error: 0 },
-      lastRunResult: null,
     }),
 }));

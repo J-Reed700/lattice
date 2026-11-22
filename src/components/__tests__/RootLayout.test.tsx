@@ -178,6 +178,41 @@ describe('RootLayout', () => {
     expect(screen.queryByRole('dialog', { name: 'Quick capture' })).not.toBeInTheDocument();
   });
 
+  it('blocks window keydown handlers and marks portaled dialogs inert while restore lockout is active', async () => {
+    const windowKeydown = vi.fn();
+    window.addEventListener('keydown', windowKeydown);
+    const portalHost = document.createElement('div');
+    portalHost.setAttribute('role', 'dialog');
+    portalHost.textContent = 'Portaled dialog';
+    document.body.appendChild(portalHost);
+
+    try {
+      renderAt('/home');
+      act(() => {
+        useRestoreLockoutStore.getState().markDatabaseRestoredRestartRequired(false, true);
+      });
+
+      const lockout = await screen.findByRole('alertdialog');
+      expect(lockout).toHaveTextContent(
+        'Restore failed after closing the library connection. Quit Lattice and open it again to reconnect.',
+      );
+      expect(portalHost.hasAttribute('inert')).toBe(true);
+
+      act(() => {
+        lockout.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true, cancelable: true }));
+      });
+      expect(windowKeydown).not.toHaveBeenCalled();
+
+      act(() => {
+        useRestoreLockoutStore.getState().resetRestoreLockout();
+      });
+      expect(portalHost.hasAttribute('inert')).toBe(false);
+    } finally {
+      window.removeEventListener('keydown', windowKeydown);
+      portalHost.remove();
+    }
+  });
+
   it('creates exactly one journal page on Mod+N on /journals both outside and inside an editor', async () => {
     const createPage = vi.fn().mockResolvedValue({ id: 'new-page', title: 'Untitled page' } as WorkspaceNote);
     function JournalHarness() {
