@@ -9,17 +9,20 @@ use tracing::{error, info, warn};
 
 /// Reconcile stale download sessions on app startup
 ///
-/// Finds downloads stuck in "Downloading" state (from app crash)
-/// and marks them as Failed to prevent zombie states.
+/// Finds downloads stuck in "Downloading" state (from app crash) or still
+/// "Pending" (queued in memory only, so a restart loses them). Interrupted
+/// transfers are marked Failed; orphaned queued rows are marked Paused so the
+/// user can resume them.
 pub async fn reconcile_stale_downloads(
     repository: Arc<dyn DownloadRepository>,
     startup_ts: DateTime<Utc>,
 ) -> Result<usize, DownloadError> {
     info!("Starting download session reconciliation");
 
-    let downloading_sessions = repository
+    let mut downloading_sessions = repository
         .list_by_state(&DownloadState::Downloading)
         .await?;
+    downloading_sessions.extend(repository.list_by_state(&DownloadState::Pending).await?);
 
     // No task from a previous process survives a restart, so a session still
     // marked Downloading that was last touched before this one started is dead
@@ -37,13 +40,24 @@ pub async fn reconcile_stale_downloads(
         return Ok(0);
     }
 
-    warn!("Found {} stale download(s) in 'Downloading' state", count);
+    warn!(
+        "Found {} stale download(s) in 'Downloading' or 'Pending' state",
+        count
+    );
 
     let mut reconciled = 0;
     for mut session in stale_sessions {
         let session_id = session.id().to_string();
 
-        match session.fail("App restarted while downloading".to_string()) {
+        // A normal quit leaves queued files Pending, and failing them would
+        // make the model saga fail the whole model. Paused keeps them
+        // resumable; only an interrupted transfer is a failure.
+        let result = if session.state() == &DownloadState::Pending {
+            session.pause()
+        } else {
+            session.fail("App restarted while downloading".to_string())
+        };
+        match result {
             Ok(_) => match repository.update(&session).await {
                 Ok(_) => {
                     info!("Reconciled stale download: {}", session_id);
@@ -275,5 +289,81 @@ mod tests {
             updated.error_message(),
             Some("App restarted while downloading")
         );
+    }
+
+    #[tokio::test]
+    async fn a_session_still_queued_at_a_relaunch_is_paused_not_failed() {
+        let repository = Arc::new(MockDownloadRepository::new());
+        let queued = DownloadSession::new(
+            "queued".to_string(),
+            "https://example.com/queued".to_string(),
+            std::env::temp_dir().join("queued"),
+            Some(1000),
+            None,
+        )
+        .unwrap();
+        repository.create(&queued).await.unwrap();
+        repository
+            .create(&downloading("interrupted"))
+            .await
+            .unwrap();
+        let startup = Utc::now() + chrono::Duration::milliseconds(5);
+
+        let reconciled = reconcile_stale_downloads(repository.clone(), startup)
+            .await
+            .unwrap();
+
+        assert_eq!(reconciled, 2);
+        let queued = repository.get("queued").await.unwrap().unwrap();
+        assert_eq!(queued.state(), &DownloadState::Paused);
+        assert_eq!(queued.error_message(), None);
+        let interrupted = repository.get("interrupted").await.unwrap().unwrap();
+        assert_eq!(
+            interrupted.error_message(),
+            Some("App restarted while downloading")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_pending_session_created_by_this_launch_is_left_queued() {
+        let repository = Arc::new(MockDownloadRepository::new());
+        let startup = Utc::now() - chrono::Duration::milliseconds(5);
+        let queued = DownloadSession::new(
+            "fresh".to_string(),
+            "https://example.com/fresh".to_string(),
+            std::env::temp_dir().join("fresh"),
+            Some(1000),
+            None,
+        )
+        .unwrap();
+        repository.create(&queued).await.unwrap();
+
+        let reconciled = reconcile_stale_downloads(repository.clone(), startup)
+            .await
+            .unwrap();
+
+        assert_eq!(reconciled, 0);
+        let session = repository.get("fresh").await.unwrap().unwrap();
+        assert_eq!(session.state(), &DownloadState::Pending);
+    }
+
+    /// Resume queues a session as Pending, so a quit that leaves it waiting for
+    /// a slot is a queued row at the next launch, not a dead transfer.
+    #[tokio::test]
+    async fn a_resumed_session_still_queued_at_shutdown_is_left_paused() {
+        let repository = Arc::new(MockDownloadRepository::new());
+        let mut session = downloading("queued-resume");
+        session.pause().unwrap();
+        session.resume().unwrap();
+        assert_eq!(session.state(), &DownloadState::Pending);
+        repository.create(&session).await.unwrap();
+        let startup = Utc::now() + chrono::Duration::milliseconds(5);
+
+        reconcile_stale_downloads(repository.clone(), startup)
+            .await
+            .unwrap();
+
+        let after = repository.get("queued-resume").await.unwrap().unwrap();
+        assert_eq!(after.state(), &DownloadState::Paused);
     }
 }

@@ -22,7 +22,9 @@ use tracing::info;
 use crate::features::transcription::engine::audio_decode::{
     decode_to_mono_16k, TARGET_SAMPLE_RATE,
 };
-use lattice_core::application::ports::transcription_port::{Transcript, TranscriptionPort};
+use lattice_core::application::ports::transcription_port::{
+    ActiveTranscriptionModel, Transcript, TranscriptionPort,
+};
 use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::runtime::background::BackgroundTasks;
@@ -371,8 +373,14 @@ impl TranscriptionPort for WhisperTranscriptionService {
         Ok(self.resolve_model().await?.is_some())
     }
 
-    async fn active_model_name(&self) -> Result<Option<String>, AppError> {
-        Ok(self.resolve_model().await?.map(|model| model.name))
+    async fn active_model(&self) -> Result<Option<ActiveTranscriptionModel>, AppError> {
+        Ok(self
+            .resolve_model()
+            .await?
+            .map(|model| ActiveTranscriptionModel {
+                model_id: model.model_id,
+                name: model.name,
+            }))
     }
 }
 

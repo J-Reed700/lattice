@@ -113,8 +113,8 @@ async fn terminal_failure_and_completion_each_promote_the_next_queued_download()
         .with_max_concurrent(1);
         let mut events = manager.subscribe_to_events().write().await.take().unwrap();
 
-        std::fs::write(dir.path().join("first.bin"), vec![1_u8; 1000]).unwrap();
-        std::fs::write(dir.path().join("queued.bin"), vec![1_u8; 1000]).unwrap();
+        std::fs::write(dir.path().join("first.bin.part"), vec![1_u8; 1000]).unwrap();
+        std::fs::write(dir.path().join("queued.bin.part"), vec![1_u8; 1000]).unwrap();
 
         let first_id = manager
             .start_download(DownloadRequest {
@@ -125,6 +125,7 @@ async fn terminal_failure_and_completion_each_promote_the_next_queued_download()
                 model_name: None,
                 model_id: None,
                 model_file_name: None,
+                expected_bytes: None,
             })
             .await
             .unwrap();
@@ -138,6 +139,7 @@ async fn terminal_failure_and_completion_each_promote_the_next_queued_download()
                 model_name: None,
                 model_id: None,
                 model_file_name: None,
+                expected_bytes: None,
             })
             .await
             .unwrap();

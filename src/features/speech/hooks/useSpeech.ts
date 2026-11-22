@@ -15,8 +15,11 @@ import { useSpeechPrefsStore } from '../stores/speechPrefsStore';
 export const SPEECH_STATUS_QUERY_KEY = ['speech', 'status'] as const;
 export const READ_ALOUD_SETTINGS = '/settings?tab=read-aloud';
 
-/** Whether the voices are downloaded, which voices there are, and the download's size. */
-export function useSpeechStatusQuery() {
+/**
+ * Whether the voices are downloaded, which voices there are, and the download's size.
+ * `refetchOnMount` lets a settings row insist on a fresh read before it offers a download.
+ */
+export function useSpeechStatusQuery(options: { refetchOnMount?: 'always' } = {}) {
   const api = useApi();
   return useQuery({
     queryKey: SPEECH_STATUS_QUERY_KEY,
@@ -26,6 +29,7 @@ export function useSpeechStatusQuery() {
       return result.data;
     },
     staleTime: 30_000,
+    refetchOnMount: options.refetchOnMount,
   });
 }
 

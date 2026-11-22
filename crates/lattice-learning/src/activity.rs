@@ -238,19 +238,21 @@ fn outline_item(
     };
     let started =
         chrono::Utc::now().timestamp_millis() - i64::from(run.elapsed_seconds).saturating_mul(1000);
-    let mut item = ActivityItem::new(
+    let target = match &run.program_id {
+        Some(program) => ActivityTarget::Course {
+            course: program.clone(),
+        },
+        None => ActivityTarget::StudioBuilder,
+    };
+    let item = ActivityItem::new(
         format!("learning.outline:{id}"),
         "learning.outline",
         title,
         ActivityState::Running,
     )
     .detail(detail)
-    .since(Some(started));
-    if let Some(program) = &run.program_id {
-        item = item.target(ActivityTarget::Course {
-            course: program.clone(),
-        });
-    }
+    .since(Some(started))
+    .target(target);
     match &run.model_name {
         Some(name) if run.stage != OutlineStage::ReadingSources => {
             item.uses(ActivityResource::Model { name: name.clone() })
@@ -346,6 +348,34 @@ mod tests {
         assert_eq!(
             detail(Phase::Review, Phase::Review).as_deref(),
             Some("Reviewing teaching and assessments")
+        );
+    }
+
+    #[test]
+    fn outline_item_targets_studio_builder_until_saved_then_course() {
+        let mut progress = LearningOutlineProgressDto {
+            program_id: None,
+            stage: OutlineStage::Drafting,
+            detail: None,
+            waiting: None,
+            elapsed_seconds: 5,
+            stage_seconds: 3,
+            response_characters: 120,
+            model_name: None,
+        };
+        let mut courses = HashMap::new();
+        courses.insert("prog-1".to_string(), "Rust Async".to_string());
+
+        let unsaved = outline_item("req-1", &progress, &courses);
+        assert_eq!(unsaved.target, Some(ActivityTarget::StudioBuilder));
+
+        progress.program_id = Some("prog-1".to_string());
+        let saved = outline_item("req-1", &progress, &courses);
+        assert_eq!(
+            saved.target,
+            Some(ActivityTarget::Course {
+                course: "prog-1".to_string(),
+            })
         );
     }
 }

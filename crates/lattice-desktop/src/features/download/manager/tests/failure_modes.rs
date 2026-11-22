@@ -34,6 +34,7 @@ async fn test_download_invalid_path_rejected() -> Result<(), Box<dyn std::error:
         model_name: None,
         model_id: None,
         model_file_name: None,
+        expected_bytes: None,
     };
 
     let result = manager.start_download(request).await;
@@ -68,6 +69,7 @@ async fn refused_destination_message(destination: std::path::PathBuf) -> String 
         model_name: None,
         model_id: None,
         model_file_name: None,
+        expected_bytes: None,
     };
     match manager.start_download(request).await {
         Err(DownloadError::InvalidDestination(msg)) => msg,
@@ -113,6 +115,7 @@ async fn test_download_accepts_a_canonicalized_destination_under_the_root(
         model_name: None,
         model_id: None,
         model_file_name: None,
+        expected_bytes: None,
     };
 
     let result = manager.start_download(request).await;
@@ -186,6 +189,7 @@ async fn assert_a_model_file_is_accepted() {
         model_name: None,
         model_id: None,
         model_file_name: None,
+        expected_bytes: None,
     };
 
     let result = manager.start_download(request).await;
@@ -220,6 +224,7 @@ async fn test_download_handles_transient_error_gracefully() -> Result<(), Box<dy
         model_name: None,
         model_id: None,
         model_file_name: None,
+        expected_bytes: None,
     };
 
     let download_id = manager.start_download(request).await?;
@@ -289,6 +294,7 @@ async fn test_download_fails_on_permanent_error() -> Result<(), Box<dyn std::err
         model_name: None,
         model_id: None,
         model_file_name: None,
+        expected_bytes: None,
     };
 
     let download_id = manager.start_download(request).await?;

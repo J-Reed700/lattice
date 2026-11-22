@@ -432,6 +432,14 @@ async repairLearningOutline(request: RepairLearningOutlineRequestDto, requestId:
     else return { status: "error", error: e  as any };
 }
 },
+async listLearningOutlineRuns() : Promise<Result<LearningOutlineRunsSnapshotDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|list_learning_outline_runs") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async acceptLearningProgram(request: AcceptLearningProgramRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|accept_learning_program", { request }) };
@@ -2290,11 +2298,24 @@ async rerankerStatus() : Promise<Result<RerankerStatusDto, ApiError>> {
 }
 },
 /**
- * Download the reranker's model, after which search reranks.
+ * Start downloading the reranker's model through the shared download
+ * manager, after which search reranks. Follow it in the Downloads list.
  */
 async downloadReranker() : Promise<Result<RerankerStatusDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:search|download_reranker") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Delete the reranker's model. Search keeps its first-stage order until it
+ * is downloaded again. Refused while its download is running.
+ */
+async removeReranker() : Promise<Result<RerankerStatusDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:search|remove_reranker") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4537,7 +4558,11 @@ export type ActivityTarget = { type: "course"; course: string } | { type: "lesso
 /**
  * An Explorer folder, by its root as the folder list names it.
  */
-{ type: "folder"; root: string; name: string } | { type: "conversation"; conversation: string }
+{ type: "folder"; root: string; name: string } | { type: "conversation"; conversation: string } |
+/**
+ * The Learning Studio course builder while an outline has no saved draft yet.
+ */
+{ type: "studio_builder" }
 export type ActorDto = "machine" | "user"
 export type AddConversationToJournalRequestDto = { journalSpaceId: string; conversationId: string }
 export type AddLearningDocumentSourceRequestDto = { operationId: string; sourceId: string; versionId: string; programId: string; documentId: string }
@@ -6598,7 +6623,13 @@ geometry: VisionGeometry;
 /**
  * The projector download's size, in bytes.
  */
-projector_bytes: number }
+projector_bytes: number;
+/**
+ * Where the projector file lives, as `to_string_lossy()` of the path the
+ * projector download is started with. It equals that download's
+ * `destination`, so the UI can find the download in the list.
+ */
+projector_path: string }
 /**
  * Why the screen reports the draft.
  */
@@ -8668,6 +8699,7 @@ export type LearningOutlineIssueKind =
  * Course-wide: no references could be gathered, so lessons cannot be prepared.
  */
 "references"
+export type LearningOutlineOutcomeDto = { requestId: string; kind: OutlineOperationKind; programId?: string | null; cancelled: boolean; error?: ApiError | null }
 export type LearningOutlineProgressDto = { programId?: string | null; stage: OutlineStage;
 /**
  * Progress inside a long stage ("Subtopic 3 of 8: searching"), so a deep
@@ -8694,6 +8726,8 @@ citationsRemoved: number;
  */
 referencesGathered: number }
 export type LearningOutlineReviewStatus = "unchecked" | "needs_repair" | "passed"
+export type LearningOutlineRunDto = { requestId: string; kind: OutlineOperationKind; goal?: string | null; courseDepth?: LearningCourseDepth | null; progress: LearningOutlineProgressDto }
+export type LearningOutlineRunsSnapshotDto = { active: LearningOutlineRunDto[]; recentOutcomes: LearningOutlineOutcomeDto[] }
 export type LearningPackChangeDto = { entityKind: string; entityId: string; action: string; description: string }
 export type LearningPackConflictDto = { kind: LearningPackConflictKind;
 /**
@@ -9970,6 +10004,7 @@ noPassage: number;
  * answering part-way.
  */
 stopped: string | null }
+export type OutlineOperationKind = "generate" | "repair"
 export type OutlineStage = "reading_sources" | "loading_model" | "gathering_references" | "drafting" | "checking_citations" | "reviewing" | "researching" | "repairing" | "checking_repair" | "saving" | "completed" | "cancelled" | "failed"
 export type OverrideLearningQuizGradeRequestDto = { operationId: string; programId: string; formId: string; itemId: string }
 /**
@@ -10381,7 +10416,13 @@ export type RerankerStatusDto = {
 /**
  * The reranker's model is on disk, so search reranks with it.
  */
-installed: boolean; modelName: string; downloadBytes: number }
+installed: boolean; modelName: string; downloadBytes: number;
+/**
+ * Where the model lives, as `to_string_lossy()` of the same path search
+ * loads. It equals the `destination` of the download that fetches it, so
+ * the UI can find that download in the list.
+ */
+path: string }
 export type RescanSummary = { scanned: number; imported: number; deleted: number }
 export type ResearchAttemptDto = { queries: string[]; sourcesAdded: SourceRefDto[]; passagesFound: number; at: number }
 /**
@@ -11967,6 +12008,10 @@ modelReady: boolean;
  */
 modelName: string | null;
 /**
+ * Catalog id of the model in use, to remove it with.
+ */
+modelId: string | null;
+/**
  * What to download for a voice conversation.
  */
 voiceModel: VoiceModelDto }
@@ -12787,6 +12832,7 @@ export type CommandArgs = {
 	list_journal_entry_pins: { journalSpaceId: string };
 	list_journal_syntheses: void;
 	list_journals: void;
+	list_learning_outline_runs: void;
 	list_learning_programs: void;
 	list_learning_tangents: { request: ListLearningTangentsRequestDto };
 	list_leftover_embedding_files: void;
@@ -12865,6 +12911,7 @@ export type CommandArgs = {
 	remove_indexed_file: { path: string };
 	remove_learning_teaching_sentences: { request: RemoveLearningTeachingSentencesRequestDto };
 	remove_leftover_embedding_files: void;
+	remove_reranker: void;
 	remove_source_key: { service: KeyServiceDto };
 	remove_tag_from_document: { request: RemoveTagRequestDto };
 	remove_watch_folder: { path: string };
@@ -13255,6 +13302,7 @@ export type CommandResults = {
 	list_journal_entry_pins: string[];
 	list_journal_syntheses: JournalSynthesisDto[];
 	list_journals: ConversationJournalDto[];
+	list_learning_outline_runs: LearningOutlineRunsSnapshotDto;
 	list_learning_programs: LearningProgramSummaryDto[];
 	list_learning_tangents: LearningTangentDto[];
 	list_leftover_embedding_files: LeftoverEmbeddingFilesDto;
@@ -13333,6 +13381,7 @@ export type CommandResults = {
 	remove_indexed_file: null;
 	remove_learning_teaching_sentences: RemoveLearningTeachingSentencesResultDto;
 	remove_leftover_embedding_files: LeftoverEmbeddingFilesDto;
+	remove_reranker: RerankerStatusDto;
 	remove_source_key: SourcesStatusDto;
 	remove_tag_from_document: null;
 	remove_watch_folder: null;

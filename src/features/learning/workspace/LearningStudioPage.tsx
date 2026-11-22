@@ -91,6 +91,7 @@ export function LearningStudioPage() {
 }
 
 const REVIEW_PARAMS = ['course', 'lesson', 'review', 'claim'] as const;
+const DEEP_LINK_PARAMS = ['course', 'lesson', 'review', 'deck', 'newDeck', 'section', 'drills', 'new', 'builder'] as const;
 
 type ProgramMutationState = { error: Error | null; variables: { programId: string } | undefined; submittedAt: number };
 
@@ -105,19 +106,35 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useAppNavigate();
   const client = useQueryClient();
-  const [screen, setScreen] = useState<Screen>('programs');
+  const generate = useGenerateLearningProgram();
+  const {
+    isPending: generatePending,
+    error: generateError,
+    builderFocused: generateBuilderFocused,
+    hasLiveChannel: generateHasLiveChannel,
+    finishedProgramId,
+    reset: resetGenerate,
+    setBuilderFocused,
+    clearFinished,
+    dismissError,
+  } = generate;
+  const hasDeepLink = Boolean(destination) || DEEP_LINK_PARAMS.some((param) => searchParams.has(param));
+  const [screen, setScreen] = useState<Screen>(() => (
+    !hasDeepLink && (generatePending || Boolean(generateError)) && generateBuilderFocused ? 'builder' : 'programs'
+  ));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   useStopSpeechOnChange(`${screen}:${selectedId}`);
   const navigation = useStudioNavigationGuard(selectedId !== null);
   const programs = useLearningPrograms();
   const detail = useLearningProgram(selectedId);
-  const generate = useGenerateLearningProgram();
   const accept = useAcceptLearningProgram();
   const prepare = usePrepareLearningLesson();
   const prepareModule = usePrepareLearningModule();
   const prepareAhead = usePrepareLearningAhead();
   const complete = useCompleteLearningLesson();
   const handledNewRoute = useRef(false);
+  const handledBuilderRoute = useRef(false);
+  const userNavigatedRef = useRef(false);
   const flashcardsRef = useRef<HTMLElement>(null);
   const rowRef = useRef<HTMLDivElement>(null);
   const routedDestination = useRef<StudyDestination | undefined>(undefined);
@@ -190,6 +207,40 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
     if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
   }, [destination, screen, selectedId, searchParams, setSearchParams]);
 
+  const shouldAutoOpenBuilder =
+    !userNavigatedRef.current
+    && !hasDeepLink
+    && screen === 'programs'
+    && selectedId === null
+    && !flashcardRoute
+    && !reviewing
+    && (generatePending || Boolean(generateError))
+    && generateBuilderFocused
+    && !generateHasLiveChannel;
+
+  const activeScreen: Screen = shouldAutoOpenBuilder ? 'builder' : screen;
+
+  useEffect(() => {
+    if (shouldAutoOpenBuilder) {
+      setScreen('builder');
+    }
+  }, [shouldAutoOpenBuilder]);
+
+  useEffect(() => {
+    if (searchParams.get('builder') !== '1') {
+      handledBuilderRoute.current = false;
+      return;
+    }
+    if (handledBuilderRoute.current) return;
+    handledBuilderRoute.current = true;
+    setSelectedId(null);
+    setScreen('builder');
+    setBuilderFocused(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('builder');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setBuilderFocused, setSearchParams]);
+
   useEffect(() => {
     if (searchParams.get('new') !== '1') {
       handledNewRoute.current = false;
@@ -197,12 +248,14 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
     }
     if (handledNewRoute.current) return;
     handledNewRoute.current = true;
+    setSelectedId(null);
     setScreen('builder');
-    generate.reset();
+    if (!generatePending) resetGenerate();
+    setBuilderFocused(true);
     const next = new URLSearchParams(searchParams);
     next.delete('new');
     setSearchParams(next, { replace: true });
-  }, [generate, searchParams, setSearchParams]);
+  }, [generatePending, resetGenerate, searchParams, setBuilderFocused, setSearchParams]);
 
   // `?section=flashcards` (the command palette) lands on the Flashcards section.
   useEffect(() => {
@@ -222,15 +275,15 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
     void client.invalidateQueries({ queryKey: learningProgramKey(programId) });
   };
   const create = (request: Parameters<typeof generate.mutate>[0]) => generate.mutate(request);
-  const { finishedProgramId, reset: resetGenerate } = generate;
   useLayoutEffect(() => {
     if (!finishedProgramId) return;
     clearProgramBuilderDraft();
-    resetGenerate();
-    if (screen === 'builder') { setSelectedId(finishedProgramId); setScreen('programs'); }
-  }, [finishedProgramId, resetGenerate, screen]);
+    clearFinished();
+    if (activeScreen === 'builder') { setSelectedId(finishedProgramId); setScreen('programs'); }
+  }, [activeScreen, clearFinished, finishedProgramId]);
 
   const handleSelectDestination = (next: StudyDestination) => {
+    userNavigatedRef.current = true;
     if (onOpenDestination) {
       onOpenDestination(next);
     } else {
@@ -277,9 +330,9 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
     handleSelectDestination({ programId: targetProgram.id, tab: tabMap[action] });
   };
 
-  if (flashcardRoute && !selectedId && screen === 'programs') return <FlashcardDeckView />;
-  if (screen === 'import' || screen === 'export-all') return <div className="studio-page-scroll h-full min-h-0 overflow-y-auto bg-background"><div className="mx-auto max-w-3xl"><button type="button" disabled={exportingAll} onClick={() => setScreen('programs')} className="mb-2 inline-flex min-h-10 items-center gap-2 text-sm text-text-muted hover:text-text-primary disabled:opacity-50"><ArrowLeft size={16} /> All programs</button>{screen === 'import' ? <ImportCourseFlow headingLevel={2} onImported={openImported} /> : <ExportAllCourses />}</div></div>;
-  if (screen === 'builder') return <div className="h-full min-h-0 overflow-y-auto bg-background px-5 py-7 sm:px-8"><LearningModelNotice /><ProgramBuilder onOpenDraft={() => { if (generate.progress?.programId) { setSelectedId(generate.progress.programId); setScreen('programs'); } }} progress={generate.progress} cancelling={generate.cancelling} onStop={() => { void generate.cancel(); }} cancelError={generate.cancelError} pending={generate.isPending} error={generate.error ?? undefined} onGenerate={create} onCancel={() => setScreen('programs')} /></div>;
+  if (flashcardRoute && !selectedId && activeScreen === 'programs') return <FlashcardDeckView />;
+  if (activeScreen === 'import' || activeScreen === 'export-all') return <div className="studio-page-scroll h-full min-h-0 overflow-y-auto bg-background"><div className="mx-auto max-w-3xl"><button type="button" disabled={exportingAll} onClick={() => setScreen('programs')} className="mb-2 inline-flex min-h-10 items-center gap-2 text-sm text-text-muted hover:text-text-primary disabled:opacity-50"><ArrowLeft size={16} /> All programs</button>{activeScreen === 'import' ? <ImportCourseFlow headingLevel={2} onImported={openImported} /> : <ExportAllCourses />}</div></div>;
+  if (activeScreen === 'builder') return <div className="h-full min-h-0 overflow-y-auto bg-background px-5 py-7 sm:px-8"><LearningModelNotice /><ProgramBuilder activeDepth={generate.courseDepth} onOpenDraft={() => { if (generate.progress?.programId) { userNavigatedRef.current = true; setBuilderFocused(false); setSelectedId(generate.progress.programId); setScreen('programs'); } }} progress={generate.progress} cancelling={generate.cancelling} onStop={() => { void generate.cancel(); }} cancelError={generate.cancelError} pending={generate.isPending} error={generate.error ?? undefined} onDismissError={dismissError} onGenerate={create} onCancel={() => { userNavigatedRef.current = true; setBuilderFocused(false); setScreen('programs'); }} /></div>;
 
   const reviewTitle = reviewing ? detail.data?.modules.flatMap((module) => module.lessons).find((lesson) => lesson.id === reviewLesson)?.title ?? 'Lesson' : '';
   return <>
@@ -296,19 +349,38 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
     {selectedId ? (
       detail.isLoading ? <div className="mx-auto flex max-w-5xl items-center justify-center rounded-2xl border border-border bg-surface p-16 text-sm text-text-muted">Loading your program…</div>
         : detail.isError || !detail.data ? <div className="mx-auto max-w-3xl rounded-2xl border border-rose-500/25 bg-rose-500/5 p-8"><h2 className="font-serif text-2xl text-text-primary">This program could not be opened</h2><p className="mt-2 text-sm text-text-secondary">{message(detail.error)}</p><div className="mt-5 flex gap-3"><button type="button" onClick={refresh} className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-accent-fg">Retry</button><button type="button" onClick={() => setSelectedId(null)} className="rounded-full border border-border px-4 py-2 text-sm">All programs</button></div></div>
-          : <ProgramWorkspace key={selectedId} destination={destination?.programId === selectedId ? destination : undefined} initialTangentId={destination?.tangentId} outlineGeneration={generate.progress?.programId === selectedId ? generate : undefined} program={detail.data} onBack={() => { setSelectedId(null); void client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY }); }} onOpenProgram={openImported} onReview={openReview} onAccept={(title) => accept.mutate({ programId: selectedId, expectedRevision: detail.data!.summary.revision, title }, { onSuccess: (accepted) => { const first = accepted.modules[0]; if (first) prepareModule.mutate({ programId: accepted.summary.id, moduleId: first.id, expectedRevision: accepted.summary.revision }); } })} acceptPending={accept.isPending} acceptError={mutationErrorFor(selectedId, accept) ? message(accept.error) : undefined} onPrepare={(lesson) => prepare.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} onPrepareModule={(module) => prepareModule.mutate({ programId: selectedId, moduleId: module.id, expectedRevision: detail.data!.summary.revision })} onLessonOpened={(lessonId) => prepareAhead.mutate({ programId: selectedId, lessonId })} preparePending={prepare.isPending || prepareModule.isPending} prepareError={latestErrorFor(selectedId, [prepare, prepareModule, prepareAhead])} onComplete={(lesson) => complete.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} completePending={complete.isPending} completeError={complete.error ?? undefined} />
+          : <ProgramWorkspace key={selectedId} destination={destination?.programId === selectedId ? destination : undefined} initialTangentId={destination?.tangentId} outlineGeneration={generate.progress?.programId === selectedId ? generate : undefined} program={detail.data} onBack={() => { userNavigatedRef.current = true; setSelectedId(null); void client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY }); }} onOpenProgram={openImported} onReview={openReview} onAccept={(title) => accept.mutate({ programId: selectedId, expectedRevision: detail.data!.summary.revision, title }, { onSuccess: (accepted) => { const first = accepted.modules[0]; if (first) prepareModule.mutate({ programId: accepted.summary.id, moduleId: first.id, expectedRevision: accepted.summary.revision }); } })} acceptPending={accept.isPending} acceptError={mutationErrorFor(selectedId, accept) ? message(accept.error) : undefined} onPrepare={(lesson) => prepare.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} onPrepareModule={(module) => prepareModule.mutate({ programId: selectedId, moduleId: module.id, expectedRevision: detail.data!.summary.revision })} onLessonOpened={(lessonId) => prepareAhead.mutate({ programId: selectedId, lessonId })} preparePending={prepare.isPending || prepareModule.isPending} prepareError={latestErrorFor(selectedId, [prepare, prepareModule, prepareAhead])} onComplete={(lesson) => complete.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} completePending={complete.isPending} completeError={complete.error ?? undefined} />
     ) : <ProgramLibrary
       programs={programs.data}
       loading={programs.isLoading}
       error={programs.isError ? message(programs.error) : undefined}
       onRetry={refresh}
-      onOpen={(id) => { setSelectedId(id); void client.invalidateQueries({ queryKey: learningProgramKey(id) }); }}
-      onBuild={() => { generate.reset(); setScreen('builder'); }}
-      onImport={() => setScreen('import')}
-      onExport={() => setScreen('export-all')}
+      onOpen={(id) => { userNavigatedRef.current = true; setSelectedId(id); void client.invalidateQueries({ queryKey: learningProgramKey(id) }); }}
+      onBuild={() => { userNavigatedRef.current = true; setBuilderFocused(true); setScreen('builder'); }}
+      onImport={() => { userNavigatedRef.current = true; setScreen('import'); }}
+      onExport={() => { userNavigatedRef.current = true; setScreen('export-all'); }}
       onSelectFramework={handleSelectFramework}
       onOpenDestination={handleSelectDestination}
       flashcardsRef={flashcardsRef}
+      outlineGeneration={{
+        isPending: generate.isPending,
+        progress: generate.progress,
+        goal: generate.goal,
+        cancelling: generate.cancelling,
+        cancelError: generate.cancelError,
+        error: generate.error,
+        onOpenBuilder: () => { userNavigatedRef.current = true; setBuilderFocused(true); setScreen('builder'); },
+        onOpenDraft: () => {
+          if (generate.progress?.programId) {
+            userNavigatedRef.current = true;
+            setBuilderFocused(false);
+            setSelectedId(generate.progress.programId);
+            setScreen('programs');
+          }
+        },
+        onCancel: () => { void generate.cancel(); },
+        onDismissError: dismissError,
+      }}
     />}
     </div>
     <ReaderPane rowWidth={room.width} availableWidth={room.available} resetKey={`${selectedId ?? ''}:${reviewing}`} />

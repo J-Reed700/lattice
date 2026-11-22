@@ -52,6 +52,8 @@ pub struct TranscriptionStatusDto {
     pub model_ready: bool,
     /// Display name of the model that would be used.
     pub model_name: Option<String>,
+    /// Catalog id of the model in use, to remove it with.
+    pub model_id: Option<String>,
     /// What to download for a voice conversation.
     pub voice_model: VoiceModelDto,
 }

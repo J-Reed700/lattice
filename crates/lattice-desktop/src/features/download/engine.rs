@@ -17,6 +17,11 @@ mod transfer;
 /// Content-Length below this threshold is likely a redirect/error page
 const MIN_VALID_MODEL_SIZE: u64 = 10 * 1024; // 10 KB
 
+/// Total time allowed for each request that only sizes a file. The transfer
+/// itself has no total timeout so a large file can stream for hours, but a
+/// server that accepts a HEAD and never answers must not hold a start call.
+const SIZE_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// HTTP status codes that are typically transient and safe to retry.
 const RETRYABLE_HTTP_STATUSES: [u16; 8] = [408, 409, 425, 429, 500, 502, 503, 504];
 
@@ -60,6 +65,11 @@ pub struct DownloadOptions {
     pub resume_from: Option<u64>,
     pub progress_callback: Option<ProgressCallback>,
     pub auth_token: Option<String>,
+    /// The size the session already knows (from the caller or the prepare-time
+    /// HEAD). It wins over the transfer-time HEAD's size, which can be absent:
+    /// without it a complete `.part` would be sent `Range: bytes=<total>-`,
+    /// which the server answers with a 416 that is never retried.
+    pub known_total: Option<u64>,
 }
 
 #[async_trait]
@@ -203,7 +213,22 @@ fn is_content_length_valid(content_length: Option<u64>) -> bool {
 #[async_trait]
 impl DownloadEngine for HttpDownloadEngine {
     async fn download(&self, options: DownloadOptions) -> Result<DownloadResult, DownloadError> {
-        let (expected_total_bytes, final_url) = self.get_file_size(&options.url).await?;
+        // Every byte is already on disk: hash it, with no request at all.
+        if let (Some(total), Some(offset)) = (options.known_total, options.resume_from) {
+            if total > 0 && offset == total {
+                return self
+                    .complete_from_local_file(
+                        &options.url,
+                        &options.destination,
+                        total,
+                        options.progress_callback.as_ref(),
+                    )
+                    .await;
+            }
+        }
+
+        let (head_total_bytes, final_url) = self.get_file_size(&options.url).await?;
+        let expected_total_bytes = options.known_total.or(head_total_bytes);
         let auth_token = options.auth_token.as_ref().filter(|_| {
             let allowed = may_forward_authorization(&options.url, &final_url);
             if !allowed {
@@ -255,6 +280,7 @@ impl DownloadEngine for HttpDownloadEngine {
                 ))
             })?
             .head(url)
+            .timeout(SIZE_PROBE_TIMEOUT)
             .send()
             .await
             .map_err(|e| {
@@ -291,9 +317,15 @@ impl DownloadEngine for HttpDownloadEngine {
             }
         }
 
-        let response = self.client.head(url).send().await.map_err(|e| {
-            DownloadError::NetworkError(format!("HEAD request failed: {}", WithCauses(&e)))
-        })?;
+        let response = self
+            .client
+            .head(url)
+            .timeout(SIZE_PROBE_TIMEOUT)
+            .send()
+            .await
+            .map_err(|e| {
+                DownloadError::NetworkError(format!("HEAD request failed: {}", WithCauses(&e)))
+            })?;
 
         let status = response.status();
         let final_url = response.url().clone();
@@ -376,6 +408,7 @@ impl DownloadEngine for HttpDownloadEngine {
                 .client
                 .get(final_url.as_str())
                 .header(header::RANGE, "bytes=0-0")
+                .timeout(SIZE_PROBE_TIMEOUT)
                 .send()
                 .await
                 .map_err(|e| {

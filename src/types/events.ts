@@ -27,7 +27,7 @@ export namespace EventSchemas {
       filename: z.string(),
       bytesDownloaded: z.number(),
       totalBytes: z.number(),
-      status: z.enum(['pending', 'downloading', 'completed', 'error']),
+      status: z.enum(['pending', 'downloading', 'paused', 'completed', 'error', 'cancelled']),
     });
 
     export const Single = z.object({
@@ -40,6 +40,9 @@ export namespace EventSchemas {
       percentage: z.number().nullable(),
       etaSeconds: z.number().nullable(),
       status: z.enum(['pending', 'downloading', 'paused', 'completed', 'error', 'cancelled']),
+      // Absent from older payloads.
+      destination: z.string().optional(),
+      modelName: z.string().nullable().optional(),
     });
 
     export const Batch = z.object({
@@ -155,7 +158,7 @@ export namespace TauriEvents {
     /**
      * Per-file status for multi-file downloads
      */
-    export type FileStatus = 'pending' | 'downloading' | 'completed' | 'error';
+    export type FileStatus = 'pending' | 'downloading' | 'paused' | 'completed' | 'error' | 'cancelled';
 
     /**
      * Per-file progress information for batch downloads
@@ -184,6 +187,9 @@ export namespace TauriEvents {
       percentage: number | null;
       etaSeconds: number | null;
       status: DownloadStatus;
+      /** The full final path; absent from older payloads. */
+      destination?: string;
+      modelName?: string | null;
     }
 
     /**

@@ -189,6 +189,8 @@ fn test_download_lifecycle_with_progress() {
     assert_eq!(session.state(), &DownloadState::Paused);
 
     session.resume().unwrap();
+    assert_eq!(session.state(), &DownloadState::Pending);
+    session.start().unwrap();
     assert_eq!(session.state(), &DownloadState::Downloading);
 
     session.update_progress(5_000_000, 750_000.0);

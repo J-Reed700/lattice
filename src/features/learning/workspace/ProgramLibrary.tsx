@@ -1,14 +1,85 @@
 import type { RefObject } from 'react';
 
-import { Archive, ArrowRight, BookOpenCheck, Layers3, Plus, Upload } from 'lucide-react';
+import { Archive, ArrowRight, BookOpenCheck, Layers3, LoaderCircle, Plus, Upload } from 'lucide-react';
 
+import { PlainError } from '@/components/PlainError';
 import { Skeleton } from '@/components/Skeleton';
 import { Button } from '@/components/ui/button';
+import {
+  describeOutlineStage,
+  formatOutlineDuration,
+  useOutlineElapsedSeconds,
+} from '@/features/learning/curriculum/OutlineGenerationProgress';
 import { StudyHabitsBar, type FrameworkAction } from '@/features/learning/habits';
 import { FlashcardsSection } from '@/features/learning/recall/flashcards/FlashcardsSection';
 import { CourseTangentsSection } from '@/features/learning/tangents/CourseTangentsSection';
-import type { LearningProgramSummaryDto } from '@/lib/bindings';
+import type { LearningOutlineProgressDto, LearningProgramSummaryDto } from '@/lib/bindings';
 import type { StudyDestination } from '@/lib/studyActivity';
+
+export interface OutlineGenerationLibraryState {
+  isPending: boolean;
+  progress: LearningOutlineProgressDto | null;
+  goal?: string | null;
+  cancelling?: boolean;
+  cancelError?: string;
+  error: Error | null;
+  onOpenBuilder: () => void;
+  onOpenDraft?: () => void;
+  onCancel?: () => void;
+  onDismissError?: () => void;
+}
+
+function OutlineGenerationBanner({ generation }: { generation: OutlineGenerationLibraryState }) {
+  const elapsed = useOutlineElapsedSeconds(generation.progress?.elapsedSeconds);
+  const stage = generation.progress?.stage;
+  const stageInfo = describeOutlineStage(stage);
+  const stopping = Boolean(generation.cancelling && stage !== 'saving' && stage !== 'completed');
+
+  return <section role="region" aria-label="Course generation in progress" className="mb-6 rounded-xl border border-accent/30 bg-accent/5 p-4 sm:p-5">
+    <div className="flex flex-col items-start justify-between gap-3 sm:flex-row">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 text-sm font-semibold text-text-primary" role="status">
+          <LoaderCircle size={18} className="shrink-0 animate-spin text-accent" aria-hidden="true" />
+          {stopping ? 'Cancelling generation…' : stageInfo.title}
+        </div>
+        <p className="mt-1.5 text-sm leading-6 text-text-secondary">
+          {stopping ? 'Stopping this request. Your inputs and completed draft corrections stay saved.' : stageInfo.detail}
+        </p>
+        {!stopping && generation.progress?.detail && (
+          <p className="mt-1 text-xs text-text-muted" aria-label="Stage progress">{generation.progress.detail}</p>
+        )}
+        {generation.goal && (
+          <p className="mt-1 truncate text-xs text-text-muted">Goal: {generation.goal}</p>
+        )}
+      </div>
+      <span className="text-xs tabular-nums text-text-muted" aria-live="off">
+        Elapsed <span aria-label="Elapsed time">{formatOutlineDuration(elapsed)}</span>
+      </span>
+    </div>
+    <div className="mt-4 flex flex-wrap items-center gap-2">
+      <Button variant="outline" type="button" onClick={generation.onOpenBuilder} className="studio-button studio-button-primary">
+        View progress
+      </Button>
+      {generation.progress?.programId && generation.onOpenDraft && (
+        <Button variant="outline" type="button" onClick={generation.onOpenDraft} className="studio-button">
+          Inspect saved draft
+        </Button>
+      )}
+      {generation.onCancel && (
+        <Button
+          variant="outline"
+          type="button"
+          onClick={generation.onCancel}
+          disabled={generation.cancelling || stage === 'saving' || stage === 'completed'}
+          className="studio-button"
+        >
+          {stopping ? 'Cancelling…' : 'Cancel generation'}
+        </Button>
+      )}
+    </div>
+    {generation.cancelError && <p role="alert" className="mt-3 text-sm text-rose-700">Could not cancel: {generation.cancelError}</p>}
+  </section>;
+}
 
 function Progress({ program }: { program: LearningProgramSummaryDto }) {
   const percent = program.lessonCount ? Math.min(100, Math.round(program.completedLessons / program.lessonCount * 100)) : 0;
@@ -32,7 +103,7 @@ function CoursePath() {
   </svg>;
 }
 
-export function ProgramLibrary({ programs, loading, error, onRetry, onOpen, onBuild, onImport, onExport, onSelectFramework, onOpenDestination, flashcardsRef }: {
+export function ProgramLibrary({ programs, loading, error, onRetry, onOpen, onBuild, onImport, onExport, onSelectFramework, onOpenDestination, flashcardsRef, outlineGeneration }: {
   programs?: LearningProgramSummaryDto[];
   loading: boolean;
   error?: string;
@@ -44,17 +115,35 @@ export function ProgramLibrary({ programs, loading, error, onRetry, onOpen, onBu
   onSelectFramework: (action: FrameworkAction) => void;
   onOpenDestination: (destination: StudyDestination) => void;
   flashcardsRef: RefObject<HTMLElement | null>;
+  outlineGeneration?: OutlineGenerationLibraryState;
 }) {
   const continuing = programs?.find((program) => program.status === 'active' && program.completedLessons < program.lessonCount);
+  const generatingOutline = Boolean(outlineGeneration?.isPending);
   return <div className="studio-library">
     <header className="studio-library-header">
       <div><div className="studio-eyebrow"><BookOpenCheck size={14} /> Learning Studio</div><h1>Your programs</h1><p>A place for focused study, practice, and ideas that stay with you.</p></div>
       <div className="studio-library-actions">
         <Button variant="outline" type="button" onClick={onImport} className="studio-button"><Upload size={14} /> Import a course…</Button>
         <Button variant="outline" type="button" onClick={onExport} className="studio-button"><Archive size={14} /> Export all courses…</Button>
-        <Button variant="outline" type="button" onClick={onBuild} className="studio-button studio-button-primary"><Plus size={15} /> Build a program</Button>
+        <Button variant="outline" type="button" onClick={onBuild} className="studio-button studio-button-primary"><Plus size={15} /> {generatingOutline ? 'View outline progress' : 'Build a program'}</Button>
       </div>
     </header>
+    {outlineGeneration?.isPending && <OutlineGenerationBanner generation={outlineGeneration} />}
+    {!outlineGeneration?.isPending && outlineGeneration?.error && (
+      <div className="mb-6 rounded-xl border border-rose-500/25 bg-rose-500/5 p-4">
+        <PlainError error={outlineGeneration.error} className="text-sm text-rose-700" />
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button variant="outline" type="button" onClick={outlineGeneration.onOpenBuilder} className="studio-button studio-button-primary">
+            Return to course builder
+          </Button>
+          {outlineGeneration.onDismissError && (
+            <Button variant="outline" type="button" onClick={outlineGeneration.onDismissError} className="studio-button">
+              Dismiss
+            </Button>
+          )}
+        </div>
+      </div>
+    )}
     <StudyHabitsBar className="studio-habits" onSelectFramework={onSelectFramework} />
     {continuing && <section className="studio-resume" aria-label="Continue studying">
       <div className="studio-resume-copy">
@@ -79,7 +168,7 @@ export function ProgramLibrary({ programs, loading, error, onRetry, onOpen, onBu
               <Progress program={program} />
               <ArrowRight size={17} className="studio-program-arrow" />
             </button>;
-          })}</div> : <div className="studio-library-empty"><Layers3 size={28} className="text-accent" /><h3>What would you like to understand?</h3><p>Start with a goal and your experience. Add materials if you have them, then review the outline before preparing your first lesson.</p><div className="studio-library-actions"><Button variant="outline" type="button" onClick={onBuild} className="studio-button studio-button-primary">Build your first program <ArrowRight size={15} /></Button><Button variant="outline" type="button" onClick={onImport} className="studio-button"><Upload size={14} /> Import a course</Button></div></div>}
+          })}</div> : <div className="studio-library-empty"><Layers3 size={28} className="text-accent" /><h3>What would you like to understand?</h3><p>Start with a goal and your experience. Add materials if you have them, then review the outline before preparing your first lesson.</p><div className="studio-library-actions"><Button variant="outline" type="button" onClick={onBuild} className="studio-button studio-button-primary">{generatingOutline ? 'View outline progress' : 'Build your first program'} <ArrowRight size={15} /></Button><Button variant="outline" type="button" onClick={onImport} className="studio-button"><Upload size={14} /> Import a course</Button></div></div>}
       {Boolean(programs?.some((program) => program.status === 'active')) && <p className="studio-progress-caption">Lesson completion is self-reported. Quiz and assessment results are recorded inside each program.</p>}
     </section>
     <FlashcardsSection ref={flashcardsRef} />

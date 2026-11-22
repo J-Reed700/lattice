@@ -97,8 +97,8 @@ impl DownloadEventBridge {
                     FileStatus::Completed
                 }
                 lattice_core::domain::download::DownloadState::Failed => FileStatus::Error,
-                lattice_core::domain::download::DownloadState::Cancelled => FileStatus::Error,
-                lattice_core::domain::download::DownloadState::Paused => FileStatus::Pending,
+                lattice_core::domain::download::DownloadState::Cancelled => FileStatus::Cancelled,
+                lattice_core::domain::download::DownloadState::Paused => FileStatus::Paused,
             };
 
             files.push(FileSnapshot {
@@ -190,6 +190,8 @@ impl DownloadEventBridge {
                         .and_then(|n| n.to_str())
                         .unwrap_or("unknown")
                         .to_string(),
+                    destination: session.destination().to_string_lossy().to_string(),
+                    model_name: session.model_name().map(str::to_string),
                     bytes_downloaded: 0,
                     total_bytes: session.progress().total_bytes(),
                     bytes_per_second: 0,
@@ -240,6 +242,8 @@ impl DownloadEventBridge {
                         .and_then(|n| n.to_str())
                         .unwrap_or("unknown")
                         .to_string(),
+                    destination: session.destination().to_string_lossy().to_string(),
+                    model_name: session.model_name().map(str::to_string),
                     bytes_downloaded,
                     total_bytes,
                     bytes_per_second: bytes_per_second as u64,
@@ -281,6 +285,8 @@ impl DownloadEventBridge {
                         .and_then(|n| n.to_str())
                         .unwrap_or("unknown")
                         .to_string(),
+                    destination: session.destination().to_string_lossy().to_string(),
+                    model_name: session.model_name().map(str::to_string),
                     bytes_downloaded,
                     total_bytes,
                     bytes_per_second: 0,
@@ -322,12 +328,14 @@ impl DownloadEventBridge {
                         .and_then(|n| n.to_str())
                         .unwrap_or("unknown")
                         .to_string(),
+                    destination: session.destination().to_string_lossy().to_string(),
+                    model_name: session.model_name().map(str::to_string),
                     bytes_downloaded,
                     total_bytes,
                     bytes_per_second: 0,
                     percentage,
                     eta_seconds: None,
-                    status: DownloadStatus::Downloading,
+                    status: status_for(session.state()),
                 }))
             }
             ME::Completed { id } => {
@@ -358,6 +366,8 @@ impl DownloadEventBridge {
                         .and_then(|n| n.to_str())
                         .unwrap_or("unknown")
                         .to_string(),
+                    destination: session.destination().to_string_lossy().to_string(),
+                    model_name: session.model_name().map(str::to_string),
                     bytes_downloaded: total_bytes.unwrap_or(0),
                     total_bytes,
                     bytes_per_second: 0,
@@ -399,6 +409,8 @@ impl DownloadEventBridge {
                         .and_then(|n| n.to_str())
                         .unwrap_or("unknown")
                         .to_string(),
+                    destination: session.destination().to_string_lossy().to_string(),
+                    model_name: session.model_name().map(str::to_string),
                     bytes_downloaded,
                     total_bytes,
                     bytes_per_second: 0,
@@ -440,6 +452,8 @@ impl DownloadEventBridge {
                         .and_then(|n| n.to_str())
                         .unwrap_or("unknown")
                         .to_string(),
+                    destination: session.destination().to_string_lossy().to_string(),
+                    model_name: session.model_name().map(str::to_string),
                     bytes_downloaded,
                     total_bytes,
                     bytes_per_second: 0,
@@ -449,5 +463,41 @@ impl DownloadEventBridge {
                 }))
             }
         }
+    }
+}
+
+/// The wire status for a session's state, so an event reports what the row
+/// says (a resumed download waiting for a slot is `pending`, not `downloading`).
+fn status_for(
+    state: &lattice_core::domain::download::DownloadState,
+) -> lattice_core::domain::download::snapshot::DownloadStatus {
+    use lattice_core::domain::download::snapshot::DownloadStatus;
+    use lattice_core::domain::download::DownloadState;
+    match state {
+        DownloadState::Pending => DownloadStatus::Pending,
+        DownloadState::Downloading => DownloadStatus::Downloading,
+        DownloadState::Paused => DownloadStatus::Paused,
+        DownloadState::Completed => DownloadStatus::Completed,
+        DownloadState::Failed => DownloadStatus::Error,
+        DownloadState::Cancelled => DownloadStatus::Cancelled,
+    }
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+    use lattice_core::domain::download::snapshot::DownloadStatus;
+    use lattice_core::domain::download::DownloadState;
+
+    #[test]
+    fn a_resumed_session_waiting_for_a_slot_reports_pending() {
+        assert!(matches!(
+            status_for(&DownloadState::Pending),
+            DownloadStatus::Pending
+        ));
+        assert!(matches!(
+            status_for(&DownloadState::Downloading),
+            DownloadStatus::Downloading
+        ));
     }
 }

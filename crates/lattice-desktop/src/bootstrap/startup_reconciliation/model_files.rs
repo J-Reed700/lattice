@@ -10,8 +10,8 @@ use tracing::{info, warn};
 /// Count, on app startup, the model directories no model record names, and
 /// keep them.
 ///
-/// That no row names a directory is no evidence it is garbage: the model
-/// manager keeps the reranker here with no row of its own, and a restored
+/// That no row names a directory is no evidence it is garbage: the reranker
+/// lives here with no row of its own, and a restored
 /// backup or a migration can lose rows of models still on disk. Nothing this
 /// app records names a directory here as let go of (a deleted model's own
 /// delete removes its directory), so none is removed; freeing that space is a

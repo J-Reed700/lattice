@@ -190,6 +190,7 @@ async fn start_model_download_impl(
         model_name: request.model_name,
         model_id: request.model_id,
         model_file_name: None,
+        expected_bytes: None,
     };
 
     match state.manager.start_download(download_request).await {

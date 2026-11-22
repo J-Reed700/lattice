@@ -51,6 +51,16 @@ describe('outline progress', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Starting your course');
   });
 
+  it('ticks smoothly 1s at a time from backend elapsedSeconds after remount', () => {
+    vi.useFakeTimers();
+    render(<OutlineGenerationProgress progress={{ ...progress, elapsedSeconds: 300 }} deepDive={false} />);
+    expect(screen.getByLabelText('Elapsed time')).toHaveTextContent('5:00');
+    act(() => vi.advanceTimersByTime(1000));
+    expect(screen.getByLabelText('Elapsed time')).toHaveTextContent('5:01');
+    act(() => vi.advanceTimersByTime(1000));
+    expect(screen.getByLabelText('Elapsed time')).toHaveTextContent('5:02');
+  });
+
   it('prevents cancellation during the final atomic save', () => {
     render(<OutlineGenerationProgress progress={{ ...progress, stage: 'saving' }} deepDive={false} onCancel={vi.fn()} />);
     expect(screen.getByRole('button', { name: 'Cancel generation' })).toBeDisabled();

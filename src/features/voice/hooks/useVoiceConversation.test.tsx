@@ -99,7 +99,7 @@ function setup(api: ApiClient = mockApi(), reply?: () => string) {
 
 const readyApi = () => {
   const api = mockApi();
-  vi.mocked(api.getTranscriptionStatus).mockResolvedValue({ ok: true, data: { modelReady: true, modelName: 'Whisper Tiny', voiceModel: WHISPER } });
+  vi.mocked(api.getTranscriptionStatus).mockResolvedValue({ ok: true, data: { modelReady: true, modelId: WHISPER.modelId, modelName: 'Whisper Tiny', voiceModel: WHISPER } });
   vi.mocked(api.getSpeechStatus).mockResolvedValue({ ok: true, data: { modelReady: true, modelName: 'Kokoro' } as never });
   vi.mocked(api.transcribeSpeech).mockResolvedValue({ ok: true, data: { text: 'Hello there.', language: 'en', durationMs: 1_000 } });
   return api;
@@ -132,7 +132,7 @@ describe('useVoiceConversation', () => {
 
   it('points at settings rather than failing when Whisper is not downloaded', async () => {
     const api = readyApi();
-    vi.mocked(api.getTranscriptionStatus).mockResolvedValue({ ok: true, data: { modelReady: false, modelName: null, voiceModel: WHISPER } });
+    vi.mocked(api.getTranscriptionStatus).mockResolvedValue({ ok: true, data: { modelReady: false, modelId: null, modelName: null, voiceModel: WHISPER } });
     const view = setup(api);
 
     act(() => view.result.current.toggle());

@@ -50,6 +50,7 @@ async fn test_download_manager_happy_path() -> Result<(), Box<dyn std::error::Er
         model_name: None,
         model_id: None,
         model_file_name: None,
+        expected_bytes: None,
     };
 
     let download_id = manager.start_download(request).await?;
@@ -171,6 +172,7 @@ async fn test_download_resumes_from_byte_offset() -> Result<(), Box<dyn std::err
         model_name: None,
         model_id: None,
         model_file_name: None,
+        expected_bytes: None,
     };
 
     let download_id = manager.start_download(request).await?;
@@ -251,6 +253,7 @@ async fn test_download_pause_and_resume() -> Result<(), Box<dyn std::error::Erro
         model_name: None,
         model_id: None,
         model_file_name: None,
+        expected_bytes: None,
     };
 
     let download_id = manager.start_download(request).await?;
@@ -335,6 +338,7 @@ async fn test_download_cancellation_cleanup() -> Result<(), Box<dyn std::error::
         model_name: None,
         model_id: None,
         model_file_name: None,
+        expected_bytes: None,
     };
 
     let download_id = manager.start_download(request).await?;
@@ -420,6 +424,7 @@ async fn test_download_checksum_verification() -> Result<(), Box<dyn std::error:
         model_name: None,
         model_id: None,
         model_file_name: None,
+        expected_bytes: None,
     };
 
     let download_id = manager.start_download(request).await?;

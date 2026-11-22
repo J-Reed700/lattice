@@ -148,6 +148,7 @@ async fn test_mock_engine_download() {
             resume_from: None,
             progress_callback: None,
             auth_token: None,
+            known_total: None,
         })
         .await
         .unwrap();
@@ -204,6 +205,7 @@ async fn test_mock_engine_with_progress_callback() {
             resume_from: None,
             progress_callback: Some(callback),
             auth_token: None,
+            known_total: None,
         })
         .await
         .unwrap();
@@ -227,6 +229,7 @@ async fn test_mock_engine_call_tracking() {
             resume_from: None,
             progress_callback: None,
             auth_token: None,
+            known_total: None,
         })
         .await
         .unwrap();
@@ -244,6 +247,7 @@ async fn test_mock_engine_call_tracking() {
             resume_from: Some(5000),
             progress_callback: None,
             auth_token: Some("test-token".to_string()),
+            known_total: None,
         })
         .await
         .unwrap();
@@ -360,6 +364,7 @@ async fn test_download_engine_http_download() {
         resume_from: None,
         progress_callback: None,
         auth_token: None,
+        known_total: None,
     };
 
     let result = mock_engine.download(options).await;
@@ -421,6 +426,7 @@ async fn test_download_engine_progress_callbacks() {
         resume_from: None,
         progress_callback: Some(progress_callback),
         auth_token: None,
+        known_total: None,
     };
 
     let result = mock_engine.download(options).await;
@@ -465,6 +471,7 @@ async fn test_download_engine_range_request() {
         resume_from: Some(500), // Resume from 500 bytes
         progress_callback: None,
         auth_token: None,
+        known_total: None,
     };
 
     let result = mock_engine.download(options).await;
@@ -498,6 +505,7 @@ async fn test_download_engine_network_error() {
         resume_from: None,
         progress_callback: None,
         auth_token: None,
+        known_total: None,
     };
 
     let result = mock_engine.download(options).await;
@@ -529,6 +537,7 @@ async fn test_download_engine_404_handling() {
         resume_from: None,
         progress_callback: None,
         auth_token: None,
+        known_total: None,
     };
 
     let result = mock_engine.download(options).await;
@@ -568,6 +577,7 @@ async fn test_download_engine_cancellation() {
         resume_from: None,
         progress_callback: None,
         auth_token: Some("cancel-token".to_string()),
+        known_total: None,
     };
 
     let result = mock_engine.download(options).await;
@@ -586,4 +596,27 @@ async fn test_download_engine_cancellation() {
         calls[0].auth_token.is_some(),
         "Auth token (cancellation signal) should be passed to engine"
     );
+}
+
+#[tokio::test]
+async fn a_complete_part_is_hashed_with_no_request_when_the_total_is_known() {
+    let dir = tempfile::tempdir().unwrap();
+    let destination = dir.path().join("x.bin.part");
+    std::fs::write(&destination, vec![1u8; 100]).unwrap();
+    let engine = HttpDownloadEngine::new().unwrap();
+
+    // Nothing listens on this port: any request would fail.
+    let result = engine
+        .download(DownloadOptions {
+            url: "http://127.0.0.1:9/x.bin".into(),
+            destination,
+            resume_from: Some(100),
+            progress_callback: None,
+            auth_token: None,
+            known_total: Some(100),
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(result.bytes_downloaded, 100);
 }

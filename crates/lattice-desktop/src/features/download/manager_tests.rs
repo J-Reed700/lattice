@@ -29,6 +29,7 @@ async fn test_download_manager_start_download() {
             model_name: None,
             model_id: None,
             model_file_name: None,
+            expected_bytes: None,
         })
         .await
         .unwrap();
@@ -69,6 +70,7 @@ async fn test_download_manager_pause_and_resume() {
             model_name: None,
             model_id: None,
             model_file_name: None,
+            expected_bytes: None,
         })
         .await
         .unwrap();
@@ -119,6 +121,7 @@ async fn test_download_manager_cancel() {
             model_name: None,
             model_id: None,
             model_file_name: None,
+            expected_bytes: None,
         })
         .await
         .unwrap();
@@ -157,6 +160,7 @@ async fn test_download_manager_list_downloads() {
             model_name: None,
             model_id: None,
             model_file_name: None,
+            expected_bytes: None,
         })
         .await
         .unwrap();
@@ -170,6 +174,7 @@ async fn test_download_manager_list_downloads() {
             model_name: None,
             model_id: None,
             model_file_name: None,
+            expected_bytes: None,
         })
         .await
         .unwrap();
@@ -210,6 +215,7 @@ async fn test_download_manager_with_checksum() {
             model_name: None,
             model_id: None,
             model_file_name: None,
+            expected_bytes: None,
         })
         .await
         .unwrap();
@@ -248,6 +254,7 @@ async fn test_download_manager_concurrent_downloads() {
             model_name: None,
             model_id: None,
             model_file_name: None,
+            expected_bytes: None,
         })
         .await
         .unwrap();
@@ -261,6 +268,7 @@ async fn test_download_manager_concurrent_downloads() {
             model_name: None,
             model_id: None,
             model_file_name: None,
+            expected_bytes: None,
         })
         .await
         .unwrap();
@@ -274,6 +282,7 @@ async fn test_download_manager_concurrent_downloads() {
             model_name: None,
             model_id: None,
             model_file_name: None,
+            expected_bytes: None,
         })
         .await
         .unwrap();
@@ -347,6 +356,7 @@ async fn test_download_manager_event_subscription() {
             model_name: None,
             model_id: None,
             model_file_name: None,
+            expected_bytes: None,
         })
         .await
         .unwrap();
@@ -402,6 +412,7 @@ async fn test_download_manager_state_persistence() {
             model_name: None,
             model_id: None,
             model_file_name: None,
+            expected_bytes: None,
         })
         .await
         .unwrap();

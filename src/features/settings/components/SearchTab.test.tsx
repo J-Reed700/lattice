@@ -5,12 +5,16 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { ApiProvider } from '@/contexts/ApiContext';
 import { VaultAPI } from '@/lib/api';
+import { createTestApi } from '@/tests/apiClient';
 import { makeAppSettings } from '@/tests/fixtures/appSettings';
+import type { DownloadStatus } from '@/types/downloads';
 
 import { describeReranker, formatDownloadSize, SearchTab } from './SearchTab';
 
 const baseSettings = makeAppSettings();
+const listDownloads = vi.fn();
 
 function renderSearchTab() {
   // A fresh client per test so nothing leaks between them.
@@ -18,7 +22,9 @@ function renderSearchTab() {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    <ApiProvider client={createTestApi({ listDownloads: listDownloads as never })}>
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    </ApiProvider>
   );
   return render(<SearchTab />, { wrapper });
 }
@@ -26,6 +32,7 @@ function renderSearchTab() {
 describe('SearchTab', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    listDownloads.mockResolvedValue({ ok: true, data: [] });
     vi.spyOn(VaultAPI, 'getSettings').mockResolvedValue({
       ok: true,
       data: structuredClone(baseSettings),
@@ -183,7 +190,7 @@ describe('SearchTab', () => {
 });
 
 describe('the reranker row', () => {
-  const qwen = { modelName: 'Qwen/Qwen3-Reranker-0.6B', downloadBytes: 639_153_184 };
+  const qwen = { modelName: 'Qwen/Qwen3-Reranker-0.6B', downloadBytes: 639_153_184, path: '/models/reranker/qwen3.gguf' };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -195,6 +202,7 @@ describe('the reranker row', () => {
       ok: true,
       data: structuredClone(baseSettings),
     });
+    listDownloads.mockResolvedValue({ ok: true, data: [] });
   });
 
   it('offers the download, with its size, and says results are not reranked yet', async () => {
@@ -221,10 +229,10 @@ describe('the reranker row', () => {
     expect(screen.queryByRole('button', { name: /Download/ })).not.toBeInTheDocument();
   });
 
-  it('reranks once the download lands, without a settings change', async () => {
+  it('starts the download without a settings change, and follows it in the download list', async () => {
     const downloadReranker = vi.spyOn(VaultAPI, 'downloadReranker').mockResolvedValue({
       ok: true,
-      data: { ...qwen, installed: true },
+      data: { ...qwen, installed: false },
     });
     vi.spyOn(VaultAPI, 'getRerankerStatus').mockResolvedValue({
       ok: true,
@@ -233,11 +241,22 @@ describe('the reranker row', () => {
 
     renderSearchTab();
 
-    await userEvent.click(await screen.findByRole('button', { name: /Download/ }));
+    const button = await screen.findByRole('button', { name: /Download/ });
+    await waitFor(() => expect(button).toBeEnabled());
+    listDownloads.mockResolvedValue({
+      ok: true,
+      data: [{
+        id: 'dl-1', url: 'https://example.org/r.gguf', destination: qwen.path, state: 'downloading', bytes_downloaded: 10,
+        total_bytes: 100, bytes_per_second: 1, percentage: 10, eta_seconds: null, error_message: null, retry_count: 0,
+        created_at: '2026-10-01T00:00:00Z', started_at: null, completed_at: null, model_name: null, model_id: null,
+      }],
+    });
+    await userEvent.click(button);
 
     await waitFor(() => expect(downloadReranker).toHaveBeenCalledTimes(1));
     expect(VaultAPI.updateSettings).not.toHaveBeenCalled();
-    expect(await screen.findByText(/A cross-encoder rescores the shortlist/)).toBeInTheDocument();
+    expect(await screen.findByRole('status', { name: 'Downloading the reranker' })).toHaveTextContent('Downloading… 10%');
+    expect(screen.getByText('Reranking turns on when the download finishes.')).toBeInTheDocument();
   });
 });
 
@@ -245,21 +264,30 @@ describe('describeReranker', () => {
   const status = {
     modelName: 'Qwen/Qwen3-Reranker-0.6B',
     downloadBytes: 639_153_184,
+    path: '/models/reranker/qwen3.gguf',
   };
+  const failed = { state: 'Failed', error_message: 'network unreachable' } as DownloadStatus;
 
   it('says nothing before the status has loaded', () => {
-    expect(describeReranker(undefined)).toBeUndefined();
+    expect(describeReranker(undefined, 'idle')).toBeUndefined();
   });
 
-  it('reports a failed download over any other state', () => {
-    expect(
-      describeReranker({ ...status, installed: true }, new Error('network unreachable'))
-    ).toContain('network unreachable');
+  it('reports a failed latest download when idle', () => {
+    expect(describeReranker({ ...status, installed: false }, 'idle', failed)).toBe(
+      "Couldn't download the reranker: network unreachable"
+    );
   });
 
   it('tells a missing model from a working one', () => {
-    expect(describeReranker({ ...status, installed: false })).toMatch(/not being reranked/);
-    expect(describeReranker({ ...status, installed: true })).toMatch(/rescores the shortlist/);
+    expect(describeReranker({ ...status, installed: false }, 'idle')).toMatch(/not being reranked/);
+    expect(describeReranker({ ...status, installed: true }, 'ready')).toMatch(/rescores the shortlist/);
+    expect(describeReranker({ ...status, installed: true }, 'ready', failed)).toMatch(/rescores the shortlist/);
+  });
+
+  it('says it is downloading while live or finishing', () => {
+    const text = 'Reranking turns on when the download finishes.';
+    expect(describeReranker({ ...status, installed: false }, 'live', failed)).toBe(text);
+    expect(describeReranker({ ...status, installed: false }, 'finishing')).toBe(text);
   });
 });
 
