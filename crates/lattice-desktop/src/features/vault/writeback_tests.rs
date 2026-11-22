@@ -523,7 +523,7 @@ async fn an_edit_on_both_sides_keeps_both_versions() {
         .into_iter()
         .map(|write| write.note_id)
         .collect();
-    assert_eq!(queued, [copy.0.clone()]);
+    assert_eq!(queued, std::slice::from_ref(&copy.0));
 }
 
 /// A file replaced outside Lattice by something that is no longer this note
