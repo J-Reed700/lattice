@@ -32,6 +32,17 @@ describe('useDownloadPhase', () => {
     expect(poll).toHaveBeenCalledTimes(calls);
   });
 
+  it('goes idle when its timer fires a moment before the clock reaches the window end', () => {
+    const { result } = renderHook(() => useDownloadPhase({ ready: false, download: completedAgo(58_000) }));
+    expect(result.current).toBe('finishing');
+
+    vi.setSystemTime(NOW - 1);
+    act(() => { vi.advanceTimersByTime(2000); });
+    act(() => { vi.advanceTimersByTime(5000); });
+
+    expect(result.current).toBe('idle');
+  });
+
   it('does not poll when ready or never downloaded', () => {
     const poll = vi.fn();
     renderHook(() => useDownloadPhase({ ready: true, download: completedAgo(1000), poll }));
