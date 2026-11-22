@@ -551,3 +551,89 @@ async fn unified_triage_parses_all_actions_and_fallbacks() {
     assert_eq!(bad.rationale.as_deref(), Some("fallback"));
     assert!(bad.used_fallback);
 }
+
+/// Both prompts define what a turn needs in the same words, so a change to a
+/// definition reaches both.
+#[test]
+fn both_prompts_define_what_a_turn_needs_in_the_same_words() {
+    let definitions = |template: &str| -> Vec<String> {
+        template
+            .lines()
+            .filter(|line| {
+                [
+                    "- needsKnowledgeBase:",
+                    "- needsWeb:",
+                    "- isFollowup:",
+                    "- standaloneQuestion:",
+                ]
+                .iter()
+                .any(|key| line.starts_with(key))
+            })
+            .map(str::to_string)
+            .collect()
+    };
+    let classify = definitions(DEFAULT_INTENT_PROMPT_TEMPLATE);
+    assert_eq!(classify.len(), 4, "{classify:?}");
+    assert_eq!(
+        classify,
+        definitions(DEFAULT_UNIFIED_TRIAGE_PROMPT_TEMPLATE)
+    );
+}
+
+/// The two answer shapes share the intent fields, in the order the models
+/// were measured with: llama.cpp writes the fields in the schema's order.
+#[test]
+fn the_two_schemas_share_the_intent_fields_in_the_measured_order() {
+    let keys = |schema: &serde_json::Value| -> Vec<String> {
+        schema["properties"]
+            .as_object()
+            .expect("properties")
+            .keys()
+            .cloned()
+            .collect()
+    };
+    let required = |schema: &serde_json::Value| -> Vec<String> {
+        schema["required"]
+            .as_array()
+            .expect("required")
+            .iter()
+            .map(|key| key.as_str().expect("a key").to_string())
+            .collect()
+    };
+    let intent = intent_schema();
+    let triage = unified_triage_schema();
+
+    assert_eq!(
+        keys(&intent),
+        [
+            "needsKnowledgeBase",
+            "needsWeb",
+            "isFollowup",
+            "standaloneQuestion",
+            "confidence"
+        ]
+    );
+    assert_eq!(
+        keys(&triage),
+        [
+            "needsKnowledgeBase",
+            "needsWeb",
+            "isFollowup",
+            "standaloneQuestion",
+            "documentAction",
+            "clarifyQuestion",
+            "rationale",
+            "confidence"
+        ]
+    );
+    assert_eq!(required(&intent), keys(&intent));
+    assert_eq!(required(&triage), keys(&triage));
+    for key in keys(&intent) {
+        assert_eq!(
+            intent["properties"][&key], triage["properties"][&key],
+            "{key}"
+        );
+    }
+    assert_eq!(intent["additionalProperties"], false);
+    assert_eq!(triage["additionalProperties"], false);
+}

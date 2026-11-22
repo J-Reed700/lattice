@@ -9,12 +9,14 @@ use crate::features::conversation::chat::retrieval::{
 use crate::features::conversation::chat::router::RouterAction;
 use crate::features::conversation::chat::scope::ScopeSnapshot;
 use crate::features::conversation::chat::test_runtime::{FakeEmbedding, FakeRuntime, Scripted};
+use crate::features::conversation::chat::turn_record::{TurnStepKind, TurnStepState};
 use crate::features::conversation::ConversationServiceTrait;
 use async_trait::async_trait;
 use lattice_core::application::ports::document_repository_port::DocumentRepositoryPort;
-use lattice_core::application::ports::llm_port::CompletionResponse;
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::repository_port::RepositoryPort;
 use lattice_core::application::ports::DocumentRepository;
+use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::context_assembler::EvidenceBudget;
 use lattice_core::domain::conversation::DocumentReference;
 use lattice_core::domain::entities::document::{
@@ -619,4 +621,212 @@ async fn custom_router_prompt_template_skips_the_router_when_the_turn_skips_the_
     assert_eq!(utility_llm.requests().len(), 1);
     assert_eq!(router_llm.requests().len(), 0);
     assert_eq!(runtime.loader_counts.router_llm_calls(), 0);
+}
+
+/// An unsure fresh search goes ahead, since searching afresh loses nothing;
+/// only an unsure return to the last document asks first.
+#[tokio::test]
+async fn an_unsure_fresh_search_searches_and_an_unsure_return_asks() {
+    let cases = [
+        (
+            r#"{"needsKnowledgeBase":true,"needsWeb":false,"isFollowup":false,"standaloneQuestion":"","documentAction":"new_search","clarifyQuestion":"","rationale":"another topic","confidence":0.55}"#,
+            RouterAction::NewSearch,
+            "new_search",
+        ),
+        (
+            r#"{"needsKnowledgeBase":true,"needsWeb":false,"isFollowup":true,"standaloneQuestion":"More on Roadmap.md","documentAction":"use_last_document","clarifyQuestion":"","rationale":"continues","confidence":0.55}"#,
+            RouterAction::Clarify,
+            "clarify",
+        ),
+    ];
+    for (reply, expected_action, expected_record) in cases {
+        let runtime = FakeRuntime {
+            utility_llm: Some(Scripted::new([CompletionResponse::from_text(reply)])),
+            router_llm: Some(Scripted::new([])),
+            ..FakeRuntime::default()
+        };
+        let turn = turn_with_recent_doc(&runtime, Scripted::new([]), "And the other one?");
+        let mut metrics = ConversationFlowTimingMetrics::default();
+
+        let (_inferred, route) = classify::triage_turn(&runtime, &turn, None, &mut metrics)
+            .await
+            .unwrap();
+
+        assert_eq!(route.decision.action, expected_action, "{reply}");
+        assert_eq!(
+            route.record.as_ref().map(|r| r.action.as_str()),
+            Some(expected_record),
+            "{reply}"
+        );
+        assert_eq!(
+            route.decision.clarify_message.is_some(),
+            expected_action == RouterAction::Clarify,
+            "{reply}"
+        );
+    }
+}
+
+/// The router a custom template calls settles an unsure answer by the same
+/// rule as the unified triage.
+#[tokio::test]
+async fn the_custom_router_settles_an_unsure_answer_by_the_same_rule() {
+    for (router_reply, expected_action) in [
+        (
+            r#"{"action":"new_search","confidence":0.4,"rationale":"unsure"}"#,
+            RouterAction::NewSearch,
+        ),
+        (
+            r#"{"action":"use_last_document","confidence":0.4,"rationale":"unsure"}"#,
+            RouterAction::Clarify,
+        ),
+    ] {
+        let runtime = FakeRuntime {
+            utility_llm: Some(Scripted::new([CompletionResponse::from_text(
+                r#"{"needsKnowledgeBase":true,"needsWeb":false,"isFollowup":true,"standaloneQuestion":"More on Roadmap","confidence":0.9}"#,
+            )])),
+            router_llm: Some(Scripted::new([CompletionResponse::from_text(router_reply)])),
+            ..FakeRuntime::default()
+        };
+        let mut turn = turn_with_recent_doc(&runtime, Scripted::new([]), "Expand section 2");
+        turn.settings.llm.router.prompt_template =
+            "Custom router: {query} / {recent_document_title}".to_string();
+        let mut metrics = ConversationFlowTimingMetrics::default();
+
+        let (_inferred, route) = classify::triage_turn(&runtime, &turn, None, &mut metrics)
+            .await
+            .unwrap();
+
+        assert_eq!(route.decision.action, expected_action, "{router_reply}");
+        assert_eq!(
+            route.decision.clarify_message.is_some(),
+            expected_action == RouterAction::Clarify,
+            "{router_reply}"
+        );
+    }
+}
+
+/// A triage that sends the turn to the library searches it, whether or not
+/// it also marked the turn as needing the library.
+#[tokio::test]
+async fn a_triage_that_says_new_search_searches_the_library() {
+    let reply = r#"{"needsKnowledgeBase":false,"needsWeb":false,"isFollowup":false,"standaloneQuestion":"","documentAction":"new_search","clarifyQuestion":"","rationale":"another document","confidence":0.9}"#;
+    let runtime = FakeRuntime {
+        utility_llm: Some(Scripted::new([CompletionResponse::from_text(reply)])),
+        router_llm: Some(Scripted::new([])),
+        ..FakeRuntime::default()
+    };
+    let turn = turn_with_recent_doc(&runtime, Scripted::new([]), "What about the budget?");
+    let mut metrics = ConversationFlowTimingMetrics::default();
+
+    let (inferred, route) = classify::triage_turn(&runtime, &turn, None, &mut metrics)
+        .await
+        .unwrap();
+
+    assert!(!inferred.flags.skip_auto_kb);
+    assert_eq!(route.decision.action, RouterAction::NewSearch);
+    assert_eq!(
+        route.record.as_ref().map(|r| r.action.as_str()),
+        Some("new_search")
+    );
+}
+
+/// A utility model that takes a while to answer, so a step's recorded length
+/// shows whether the step covered the call.
+struct Deliberate {
+    reply: &'static str,
+    takes: std::time::Duration,
+}
+
+#[async_trait]
+impl LLMPort for Deliberate {
+    async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
+        tokio::time::sleep(self.takes).await;
+        Ok(CompletionResponse::from_text(self.reply))
+    }
+    fn model_name(&self) -> &str {
+        "deliberate"
+    }
+    fn max_context_tokens(&self) -> usize {
+        32_768
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
+}
+
+fn route_steps(
+    turn: &PreparedTurn,
+) -> Vec<crate::features::conversation::chat::turn_record::TurnStepDto> {
+    turn.recorder
+        .steps()
+        .into_iter()
+        .filter(|step| step.kind == TurnStepKind::Route)
+        .collect()
+}
+
+/// The step that says the turn is deciding how to answer is open while the
+/// model decides, so the time the decision took is the step's.
+#[tokio::test]
+async fn the_route_step_covers_the_triage_call() {
+    let runtime = FakeRuntime {
+        utility_llm: Some(Arc::new(Deliberate {
+            reply: r#"{"needsKnowledgeBase":true,"needsWeb":false,"isFollowup":true,"standaloneQuestion":"More on Roadmap.md","documentAction":"use_last_document","clarifyQuestion":"","rationale":"continues","confidence":0.92}"#,
+            takes: std::time::Duration::from_millis(30),
+        })),
+        router_llm: Some(Scripted::new([])),
+        ..FakeRuntime::default()
+    };
+    let turn = turn_with_recent_doc(&runtime, Scripted::new([]), "Tell me more");
+    let mut metrics = ConversationFlowTimingMetrics::default();
+
+    let (_inferred, route) = classify::triage_turn(&runtime, &turn, None, &mut metrics)
+        .await
+        .unwrap();
+
+    assert_eq!(route.decision.action, RouterAction::UseLastDocument);
+    let steps = route_steps(&turn);
+    assert_eq!(steps.len(), 1, "{steps:?}");
+    assert_eq!(steps[0].state, TurnStepState::Done);
+    assert!(steps[0].duration_ms.is_some_and(|ms| ms >= 30), "{steps:?}");
+}
+
+/// Every way out of the triage closes the step it opened: a triage that
+/// answers without the library is done, one whose answer cannot be read
+/// failed, and the turn goes on either way.
+#[tokio::test]
+async fn every_triage_outcome_closes_its_route_step() {
+    for (reply, expected_state) in [
+        (
+            r#"{"needsKnowledgeBase":false,"needsWeb":false,"isFollowup":false,"standaloneQuestion":"","documentAction":"none","clarifyQuestion":"","rationale":"general CS","confidence":0.95}"#,
+            TurnStepState::Done,
+        ),
+        (
+            r#"{"needsKnowledgeBase":false,"needsWeb":true,"isFollowup":false,"standaloneQuestion":"","documentAction":"new_search","clarifyQuestion":"","rationale":"live data","confidence":0.9}"#,
+            TurnStepState::Done,
+        ),
+        ("not valid json", TurnStepState::Failed),
+    ] {
+        let runtime = FakeRuntime {
+            utility_llm: Some(Scripted::new([CompletionResponse::from_text(reply)])),
+            router_llm: Some(Scripted::new([])),
+            ..FakeRuntime::default()
+        };
+        let turn = turn_with_recent_doc(&runtime, Scripted::new([]), "What is a hash map?");
+        let mut metrics = ConversationFlowTimingMetrics::default();
+
+        let (_inferred, route) = classify::triage_turn(&runtime, &turn, None, &mut metrics)
+            .await
+            .unwrap();
+
+        assert_eq!(route.decision.action, RouterAction::NewSearch, "{reply}");
+        let steps = route_steps(&turn);
+        assert_eq!(steps.len(), 1, "{reply}: {steps:?}");
+        assert_eq!(steps[0].state, expected_state, "{reply}");
+    }
 }
