@@ -23,6 +23,18 @@ const PREVIOUS_STRICT_RAG_TEMPLATE: &str = "Answer the user's question using onl
 /// The hybrid default before rules moved after the question.
 const PREVIOUS_HYBRID_RAG_TEMPLATE: &str = "Answer the user's question using the provided context first, citing every factual statement supported by a passage using bracketed labels like [s1], [s2], [s3]. If the excerpts are incomplete for a question about the user's documents, use available document search/read tools first. When the passages do not cover a general, conceptual, or public-knowledge question (or only cover part of it), answer naturally from general knowledge without adding citations to uncited claims. Never fabricate citations, never present general knowledge as coming from their documents, and never guess private facts about the user's own files, notes, policies, or projects that are not in the passages. Do not cite unrelated context or a source that does not support the associated statement. If you need to call get_document, name the document by its bracketed name in the context. For long documents, read on with read_more and the name each result gives.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
 
+/// Initial context-first strict template that ended with `\n\nAnswer:`.
+const ANSWER_CUE_STRICT_RAG_TEMPLATE: &str = "Context:\n{context}\n\nQuestion: {question}\n\nAnswer the user's question using only the provided context. Check every supplied passage before writing so no matching detail, exception, or condition is left out, and keep dates, figures, and names as given. Cite every factual statement supported by the context using bracketed labels like [s1], [s2], [s3]; do not cite unrelated context or a source that does not support the associated statement. When the question names a document, ignore passages from other documents. If the excerpts leave any part of the question unanswered, use available document search/read tools before concluding that evidence is missing (for get_document, name the document by its bracketed name in the context; for long documents, read on with read_more and the name each result gives). If still unsupported, say it was not found in the excerpts searched and do not guess or claim the entire collection lacks it. Do not describe the passages or comment on unrelated ones. Write in the language of the question, translating any passage in another.\n\nAnswer:";
+
+/// Initial context-first hybrid template that ended with `\n\nAnswer:`.
+const ANSWER_CUE_HYBRID_RAG_TEMPLATE: &str = "Context:\n{context}\n\nQuestion: {question}\n\nAnswer the user's question using the provided context first, citing every factual statement supported by a passage using bracketed labels like [s1], [s2], [s3]. Check every supplied passage before writing so no matching detail, exception, or condition is left out, and keep dates, figures, and names as given. If the excerpts are incomplete for a question about the user's documents, use available document search/read tools first (for get_document, name the document by its bracketed name in the context; for long documents, read on with read_more and the name each result gives). When the passages do not cover a general, conceptual, or public-knowledge question (or only cover part of it), answer naturally from general knowledge without adding citations to uncited claims. Never fabricate citations, never present general knowledge as coming from their documents, and never guess private facts about the user's own files, notes, policies, or projects that are not in the passages. When the question names a document, ignore passages from other documents. Do not cite unrelated context or a source that does not support the associated statement, and do not describe the passages or comment on unrelated ones. Write in the language of the question, translating any passage in another.\n\nAnswer:";
+
+/// Context-first strict template where `{question}` preceded the rules block.
+const MID_QUESTION_STRICT_RAG_TEMPLATE: &str = "Context:\n{context}\n\nQuestion: {question}\n\nAnswer the user's question directly using only the provided context. Check every supplied passage before writing so no matching detail, exception, or condition is left out, and keep dates, figures, and names as given. Cite every factual statement supported by the context using bracketed labels like [s1], [s2], [s3]; do not cite unrelated context or a source that does not support the associated statement. Answer only about the specific document, entity, scope, or current version asked about: ignore passages for other documents, homonymous entities, other scopes, or superseded versions, and do not mention or contrast their figures, dates, or details. When the supplied excerpts already answer the question, do not call tools. If the excerpts leave any part of the question unanswered — including when excerpts from a matching document omit the section or detail asked about — do not answer yet: call get_document (passing only the bracketed source label, such as [s1], never a filename), read_more (passing the bracketed continuation handle), or semantic_search first. If the answer is still unsupported after searching, say it was not found in the excerpts searched and do not guess or claim the entire collection lacks it. Start straight with the answer — never open by describing which source label answers the question, and do not describe the passages or comment on unrelated ones. Write in the language of the question, translating any passage in another.";
+
+/// Context-first hybrid template where `{question}` preceded the rules block.
+const MID_QUESTION_HYBRID_RAG_TEMPLATE: &str = "Context:\n{context}\n\nQuestion: {question}\n\nAnswer the user's question directly using the provided context first, citing every factual statement supported by a passage using bracketed labels like [s1], [s2], [s3]. Check every supplied passage before writing so no matching detail, exception, or condition is left out, and keep dates, figures, and names as given. Answer only about the specific document, entity, scope, or current version asked about: ignore passages for other documents, homonymous entities, other scopes, or superseded versions, and do not mention or contrast their figures, dates, or details. When the supplied excerpts already answer the question, do not call tools. If the excerpts are incomplete for a question about the user's documents — including when excerpts from a matching document omit the section or detail asked about — do not answer yet: call get_document (passing only the bracketed source label, such as [s1], never a filename), read_more (passing the bracketed continuation handle), or semantic_search first. When the passages do not cover a general, conceptual, or public-knowledge question (or only cover part of it), answer naturally from general knowledge without adding citations to uncited claims. Never fabricate citations, never present general knowledge as coming from their documents, and never guess private facts about the user's own files, notes, policies, or projects that are not in the passages. Do not cite unrelated context or a source that does not support the associated statement. Start straight with the answer — never open by describing which source label answers the question, and do not describe the passages or comment on unrelated ones. Write in the language of the question, translating any passage in another.";
+
 pub(super) fn normalize_prompt_settings(
     mut prompt_settings: LLMPromptSettingsDto,
 ) -> LLMPromptSettingsDto {
@@ -55,6 +67,10 @@ pub(super) fn normalize_prompt_settings(
         || prompt_settings.rag_prompt_template == NUMERIC_BRACKETS_RAG_TEMPLATE
         || prompt_settings.rag_prompt_template == PREVIOUS_STRICT_RAG_TEMPLATE
         || prompt_settings.rag_prompt_template == PREVIOUS_HYBRID_RAG_TEMPLATE
+        || prompt_settings.rag_prompt_template == ANSWER_CUE_STRICT_RAG_TEMPLATE
+        || prompt_settings.rag_prompt_template == ANSWER_CUE_HYBRID_RAG_TEMPLATE
+        || prompt_settings.rag_prompt_template == MID_QUESTION_STRICT_RAG_TEMPLATE
+        || prompt_settings.rag_prompt_template == MID_QUESTION_HYBRID_RAG_TEMPLATE
         || prompt_settings.rag_prompt_template == DEFAULT_RAG_PROMPT_TEMPLATE
     {
         prompt_settings.rag_prompt_template = DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE.to_string();
@@ -140,7 +156,7 @@ mod tests {
         );
         assert!(settings
             .rag_prompt_template
-            .contains("use available document search/read tools first"));
+            .contains("do not answer yet: call get_document"));
     }
 
     #[test]
@@ -216,7 +232,14 @@ mod tests {
 
     #[test]
     fn saved_copies_of_prior_strict_and_hybrid_defaults_migrate_to_context_first_hybrid() {
-        for previous in [PREVIOUS_STRICT_RAG_TEMPLATE, PREVIOUS_HYBRID_RAG_TEMPLATE] {
+        for previous in [
+            PREVIOUS_STRICT_RAG_TEMPLATE,
+            PREVIOUS_HYBRID_RAG_TEMPLATE,
+            ANSWER_CUE_STRICT_RAG_TEMPLATE,
+            ANSWER_CUE_HYBRID_RAG_TEMPLATE,
+            MID_QUESTION_STRICT_RAG_TEMPLATE,
+            MID_QUESTION_HYBRID_RAG_TEMPLATE,
+        ] {
             let saved = LLMPromptSettingsDto {
                 rag_prompt_template: previous.to_string(),
                 ..LLMPromptSettingsDto::default()
@@ -235,15 +258,17 @@ mod tests {
             DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE,
         ] {
             let context_pos = template.find("{context}").expect("context slot");
-            let question_pos = template.find("{question}").expect("question slot");
             let rules_pos = template
-                .find("Check every supplied passage")
+                .find("Read every supplied passage")
                 .expect("answering rules");
-            let answer_pos = template.rfind("Answer:").expect("closing cue");
-            assert!(context_pos < question_pos, "{template}");
-            assert!(question_pos < rules_pos, "{template}");
-            assert!(rules_pos < answer_pos, "{template}");
-            assert!(template.ends_with("\n\nAnswer:"), "{template}");
+            let question_pos = template.find("{question}").expect("question slot");
+            assert!(context_pos < rules_pos, "{template}");
+            assert!(rules_pos < question_pos, "{template}");
+            assert!(
+                template.ends_with("missing from the excerpts."),
+                "{template}"
+            );
+            assert!(!template.ends_with("Answer:"), "{template}");
         }
     }
 }

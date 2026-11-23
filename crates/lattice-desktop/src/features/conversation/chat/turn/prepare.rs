@@ -266,7 +266,7 @@ pub(super) async fn prepare_turn(
     // Sized before retrieval, so the evidence it reads leaves room for what
     // every evidence-carrying request also sends: the tool schemas and the
     // template the evidence travels in.
-    let tool_schema_tokens = super::assemble::grounded_tool_tokens(
+    let (tool_schema_tokens, document_tools_available) = super::assemble::grounded_tool_budget(
         container,
         &llm,
         &settings.llm.custom_tools,
@@ -280,11 +280,12 @@ pub(super) async fn prepare_turn(
     let budget = TurnBudget::plan(
         &llm,
         &system_prompt,
-        &crate::features::conversation::chat::prompting::evidence_frame(
+        &crate::features::conversation::chat::prompting::evidence_frame_with_tools(
             &prompt_settings,
             &validated_message,
             source.as_ref().map(|source| source.policy()),
             search_flags.strict_sources,
+            document_tools_available,
         ),
         &context,
         settings.llm.bounded_conversation_memory,

@@ -102,7 +102,7 @@ impl CompletionProtocol for OpenAi {
         // Reasoning models reject both knobs outright, so an override that
         // would 400 the request is dropped rather than sent: the caller
         // wanted determinism, not a failed call.
-        if let Some(sampling) = request.sampling.filter(|_| !reasons) {
+        if let Some(sampling) = fitted.effective_sampling().filter(|_| !reasons) {
             if let Some(temperature) = sampling.temperature {
                 set_field(&mut body, "temperature", json!(temperature))?;
             }

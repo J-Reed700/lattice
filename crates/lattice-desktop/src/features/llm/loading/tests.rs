@@ -546,7 +546,7 @@ fn the_utility_role_keeps_its_own_output_ceiling() {
         },
     );
     let (_, known) = cloud_connection(&settings, &claude(), Tuning::Utility, &CLAUDE_REPORTS);
-    assert_eq!(known, Some(8_192));
+    assert_eq!(known, Some(16_384));
 }
 
 /// The Messages API refuses a request without a ceiling, and Settings' default

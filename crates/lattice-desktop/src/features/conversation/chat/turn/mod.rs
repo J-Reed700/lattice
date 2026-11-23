@@ -213,6 +213,7 @@ pub(super) async fn run_stages(
     turn.ensure_not_cancelled()?;
 
     let mut prompt = assemble::render_prompt(
+        container,
         &turn,
         flags,
         preferences,

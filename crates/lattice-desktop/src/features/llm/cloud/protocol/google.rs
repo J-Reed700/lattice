@@ -91,7 +91,7 @@ impl CompletionProtocol for Google {
         if stream {
             set_field(&mut body, "stream_options", json!({"include_usage": true}))?;
         }
-        if let Some(sampling) = request.sampling {
+        if let Some(sampling) = fitted.effective_sampling() {
             if let Some(temperature) = sampling.temperature {
                 set_field(&mut body, "temperature", json!(temperature))?;
             }
