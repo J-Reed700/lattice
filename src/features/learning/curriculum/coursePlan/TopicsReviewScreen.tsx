@@ -33,7 +33,7 @@ function AskForChange({ busy, error, onSend, onCancel }: { busy: boolean; error:
   const [text, setText] = useState('');
   return (
     <form
-      className="mt-3 space-y-2 rounded-xl border border-border bg-background p-3"
+      className="mt-3 space-y-2 rounded-xl border border-border bg-bg p-3"
       onSubmit={(event) => { event.preventDefault(); void onSend(text.trim()); }}
     >
       <textarea aria-label="What should change?" rows={2} autoFocus value={text} onChange={(event) => setText(event.target.value)} className={INPUT} />

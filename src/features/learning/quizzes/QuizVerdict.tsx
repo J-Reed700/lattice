@@ -13,7 +13,7 @@ const toneStyle: Record<Tone, { icon: ReactNode; chip: string; text: string }> =
   paused: { icon: <CirclePause size={14} />, chip: 'bg-accent/10 text-accent', text: 'text-accent' },
   warning: { icon: <TriangleAlert size={14} />, chip: 'bg-amber-500/14 text-amber-900 dark:text-amber-200', text: 'text-amber-900 dark:text-amber-200' },
   override: { icon: <UserCheck size={14} />, chip: 'bg-violet-500/12 text-violet-900 dark:text-violet-200', text: 'text-violet-900 dark:text-violet-200' },
-  neutral: { icon: <Circle size={14} />, chip: 'bg-background text-text-secondary', text: 'text-text-secondary' },
+  neutral: { icon: <Circle size={14} />, chip: 'bg-bg text-text-secondary', text: 'text-text-secondary' },
 };
 
 /** A verdict as an icon and words. The colour only repeats what the words say. */

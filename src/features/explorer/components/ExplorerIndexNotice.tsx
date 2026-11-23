@@ -34,7 +34,7 @@ export function ExplorerIndexNotice() {
     <p
       role="status"
       title={`${words} — search covers what's indexed so far`}
-      className="explorer-index-notice flex items-center gap-2 border-t border-subtle px-6 py-1.5 text-xs tabular-nums text-text-muted"
+      className="explorer-index-notice flex items-center gap-2 border-t border-border-subtle px-6 py-1.5 text-xs tabular-nums text-text-muted"
     >
       <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-[hsl(var(--accent)/0.7)]" />
       <span className="min-w-0 truncate">

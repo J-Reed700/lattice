@@ -89,7 +89,7 @@ export function CourseSyllabus({
             const done = module.lessons.filter((lesson) => lesson.completed).length;
             const summaryCitation = findOutlineCitation(evidence, 'module_summary', module.id, module.summary);
             return (
-              <li key={module.id} className={`min-w-0 rounded-xl border p-4 ${moduleId === module.id ? 'border-accent/40 bg-accent/5' : 'border-border bg-background/40'}`}>
+              <li key={module.id} className={`min-w-0 rounded-xl border p-4 ${moduleId === module.id ? 'border-accent/40 bg-accent/5' : 'border-border bg-bg/40'}`}>
                 <div className="flex items-start gap-3">
                   <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-surface font-serif text-lg text-accent">
                     {done === module.lessons.length && done > 0 ? <Check size={16} /> : String(index + 1).padStart(2, '0')}

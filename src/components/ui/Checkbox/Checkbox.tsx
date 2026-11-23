@@ -1,24 +1,18 @@
-import { forwardRef, type InputHTMLAttributes } from 'react';
+import { forwardRef, useEffect, useId, useRef, useState, type InputHTMLAttributes } from 'react';
 
-import { Check } from 'lucide-react';
+import { Check, Minus } from 'lucide-react';
+
+import { cn } from '@/lib/utils';
 
 /**
  * Checkbox
  *
- * Purpose: Multi-select control for toggling individual options
- *
- * Features:
- * - Custom styled checkbox with smooth transitions
- * - Label and description support
- * - Indeterminate state support
- * - Error state handling
- * - Dark mode support
- *
- * States: default, hover, focus, checked, indeterminate, disabled
- * Accessibility: WCAG AA, keyboard navigation, proper labels
+ * Accessible minimalist checkbox supporting controlled, uncontrolled,
+ * indeterminate, description, and error states. Uses React `useId()` for
+ * stable deterministic IDs.
  */
 
-interface CheckboxProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> {
+export interface CheckboxProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> {
   label?: string;
   description?: string;
   error?: string;
@@ -34,82 +28,108 @@ const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(
       error,
       indeterminate = false,
       checked,
+      defaultChecked,
       onCheckedChange,
+      onChange,
       disabled,
-      className = '',
+      className,
       id,
       ...props
     },
     ref
   ) => {
-    const checkboxId = id || `checkbox-${Math.random().toString(36).substr(2, 9)}`;
+    const generatedId = useId();
+    const checkboxId = id ?? `checkbox-${generatedId}`;
     const errorId = error ? `${checkboxId}-error` : undefined;
     const descriptionId = description ? `${checkboxId}-description` : undefined;
     const hasError = Boolean(error);
 
-    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      onCheckedChange?.(e.target.checked);
-      props.onChange?.(e);
+    const isControlled = checked !== undefined;
+    const [uncontrolledChecked, setUncontrolledChecked] = useState(Boolean(defaultChecked));
+    const isChecked = isControlled ? Boolean(checked) : uncontrolledChecked;
+
+    const internalRef = useRef<HTMLInputElement | null>(null);
+
+    useEffect(() => {
+      if (internalRef.current) {
+        internalRef.current.indeterminate = indeterminate;
+      }
+    }, [indeterminate]);
+
+    const setRefs = (node: HTMLInputElement | null) => {
+      internalRef.current = node;
+      if (typeof ref === 'function') {
+        ref(node);
+      } else if (ref) {
+        ref.current = node;
+      }
     };
+
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (!isControlled) {
+        setUncontrolledChecked(e.target.checked);
+      }
+      onCheckedChange?.(e.target.checked);
+      onChange?.(e);
+    };
+
+    const isFilled = isChecked || indeterminate;
 
     return (
       <div className={className}>
-        <div className="flex items-start gap-3">
-          <div className="flex items-center h-6">
+        <div className="flex items-start gap-2.5">
+          <div className="flex h-5 items-center">
             <div className="relative">
               <input
-                ref={ref}
+                ref={setRefs}
                 id={checkboxId}
                 type="checkbox"
-                checked={checked}
+                checked={isControlled ? checked : undefined}
+                defaultChecked={isControlled ? undefined : defaultChecked}
                 onChange={handleChange}
                 disabled={disabled}
+                aria-checked={indeterminate ? 'mixed' : undefined}
                 aria-invalid={hasError}
                 aria-describedby={errorId || descriptionId}
-                className="sr-only peer"
+                className="peer sr-only"
                 {...props}
               />
               <label
                 htmlFor={checkboxId}
-                className={`
-                  flex items-center justify-center
-                  w-5 h-5 rounded border-2
-                  transition-colors duration-fast
-                  cursor-pointer
-                  peer-focus-visible:ring-2 peer-focus-visible:ring-[hsl(var(--ring))] peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-[hsl(var(--bg))]
-                  ${
-                    hasError
-                      ? 'border-[hsl(var(--danger-fg))]'
-                      : 'border-[hsl(var(--border-default))]'
-                  }
-                  ${
-                    checked || indeterminate
-                      ? 'bg-[hsl(var(--accent))] border-[hsl(var(--accent))] '
-                      : 'bg-[hsl(var(--surface))]'
-                  }
-                  ${
-                    disabled
-                      ? 'opacity-50 cursor-not-allowed'
-                      : 'hover:border-[hsl(var(--accent))]'
-                  }
-                `}
+                className={cn(
+                  'flex h-4 w-4 items-center justify-center rounded-sm border transition-[background-color,border-color,box-shadow] duration-fast',
+                  'peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-bg',
+                  isFilled
+                    ? 'border-accent bg-accent text-accent-fg shadow-none'
+                    : hasError
+                      ? 'border-danger-fg bg-surface shadow-control'
+                      : 'border-border-strong bg-surface shadow-control',
+                  disabled
+                    ? 'cursor-not-allowed opacity-50'
+                    : isFilled
+                      ? 'cursor-pointer hover:bg-accent-hover hover:border-accent-hover'
+                      : 'cursor-pointer hover:border-accent',
+                )}
               >
-                {checked && !indeterminate && (
-                  <Check className="w-3.5 h-3.5 text-[hsl(var(--accent-fg))]" strokeWidth={3} />
+                {isChecked && !indeterminate && (
+                  <Check className="h-3 w-3 text-accent-fg" strokeWidth={2.75} aria-hidden="true" />
                 )}
                 {indeterminate && (
-                  <div className="w-2.5 h-0.5 bg-[hsl(var(--accent-fg))] rounded-full" />
+                  <Minus className="h-3 w-3 text-accent-fg" strokeWidth={2.75} aria-hidden="true" />
                 )}
               </label>
             </div>
           </div>
 
           {(label || description) && (
-            <div className="flex-1 pt-0.5">
+            <div className="min-w-0 flex-1">
               {label && (
                 <label
                   htmlFor={checkboxId}
-                  className="block text-sm font-medium text-[hsl(var(--text-primary))] cursor-pointer"
+                  className={cn(
+                    'block text-ui font-medium leading-5 text-text-primary',
+                    disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
+                  )}
                 >
                   {label}
                 </label>
@@ -117,7 +137,7 @@ const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(
               {description && (
                 <p
                   id={descriptionId}
-                  className="text-sm text-[hsl(var(--text-secondary))] mt-0.5"
+                  className="mt-0.5 text-xs leading-relaxed text-text-secondary"
                 >
                   {description}
                 </p>
@@ -129,13 +149,14 @@ const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(
         {error && (
           <p
             id={errorId}
-            className="mt-1.5 ml-8 text-sm text-[hsl(var(--danger-fg))] flex items-start gap-1"
+            className="mt-1.5 ml-6.5 flex items-start gap-1 text-xs text-danger-fg"
             role="alert"
           >
             <svg
-              className="w-4 h-4 mt-0.5 shrink-0"
+              className="mt-0.5 h-3.5 w-3.5 shrink-0"
               fill="currentColor"
               viewBox="0 0 20 20"
+              aria-hidden="true"
             >
               <path
                 fillRule="evenodd"
@@ -153,4 +174,5 @@ const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(
 
 Checkbox.displayName = 'Checkbox';
 
+export { Checkbox };
 export default Checkbox;

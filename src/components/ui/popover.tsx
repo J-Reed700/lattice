@@ -47,7 +47,7 @@ const PopoverContent = React.forwardRef<
         sideOffset={sideOffset}
         style={{ ...tokens, ...style }}
         className={cn(
-          "surface-pop z-50 w-72 rounded-lg bg-[hsl(var(--surface-overlay))] p-4 text-sm text-[hsl(var(--text-primary))] shadow-lg outline-hidden",
+          "surface-pop z-50 w-72 rounded-xl border border-border-subtle bg-surface-overlay p-4 text-sm text-text-primary shadow-lg outline-hidden",
           className
         )}
         {...props}

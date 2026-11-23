@@ -482,7 +482,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
             below 1024px.
           */}
           {matchNotice && (
-            <p className="shrink-0 border-b border-subtle px-7 py-2 text-xs text-[hsl(var(--text-muted))]">
+            <p className="shrink-0 border-b border-border-subtle px-7 py-2 text-xs text-[hsl(var(--text-muted))]">
               {matchNotice}
             </p>
           )}

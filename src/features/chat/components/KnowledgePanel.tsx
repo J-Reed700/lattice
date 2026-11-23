@@ -68,7 +68,7 @@ export function KnowledgePanel({ conversationId, onOpenConversation }: { convers
         <button className={buttonClass} disabled={!text.trim() || mutation.isPending} type="submit">{editing ? 'Save correction' : 'Remember'}</button>
         {editing && <button className={`${buttonClass} ml-2`} type="button" onClick={() => {setEditing(null); setText(''); setFrom(''); setUntil(''); setScope(null);}}>Cancel correction</button>}
       </form>
-      {(query.error || mutation.error) && <p role="alert" className="text-xs text-[hsl(var(--error-fg))]">{(mutation.error ?? query.error)?.message}</p>}
+      {(query.error || mutation.error) && <p role="alert" className="text-xs text-[hsl(var(--danger-fg))]">{(mutation.error ?? query.error)?.message}</p>}
       {query.isPending && <p className="text-xs">Loading saved knowledge…</p>}
       <ul className="space-y-3">
         {query.data?.items.map(item => {

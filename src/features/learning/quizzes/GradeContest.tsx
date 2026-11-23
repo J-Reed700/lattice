@@ -13,7 +13,7 @@ export function ContestForm({ pending, error, onSubmit, onCancel }: { pending: b
   return <form className="rounded-xl border border-border bg-surface p-4" onSubmit={(event) => { event.preventDefault(); onSubmit(note.trim()); }}>
     <label htmlFor="contest-note" className="text-sm font-semibold text-text-primary">What did the grade miss? <span className="font-normal text-text-muted">(optional)</span></label>
     <textarea id="contest-note" rows={3} value={note} onChange={(event) => setNote(event.target.value)} autoFocus
-      className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm leading-6 text-text-primary outline-hidden focus:border-accent focus:ring-2 focus:ring-accent/30" />
+      className="mt-2 w-full rounded-xl border border-border bg-bg px-3 py-2 text-sm leading-6 text-text-primary outline-hidden focus:border-accent focus:ring-2 focus:ring-accent/30" />
     <p className="mt-1 text-xs text-text-muted">A fresh grade is made without seeing the first one, and it answers your note.</p>
     {error && <p role="alert" className="mt-2 text-sm text-rose-700 dark:text-rose-300">{error}</p>}
     <div className="mt-3 flex flex-wrap justify-end gap-2">

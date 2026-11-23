@@ -45,7 +45,7 @@ export function Passage({
 }) {
   const url = safeUrl(passage.url);
   return (
-    <details className="rounded-lg bg-background p-3" open={defaultOpen}>
+    <details className="rounded-lg bg-bg p-3" open={defaultOpen}>
       <summary className="cursor-pointer text-xs font-medium text-text-secondary">
         <span className="mr-2 inline-grid h-5 min-w-5 place-items-center rounded bg-accent/10 px-1 text-[10px] font-semibold text-accent">
           {number}
@@ -85,7 +85,7 @@ function ResolutionChip({ claim }: { claim: LearningClaimEvidenceDto }) {
     return <span className="rounded-full border border-amber-600/40 px-2 py-1 text-[10px] font-medium text-text-primary">{text}</span>;
   }
   if (claim.resolution === 'confirmed_by_you') {
-    return <span className="rounded-full border border-border bg-background px-2 py-1 text-[10px] font-medium text-text-secondary">{text}</span>;
+    return <span className="rounded-full border border-border bg-bg px-2 py-1 text-[10px] font-medium text-text-secondary">{text}</span>;
   }
   if (claim.class === 'common') {
     return <span className="rounded-full border border-border px-2 py-1 text-[10px] font-medium text-text-secondary">{text}</span>;

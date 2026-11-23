@@ -50,7 +50,7 @@ export function TutorPanel({ program, lesson, onCourseChanged, onActiveChatChang
 
   return (
     <div className="mt-4 grid h-[calc(100vh-14rem)] min-h-[28rem] grid-cols-[14rem_minmax(0,1fr)] gap-3">
-      <aside aria-label="Tutor chats" className="flex min-h-0 flex-col rounded-xl border border-border bg-background">
+      <aside aria-label="Tutor chats" className="flex min-h-0 flex-col rounded-xl border border-border bg-bg">
         <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
           <h3 className="text-sm font-medium text-text-primary">Tutor chats</h3>
           <IconButton label="New tutor chat" disabled={chats.creating} onClick={() => void chats.create()}>

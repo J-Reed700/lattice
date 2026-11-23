@@ -46,7 +46,7 @@ export function ComposerControls({
           Turn mode
         </p>
         <div
-          className="flex items-center gap-1 rounded-sm border border-subtle bg-surface p-0.5"
+          className="flex items-center gap-1 rounded-sm border border-border-subtle bg-surface p-0.5"
           role="tablist"
         >
           {([

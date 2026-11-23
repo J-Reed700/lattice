@@ -63,7 +63,7 @@ export function InterviewDrill({ programId, activity }: { programId: string; act
             type="datetime-local"
             value={when}
             onChange={(event) => setWhen(event.target.value)}
-            className="mt-1.5 block rounded-lg border border-border bg-background px-3 py-2 text-sm"
+            className="mt-1.5 block rounded-lg border border-border bg-bg px-3 py-2 text-sm"
           />
         </label>
         <button

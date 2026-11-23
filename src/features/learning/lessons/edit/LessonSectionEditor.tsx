@@ -129,7 +129,7 @@ function EditorBody({ programId, lessonId, sectionIndex, title: titleProp, body:
         <div>
           <label htmlFor={`${ids}-title`} className="block text-xs font-medium text-text-secondary">Title</label>
           <input id={`${ids}-title`} value={title} disabled={saving} onChange={(event) => setTitle(event.target.value)}
-            className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary" />
+            className="mt-1 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary" />
         </div>
         <div>
           <div className="flex items-center justify-between gap-2">
@@ -137,8 +137,8 @@ function EditorBody({ programId, lessonId, sectionIndex, title: titleProp, body:
             <Button type="button" size="sm" variant="ghost" onClick={() => setPreview((value) => !value)}>{preview ? 'Back to editing' : 'Preview'}</Button>
           </div>
           <textarea id={`${ids}-text`} ref={textRef} hidden={preview} value={body} disabled={saving} onChange={(event) => setBody(event.target.value)} rows={6}
-            className="mt-1 block w-full resize-none overflow-hidden rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm leading-6 text-text-primary" />
-          {preview && <div className="studio-lesson-prose mt-1 rounded-lg border border-border bg-background px-3 py-2"><MarkdownViewer content={body} /></div>}
+            className="mt-1 block w-full resize-none overflow-hidden rounded-lg border border-border bg-bg px-3 py-2 font-mono text-sm leading-6 text-text-primary" />
+          {preview && <div className="studio-lesson-prose mt-1 rounded-lg border border-border bg-bg px-3 py-2"><MarkdownViewer content={body} /></div>}
         </div>
         <p aria-live="polite" className="min-h-5 text-sm leading-6 text-text-secondary">{line}</p>
         {save.error && <p role="alert" className="text-sm text-danger-fg">{save.error.message}</p>}

@@ -342,8 +342,8 @@ function LearningStudioContent({ destination, onOpenDestination }: { destination
   };
 
   if (flashcardRoute && !selectedId && activeScreen === 'programs') return <FlashcardDeckView />;
-  if (activeScreen === 'import' || activeScreen === 'export-all') return <div className="studio-page-scroll h-full min-h-0 overflow-y-auto bg-background"><div className="mx-auto max-w-3xl"><button type="button" onClick={() => setScreen('programs')} className="mb-2 inline-flex min-h-10 items-center gap-2 text-sm text-text-muted hover:text-text-primary"><ArrowLeft size={16} /> All programs</button>{activeScreen === 'import' ? <ImportCourseFlow headingLevel={2} onImported={openImported} /> : <ExportAllCourses />}</div></div>;
-  if (activeScreen === 'builder') return <div className="h-full min-h-0 overflow-y-auto bg-background px-5 py-7 sm:px-8"><LearningModelNotice /><ProgramBuilder activeDepth={generate.courseDepth} onOpenDraft={() => { if (generate.progress?.programId) { userNavigatedRef.current = true; setBuilderFocused(false); setSelectedId(generate.progress.programId); setScreen('programs'); } }} progress={generate.progress} cancelling={generate.cancelling} onStop={() => { void generate.cancel(); }} cancelError={generate.cancelError} pending={generate.isPending} error={generate.error ?? undefined} onDismissError={dismissError} onGenerate={create} onCancel={() => { userNavigatedRef.current = true; setBuilderFocused(false); setScreen('programs'); }} /></div>;
+  if (activeScreen === 'import' || activeScreen === 'export-all') return <div className="studio-page-scroll h-full min-h-0 overflow-y-auto bg-bg"><div className="mx-auto max-w-3xl"><button type="button" onClick={() => setScreen('programs')} className="mb-2 inline-flex min-h-10 items-center gap-2 text-sm text-text-muted hover:text-text-primary"><ArrowLeft size={16} /> All programs</button>{activeScreen === 'import' ? <ImportCourseFlow headingLevel={2} onImported={openImported} /> : <ExportAllCourses />}</div></div>;
+  if (activeScreen === 'builder') return <div className="h-full min-h-0 overflow-y-auto bg-bg px-5 py-7 sm:px-8"><LearningModelNotice /><ProgramBuilder activeDepth={generate.courseDepth} onOpenDraft={() => { if (generate.progress?.programId) { userNavigatedRef.current = true; setBuilderFocused(false); setSelectedId(generate.progress.programId); setScreen('programs'); } }} progress={generate.progress} cancelling={generate.cancelling} onStop={() => { void generate.cancel(); }} cancelError={generate.cancelError} pending={generate.isPending} error={generate.error ?? undefined} onDismissError={dismissError} onGenerate={create} onCancel={() => { userNavigatedRef.current = true; setBuilderFocused(false); setScreen('programs'); }} /></div>;
 
   const reviewTitle = reviewing ? detail.data?.modules.flatMap((module) => module.lessons).find((lesson) => lesson.id === reviewLesson)?.title ?? 'Lesson' : '';
   return <>
@@ -355,7 +355,7 @@ function LearningStudioContent({ destination, onOpenDestination }: { destination
     </div>}
     {/* The course page stays mounted behind the review, so leaving it returns to the same tab and scroll. */}
     <div ref={rowRef} hidden={reviewing} className="flex h-full min-h-0 w-full min-w-0 overflow-hidden">
-    <div className="studio-page-scroll h-full min-h-0 min-w-0 flex-1 overflow-y-auto bg-background">
+    <div className="studio-page-scroll h-full min-h-0 min-w-0 flex-1 overflow-y-auto bg-bg">
     {!selectedId && <LearningModelNotice />}
     {navigation.error && <p role="alert" className="mx-auto mb-4 max-w-[1500px] rounded-xl border border-rose-500/25 bg-rose-500/5 p-3 text-sm text-text-primary">{navigation.error}</p>}
     {selectedId ? (

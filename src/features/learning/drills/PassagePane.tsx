@@ -56,7 +56,7 @@ export function PassagePane({ drill, writingFix, selection, onSelectLines, highl
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-border bg-surface">
-      <div className="flex items-center justify-between gap-2 border-b border-border bg-background px-4 py-2.5">
+      <div className="flex items-center justify-between gap-2 border-b border-border bg-bg px-4 py-2.5">
         <h2 className="text-xs font-medium text-text-secondary">The explanation</h2>
         {writingFix && <span className="shrink-0 text-xs font-medium text-text-secondary">Your fix: an editable copy</span>}
       </div>
@@ -70,7 +70,7 @@ export function PassagePane({ drill, writingFix, selection, onSelectLines, highl
               aria-label="Edit the explanation"
               value={fixEdits[file.path] ?? file.text}
               onChange={(event) => onFixEdit(file.path, event.target.value)}
-              className="min-h-[20rem] w-full flex-1 resize-none rounded-xl border border-border bg-background px-4 py-3 text-[15px] leading-7 text-text-primary outline-hidden focus:border-accent focus:ring-2 focus:ring-accent/15"
+              className="min-h-[20rem] w-full flex-1 resize-none rounded-xl border border-border bg-bg px-4 py-3 text-[15px] leading-7 text-text-primary outline-hidden focus:border-accent focus:ring-2 focus:ring-accent/15"
             />
           </div>
         ) : (

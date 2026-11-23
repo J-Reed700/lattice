@@ -110,7 +110,7 @@ export function CourseTangentsSection({ onOpenDestination }: CourseTangentsSecti
                 return (
                   <div
                     key={t.conversationId}
-                    className="flex flex-col justify-between rounded-xl border border-border bg-background p-4 text-left transition hover:border-accent/40"
+                    className="flex flex-col justify-between rounded-xl border border-border bg-bg p-4 text-left transition hover:border-accent/40"
                   >
                     <div>
                       <div className="truncate text-[10px] font-medium text-text-muted">

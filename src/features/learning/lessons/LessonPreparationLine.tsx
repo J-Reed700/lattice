@@ -23,6 +23,6 @@ export function LessonPreparationLine({ job, queuedMore = 0, failedCount = 0, pe
       {working ? <LoaderCircle size={16} className="shrink-0 animate-spin text-accent motion-reduce:animate-none" aria-hidden="true" /> : <CirclePause size={16} className="shrink-0 text-accent" aria-hidden="true" />}
       <span className="min-w-0 wrap-break-word">{line}</span>
     </p>
-    <button type="button" onClick={onView} className="rounded-full border border-accent/40 bg-background px-3 py-1.5 text-xs font-medium text-text-primary">View</button>
+    <button type="button" onClick={onView} className="rounded-full border border-accent/40 bg-bg px-3 py-1.5 text-xs font-medium text-text-primary">View</button>
   </section>;
 }
