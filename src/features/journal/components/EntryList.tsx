@@ -43,6 +43,8 @@ interface EntryListProps {
   onDeletePage: (page: WorkspaceNote) => Promise<unknown> | void;
   /** How a page is named in the list (the journal's first page has a legacy title). */
   displayPageTitle: (page: WorkspaceNote) => string;
+  /** Open the Context Inspector beside the page when the user explicitly picks a conversation. */
+  onOpenContext?: () => void;
 }
 
 type GroupKey = 'pinned' | 'today' | 'yesterday' | 'thisWeek' | 'thisMonth' | string;
@@ -170,6 +172,7 @@ export function EntryList({
   onRenamePage,
   onDeletePage,
   displayPageTitle,
+  onOpenContext,
 }: EntryListProps) {
   const {
     entries,
@@ -226,7 +229,10 @@ export function EntryList({
           </Button>
           <JournalCalendarPopover
             entries={entries}
-            onJumpToEntry={(id) => setSelectedId(id)}
+            onJumpToEntry={(id) => {
+              setSelectedId(id);
+              onOpenContext?.();
+            }}
           />
           <IconButton label="Hide sidebar" shortcut="⌘\" onClick={onToggleCollapse}>
             <PanelLeft />
@@ -316,7 +322,10 @@ export function EntryList({
                     isPinned={pinnedIds.has(entry.id)}
                     isRenaming={renamingId === entry.id}
                     renameDraft={renameDraft}
-                    onSelect={() => setSelectedId(entry.id)}
+                    onSelect={() => {
+                      setSelectedId(entry.id);
+                      onOpenContext?.();
+                    }}
                     onTogglePinned={() => togglePinned(entry.id)}
                     onStartRename={() => {
                       setRenamingId(entry.id);

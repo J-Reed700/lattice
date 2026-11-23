@@ -56,6 +56,8 @@ interface EntryEditorProps {
   onSynthesize: (scope: SynthesisScope) => Promise<boolean>;
   weekCandidates?: WeekCandidateCounts;
   onNotify: (tone: 'info' | 'success' | 'error', message: string) => void;
+  /** Monotonic signal incremented on explicit conversation picks to open the Context Inspector. */
+  openContextRequest?: number;
 }
 
 const CONTEXT_RAIL_KEY = 'journal.contextRail.open';
@@ -121,9 +123,23 @@ export function EntryEditor({
   onSynthesize,
   weekCandidates,
   onNotify,
+  openContextRequest = 0,
 }: EntryEditorProps) {
   const editorContainerRef = useRef<HTMLDivElement | null>(null);
   const [railOpen, setRailOpen] = useState(readRailOpen);
+  const [seenOpenRequest, setSeenOpenRequest] = useState(openContextRequest);
+  if (seenOpenRequest !== openContextRequest) {
+    setSeenOpenRequest(openContextRequest);
+    if (openContextRequest > 0) setRailOpen(true);
+  }
+  useEffect(() => {
+    if (openContextRequest <= 0) return;
+    try {
+      localStorage.setItem(CONTEXT_RAIL_KEY, '1');
+    } catch {
+      // Preference only.
+    }
+  }, [openContextRequest]);
   const readerSession = useReaderStore((state) => state.session);
   const openReader = useReaderStore((state) => state.open);
   const setReaderIndex = useReaderStore((state) => state.setIndex);

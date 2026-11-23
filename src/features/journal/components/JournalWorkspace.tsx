@@ -114,6 +114,10 @@ export function JournalWorkspace() {
 
 
   const [sidebarCollapsed, setSidebarCollapsed] = useSidebarCollapsed();
+  const [openContextRequest, setOpenContextRequest] = useState(0);
+  const handleOpenContext = useCallback(() => {
+    setOpenContextRequest((count) => count + 1);
+  }, []);
 
   useFollowNoteIdParam({ requestedNoteIdParam, searchParams, setSearchParams, setRequestedNoteId });
 
@@ -281,6 +285,7 @@ export function JournalWorkspace() {
           onRenamePage={handleRenamePage}
           onDeletePage={handleDeletePage}
           displayPageTitle={displayPageTitle}
+          onOpenContext={handleOpenContext}
         />
       )}
 
@@ -316,6 +321,7 @@ export function JournalWorkspace() {
         onSynthesize={handleSynthesize}
         weekCandidates={weekCandidates}
         onNotify={notify}
+        openContextRequest={openContextRequest}
       />
 
       {notice && <JournalNoticeToast notice={notice} onDismiss={() => setNotice(null)} />}

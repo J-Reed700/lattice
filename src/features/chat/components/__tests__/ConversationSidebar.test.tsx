@@ -178,6 +178,28 @@ describe('ConversationSidebar', () => {
     await waitFor(() => expect(h.store.loadConversations).toHaveBeenCalledWith({ filterMode: 'snippets' }));
   });
 
+  it('maintains roving tabIndex across primary and overflow filter modes', () => {
+    h.store = makeStore({ filterMode: 'saved' });
+    const first = render(<TooltipProvider><ConversationSidebar /></TooltipProvider>);
+    expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('tabindex', '-1');
+    expect(screen.getByRole('tab', { name: 'Starred' })).toHaveAttribute('tabindex', '0');
+    expect(screen.getByRole('tab', { name: 'Pinned' })).toHaveAttribute('tabindex', '-1');
+    first.unmount();
+
+    h.store = makeStore({ filterMode: 'archived' });
+    const second = render(<TooltipProvider><ConversationSidebar /></TooltipProvider>);
+    expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('tabindex', '0');
+    expect(screen.getByRole('tab', { name: 'Starred' })).toHaveAttribute('tabindex', '-1');
+    expect(screen.getByRole('tab', { name: 'Pinned' })).toHaveAttribute('tabindex', '-1');
+    second.unmount();
+
+    h.store = makeStore({ filterMode: 'snippets' });
+    renderSidebar();
+    expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('tabindex', '0');
+    expect(screen.getByRole('tab', { name: 'Starred' })).toHaveAttribute('tabindex', '-1');
+    expect(screen.getByRole('tab', { name: 'Pinned' })).toHaveAttribute('tabindex', '-1');
+  });
+
   it('shows references instead of selection in the Referenced tab', () => {
     h.store = makeStore({ filterMode: 'snippets' });
     h.selection = makeSelection({ isSelectionMode: true });

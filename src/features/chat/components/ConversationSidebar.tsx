@@ -151,6 +151,7 @@ export function ConversationSidebar({ onCollapse }: ConversationSidebarProps = {
   ];
 
   const activeOverflowOption = overflowFilterOptions.find((option) => option.id === filterMode) ?? null;
+  const hasActivePrimaryFilter = primaryFilterOptions.some((option) => option.id === filterMode);
 
   return (
     <div
@@ -230,7 +231,7 @@ export function ConversationSidebar({ onCollapse }: ConversationSidebarProps = {
                   type="button"
                   role="tab"
                   aria-selected={isActive}
-                  tabIndex={isActive || (!activeOverflowOption && option.id === 'all') ? 0 : -1}
+                  tabIndex={isActive || (!hasActivePrimaryFilter && option.id === 'all') ? 0 : -1}
                   onClick={handleAsyncEvent(() => handleFilterSelect(option.id))}
                   onKeyDown={(event) => {
                     const index = primaryFilterOptions.findIndex((item) => item.id === option.id);
