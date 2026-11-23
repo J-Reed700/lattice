@@ -6,6 +6,7 @@ import {
   Bookmark,
   BookOpen,
   Clock,
+  Columns3,
   FilePlus,
   FileSearch,
   FileText,
@@ -398,6 +399,7 @@ export function CommandPaletteDialog({
                 <CommandItem icon={Bookmark} label="References" shortcut={`${cmd}5`} onSelect={goTo('/references')} />
                 <CommandItem icon={FolderTree} label="Explorer" shortcut={`${cmd}6`} onSelect={goTo('/explorer')} />
                 <CommandItem icon={BookOpen} label="Studio" shortcut={`${cmd}7`} onSelect={goTo('/studio')} />
+                <CommandItem icon={Columns3} label="Compare" onSelect={goTo('/compare')} />
                 <CommandItem icon={Layers} label="Flashcards" onSelect={goTo('/studio?section=flashcards')} />
                 <CommandItem icon={FileSearch} label="Review drills" onSelect={goTo('/studio?drills=open')} />
                 <CommandItem icon={Plus} label="Import" shortcut={`${cmd}I`} onSelect={goToImport('files')} />

@@ -48,6 +48,7 @@ export function ChatView() {
   const queryClient = useQueryClient();
   const loadConversations = useConversationsStore((state) => state.loadConversations);
   const loadSpaces = useConversationsStore((state) => state.loadSpaces);
+  const setSelectedSpace = useConversationsStore((state) => state.setSelectedSpace);
   const selectConversation = useConversationsStore((state) => state.selectConversation);
   const createConversation = useConversationsStore((state) => state.createConversation);
   const activeConversationId = useConversationsStore((state) => state.activeConversationId);
@@ -126,6 +127,17 @@ export function ChatView() {
     window.addEventListener(NEW_ITEM_EVENT, onNew);
     return () => window.removeEventListener(NEW_ITEM_EVENT, onNew);
   }, [handleNewConversation]);
+
+  useEffect(() => {
+    const requestedSpaceId = searchParams.get('spaceId');
+    if (!requestedSpaceId) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('spaceId');
+    setSearchParams(next, { replace: true });
+    const targetSpaceId = requestedSpaceId === 'all' ? null : requestedSpaceId;
+    setSelectedSpace(targetSpaceId);
+    void loadConversations({ spaceId: targetSpaceId });
+  }, [loadConversations, searchParams, setSearchParams, setSelectedSpace]);
 
   useEffect(() => {
     if (searchParams.get('new') !== '1') return;

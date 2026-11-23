@@ -30,6 +30,7 @@ import { cn } from '@/lib/utils';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 
+import { RailSpacesSection } from './RailSpacesSection';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 
 /**
@@ -121,7 +122,7 @@ function NavButton({ item, isActive, onClick, compact }: NavButtonProps) {
           aria-label={item.label}
           aria-current={isActive ? 'page' : undefined}
           className={cn(
-            'group relative flex h-8 w-full items-center justify-center gap-2.5 rounded-md px-2.5 transition-colors duration-fast',
+            'group relative flex h-8 w-full items-center justify-center gap-2.5 rounded-lg px-2.5 transition-colors duration-fast',
             !compact && 'xl:justify-start',
             'focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
             isActive ? 'text-text-primary' : 'text-text-tertiary hover:text-text-primary',
@@ -133,10 +134,10 @@ function NavButton({ item, isActive, onClick, compact }: NavButtonProps) {
               layoutId="rail-active"
               aria-hidden="true"
               transition={reduceMotion ? { duration: 0 } : { type: 'spring', visualDuration: 0.22, bounce: 0.12 }}
-              className="absolute inset-0 rounded-md bg-accent-muted shadow-[inset_0_0_0_1px_hsl(var(--accent)/0.14)]"
+              className="absolute inset-0 rounded-lg bg-accent-muted shadow-[inset_0_0_0_1px_hsl(var(--accent)/0.16)]"
             />
           ) : (
-            <span aria-hidden="true" className="row-hover absolute inset-0 rounded-md" />
+            <span aria-hidden="true" className="row-hover absolute inset-0 rounded-lg" />
           )}
           <span className={cn('relative flex', isActive && 'text-accent')}>{item.icon}</span>
           <span className={cn('relative hidden text-ui', !compact && 'xl:block', isActive && 'font-medium')}>{item.label}</span>
@@ -181,7 +182,7 @@ export function Layout() {
           onClick={() => window.dispatchEvent(new Event(OPEN_PALETTE_EVENT))}
           aria-label="Search and commands"
           className={cn(
-            'pressable mb-3 flex h-8 w-full items-center justify-center gap-2 rounded-md bg-[hsl(var(--text-primary)/0.055)] px-2.5 text-text-tertiary transition-[background-color,color,scale] duration-fast hover:bg-[hsl(var(--text-primary)/0.09)] hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
+            'pressable mb-3 flex h-8 w-full items-center justify-center gap-2 rounded-lg border border-border-subtle bg-surface/75 px-2.5 text-text-tertiary shadow-xs transition-[background-color,border-color,color,scale] duration-fast hover:border-border-default hover:bg-surface hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
             wide('xl:justify-start'),
           )}
         >
@@ -192,19 +193,25 @@ export function Layout() {
         </button>
 
         <nav aria-label="Main navigation" className="flex min-h-0 flex-1 flex-col">
-          <div className="flex w-full flex-col gap-px">
-            {PRIMARY_NAV.map((item) => (
-              <NavButton key={item.view} item={item} isActive={activeView === item.view} onClick={handleAsyncEvent(() => go(item.view))} compact={compact} />
-            ))}
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+            <div className="flex w-full flex-col gap-px">
+              {PRIMARY_NAV.map((item) => (
+                <NavButton key={item.view} item={item} isActive={activeView === item.view} onClick={handleAsyncEvent(() => go(item.view))} compact={compact} />
+              ))}
+            </div>
+
+            <div className="mx-2 my-2.5 h-px shrink-0 bg-border-subtle" aria-hidden="true" />
+
+            <NavButton item={IMPORT_NAV} isActive={activeView === IMPORT_NAV.view} onClick={handleAsyncEvent(() => go(IMPORT_NAV.view))} compact={compact} />
+
+            <div className="mx-2 my-2.5 h-px shrink-0 bg-border-subtle" aria-hidden="true" />
+
+            <RailSpacesSection compact={compact} isOnChat={activeView === 'chat'} />
+
+            <div data-tauri-drag-region className="min-h-4 flex-1" />
           </div>
 
-          <div className="mx-2.5 my-2.5 h-px bg-border-subtle" aria-hidden="true" />
-
-          <NavButton item={IMPORT_NAV} isActive={activeView === IMPORT_NAV.view} onClick={handleAsyncEvent(() => go(IMPORT_NAV.view))} compact={compact} />
-
-          <div data-tauri-drag-region className="min-h-4 flex-1" />
-
-          <div className="flex w-full flex-col items-center gap-px">
+          <div className="flex w-full shrink-0 flex-col items-center gap-px border-t border-border-subtle/70 pt-2">
             <Iris compact={compact} />
             <IndexingStatusRail />
             <HeaderDownloadsIndicator />
@@ -217,12 +224,12 @@ export function Layout() {
                   onClick={() => setCompact((value) => !value)}
                   aria-label={compact ? 'Expand sidebar' : 'Collapse sidebar'}
                   className={cn(
-                    'group relative hidden h-8 w-full items-center justify-center gap-2.5 rounded-md px-2.5 text-text-tertiary transition-colors duration-fast hover:text-text-primary xl:flex',
+                    'group relative hidden h-8 w-full items-center justify-center gap-2.5 rounded-lg px-2.5 text-text-tertiary transition-colors duration-fast hover:text-text-primary xl:flex',
                     'focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
                     wide('xl:justify-start'),
                   )}
                 >
-                  <span aria-hidden="true" className="row-hover absolute inset-0 rounded-md" />
+                  <span aria-hidden="true" className="row-hover absolute inset-0 rounded-lg" />
                   {compact ? (
                     <PanelLeftOpen className={cn('relative', ICON_CLASS)} strokeWidth={STROKE} />
                   ) : (
