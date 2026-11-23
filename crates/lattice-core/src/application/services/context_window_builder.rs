@@ -211,4 +211,50 @@ mod tests {
             ["User: What is in this chart?\n[Picture attached: Q3 revenue.png]"]
         );
     }
+
+    #[test]
+    fn a_stopped_unanswered_question_does_not_leak_into_next_turn_context() {
+        use crate::domain::conversation::{ConversationAggregate, MessageRole};
+
+        let mut aggregate = ConversationAggregate::new("Chat".into(), None).unwrap();
+        aggregate
+            .add_message(MessageRole::User, "First question".into(), 3)
+            .unwrap();
+        aggregate
+            .add_message(MessageRole::Assistant, "First answer".into(), 3)
+            .unwrap();
+        aggregate
+            .add_message_with_status(
+                MessageRole::User,
+                "Stopped unanswered question".into(),
+                4,
+                "failed".into(),
+            )
+            .unwrap();
+        let mut messages = aggregate.messages().to_vec();
+        messages[2].metadata = Some(r#"{"cancelled":true}"#.into());
+        let mut aggregate = ConversationAggregate::from_persistence(
+            aggregate.conversation().clone(),
+            messages,
+            Vec::new(),
+            None,
+        );
+        aggregate
+            .add_message(MessageRole::User, "Follow-up question".into(), 3)
+            .unwrap();
+
+        let builder = ContextWindowBuilder::new(
+            Arc::new(EmptyConversationHistory),
+            100_000,
+            Arc::new(|text: &str| estimate_tokens(text)),
+        );
+        assert_eq!(
+            builder.build_from_aggregate(&aggregate),
+            [
+                "User: First question",
+                "Assistant: First answer",
+                "User: Follow-up question",
+            ]
+        );
+    }
 }

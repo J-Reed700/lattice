@@ -9,6 +9,7 @@ import { quizOverview } from '@/features/learning/quizzes/quizTestData';
 import { LearningStudioPage } from '@/features/learning/workspace/LearningStudioPage';
 import { queryClient as activityClient } from '@/lib/queryClient';
 import { STUDY_ACTIVITY_KEY } from '@/lib/studyActivity';
+import { deferred } from '@/tests/deferred';
 import { makeAppSettings } from '@/tests/fixtures/appSettings';
 import { ok } from '@/tests/learningStudioFixtures';
 import type { AppSettings } from '@/types/api/settings';
@@ -203,5 +204,49 @@ describe('Studio programs workspace with no Learning model', () => {
     expect(await screen.findByText('Thermodynamics')).toBeVisible();
     await settle();
     expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+  });
+
+  it('warns when the configured Learning model was deleted or its local server URL is missing', async () => {
+    mocks.getSettings.mockResolvedValue(ok(withChatModel({ kind: 'local', model_id: 'deleted-local-model' })));
+    mocks.downloadedModels.mockResolvedValue(ok([]));
+    show('/studio?new=1');
+    expect(await screen.findByText(/Learning model deleted-local-model is not downloaded any more/)).toBeVisible();
+    expect(screen.getByRole('button', { name: `Use ${CHAT_MODEL}` })).toBeVisible();
+  });
+
+  it('does not offer adopting a broken chat model that points to the same unavailable model', async () => {
+    const missingRef = { kind: 'local', model_id: 'missing-model' } as const;
+    mocks.getSettings.mockResolvedValue(ok(withChatModel(missingRef)));
+    mocks.downloadedModels.mockResolvedValue(ok([]));
+    mocks.activeModels.mockResolvedValue(ok({
+      chat: [missingRef],
+      chat_unset: null,
+      utility: [],
+      llama_cpp: null,
+      ollama: null,
+      ollama_utility_tag: null,
+    }));
+    show('/studio?new=1');
+    expect(await screen.findByRole('button', { name: 'Choose a model' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /Use missing-model/ })).not.toBeInTheDocument();
+  });
+
+  it('does not claim a local Learning model is missing while downloaded models are still loading or failed to load', async () => {
+    const localRef = { kind: 'local', model_id: 'local-llama' } as const;
+    mocks.getSettings.mockResolvedValue(ok(withChatModel(localRef)));
+    const pendingModels = deferred<ReturnType<typeof ok>>();
+    mocks.downloadedModels.mockReturnValueOnce(pendingModels.promise);
+
+    show('/studio?new=1');
+    expect(await screen.findByLabelText('Your goal')).toBeVisible();
+    await settle();
+    expect(screen.queryByText(/is not downloaded any more/)).not.toBeInTheDocument();
+
+    // If loading fails, it must still not falsely warn that the model was deleted.
+    await act(async () => {
+      pendingModels.resolve({ ok: false, error: 'Database locked' } as unknown as ReturnType<typeof ok>);
+    });
+    await settle();
+    expect(screen.queryByText(/is not downloaded any more/)).not.toBeInTheDocument();
   });
 });

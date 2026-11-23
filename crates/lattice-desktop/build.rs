@@ -651,6 +651,7 @@ fn main() {
                     "get_learning_practice_profile",
                     "save_learning_practice_profile",
                     "start_practice_build",
+                    "cancel_practice_build",
                     "start_practice_session",
                     "get_practice_session",
                     "move_practice_stage",

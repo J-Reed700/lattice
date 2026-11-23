@@ -88,12 +88,15 @@ impl AIModule {
         // Download wiring
         let download_repository = Arc::new(SqliteDownloadRepository::new(core.database().clone()));
         let download_engine = Arc::new(HttpDownloadEngine::new()?);
-        let download_manager = Arc::new(DownloadManagerService::new(
-            download_repository,
-            download_engine,
-            core.data_dir().clone(),
-            Arc::clone(core.background()),
-        )) as Arc<dyn DownloadManager>;
+        let download_manager = Arc::new(
+            DownloadManagerService::new(
+                download_repository,
+                download_engine,
+                core.data_dir().clone(),
+                Arc::clone(core.background()),
+            )
+            .with_credentials(core.credentials().clone()),
+        ) as Arc<dyn DownloadManager>;
 
         let llm = crate::features::llm::di::build(
             database.clone(),

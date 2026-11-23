@@ -217,6 +217,18 @@ describe('TangentConversation', () => {
       await ready();
       expect(conversationUiStore.getState().optimisticMessages.has('tmp')).toBe(true);
     });
+
+    it('prunes a pending optimistic bubble once the tangent has persisted that requestId', async () => {
+      const pending = { tempId: 'tmp-pending', conversationId: 't1', role: 'user', content: 'In flight?', status: 'pending', requestId: 'req-inflight' };
+      conversationUiStore.setState({ optimisticMessages: new Map([['tmp-pending', pending]]) } as never);
+      h.fetchMessages.mockResolvedValue([
+        ...inherited,
+        message('m5', 'user', 'In flight?', { status: 'pending', metadata: JSON.stringify({ requestId: 'req-inflight' }) }),
+      ]);
+      renderTangent();
+      await ready();
+      await waitFor(() => expect(conversationUiStore.getState().optimisticMessages.has('tmp-pending')).toBe(false));
+    });
   });
 
   describe('when a turn ends', () => {
@@ -249,5 +261,36 @@ describe('TangentConversation', () => {
     stop.mockClear();
     unmount();
     expect(stop).toHaveBeenCalled();
+  });
+
+  it('exposes and dismisses scoped query errors inside the tangent without leaking silently', async () => {
+    h.fetchBookmarks.mockRejectedValue(new Error('Bookmarks unreadable'));
+    renderTangent();
+    await ready();
+    await waitFor(() => expect(h.scope?.error).toBe('Bookmarks unreadable'));
+    act(() => h.scope?.clearError());
+    expect(h.scope?.error).toBeNull();
+  });
+
+  it('does not show the global main-chat error or clear it when dismissing inside a tangent', async () => {
+    const clearGlobalError = vi.fn();
+    h.base = {
+      ...h.base,
+      error: 'Main chat failed',
+      clearError: clearGlobalError,
+    };
+    h.fetchBookmarks.mockRejectedValue(new Error('Tangent bookmarks unreadable'));
+    renderTangent();
+    await ready();
+    await waitFor(() => expect(h.scope?.error).toBe('Tangent bookmarks unreadable'));
+
+    act(() => h.scope?.clearError());
+    expect(h.scope?.error).toBeNull();
+    expect(clearGlobalError).not.toHaveBeenCalled();
+
+    // Without a scoped error, global error still stays out of the tangent scope.
+    h.fetchBookmarks.mockResolvedValue([]);
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: conversationKeys.bookmarks('t1') }); });
+    await waitFor(() => expect(h.scope?.error).toBeNull());
   });
 });

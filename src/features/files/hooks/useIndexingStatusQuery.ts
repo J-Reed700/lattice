@@ -4,6 +4,7 @@ import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tansta
 import { listen } from '@tauri-apps/api/event';
 
 import { useApi } from '@/contexts/ApiContext';
+import { CORPUS_SHAPE_QUERY_KEY } from '@/features/corpus-shape/hooks/useCorpusShapeQuery';
 import VaultAPI, { type ApiClient } from '@/lib/api';
 import type { IndexStatus } from '@/types';
 import type { IndexingActivity } from '@/types/api/files';
@@ -81,6 +82,8 @@ function invalidateViewsAfterIndexing(queryClient: QueryClient): void {
   void queryClient.invalidateQueries({ queryKey: LIBRARY_DOCUMENTS_QUERY_KEY });
   void queryClient.invalidateQueries({ queryKey: INDEXED_FOLDERS_QUERY_KEY });
   void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+  void queryClient.invalidateQueries({ queryKey: CORPUS_SHAPE_QUERY_KEY });
+  void queryClient.invalidateQueries({ queryKey: INDEXING_ACTIVITIES_QUERY_KEY });
 }
 
 /**
@@ -94,7 +97,7 @@ export function useIndexingStatusQuery() {
   const queryClient = useQueryClient();
 
   useEffect(() => onIndexingProgress((payload) => {
-    let transitionedToIdle = false;
+    let indexingFinished = false;
     // The event payload is the engine's own progress struct: camelCase, but
     // without `paused` or `failures`. Merge rather than replace, or the
     // failure list blinks empty on every progress tick.
@@ -118,12 +121,12 @@ export function useIndexingStatusQuery() {
       ) {
         return prev;
       }
-      if (isIndexingActive(base) && next.status === 'idle') {
-        transitionedToIdle = true;
+      if (isIndexingActive(base) && !isIndexingActive(next)) {
+        indexingFinished = true;
       }
       return next;
     });
-    if (transitionedToIdle) {
+    if (indexingFinished) {
       invalidateViewsAfterIndexing(queryClient);
     }
   }), [queryClient]);
@@ -136,7 +139,7 @@ export function useIndexingStatusQuery() {
       if (!result.ok) {
         throw new Error(result.error);
       }
-      if (isIndexingActive(prev) && result.data.status === 'idle') {
+      if (isIndexingActive(prev) && !isIndexingActive(result.data)) {
         invalidateViewsAfterIndexing(queryClient);
       }
       return result.data;

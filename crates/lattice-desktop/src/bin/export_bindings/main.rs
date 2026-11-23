@@ -248,6 +248,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::learning::plugin::code_review_languages,
             lattice::features::learning::plugin::course_drills,
             lattice::features::learning::plugin::start_practice_build,
+            lattice::features::learning::plugin::cancel_practice_build,
             lattice::features::learning::plugin::start_practice_session,
             lattice::features::learning::plugin::get_practice_session,
             lattice::features::learning::plugin::list_practice_sessions,

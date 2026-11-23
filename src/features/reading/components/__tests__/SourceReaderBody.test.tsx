@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 
+import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { SourceReaderBody } from '@/features/reading/components/SourceReaderBody';
 import { captureWebPageSnapshot } from '@/features/reading/snapshot/api';
 import { useWebPageSnapshotStore } from '@/features/reading/snapshot/webPageSnapshotStore';
@@ -459,6 +460,70 @@ describe('SourceReaderBody saved web articles', () => {
     expect(mocks.savedWebArticle).toHaveBeenCalledWith(`${folder}article.md`);
     expect(mocks.savedWebArticle).not.toHaveBeenCalledWith(
       '/old/home/web-archive/example.com/a-1/article.md',
+    );
+  });
+
+  it('ignores stale activeConversationId when standalone dialog views open a web source without explicit conversationId', async () => {
+    mocks.activeConversationId = 'stale-chat-1';
+    mocks.getWebPageSnapshot.mockResolvedValue({ ok: true, data: null });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Dialog open onOpenChange={() => undefined}>
+          <DialogContent>
+            <SourceReaderBody
+              presentation="dialog"
+              source={source({
+                documentId: 'web:https://example.com/standalone',
+                filePath: 'https://example.com/standalone',
+                fileName: 'Standalone page',
+                mimeType: 'text/html',
+                category: 'Web Page',
+                content: 'Snippet',
+              })}
+              initialLocator={{ text: 'Snippet' }}
+              onClose={vi.fn()}
+            />
+          </DialogContent>
+        </Dialog>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(mocks.getWebPageSnapshot).toHaveBeenCalledWith('', 'https://example.com/standalone'),
+    );
+  });
+
+  it('uses explicit conversationId on source or prop even when activeConversationId differs (e.g. tangents)', async () => {
+    mocks.activeConversationId = 'main-chat-1';
+    mocks.getWebPageSnapshot.mockResolvedValue({ ok: true, data: null });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Dialog open onOpenChange={() => undefined}>
+          <DialogContent>
+            <SourceReaderBody
+              presentation="docked"
+              conversationId="tangent-9"
+              source={source({
+                documentId: 'web:https://example.com/tangent-page',
+                conversationId: 'tangent-9',
+                filePath: 'https://example.com/tangent-page',
+                fileName: 'Tangent page',
+                mimeType: 'text/html',
+                category: 'Web Page',
+                content: 'Snippet',
+              })}
+              initialLocator={{ text: 'Snippet' }}
+              onClose={vi.fn()}
+            />
+          </DialogContent>
+        </Dialog>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(mocks.getWebPageSnapshot).toHaveBeenCalledWith('tangent-9', 'https://example.com/tangent-page'),
     );
   });
 });

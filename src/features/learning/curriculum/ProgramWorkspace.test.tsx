@@ -1,13 +1,14 @@
 import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { learningPlanKey } from '@/features/learning/api/learningQueryKeys';
 import { ProgramWorkspace } from '@/features/learning/curriculum/ProgramWorkspace';
 import { review, unsupportedItem } from '@/features/learning/lessons/review/claimReviewTestData';
+import { resetPortabilityRunStore, usePortabilityRunStore } from '@/features/learning/portability/portabilityRunStore';
 import { PROGRAM_KIND_ID } from '@/features/learning/practice/kinds';
 import { quizOverview } from '@/features/learning/quizzes/quizTestData';
 import type { LearningGenerationJob, LearningLessonDto, LearningModuleDto, LearningProgramDto } from '@/lib/bindings';
@@ -134,6 +135,7 @@ function show(course: LearningProgramDto, onReview = vi.fn(), destination?: Stud
 describe('Course page', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    resetPortabilityRunStore();
     drills.mounts = 0;
     // One lesson held for review by a finished attempt, another being prepared now.
     api.plan.mockResolvedValue({ ok: true, data: { programId: 'program-1', jobs: [
@@ -575,6 +577,124 @@ describe('The course progress line', () => {
     const inCard = (lessonId: string) => within(document.getElementById(`lesson-${lessonId}`) as HTMLElement);
     expect(await inCard('lesson-1').findByText('Preparing · 3 of 10 checked')).toBeVisible();
     expect(await inCard('lesson-2').findByText('Preparing · 7 of 20 checked')).toBeVisible();
+  });
+
+  it('keeps a failed lesson preparation job visible while another queued lesson is running', async () => {
+    showCourse(course(), [
+      lessonJob('lesson-1', { status: 'failed', error: 'Citation pass timed out', finishedAt: Date.now() - 5_000, activity: { lessonTitle: 'Airway defenses' } as unknown as LearningGenerationJob['activity'] }),
+      lessonJob('lesson-2', { status: 'running', createdAt: Date.now(), activity: { phase: 'evidence', lessonTitle: 'Gas exchange', recentSteps: [], modelRunning: true } as unknown as LearningGenerationJob['activity'] }),
+    ]);
+    expect(await screen.findByText(/Preparing Gas exchange/)).toBeVisible();
+    const prepRegion = screen.getByRole('region', { name: 'Lesson preparation' });
+    expect(within(prepRegion).getByText(/Lesson preparation failed · Airway defenses/)).toBeVisible();
+    expect(prepRegion).toHaveTextContent('Citation pass timed out');
+    const failedTitle = screen.getByRole('button', { name: 'The heart as a pump' });
+    const failedCard = within(failedTitle.closest('article') as HTMLElement);
+    expect(failedCard.getByText('Preparation failed')).toBeVisible();
+  });
+
+  it('suppresses failed lesson preparation jobs once the lesson is ready or superseded by a newer job', async () => {
+    const readyCourse = course();
+    readyCourse.modules[0].lessons[0].preparation = 'ready';
+    showCourse(readyCourse, [
+      lessonJob('lesson-1', {
+        id: 'job-failed-old',
+        status: 'failed',
+        error: 'Stale preparation error',
+        createdAt: 100,
+        finishedAt: 150,
+        activity: { lessonTitle: 'The heart as a pump' } as unknown as LearningGenerationJob['activity'],
+      }),
+      lessonJob('lesson-1', {
+        id: 'job-completed-new',
+        status: 'completed',
+        createdAt: 200,
+        finishedAt: 250,
+      }),
+    ]);
+
+    expect(await screen.findByText('Lessons complete')).toBeVisible();
+    await waitFor(() => expect(api.plan).toHaveBeenCalled());
+    expect(screen.queryByText(/Lesson preparation failed/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry lesson preparation' })).not.toBeInTheDocument();
+
+    // Even when only the failed job remains in the list, a ready lesson must not show the failure banner.
+    api.plan.mockResolvedValue({
+      ok: true,
+      data: {
+        programId: 'program-1',
+        jobs: [
+          lessonJob('lesson-1', {
+            id: 'job-failed-only',
+            status: 'failed',
+            error: 'Stale preparation error',
+            createdAt: 100,
+            finishedAt: 150,
+            activity: { lessonTitle: 'The heart as a pump' } as unknown as LearningGenerationJob['activity'],
+          }),
+        ],
+      },
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <ProgramWorkspace
+          program={readyCourse}
+          onBack={vi.fn()}
+          onOpenProgram={vi.fn()}
+          onAccept={vi.fn()}
+          acceptPending={false}
+          onPrepare={vi.fn()}
+          preparePending={false}
+          onComplete={vi.fn()}
+          completePending={false}
+        />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(api.plan).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText(/Lesson preparation failed/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry lesson preparation' })).not.toBeInTheDocument();
+  });
+
+  it('notifies onReaderContextChange when switching tabs so ReaderPane resets', async () => {
+    const user = userEvent.setup();
+    const onReaderContextChange = vi.fn();
+    api.plan.mockResolvedValue({ ok: true, data: { programId: 'program-1', jobs: [] } });
+    api.review.mockResolvedValue({ ok: true, data: null });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}>
+      <ProgramWorkspace program={course()} onBack={vi.fn()} onOpenProgram={vi.fn()} onAccept={vi.fn()} acceptPending={false}
+        onPrepare={vi.fn()} preparePending={false} onComplete={vi.fn()} completePending={false} onReaderContextChange={onReaderContextChange} />
+    </QueryClientProvider>);
+    expect(onReaderContextChange).toHaveBeenCalledWith('lessons:');
+    await user.click(screen.getByRole('tab', { name: 'Sources' }));
+    await waitFor(() => expect(onReaderContextChange).toHaveBeenLastCalledWith('sources:'));
+    await user.click(screen.getByRole('tab', { name: 'Quizzes' }));
+    await waitFor(() => expect(onReaderContextChange).toHaveBeenLastCalledWith('quizzes:'));
+  });
+
+  it('calls onOpenProgram when a different course import finishes while ImportCourseFlow is unmounted', async () => {
+    const onOpenProgram = vi.fn();
+    api.plan.mockResolvedValue({ ok: true, data: { programId: 'program-1', jobs: [] } });
+    api.review.mockResolvedValue({ ok: true, data: null });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}>
+      <ProgramWorkspace program={course()} onBack={vi.fn()} onOpenProgram={onOpenProgram} onAccept={vi.fn()} acceptPending={false}
+        onPrepare={vi.fn()} preparePending={false} onComplete={vi.fn()} completePending={false} />
+    </QueryClientProvider>);
+
+    act(() => {
+      usePortabilityRunStore.setState((state) => ({
+        importFlow: {
+          ...state.importFlow,
+          mountedCount: 0,
+          importSeq: state.importFlow.importSeq + 1,
+          lastImported: { programId: 'imported-copy', title: 'Imported copy' },
+        },
+      }));
+    });
+
+    await waitFor(() => expect(onOpenProgram).toHaveBeenCalledWith('imported-copy'));
   });
 
   describe('preparing ahead of the learner', () => {

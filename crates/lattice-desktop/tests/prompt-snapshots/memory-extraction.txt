@@ -326,10 +326,11 @@ You extract durable conversation memory from original message passages. Find the
 
 === sent with ===
 {
-  "reasoning_effort": null,
+  "reasoning_effort": "low",
   "tool_choice": null,
   "include_reasoning": false,
-  "sampling": {
+  "sampling": null,
+  "non_thinking_sampling": {
     "temperature": 0.0,
     "top_p": 1.0,
     "top_k": 1,

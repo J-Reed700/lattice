@@ -2,7 +2,13 @@ import { useMemo } from 'react';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { useJobStatus } from '@/features/jobs/api';
 import { useCourseDrills } from '@/features/learning/drills/useCourseDrills';
+import {
+  isCodingBuildSubject,
+  listActivePracticeBuildJob,
+  PRACTICE_BUILD_JOB_KIND,
+} from '@/features/learning/practice/kinds/program/codingBuildStore';
 import { usePracticalWorkspace } from '@/features/learning/practice/practical/usePracticalWorkspace';
 import { useLearningPracticeWorkspace } from '@/features/learning/practice/useLearningPractice';
 import { getErrorMessage } from '@/lib/errorUtils';
@@ -36,6 +42,7 @@ export function usePracticeFit(programId: string) {
       const fit = await practiceHomeApi.getFit(programId);
       return fit.kinds.some((entry) => entry.fit === 'checking') ? practiceHomeApi.checkFit(programId) : fit;
     },
+    staleTime: 0,
     retry: false,
   });
   return {
@@ -47,7 +54,7 @@ export function usePracticeFit(programId: string) {
 }
 
 export function usePracticeDue(programId: string) {
-  const query = useQuery({ queryKey: dueKey(programId), queryFn: () => practiceHomeApi.due(programId), retry: false });
+  const query = useQuery({ queryKey: dueKey(programId), queryFn: () => practiceHomeApi.due(programId), staleTime: 0, retry: false });
   return {
     items: query.data?.items,
     loading: query.isPending,
@@ -56,9 +63,26 @@ export function usePracticeDue(programId: string) {
   };
 }
 
+export function usePracticeBuildJob(programId: string) {
+  const client = useQueryClient();
+  const query = useQuery({
+    queryKey: ['learning-practice-build-jobs', programId],
+    queryFn: () => listActivePracticeBuildJob(programId),
+    staleTime: 0,
+    refetchOnMount: 'always',
+    retry: false,
+  });
+  useJobStatus((job) => {
+    if (job.kind === PRACTICE_BUILD_JOB_KIND && isCodingBuildSubject(job.subjectId, programId)) {
+      void client.invalidateQueries({ queryKey: ['learning-practice-build-jobs', programId] });
+    }
+  });
+  return query.data ?? null;
+}
+
 /** Coding sessions, simulations, written attempts and drills of a course as one list. */
 export function usePracticeHistory(programId: string) {
-  const coding = useQuery({ queryKey: codingKey(programId), queryFn: () => practiceHomeApi.codingSessions(programId), retry: false });
+  const coding = useQuery({ queryKey: codingKey(programId), queryFn: () => practiceHomeApi.codingSessions(programId), staleTime: 0, retry: false });
   const practical = usePracticalWorkspace(programId);
   const written = useLearningPracticeWorkspace(programId);
   const drills = useCourseDrills(programId, null);

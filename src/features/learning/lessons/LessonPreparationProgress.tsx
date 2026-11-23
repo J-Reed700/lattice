@@ -62,10 +62,12 @@ function HeldLessonLine({ programId, lessonId, title, onReview }: { programId: s
  * line, the progress bar, Pause/Resume, and everything else behind Details.
  * A lesson held for review is a line that leads to the review screen.
  */
-export function LessonPreparationStatus({ job, queuedMore = 0, pending, programId, revision, error, expanded: heldExpanded, onExpandedChange, lessonTitles, onReview }: {
+export function LessonPreparationStatus({ job, queuedMore = 0, failedJobs = [], pending, programId, revision, error, expanded: heldExpanded, onExpandedChange, lessonTitles, onReview }: {
   job?: LearningGenerationJob; pending: boolean; programId: string; revision: number; error?: string;
   /** Lesson jobs waiting behind this one. */
   queuedMore?: number;
+  /** Other failed lesson jobs in the course queue not already represented by `job`. */
+  failedJobs?: LearningGenerationJob[];
   // A parent that unmounts the panel (the course tabs) holds this, so an opened Details survives a tab switch.
   expanded?: boolean; onExpandedChange?: (expanded: boolean) => void;
   /** Lesson titles by id, for lessons the job holds for review. */
@@ -101,9 +103,9 @@ export function LessonPreparationStatus({ job, queuedMore = 0, pending, programI
         title={lessonTitles?.[lessonId] ?? (held.length === 1 ? activity?.lessonTitle : null) ?? 'A lesson'} onReview={onReview} />)}</ul>
     </section>;
   }
-  if (!active && (!job || job.status === 'completed')) return null;
+  if (!active && (!job || job.status === 'completed') && failedJobs.length === 0) return null;
   const elapsed = Math.max(0, (now - (job?.startedAt ?? job?.createdAt ?? now)) / 1000);
-  const request = () => ({ operationId: crypto.randomUUID(), programId, jobId: job!.id, expectedRevision: revision });
+  const request = (jobId = job!.id) => ({ operationId: crypto.randomUUID(), programId, jobId, expectedRevision: revision });
   const actionError = cancel.error ?? retry.error;
   const hasChecks = activity && activity.checksTotal > 0;
   const remaining = hasChecks ? Math.max(0, activity.checksTotal - activity.checksCompleted) : 0;
@@ -120,7 +122,9 @@ export function LessonPreparationStatus({ job, queuedMore = 0, pending, programI
     : active ? `Preparing ${lesson ?? 'your lesson'} · ${queued ? 'Queued' : step ?? 'Starting'}${queuedMore > 0 ? ` · ${queuedMore} more queued` : ''}`
     : paused ? `Lesson preparation paused${phase ? ` · at ${phase.title.toLowerCase()}` : ''}${lesson ? ` · ${lesson}` : ''}`
     : `Lesson preparation ${job?.status}${lesson ? ` · ${lesson}` : ''}`;
+  const showPrimary = Boolean(job && job.status !== 'completed') || pending;
   return <section aria-label="Lesson preparation" className="my-3 rounded-xl border border-accent/30 bg-accent/5 px-4 py-3">
+    {showPrimary && <>
     <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
       <p className="flex min-w-0 flex-1 items-center gap-2 text-sm text-text-primary">
         {active && !reconnecting ? <LoaderCircle size={16} className="shrink-0 animate-spin text-accent motion-reduce:animate-none" aria-hidden="true" /> : <CirclePause size={16} className="shrink-0 text-accent" aria-hidden="true" />}
@@ -174,5 +178,37 @@ export function LessonPreparationStatus({ job, queuedMore = 0, pending, programI
         <ol className="mt-3 space-y-2 text-text-secondary">{[...activity.recentSteps].reverse().map((entry, index) => <li key={`${entry.startedAt}-${index}`} className="flex flex-wrap justify-between gap-2"><span>{PREPARATION_PHASES[entry.phase].title}</span><time className="tabular-nums text-text-muted" dateTime={new Date(entry.startedAt).toISOString()}>{new Date(entry.startedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time></li>)}</ol>
       </details>}
     </div>}
+    </>}
+    {failedJobs.length > 0 && (
+      <div className={showPrimary ? 'mt-3 space-y-2 border-t border-accent/15 pt-3' : 'space-y-2'}>
+        {failedJobs.map((failedJob) => {
+          const failedTitle = failedJob.activity?.lessonTitle ?? lessonTitles?.[failedJob.lessonIds?.[0] ?? ''];
+          return (
+            <div key={failedJob.id} className="flex flex-wrap items-start justify-between gap-2 text-sm">
+              <div className="min-w-0 flex-1">
+                <p role="status" className="font-medium text-text-primary">
+                  {`Lesson preparation failed${failedTitle ? ` · ${failedTitle}` : ''}`}
+                </p>
+                {failedJob.error
+                  ? <PlainError error={jobErrorToError(failedJob)} className="mt-1 text-sm leading-6 text-rose-700" />
+                  : <p role="alert" className="mt-1 text-sm leading-6 text-rose-700">Preparation stopped. Your draft and completed checkpoints remain saved.</p>}
+              </div>
+              <button
+                type="button"
+                disabled={cancel.isPending || retry.isPending || Boolean(waitsForIndex)}
+                onClick={() => {
+                  cancel.reset();
+                  retry.reset();
+                  retry.mutate(request(failedJob.id));
+                }}
+                className="min-h-9 rounded-full border border-accent/40 bg-background px-3 text-xs font-medium text-text-primary disabled:opacity-50"
+              >
+                {retry.isPending ? 'Retrying…' : 'Retry lesson preparation'}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    )}
   </section>;
 }

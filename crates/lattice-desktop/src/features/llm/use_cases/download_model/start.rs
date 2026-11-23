@@ -20,23 +20,29 @@ use super::plan::PlannedFile;
 use super::{DownloadBatchItem, DownloadModelUseCase, DownloadRequest};
 
 impl DownloadModelUseCase {
-    async fn huggingface_token(
+    pub(super) async fn huggingface_token(
         &self,
         model_id: &str,
         meta: &ModelMetadata,
+        plan: &[PlannedFile],
     ) -> Result<Option<String>, AppError> {
-        if !meta.requires_auth {
+        let targets_huggingface = plan.iter().any(|file| {
+            lattice_core::application::ports::download_manager::is_huggingface_url(&file.url)
+        });
+        if !meta.requires_auth && !targets_huggingface {
             return Ok(None);
         }
         match self.credentials.get_api_key(CredentialKey::HuggingFaceToken.as_str()).await {
-            Ok(Some(token)) => {
-                info!(model_id = %model_id, "Model requires authentication, using HuggingFace token");
+            Ok(Some(token)) if !token.trim().is_empty() => {
+                info!(model_id = %model_id, "Using HuggingFace token for model download");
                 Ok(Some(token))
             }
-            Ok(None) => Err(AppError::InvalidInput(format!(
+            Ok(_) if !meta.requires_auth => Ok(None),
+            Ok(_) => Err(AppError::InvalidInput(format!(
                 "Model '{}' requires HuggingFace authentication. Please set your HuggingFace token in Settings → HuggingFace.",
                 meta.name
             ))),
+            Err(_) if !meta.requires_auth => Ok(None),
             Err(e) => {
                 warn!(error = ?e, model_id = %model_id, "Failed to retrieve HuggingFace token from secure storage");
                 Err(AppError::Other(format!(
@@ -63,7 +69,7 @@ impl DownloadModelUseCase {
             "Starting model download"
         );
 
-        let auth_token = self.huggingface_token(model_id, meta).await?;
+        let auth_token = self.huggingface_token(model_id, meta, plan).await?;
 
         // A GGUF extension says nothing about whether the bundled engine knows
         // its architecture, so read the header before persisting or fetching.

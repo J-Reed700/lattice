@@ -1,15 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 import { AlertCircle, Check, Circle, Loader2 } from 'lucide-react';
 
-import { useJobStatus } from '@/features/jobs/api';
-import { newId } from '@/lib/api';
 import type * as Wire from '@/lib/bindings';
-import { getErrorMessage } from '@/lib/errorUtils';
 
-import { programApi } from './programApi';
+import { sameCodingBuildChoice, useCodingBuildStore } from './codingBuildStore';
 import { SETTING_NAMES } from '../../session/practiceNames';
-import { sessionApi } from '../../session/sessionApi';
 
 export interface CodingBuildChoice {
   lessonId?: string | null;
@@ -30,104 +26,59 @@ export interface CodingEntryProps {
 
 const STEPS = ['Writing the problem', 'Proving it', 'Saving'] as const;
 
-type Phase = { kind: 'building' } | { kind: 'starting' } | { kind: 'failed'; message: string; stage: 'build' | 'start' };
-
 export function CodingEntry({ programId, choice, onReady, onCancel }: CodingEntryProps) {
-  const [phase, setPhase] = useState<Phase>({ kind: 'building' });
-  const [step, setStep] = useState(0);
-  const [attempt, setAttempt] = useState(0);
-  const jobId = useRef<string | null>(null);
-  const seen = useRef(new Map<string, Wire.JobDto>());
-  const operationId = useRef(newId());
-  const handled = useRef<string | null>(null);
-  const activityId = useRef<string | null>(null);
-  const startOperationId = useRef(newId());
+  const handle = useCodingBuildStore((store) => store.handles[programId]);
+  const ensureBuild = useCodingBuildStore((store) => store.ensureBuild);
+  const startSessionForBuild = useCodingBuildStore((store) => store.startSessionForBuild);
+  const clearHandle = useCodingBuildStore((store) => store.clearHandle);
+
+  const mountedRef = useRef(true);
   const latest = useRef({ choice, onReady });
   latest.current = { choice, onReady };
 
-  const start = useCallback(
-    async (activity: string) => {
-      setPhase({ kind: 'starting' });
-      try {
-        const { choice: picked, onReady: ready } = latest.current;
-        const session = await sessionApi.startSession({
-          operationId: startOperationId.current,
-          programId,
-          activityId: activity,
-          setting: picked.setting,
-          budgetSeconds: picked.budgetSeconds ?? null,
-        });
-        ready(session.sessionId);
-      } catch (error) {
-        setPhase({ kind: 'failed', message: getErrorMessage(error), stage: 'start' });
-      }
-    },
-    [programId],
-  );
-
-  const settle = useCallback(
-    async (job: Wire.JobDto) => {
-      if (job.id !== jobId.current) return;
-      setStep(job.progressCurrent);
-      if (job.status === 'completed' && job.resultRef && handled.current !== job.id) {
-        handled.current = job.id;
-        activityId.current = job.resultRef;
-        await start(job.resultRef);
-      } else if (job.status === 'failed' || job.status === 'cancelled' || job.status === 'interrupted') {
-        setPhase({ kind: 'failed', message: job.error ?? 'The problem could not be built.', stage: 'build' });
-      }
-    },
-    [start],
-  );
-
-  useJobStatus((job) => {
-    seen.current.set(job.id, job);
-    void settle(job);
-  });
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    const { choice: picked } = latest.current;
-    programApi
-      .startBuild({
-        operationId: operationId.current,
-        programId,
-        lessonId: picked.lessonId ?? null,
-        form: picked.form,
-        language: picked.language,
-        difficulty: picked.difficulty,
-        focus: picked.focus ?? null,
-      })
-      .then((result) => {
-        if (cancelled) return;
-        jobId.current = result.jobId;
-        const early = seen.current.get(result.jobId);
-        if (early) void settle(early);
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) setPhase({ kind: 'failed', message: getErrorMessage(error), stage: 'build' });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [programId, attempt, settle]);
+    void ensureBuild(programId, latest.current.choice);
+  }, [ensureBuild, programId]);
+
+  const launchSession = useCallback(async () => {
+    await startSessionForBuild(programId);
+  }, [programId, startSessionForBuild]);
+
+  const currentPhase = handle?.phase;
+  const phaseKind = currentPhase?.kind;
+  const readySessionId = currentPhase?.kind === 'ready' ? currentPhase.sessionId : null;
+  const handleMatchesChoice = handle ? sameCodingBuildChoice(handle.choice, choice) : false;
+  const activityId = handle?.activityId ?? null;
+  useEffect(() => {
+    if (phaseKind === 'ready' && readySessionId && handleMatchesChoice) {
+      clearHandle(programId);
+      latest.current.onReady(readySessionId);
+    }
+  }, [clearHandle, handleMatchesChoice, phaseKind, programId, readySessionId]);
+  useEffect(() => {
+    if (phaseKind === 'built' && activityId) {
+      void launchSession();
+    }
+  }, [activityId, launchSession, phaseKind]);
 
   const retry = () => {
-    if (phase.kind === 'failed' && phase.stage === 'start' && activityId.current) {
-      void start(activityId.current);
+    if (handle?.phase.kind === 'failed' && handle.phase.stage === 'start' && handle.activityId) {
+      void launchSession();
       return;
     }
-    operationId.current = newId();
-    startOperationId.current = newId();
-    activityId.current = null;
-    jobId.current = null;
-    handled.current = null;
-    seen.current.clear();
-    setStep(0);
-    setPhase({ kind: 'building' });
-    setAttempt((value) => value + 1);
+    void ensureBuild(programId, handle?.choice ?? latest.current.choice, true);
   };
 
+  const activeChoice = handle?.choice ?? choice;
+  const phase = handle?.phase ?? { kind: 'building' as const };
+  const step = handle?.step ?? 0;
   const failed = phase.kind === 'failed';
   const current = Math.min(step, STEPS.length);
 
@@ -135,7 +86,7 @@ export function CodingEntry({ programId, choice, onReady, onCancel }: CodingEntr
     <main className="mx-auto flex w-full max-w-2xl flex-col gap-5 px-4 py-10">
       <header className="flex flex-col gap-1">
         <p className="m-0 text-xs font-semibold uppercase tracking-wide text-text-secondary">
-          Code · {SETTING_NAMES[choice.setting]}
+          Code · {SETTING_NAMES[activeChoice.setting]}
         </p>
         <h1 className="m-0 font-serif text-2xl font-bold text-text-primary">Building your problem</h1>
         <p className="m-0 text-sm text-text-secondary">
@@ -175,7 +126,7 @@ export function CodingEntry({ programId, choice, onReady, onCancel }: CodingEntr
         })}
       </ol>
 
-      {phase.kind === 'starting' ? (
+      {phase.kind === 'starting' || phase.kind === 'built' ? (
         <p role="status" className="m-0 text-sm text-text-secondary">
           Opening your session…
         </p>
@@ -198,7 +149,7 @@ export function CodingEntry({ programId, choice, onReady, onCancel }: CodingEntr
         <button
           type="button"
           onClick={onCancel}
-          className="min-h-[44px] cursor-pointer rounded-lg border border-border-default bg-surface px-4 text-sm font-semibold text-text-primary hover:bg-surface-raised"
+          className="min-h-[44px] cursor-pointer rounded-lg border border-border-default bg-surface px-4 text-sm font-semibold text-text-secondary hover:bg-surface-raised hover:text-text-primary"
         >
           Cancel
         </button>

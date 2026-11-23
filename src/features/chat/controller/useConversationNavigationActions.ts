@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 
 import { useApi } from '@/contexts/ApiContext';
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
@@ -18,6 +18,7 @@ export function useConversationNavigationActions({
   addRequestedId,
 }: Pick<ConversationActionsDependencies, 'queryClient' | 'addRequestedId'>) {
   const api = useApi();
+  const lastListErrorRef = useRef<string | null>(null);
 
   const invalidateLists = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: conversationKeys.lists });
@@ -61,11 +62,12 @@ export function useConversationNavigationActions({
       filterMode: overrides?.filterMode ?? current.filterMode,
       searchQuery: overrides?.searchQuery ?? current.searchQuery,
     };
+    const shouldClearListError = lastListErrorRef.current !== null && current.error === lastListErrorRef.current;
     conversationUiStore.setState({
       selectedSpaceId: params.spaceId,
       filterMode: params.filterMode,
       searchQuery: params.searchQuery,
-      error: null,
+      ...(shouldClearListError ? { error: null } : {}),
       ...(params.spaceId !== current.selectedSpaceId
         ? { activeConversationId: activeChatAfterSpaceChange(params.spaceId) }
         : {}),
@@ -76,7 +78,9 @@ export function useConversationNavigationActions({
         queryFn: () => fetchConversationList(params, api),
         staleTime: 0,
       });
+      lastListErrorRef.current = null;
     } catch (error) {
+      lastListErrorRef.current = error instanceof Error ? error.message : String(error);
       setUiError(error);
     }
   }, [activeChatAfterSpaceChange, queryClient, api]);

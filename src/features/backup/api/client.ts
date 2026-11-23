@@ -12,6 +12,8 @@ import type {
   WordConfirmation,
 } from '@/types';
 
+import { useRestoreLockoutStore } from '../restoreLockoutStore';
+
 export const backupApi = {
   /**
    * Writes a database backup into the app's backups folder and returns its path.
@@ -38,10 +40,17 @@ export const backupApi = {
    */
   restoreBackup: async (
     backupPath: string,
-  ): Promise<ApiResult<RestoreBackupResult>> =>
-    apiCall('plugin_restore_backup', {
+  ): Promise<ApiResult<RestoreBackupResult>> => {
+    const result = await apiCall('plugin_restore_backup', {
       request: { backupPath },
-    }),
+    });
+    if (result.ok && result.data.success !== false) {
+      useRestoreLockoutStore.getState().markDatabaseRestoredRestartRequired(false);
+    } else if (!result.ok && result.details?.details === 'restart_required') {
+      useRestoreLockoutStore.getState().markDatabaseRestoredRestartRequired(false, true);
+    }
+    return result;
+  },
 
   /** Exports conversations and journal pages as Markdown into the app's exports folder. */
   exportMarkdown: async (): Promise<ApiResult<ExportSummary>> =>
@@ -131,8 +140,15 @@ export const backupApi = {
    */
   restoreArchive: async (
     secret: string | null,
-  ): Promise<ApiResult<RestoreArchiveResult>> =>
-    apiCall('plugin_restore_archive', {
+  ): Promise<ApiResult<RestoreArchiveResult>> => {
+    const result = await apiCall('plugin_restore_archive', {
       request: { secret },
-    }),
+    });
+    if (result.ok && result.data.outcome === 'restored') {
+      useRestoreLockoutStore.getState().markDatabaseRestoredRestartRequired(true);
+    } else if (!result.ok && result.details?.details === 'restart_required') {
+      useRestoreLockoutStore.getState().markDatabaseRestoredRestartRequired(true, true);
+    }
+    return result;
+  },
 };

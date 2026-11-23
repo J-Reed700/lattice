@@ -237,6 +237,10 @@ pub async fn generate_learning_practical_activity(
                 "Learning lesson not found".into(),
             ))
         })?;
+    let _generation_guard = container
+        .practical_run_registry()
+        .acquire_generation_guard(&request.program_id, &request.lesson_id)
+        .map_err(ApiError::from)?;
     let pin = learning_model(
         &container,
         model_requirements::practice(),

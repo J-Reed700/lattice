@@ -484,6 +484,7 @@
     "learning:allow-get-learning-practice-profile",
     "learning:allow-save-learning-practice-profile",
     "learning:allow-start-practice-build",
+    "learning:allow-cancel-practice-build",
     "learning:allow-start-practice-session",
     "learning:allow-get-practice-session",
     "learning:allow-move-practice-stage",

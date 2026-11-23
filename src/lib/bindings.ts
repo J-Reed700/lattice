@@ -1587,6 +1587,19 @@ async startPracticeBuild(request: StartPracticeBuildRequestDto) : Promise<Result
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Cancels a coding problem build the learner backed out of, so it stops
+ * using the model and is not picked up again after a reload. A build that
+ * has already finished is left as it is.
+ */
+async cancelPracticeBuild(jobId: string) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|cancel_practice_build", { jobId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async startPracticeSession(request: StartPracticeSessionRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_practice_session", { request }) };
@@ -12646,6 +12659,7 @@ export type CommandArgs = {
 	cancel_learning_outline: { requestId: string };
 	cancel_learning_pack_import_preview: { request: CancelLearningPackImportPreviewRequestDto };
 	cancel_learning_practical_run: { request: CancelLearningPracticalRunRequestDto };
+	cancel_practice_build: { jobId: string };
 	capture_learning_source_snapshot: { request: CaptureLearningSourceSnapshotRequestDto };
 	capture_reference: { request: CaptureReferenceRequestDto };
 	capture_web_page_snapshot: { conversationId: string; url: string };
@@ -13119,6 +13133,7 @@ export type CommandResults = {
 	cancel_learning_outline: boolean;
 	cancel_learning_pack_import_preview: LearningPortabilityWorkspaceDto;
 	cancel_learning_practical_run: LearningPracticalRunDto;
+	cancel_practice_build: null;
 	capture_learning_source_snapshot: SnapshotNoteDto;
 	capture_reference: CaptureReferenceResultDto;
 	capture_web_page_snapshot: WebPageSnapshotDto;

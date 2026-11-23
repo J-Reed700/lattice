@@ -2,6 +2,8 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { resetBatchFileImportWorkflow } from '@/features/files/hooks/batchFileImportWatcher';
+import { JOB_STATUS_EVENT } from '@/features/jobs/api';
 
 import { BatchFileImport } from './BatchFileImport';
 
@@ -9,6 +11,8 @@ type DragDropPayload = { type: 'over' | 'drop' | 'leave'; paths?: string[] };
 
 const mocks = vi.hoisted(() => ({
   selectFiles: vi.fn(),
+  getBatchJobStatus: vi.fn(),
+  jobEvents: new Set<(event: { payload: { id: string } }) => void>(),
   startBatchImport: vi.fn(),
   cancelBatchImport: vi.fn(),
   getOperation: vi.fn(),
@@ -25,6 +29,15 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ onDragDropEvent: mocks.onDragDropEvent }) }));
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn((event: string, handler: (event: { payload: { id: string } }) => void) => {
+    if (event === JOB_STATUS_EVENT) {
+      mocks.jobEvents.add(handler);
+      return Promise.resolve(() => mocks.jobEvents.delete(handler));
+    }
+    return Promise.resolve(() => {});
+  }),
+}));
 vi.mock('@/features/files/hooks/useIndexing', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/features/files/hooks/useIndexing')>()),
   useIndexing: () => ({
@@ -44,7 +57,7 @@ vi.mock('@/features/files/hooks/useCustomCollectionsQuery', () => ({
   useCustomCollectionActions: () => mocks.collectionActions,
 }));
 vi.mock('@/features/spaces/api/queries', () => ({ useSpacesQuery: () => ({ data: mocks.spaces, isLoading: false }) }));
-vi.mock('@/lib/api', () => ({ default: { selectMultipleFiles: mocks.selectFiles } }));
+vi.mock('@/lib/api', () => ({ default: { selectMultipleFiles: mocks.selectFiles, getBatchJobStatus: mocks.getBatchJobStatus } }));
 
 const renderImport = (props: Parameters<typeof BatchFileImport>[0] = {}) =>
   render(<TooltipProvider><BatchFileImport {...props} /></TooltipProvider>);
@@ -65,6 +78,9 @@ const collection = (id: string, name: string, parentId: string | null = null, ki
 describe('BatchFileImport flows', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetBatchFileImportWorkflow();
+    mocks.jobEvents.clear();
+    mocks.getBatchJobStatus.mockResolvedValue({ ok: true, data: { status: 'processing', items: [] } });
     mocks.operations.clear();
     mocks.getOperation.mockReset();
     mocks.historyError = undefined;
@@ -251,6 +267,101 @@ describe('BatchFileImport flows', () => {
       });
       await press('Import 1 file');
       await waitFor(() => expect(mocks.toast.error).toHaveBeenCalledWith('Imported documents could not be added to the collection', { message: 'collection deleted' }));
+    });
+
+    it('still files completed documents into the chosen collection after navigating away mid-import', async () => {
+      mocks.collectionsQuery.data = [collection('k1', 'Kitchen')];
+      mocks.getOperation.mockReturnValue({
+        id: 'job-unmounted',
+        status: 'processing',
+        totalFiles: 1,
+        processedFiles: 0,
+        successfulFiles: 0,
+        failedFiles: 0,
+        items: [{ target: '/a/one.pdf', status: 'processing' }],
+      });
+      mocks.startBatchImport.mockResolvedValueOnce({ ok: true, data: 'job-unmounted' });
+      const { unmount } = renderImport();
+      fireEvent.change(screen.getByLabelText('Add to collection'), { target: { value: 'k1' } });
+      await choose(['/a/one.pdf']);
+      await press('Import 1 file');
+      expect(mocks.collectionActions.addDocuments).not.toHaveBeenCalled();
+
+      // User switches tabs or navigates away before the import completes.
+      unmount();
+
+      mocks.getBatchJobStatus.mockResolvedValue({
+        ok: true,
+        data: {
+          status: 'completed',
+          items: [{ target: '/a/one.pdf', status: 'completed', documentId: 'doc-99' }],
+        },
+      });
+      await act(async () => {
+        for (const handler of mocks.jobEvents) {
+          handler({ payload: { id: 'job-unmounted' } });
+        }
+        await Promise.resolve();
+      });
+
+      await waitFor(() => expect(mocks.collectionActions.addDocuments).toHaveBeenCalledWith('k1', ['doc-99']));
+    });
+
+    it('retries a failed status read after unmount and cleans up on interrupted jobs without leaking listeners', async () => {
+      vi.useFakeTimers();
+      try {
+        mocks.collectionsQuery.data = [collection('k1', 'Kitchen')];
+        mocks.getOperation.mockReturnValue({
+          id: 'job-retry',
+          status: 'processing',
+          totalFiles: 2,
+          processedFiles: 0,
+          successfulFiles: 0,
+          failedFiles: 0,
+          items: [
+            { target: '/a/one.pdf', status: 'processing' },
+            { target: '/a/two.pdf', status: 'pending' },
+          ],
+        });
+        mocks.startBatchImport.mockResolvedValueOnce({ ok: true, data: 'job-retry' });
+        mocks.getBatchJobStatus
+          .mockResolvedValueOnce({ ok: false, error: 'transient db error 1' })
+          .mockResolvedValueOnce({ ok: false, error: 'transient db error 2' })
+          .mockResolvedValueOnce({
+            ok: true,
+            data: {
+              status: 'interrupted',
+              items: [
+                { target: '/a/one.pdf', status: 'completed', documentId: 'doc-1' },
+                { target: '/a/two.pdf', status: 'cancelled', documentId: null },
+              ],
+            },
+          });
+
+        const { unmount } = renderImport();
+        fireEvent.change(screen.getByLabelText('Add to collection'), { target: { value: 'k1' } });
+        await choose(['/a/one.pdf', '/a/two.pdf']);
+        await press('Import 2 files');
+        unmount();
+
+        await act(async () => {
+          for (const handler of mocks.jobEvents) {
+            handler({ payload: { id: 'job-retry' } });
+          }
+          await Promise.resolve();
+        });
+        expect(mocks.collectionActions.addDocuments).not.toHaveBeenCalled();
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1000);
+          await Promise.resolve();
+        });
+
+        expect(mocks.collectionActions.addDocuments).toHaveBeenCalledWith('k1', ['doc-1']);
+        expect(mocks.jobEvents.size).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

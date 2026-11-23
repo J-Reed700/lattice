@@ -365,7 +365,7 @@ impl OllamaClient {
                 .map(|tool| OllamaTool::new(&tool.name, &tool.description, tool.parameters.clone()))
                 .collect()
         });
-        let sampling = request.sampling.unwrap_or_default();
+        let sampling = fitted.effective_sampling().unwrap_or_default();
         // Thinking is a template switch on Ollama as on llama.cpp, decided the
         // same way: the user's pin, or the request with tool rounds held off.
         let thinks = fitted.thinking().is_on();

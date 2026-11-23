@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -13,7 +13,7 @@ import type { Conversation } from '@/types/conversation';
 
 import { createConversationLifecycleRegistry } from './lifecycleRegistry';
 import { deriveMessageMetadata } from './messageMetadata';
-import { reconcilePersistedFailedMessages } from './optimisticMessages';
+import { reconcilePersistedMessages } from './optimisticMessages';
 import { MAX_OBSERVED_CONVERSATIONS, MAX_OBSERVED_MEMBERSHIPS, useConversationActions } from './useConversationActions';
 import { useConversationTurnLifecycle } from './useConversationTurnLifecycle';
 import {
@@ -82,10 +82,16 @@ export function useConversationsController(): ConversationsState {
   useEffect(() => {
     if (!activeId || !messagesQuery.data) return;
     conversationUiStore.setState(state => {
-      const optimisticMessages = reconcilePersistedFailedMessages(state.optimisticMessages, activeId, messagesQuery.data!);
+      const optimisticMessages = reconcilePersistedMessages(state.optimisticMessages, activeId, messagesQuery.data!);
       return optimisticMessages === state.optimisticMessages ? state : { optimisticMessages };
     });
   }, [activeId, messagesQuery.data]);
+  const reconciledOptimisticMessages = useMemo(
+    () => (activeId && messagesQuery.data
+      ? reconcilePersistedMessages(ui.optimisticMessages, activeId, messagesQuery.data)
+      : ui.optimisticMessages),
+    [activeId, messagesQuery.data, ui.optimisticMessages],
+  );
   const bookmarksQuery = useQuery({
     queryKey: conversationKeys.bookmarks(activeId ?? ''),
     queryFn: () => fetchBookmarks(activeId!, undefined, api),
@@ -187,6 +193,14 @@ export function useConversationsController(): ConversationsState {
   });
 
   const queryError = conversationsQuery.error ?? spacesQuery.error ?? messagesQuery.error ?? bookmarksQuery.error;
+  const [dismissedQueryError, setDismissedQueryError] = useState<unknown>(null);
+  const visibleQueryError = queryError && queryError !== dismissedQueryError ? queryError : null;
+  const clearVisibleError = useCallback(() => {
+    clearError();
+    if (queryError) {
+      setDismissedQueryError(queryError);
+    }
+  }, [clearError, queryError]);
 
   return useMemo<ConversationsState>(() => ({
     spaces: spacesQuery.data ?? [],
@@ -200,8 +214,8 @@ export function useConversationsController(): ConversationsState {
     isLoading: conversationsQuery.isLoading || messagesQuery.isLoading,
     isLoadingBookmarks: bookmarksQuery.isLoading,
     inFlightGenerations: ui.inFlightGenerations,
-    error: ui.error ?? queryError?.message ?? null,
-    optimisticMessages: ui.optimisticMessages,
+    error: ui.error ?? visibleQueryError?.message ?? null,
+    optimisticMessages: reconciledOptimisticMessages,
     lastMessageSources: messageMetadata.sources,
     messageVerification: messageMetadata.verification,
     messageRetrieval: messageMetadata.retrieval,
@@ -249,24 +263,24 @@ export function useConversationsController(): ConversationsState {
     deleteMessage,
     deleteConversation,
     dismissFailedMessage,
-    clearError,
+    clearError: clearVisibleError,
   }), [
     addConversationWebSource, bookmarkMessage, bookmarksQuery.isLoading, cancelGeneration,
-    clearError, compactConversation, continueInNewConversation, conversations, conversationsQuery.isLoading,
+    clearVisibleError, compactConversation, continueInNewConversation, conversations, conversationsQuery.isLoading,
     createConversation, deleteConversation, dismissFailedMessage, setConversationModelChoice,
     deleteMessage, documentSpaceMembershipsByDocumentId, linkedDocumentsByConversationId,
     loadConversationLinkedDocuments, loadConversationWebSources, loadConversations,
     loadDocumentSpaceMemberships, loadMessageBookmarks, loadSpaces, messageBookmarkMap,
     messageBookmarks, messageMetadata.retrieval, messageMetadata.sources,
     messageMetadata.turn, messageMetadata.verification, messagesQuery.isLoading,
-    moveConversationToSpace, queryError?.message, regenerateResponse, retryFailedMessage,
+    moveConversationToSpace, visibleQueryError?.message, regenerateResponse, retryFailedMessage,
     removeConversationLinkedDocument,
     removeConversationWebSource, renameConversation, selectConversation, sendMessage,
     setComposerDraft, setConversationArchived, setConversationBookmarked, setConversationPinned,
     setConversationSaved, setDocumentSpaceMembership, setFilterMode, setSearchQuery,
     setSelectedSpace, spacesQuery.data, truncateAfter, forkConversation,
     ui.activeConversationId, ui.composerDraft, ui.error, ui.filterMode,
-    ui.inFlightGenerations, ui.liveRetrieval, ui.liveSteps, ui.liveModel, ui.optimisticMessages, ui.searchQuery,
+    ui.inFlightGenerations, ui.liveRetrieval, ui.liveSteps, ui.liveModel, reconciledOptimisticMessages, ui.searchQuery,
     ui.selectedSpaceId, unbookmarkMessage, webSourcesByConversationId,
   ]);
 }

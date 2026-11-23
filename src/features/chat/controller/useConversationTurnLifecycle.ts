@@ -5,11 +5,13 @@ import { listen } from '@tauri-apps/api/event';
 import { useApi } from '@/contexts/ApiContext';
 import { folderFocusFor } from '@/features/chat/model/folderThreadHost';
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
+import { migrateStagedFiles } from '@/features/chat/stores/stagedFilesStore';
 import { LOADED_MODELS_QUERY_KEY } from '@/features/model/hooks/useLoadedModels';
 import type { ChatResponse, ChatStreamEventDto } from '@/lib/bindings';
 import { isBoundChat } from '@/shared/conversations/boundChats';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import type { GenerationOutcome, RegenerateOptions } from '@/shared/conversations/conversationsStore.types';
+import { conversationDraftKey, readDraft, setDraft } from '@/shared/drafts/drafts';
 import type { ApiResult } from '@/types';
 import { ErrorCode } from '@/types/api/errorCodes';
 import type {
@@ -26,7 +28,7 @@ import {
   isVerificationPending, markVerificationInterrupted, mergeImages, mergeStep, parseImages, parseSources,
   type VerificationPatch, VERIFICATION_WAIT_MS,
 } from './messageMetadata';
-import { prepareOptimisticMessages, reconcilePersistedFailedMessages } from './optimisticMessages';
+import { prepareOptimisticMessages, reconcilePersistedMessages } from './optimisticMessages';
 import { fetchMessages, toConversationMessage } from '../api/conversationQueryData';
 
 import type { ConversationLifecycleRegistry } from './lifecycleRegistry';
@@ -74,18 +76,19 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
     content: string;
     showUserBubble: boolean;
     invoke: (_requestId: string) => Promise<ApiResult<ChatResponse>>;
-    onFailure?: (_error: string) => void;
+    onFailure?: (_error: string, _refreshed?: ConversationMessage[]) => void;
     retryContext?: OptimisticMessage['retryContext'];
     replacesFailedTempId?: string;
+    ownsComposerWhenActiveNull?: boolean;
   }): Promise<GenerationOutcome> => {
     const {
       conversationId: requestConversationId, content, showUserBubble, invoke, onFailure,
-      retryContext, replacesFailedTempId,
+      retryContext, replacesFailedTempId, ownsComposerWhenActiveNull = false,
     } = options;
     const state = conversationUiStore.getState();
     const ownsComposer = () => {
       const activeId = conversationUiStore.getState().activeConversationId;
-      return activeId === requestConversationId || (activeId === null && state.activeConversationId === null);
+      return activeId === requestConversationId || (activeId === null && ownsComposerWhenActiveNull);
     };
     if (state.inFlightGenerations.has(requestConversationId)) {
       setUiError('A response is already being generated for this conversation.');
@@ -103,6 +106,8 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
         // The submitter clears its input while awaiting us; return this unsent text.
         if (ownsComposer()) {
           conversationUiStore.setState({ composerDraft: content });
+        } else {
+          setDraft(conversationDraftKey(requestConversationId), content);
         }
         return 'failed';
       }
@@ -149,7 +154,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
       return { optimisticMessages, inFlightGenerations, liveRetrieval, liveSteps, liveModel, error: null };
     });
 
-    const settleOptimisticMessages = (error?: string) => {
+    const settleOptimisticMessages = (error?: string, refreshed?: ConversationMessage[]) => {
       if (!ownsTurn()) return;
       conversationUiStore.setState(current => {
         const optimisticMessages = new Map(current.optimisticMessages);
@@ -167,7 +172,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
           ...(error ? { error } : {}),
         };
       });
-      if (error) onFailure?.(error);
+      if (error) onFailure?.(error, refreshed);
     };
 
     let unlisten: (() => void) | undefined;
@@ -339,7 +344,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
           if (!ownsTurn()) return 'cancelled';
           queryClient.setQueryData(conversationKeys.messages(requestConversationId), refreshed);
           conversationUiStore.setState(current => {
-            const optimisticMessages = reconcilePersistedFailedMessages(
+            const optimisticMessages = reconcilePersistedMessages(
               current.optimisticMessages, requestConversationId, refreshed
             );
             return optimisticMessages === current.optimisticMessages ? current : { optimisticMessages };
@@ -350,27 +355,47 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
           // copy. Hand it back to the composer rather than lose it.
           const lastUser = [...refreshed].reverse().find(message => message.role === 'user');
           const questionLost = showUserBubble && lastUser?.content !== content;
-          conversationUiStore.setState(questionLost && ownsComposer()
-            ? { error: null, composerDraft: content }
-            : { error: null });
+          if (questionLost) {
+            if (ownsComposer()) {
+              conversationUiStore.setState(current => (
+                current.composerDraft
+                  ? { error: null }
+                  : { error: null, composerDraft: content }
+              ));
+            } else {
+              const draftKey = conversationDraftKey(requestConversationId);
+              if (!readDraft(draftKey)) {
+                setDraft(draftKey, content);
+              }
+              conversationUiStore.setState({ error: null });
+            }
+          } else {
+            conversationUiStore.setState({ error: null });
+          }
           return 'cancelled';
         }
         const detail: unknown = result.details?.details;
-        settleOptimisticMessages(typeof detail === 'string' && detail.trim() ? detail : result.error);
+        const errorMessage = typeof detail === 'string' && detail.trim() ? detail : result.error;
         // A failed provider call can still have persisted the question. Replace
-        // only the optimistic copy carrying that exact request id.
+        // only the optimistic copy carrying that exact request id, and read the
+        // refreshed transcript before deciding whether regenerate lost the prompt.
+        let refreshed: ConversationMessage[] | undefined;
         try {
-          const refreshed = await fetchMessages(requestConversationId, api);
+          const fetched = await fetchMessages(requestConversationId, api);
           if (ownsTurn()) {
-            queryClient.setQueryData(conversationKeys.messages(requestConversationId), refreshed);
-            conversationUiStore.setState(current => {
-              const optimisticMessages = reconcilePersistedFailedMessages(
-                current.optimisticMessages, requestConversationId, refreshed
-              );
-              return optimisticMessages === current.optimisticMessages ? current : { optimisticMessages };
-            });
+            refreshed = fetched;
+            queryClient.setQueryData(conversationKeys.messages(requestConversationId), fetched);
           }
         } catch { /* Keep the unsaved prompt when its persistence is unknown. */ }
+        settleOptimisticMessages(errorMessage, refreshed);
+        if (refreshed && ownsTurn()) {
+          conversationUiStore.setState(current => {
+            const optimisticMessages = reconcilePersistedMessages(
+              current.optimisticMessages, requestConversationId, refreshed
+            );
+            return optimisticMessages === current.optimisticMessages ? current : { optimisticMessages };
+          });
+        }
         return 'failed';
       }
 
@@ -387,6 +412,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
       if (responseId !== requestConversationId) {
         unregisterLifecycle?.();
         unregisterLifecycle = lifecycle.register(responseId, cancelLifecycle);
+        migrateStagedFiles(requestConversationId, responseId);
       }
       // The capture and the check may have landed while the response was on
       // its way; the response itself was read before they did.
@@ -505,6 +531,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
     attachmentImages?: ChatImage[]
   ) => {
     const state = conversationUiStore.getState();
+    const usedFallback = conversationId == null && state.activeConversationId == null;
     // The fallback is a Chat conversation: a bound chat is never continued
     // away from what it is bound to.
     const requestConversationId = conversationId
@@ -524,6 +551,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
       conversationId: requestConversationId,
       content,
       showUserBubble: true,
+      ownsComposerWhenActiveNull: usedFallback,
       invoke: requestId => api.chatWithConversation(
         requestConversationId,
         content,
@@ -593,8 +621,11 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
         requestId,
         model
       ),
-      onFailure: () => {
-        if (lastUser?.content && conversationUiStore.getState().activeConversationId === conversationId) {
+      onFailure: (_error, refreshed) => {
+        const lastRefreshed = refreshed?.[refreshed.length - 1];
+        const restoredInThread =
+          lastRefreshed?.role === 'user' && lastRefreshed.status === 'failed';
+        if (!restoredInThread && lastUser?.content && conversationUiStore.getState().activeConversationId === conversationId) {
           conversationUiStore.setState({ composerDraft: lastUser.content });
         }
       },

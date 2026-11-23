@@ -114,6 +114,10 @@ impl DownloadManagerService {
             let tokens = auth_tokens.read().await;
             tokens.get(&session_id).cloned()
         };
+        let auth_token = match auth_token {
+            Some(token) => Some(token),
+            None => self.resolve_auth_token(&url, None).await,
+        };
 
         // Latest progress occupies one slot regardless of callback rate or
         // database latency. Persistence happens in the transfer task itself.

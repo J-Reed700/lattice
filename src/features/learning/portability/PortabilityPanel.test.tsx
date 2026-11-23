@@ -7,6 +7,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { conflictPolicyOption, DEFAULT_CONFLICT_POLICY } from '@/features/learning/portability/conflictPolicies';
 import { PortabilityPanel } from '@/features/learning/portability/PortabilityPanel';
+import { resetPortabilityRunStore } from '@/features/learning/portability/portabilityRunStore';
+import { deferred } from '@/tests/deferred';
 
 const mocks = vi.hoisted(() => ({ open: vi.fn(), workspace: vi.fn(), exportPack: vi.fn(), saveAs: vi.fn(), preview: vi.fn(), apply: vi.fn(), cancel: vi.fn(), showInFolder: vi.fn(), onImported: vi.fn() }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: mocks.open }));
@@ -37,6 +39,7 @@ function renderPanel() {
 describe('Learning Studio portable packs', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    resetPortabilityRunStore();
     mocks.open.mockResolvedValue('/tmp/evidence.lattice-learning');
     mocks.workspace.mockResolvedValue(ok(workspace()));
     mocks.exportPack.mockResolvedValue(ok(workspace({ exports: [exportRow('/managed/learning/evidence.lattice-learning')] })));
@@ -200,5 +203,29 @@ describe('Learning Studio portable packs', () => {
     expect(screen.getByText(/backup backup-1/)).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Reveal Evidence basics in folder' }));
     expect(mocks.showInFolder).toHaveBeenCalledWith('/managed/learning/evidence.lattice-learning');
+  });
+
+  it('preserves single-course export progress, completion, and errors across unmount and remount', async () => {
+    const user = userEvent.setup();
+    const exporting = deferred<ReturnType<typeof ok>>();
+    mocks.exportPack.mockReturnValueOnce(exporting.promise);
+
+    const view1 = renderPanel();
+    await user.click(await screen.findByRole('button', { name: 'Export to app folder' }));
+    expect(screen.getByRole('button', { name: 'Creating course file…' })).toBeDisabled();
+    view1.unmount();
+
+    const view2 = renderPanel();
+    expect(await screen.findByRole('button', { name: 'Creating course file…' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save to…' })).toBeDisabled();
+    await act(async () => {
+      exporting.resolve(ok(workspace({ exports: [exportRow('/managed/learning/evidence.lattice-learning')] })));
+    });
+    expect(await screen.findByRole('status')).toHaveTextContent('Course file saved to /managed/learning/evidence.lattice-learning');
+    view2.unmount();
+
+    renderPanel();
+    expect(await screen.findByText('Course file saved to /managed/learning/evidence.lattice-learning')).toBeVisible();
+    expect(mocks.exportPack).toHaveBeenCalledTimes(1);
   });
 });

@@ -230,3 +230,138 @@ async fn slow_progress_persistence_coalesces_flood_and_flushes_before_pause() {
     );
     assert!(manager.active_downloads.read().await.is_empty());
 }
+
+#[tokio::test]
+async fn gated_huggingface_download_reloads_token_for_size_probe_pause_resume_retry_and_restart() {
+    use lattice_core::application::ports::CredentialsPort;
+    use lattice_core::application::services::credentials::{
+        memory::InMemoryCredentials, CredentialKey,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let repository = Arc::new(MockDownloadRepository::new());
+    let engine = Arc::new(MockDownloadEngine::new());
+    let credentials = Arc::new(InMemoryCredentials::default());
+    credentials
+        .set_api_key(CredentialKey::HuggingFaceToken.as_str(), "hf_secret_123")
+        .await
+        .unwrap();
+
+    let hf_url = "https://huggingface.co/meta-llama/Llama-3.3-70B/resolve/main/model.gguf";
+    engine.set_file_size(hf_url, Some(2000));
+    engine.set_stall(true);
+
+    let manager = DownloadManagerService::new(
+        repository.clone(),
+        engine.clone(),
+        dir.path().to_path_buf(),
+        Arc::default(),
+    )
+    .with_credentials(credentials.clone());
+
+    let id = manager
+        .start_download(DownloadRequest {
+            url: hf_url.to_string(),
+            destination: dir.path().join("model.gguf"),
+            checksum: None,
+            auth_token: None,
+            model_name: Some("Llama 3.3".to_string()),
+            model_id: Some("meta-llama/Llama-3.3-70B".to_string()),
+            model_file_name: Some("model.gguf".to_string()),
+            expected_bytes: None,
+        })
+        .await
+        .unwrap();
+
+    // Size probe (prepare_download -> get_file_size) received the HF token.
+    assert_eq!(
+        engine.get_file_size_calls(),
+        vec![(hf_url.to_string(), Some("hf_secret_123".to_string()))]
+    );
+
+    // Wait for initial download() call and verify token.
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while engine.get_download_calls().is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        engine.get_last_call().unwrap().auth_token,
+        Some("hf_secret_123".to_string())
+    );
+
+    // Pause clears in-memory auth_tokens, then resume reloads from CredentialsPort.
+    manager.pause_download(&id).await.unwrap();
+    assert!(!manager.auth_tokens.read().await.contains_key(&id));
+    engine.clear_calls();
+    manager.resume_download(&id).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while engine.get_download_calls().is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        engine.get_last_call().unwrap().auth_token,
+        Some("hf_secret_123".to_string())
+    );
+
+    // Simulate app restart: new DownloadManagerService (empty auth_tokens) resumes Paused session.
+    manager.pause_download(&id).await.unwrap();
+    drop(manager);
+
+    let restarted_engine = Arc::new(MockDownloadEngine::new());
+    restarted_engine.set_file_size(hf_url, Some(2000));
+    restarted_engine.set_write_len(Some(2000));
+    let restarted_manager = DownloadManagerService::new(
+        repository.clone(),
+        restarted_engine.clone(),
+        dir.path().to_path_buf(),
+        Arc::default(),
+    )
+    .with_credentials(credentials.clone());
+
+    restarted_manager.resume_download(&id).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while restarted_engine.get_download_calls().is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        restarted_engine.get_last_call().unwrap().auth_token,
+        Some("hf_secret_123".to_string())
+    );
+
+    // Also test retry_download after failure reloads the token.
+    let mut failed_session = lattice_core::domain::download::DownloadSession::new(
+        "failed-hf".to_string(),
+        hf_url.to_string(),
+        dir.path().join("failed.gguf"),
+        Some(2000),
+        None,
+    )
+    .unwrap();
+    failed_session.start().unwrap();
+    failed_session.fail("401".to_string()).unwrap();
+    repository.create(&failed_session).await.unwrap();
+
+    restarted_engine.clear_calls();
+    restarted_engine.set_stall(true);
+    restarted_manager.retry_download("failed-hf").await.unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while restarted_engine.get_download_calls().is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        restarted_engine.get_last_call().unwrap().auth_token,
+        Some("hf_secret_123".to_string())
+    );
+}

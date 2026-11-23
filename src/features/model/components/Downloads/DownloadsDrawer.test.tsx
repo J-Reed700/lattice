@@ -124,8 +124,8 @@ describe('DownloadsDrawer', () => {
     expect(actions.cancelDownload).toHaveBeenCalledWith('k-run');
     await user.click(within(drawer).getByRole('button', { name: 'Resume paused.gguf' }));
     expect(actions.resumeDownload).toHaveBeenCalledWith('k-paused');
-    // A failed download with bytes on disk can resume or start over.
-    await user.click(within(drawer).getByRole('button', { name: 'Resume failed.gguf' }));
+    // A failed download offers only Retry (which preserves valid .part files), not a duplicate Resume button.
+    expect(within(drawer).queryByRole('button', { name: 'Resume failed.gguf' })).not.toBeInTheDocument();
     await user.click(within(drawer).getByRole('button', { name: 'Retry failed.gguf' }));
     expect(actions.retryDownload).toHaveBeenCalledWith('k-failed');
     expect(within(drawer).queryByRole('button', { name: 'Resume cancelled.gguf' })).not.toBeInTheDocument();

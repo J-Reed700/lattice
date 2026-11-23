@@ -35,10 +35,11 @@ pub(crate) type LaunchProfile = Option<LocalServerOptions>;
 
 /// Output ceiling for the shared utility model.
 ///
-/// Sized to the largest cap its callers send (conversation memory extraction
-/// asks for 8192), because a ceiling below a caller's own cap does not shorten
-/// that caller's work — it truncates its reply.
-const UTILITY_MAX_OUTPUT_TOKENS: usize = 8_192;
+/// Sized above the largest answer cap its callers send (conversation memory
+/// extraction asks for 8192) with room for `low` thinking when a caller sets
+/// `ThinkingMode::On`, since thinking tokens count toward the backend's
+/// `max_tokens` ceiling and shared-window KV reservation.
+const UTILITY_MAX_OUTPUT_TOKENS: usize = 16_384;
 
 /// The generation settings a client is built with. Most work generates as
 /// Settings says; the utility and router roles have their own temperature or

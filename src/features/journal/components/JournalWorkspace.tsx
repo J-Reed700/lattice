@@ -221,7 +221,7 @@ export function JournalWorkspace() {
     handleNewPage,
   });
 
-  useJournalShortcuts({ entries, selectedId, setSelectedId, saveNow, handleNewPage, setSidebarCollapsed });
+  useJournalShortcuts({ entries, selectedId, setSelectedId, saveNow, setSidebarCollapsed });
 
   const journalName = journalSpace?.name ?? 'Journal';
   const pinnedEntryCount = [...pinnedIds].length;

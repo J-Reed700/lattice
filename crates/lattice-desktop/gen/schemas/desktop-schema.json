@@ -4881,6 +4881,12 @@
           "markdownDescription": "Enables the cancel_learning_practical_run command without any pre-configured scope."
         },
         {
+          "description": "Enables the cancel_practice_build command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-cancel-practice-build",
+          "markdownDescription": "Enables the cancel_practice_build command without any pre-configured scope."
+        },
+        {
           "description": "Enables the capture_learning_source_snapshot command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-capture-learning-source-snapshot",
@@ -5923,6 +5929,12 @@
           "type": "string",
           "const": "learning:deny-cancel-learning-practical-run",
           "markdownDescription": "Denies the cancel_learning_practical_run command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancel_practice_build command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-cancel-practice-build",
+          "markdownDescription": "Denies the cancel_practice_build command without any pre-configured scope."
         },
         {
           "description": "Denies the capture_learning_source_snapshot command without any pre-configured scope.",

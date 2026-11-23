@@ -11,7 +11,8 @@ import { useApi } from '@/contexts/ApiContext';
 import { createNoteSaveQueue } from '@/features/journal/api/noteSaveQueue';
 import { WORKSPACE_NOTES_QUERY_KEY } from '@/features/journal/api/queries';
 import { HandwrittenSynthesisTools } from '@/features/learning/memory/HandwrittenSynthesisTools';
-import { learningMemoryKey, useAcceptLearningCardDraft, useDiscardLearningCardDraft, useEnsureLearningLessonNote, useGenerateLearningCardDrafts, useSaveLearningCardDraft, useUpdateLearningStudyCard, useReviewLearningStudyCard } from '@/features/learning/memory/useLearningMemory';
+import { recallGenerationKey, useRecallGenerationStore } from '@/features/learning/memory/recallGenerationStore';
+import { learningMemoryKey, useAcceptLearningCardDraft, useDiscardLearningCardDraft, useEnsureLearningLessonNote, useSaveLearningCardDraft, useUpdateLearningStudyCard, useReviewLearningStudyCard } from '@/features/learning/memory/useLearningMemory';
 import { CardText, cardPreview } from '@/features/learning/recall/CardText';
 import { fromNow, MAX_ATTEMPTS, RELEARN_GAP } from '@/features/learning/recall/flashcards/retrieval';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
@@ -259,7 +260,13 @@ function FullSessionButton({ deckId }: { deckId: string }) {
 export function RecallPanel({ program, lessonId, memory, memoryLoading, memoryError, onRetryMemory }: {
   program: LearningProgramDto; lessonId?: string; memory: LearningMemoryDto | undefined; memoryLoading: boolean; memoryError?: string; onRetryMemory: () => void;
 }) {
-  const generate = useGenerateLearningCardDrafts();
+  const api = useApi();
+  const queryClient = useQueryClient();
+  const generationRun = useRecallGenerationStore(
+    (state) => state.runs[recallGenerationKey(program.summary.id, lessonId)],
+  );
+  const startGeneration = useRecallGenerationStore((state) => state.startGeneration);
+  const clearGenerationError = useRecallGenerationStore((state) => state.clearError);
   const saveDraft = useSaveLearningCardDraft();
   const acceptDraft = useAcceptLearningCardDraft();
   const discardDraft = useDiscardLearningCardDraft();
@@ -337,7 +344,16 @@ export function RecallPanel({ program, lessonId, memory, memoryLoading, memoryEr
   const origins = memory?.acceptedCards?.filter((origin) => origin.lessonId === lessonId) ?? [];
   const draftActionError = acceptDraft.error?.message || discardDraft.error?.message;
   const draftPending = saveDraft.isPending || acceptDraft.isPending || discardDraft.isPending;
-  const runGeneration = () => { if (lessonId && selectedLesson?.preparation === 'ready') generate.mutate({ programId: program.summary.id, lessonId, count }); };
+  const generatingDrafts = Boolean(generationRun?.pending);
+  const generationError = generationRun?.error;
+  const runGeneration = () => {
+    if (!lessonId || selectedLesson?.preparation !== 'ready') return;
+    void startGeneration({
+      request: { programId: program.summary.id, lessonId, count },
+      call: api.generateLearningCardDrafts,
+      queryClient,
+    });
+  };
 
   const currentCardId = currentCard?.id;
   useEffect(() => {
@@ -398,14 +414,14 @@ export function RecallPanel({ program, lessonId, memory, memoryLoading, memoryEr
   return <div className="space-y-5">
     <section className="rounded-2xl border border-border bg-surface p-3 shadow-sm sm:p-6"><header className="flex flex-wrap items-start justify-between gap-4"><div><div className="text-[10px] font-semibold uppercase tracking-[.16em] text-accent">Recall studio · FSRS 6</div><h3 className="mt-1 font-serif text-2xl text-text-primary">Keep the ideas close</h3><p className="mt-2 max-w-2xl text-sm leading-6 text-text-secondary">Draft cards from a ready lesson, edit each one, and accept only what you want to remember.</p></div><div className="min-w-44 rounded-xl bg-background p-3"><div className="flex items-baseline justify-between"><span className="text-xs text-text-muted">Due now</span><strong className="font-serif text-2xl text-text-primary">{dueCards.length}</strong></div><div className="mt-1 text-[10px] text-text-muted">{memory?.studyDeck?.cards.length ?? 0} accepted cards total</div></div></header>
       <div className="mt-4 rounded-xl border border-[#d7c9b8] bg-[#f2ebe2] p-4 text-xs leading-5 text-text-secondary dark:border-white/10 dark:bg-white/5"><span className="font-semibold text-text-primary">Schedule: FSRS 6.</span> Cards are spaced with FSRS 6 and its default parameters. A review interval does not promise or measure a retention rate.</div>
-      <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-border pt-5"><label className="text-xs font-medium text-text-secondary" htmlFor="draft-card-count">Generate grounded drafts</label><select id="draft-card-count" value={count} onChange={(e) => setCount(Number(e.target.value))} className="rounded-lg border border-border bg-background px-3 py-2 text-sm">{Array.from({ length: 7 }, (_, index) => index + 2).map((value) => <option key={value} value={value}>{value} cards</option>)}</select><button type="button" disabled={generate.isPending || program.summary.status !== 'active' || selectedLesson?.preparation !== 'ready'} onClick={runGeneration} className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-xs font-semibold text-accent-fg disabled:opacity-50"><Sparkles size={14} />{generate.isPending ? 'Generating…' : 'Generate drafts'}</button><button type="button" disabled={program.summary.status !== 'active' || selectedLesson?.preparation !== 'ready'} onClick={() => setManualOpen((value) => !value)} className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2 text-xs font-medium text-text-secondary hover:border-accent/40 disabled:opacity-50"><PencilLine size={13} />{manualOpen ? 'Close manual draft' : 'Create manually'}</button></div>
+      <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-border pt-5"><label className="text-xs font-medium text-text-secondary" htmlFor="draft-card-count">Generate grounded drafts</label><select id="draft-card-count" value={count} onChange={(e) => setCount(Number(e.target.value))} className="rounded-lg border border-border bg-background px-3 py-2 text-sm">{Array.from({ length: 7 }, (_, index) => index + 2).map((value) => <option key={value} value={value}>{value} cards</option>)}</select><button type="button" disabled={generatingDrafts || program.summary.status !== 'active' || selectedLesson?.preparation !== 'ready'} onClick={runGeneration} className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-xs font-semibold text-accent-fg disabled:opacity-50"><Sparkles size={14} />{generatingDrafts ? 'Generating…' : 'Generate drafts'}</button><button type="button" disabled={program.summary.status !== 'active' || selectedLesson?.preparation !== 'ready'} onClick={() => setManualOpen((value) => !value)} className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2 text-xs font-medium text-text-secondary hover:border-accent/40 disabled:opacity-50"><PencilLine size={13} />{manualOpen ? 'Close manual draft' : 'Create manually'}</button></div>
       {program.summary.status === 'draft' && <p className="mt-3 text-xs text-text-muted">Accept the program before generating cards.</p>}
       {program.summary.status === 'active' && selectedLesson?.preparation !== 'ready' && <p className="mt-3 text-xs text-text-muted">Prepare this lesson before generating grounded card drafts.</p>}
-      {generate.error && <div role="alert" className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-700"><span>Draft generation failed: {generate.error.message}</span><button type="button" onClick={runGeneration} className="inline-flex items-center gap-1 text-xs underline"><RotateCcw size={12} /> Retry</button></div>}
+      {generationError && <div role="alert" className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-700"><span>Draft generation failed: {generationError}</span><div className="flex items-center gap-3"><button type="button" onClick={runGeneration} className="inline-flex items-center gap-1 text-xs underline"><RotateCcw size={12} /> Retry</button><button type="button" onClick={() => clearGenerationError(program.summary.id, lessonId)} className="text-xs underline">Dismiss</button></div></div>}
       {manualOpen && <div className="mt-4"><DraftEditor draftId={null} lessonId={lessonId} program={program} origin="manual" pending={saveDraft.isPending} error={draftSaveTarget === 'manual' ? saveDraft.error?.message : undefined} onSave={(value) => saveDraftValue(null, value)} onCancel={() => setManualOpen(false)} /></div>}
       {draftActionError && <p role="alert" className="mt-3 text-xs text-rose-700">{draftActionError}</p>}
       <div className="mt-6"><h4 className="font-serif text-lg text-text-primary">Draft cards <span className="text-sm text-text-muted">{memory?.drafts?.filter((draft) => draft.lessonId === lessonId).length ?? 0}</span></h4>
-        {(memory?.drafts?.filter((draft) => draft.lessonId === lessonId) ?? []).length ? <div className="mt-3 space-y-3">{memory?.drafts?.filter((draft) => draft.lessonId === lessonId).map((draft) => <article key={draft.id} aria-label={`Draft card: ${draft.question}`} className="space-y-2"><DraftEditor draftId={draft.id} lessonId={lessonId} program={program} initial={draft} origin={draft.origin} pending={draftPending} error={draftSaveTarget === draft.id ? saveDraft.error?.message : undefined} onSave={(value) => saveDraftValue(draft.id, value)} /><div className="flex justify-end gap-2"><button type="button" disabled={draftPending || program.summary.status !== 'active' || selectedLesson?.preparation !== 'ready'} onClick={() => acceptCard(draft.id)} className="inline-flex items-center gap-1.5 rounded-full bg-emerald-700 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"><Check size={13} />Accept card</button><button type="button" disabled={draftPending} onClick={() => discardCard(draft.id)} className="inline-flex items-center gap-1.5 rounded-full border border-border px-4 py-2 text-xs text-text-secondary disabled:opacity-50"><Trash2 size={13} />Discard</button></div></article>)}</div> : !manualOpen && !generate.isPending ? <p className="mt-2 rounded-xl border border-dashed border-border p-5 text-sm text-text-muted">No drafts for this lesson yet. Generate source-grounded suggestions or write one yourself.</p> : null}
+        {(memory?.drafts?.filter((draft) => draft.lessonId === lessonId) ?? []).length ? <div className="mt-3 space-y-3">{memory?.drafts?.filter((draft) => draft.lessonId === lessonId).map((draft) => <article key={draft.id} aria-label={`Draft card: ${draft.question}`} className="space-y-2"><DraftEditor draftId={draft.id} lessonId={lessonId} program={program} initial={draft} origin={draft.origin} pending={draftPending} error={draftSaveTarget === draft.id ? saveDraft.error?.message : undefined} onSave={(value) => saveDraftValue(draft.id, value)} /><div className="flex justify-end gap-2"><button type="button" disabled={draftPending || program.summary.status !== 'active' || selectedLesson?.preparation !== 'ready'} onClick={() => acceptCard(draft.id)} className="inline-flex items-center gap-1.5 rounded-full bg-emerald-700 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"><Check size={13} />Accept card</button><button type="button" disabled={draftPending} onClick={() => discardCard(draft.id)} className="inline-flex items-center gap-1.5 rounded-full border border-border px-4 py-2 text-xs text-text-secondary disabled:opacity-50"><Trash2 size={13} />Discard</button></div></article>)}</div> : !manualOpen && !generatingDrafts ? <p className="mt-2 rounded-xl border border-dashed border-border p-5 text-sm text-text-muted">No drafts for this lesson yet. Generate source-grounded suggestions or write one yourself.</p> : null}
       </div>
     </section>
 

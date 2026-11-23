@@ -7,7 +7,7 @@
  */
 import { useState } from 'react';
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Cpu } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -22,6 +22,7 @@ import {
 import { useApi } from '@/contexts/ApiContext';
 import { ApiKeyForm } from '@/features/model/components/FirstRun/ApiKeyForm';
 import { RecommendationCardBody } from '@/features/model/components/RecommendationCardBody';
+import { DOWNLOADS_QUERY_KEY } from '@/features/model/hooks/useDownloads';
 import { firstRunStatusQueryOptions, useFirstRunDownloads } from '@/features/model/hooks/useFirstRunSetup';
 import { useModelCatalog } from '@/features/model/hooks/useModelCatalog';
 import { useRecommendedChatModels } from '@/features/model/hooks/useRecommendedChatModels';
@@ -58,6 +59,7 @@ export function ModelSetupModal({
   onDismiss,
 }: ModelSetupModalProps) {
   const api = useApi();
+  const queryClient = useQueryClient();
   // Read again on every opening; what was read last stays up meanwhile.
   const statusQuery = useQuery({ ...firstRunStatusQueryOptions(api), enabled: open });
   const status = statusQuery.data ?? null;
@@ -121,6 +123,8 @@ export function ModelSetupModal({
           if (!result.ok) {
             console.error('embedding download failed:', result.error);
             toast.error('Embedding model download failed', { message: result.error });
+          } else {
+            void queryClient.invalidateQueries({ queryKey: DOWNLOADS_QUERY_KEY });
           }
         }),
       );
@@ -132,6 +136,8 @@ export function ModelSetupModal({
           if (!result.ok) {
             console.error('chat download failed:', result.error);
             toast.error('Chat model download failed', { message: result.error });
+          } else {
+            void queryClient.invalidateQueries({ queryKey: DOWNLOADS_QUERY_KEY });
           }
         }),
       );

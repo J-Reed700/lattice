@@ -263,6 +263,11 @@ async fn retry_keeps_the_part_with_a_checksum_and_deletes_it_without_one() {
             sum.is_some(),
             "{name}: .part kept only when a checksum can vouch for it"
         );
+        let session = f.repository.get(&id).await.unwrap().unwrap();
+        assert_eq!(
+            session.progress().bytes_downloaded(),
+            if sum.is_some() { 300 } else { 0 }
+        );
     }
 }
 
@@ -435,7 +440,7 @@ async fn a_session_with_no_checksum_does_not_reuse_leftover_bytes() {
     let f = fixture();
     f.engine.set_stall(true);
 
-    // A leftover `.part` is deleted when the new session registers.
+    // A leftover `.part` is deleted when the new session registers without a checksum.
     let with_part = f.dir.path().join("a.gguf");
     std::fs::write(part_path(&with_part), vec![1u8; 400]).unwrap();
     f.manager
@@ -443,8 +448,28 @@ async fn a_session_with_no_checksum_does_not_reuse_leftover_bytes() {
         .await
         .unwrap();
     assert!(!part_path(&with_part).exists());
+    let first = first_call(&f).await;
+    assert_eq!(first.resume_from, None);
 
-    // An in-place partial is not migrated.
+    // Even with a checksum, an oversized `.part` (len > total_bytes) is discarded so it starts clean.
+    let f_oversized = fixture();
+    f_oversized.engine.set_stall(true);
+    let oversized = f_oversized.dir.path().join("oversized.gguf");
+    std::fs::write(part_path(&oversized), vec![1u8; 1500]).unwrap();
+    let mut oversized_req = request(&oversized, Some(checksum('a')));
+    oversized_req.url = "https://example.com/oversized.gguf".into();
+    f_oversized
+        .engine
+        .set_file_size("https://example.com/oversized.gguf", Some(1000));
+    f_oversized
+        .manager
+        .start_download(oversized_req)
+        .await
+        .unwrap();
+    let oversized_call = first_call(&f_oversized).await;
+    assert_eq!(oversized_call.resume_from, None);
+
+    // An in-place partial (at destination, not `.part`) is not migrated without a checksum.
     let in_place = f.dir.path().join("b.gguf");
     std::fs::write(&in_place, vec![1u8; 500]).unwrap();
     let mut second = request(&in_place, None);
@@ -465,6 +490,45 @@ async fn a_session_with_no_checksum_does_not_reuse_leftover_bytes() {
     };
     assert_eq!(call.resume_from, None);
     assert!(in_place.exists());
+}
+
+#[tokio::test]
+async fn resume_on_failed_or_zero_byte_checksumless_session_discards_part() {
+    let f = fixture();
+    f.engine.set_stall(true);
+
+    let failed_dest = f.dir.path().join("failed-no-sum.gguf");
+    std::fs::write(part_path(&failed_dest), vec![1u8; 300]).unwrap();
+    f.repository
+        .create(&failed_session("failed-no-sum", &failed_dest, None))
+        .await
+        .unwrap();
+
+    f.manager.resume_download("failed-no-sum").await.unwrap();
+    assert!(!part_path(&failed_dest).exists());
+    let call = first_call(&f).await;
+    assert_eq!(call.resume_from, None);
+
+    let f2 = fixture();
+    f2.engine.set_stall(true);
+    let paused_dest = f2.dir.path().join("paused-zero.gguf");
+    let mut paused = DownloadSession::new(
+        "paused-zero".into(),
+        URL.into(),
+        paused_dest.clone(),
+        Some(1000),
+        None,
+    )
+    .unwrap();
+    paused.start().unwrap();
+    paused.pause().unwrap();
+    f2.repository.create(&paused).await.unwrap();
+    std::fs::write(part_path(&paused_dest), vec![2u8; 400]).unwrap();
+
+    f2.manager.resume_download("paused-zero").await.unwrap();
+    assert!(!part_path(&paused_dest).exists());
+    let call2 = first_call(&f2).await;
+    assert_eq!(call2.resume_from, None);
 }
 
 #[tokio::test]

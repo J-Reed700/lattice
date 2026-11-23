@@ -98,6 +98,24 @@ describe('useConversationNavigationActions', () => {
       await act(() => actions.loadConversations());
       expect(ui().error).toBe('db locked');
     });
+
+    it('preserves an existing turn error when routine loadConversations succeeds', async () => {
+      conversationUiStore.setState({ error: 'Model context exceeded' });
+      const actions = setup();
+      await act(() => actions.loadConversations());
+      expect(ui().error).toBe('Model context exceeded');
+    });
+
+    it('clears its own prior list-load error once loadConversations succeeds', async () => {
+      h.api.listConversationsExplorer.mockResolvedValueOnce(refused('explorer gone'));
+      h.api.listConversations.mockResolvedValueOnce(refused('temporary lock'));
+      const actions = setup();
+      await act(() => actions.loadConversations());
+      expect(ui().error).toBe('temporary lock');
+
+      await act(() => actions.loadConversations());
+      expect(ui().error).toBeNull();
+    });
   });
 
   describe('loadMessageBookmarks', () => {

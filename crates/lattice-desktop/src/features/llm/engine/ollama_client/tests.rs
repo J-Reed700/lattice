@@ -764,3 +764,48 @@ async fn a_server_that_cannot_say_leaves_the_configured_window() {
     .unwrap();
     assert_eq!(client.resolve_context_window(Some(32_768)).await, 32_768);
 }
+
+#[test]
+fn non_thinking_sampling_applies_only_when_ollama_turns_thinking_off() {
+    use lattice_core::application::contracts::settings::{LLMSettingsDto, ThinkingOverrideDto};
+    use lattice_core::application::ports::llm_port::SamplingOverride;
+
+    let mut settings = LLMSettingsDto::default();
+    let thinking_client = OllamaClient::with_model_and_timeouts(
+        "http://localhost:11434",
+        "qwen3.5",
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+    )
+    .unwrap()
+    .with_generation_config(GenerationConfig::from_settings(&settings));
+    settings.thinking_override = ThinkingOverrideDto::Off;
+    let non_thinking_client = OllamaClient::with_model_and_timeouts(
+        "http://localhost:11434",
+        "qwen3.5",
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+    )
+    .unwrap()
+    .with_generation_config(GenerationConfig::from_settings(&settings));
+
+    let request = legacy::completion(legacy::Completion {
+        thinking: ThinkingMode::On,
+        non_thinking_sampling: Some(SamplingOverride::deterministic()),
+        ..Default::default()
+    });
+
+    let thinking =
+        serde_json::to_value(thinking_client.uncut_chat_request(&request).unwrap()).unwrap();
+    assert_eq!(thinking["think"], true);
+    assert_eq!(thinking["options"]["temperature"], 1.0);
+    assert_eq!(thinking["options"]["top_k"], 20);
+
+    let non_thinking =
+        serde_json::to_value(non_thinking_client.uncut_chat_request(&request).unwrap()).unwrap();
+    assert_eq!(non_thinking["think"], false);
+    assert_eq!(non_thinking["options"]["temperature"], 0.0);
+    assert_eq!(non_thinking["options"]["top_p"], 1.0);
+    assert_eq!(non_thinking["options"]["top_k"], 1);
+    assert_eq!(non_thinking["options"]["presence_penalty"], 0.0);
+}

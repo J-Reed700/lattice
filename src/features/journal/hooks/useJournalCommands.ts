@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'react';
 
 import { Combine, FilePlus2, Plus } from 'lucide-react';
 
+import { useRestoreLockoutStore } from '@/features/backup/restoreLockoutStore';
 import type { SynthesisScope } from '@/features/journal/components/SynthesizePopover';
 import type { JournalEntrySummary } from '@/features/journal/hooks/useJournalEntries';
 import { useRegisterPaletteCommands } from '@/features/palette/hooks/useRegisterPaletteCommands';
@@ -90,16 +91,18 @@ export function useJournalShortcuts(options: {
   selectedId: string | null;
   setSelectedId: (id: string | null) => void;
   saveNow: () => Promise<boolean>;
-  handleNewPage: () => Promise<void>;
   setSidebarCollapsed: (update: (collapsed: boolean) => boolean) => void;
 }) {
-  const { entries, selectedId, setSelectedId, saveNow, handleNewPage, setSidebarCollapsed } = options;
+  const { entries, selectedId, setSelectedId, saveNow, setSidebarCollapsed } = options;
 
-  // Keyboard shortcuts: J/K navigate, T today, ⌘N new entry, ⌘S save now,
-  // ⌘⇧H highlight selection (delegates to highlights strip via selection),
-  // ⌘\ toggle sidebar.
+  // Keyboard shortcuts: J/K navigate, T today, ⌘S save now, ⌘\ toggle sidebar.
+  // ⌘N is handled globally by RootLayout via NEW_ITEM_EVENT -> useJournalPageActions
+  // so pressing ⌘N outside the editor never creates a second blank page.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || useRestoreLockoutStore.getState().isDatabaseRestoredRestartRequired) {
+        return;
+      }
       const target = e.target as HTMLElement | null;
       const isEditable =
         target instanceof HTMLElement &&
@@ -115,12 +118,6 @@ export function useJournalShortcuts(options: {
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === '\\') {
         e.preventDefault();
         setSidebarCollapsed((v) => !v);
-        return;
-      }
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'n') {
-        if (isEditable) return;
-        e.preventDefault();
-        void handleNewPage();
         return;
       }
       if (!isEditable) {
@@ -158,5 +155,5 @@ export function useJournalShortcuts(options: {
     return () => {
       window.removeEventListener('keydown', onKey);
     };
-  }, [entries, handleNewPage, saveNow, selectedId, setSelectedId, setSidebarCollapsed]);
+  }, [entries, saveNow, selectedId, setSelectedId, setSidebarCollapsed]);
 }

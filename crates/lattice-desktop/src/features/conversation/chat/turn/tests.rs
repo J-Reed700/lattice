@@ -781,7 +781,24 @@ fn course_turn(runtime: &FakeRuntime, source: TurnSource) -> PreparedTurn {
 }
 
 fn rendered(
+    runtime: &FakeRuntime,
     turn: &PreparedTurn,
+    passages: Vec<SourcePassage>,
+    evidence: lattice_core::application::services::context_assembler::EvidenceBudget,
+) -> RenderedPrompt {
+    rendered_with_flags(
+        runtime,
+        turn,
+        SearchFlags::from_preferences(None),
+        passages,
+        evidence,
+    )
+}
+
+fn rendered_with_flags(
+    runtime: &FakeRuntime,
+    turn: &PreparedTurn,
+    flags: SearchFlags,
     passages: Vec<SourcePassage>,
     evidence: lattice_core::application::services::context_assembler::EvidenceBudget,
 ) -> RenderedPrompt {
@@ -802,8 +819,9 @@ fn rendered(
     };
     let (sink, _) = recording_sink();
     super::assemble::render_prompt(
+        runtime,
         turn,
-        SearchFlags::from_preferences(None),
+        flags,
         None,
         carried,
         retrieved,
@@ -817,10 +835,14 @@ fn rendered(
 #[test]
 fn a_source_s_passages_join_the_turn_s_numbered_passages() {
     use lattice_core::application::services::context_assembler::EvidenceBudget;
-    let runtime = FakeRuntime::default();
+    let runtime = FakeRuntime {
+        tools: Some(Arc::new(LibraryTools)),
+        ..FakeRuntime::default()
+    };
     let turn = course_turn(&runtime, Arc::new(Course::new()));
 
     let prompt = rendered(
+        &runtime,
         &turn,
         vec![passage("chunk-1", "Fusion sums reciprocal ranks.")],
         EvidenceBudget::new(10_000),
@@ -840,7 +862,8 @@ fn a_source_s_passages_join_the_turn_s_numbered_passages() {
     let passage_pos = message.find("[s1] Document:").expect("passage marker");
     let question_pos = message.find("Question:").expect("question line");
     assert!(passage_pos < question_pos, "{message}");
-    assert!(message.ends_with("Answer:"), "{message}");
+    assert!(message.ends_with("missing from the excerpts."), "{message}");
+    assert!(!message.ends_with("Answer:"), "{message}");
     assert_eq!(prompt.sources[0].citation_id, Some(1));
     assert_eq!(prompt.sources[0].document_id, "course:version-1");
     assert_eq!(prompt.sources[0].content, "Fusion sums reciprocal ranks.");
@@ -855,6 +878,7 @@ fn a_source_s_passage_the_budget_cut_is_no_source() {
     let turn = course_turn(&runtime, Arc::new(Course::new()));
 
     let prompt = rendered(
+        &runtime,
         &turn,
         vec![passage("chunk-1", &"word ".repeat(400))],
         EvidenceBudget::new(5),
@@ -1153,4 +1177,322 @@ fn zero_claim_turns_skip_background_verification_with_immediate_metadata() {
     assert_eq!(pending_strict["pending"], true);
     assert_eq!(pending_strict["groundingMode"], "strict");
     assert!(pending_strict.get("citedOnly").is_none());
+}
+
+struct WithoutTools;
+
+#[async_trait::async_trait]
+impl LLMPort for WithoutTools {
+    async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
+        unreachable!("only prompt rendering")
+    }
+    fn model_name(&self) -> &str {
+        "no-tools"
+    }
+    fn max_context_tokens(&self) -> usize {
+        32_768
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+    fn supports_tool_calling(&self) -> bool {
+        false
+    }
+    fn enforces(
+        &self,
+        _schema: &lattice_core::application::services::model_contract::shape::Schema,
+    ) -> bool {
+        false
+    }
+}
+
+#[test]
+fn render_prompt_omits_tool_call_orders_when_no_document_tools_are_offered() {
+    use lattice_core::application::services::context_assembler::EvidenceBudget;
+
+    let runtime = FakeRuntime {
+        tools: Some(Arc::new(LibraryTools)),
+        ..FakeRuntime::default()
+    };
+
+    // Case 1: Model does not support tool calling.
+    let mut no_tools_turn = PreparedTurn::for_test(
+        "conv-no-tools",
+        "req-no-tools",
+        Arc::new(WithoutTools),
+        runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
+    )
+    .unwrap();
+    no_tools_turn.source = Some(Arc::new(Course::new()));
+    let no_tools_prompt = rendered(
+        &runtime,
+        &no_tools_turn,
+        vec![passage("chunk-1", "Fusion sums reciprocal ranks.")],
+        EvidenceBudget::new(10_000),
+    );
+    for forbidden in [
+        "do not answer yet",
+        "get_document",
+        "read_more",
+        "semantic_search",
+        "call a document tool first",
+    ] {
+        assert!(
+            !no_tools_prompt.enhanced_message.contains(forbidden),
+            "no-tools model saw {forbidden:?}: {}",
+            no_tools_prompt.enhanced_message
+        );
+    }
+
+    // Case 2: Runtime without registered tools offers no document tools.
+    let no_registry_runtime = FakeRuntime::default();
+    let no_registry_turn = course_turn(&no_registry_runtime, Arc::new(Course::new()));
+    let no_registry_prompt = rendered(
+        &no_registry_runtime,
+        &no_registry_turn,
+        vec![passage("chunk-1", "Fusion sums reciprocal ranks.")],
+        EvidenceBudget::new(10_000),
+    );
+    assert!(
+        !no_registry_prompt.enhanced_message.contains("get_document"),
+        "turn with no registered tools still ordered get_document: {}",
+        no_registry_prompt.enhanced_message
+    );
+
+    // Explorer folder turns still offer `get_document`/`read_more` for named documents.
+    let folder_turn = course_turn(&runtime, Arc::new(Folder));
+    let folder_prompt = rendered(
+        &runtime,
+        &folder_turn,
+        vec![passage("chunk-1", "Fusion sums reciprocal ranks.")],
+        EvidenceBudget::new(10_000),
+    );
+    assert!(
+        folder_prompt.enhanced_message.contains("get_document"),
+        "folder turn with get_document still needs document-read instructions: {}",
+        folder_prompt.enhanced_message
+    );
+
+    // Case 3: Closed-book turn strips external/library document tools.
+    let mut course = PreparedTurn::for_test(
+        "conv-closed-book",
+        "req-closed-book",
+        Arc::new(ToolCalling),
+        runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
+    )
+    .unwrap();
+    course.source = Some(Arc::new(Course::new()));
+    let closed_book_prompt = rendered_with_flags(
+        &runtime,
+        &course,
+        SearchFlags {
+            closed_book: true,
+            ..SearchFlags::from_preferences(None)
+        },
+        vec![passage("chunk-1", "Fusion sums reciprocal ranks.")],
+        EvidenceBudget::new(10_000),
+    );
+    assert!(
+        !closed_book_prompt.enhanced_message.contains("get_document"),
+        "closed-book turn still ordered get_document: {}",
+        closed_book_prompt.enhanced_message
+    );
+}
+
+#[tokio::test]
+async fn conclude_handles_cancelled_partial_and_failed_outcomes_cleanly() {
+    use crate::features::conversation::chat::ports::ChatStorage;
+
+    let llm: Arc<dyn LLMPort> = Arc::new(Unanswering {
+        asked: tokio::sync::Notify::new(),
+    });
+    let runtime = FakeRuntime::default();
+    let service = runtime.conversation_service();
+    let conv_id = service
+        .create_conversation("Cancel test".into(), None)
+        .await
+        .unwrap()
+        .id
+        .to_string();
+
+    // 1. Cancelled turn with partial tokens: user completed + cancelled=true, assistant saved, Ok returned.
+    let partial_user = service
+        .add_message_with_metadata(
+            &conv_id,
+            lattice_core::domain::conversation::MessageRole::User,
+            "Explain entropy".into(),
+            2,
+            "pending".into(),
+            Some(r#"{"requestId":"req-cancel-partial"}"#.into()),
+        )
+        .await
+        .unwrap();
+    let partial_turn = PreparedTurn::for_test(
+        &conv_id,
+        "turn-cancel-partial",
+        Arc::clone(&llm),
+        runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
+    )
+    .unwrap();
+    let (sink, _) = recording_sink();
+    let answered_partial = Answered {
+        flags: SearchFlags::from_preferences(None),
+        router: None,
+        user_message_id: partial_user.id.clone(),
+        message_tokens: 2,
+        flow_start: std::time::Instant::now(),
+    };
+    let partial_err = conclude(
+        &runtime,
+        &partial_turn,
+        None,
+        answered_partial,
+        Ok(generate::GenerateOutcome::Cancelled {
+            error: AppError::Cancelled("stopped".into()),
+            partial: Some(generate::GeneratedAnswer {
+                response: "Entropy measures ".into(),
+                sources: Vec::new(),
+                retrieval_trace: None,
+                tokens: TurnTokensDto::default(),
+                memory_usage: None,
+                summary_refold: None,
+            }),
+        }),
+        &sink,
+        ConversationFlowTimingMetrics::default(),
+    )
+    .await
+    .expect_err("cancelled turn propagates Cancelled after persisting partial turn");
+
+    assert!(matches!(partial_err, AppError::Cancelled(_)));
+
+    // 2. Cancelled turn with zero tokens: user failed + cancelled=true, no assistant reply, Cancelled returned.
+    let empty_user = service
+        .add_message_with_status(
+            &conv_id,
+            lattice_core::domain::conversation::MessageRole::User,
+            "Explain enthalpy".into(),
+            2,
+            "pending".into(),
+        )
+        .await
+        .unwrap();
+    let empty_turn = PreparedTurn::for_test(
+        &conv_id,
+        "turn-cancel-empty",
+        Arc::clone(&llm),
+        runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
+    )
+    .unwrap();
+    let answered_empty = Answered {
+        flags: SearchFlags::from_preferences(None),
+        router: None,
+        user_message_id: empty_user.id.clone(),
+        message_tokens: 2,
+        flow_start: std::time::Instant::now(),
+    };
+    let empty_err = conclude(
+        &runtime,
+        &empty_turn,
+        None,
+        answered_empty,
+        Ok(generate::GenerateOutcome::Cancelled {
+            error: AppError::Cancelled("stopped".into()),
+            partial: None,
+        }),
+        &sink,
+        ConversationFlowTimingMetrics::default(),
+    )
+    .await
+    .expect_err("cancelled turn propagates Cancelled after completing user message");
+    assert!(matches!(empty_err, AppError::Cancelled(_)));
+
+    // 3. Failed turn persists human-readable reason inside user message metadata.
+    let fail_user = service
+        .add_message_with_metadata(
+            &conv_id,
+            lattice_core::domain::conversation::MessageRole::User,
+            "Broken prompt".into(),
+            2,
+            "pending".into(),
+            Some(r#"{"requestId":"req-fail"}"#.into()),
+        )
+        .await
+        .unwrap();
+    let fail_turn = PreparedTurn::for_test(
+        &conv_id,
+        "turn-fail",
+        llm,
+        runtime.conversations.clone(),
+        runtime.turn_cancellation.clone(),
+    )
+    .unwrap();
+    let answered_fail = Answered {
+        flags: SearchFlags::from_preferences(None),
+        router: None,
+        user_message_id: fail_user.id.clone(),
+        message_tokens: 2,
+        flow_start: std::time::Instant::now(),
+    };
+    let fail_result = conclude(
+        &runtime,
+        &fail_turn,
+        None,
+        answered_fail,
+        Err(AppError::InvalidState("Provider rate limit".into())),
+        &sink,
+        ConversationFlowTimingMetrics::default(),
+    )
+    .await;
+    assert!(fail_result.is_err());
+
+    let messages = runtime
+        .conversation_branches()
+        .get_messages(&conv_id)
+        .await
+        .unwrap();
+    let saved_partial_user = messages.iter().find(|m| m.id == partial_user.id).unwrap();
+    assert_eq!(saved_partial_user.status, "completed");
+    let saved_partial_meta: serde_json::Value =
+        serde_json::from_str(saved_partial_user.metadata.as_deref().unwrap()).unwrap();
+    assert_eq!(saved_partial_meta["requestId"], "req-cancel-partial");
+    assert_eq!(saved_partial_meta["cancelled"], true);
+
+    let saved_partial_assistant = messages
+        .iter()
+        .find(|m| {
+            m.role == lattice_core::domain::conversation::MessageRole::Assistant
+                && m.content == "Entropy measures "
+        })
+        .expect("partial assistant reply saved");
+    assert_eq!(saved_partial_assistant.status, "completed");
+
+    let saved_empty_user = messages.iter().find(|m| m.id == empty_user.id).unwrap();
+    assert_eq!(saved_empty_user.status, "failed");
+    let saved_empty_meta: serde_json::Value =
+        serde_json::from_str(saved_empty_user.metadata.as_deref().unwrap()).unwrap();
+    assert_eq!(saved_empty_meta["cancelled"], true);
+    assert!(saved_empty_meta.get("error").is_none());
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|m| m.role == lattice_core::domain::conversation::MessageRole::Assistant)
+            .count(),
+        1,
+        "zero-token cancellation must not create an empty assistant message"
+    );
+
+    let saved_fail_user = messages.iter().find(|m| m.id == fail_user.id).unwrap();
+    assert_eq!(saved_fail_user.status, "failed");
+    let saved_fail_meta: serde_json::Value =
+        serde_json::from_str(saved_fail_user.metadata.as_deref().unwrap()).unwrap();
+    assert_eq!(saved_fail_meta["requestId"], "req-fail");
+    assert!(saved_fail_meta["error"]
+        .as_str()
+        .unwrap()
+        .contains("Provider rate limit"));
 }

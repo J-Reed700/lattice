@@ -10,6 +10,8 @@ pub struct FileSnapshot {
     pub bytes_downloaded: u64,
     pub total_bytes: u64,
     pub status: FileStatus,
+    #[serde(default)]
+    pub error_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -34,6 +36,8 @@ pub struct SingleFileSnapshot {
     pub filename: String,
     /// The full final path, the same string the download list reports.
     pub destination: String,
+    /// Model id when the download belongs to a model record.
+    pub model_id: Option<String>,
     /// Display name, when the download has one (with or without a model id).
     pub model_name: Option<String>,
     pub bytes_downloaded: u64,
@@ -42,6 +46,8 @@ pub struct SingleFileSnapshot {
     pub percentage: Option<f64>,
     pub eta_seconds: Option<u64>,
     pub status: DownloadStatus,
+    #[serde(default)]
+    pub error_message: Option<String>,
 }
 
 /// Multi-file download batch snapshot
@@ -95,6 +101,7 @@ mod tests {
             id: "d".into(),
             filename: "r.gguf".into(),
             destination: "/models/r.gguf".into(),
+            model_id: Some("reranker-id".into()),
             model_name: Some("Reranker".into()),
             bytes_downloaded: 1,
             total_bytes: Some(2),
@@ -102,9 +109,11 @@ mod tests {
             percentage: Some(50.0),
             eta_seconds: None,
             status: DownloadStatus::Pending,
+            error_message: None,
         };
         let json = serde_json::to_value(&snapshot).unwrap();
         assert_eq!(json["destination"], "/models/r.gguf");
+        assert_eq!(json["modelId"], "reranker-id");
         assert_eq!(json["modelName"], "Reranker");
     }
 }

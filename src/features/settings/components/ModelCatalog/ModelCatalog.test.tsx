@@ -222,6 +222,148 @@ describe('ModelRow', () => {
     expect(screen.getByText('Downloading 42%')).toBeInTheDocument();
   });
 
+  it('shows Paused state with Resume button instead of Downloading spinner', async () => {
+    const user = userEvent.setup();
+    const onResume = vi.fn();
+    render(
+      <ModelRow
+        model={recommendation()}
+        {...rowProps}
+        onResume={onResume}
+        activeDownload={
+          {
+            id: 'd-paused',
+            url: 'https://example.invalid/model.gguf',
+            destination: '/tmp/model.gguf',
+            state: 'Paused',
+            bytes_downloaded: 84,
+            total_bytes: 200,
+            bytes_per_second: 0,
+            percentage: 42,
+            eta_seconds: null,
+            error_message: null,
+            retry_count: 0,
+            created_at: '2026-09-05T00:00:00Z',
+            started_at: '2026-09-05T00:00:00Z',
+            completed_at: null,
+            model_name: null,
+            model_id: null,
+          }
+        }
+      />,
+    );
+    expect(screen.getByText('Paused · 42%')).toBeInTheDocument();
+    expect(screen.queryByText(/Downloading/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Resume' }));
+    expect(onResume).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows Queued for Pending state and Failed with Retry button', async () => {
+    const user = userEvent.setup();
+    const onRetry = vi.fn();
+    const { rerender } = render(
+      <ModelRow
+        model={recommendation()}
+        {...rowProps}
+        activeDownload={
+          {
+            id: 'd-pending',
+            url: 'https://example.invalid/model.gguf',
+            destination: '/tmp/model.gguf',
+            state: 'Pending',
+            bytes_downloaded: 0,
+            total_bytes: 200,
+            bytes_per_second: 0,
+            percentage: 0,
+            eta_seconds: null,
+            error_message: null,
+            retry_count: 0,
+            created_at: '2026-09-05T00:00:00Z',
+            started_at: null,
+            completed_at: null,
+            model_name: null,
+            model_id: null,
+          }
+        }
+      />,
+    );
+    expect(screen.getByText('Queued')).toBeInTheDocument();
+
+    rerender(
+      <ModelRow
+        model={recommendation()}
+        {...rowProps}
+        onRetry={onRetry}
+        activeDownload={
+          {
+            id: 'd-failed',
+            url: 'https://example.invalid/model.gguf',
+            destination: '/tmp/model.gguf',
+            state: 'Failed',
+            bytes_downloaded: 20,
+            total_bytes: 200,
+            bytes_per_second: 0,
+            percentage: 10,
+            eta_seconds: null,
+            error_message: 'HTTP 401',
+            retry_count: 0,
+            created_at: '2026-09-05T00:00:00Z',
+            started_at: '2026-09-05T00:00:00Z',
+            completed_at: '2026-09-05T00:01:00Z',
+            model_name: null,
+            model_id: null,
+          }
+        }
+      />,
+    );
+    expect(screen.getByText('Failed')).toHaveAttribute('title', 'HTTP 401');
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables Resume and Retry buttons with Starting… feedback while isStarting is true', () => {
+    const pausedRow = {
+      id: 'd-paused',
+      url: 'https://example.invalid/model.gguf',
+      destination: '/tmp/model.gguf',
+      state: 'Paused' as const,
+      bytes_downloaded: 84,
+      total_bytes: 200,
+      bytes_per_second: 0,
+      percentage: 42,
+      eta_seconds: null,
+      error_message: null,
+      retry_count: 0,
+      created_at: '2026-09-05T00:00:00Z',
+      started_at: '2026-09-05T00:00:00Z',
+      completed_at: null,
+      model_name: null,
+      model_id: null,
+    };
+
+    const { rerender } = render(
+      <ModelRow
+        model={recommendation()}
+        {...rowProps}
+        isStarting
+        onResume={vi.fn()}
+        activeDownload={pausedRow}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Starting…' })).toBeDisabled();
+
+    rerender(
+      <ModelRow
+        model={recommendation()}
+        {...rowProps}
+        isStarting
+        onRetry={vi.fn()}
+        activeDownload={{ ...pausedRow, state: 'Failed', error_message: 'HTTP 401' }}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Starting…' })).toBeDisabled();
+  });
+
   it('offers the token on a gated row', async () => {
     const user = userEvent.setup();
     const onAddToken = vi.fn();

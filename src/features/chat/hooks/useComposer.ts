@@ -34,7 +34,8 @@ interface ComposerOptions {
   /** Whether `/compact` has anything to fold. */
   canCompact: boolean;
   onCompact: (_conversationId: string) => void;
-  attachments: Pick<AttachmentImport, 'staged' | 'importStaged' | 'takePictures'>;
+  attachments: Pick<AttachmentImport, 'staged' | 'importStaged' | 'takePictures'> &
+    Partial<Pick<AttachmentImport, 'isImporting' | 'cancelImport'>>;
 }
 
 /**
@@ -69,8 +70,19 @@ export function useComposer({
   // Kept per conversation, so leaving the pane or the chat does not lose it.
   const [input, setInput] = useDraft(conversationId ? conversationDraftKey(conversationId) : null);
   const [isControlsOpen, setIsControlsOpen] = useState(false);
+  const [isImportingAttachments, setIsImportingAttachments] = useState(false);
+  const importingAttachmentsRef = useRef(false);
+  const importAttemptRef = useRef(0);
+  const conversationIdRef = useRef(conversationId);
+  conversationIdRef.current = conversationId;
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    importAttemptRef.current += 1;
+    importingAttachmentsRef.current = false;
+    setIsImportingAttachments(false);
+  }, [conversationId]);
   // Typing is never blocked during a turn (a turn can run for many minutes);
   // only submitting is, in handleSubmit.
   useRefocusAfterTurn(isSending, textareaRef);
@@ -169,6 +181,10 @@ export function useComposer({
 
   /** Sends `message` with what is waiting to join it; `accepted` runs once it is going. */
   const sendTurn = async (message: string, accepted?: () => void): Promise<GenerationOutcome | undefined> => {
+    if (importingAttachmentsRef.current || isImportingAttachments || attachments.isImporting) {
+      return undefined;
+    }
+    const targetConversationId = conversationId;
     // Staged files join the conversation *with* this message: import them
     // first so the turn can already draw on them, and let the message carry
     // their names and ids. The names draw the chips; the ids are what makes
@@ -179,10 +195,23 @@ export function useComposer({
     let attachmentNames: string[] | undefined;
     let attachmentDocumentIds: string[] | undefined;
     if (attachments.staged.length > 0) {
-      const imported = await attachments.importStaged();
-      if (imported === null) return undefined;
-      if (imported.names.length > 0) attachmentNames = imported.names;
-      if (imported.documentIds.length > 0) attachmentDocumentIds = imported.documentIds;
+      const attemptId = ++importAttemptRef.current;
+      importingAttachmentsRef.current = true;
+      setIsImportingAttachments(true);
+      try {
+        const imported = await attachments.importStaged();
+        if (imported === null) return undefined;
+        // If the user switched conversations while the import was in flight,
+        // do not fire the turn against the new conversation or clear its draft.
+        if (conversationIdRef.current !== targetConversationId) return undefined;
+        if (imported.names.length > 0) attachmentNames = imported.names;
+        if (imported.documentIds.length > 0) attachmentDocumentIds = imported.documentIds;
+      } finally {
+        if (importAttemptRef.current === attemptId) {
+          importingAttachmentsRef.current = false;
+          setIsImportingAttachments(false);
+        }
+      }
     }
     // Pictures are already stored; the send claims them by id.
     const pictures = attachments.takePictures();
@@ -191,7 +220,7 @@ export function useComposer({
 
     return sendMessage(
       message,
-      conversationId,
+      targetConversationId,
       resolveEffectiveToolPreferences(),
       attachmentNames,
       attachmentDocumentIds,
@@ -201,7 +230,16 @@ export function useComposer({
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isSending || !conversationId) return;
+    if (
+      !input.trim() ||
+      isSending ||
+      isImportingAttachments ||
+      importingAttachmentsRef.current ||
+      attachments.isImporting ||
+      !conversationId
+    ) {
+      return;
+    }
     // Block submit while warming up or before chat model downloads.
     if (useModelWarmupStore.getState().chat.phase === 'started') return;
     if (isChatUnavailable) return;
@@ -239,7 +277,17 @@ export function useComposer({
    */
   const sendSpoken = (message: string): Promise<GenerationOutcome | undefined> => {
     const warming = useModelWarmupStore.getState().chat.phase === 'started';
-    if (!conversationId || warming || isChatUnavailable || isCompacting) return Promise.resolve(undefined);
+    if (
+      !conversationId ||
+      warming ||
+      isChatUnavailable ||
+      isCompacting ||
+      isImportingAttachments ||
+      importingAttachmentsRef.current ||
+      attachments.isImporting
+    ) {
+      return Promise.resolve(undefined);
+    }
     return sendTurn(message);
   };
 
@@ -387,6 +435,7 @@ export function useComposer({
     toggleCustomTool,
     removeMode,
     suggest,
+    isImportingAttachments,
     handleKeyDown,
     handleSubmit,
     sendSpoken,

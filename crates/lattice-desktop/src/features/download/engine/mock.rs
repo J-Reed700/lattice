@@ -3,6 +3,8 @@ use super::*;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+type SizeCallHistory = Vec<(String, Option<String>)>;
+
 pub struct MockDownloadEngine {
     file_sizes: Arc<Mutex<HashMap<String, Option<u64>>>>,
     supports_resume: Arc<Mutex<HashMap<String, bool>>>,
@@ -23,6 +25,7 @@ pub struct MockDownloadEngine {
     /// Makes `get_file_size` wait on this signal, so a test can hold a HEAD in flight.
     size_gate: Arc<Mutex<Option<Arc<tokio::sync::Notify>>>>,
     size_calls: Arc<Mutex<usize>>,
+    size_call_history: Arc<Mutex<SizeCallHistory>>,
 }
 
 impl MockDownloadEngine {
@@ -40,6 +43,7 @@ impl MockDownloadEngine {
             write_len: Arc::new(Mutex::new(None)),
             size_gate: Arc::new(Mutex::new(None)),
             size_calls: Arc::new(Mutex::new(0)),
+            size_call_history: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -57,7 +61,15 @@ impl MockDownloadEngine {
 
     /// How many times `get_file_size` was called.
     pub fn file_size_calls(&self) -> usize {
-        *self.size_calls.lock().unwrap()
+        *self.size_calls.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Recorded `(url, auth_token)` pairs passed to `get_file_size`.
+    pub fn get_file_size_calls(&self) -> SizeCallHistory {
+        self.size_call_history
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Park `download` indefinitely so pause/cancel can be tested
@@ -224,13 +236,25 @@ impl DownloadEngine for MockDownloadEngine {
         }
     }
 
-    async fn get_file_size(&self, url: &str) -> Result<(Option<u64>, String), DownloadError> {
-        *self.size_calls.lock().unwrap() += 1;
-        let gate = self.size_gate.lock().unwrap().clone();
+    async fn get_file_size(
+        &self,
+        url: &str,
+        auth_token: Option<&str>,
+    ) -> Result<(Option<u64>, String), DownloadError> {
+        *self.size_calls.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+        self.size_call_history
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((url.to_string(), auth_token.map(str::to_string)));
+        let gate = self
+            .size_gate
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         if let Some(gate) = gate {
             gate.notified().await;
         }
-        let sizes = self.file_sizes.lock().unwrap();
+        let sizes = self.file_sizes.lock().unwrap_or_else(|e| e.into_inner());
         let size = sizes.get(url).copied().unwrap_or(Some(1000));
         Ok((size, url.to_string()))
     }

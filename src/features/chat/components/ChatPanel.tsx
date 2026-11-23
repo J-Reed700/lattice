@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { motion, useReducedMotion } from 'framer-motion';
+import { AlertCircle, X } from 'lucide-react';
 
 import { ChatEmptyStateIngestDelta } from '@/features/chat/components/ChatEmptyStateIngestDelta';
 import { chatPaletteCommands } from '@/features/chat/components/chatPaletteCommands';
@@ -61,13 +62,23 @@ export interface ChatPanelProps {
   embedded?: boolean;
   /** Focus the composer when the chat opens. */
   autoFocus?: boolean;
+  /** Render the store error banner inside this panel (e.g. when the sidebar is collapsed or absent). */
+  showErrorBanner?: boolean;
 }
 
 const DEFAULT_CHOICE: ChatModelChoice = { kind: 'default' };
 const NO_COMMANDS: PaletteCommand[] = [];
 const EMPTY_OPTIMISTIC: readonly OptimisticMessage[] = [];
 
-export function ChatPanel({ composerNotice, composerChips, starters, startersNote, embedded = false, autoFocus = false }: ChatPanelProps = {}) {
+export function ChatPanel({
+  composerNotice,
+  composerChips,
+  starters,
+  startersNote,
+  embedded = false,
+  autoFocus = false,
+  showErrorBanner,
+}: ChatPanelProps = {}) {
   const { downloadedModels } = useDownloadedModels();
   const { activeModels } = useActiveModels();
   const { catalogs } = useCloudModelCatalogs();
@@ -116,6 +127,8 @@ export function ChatPanel({ composerNotice, composerChips, starters, startersNot
   );
   const messageRetrieval = useConversationsStore((state) => state.messageRetrieval);
   const cancelGeneration = useConversationsStore((state) => state.cancelGeneration);
+  const error = useConversationsStore((state) => state.error);
+  const clearError = useConversationsStore((state) => state.clearError);
   const createConversation = useConversationsStore((state) => state.createConversation);
   const regenerateResponse = useConversationsStore((state) => state.regenerateResponse);
   const forkConversation = useConversationsStore((state) => state.forkConversation);
@@ -326,12 +339,37 @@ export function ChatPanel({ composerNotice, composerChips, starters, startersNot
   );
   useRegisterPaletteCommands(embedded ? NO_COMMANDS : paletteCommands);
 
+  const shouldShowErrorBanner = (showErrorBanner ?? !embedded) && Boolean(error);
+  const errorBanner = shouldShowErrorBanner && error ? (
+    <div
+      role="alert"
+      className="mx-6 mt-3 flex shrink-0 items-center justify-between gap-3 rounded-sm border border-[hsl(var(--danger-muted))] bg-[hsl(var(--danger-muted))] px-3 py-2"
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <AlertCircle className="h-4 w-4 shrink-0 text-[hsl(var(--danger-fg))]" />
+        <p className="text-xs text-[hsl(var(--danger-fg))] break-words">{error}</p>
+      </div>
+      <button
+        type="button"
+        onClick={() => clearError?.()}
+        className="shrink-0 text-[hsl(var(--danger-fg))] opacity-70 transition-opacity hover:opacity-100"
+        aria-label="Dismiss error"
+        title="Dismiss"
+      >
+        <X className="h-3 w-3" />
+      </button>
+    </div>
+  ) : null;
+
   if (!activeConversationId) {
     return (
-      <NoConversationOpen
-        isCreatingConversation={isCreatingConversation}
-        onCreate={handleCreateEmptyStateConversation}
-      />
+      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-bg">
+        {errorBanner}
+        <NoConversationOpen
+          isCreatingConversation={isCreatingConversation}
+          onCreate={handleCreateEmptyStateConversation}
+        />
+      </div>
     );
   }
 
@@ -354,6 +392,7 @@ export function ChatPanel({ composerNotice, composerChips, starters, startersNot
           <UtilityModelNotice />
         </>
       )}
+      {errorBanner}
       <ConversationMemoryPanel
         conversationId={activeConversationId}
         isOpen={isMemoryOpen}

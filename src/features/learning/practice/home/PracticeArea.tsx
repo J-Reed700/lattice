@@ -4,7 +4,8 @@ import { ArrowLeft } from 'lucide-react';
 
 import { CourseDrillsPanel } from '@/features/learning/drills/CourseDrillsPanel';
 import { FeynmanTechniquePanel } from '@/features/learning/practice/FeynmanTechniquePanel';
-import { CodingEntry, kinds } from '@/features/learning/practice/kinds';
+import { CodingEntry, kinds, type CodingBuildChoice } from '@/features/learning/practice/kinds';
+import { isCodingBuildActive, sameCodingBuildChoice, useCodingBuildStore } from '@/features/learning/practice/kinds/program/codingBuildStore';
 import { PracticalWorkbenchPanel } from '@/features/learning/practice/practical/PracticalWorkbenchPanel';
 import { PracticeWorkbenchPanel } from '@/features/learning/practice/PracticeWorkbenchPanel';
 import { PracticeSession } from '@/features/learning/practice/session/PracticeSession';
@@ -42,16 +43,41 @@ export function PracticeArea({ program, currentLesson, currentModule, view }: Pr
   const [startError, setStartError] = useState<string | null>(null);
   const kind = view.view.kind;
   const subView = kind === 'attempt' || kind === 'activity' || kind === 'drill';
+  const codingBuild = useCodingBuildStore((store) => store.handles[programId]);
+  const clearCodingBuild = useCodingBuildStore((store) => store.clearHandle);
+  const discardCodingBuild = useCodingBuildStore((store) => store.discardBuild);
+
+  const openOrReattachCodingBuild = useCallback(
+    (choice: CodingBuildChoice) => {
+      if (
+        (isCodingBuildActive(codingBuild) || codingBuild?.phase.kind === 'built') &&
+        codingBuild &&
+        sameCodingBuildChoice(codingBuild.choice, choice)
+      ) {
+        view.openCodingBuild(codingBuild.choice);
+        return;
+      }
+      if (codingBuild) {
+        if (isCodingBuildActive(codingBuild)) {
+          discardCodingBuild(programId);
+        } else {
+          clearCodingBuild(programId);
+        }
+      }
+      view.openCodingBuild(choice);
+    },
+    [clearCodingBuild, codingBuild, discardCodingBuild, programId, view],
+  );
 
   const start = useCallback(
     (action: StartAction) => {
       setStartError(null);
-      if (action.kind === 'coding-build') view.openCodingBuild(action.choice);
+      if (action.kind === 'coding-build') openOrReattachCodingBuild(action.choice);
       else if (action.kind === 'activity') view.openActivity(null, action.composer);
       else if (action.kind === 'attempt') view.openAttempt(action.mode);
       else view.openDrill();
     },
-    [view],
+    [openOrReattachCodingBuild, view],
   );
 
   const openTarget = useCallback(
@@ -84,7 +110,7 @@ export function PracticeArea({ program, currentLesson, currentModule, view }: Pr
   const startDue = useCallback(
     (item: Wire.DueItemDto) => {
       if (item.kind === 'coding_patterns') {
-        view.openCodingBuild({
+        openOrReattachCodingBuild({
           lessonId: item.lessonId ?? currentLesson?.id ?? null,
           form: 'build',
           setting: 'coached',
@@ -95,12 +121,12 @@ export function PracticeArea({ program, currentLesson, currentModule, view }: Pr
         view.openDrill();
       }
     },
-    [currentLesson?.id, view],
+    [currentLesson?.id, openOrReattachCodingBuild, view],
   );
 
   const tryInterview = useCallback(
     (setting: Wire.Setting) => {
-      view.openCodingBuild({
+      openOrReattachCodingBuild({
         lessonId: currentLesson?.id ?? null,
         form: 'build',
         setting,
@@ -108,7 +134,7 @@ export function PracticeArea({ program, currentLesson, currentModule, view }: Pr
         difficulty: MOCK_DIFFICULTY,
       });
     },
-    [currentLesson?.id, view],
+    [currentLesson?.id, openOrReattachCodingBuild],
   );
 
   const openSubTab = (id: SubTabId) => {
@@ -189,11 +215,20 @@ export function PracticeArea({ program, currentLesson, currentModule, view }: Pr
           onOpenTarget={openTarget}
           onStartDue={startDue}
           onOpenWorkbench={() => view.openActivity()}
+          onResumeBuild={view.openCodingBuild}
         />
       )}
 
       {view.view.kind === 'coding-build' && (
-        <CodingEntry programId={programId} choice={view.view.choice} onReady={view.openCoding} onCancel={view.openHome} />
+        <CodingEntry
+          programId={programId}
+          choice={view.view.choice}
+          onReady={view.openCoding}
+          onCancel={() => {
+            discardCodingBuild(programId);
+            view.openHome();
+          }}
+        />
       )}
       {view.view.kind === 'coding' && (
         <PracticeSession key={view.view.sessionId} programId={programId} sessionId={view.view.sessionId} kinds={kinds} onExit={view.openHome} onTryInterview={tryInterview} />

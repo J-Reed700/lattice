@@ -79,6 +79,10 @@ function nearestScrollable(element: HTMLElement): HTMLElement | null {
 
 export interface PassageHighlighterProps {
   locator?: PassageLocator | null;
+  /** True while the underlying viewer is still loading its content. */
+  isLoading?: boolean;
+  /** Changes when loaded document text updates so locating re-runs against the mounted DOM. */
+  contentKey?: string;
   /** Reported once per locate attempt so the rail can say what happened. */
   onMatch?: (_tier: PassageMatchTier) => void;
   className?: string;
@@ -87,6 +91,8 @@ export interface PassageHighlighterProps {
 
 export function PassageHighlighter({
   locator,
+  isLoading = false,
+  contentKey,
   onMatch,
   className,
   children,
@@ -100,7 +106,7 @@ export function PassageHighlighter({
 
   useEffect(() => {
     const container = containerRef.current;
-    if (!container) return;
+    if (!container || isLoading) return;
 
     const report = (tier: PassageMatchTier) => onMatchRef.current?.(tier);
 
@@ -111,11 +117,36 @@ export function PassageHighlighter({
 
     const markedBlocks: HTMLElement[] = [];
     let cancelled = false;
+    let observer: MutationObserver | null = null;
+    let retryFrame = 0;
+    let observerTimeout: ReturnType<typeof setTimeout> | undefined;
+    let didApproximateScroll = false;
+    let lastReportedTier: PassageMatchTier | null = null;
 
-    // Content arrives asynchronously in every viewer (markdown parse, syntax
-    // highlighting, fetch), so locate after a frame rather than racing it.
-    const frame = requestAnimationFrame(() => {
-      if (cancelled) return;
+    const reportOnce = (tier: PassageMatchTier) => {
+      if (lastReportedTier === tier) return;
+      lastReportedTier = tier;
+      report(tier);
+    };
+
+    const clearMarks = () => {
+      while (markedBlocks.length > 0) {
+        markedBlocks.pop()?.classList.remove(BLOCK_CLASS);
+      }
+    };
+
+    const stopObserver = () => {
+      observer?.disconnect();
+      observer = null;
+      if (observerTimeout !== undefined) {
+        clearTimeout(observerTimeout);
+        observerTimeout = undefined;
+      }
+    };
+
+    const locate = (): boolean => {
+      if (cancelled) return false;
+      clearMarks();
 
       const { haystack, spans } = collectText(container);
       let hitStart = -1;
@@ -132,15 +163,18 @@ export function PassageHighlighter({
 
       if (hitStart < 0) {
         if (typeof chunkIndex === 'number') {
-          const scroller = nearestScrollable(container);
-          if (scroller) {
-            scroller.scrollTop = approximateScrollRatio(chunkIndex) * scroller.scrollHeight;
+          if (!didApproximateScroll && haystack.length > 0) {
+            const scroller = nearestScrollable(container);
+            if (scroller) {
+              scroller.scrollTop = approximateScrollRatio(chunkIndex) * scroller.scrollHeight;
+              didApproximateScroll = true;
+            }
           }
-          report('approximate');
+          reportOnce('approximate');
         } else {
-          report('none');
+          reportOnce('none');
         }
-        return;
+        return false;
       }
 
       const startSpan = spans.find((span) => span.end > hitStart);
@@ -149,8 +183,8 @@ export function PassageHighlighter({
       const endBlock = endSpan ? nearestBlock(endSpan.node, container) : null;
 
       if (!startBlock) {
-        report('none');
-        return;
+        reportOnce('none');
+        return false;
       }
 
       const allBlocks = Array.from(container.querySelectorAll<HTMLElement>(BLOCK_SELECTOR));
@@ -173,16 +207,36 @@ export function PassageHighlighter({
         block: 'center',
         behavior: prefersReducedMotion() ? 'auto' : 'smooth',
       });
-      report('exact');
+      reportOnce('exact');
+      return true;
+    };
+
+    // Content arrives asynchronously in every viewer (markdown parse, syntax
+    // highlighting, fetch), so locate after a frame rather than racing it, and
+    // watch briefly for late DOM mounts if the first pass ran before render settled.
+    const frame = requestAnimationFrame(() => {
+      if (cancelled) return;
+      if (locate() || typeof MutationObserver === 'undefined') return;
+
+      observer = new MutationObserver(() => {
+        if (cancelled || retryFrame !== 0) return;
+        retryFrame = requestAnimationFrame(() => {
+          retryFrame = 0;
+          if (locate()) stopObserver();
+        });
+      });
+      observer.observe(container, { childList: true, subtree: true, characterData: true });
+      observerTimeout = setTimeout(stopObserver, 5000);
     });
 
     return () => {
       cancelled = true;
       cancelAnimationFrame(frame);
-      for (const block of markedBlocks) block.classList.remove(BLOCK_CLASS);
-
+      if (retryFrame !== 0) cancelAnimationFrame(retryFrame);
+      stopObserver();
+      clearMarks();
     };
-  }, [locatorText, chunkIndex]);
+  }, [locatorText, chunkIndex, isLoading, contentKey]);
 
   return (
     <div ref={containerRef} className={className}>

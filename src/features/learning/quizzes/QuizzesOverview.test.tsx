@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { LessonQuizCallout } from '@/features/learning/quizzes/LessonQuizCallout';
 import { percent } from '@/features/learning/quizzes/quizCopy';
+import { resetQuizLauncherStore } from '@/features/learning/quizzes/quizLauncherStore';
 import { quizForm, quizOverview, quizStatus } from '@/features/learning/quizzes/quizTestData';
 import { QuizzesOverview } from '@/features/learning/quizzes/QuizzesOverview';
 import type { LearningLessonDto, LearningProgramDto, LearningQuizOverviewDto } from '@/lib/bindings';
@@ -41,7 +42,10 @@ function withLesson(quiz: Partial<LearningQuizOverviewDto['modules'][number]['le
 }
 
 describe('Quizzes overview', () => {
-  beforeEach(() => vi.resetAllMocks());
+  beforeEach(() => {
+    vi.resetAllMocks();
+    resetQuizLauncherStore();
+  });
 
   it('lists the exam, each module test and every lesson quiz with its verdict in words', async () => {
     const overview = withLesson({ verdict: 'not_passed', best: attempt(0.63), latest: attempt(0.63), attempts: 2, freshItems: 5 });
@@ -71,10 +75,77 @@ describe('Quizzes overview', () => {
     await waitFor(() => expect(onFormIdChange).toHaveBeenCalledWith('new-form'));
     expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ scope: { kind: 'lesson', id: 'lesson-1' }, mode: 'graded', retakeOfFormId: 'latest' }));
   });
+
+  it('tracks independent per-quiz busy states and errors and disables Prepare all while running', async () => {
+    const user = userEvent.setup();
+    const overview = quizOverview();
+    overview.exam = quizStatus({ scope: { kind: 'course', id: null }, title: 'Course exam', bankStatus: 'not_prepared' });
+    overview.modules[0].test = quizStatus({ scope: { kind: 'module', id: 'module-1' }, title: 'Module 1 test', bankStatus: 'not_prepared' });
+    overview.modules[0].lessons[0].quiz = quizStatus({ scope: { kind: 'lesson', id: 'lesson-1' }, title: 'Enzyme kinetics', bankStatus: 'not_prepared' });
+    api.overview.mockResolvedValue(ok(overview));
+
+    let resolveExam!: (v: unknown) => void;
+    let resolveModule!: (v: unknown) => void;
+    api.prepare
+      .mockImplementationOnce(() => new Promise((r) => { resolveExam = r; }))
+      .mockImplementationOnce(() => new Promise((r) => { resolveModule = r; }))
+      .mockResolvedValueOnce(ok({ id: 'job-3' }));
+
+    wrap(<QuizzesOverview program={program} formId={null} onFormIdChange={vi.fn()} onOpenLesson={vi.fn()} />);
+    const prepareAllBtn = await screen.findByRole('button', { name: 'Prepare all' });
+    await user.click(prepareAllBtn);
+    expect(screen.getByRole('button', { name: 'Preparing all…' })).toBeDisabled();
+
+    resolveExam({ ok: false, error: 'Exam bank failed' });
+    expect(await screen.findByText('Exam bank failed')).toBeVisible();
+
+    resolveModule({ ok: false, error: 'Module test bank failed' });
+    expect(await screen.findByText('Module test bank failed')).toBeVisible();
+    // Earlier quiz error stays visible when the next quiz finishes/fails.
+    expect(screen.getByText('Exam bank failed')).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'Prepare all' })).toBeEnabled();
+  });
+
+  it('keeps the first quiz busy while launching a second quiz concurrently', async () => {
+    const user = userEvent.setup();
+    const overview = quizOverview();
+    overview.exam = quizStatus({ scope: { kind: 'course', id: null }, title: 'Course exam', bankStatus: 'ready', bankSize: 8 });
+    overview.modules[0].lessons[0].quiz = quizStatus({ scope: { kind: 'lesson', id: 'lesson-1' }, title: 'Enzyme kinetics', bankStatus: 'ready', bankSize: 8 });
+    api.overview.mockResolvedValue(ok(overview));
+
+    let resolveFirst!: (v: unknown) => void;
+    let resolveSecond!: (v: unknown) => void;
+    api.start
+      .mockImplementationOnce(() => new Promise((r) => { resolveFirst = r; }))
+      .mockImplementationOnce(() => new Promise((r) => { resolveSecond = r; }));
+
+    wrap(<QuizzesOverview program={program} formId={null} onFormIdChange={vi.fn()} onOpenLesson={vi.fn()} />);
+    const examRegion = (await screen.findByRole('heading', { name: 'Course exam' })).closest('section')!;
+    const moduleRegion = screen.getByRole('region', { name: /Module 1/ });
+
+    await user.click(within(examRegion).getByRole('button', { name: /Start exam/i }));
+    expect(within(examRegion).getByRole('button', { name: 'Starting…' })).toBeDisabled();
+
+    await user.click(within(moduleRegion).getByRole('button', { name: /Start quiz/i }));
+    // Starting the second quiz must not clear the busy state on the first.
+    expect(within(examRegion).getByRole('button', { name: 'Starting…' })).toBeDisabled();
+    expect(within(moduleRegion).getByRole('button', { name: 'Starting…' })).toBeDisabled();
+
+    resolveSecond({ ok: false, error: 'Lesson quiz failed' });
+    expect(await within(moduleRegion).findByText('Lesson quiz failed')).toBeVisible();
+    expect(within(examRegion).getByRole('button', { name: 'Starting…' })).toBeDisabled();
+
+    resolveFirst({ ok: false, error: 'Exam failed' });
+    expect(await within(examRegion).findByText('Exam failed')).toBeVisible();
+    expect(within(moduleRegion).getByText('Lesson quiz failed')).toBeVisible();
+  });
 });
 
 describe('lesson quiz callout', () => {
-  beforeEach(() => vi.resetAllMocks());
+  beforeEach(() => {
+    vi.resetAllMocks();
+    resetQuizLauncherStore();
+  });
   const enzyme = program.modules[0].lessons[0];
 
   it('offers the quiz, a practice round, and says nothing has been taken', async () => {
@@ -131,5 +202,39 @@ describe('lesson quiz callout', () => {
     await user.click(await screen.findByRole('button', { name: 'Resume' }));
     expect(onOpenForm).toHaveBeenCalledWith('paused-form');
     expect(screen.getByText('Paused · Resume')).toBeVisible();
+  });
+
+  it('preserves Prepare all progress and per-quiz errors across unmount and remount', async () => {
+    const user = userEvent.setup();
+    const overview = quizOverview();
+    overview.exam = quizStatus({ scope: { kind: 'course', id: null }, title: 'Course exam', bankStatus: 'not_prepared' });
+    overview.modules[0].test = quizStatus({ scope: { kind: 'module', id: 'module-1' }, title: 'Module 1 test', bankStatus: 'not_prepared' });
+    api.overview.mockResolvedValue(ok(overview));
+
+    let resolveExam!: (v: unknown) => void;
+    api.prepare
+      .mockImplementationOnce(() => new Promise((r) => { resolveExam = r; }))
+      .mockResolvedValueOnce({ ok: false, error: 'Module test failed' });
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const renderOverview = () => render(
+      <QueryClientProvider client={client}>
+        <QuizzesOverview program={program} formId={null} onFormIdChange={vi.fn()} onOpenLesson={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    const view1 = renderOverview();
+    await user.click(await screen.findByRole('button', { name: 'Prepare all' }));
+    expect(screen.getByRole('button', { name: 'Preparing all…' })).toBeDisabled();
+    view1.unmount();
+
+    const view2 = renderOverview();
+    expect(await screen.findByRole('button', { name: 'Preparing all…' })).toBeDisabled();
+
+    resolveExam({ ok: false, error: 'Exam failed while unmounted' });
+    expect(await screen.findByText('Exam failed while unmounted')).toBeVisible();
+    expect(await screen.findByText('Module test failed')).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'Prepare all' })).toBeEnabled();
+    view2.unmount();
   });
 });

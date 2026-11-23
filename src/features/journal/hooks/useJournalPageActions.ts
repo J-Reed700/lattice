@@ -60,9 +60,10 @@ export function useJournalPageActions(options: {
   const [pageToName, setPageToName] = useState<string | null>(null);
 
   const handleNewPage = useCallback(async () => {
+    if (!requestedJournalSpaceId || !journalSpace) return;
     const created = await createPage(UNTITLED_PAGE);
     if (created) setPageToName(created.id);
-  }, [createPage]);
+  }, [createPage, journalSpace, requestedJournalSpaceId]);
 
   const handleRenamePage = useCallback(
     async (noteId: string, title: string) => {
@@ -90,12 +91,13 @@ export function useJournalPageActions(options: {
   // start a new page: writing is what a journal is for. (A `?new=1` that
   // arrives before the page list has loaded waits for it.)
   useEffect(() => {
+    if (!requestedJournalSpaceId || !journalSpace) return;
     const onNew = () => {
       void handleNewPage();
     };
     window.addEventListener(NEW_ITEM_EVENT, onNew);
     return () => window.removeEventListener(NEW_ITEM_EVENT, onNew);
-  }, [handleNewPage]);
+  }, [handleNewPage, journalSpace, requestedJournalSpaceId]);
 
   useEffect(() => {
     if (searchParams.get('new') !== '1' || !requestedJournalSpaceId || isLoadingNote) return;

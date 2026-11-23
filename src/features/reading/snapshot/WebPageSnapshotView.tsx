@@ -271,7 +271,7 @@ export function WebPageSnapshotView({
         />
         {snapshot?.status === 'ready' ? (
           <LinkBar
-            conversationId={conversationId}
+            conversationId={snapshot.conversationId || conversationId}
             snapshotId={snapshot.id}
             onOpenFrozenCopy={(next) => setSwitched({ forUrl: url, snapshot: next })}
           />

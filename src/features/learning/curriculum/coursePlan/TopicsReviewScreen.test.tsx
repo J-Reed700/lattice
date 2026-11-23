@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { learningCoursePlanKey } from '@/features/learning/api/learningQueryKeys';
 import { entry, ok, planView, topics } from '@/features/learning/curriculum/coursePlan/coursePlanFixtures';
+import { resetTopicsChangeStore } from '@/features/learning/curriculum/coursePlan/topicsChangeStore';
 import { TopicsReviewScreen } from '@/features/learning/curriculum/coursePlan/TopicsReviewScreen';
 import type { CoursePlanEntryDto, LearningProgramDto } from '@/lib/bindings';
 
@@ -43,6 +44,7 @@ const card = (name: string) => screen.getByRole('article', { name });
 describe('Review topics', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    resetTopicsChangeStore();
     api.get.mockResolvedValue(ok(planView(entries())));
   });
 
@@ -238,5 +240,43 @@ describe('Review topics', () => {
     const { onBack } = show();
     await user.click(await screen.findByRole('button', { name: 'Back' }));
     expect(onBack).toHaveBeenCalled();
+  });
+
+  it('preserves Ask for a change pending state and errors across unmount and remount', async () => {
+    const user = userEvent.setup();
+    let resolveChange!: (v: unknown) => void;
+    api.change.mockImplementationOnce(() => new Promise((r) => { resolveChange = r; }));
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const renderScreen = () => render(
+      <QueryClientProvider client={client}>
+        <TopicsReviewScreen program={course} onBack={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    const view1 = renderScreen();
+    await user.click(within(await screen.findByRole('article', { name: 'Valves' })).getByRole('button', { name: 'Ask for a change' }));
+    await user.type(within(card('Valves')).getByRole('textbox', { name: 'What should change?' }), 'Focus on valve timing');
+    await user.click(within(card('Valves')).getByRole('button', { name: 'Send' }));
+    expect(screen.getByRole('status')).toHaveTextContent('Applying your topic change…');
+
+    view1.unmount();
+    const view2 = renderScreen();
+    expect(await screen.findByRole('status')).toHaveTextContent('Applying your topic change…');
+    expect(within(card('Valves')).getByRole('button', { name: 'Edit' })).toBeDisabled();
+
+    resolveChange({ ok: false, error: 'Model timed out revising Valve topics' });
+    expect(await within(card('Valves')).findByRole('alert')).toHaveTextContent('Model timed out revising Valve topics');
+    view2.unmount();
+
+    const view3 = renderScreen();
+    expect(await within(card('Valves')).findByRole('alert')).toHaveTextContent('Model timed out revising Valve topics');
+    await user.click(within(card('Valves')).getByRole('button', { name: 'Dismiss' }));
+    expect(within(card('Valves')).queryByRole('alert')).not.toBeInTheDocument();
+    view3.unmount();
+
+    renderScreen();
+    await screen.findByRole('article', { name: 'Valves' });
+    expect(within(card('Valves')).queryByRole('alert')).not.toBeInTheDocument();
   });
 });

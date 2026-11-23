@@ -453,25 +453,15 @@ impl LearningAssessmentRepository {
             .filter(|_| live)
             .map(|j| j.get::<String, _>("id"));
         if !live {
-            let reason = match job
+            let status = job.as_ref().map(|j| j.get::<String, _>("status"));
+            let error_message = job
                 .as_ref()
-                .map(|j| j.get::<String, _>("status"))
-                .as_deref()
-            {
-                Some("cancelled") => "Grading stopped. Resume grading to finish.".to_string(),
-                Some("failed") => format!(
-                    "Couldn't grade yet: {}",
-                    job.as_ref()
-                        .and_then(|j| j.get::<Option<String>, _>("error_message"))
-                        .unwrap_or_else(|| "the grader stopped with an error.".into())
-                ),
-                _ => "Couldn't grade yet. Retry grading.".into(),
-            };
-            for result in results.iter_mut().filter(|r| {
-                r.grade_status == LearningAssessmentGradeStatus::Pending && r.feedback.is_empty()
-            }) {
-                result.feedback = reason.clone();
-            }
+                .and_then(|j| j.get::<Option<String>, _>("error_message"));
+            apply_unlive_grading_feedback(
+                &mut results,
+                status.as_deref(),
+                error_message.as_deref(),
+            );
         }
         Ok(Some(LearningAssessmentSubmissionDto {
             score: r.get("score"),
@@ -617,11 +607,58 @@ impl LearningAssessmentRepository {
     }
 }
 
+fn apply_unlive_grading_feedback(
+    results: &mut [LearningAssessmentItemResultDto],
+    job_status: Option<&str>,
+    error_message: Option<&str>,
+) {
+    let cancelled = matches!(job_status, Some("cancelled"));
+    let reason = match job_status {
+        Some("cancelled") => "Grading stopped. Resume grading to finish.".to_string(),
+        Some("failed") => format!(
+            "Couldn't grade yet: {}",
+            error_message.unwrap_or("the grader stopped with an error.")
+        ),
+        _ => "Couldn't grade yet. Retry grading.".into(),
+    };
+    for result in results.iter_mut().filter(|r| {
+        r.grade_status == LearningAssessmentGradeStatus::Pending
+            && (r.feedback.is_empty()
+                || (cancelled && r.feedback.starts_with("Couldn't grade yet")))
+    }) {
+        result.feedback = reason.clone();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::assessment_engine::LearningItemFormat as Format;
     use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
+
+    #[test]
+    fn unlive_cancelled_grading_marks_pending_items_stopped() {
+        let mut results = vec![LearningAssessmentItemResultDto {
+            item_id: "q1".into(),
+            outcome_ids: vec![],
+            score: 0.0,
+            correct: None,
+            grade_status: LearningAssessmentGradeStatus::Pending,
+            feedback: "Couldn't grade yet. Retry grading.".into(),
+            points_earned: 0.0,
+            points_possible: 4.0,
+            detail: String::new(),
+            learner_override: false,
+            rationale: None,
+            part_results: vec![],
+            contest: None,
+        }];
+        apply_unlive_grading_feedback(&mut results, Some("cancelled"), None);
+        assert_eq!(
+            results[0].feedback,
+            "Grading stopped. Resume grading to finish."
+        );
+    }
 
     fn answer(text: String) -> engine::LearningAssessmentResponse {
         let mut response = engine::LearningAssessmentResponse::empty("item");

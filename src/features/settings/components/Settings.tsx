@@ -98,14 +98,21 @@ const footerButtonClass =
   'flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-xs text-text-secondary transition-colors duration-fast hover:bg-surface-raised hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50';
 
 export function Settings() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const requestedTab = searchParams.get('tab');
   const [activeTab, setActiveTab] = useState<SettingsTab>(() =>
     requestedTab && tabIds.has(requestedTab) ? requestedTab as SettingsTab : 'search'
   );
   useEffect(() => {
-    if (requestedTab && tabIds.has(requestedTab)) setActiveTab(requestedTab as SettingsTab);
-  }, [requestedTab]);
+    if (!requestedTab) return;
+    if (tabIds.has(requestedTab)) {
+      setActiveTab(requestedTab as SettingsTab);
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete('tab');
+    setSearchParams(next, { replace: true });
+  }, [requestedTab, searchParams, setSearchParams]);
+
   const [showResetDialog, setShowResetDialog] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);

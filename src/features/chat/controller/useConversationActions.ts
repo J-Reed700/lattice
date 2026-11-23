@@ -4,6 +4,7 @@ import { useApi } from '@/contexts/ApiContext';
 import { useStagedPicturesStore } from '@/features/chat/images/stagedPictures';
 import { useCompactionStore } from '@/features/chat/stores/compactionStore';
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
+import { migrateStagedFiles, useStagedFilesStore } from '@/features/chat/stores/stagedFilesStore';
 import { spacesQueryOptions } from '@/features/spaces/api/queries';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 import type { VaultAPI } from '@/lib/api';
@@ -89,6 +90,7 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
     }
     queryClient.setQueryData(conversationKeys.detail(id), created);
     queryClient.setQueryData(conversationKeys.messages(id), []);
+    migrateStagedFiles(null, id);
     conversationUiStore.setState({ activeConversationId: id });
     await invalidateLists();
     return id;
@@ -267,6 +269,7 @@ export function useConversationActions({ queryClient, addRequestedId, lifecycle 
           return { byConversation };
         });
       }
+      useStagedFilesStore.getState().clear(removedId);
       if (removedId in useCompactionStore.getState().runs) {
         useCompactionStore.setState((state) => {
           const { [removedId]: _removed, ...runs } = state.runs;
