@@ -1,25 +1,18 @@
 import { type InputHTMLAttributes, forwardRef, useState, useEffect, useId } from 'react';
 
+import { cn } from '@/lib/utils';
+
 /**
  * Input
  *
- * Purpose: Text input field for user data entry
- *
- * Features:
- * - Icon support (left and right)
- * - Error state with message
- * - Helper text
- * - Loading state
- * - Dark mode support
- * - Character counter
- * - Inline validation
- * - Clear button
- *
- * States: default, focus, error, disabled, loading
- * Accessibility: WCAG AA, proper labels, error announcements
+ * Compact desktop text input field matching the Lattice 2.0 minimalist system.
+ * Default density is `md` (`h-8` / 32px, `rounded-lg`), with optional `sm` (28px)
+ * and `lg` (40px) sizes.
  */
 
-interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
+export type InputSize = 'sm' | 'md' | 'lg';
+
+export interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'size'> {
   label?: string;
   error?: string;
   helperText?: string;
@@ -31,7 +24,17 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   onClear?: () => void;
   validateOnBlur?: boolean;
   validate?: (value: string) => string | undefined;
+  /** Visual control height: `sm` (28px), `md` (32px, default), `lg` (40px). */
+  size?: InputSize;
+  /** Native HTML `size` attribute if needed. */
+  htmlSize?: number;
 }
+
+const sizeClasses: Record<InputSize, string> = {
+  sm: 'h-7 rounded-md px-2.5 text-xs',
+  md: 'h-8 rounded-lg px-2.5 text-ui',
+  lg: 'h-10 rounded-lg px-3.5 text-sm',
+};
 
 const Input = forwardRef<HTMLInputElement, InputProps>(
   (
@@ -43,7 +46,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
       rightIcon,
       isLoading,
       disabled,
-      className = '',
+      className,
       id,
       showCharCount = false,
       showClearButton = false,
@@ -55,6 +58,8 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
       validate,
       onBlur,
       onChange,
+      size = 'md',
+      htmlSize,
       ...props
     },
     ref
@@ -88,15 +93,15 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
       onClear?.();
     };
 
-    // Show right icon, loading spinner, or clear button
-    const showRightContent = rightIcon || isLoading || (showClearButton && charCount > 0);
+    const showRightContent = Boolean(rightIcon || isLoading || (showClearButton && charCount > 0));
+    const showFooter = Boolean((helperText && !error) || (showCharCount && maxLength));
 
     return (
       <div className="w-full">
         {label && (
           <label
             htmlFor={inputId}
-            className="block text-sm font-medium text-[hsl(var(--text-secondary))] mb-1.5"
+            className="mb-1.5 block text-xs font-medium text-text-secondary"
           >
             {label}
           </label>
@@ -104,7 +109,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
 
         <div className="relative">
           {leftIcon && (
-            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-[hsl(var(--text-tertiary))] pointer-events-none">
+            <div className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-text-tertiary">
               {leftIcon}
             </div>
           )}
@@ -112,6 +117,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
           <input
             ref={ref}
             id={inputId}
+            size={htmlSize}
             disabled={disabled || isLoading}
             aria-invalid={hasError}
             aria-describedby={errorId || helperId}
@@ -123,34 +129,31 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
               onChange?.(event);
             }}
             onBlur={handleBlur}
-            className={`
-              w-full px-4 py-2.5
-              bg-[hsl(var(--surface))]
-              text-[hsl(var(--text-primary))]
-              border rounded-md
-              transition-colors duration-fast
-              placeholder-[hsl(var(--text-tertiary))]
-              focus:outline-hidden focus:ring-2 focus:ring-offset-0
-              disabled:opacity-50 disabled:cursor-not-allowed
-              ${leftIcon ? 'pl-10' : ''}
-              ${showRightContent ? 'pr-10' : ''}
-              ${hasError
-                ? 'border-[hsl(var(--danger-fg))] focus:ring-[hsl(var(--danger-fg))]'
-                : 'border-[hsl(var(--border-default))] focus:ring-[hsl(var(--ring))]'
-              }
-              ${className}
-            `}
+            className={cn(
+              'w-full border bg-surface text-text-primary shadow-control transition-[border-color,box-shadow,background-color] duration-fast',
+              'placeholder:text-text-muted',
+              'focus:outline-hidden focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-offset-0',
+              'disabled:cursor-not-allowed disabled:opacity-50',
+              sizeClasses[size],
+              leftIcon && 'pl-10',
+              showRightContent && 'pr-9',
+              hasError
+                ? 'border-danger-fg focus-visible:border-danger-fg focus-visible:ring-danger-fg'
+                : 'border-border-default hover:border-border-strong focus-visible:border-accent/60 focus-visible:ring-ring disabled:hover:border-border-default',
+              className,
+            )}
             {...props}
           />
 
           {showRightContent && (
-            <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
+            <div className="absolute right-2.5 top-1/2 flex -translate-y-1/2 items-center gap-1">
               {isLoading ? (
                 <svg
-                  className="animate-spin h-4 w-4 text-[hsl(var(--text-tertiary))]"
+                  className="h-3.5 w-3.5 animate-spin text-text-tertiary"
                   xmlns="http://www.w3.org/2000/svg"
                   fill="none"
                   viewBox="0 0 24 24"
+                  aria-hidden="true"
                 >
                   <circle
                     className="opacity-25"
@@ -170,16 +173,16 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
                 <button
                   type="button"
                   onClick={handleClear}
-                  className="text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-secondary))] transition-colors duration-fast"
+                  className="rounded-sm p-0.5 text-text-tertiary transition-colors duration-fast hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                   aria-label="Clear input"
                   tabIndex={-1}
                 >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
               ) : rightIcon ? (
-                <div className="text-[hsl(var(--text-tertiary))]">{rightIcon}</div>
+                <div className="text-text-tertiary">{rightIcon}</div>
               ) : null}
             </div>
           )}
@@ -188,13 +191,14 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
         {error && (
           <p
             id={errorId}
-            className="mt-1.5 text-sm text-[hsl(var(--danger-fg))] flex items-start gap-1"
+            className="mt-1.5 flex items-start gap-1 text-xs text-danger-fg"
             role="alert"
           >
             <svg
-              className="w-4 h-4 mt-0.5 shrink-0"
+              className="mt-0.5 h-3.5 w-3.5 shrink-0"
               fill="currentColor"
               viewBox="0 0 20 20"
+              aria-hidden="true"
             >
               <path
                 fillRule="evenodd"
@@ -206,29 +210,32 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
           </p>
         )}
 
-        <div className="flex items-center justify-between mt-1.5">
-          {helperText && !error && (
-            <p
-              id={helperId}
-              className="text-sm text-[hsl(var(--text-secondary))]"
-            >
-              {helperText}
-            </p>
-          )}
-          {showCharCount && maxLength && (
-            <p
-              className={`text-xs ${
-                charCount >= maxLength
-                  ? 'text-[hsl(var(--danger-fg))]'
-                  : charCount > maxLength * 0.9
-                  ? 'text-[hsl(var(--warning-fg))]'
-                  : 'text-[hsl(var(--text-secondary))]'
-              }`}
-            >
-              {charCount} / {maxLength}
-            </p>
-          )}
-        </div>
+        {showFooter && (
+          <div className="mt-1.5 flex items-center justify-between gap-2">
+            {helperText && !error && (
+              <p
+                id={helperId}
+                className="text-xs text-text-secondary"
+              >
+                {helperText}
+              </p>
+            )}
+            {showCharCount && maxLength && (
+              <p
+                className={cn(
+                  'ml-auto text-xs tabular-nums',
+                  charCount >= maxLength
+                    ? 'text-[hsl(var(--danger-fg))]'
+                    : charCount > maxLength * 0.9
+                      ? 'text-[hsl(var(--warning-fg))]'
+                      : 'text-[hsl(var(--text-secondary))]',
+                )}
+              >
+                {charCount} / {maxLength}
+              </p>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -236,4 +243,5 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
 
 Input.displayName = 'Input';
 
+export { Input };
 export default Input;

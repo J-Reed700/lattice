@@ -87,7 +87,7 @@ function SnapshotFrame({ src, host, zoom }: SnapshotFrameProps) {
   };
 
   return (
-    <div className="relative h-full overflow-hidden rounded-md border border-subtle bg-white">
+    <div className="relative h-full overflow-hidden rounded-md border border-border-subtle bg-white">
       <iframe
         ref={frameRef}
         sandbox=""
@@ -251,7 +251,7 @@ export function WebPageSnapshotView({
         aria-label={`Frozen copy of ${host}`}
         tabIndex={-1}
         onKeyDown={onKeyDown}
-        className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-subtle bg-surface focus:outline-hidden"
+        className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-border-subtle bg-surface focus:outline-hidden"
       >
         <SnapshotToolbar
           toggle={toggle}
@@ -280,7 +280,7 @@ export function WebPageSnapshotView({
         {status ? (
           <p
             className={cn(
-              'shrink-0 truncate border-t border-subtle px-3 py-1.5 text-xs',
+              'shrink-0 truncate border-t border-border-subtle px-3 py-1.5 text-xs',
               status.failed ? 'text-[hsl(var(--danger-fg))]' : 'text-[hsl(var(--text-muted))]',
             )}
           >

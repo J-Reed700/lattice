@@ -40,7 +40,7 @@ function FullPassage({ programId, support }: { programId: string; support: Claim
         className="inline-flex min-h-9 items-center gap-1 text-xs font-medium text-text-secondary hover:text-text-primary">
         Full passage <span aria-hidden="true" className={`transition-transform ${open ? 'rotate-90' : ''}`}>▸</span>
       </button>
-      {open && <div id={id} className="mt-2 max-h-[28rem] overflow-y-auto rounded-lg border border-border bg-background px-4 py-3 text-sm">
+      {open && <div id={id} className="mt-2 max-h-[28rem] overflow-y-auto rounded-lg border border-border bg-bg px-4 py-3 text-sm">
         <TiptapViewer content={content} claims={marks} showEvidence />
       </div>}
     </div>

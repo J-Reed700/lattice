@@ -24,7 +24,7 @@
   max-height: 60vh;
   overflow: hidden;
   background: hsl(var(--surface-overlay));
-  border-radius: 14px;
+  border-radius: var(--radius-2xl);
   box-shadow: var(--shadow-lg);
 }
 
@@ -103,7 +103,7 @@
 }
 
 .command-item {
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   cursor: pointer;
   user-select: none;
 }

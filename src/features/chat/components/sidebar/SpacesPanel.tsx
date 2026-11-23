@@ -117,14 +117,14 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
         overlayClassName={`overlay-fade fixed inset-0 bg-[hsl(var(--overlay))] ${SPACES_MODAL_LAYER_CLASSES.backdrop}`}
       >
         <motion.aside
-          className={`fixed border-r border-subtle bg-surface-raised shadow-md ${SPACES_MODAL_LAYER_CLASSES.panel}`}
+          className={`fixed border-r border-border-subtle bg-surface-raised shadow-md ${SPACES_MODAL_LAYER_CLASSES.panel}`}
           style={spacesPanelFrame ?? undefined}
           initial={prefersReducedMotion ? false : { opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
         >
           <div className={`${SPACES_MODAL_LAYER_CLASSES.content} flex h-full flex-col overflow-hidden`}>
-            <div className={`flex items-center justify-between border-b border-subtle px-4 py-3 ${SPACES_MODAL_LAYER_CLASSES.section}`}>
+            <div className={`flex items-center justify-between border-b border-border-subtle px-4 py-3 ${SPACES_MODAL_LAYER_CLASSES.section}`}>
               <DialogTitle asChild>
                 <h3 className="font-serif text-sm font-semibold text-[hsl(var(--text-primary))]">Spaces</h3>
               </DialogTitle>
@@ -158,7 +158,7 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
               </div>
 
               {isCreateSpaceOpen && (
-                <div className="mt-3 space-y-2 border-t border-subtle pt-3">
+                <div className="mt-3 space-y-2 border-t border-border-subtle pt-3">
                   <input
                     value={newSpaceNameDraft}
                     onChange={(e) => setNewSpaceNameDraft(e.target.value)}
@@ -307,12 +307,12 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
               </div>
 
               {isSpaceEditorOpen && selectedSpace && (
-                <div className="mt-3 space-y-3 border-t border-subtle pt-3">
+                <div className="mt-3 space-y-3 border-t border-border-subtle pt-3">
                   <p className="text-xs font-medium text-[hsl(var(--text-secondary))]">
                     {selectedSpace.name}
                   </p>
 
-                  <details open className="border-b border-subtle pb-3">
+                  <details open className="border-b border-border-subtle pb-3">
                     <summary className="cursor-pointer text-xs text-[hsl(var(--text-secondary))]">Basics</summary>
                     <div className="mt-2 space-y-2">
                       <div className="grid grid-cols-[72px_1fr] gap-2">
@@ -362,7 +362,7 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
                     </div>
                   </details>
 
-                  <details className="border-b border-subtle pb-3">
+                  <details className="border-b border-border-subtle pb-3">
                     <summary className="cursor-pointer text-xs text-[hsl(var(--text-secondary))]">Defaults</summary>
                     <div className="mt-2 space-y-2">
                       <textarea
@@ -458,7 +458,7 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
                   </div>
 
                   {archivedSpaces.length > 0 && (
-                    <details className="border-b border-subtle pb-3">
+                    <details className="border-b border-border-subtle pb-3">
                       <summary className="cursor-pointer text-xs text-[hsl(var(--text-muted))]">
                         Archived spaces · {archivedSpaces.length}
                       </summary>
@@ -466,7 +466,7 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
                         {archivedSpaces.slice(0, 6).map((space) => (
                           <div
                             key={space.id}
-                            className="flex items-center justify-between rounded-sm border border-subtle bg-surface px-2 py-1"
+                            className="flex items-center justify-between rounded-sm border border-border-subtle bg-surface px-2 py-1"
                           >
                             <span className="text-xs text-[hsl(var(--text-secondary))] truncate">
                               {space.icon ? `${space.icon} ` : ''}{space.name}
@@ -487,7 +487,7 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
               )}
             </div>
 
-            <div className={`border-t border-subtle px-4 py-3 ${SPACES_MODAL_LAYER_CLASSES.section}`}>
+            <div className={`border-t border-border-subtle px-4 py-3 ${SPACES_MODAL_LAYER_CLASSES.section}`}>
               <p className="text-xs text-[hsl(var(--text-muted))] text-center">
                 {activeSpacesOrdered.length} space{activeSpacesOrdered.length !== 1 ? 's' : ''}
               </p>

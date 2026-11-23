@@ -165,7 +165,7 @@ export function SnapshotToolbar({
   );
 
   return (
-    <div className="flex h-10 shrink-0 items-center gap-2 border-b border-subtle bg-surface-raised px-2">
+    <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border-subtle bg-surface-raised px-2">
       {toggle}
 
       <div className="flex min-w-0 flex-1 items-center justify-center gap-1.5">

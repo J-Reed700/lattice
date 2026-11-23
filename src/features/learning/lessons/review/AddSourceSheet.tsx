@@ -183,13 +183,13 @@ export function AddSourceSheet({ programId, lessonId, revision, target, initial,
           <label htmlFor={`${id}-url`} className="sr-only">Page address</label>
           <input id={`${id}-url`} type="url" inputMode="url" autoFocus value={url} disabled={busy} placeholder="https://"
             onChange={(event) => setUrl(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') submit(); }}
-            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" />
+            className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm" />
         </>}
         {mode === 'paste' && <div className="space-y-2">
           <label htmlFor={`${id}-origin`} className="block text-xs font-medium text-text-secondary">Where it is from</label>
-          <input id={`${id}-origin`} value={origin} disabled={busy} onChange={(event) => setOrigin(event.target.value)} placeholder="Title or address of the original" className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" />
+          <input id={`${id}-origin`} value={origin} disabled={busy} onChange={(event) => setOrigin(event.target.value)} placeholder="Title or address of the original" className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm" />
           <label htmlFor={`${id}-text`} className="block text-xs font-medium text-text-secondary">Text</label>
-          <textarea id={`${id}-text`} value={text} disabled={busy} onChange={(event) => setText(event.target.value)} rows={5} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" />
+          <textarea id={`${id}-text`} value={text} disabled={busy} onChange={(event) => setText(event.target.value)} rows={5} className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm" />
         </div>}
         {mode === 'file' && (picking
           ? <LearningDocumentPicker selected={documents} onChange={setDocuments} limit={1} />
@@ -207,7 +207,7 @@ export function AddSourceSheet({ programId, lessonId, revision, target, initial,
 
       {busy && <div role="status" className="mt-3 space-y-1.5">
         <p className="flex items-center gap-2 text-xs text-text-secondary"><LoaderCircle size={13} className="shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" /><span className="min-w-0 truncate" title={progress ? progressLine(progress) : undefined}>{progress ? progressLine(progress) : add.isPending ? 'Starting…' : 'Finishing the previous source check…'}</span></p>
-        {checking && <div role="progressbar" aria-label="Statements checked" aria-valuemin={0} aria-valuemax={checking.total} aria-valuenow={checking.done} className="h-1.5 overflow-hidden rounded-full bg-background">
+        {checking && <div role="progressbar" aria-label="Statements checked" aria-valuemin={0} aria-valuemax={checking.total} aria-valuenow={checking.done} className="h-1.5 overflow-hidden rounded-full bg-bg">
           <div className="h-full rounded-full bg-accent transition-[width]" style={{ width: `${checking.total ? (checking.done / checking.total) * 100 : 0}%` }} />
         </div>}
       </div>}

@@ -5,7 +5,7 @@ import { useSettingsQuery } from '@/features/settings/hooks/useSettingsQuery';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { MODEL_SETTINGS_PATH } from '@/lib/settingsLinks';
 
-const ACTION_CLASS = 'shrink-0 rounded-md border border-border bg-surface px-3 py-1.5 text-sm font-medium text-text-primary hover:bg-background disabled:opacity-60';
+const ACTION_CLASS = 'shrink-0 rounded-md border border-border bg-surface px-3 py-1.5 text-sm font-medium text-text-primary hover:bg-bg disabled:opacity-60';
 
 function sameModelRef(
   a: NonNullable<ReturnType<typeof useSettingsQuery>['data']>['llm']['learningModel'] & object,

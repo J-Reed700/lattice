@@ -190,7 +190,7 @@ export function TeachingFindings({ programId, lessonId, findings, lessonAnchor =
           return (
           <li key={finding.findingKey}>
             <article id={teachingNoteId(finding.findingKey)} tabIndex={-1} aria-label={`${finding.unitTitle}: ${KIND_LABELS[finding.kind]}${position}`}
-              className="flex gap-3 rounded-xl border border-border bg-background p-4 focus-visible:outline-2 focus-visible:outline-accent">
+              className="flex gap-3 rounded-xl border border-border bg-bg p-4 focus-visible:outline-2 focus-visible:outline-accent">
               {isTeachingWaiting(finding) && <ReviewCheckbox checked={selection.isSelected(finding.findingKey)} label={`Select the note on ${finding.unitTitle}${position}`}
                 disabled={acting !== null} onToggle={(shiftKey) => selection.toggle(finding.findingKey, { shiftKey })} />}
               <div className="min-w-0 flex-1">

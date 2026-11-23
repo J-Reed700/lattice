@@ -12,7 +12,7 @@ const verdictWords: Record<LearningCriterionVerdict, { label: string; icon: Reac
   met: { label: 'Met', icon: <Check size={13} strokeWidth={2.5} />, className: 'bg-emerald-500/12 text-emerald-800 dark:text-emerald-200' },
   partly_met: { label: 'Partly met', icon: <CircleDot size={13} />, className: 'bg-amber-500/14 text-amber-900 dark:text-amber-200' },
   missed: { label: 'Missed', icon: <X size={13} strokeWidth={2.5} />, className: 'bg-rose-500/12 text-rose-800 dark:text-rose-200' },
-  uncertain: { label: 'Uncertain', icon: <CircleHelp size={13} />, className: 'bg-background text-text-secondary' },
+  uncertain: { label: 'Uncertain', icon: <CircleHelp size={13} />, className: 'bg-bg text-text-secondary' },
 };
 
 export function CriterionVerdict({ verdict }: { verdict: LearningCriterionVerdict }) {

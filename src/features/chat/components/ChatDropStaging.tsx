@@ -49,7 +49,7 @@ export function ChatDropStaging({
   ].filter(Boolean).join(' and ');
 
   return (
-    <div className="border-t border-subtle px-6 py-2 text-xs">
+    <div className="border-t border-border-subtle px-6 py-2 text-xs">
       {pictures.length > 0 || isAttachingPictures ? (
         <ul className="mb-2 flex flex-wrap gap-2" aria-label="Pictures for your next message">
           {pictures.map((picture) => {

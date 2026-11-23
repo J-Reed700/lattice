@@ -239,7 +239,7 @@ export function ProgramTangents({
                 </header>
 
                 <div className="shrink-0 border-b border-border-subtle p-3 space-y-2.5">
-                  <div className="flex items-center gap-1 rounded-lg bg-background p-0.5 text-xs">
+                  <div className="flex items-center gap-1 rounded-lg bg-bg p-0.5 text-xs">
                     <button
                       type="button"
                       onClick={() => setScopeFilter('lesson')}
@@ -276,7 +276,7 @@ export function ProgramTangents({
                         onChange={(e) => setSearchQuery(e.target.value)}
                         placeholder="Search tangents…"
                         aria-label="Search tangents"
-                        className="w-full rounded-md border border-border bg-background py-1.5 pl-8 pr-3 text-xs outline-hidden focus:border-accent"
+                        className="w-full rounded-md border border-border bg-bg py-1.5 pl-8 pr-3 text-xs outline-hidden focus:border-accent"
                       />
                     </div>
                   )}

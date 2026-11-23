@@ -270,7 +270,7 @@ export function ArticleText({ text, blocks, passages, activeIndex = -1, onMarkEl
             return (
               <Cell
                 key={column}
-                className={`border border-subtle px-2.5 py-1.5 align-top ${align(column)} ${
+                className={`border border-border-subtle px-2.5 py-1.5 align-top ${align(column)} ${
                   Cell === 'th' ? 'bg-[hsl(var(--text-primary)/0.04)] font-semibold' : ''
                 }`}
                 {...(Cell === 'th' ? { scope: 'col' } : {})}
@@ -295,7 +295,7 @@ export function ArticleText({ text, blocks, passages, activeIndex = -1, onMarkEl
         );
       }
       case 'rule':
-        return <hr key={block.start} className="my-6 border-subtle" />;
+        return <hr key={block.start} className="my-6 border-border-subtle" />;
       default:
         return (
           <p key={block.start} className={`mb-4 ${BODY}`}>

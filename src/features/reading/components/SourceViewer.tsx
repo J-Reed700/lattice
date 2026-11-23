@@ -103,7 +103,7 @@ export const SourceViewer = ({
     if (savedCitationText) {
       return (
         <div className="flex min-h-full flex-col">
-          <p role="status" className="mb-4 rounded-md border border-subtle bg-surface-raised px-4 py-3 text-sm text-[hsl(var(--text-secondary))]">
+          <p role="status" className="mb-4 rounded-md border border-border-subtle bg-surface-raised px-4 py-3 text-sm text-[hsl(var(--text-secondary))]">
             The original file is unavailable. Showing saved citation text; this is not a full file snapshot.
           </p>
           <TextViewer content={savedCitationText} language="text" />

@@ -50,7 +50,7 @@ export function CitationRail({
   const excerpt = locator.text?.trim() ?? '';
 
   return (
-    <aside className="hidden w-[320px] shrink-0 flex-col gap-4 overflow-y-auto border-l border-subtle bg-surface px-5 py-6 lg:flex">
+    <aside className="hidden w-[320px] shrink-0 flex-col gap-4 overflow-y-auto border-l border-border-subtle bg-surface px-5 py-6 lg:flex">
       {showNav && (
         <div className="flex items-center justify-between gap-2">
           <span className="text-xs tabular-nums text-[hsl(var(--text-muted))]">
@@ -85,7 +85,7 @@ export function CitationRail({
         </blockquote>
       )}
 
-      <div className="flex flex-col items-start gap-3 border-t border-subtle pt-4">
+      <div className="flex flex-col items-start gap-3 border-t border-border-subtle pt-4">
         <button type="button" className={VERB_CLASS} onClick={() => void onReference()}>
           <Bookmark className="h-3 w-3" strokeWidth={1.75} />
           Reference

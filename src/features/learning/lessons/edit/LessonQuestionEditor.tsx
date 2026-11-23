@@ -125,7 +125,7 @@ function EditorBody({ programId, lessonId, questionIndex, opened, onClose, onSav
     : !changed ? NO_CHANGES
     : dryError ?? (checked === null ? '' : savingLine(checked));
 
-  const field = 'mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary';
+  const field = 'mt-1 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary';
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) requestClose(); }}>
@@ -146,7 +146,7 @@ function EditorBody({ programId, lessonId, questionIndex, opened, onClose, onSav
                     onChange={() => chooseRight(index)} />
                   <label htmlFor={`${ids}-choice-${index}`} className="sr-only">Choice {index + 1}</label>
                   <input id={`${ids}-choice-${index}`} value={choice} disabled={saving} onChange={(event) => setChoice(index, event.target.value)}
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary" />
+                    className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary" />
                   <Button type="button" variant="ghost" size="sm" disabled={saving || draft.choices.length <= MIN_CHOICES}
                     onClick={() => removeChoice(index)}>Remove</Button>
                 </div>

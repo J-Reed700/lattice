@@ -14,7 +14,7 @@ export function MultiSelectEditor({ item, draft, disabled, promptId, onChange }:
     <div className="space-y-2.5">{item.options.map((option, index) => {
       const checked = draft.selectedIndices.includes(index);
       return <button key={`${index}-${option}`} type="button" role="checkbox" aria-checked={checked} disabled={disabled} onClick={() => toggle(index)}
-        className={`flex min-h-11 w-full items-start gap-3 rounded-xl border px-4 py-3 text-left text-sm leading-6 transition focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60 ${checked ? 'border-accent bg-accent/5 text-text-primary ring-1 ring-accent/30' : 'border-border text-text-secondary hover:bg-background'}`}>
+        className={`flex min-h-11 w-full items-start gap-3 rounded-xl border px-4 py-3 text-left text-sm leading-6 transition focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60 ${checked ? 'border-accent bg-accent/5 text-text-primary ring-1 ring-accent/30' : 'border-border text-text-secondary hover:bg-bg'}`}>
         <span aria-hidden="true" className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-md border ${checked ? 'border-accent bg-accent text-accent-fg' : 'border-border'}`}>{checked && <Check size={13} />}</span>
         <span className="min-w-0"><span aria-hidden="true" className="mr-1.5 font-semibold text-text-muted">{optionLetter(index)}.</span>{option}</span>
       </button>;

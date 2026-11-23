@@ -30,7 +30,7 @@ export interface ChatModelNoticeProps {
 }
 
 const ROW_CLASS =
-  'flex items-center justify-between gap-3 border-t border-subtle px-6 py-2 text-xs text-[hsl(var(--text-secondary))]';
+  'flex items-center justify-between gap-3 border-t border-border-subtle px-6 py-2 text-xs text-[hsl(var(--text-secondary))]';
 const ACTION_CLASS =
   'shrink-0 text-[hsl(var(--accent))] underline-offset-2 hover:underline';
 

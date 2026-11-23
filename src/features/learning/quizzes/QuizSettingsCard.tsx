@@ -35,7 +35,7 @@ export function QuizSettingsCard({ programId, settings, onClose }: { programId: 
   return <section aria-labelledby="quiz-settings-heading" className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
     <h3 id="quiz-settings-heading" className="font-serif text-xl text-text-primary">Quiz settings for this course</h3>
     <p className="mt-1 text-sm text-text-secondary">Pass marks change the verdict words only. Nothing is ever locked.</p>
-    <div className="mt-4 grid gap-3 sm:grid-cols-3">{fields.map(({ key, label }) => <label key={key} className="block rounded-xl border border-border bg-background/40 px-4 py-3">
+    <div className="mt-4 grid gap-3 sm:grid-cols-3">{fields.map(({ key, label }) => <label key={key} className="block rounded-xl border border-border bg-bg/40 px-4 py-3">
       <span className="text-xs font-semibold text-text-secondary">{label} pass mark</span>
       <span className="mt-1 flex items-baseline gap-1">
         <input inputMode="numeric" value={draft[key]} aria-invalid={!valid(draft[key])} onChange={(event) => setDraft((current) => ({ ...current, [key]: event.target.value.trim() }))}

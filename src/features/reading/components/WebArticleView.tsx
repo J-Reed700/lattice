@@ -309,14 +309,14 @@ export function WebArticleView({
   const renderBody = (): ReactNode => (
       <div className="mx-auto max-w-[68ch] py-5">
         {!hasSnapshotText && (
-          <p className="mb-4 rounded-md border border-subtle px-3 py-2 text-xs text-[hsl(var(--text-secondary))]">
+          <p className="mb-4 rounded-md border border-border-subtle px-3 py-2 text-xs text-[hsl(var(--text-secondary))]">
             {snapshot
               ? 'The saved page snapshot contains no text; showing the saved source excerpt instead.'
               : 'This is the saved source excerpt. A full page snapshot was not saved with this citation.'}
           </p>
         )}
         {snapshot?.truncated && (
-          <p className="mb-4 rounded-md border border-subtle px-3 py-2 text-xs text-[hsl(var(--text-secondary))]">
+          <p className="mb-4 rounded-md border border-border-subtle px-3 py-2 text-xs text-[hsl(var(--text-secondary))]">
             This saved snapshot was truncated when captured; it may not contain the full page.
           </p>
         )}
@@ -343,7 +343,7 @@ export function WebArticleView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-start justify-between gap-4 border-b border-subtle pb-4">
+      <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border-subtle pb-4">
         <div className="min-w-0">
           <p className="truncate text-xs text-[hsl(var(--text-muted))]">
             {url ? hostOf(url) : isCourseSource(source) ? 'Saved source' : 'Web source'}
@@ -360,7 +360,7 @@ export function WebArticleView({
 
       {focusedSentence && (
         <p
-          className="shrink-0 truncate border-b border-subtle py-2 text-xs text-[hsl(var(--text-secondary))]"
+          className="shrink-0 truncate border-b border-border-subtle py-2 text-xs text-[hsl(var(--text-secondary))]"
           title={focusedSentence}
         >
           <span className="text-[hsl(var(--text-muted))]">For the sentence </span>“{focusedSentence}”
@@ -368,7 +368,7 @@ export function WebArticleView({
       )}
 
       {showMatchNotice && (
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-subtle py-2">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border-subtle py-2">
           <p
             className={`text-xs ${
               // A click that found nothing has to say so louder than a count does.

@@ -72,7 +72,7 @@ export function SourceTrustSettings() {
 
       <SettingsSection title="Your site overrides" description="A site override says who the publisher is; only a site trusted for a subject can be primary for it.">
         {overrides.isLoading && <p role="status" className="text-sm text-text-muted">Loading…</p>}
-        {overrides.error && <p role="alert" className="text-sm text-rose-700">{overrides.error.message}</p>}
+        {overrides.error && <p role="alert" className="text-sm text-danger-fg">{overrides.error.message}</p>}
         {overrides.data?.length === 0 && <p className="text-sm text-text-secondary">None yet. Set one from a source’s “Change trust…” menu.</p>}
         {overrides.data && overrides.data.length > 0 && (
           <ul className="space-y-2">
@@ -92,12 +92,12 @@ export function SourceTrustSettings() {
             })}
           </ul>
         )}
-        {clear.error && <p role="alert" className="text-sm text-rose-700">{clear.error.message}</p>}
+        {clear.error && <p role="alert" className="text-sm text-danger-fg">{clear.error.message}</p>}
       </SettingsSection>
 
       <SettingsSection title="Bars in force" description="Which level of source is enough alone for each kind of statement. Your verdicts move a bar in either direction once the evidence is strong enough.">
         {calibration.isLoading && <p role="status" className="text-sm text-text-muted">Loading…</p>}
-        {calibration.error && <p role="alert" className="text-sm text-rose-700">{calibration.error.message}</p>}
+        {calibration.error && <p role="alert" className="text-sm text-danger-fg">{calibration.error.message}</p>}
         {calibration.data && (
           <>
             <div className="overflow-x-auto">
@@ -147,7 +147,7 @@ export function SourceTrustSettings() {
 
       <SettingsSection title="Checker reliability" description="How often the local checker was wrong on statements you labelled, per checker model.">
         {checker.isLoading && <p role="status" className="text-sm text-text-muted">Loading…</p>}
-        {checker.error && <p role="alert" className="text-sm text-rose-700">{checker.error.message}</p>}
+        {checker.error && <p role="alert" className="text-sm text-danger-fg">{checker.error.message}</p>}
         {checker.data?.length === 0 && <p className="text-sm text-text-secondary">No labelled statements yet. Each confirmation, removal, edit or added source labels one.</p>}
         {checker.data?.map((row) => <p key={row.checkerModel} className="text-sm text-text-secondary"><span className="font-medium text-text-primary">{row.checkerModel}: </span>{accuracyLine(row)}</p>)}
       </SettingsSection>
@@ -158,7 +158,7 @@ export function SourceTrustSettings() {
         </button>
         {exported.data && <p role="status" className="mt-2 text-sm text-text-secondary">Saved {exported.data.examples} {exported.data.examples === 1 ? 'example' : 'examples'} to {exported.data.path}.</p>}
         {exported.isSuccess && exported.data === null && <p role="status" className="mt-2 text-sm text-text-secondary">Export cancelled.</p>}
-        {exported.error && <p role="alert" className="mt-2 text-sm text-rose-700">{exported.error.message}</p>}
+        {exported.error && <p role="alert" className="mt-2 text-sm text-danger-fg">{exported.error.message}</p>}
       </SettingsSection>
     </>
   );

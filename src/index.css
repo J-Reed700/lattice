@@ -101,6 +101,7 @@
   --radius-md: var(--radius-md);
   --radius-lg: var(--radius-lg);
   --radius-xl: var(--radius-xl);
+  --radius-2xl: var(--radius-2xl);
   --radius-full: var(--radius-full);
 
   --shadow-none: var(--shadow-none);
@@ -185,12 +186,13 @@
     --shadow-control: 0 1px 1px rgb(40 28 16 / 0.05), inset 0 1px 0 rgb(255 255 255 / 0.6);
     --shadow-action: 0 1px 2px rgb(20 14 8 / 0.3), inset 0 1px 0 rgb(255 255 255 / 0.14);
 
-    /* Radius — concentric: a child is its parent minus the padding (§5) */
+    /* Radius — concentric: controls (8px) inside cards (12px) inside sheets (16px) */
     --radius-xs: 3px;
-    --radius-sm: 5px;
-    --radius-md: 8px;
-    --radius-lg: 12px;
-    --radius-xl: 16px;
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 8px;
+    --radius-xl: 12px;
+    --radius-2xl: 16px;
     --radius-full: 9999px;
     --radius: 8px;
 
@@ -384,15 +386,27 @@
 @layer base {
   ::selection { background: hsl(var(--accent) / 0.22); }
   * { scrollbar-width: thin; scrollbar-color: hsl(var(--text-primary) / 0.16) transparent; }
+  *::-webkit-scrollbar { width: 6px; height: 6px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--text-primary) / 0.15);
+    border-radius: 9999px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--text-primary) / 0.28);
+  }
   button, a, input, textarea { -webkit-tap-highlight-color: transparent; }
-  select {
+  select:not([multiple]) {
     -webkit-appearance: none;
     appearance: none;
     padding-right: 26px !important;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2378716c' stroke-width='2.1' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 8px center;
     cursor: pointer;
+  }
+  :is(.dark, [data-theme="dark"]) select:not([multiple]) {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a8a29e' stroke-width='2.1' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   }
   input[type='number']::-webkit-inner-spin-button,
   input[type='number']::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }

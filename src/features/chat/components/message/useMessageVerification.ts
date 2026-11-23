@@ -98,7 +98,7 @@ export function useMessageVerification({
         label: 'Verification off',
         icon: ShieldOff,
         className:
-          'border-subtle bg-surface text-[hsl(var(--text-muted))]',
+          'border-border-subtle bg-surface text-[hsl(var(--text-muted))]',
       };
     }
     // The answer is readable while its check runs; say so quietly rather
@@ -108,7 +108,7 @@ export function useMessageVerification({
         label: 'Checking…',
         icon: ShieldEllipsis,
         className:
-          'border-subtle bg-surface text-[hsl(var(--text-muted))]',
+          'border-border-subtle bg-surface text-[hsl(var(--text-muted))]',
       };
     }
     // The check never reported: the app closed under it, or the wait ran
@@ -118,7 +118,7 @@ export function useMessageVerification({
         label: 'Not checked',
         icon: ShieldOff,
         className:
-          'border-subtle bg-surface text-[hsl(var(--text-muted))]',
+          'border-border-subtle bg-surface text-[hsl(var(--text-muted))]',
         title: 'Verification was interrupted before finishing.',
       };
     }
@@ -128,7 +128,7 @@ export function useMessageVerification({
           label: 'General knowledge',
           icon: Sparkles,
           className:
-            'border-subtle bg-surface text-[hsl(var(--text-muted))]',
+            'border-border-subtle bg-surface text-[hsl(var(--text-muted))]',
           title: 'Answered from general knowledge without source citations. Turn on Sources only for document-only answers.',
         };
       }
@@ -136,7 +136,7 @@ export function useMessageVerification({
         label: 'Nothing to verify',
         icon: ShieldOff,
         className:
-          'border-subtle bg-surface text-[hsl(var(--text-muted))]',
+          'border-border-subtle bg-surface text-[hsl(var(--text-muted))]',
       };
     }
     if (unsupportedCount === 0 && uncheckedCount > 0) {
@@ -144,7 +144,7 @@ export function useMessageVerification({
         label: `Partly checked · ${uncheckedCount} not checked`,
         icon: ShieldCheck,
         className:
-          'border-subtle bg-surface text-[hsl(var(--text-secondary))]',
+          'border-border-subtle bg-surface text-[hsl(var(--text-secondary))]',
       };
     }
     if (unsupportedCount === 0) {
