@@ -359,7 +359,11 @@ function SearchInterfaceBody({
               >
                 <TabsList aria-label="Search mode">
                   {SEARCH_MODES.map((mode) => (
-                    <TabsTrigger key={mode.id} value={mode.id}>
+                    <TabsTrigger
+                      key={mode.id}
+                      value={mode.id}
+                      onClick={() => setSearchMode(mode.id)}
+                    >
                       {mode.label}
                     </TabsTrigger>
                   ))}
