@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { Button } from '@/components/ui/button';
 import {
+  Button,
   Dialog,
   DialogContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
+  Textarea,
+} from '@/components/ui';
 import { useWebImport } from '@/features/files/hooks/useWebImport';
 import { useQuickCapture } from '@/features/journal/hooks/useQuickCapture';
 import { toast } from '@/stores/toastStore';
@@ -116,15 +117,15 @@ export function QuickCaptureDialog({
           <DialogTitle>Quick capture</DialogTitle>
         </DialogHeader>
 
-        <textarea
+        <Textarea
           ref={textareaRef}
           value={text}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={handleKeyDown}
           rows={5}
+          resize="none"
           autoFocus
           placeholder="What do you want to keep?"
-          className="w-full resize-none rounded-sm border border-border-default bg-bg px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:ring-2 focus:ring-ring"
         />
 
         {importUrl && text.trim() === '' ? (

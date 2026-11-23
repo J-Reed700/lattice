@@ -94,7 +94,7 @@ export function Composer({
 
       <form onSubmit={handleAsyncEvent(composer.handleSubmit)} className="chat-column chat-beside-margin mx-auto w-full px-6 pb-5 pt-1">
         {/* One object: the page you write on, with its tools along the bottom edge. */}
-        <div className="rounded-2xl bg-surface shadow-sheet transition-shadow duration-base focus-within:shadow-[var(--shadow-sheet),0_0_0_3px_hsl(var(--accent)/0.16)]">
+        <div className="rounded-2xl border border-border-default bg-surface shadow-sheet transition-[border-color,box-shadow] duration-base focus-within:border-accent/55 focus-within:shadow-[var(--shadow-sheet),0_0_0_3px_hsl(var(--accent)/0.14)]">
           {chips}
           <FocusChips
             documents={focusDocuments}
@@ -303,7 +303,7 @@ export function Composer({
                     ? 'Waiting for the context to finish compacting'
                     : 'Send · Enter'
                 }
-                className="pressable inline-flex h-8 w-8 items-center justify-center rounded-full bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] shadow-action transition-[background-color,color,scale,box-shadow] duration-fast hover:bg-[hsl(var(--accent-hover))] disabled:cursor-not-allowed disabled:bg-[hsl(var(--text-primary)/0.08)] disabled:text-[hsl(var(--text-disabled))] disabled:shadow-none"
+                className="pressable inline-flex h-8 w-8 items-center justify-center rounded-full bg-action text-action-fg shadow-action transition-[background-color,color,scale,box-shadow] duration-fast hover:bg-action-hover disabled:cursor-not-allowed disabled:bg-[hsl(var(--text-primary)/0.08)] disabled:text-text-disabled disabled:shadow-none"
               >
                 <ArrowUp className="h-4 w-4" strokeWidth={2.2} />
               </button>

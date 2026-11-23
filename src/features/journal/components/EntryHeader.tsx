@@ -104,7 +104,7 @@ export function EntryHeader({
   return (
     <header className="journal-page-header mb-8">
       {/* One quiet line of facts; the title gets the rest of the room. */}
-      <div className="mb-6 flex min-h-7 items-center justify-between gap-3 text-xs text-text-muted">
+      <div className="mb-7 flex min-h-8 items-center justify-between gap-3 border-b border-border-subtle/70 pb-3 text-xs text-text-muted">
         <span className="min-w-0 truncate" title={journalName}>{subline}</span>
         <div className="flex shrink-0 items-center gap-2" title={formatRelativeEdit(lastEditedAt)}>
           <span className="tabular-nums">
@@ -117,7 +117,7 @@ export function EntryHeader({
             saveError={saveError}
             onRetry={onRetrySave}
           />
-          {actions ? <span className="-mr-1.5 ml-1 flex items-center">{actions}</span> : null}
+          {actions ? <span className="ml-1 flex items-center">{actions}</span> : null}
         </div>
       </div>
       <h1 className="m-0">

@@ -4,6 +4,8 @@ import type { RefObject } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import {
   Archive,
+  Check,
+  ChevronRight,
   FolderPlus,
   Loader2,
   MessageSquare,
@@ -13,7 +15,15 @@ import {
   X
 } from 'lucide-react';
 
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  Input,
+  Switch,
+  Textarea,
+} from '@/components/ui';
 import { SPACES_MODAL_LAYER_CLASSES } from '@/features/chat/components/sidebar/sidebarUtils';
 import type { useNewSpaceForm } from '@/features/chat/components/sidebar/useNewSpaceForm';
 import type { useSpaceEditor } from '@/features/spaces/hooks/useSpaceEditor';
@@ -21,7 +31,16 @@ import { GENERAL_SPACE_ID, normalizeHexColor } from '@/features/spaces/model/spa
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
-
+const ARCHITECTURAL_SWATCHES = [
+  { name: 'Terracotta', hex: '#aa503d' },
+  { name: 'Ochre', hex: '#b58336' },
+  { name: 'Sage', hex: '#52796f' },
+  { name: 'Slate', hex: '#4b6584' },
+  { name: 'Plum', hex: '#7c527a' },
+  { name: 'Clay', hex: '#8f624c' },
+  { name: 'Pine', hex: '#3d6352' },
+  { name: 'Obsidian', hex: '#4a443f' },
+] as const;
 
 interface SpacesPanelProps {
   anchorRef: RefObject<HTMLDivElement | null>;
@@ -29,6 +48,7 @@ interface SpacesPanelProps {
   editor: ReturnType<typeof useSpaceEditor>;
   newSpace: ReturnType<typeof useNewSpaceForm>;
 }
+
 export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPanelProps) {
   const prefersReducedMotion = useReducedMotion();
   const spaces = useConversationsStore((state) => state.spaces);
@@ -79,6 +99,9 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
     setSpaceWebDefault,
     spaceDeepResearchDefault,
   } = editor;
+
+  const normalizedAccent = normalizeHexColor(spaceAccentDraft)?.toLowerCase() ?? null;
+
   const updateSpacesPanelFrame = useCallback(() => {
     const sidebarElement = anchorRef.current;
     if (!sidebarElement) return;
@@ -117,20 +140,21 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
         overlayClassName={`overlay-fade fixed inset-0 bg-[hsl(var(--overlay))] ${SPACES_MODAL_LAYER_CLASSES.backdrop}`}
       >
         <motion.aside
-          className={`fixed border-r border-border-subtle bg-surface-raised shadow-md ${SPACES_MODAL_LAYER_CLASSES.panel}`}
+          className={`fixed border-r border-border-subtle bg-surface-overlay shadow-lg ${SPACES_MODAL_LAYER_CLASSES.panel}`}
           style={spacesPanelFrame ?? undefined}
           initial={prefersReducedMotion ? false : { opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
         >
           <div className={`${SPACES_MODAL_LAYER_CLASSES.content} flex h-full flex-col overflow-hidden`}>
-            <div className={`flex items-center justify-between border-b border-border-subtle px-4 py-3 ${SPACES_MODAL_LAYER_CLASSES.section}`}>
+            <div className={`flex h-12 shrink-0 items-center justify-between border-b border-border-subtle px-4 ${SPACES_MODAL_LAYER_CLASSES.section}`}>
               <DialogTitle asChild>
-                <h3 className="font-serif text-sm font-semibold text-[hsl(var(--text-primary))]">Spaces</h3>
+                <h3 className="font-serif text-base font-medium text-text-primary">Spaces</h3>
               </DialogTitle>
               <button
+                type="button"
                 onClick={() => onClose()}
-                className="rounded-sm p-1.5 text-[hsl(var(--text-muted))] transition-colors duration-fast hover:bg-surface hover:text-[hsl(var(--text-primary))]"
+                className="rounded-lg p-1.5 text-text-muted transition-colors duration-fast hover:bg-surface hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                 aria-label="Close spaces panel"
                 title="Close"
               >
@@ -139,27 +163,34 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
             </div>
 
             <div className={`flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-3 ${SPACES_MODAL_LAYER_CLASSES.section}`}>
-              <div className="flex items-center gap-2">
-                <button
+              <div className="flex items-center gap-1.5">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
                   onClick={() => setIsCreateSpaceOpen((open) => !open)}
-                  className="inline-flex h-7 items-center gap-1.5 rounded-sm px-2 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:bg-surface hover:text-[hsl(var(--text-primary))]"
+                  className="h-7 gap-1.5 px-2 text-xs text-text-secondary hover:text-text-primary"
                 >
-                  <FolderPlus className="w-3.5 h-3.5" />
+                  <FolderPlus className="h-3.5 w-3.5" />
                   {isCreateSpaceOpen ? 'Cancel' : 'New space'}
-                </button>
-                <button
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
                   onClick={() => setIsSpaceEditorOpen((open) => !open)}
                   disabled={!selectedSpace}
-                  className="inline-flex h-7 items-center gap-1.5 rounded-sm px-2 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:bg-surface hover:text-[hsl(var(--text-primary))] disabled:cursor-not-allowed disabled:opacity-40"
+                  className="h-7 gap-1.5 px-2 text-xs text-text-secondary hover:text-text-primary"
                 >
-                  <Settings2 className="w-3.5 h-3.5" />
+                  <Settings2 className="h-3.5 w-3.5" />
                   Edit space
-                </button>
+                </Button>
               </div>
 
               {isCreateSpaceOpen && (
-                <div className="mt-3 space-y-2 border-t border-border-subtle pt-3">
-                  <input
+                <div className="mt-3 space-y-2.5 rounded-xl border border-border-subtle bg-surface p-3">
+                  <Input
+                    size="sm"
                     value={newSpaceNameDraft}
                     onChange={(e) => setNewSpaceNameDraft(e.target.value)}
                     placeholder={
@@ -167,79 +198,84 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
                         ? 'Journal name (e.g. Food Research, Weekly Notes)'
                         : 'Space name (e.g. Product, Research, Personal)'
                     }
-                    className="w-full rounded-sm border border-border-default bg-surface-raised px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-hidden focus:ring-2 focus:ring-[hsl(var(--ring))]"
                   />
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex h-7 items-center gap-0.5 rounded-lg bg-[hsl(var(--text-primary)/0.06)] p-0.5">
                     <button
                       type="button"
                       onClick={() => setNewSpaceKindDraft('standard')}
-                      className={`rounded-sm border px-2 py-1 text-xs transition-colors duration-fast ${newSpaceKindDraft === 'standard'
-                        ? 'border-[hsl(var(--accent))] text-[hsl(var(--accent))]'
-                        : 'border-border-default text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]'
-                        }`}
+                      className={`h-full flex-1 rounded-md text-xs font-medium transition-colors duration-fast ${
+                        newSpaceKindDraft === 'standard'
+                          ? 'bg-surface-overlay text-text-primary shadow-control'
+                          : 'text-text-tertiary hover:text-text-primary'
+                      }`}
                     >
                       Standard
                     </button>
                     <button
                       type="button"
                       onClick={() => setNewSpaceKindDraft('journal')}
-                      className={`rounded-sm border px-2 py-1 text-xs transition-colors duration-fast ${newSpaceKindDraft === 'journal'
-                        ? 'border-[hsl(var(--accent))] text-[hsl(var(--accent))]'
-                        : 'border-border-default text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]'
-                        }`}
+                      className={`h-full flex-1 rounded-md text-xs font-medium transition-colors duration-fast ${
+                        newSpaceKindDraft === 'journal'
+                          ? 'bg-surface-overlay text-text-primary shadow-control'
+                          : 'text-text-tertiary hover:text-text-primary'
+                      }`}
                     >
                       Journal
                     </button>
                   </div>
                   <div className="flex items-center justify-end gap-1.5">
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="sm"
                       onClick={() => {
                         setIsCreateSpaceOpen(false);
                         setNewSpaceNameDraft('');
                         setNewSpaceKindDraft('standard');
                       }}
-                      className="inline-flex items-center gap-1 rounded-sm border border-border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
                     >
                       Cancel
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
                       onClick={handleAsyncEvent(createSpace)}
                       disabled={isCreatingSpace}
-                      className="inline-flex items-center gap-1 rounded-sm bg-[hsl(var(--accent))] px-2 py-1 text-xs text-[hsl(var(--accent-fg))] transition-colors duration-fast hover:bg-[hsl(var(--accent-hover))] disabled:cursor-not-allowed disabled:opacity-50"
+                      className="gap-1"
                     >
                       {isCreatingSpace ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       ) : (
-                        <Plus className="w-3.5 h-3.5" />
+                        <Plus className="h-3.5 w-3.5" />
                       )}
                       Create
-                    </button>
+                    </Button>
                   </div>
                 </div>
               )}
 
               <div className="mt-3 flex min-h-0 flex-1 flex-col">
-
-                <div className="flex-1 min-h-0 space-y-0.5 overflow-y-auto pr-1">
+                <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-1">
                   <button
+                    type="button"
                     onClick={handleAsyncEvent(() => handleSpaceSelect(null))}
-                    className={`relative w-full rounded-sm px-3 py-2 text-left transition-colors duration-fast ${selectedSpaceId === null ? 'bg-surface' : 'hover:bg-surface'
-                      }`}
+                    className={`relative w-full rounded-lg px-3 py-2 text-left transition-colors duration-fast ${
+                      selectedSpaceId === null ? 'bg-surface shadow-control' : 'hover:bg-surface/70'
+                    }`}
                   >
                     {selectedSpaceId === null && (
                       <span
-                        className="absolute inset-y-0 left-0 w-0.5 bg-[hsl(var(--accent))]"
+                        className="absolute inset-y-2 left-0 w-[2.5px] rounded-full bg-accent"
                         aria-hidden="true"
                       />
                     )}
                     <div className="flex items-start gap-2.5">
-                      <div className="flex h-6 w-6 shrink-0 items-center justify-center text-[hsl(var(--text-tertiary))]">
+                      <div className="flex h-6 w-6 shrink-0 items-center justify-center text-text-tertiary">
                         <MessageSquare className="h-4 w-4" />
                       </div>
                       <div className="min-w-0">
-                        <p className="truncate text-sm text-[hsl(var(--text-primary))]">All spaces</p>
-                        <p className="mt-0.5 text-xs text-[hsl(var(--text-muted))]">
+                        <p className="truncate text-ui font-medium text-text-primary">All spaces</p>
+                        <p className="mt-0.5 text-xs text-text-muted">
                           Every conversation, all scopes
                         </p>
                       </div>
@@ -247,7 +283,7 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
                   </button>
 
                   {standardSpaces.length > 0 && (
-                    <p className="px-2 pt-4 pb-1 text-xs font-medium text-[hsl(var(--text-secondary))]">
+                    <p className="px-2 pb-1 pt-4 text-xs font-medium text-text-muted">
                       Spaces
                     </p>
                   )}
@@ -259,30 +295,26 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
                     return (
                       <button
                         key={space.id}
+                        type="button"
                         onClick={handleAsyncEvent(() => handleSpaceSelect(space.id))}
-                        className={`relative w-full rounded-sm px-3 py-2 text-left transition-colors duration-fast ${isSelected ? 'bg-surface' : 'hover:bg-surface'
-                          }`}
+                        className={`relative w-full rounded-lg px-3 py-2 text-left transition-colors duration-fast ${
+                          isSelected ? 'bg-surface shadow-control' : 'hover:bg-surface/70'
+                        }`}
                         title={space.description ?? space.name}
                       >
                         {isSelected && (
                           <span
-                            className="absolute inset-y-0 left-0 w-0.5"
-                            style={{ backgroundColor: accent ?? undefined }}
-                            aria-hidden="true"
-                          />
-                        )}
-                        {isSelected && !accent && (
-                          <span
-                            className="absolute inset-y-0 left-0 w-0.5 bg-[hsl(var(--accent))]"
+                            className={`absolute inset-y-2 left-0 w-[2.5px] rounded-full ${accent ? '' : 'bg-accent'}`}
+                            style={accent ? { backgroundColor: accent } : undefined}
                             aria-hidden="true"
                           />
                         )}
                         <div className="flex items-start gap-2.5">
-                          <div className="flex h-6 w-6 shrink-0 items-center justify-center text-sm text-[hsl(var(--text-tertiary))]">
+                          <div className="flex h-6 w-6 shrink-0 items-center justify-center text-sm text-text-tertiary">
                             {space.icon || (
                               accent ? (
                                 <span
-                                  className="h-2 w-2 rounded-full"
+                                  className="h-2.5 w-2.5 rounded-full"
                                   style={{ backgroundColor: accent }}
                                   aria-hidden="true"
                                 />
@@ -292,9 +324,9 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
                             )}
                           </div>
                           <div className="min-w-0">
-                            <p className="truncate text-sm text-[hsl(var(--text-primary))]">{space.name}</p>
+                            <p className="truncate text-ui font-medium text-text-primary">{space.name}</p>
                             {space.description ? (
-                              <p className="mt-0.5 line-clamp-2 text-xs text-[hsl(var(--text-muted))]">
+                              <p className="mt-0.5 line-clamp-2 text-xs text-text-muted">
                                 {space.description}
                               </p>
                             ) : null}
@@ -308,119 +340,153 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
 
               {isSpaceEditorOpen && selectedSpace && (
                 <div className="mt-3 space-y-3 border-t border-border-subtle pt-3">
-                  <p className="text-xs font-medium text-[hsl(var(--text-secondary))]">
+                  <p className="text-xs font-medium text-text-primary">
                     {selectedSpace.name}
                   </p>
 
-                  <details open className="border-b border-border-subtle pb-3">
-                    <summary className="cursor-pointer text-xs text-[hsl(var(--text-secondary))]">Basics</summary>
-                    <div className="mt-2 space-y-2">
-                      <div className="grid grid-cols-[72px_1fr] gap-2">
-                        <input
+                  <details open className="group border-b border-border-subtle pb-3">
+                    <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-text-secondary transition-colors duration-fast hover:text-text-primary [&::-webkit-details-marker]:hidden">
+                      <ChevronRight
+                        className="h-3.5 w-3.5 text-text-muted transition-transform duration-fast group-open:rotate-90"
+                        strokeWidth={1.75}
+                        aria-hidden="true"
+                      />
+                      Basics
+                    </summary>
+                    <div className="mt-2.5 space-y-2.5">
+                      <div className="grid grid-cols-[64px_1fr] gap-2">
+                        <Input
+                          size="sm"
                           value={spaceIconDraft}
                           onChange={(e) => setSpaceIconDraft(e.target.value)}
                           placeholder="Icon"
-                          className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-hidden focus:ring-2 focus:ring-[hsl(var(--ring))]"
                         />
-                        <input
+                        <Input
+                          size="sm"
                           value={spaceNameDraft}
                           onChange={(e) => setSpaceNameDraft(e.target.value)}
                           placeholder="Space name"
-                          className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-hidden focus:ring-2 focus:ring-[hsl(var(--ring))]"
                         />
                       </div>
-                      <div className="grid grid-cols-[92px_1fr_56px] gap-2">
-                        <input
-                          type="color"
-                          value={normalizeHexColor(spaceAccentDraft) ?? '#aa503d'}
-                          onChange={(e) => setSpaceAccentDraft(e.target.value)}
-                          className="h-8 w-full rounded-sm border border-border-default bg-surface p-1"
-                          title="Accent color"
-                        />
-                        <input
-                          value={spaceAccentDraft}
-                          onChange={(e) => setSpaceAccentDraft(e.target.value)}
-                          placeholder="#aa503d"
-                          className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-hidden focus:ring-2 focus:ring-[hsl(var(--ring))]"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setSpaceAccentDraft('')}
-                          aria-label="Clear accent color"
-                          title="Clear accent color"
-                          className="rounded-sm border border-border-default px-2 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:text-[hsl(var(--text-primary))]"
-                        >
-                          Clear
-                        </button>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-text-muted">Accent color</span>
+                          <span
+                            className="h-3.5 w-3.5 rounded-full border border-border-subtle"
+                            style={{ backgroundColor: normalizedAccent ?? 'transparent' }}
+                            aria-hidden="true"
+                          />
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Architectural color swatches">
+                          {ARCHITECTURAL_SWATCHES.map((swatch) => {
+                            const selected = normalizedAccent === swatch.hex;
+                            return (
+                              <button
+                                key={swatch.hex}
+                                type="button"
+                                aria-label={`Accent color ${swatch.name}`}
+                                aria-pressed={selected}
+                                title={`${swatch.name} (${swatch.hex})`}
+                                onClick={() => setSpaceAccentDraft(swatch.hex)}
+                                className={`flex h-6 w-6 items-center justify-center rounded-full border transition-transform duration-fast hover:scale-105 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-bg ${
+                                  selected ? 'border-text-primary ring-1 ring-text-primary/40' : 'border-black/10 dark:border-white/15'
+                                }`}
+                                style={{ backgroundColor: swatch.hex }}
+                              >
+                                {selected && <Check className="h-3 w-3 text-white drop-shadow-xs" strokeWidth={2.5} aria-hidden="true" />}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <Input
+                            size="sm"
+                            value={spaceAccentDraft}
+                            onChange={(e) => setSpaceAccentDraft(e.target.value)}
+                            placeholder="#aa503d"
+                            aria-label="Custom hex color"
+                            className="font-mono text-xs"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setSpaceAccentDraft('')}
+                            aria-label="Clear accent color"
+                            title="Clear accent color"
+                            className="h-7 shrink-0 px-2.5 text-xs"
+                          >
+                            Clear
+                          </Button>
+                        </div>
                       </div>
-                      <input
+
+                      <Input
+                        size="sm"
                         value={spaceDescriptionDraft}
                         onChange={(e) => setSpaceDescriptionDraft(e.target.value)}
                         placeholder="Description"
-                        className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-hidden focus:ring-2 focus:ring-[hsl(var(--ring))]"
                       />
                     </div>
                   </details>
 
-                  <details className="border-b border-border-subtle pb-3">
-                    <summary className="cursor-pointer text-xs text-[hsl(var(--text-secondary))]">Defaults</summary>
-                    <div className="mt-2 space-y-2">
-                      <textarea
+                  <details className="group border-b border-border-subtle pb-3">
+                    <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-text-secondary transition-colors duration-fast hover:text-text-primary [&::-webkit-details-marker]:hidden">
+                      <ChevronRight
+                        className="h-3.5 w-3.5 text-text-muted transition-transform duration-fast group-open:rotate-90"
+                        strokeWidth={1.75}
+                        aria-hidden="true"
+                      />
+                      Defaults
+                    </summary>
+                    <div className="mt-2.5 space-y-3">
+                      <Textarea
                         value={spacePromptDraft}
                         onChange={(e) => setSpacePromptDraft(e.target.value)}
                         placeholder="System prompt for this space"
                         rows={4}
-                        className="w-full rounded-sm border border-border-default bg-surface px-2 py-1.5 text-xs text-[hsl(var(--text-primary))] placeholder:text-[hsl(var(--text-muted))] focus:outline-hidden focus:ring-2 focus:ring-[hsl(var(--ring))] resize-y"
+                        className="text-xs"
                       />
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setSpaceKbDefault((value) => !value)}
-                          className={`px-2 py-1 text-xs rounded-sm border transition-colors duration-fast ${spaceKbDefault
-                            ? 'border-[hsl(var(--accent))] text-[hsl(var(--accent))]'
-                            : 'border-border-default text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]'
-                            }`}
-                        >
-                          Search documents by default
-                        </button>
-                        <button
-                          type="button"
-                          aria-pressed={spaceStrictSourcesDefault}
-                          title="Answer strictly from retrieved sources; no general knowledge"
-                          onClick={() => setSpaceStrictSourcesDefault((value) => !value)}
-                          className={`px-2 py-1 text-xs rounded-sm border transition-colors duration-fast ${spaceStrictSourcesDefault
-                            ? 'border-[hsl(var(--accent))] text-[hsl(var(--accent))]'
-                            : 'border-border-default text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]'
-                            }`}
-                        >
-                          Sources only
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setSpaceWebDefault((value) => !value)}
-                          className={`px-2 py-1 text-xs rounded-sm border transition-colors duration-fast ${spaceWebDefault
-                            ? 'border-[hsl(var(--accent))] text-[hsl(var(--accent))]'
-                            : 'border-border-default text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]'
-                            }`}
-                        >
-                          Web by default
-                        </button>
-                        <button
-                          type="button"
-                          onClick={toggleSpaceDeepResearchDefault}
-                          className={`px-2 py-1 text-xs rounded-sm border transition-colors duration-fast ${spaceDeepResearchDefault
-                            ? 'border-[hsl(var(--accent))] text-[hsl(var(--accent))]'
-                            : 'border-border-default text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]'
-                            }`}
-                        >
-                          Deep research by default
-                        </button>
+                      <div className="space-y-2 rounded-lg border border-border-subtle bg-surface p-2.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs text-text-secondary">Search documents by default</span>
+                          <Switch
+                            aria-label="Search documents by default"
+                            checked={spaceKbDefault}
+                            onCheckedChange={(checked) => setSpaceKbDefault(() => checked)}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between gap-2" title="Answer strictly from retrieved sources; no general knowledge">
+                          <span className="text-xs text-text-secondary">Sources only</span>
+                          <Switch
+                            aria-label="Sources only"
+                            checked={spaceStrictSourcesDefault}
+                            onCheckedChange={(checked) => setSpaceStrictSourcesDefault(() => checked)}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs text-text-secondary">Web by default</span>
+                          <Switch
+                            aria-label="Web by default"
+                            checked={spaceWebDefault}
+                            onCheckedChange={(checked) => setSpaceWebDefault(() => checked)}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs text-text-secondary">Deep research by default</span>
+                          <Switch
+                            aria-label="Deep research by default"
+                            checked={spaceDeepResearchDefault}
+                            onCheckedChange={() => toggleSpaceDeepResearchDefault()}
+                          />
+                        </div>
                       </div>
                       {spaceDeepResearchDefault && (
                         <div
                           role="status"
                           aria-live="polite"
-                          className="rounded-sm border border-[hsl(var(--warning-muted))] bg-[hsl(var(--warning-muted))] px-2 py-1.5 text-xs text-[hsl(var(--warning-fg))]"
+                          className="rounded-lg border border-warning-muted bg-warning-muted px-2.5 py-1.5 text-xs text-warning-fg"
                         >
                           Deep research is on for this space. Responses will be slower.
                         </div>
@@ -428,56 +494,69 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
                     </div>
                   </details>
 
-                  <div className="flex items-center gap-1.5">
-                    <button
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
                       onClick={handleAsyncEvent(saveSpaceEnvironment)}
                       disabled={isSavingSpace}
-                      className="inline-flex items-center gap-1 rounded-sm bg-[hsl(var(--accent))] px-2.5 py-1 text-xs text-[hsl(var(--accent-fg))] transition-colors duration-fast hover:bg-[hsl(var(--accent-hover))] disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="gap-1.5"
                     >
                       {isSavingSpace ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       ) : (
-                        <Save className="w-3.5 h-3.5" />
+                        <Save className="h-3.5 w-3.5" />
                       )}
                       Save
-                    </button>
+                    </Button>
                     {selectedSpace.id !== GENERAL_SPACE_ID && (
-                      <button
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
                         onClick={handleAsyncEvent(() => setSelectedSpaceArchived(!selectedSpace.isArchived))}
                         disabled={isArchivingSpace}
-                        className="inline-flex items-center gap-1 rounded-sm px-2.5 py-1 text-xs text-[hsl(var(--text-secondary))] transition-colors duration-fast hover:bg-surface hover:text-[hsl(var(--text-primary))] disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="gap-1.5 text-text-secondary hover:text-text-primary"
                       >
                         {isArchivingSpace ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
                         ) : (
-                          <Archive className="w-3.5 h-3.5" />
+                          <Archive className="h-3.5 w-3.5" />
                         )}
                         {selectedSpace.isArchived ? 'Restore' : 'Archive'}
-                      </button>
+                      </Button>
                     )}
                   </div>
 
                   {archivedSpaces.length > 0 && (
-                    <details className="border-b border-border-subtle pb-3">
-                      <summary className="cursor-pointer text-xs text-[hsl(var(--text-muted))]">
+                    <details className="group border-b border-border-subtle pb-3">
+                      <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs text-text-muted transition-colors duration-fast hover:text-text-secondary [&::-webkit-details-marker]:hidden">
+                        <ChevronRight
+                          className="h-3.5 w-3.5 transition-transform duration-fast group-open:rotate-90"
+                          strokeWidth={1.75}
+                          aria-hidden="true"
+                        />
                         Archived spaces · {archivedSpaces.length}
                       </summary>
-                      <div className="mt-2 space-y-1">
+                      <div className="mt-2 space-y-1.5">
                         {archivedSpaces.slice(0, 6).map((space) => (
                           <div
                             key={space.id}
-                            className="flex items-center justify-between rounded-sm border border-border-subtle bg-surface px-2 py-1"
+                            className="flex items-center justify-between gap-2 rounded-lg border border-border-subtle bg-surface px-2.5 py-1.5"
                           >
-                            <span className="text-xs text-[hsl(var(--text-secondary))] truncate">
+                            <span className="truncate text-xs text-text-secondary">
                               {space.icon ? `${space.icon} ` : ''}{space.name}
                             </span>
-                            <button
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
                               onClick={handleAsyncEvent(() => restoreArchivedSpace(space.id))}
                               disabled={isRestoringSpace}
-                              className="rounded-sm border border-border-default px-1.5 py-0.5 text-xs text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-fast"
+                              className="h-6 px-2 text-xs"
                             >
                               Restore
-                            </button>
+                            </Button>
                           </div>
                         ))}
                       </div>
@@ -487,8 +566,8 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
               )}
             </div>
 
-            <div className={`border-t border-border-subtle px-4 py-3 ${SPACES_MODAL_LAYER_CLASSES.section}`}>
-              <p className="text-xs text-[hsl(var(--text-muted))] text-center">
+            <div className={`border-t border-border-subtle px-4 py-2.5 ${SPACES_MODAL_LAYER_CLASSES.section}`}>
+              <p className="text-center text-xs text-text-muted">
                 {activeSpacesOrdered.length} space{activeSpacesOrdered.length !== 1 ? 's' : ''}
               </p>
             </div>

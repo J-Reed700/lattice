@@ -161,11 +161,43 @@ describe('ConversationSidebar', () => {
     expect(h.referencesProps?.query).toBe('byzantium');
   });
 
-  it('filters by tab', async () => {
+  it('filters by tab and overflow menu', async () => {
     renderSidebar();
     fireEvent.click(screen.getByRole('tab', { name: 'Starred' }));
     expect(h.store.setFilterMode).toHaveBeenCalledWith('saved');
     await waitFor(() => expect(h.store.loadConversations).toHaveBeenCalledWith({ filterMode: 'saved' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'More conversation filters' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Archived' }));
+    expect(h.store.setFilterMode).toHaveBeenCalledWith('archived');
+    await waitFor(() => expect(h.store.loadConversations).toHaveBeenCalledWith({ filterMode: 'archived' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'More conversation filters' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Referenced' }));
+    expect(h.store.setFilterMode).toHaveBeenCalledWith('snippets');
+    await waitFor(() => expect(h.store.loadConversations).toHaveBeenCalledWith({ filterMode: 'snippets' }));
+  });
+
+  it('maintains roving tabIndex across primary and overflow filter modes', () => {
+    h.store = makeStore({ filterMode: 'saved' });
+    const first = render(<TooltipProvider><ConversationSidebar /></TooltipProvider>);
+    expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('tabindex', '-1');
+    expect(screen.getByRole('tab', { name: 'Starred' })).toHaveAttribute('tabindex', '0');
+    expect(screen.getByRole('tab', { name: 'Pinned' })).toHaveAttribute('tabindex', '-1');
+    first.unmount();
+
+    h.store = makeStore({ filterMode: 'archived' });
+    const second = render(<TooltipProvider><ConversationSidebar /></TooltipProvider>);
+    expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('tabindex', '0');
+    expect(screen.getByRole('tab', { name: 'Starred' })).toHaveAttribute('tabindex', '-1');
+    expect(screen.getByRole('tab', { name: 'Pinned' })).toHaveAttribute('tabindex', '-1');
+    second.unmount();
+
+    h.store = makeStore({ filterMode: 'snippets' });
+    renderSidebar();
+    expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('tabindex', '0');
+    expect(screen.getByRole('tab', { name: 'Starred' })).toHaveAttribute('tabindex', '-1');
+    expect(screen.getByRole('tab', { name: 'Pinned' })).toHaveAttribute('tabindex', '-1');
   });
 
   it('shows references instead of selection in the Referenced tab', () => {

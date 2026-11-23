@@ -79,14 +79,17 @@ describe('EntryList', () => {
   it('selects, pins and deletes a conversation from its row', async () => {
     const user = userEvent.setup();
     const state = entriesState({ entries: [entry('c1', 'Roman roads', new Date().toISOString())], selectedId: 'c1' });
-    const props = renderList({ entriesState: state });
+    const onOpenContext = vi.fn();
+    const props = renderList({ entriesState: state, onOpenContext });
     expect(row('Roman roads')).toHaveAttribute('aria-current', 'page');
 
     await user.click(row('Roman roads'));
     expect(state.setSelectedId).toHaveBeenCalledWith('c1');
+    expect(onOpenContext).toHaveBeenCalledTimes(1);
     row('Roman roads').focus();
     await user.keyboard(' ');
     expect(state.setSelectedId).toHaveBeenCalledTimes(2);
+    expect(onOpenContext).toHaveBeenCalledTimes(2);
 
     await user.hover(row('Roman roads'));
     await user.click(within(row('Roman roads')).getByRole('button', { name: 'Pin entry' }));
@@ -195,12 +198,14 @@ describe('EntryList', () => {
         entry('bad', 'Undated', 'never'),
       ],
     });
-    renderList({ entriesState: state });
+    const onOpenContext = vi.fn();
+    renderList({ entriesState: state, onOpenContext });
 
     await user.click(screen.getByRole('button', { name: 'Open date picker' }));
     const calendar = await screen.findByRole('grid', {}, { timeout: 5_000 });
     await user.click(within(calendar).getByRole('button', { name: /October 20th, 2026/ }));
     expect(state.setSelectedId).toHaveBeenLastCalledWith('first');
+    expect(onOpenContext).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(screen.queryByRole('grid')).not.toBeInTheDocument());
 
     await user.click(screen.getByRole('button', { name: 'Open date picker' }));

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -82,5 +82,13 @@ describe('UtilityModelNotice', () => {
     mocks.settings.mockReturnValue({ data: undefined, isPending: false, error: new Error('settings offline') });
     show();
     expect(screen.getByRole('status')).toHaveTextContent('availability could not be checked');
+  });
+
+  it('can be dismissed cleanly', () => {
+    mocks.models.mockReturnValue({ downloadedModels: [], isLoading: false, error: null });
+    show();
+    expect(screen.getByRole('status')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss utility model notice' }));
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 });

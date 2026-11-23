@@ -1,4 +1,4 @@
-import { fireEvent, screen } from '@testing-library/react';
+import { fireEvent, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -18,6 +18,8 @@ vi.mock('@/features/model/hooks/useLoadedModels', () => ({
 }));
 
 const noop = () => {};
+const openMore = () => fireEvent.click(screen.getByRole('button', { name: 'More actions for this message' }));
+const menu = () => screen.getByRole('menu', { name: 'More actions' });
 
 const baseProps = {
   canBookmark: true,
@@ -48,28 +50,36 @@ const answerSource = {
 } as SourceWithMetadata;
 
 describe('MessageActions', () => {
-  it('offers regenerate and try-with on the last assistant turn', () => {
+  it('offers primary actions inline and secondary actions in More on the last assistant turn', () => {
     render(<MessageActions {...baseProps} role="assistant" isLastTurn />);
-    expect(screen.getByText('Regenerate')).toBeInTheDocument();
-    expect(screen.getByText('Try with another model')).toBeInTheDocument();
-    expect(screen.getByText('Branch here')).toBeInTheDocument();
+    expect(screen.getByText('Copy')).toBeInTheDocument();
     expect(screen.getByText('Reference')).toBeInTheDocument();
+    expect(screen.getByText('Regenerate')).toBeInTheDocument();
+    // Secondary actions stay tucked inside More rather than crowding the row.
+    expect(screen.queryByText('Branch here')).not.toBeInTheDocument();
+
+    openMore();
+    expect(within(menu()).getByRole('menuitem', { name: 'Try with another model…' })).toBeInTheDocument();
+    expect(within(menu()).getByRole('menuitem', { name: 'Branch here' })).toBeInTheDocument();
+    expect(within(menu()).getByRole('menuitem', { name: 'Delete message' })).toBeInTheDocument();
   });
 
-  it('offers neither on an earlier assistant turn', () => {
+  it('offers neither regenerate nor try-with on an earlier assistant turn', () => {
     // Regenerating mid-thread would silently discard everything after it.
     render(<MessageActions {...baseProps} role="assistant" isLastTurn={false} />);
     expect(screen.queryByText('Regenerate')).not.toBeInTheDocument();
-    expect(screen.queryByText('Try with another model')).not.toBeInTheDocument();
-    expect(screen.getByText('Branch here')).toBeInTheDocument();
+    openMore();
+    expect(within(menu()).queryByRole('menuitem', { name: 'Try with another model…' })).not.toBeInTheDocument();
+    expect(within(menu()).getByRole('menuitem', { name: 'Branch here' })).toBeInTheDocument();
   });
 
   it('offers Edit on a user turn, and neither regenerate nor try-with', () => {
     render(<MessageActions {...baseProps} role="user" isLastTurn />);
     expect(screen.getByText('Edit')).toBeInTheDocument();
     expect(screen.queryByText('Regenerate')).not.toBeInTheDocument();
-    expect(screen.queryByText('Try with another model')).not.toBeInTheDocument();
     expect(screen.queryByText('Reference')).not.toBeInTheDocument();
+    openMore();
+    expect(within(menu()).queryByRole('menuitem', { name: 'Try with another model…' })).not.toBeInTheDocument();
   });
 
   it('never offers Edit on an assistant turn', () => {
@@ -79,17 +89,20 @@ describe('MessageActions', () => {
 
   it('hides Branch here when branching is not possible', () => {
     render(<MessageActions {...baseProps} role="assistant" isLastTurn canBranch={false} />);
-    expect(screen.queryByText('Branch here')).not.toBeInTheDocument();
+    openMore();
+    expect(within(menu()).queryByRole('menuitem', { name: 'Branch here' })).not.toBeInTheDocument();
   });
 
   it('disables every mutating verb while a generation is in flight', () => {
     render(<MessageActions {...baseProps} role="assistant" isLastTurn isBusy />);
     expect(screen.getByLabelText('Regenerate this answer')).toBeDisabled();
-    expect(screen.getByLabelText('Try this question with another model')).toBeDisabled();
-    expect(screen.getByLabelText('Branch the conversation here')).toBeDisabled();
-    expect(screen.getByLabelText('Delete message')).toBeDisabled();
     // Copy is read-only and stays available.
     expect(screen.getByLabelText('Copy message to clipboard')).not.toBeDisabled();
+
+    openMore();
+    expect(within(menu()).getByRole('menuitem', { name: 'Try with another model…' })).toBeDisabled();
+    expect(within(menu()).getByRole('menuitem', { name: 'Branch here' })).toBeDisabled();
+    expect(within(menu()).getByRole('menuitem', { name: 'Delete message' })).toBeDisabled();
   });
 
   it('shows Referenced once a message is saved', () => {
@@ -98,8 +111,6 @@ describe('MessageActions', () => {
   });
 
   it('stays visible without a hover, and keeps a focus ring', () => {
-    // CHAT-POLISH-COMPONENTS §5: low contrast and full opacity always. Verbs
-    // that only exist on hover teach nobody they exist.
     const { container } = render(
       <MessageActions {...baseProps} role="assistant" isLastTurn />
     );
@@ -111,16 +122,17 @@ describe('MessageActions', () => {
     );
   });
 
-  it('starts a tangent from the visible reply action without selecting text', () => {
+  it('starts a tangent from More without selecting text', () => {
     const create = vi.fn();
     const tangentSource = { conversationId: 'parent', messageId: 'reply', getText: () => 'The whole reply.' };
     render(<TangentSelectionContext.Provider value={{ create, creating: false }}>
       <MessageActions {...baseProps} role="assistant" isLastTurn tangentSource={tangentSource} />
     </TangentSelectionContext.Provider>);
-    const button = screen.getByRole('button', { name: 'Start a tangent from this reply' });
-    expect(button).toBeVisible();
-    expect(button).toHaveTextContent('Tangent');
-    fireEvent.click(button);
+    openMore();
+    const item = within(menu()).getByRole('menuitem', { name: 'Start a tangent from this reply' });
+    expect(item).toBeVisible();
+    expect(item).toHaveTextContent('Tangent');
+    fireEvent.click(item);
     expect(create).toHaveBeenCalledWith({ conversationId: 'parent', messageId: 'reply', selectedText: 'The whole reply.' });
   });
 
@@ -131,7 +143,8 @@ describe('MessageActions', () => {
     render(<TangentSelectionContext.Provider value={{ create, creating: false }}>
       <MessageActions {...baseProps} role="assistant" isLastTurn tangentSource={tangentSource} />
     </TangentSelectionContext.Provider>);
-    fireEvent.click(screen.getByRole('button', { name: 'Start a tangent from this reply' }));
+    openMore();
+    fireEvent.click(within(menu()).getByRole('menuitem', { name: 'Start a tangent from this reply' }));
     expect(create).toHaveBeenCalledWith({ conversationId: 'parent', messageId: 'reply', selectedText: longReply.trim() });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
@@ -142,7 +155,8 @@ describe('MessageActions', () => {
     render(<TangentSelectionContext.Provider value={{ create, creating: false }}>
       <MessageActions {...baseProps} role="assistant" isLastTurn tangentSource={tangentSource} />
     </TangentSelectionContext.Provider>);
-    fireEvent.click(screen.getByRole('button', { name: 'Start a tangent from this reply' }));
+    openMore();
+    fireEvent.click(within(menu()).getByRole('menuitem', { name: 'Start a tangent from this reply' }));
     expect(create).not.toHaveBeenCalled();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
@@ -154,15 +168,14 @@ describe('MessageActions', () => {
       <MessageActions {...baseProps} role={role} isLastTurn tangentSource={tangentSource} />
     </TangentSelectionContext.Provider>;
     const view = render(content('user', false));
-    expect(screen.queryByRole('button', { name: 'Start a tangent from this reply' })).not.toBeInTheDocument();
+    openMore();
+    expect(within(menu()).queryByRole('menuitem', { name: 'Start a tangent from this reply' })).not.toBeInTheDocument();
     view.rerender(content('assistant', true));
-    expect(screen.getByRole('button', { name: 'Start a tangent from this reply' })).toBeDisabled();
+    expect(within(menu()).getByRole('menuitem', { name: 'Start a tangent from this reply' })).toBeDisabled();
     expect(create).not.toHaveBeenCalled();
   });
 
-  it('offers a way to carry a grounded answer out of the chat', () => {
-    // The verbs that leave the chat sit in the row like every other one: a menu
-    // that only exists on hover teaches nobody it is there.
+  it('offers a way to carry a grounded answer out of the chat from More', () => {
     render(
       <MemoryRouter>
         <MessageActions
@@ -175,12 +188,17 @@ describe('MessageActions', () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByText('Use this answer')).toBeInTheDocument();
+    openMore();
+    const item = within(menu()).getByRole('menuitem', { name: 'Use this answer elsewhere' });
+    expect(item).toHaveTextContent('Use this answer…');
+    fireEvent.click(item);
+    expect(screen.getByText('Take this answer with you')).toBeInTheDocument();
   });
 
   it('offers nothing to carry out of an answer with no sources behind it', () => {
     render(<MessageActions {...baseProps} role="assistant" isLastTurn answerMarkdown="Just prose." />);
-    expect(screen.queryByText('Use this answer')).not.toBeInTheDocument();
+    openMore();
+    expect(within(menu()).queryByRole('menuitem', { name: 'Use this answer elsewhere' })).not.toBeInTheDocument();
   });
 
   it('never offers it on a question', () => {
@@ -196,6 +214,7 @@ describe('MessageActions', () => {
       </MemoryRouter>
     );
 
-    expect(screen.queryByText('Use this answer')).not.toBeInTheDocument();
+    openMore();
+    expect(within(menu()).queryByRole('menuitem', { name: 'Use this answer elsewhere' })).not.toBeInTheDocument();
   });
 });
