@@ -146,9 +146,25 @@ export function SettingsNumberField({
     onCommit(normalized);
   };
 
+  const clearTypingState = () => {
+    isTypingRef.current = false;
+    dirtyRef.current = false;
+    rawInputRef.current = null;
+  };
+
   return (
     <div
       className={cn('inline-flex', className)}
+      onMouseDownCapture={(event) => {
+        if (event.target instanceof Element && event.target.closest('button')) {
+          clearTypingState();
+        }
+      }}
+      onClickCapture={(event) => {
+        if (event.target instanceof Element && event.target.closest('button')) {
+          clearTypingState();
+        }
+      }}
       onChangeCapture={(event) => {
         if (event.target instanceof HTMLInputElement) {
           isTypingRef.current = true;
@@ -165,7 +181,7 @@ export function SettingsNumberField({
           event.key === 'Home' ||
           event.key === 'End'
         ) {
-          isTypingRef.current = false;
+          clearTypingState();
         }
       }}
       onKeyDown={(event) => {

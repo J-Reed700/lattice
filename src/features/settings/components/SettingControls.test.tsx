@@ -1,3 +1,5 @@
+import { useState } from 'react';
+
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -56,6 +58,45 @@ describe('SettingControls', () => {
     fireEvent.change(input, { target: { value: '99' } });
     fireEvent.blur(input);
     expect(onCommit).toHaveBeenLastCalledWith(10);
+  });
+
+  it('SettingsNumberField commits +/- clicks after typing and never reverts to stale typed text on blur', async () => {
+    const user = userEvent.setup();
+    const onCommit = vi.fn();
+    function Harness() {
+      const [val, setVal] = useState(5);
+      return (
+        <SettingsNumberField
+          id="step-after-type"
+          aria-label="Step after type"
+          value={val}
+          min={1}
+          max={100}
+          step={1}
+          integer
+          onDraftChange={setVal}
+          onCommit={(next) => {
+            setVal(next);
+            onCommit(next);
+          }}
+        />
+      );
+    }
+
+    render(<Harness />);
+    const input = screen.getByRole('spinbutton', { name: 'Step after type' });
+    input.focus();
+    fireEvent.change(input, { target: { value: '20' } });
+    expect(onCommit).not.toHaveBeenCalled();
+
+    const inc = screen.getByRole('button', { name: 'Increase value' });
+    await user.click(inc);
+    expect(onCommit).toHaveBeenLastCalledWith(21);
+    expect(input).toHaveValue('21');
+
+    fireEvent.blur(input);
+    expect(onCommit).toHaveBeenLastCalledWith(21);
+    expect(input).toHaveValue('21');
   });
 
   it('RangeStepperControl pairs a Slider and NumberStepper with live bounds', () => {
