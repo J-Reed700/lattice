@@ -1,5 +1,6 @@
 import { FolderOpen, FolderTree } from 'lucide-react';
 
+import { Button, PageHeader } from '@/components/ui';
 import { cn } from '@/lib/utils';
 
 import { YourFolders } from './ExplorerFolders';
@@ -14,10 +15,9 @@ export interface ExplorerStartProps {
 }
 
 /**
- * Before a folder is open there is nothing to browse: one large choice, and
- * the folders picked before. With none yet, the choice is the whole page;
- * once there are some, it steps down so the list is what the eye lands on.
- * Once picked, the Explorer stays in that folder until it is closed.
+ * Explorer start screen: editorial PageHeader with a calm `--action` primary
+ * "Choose a folder" CTA and a structured 2-column grid of indexed folder
+ * workspace cards.
  */
 export function ExplorerStart({ opening, onChoose, onOpen }: ExplorerStartProps) {
   const list = useExplorerFolders();
@@ -31,45 +31,62 @@ export function ExplorerStart({ opening, onChoose, onOpen }: ExplorerStartProps)
   return (
     <div
       aria-busy={loading || undefined}
-      className={cn('flex flex-1 justify-center overflow-y-auto px-4', hasFolders ? 'py-10 sm:py-14' : 'items-center py-10', loading && 'invisible')}
+      className={cn(
+        'flex flex-1 justify-center overflow-y-auto bg-bg px-6',
+        hasFolders ? 'py-10' : 'items-center py-10',
+        loading && 'invisible'
+      )}
     >
-      <div className={cn('w-full', hasFolders ? 'max-w-2xl' : 'max-w-lg')}>
-        <FolderTree className="h-6 w-6 text-text-muted" strokeWidth={1.5} aria-hidden="true" />
-        <h1 className="mt-4 font-serif text-2xl text-text-primary">Pick the folder to work in.</h1>
-        <p className="mt-2 text-sm leading-6 text-text-secondary">
-          The Explorer and its chat stay inside the folder you pick. They can read anything below it and nothing above it.
-          To work somewhere else, close the folder and pick again. Nothing in the folder is changed.
-        </p>
+      <div className={cn('w-full', hasFolders ? 'max-w-[960px]' : 'max-w-[640px]')}>
+        <PageHeader
+          title="Folder Explorer"
+          description="Browse and chat inside a single folder. Lattice reads only below it and never modifies files on disk."
+          actions={
+            <Button
+              type="button"
+              disabled={busy}
+              onClick={() => onChoose(recent)}
+            >
+              <FolderOpen className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+              {busy ? 'Opening…' : 'Choose a folder'}
+            </Button>
+          }
+        />
+
         {!hasFolders && (
-          <p className="mt-2 text-sm leading-6 text-text-secondary">
-            Lattice also indexes the folder so its chat can search it by meaning. The index lives in Lattice&apos;s data, not in
-            the folder, and stays until you delete it.
-          </p>
+          <div className="rounded-xl border border-border-subtle bg-surface p-6 shadow-control">
+            <div className="flex items-start gap-4">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-surface-sunken text-text-secondary ring-1 ring-inset ring-border-subtle">
+                <FolderTree className="h-5 w-5" strokeWidth={1.6} aria-hidden="true" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-[15px] font-medium text-text-primary">
+                  Open a local folder workspace
+                </h2>
+                <p className="mt-1.5 text-sm leading-relaxed text-text-secondary">
+                  The Explorer and its chat stay inside the folder you pick. To work somewhere else,
+                  close the folder and pick again.
+                </p>
+                <p className="mt-2 text-sm leading-relaxed text-text-secondary">
+                  Lattice also indexes the folder so its chat can search it by meaning. The index lives in Lattice&apos;s data, not in
+                  the folder, and stays until you delete it.
+                </p>
+              </div>
+            </div>
+          </div>
         )}
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => onChoose(recent)}
-          className={cn(
-            'pressable mt-6 flex w-full items-center rounded-lg bg-accent text-left text-accent-fg shadow-action transition hover:brightness-95 disabled:opacity-60',
-            hasFolders ? 'gap-3 px-5 py-3.5' : 'gap-4 px-6 py-6'
-          )}
-        >
-          <FolderOpen className={cn('shrink-0', hasFolders ? 'h-5 w-5' : 'h-7 w-7')} strokeWidth={1.5} aria-hidden="true" />
-          <span className={cn('flex min-w-0', hasFolders ? 'flex-1 items-baseline justify-between gap-3' : 'flex-col')}>
-            <span className={cn('font-medium', hasFolders ? 'text-ui' : 'text-base')}>{busy ? 'Opening…' : 'Choose a folder…'}</span>
-            <span className="truncate text-[12.5px] opacity-80">Opens the system folder picker</span>
-          </span>
-        </button>
+
         <YourFolders list={list} opening={opening} onOpen={onOpen} />
+
         {hasFolders && (
-          <p className="mt-3 px-1 text-[11.5px] leading-5 text-text-muted">
+          <p className="mt-4 px-0.5 text-xs leading-5 text-text-muted">
             Each folder&apos;s index lives in Lattice&apos;s data, not in the folder. Delete index frees the space; the next open
             builds it again.
           </p>
         )}
+
         {list.error && !hasFolders && (
-          <p role="alert" className="mt-6 text-[12.5px] text-text-muted">
+          <p role="alert" className="mt-6 text-xs text-danger-fg">
             Your folders couldn&apos;t be listed: {list.error}
           </p>
         )}

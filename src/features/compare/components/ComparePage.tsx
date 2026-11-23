@@ -1,10 +1,10 @@
 import { useCallback, useMemo, useState } from 'react';
 
-import { Columns3 } from 'lucide-react';
+import { Columns3, Loader2, NotebookPen } from 'lucide-react';
 import { useSearchParams } from 'react-router';
 
 import { EmptyState } from '@/components/EmptyState';
-import { PageHeader } from '@/components/ui';
+import { Button, PageHeader } from '@/components/ui';
 import { useCompareQuery } from '@/features/compare/hooks/useCompareQuery';
 import { useQuickCapture } from '@/features/journal/hooks/useQuickCapture';
 import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
@@ -135,24 +135,26 @@ export function ComparePage() {
     if (!hasRun || columns.length === 0) return null;
     if (query.isPending || query.isFetching) {
       return (
-        <p className="text-sm text-text-tertiary">
+        <p className="inline-flex items-center gap-2 text-sm text-text-tertiary">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
           Reading {documentIds.length} {documentIds.length === 1 ? 'document' : 'documents'}…
         </p>
       );
     }
     if (query.error) {
       return (
-        <div>
-          <p className="text-sm text-[hsl(var(--danger-fg))]">
+        <div className="space-y-3">
+          <p className="text-sm text-danger-fg">
             Couldn’t build the table. {query.error.message}
           </p>
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             onClick={() => void query.refetch()}
-            className="mt-3 text-sm text-text-secondary transition-colors duration-fast hover:text-text-primary"
           >
             Try again
-          </button>
+          </Button>
         </div>
       );
     }
@@ -178,13 +180,13 @@ export function ComparePage() {
           meta={metaLine}
           actions={
             table ? (
-              <button
+              <Button
                 type="button"
                 onClick={() => void saveToJournal()}
-                className="text-sm text-text-secondary transition-colors duration-fast hover:text-text-primary"
               >
+                <NotebookPen className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
                 Save to journal
-              </button>
+              </Button>
             ) : undefined
           }
         />

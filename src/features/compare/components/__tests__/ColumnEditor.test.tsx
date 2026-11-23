@@ -89,4 +89,80 @@ describe('ColumnEditor', () => {
     );
     expect(screen.getByRole('button', { name: 'Compare' })).toBeDisabled();
   });
+
+  it('renders interactive removable column chips and adds columns via Enter, comma, or Backspace', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const onSubmit = vi.fn();
+
+    const { rerender } = render(
+      <ColumnEditor
+        value="method, sample size"
+        onChange={onChange}
+        onSubmit={onSubmit}
+        isRunning={false}
+      />,
+    );
+
+    expect(screen.getByText('method')).toBeInTheDocument();
+    expect(screen.getByText('sample size')).toBeInTheDocument();
+
+    // Remove a chip via its close button.
+    await user.click(screen.getByRole('button', { name: 'Remove column method' }));
+    expect(onChange).toHaveBeenLastCalledWith('sample size');
+
+    rerender(
+      <ColumnEditor
+        value="sample size"
+        onChange={onChange}
+        onSubmit={onSubmit}
+        isRunning={false}
+      />,
+    );
+
+    // Add a column by typing + Enter.
+    const input = screen.getByLabelText('Columns');
+    await user.type(input, 'finding{Enter}');
+    expect(onChange).toHaveBeenLastCalledWith('sample size, finding');
+
+    rerender(
+      <ColumnEditor
+        value="sample size, finding"
+        onChange={onChange}
+        onSubmit={onSubmit}
+        isRunning={false}
+      />,
+    );
+
+    // Comma commits immediately.
+    await user.type(input, 'limitations,');
+    expect(onChange).toHaveBeenLastCalledWith('sample size, finding, limitations');
+
+    rerender(
+      <ColumnEditor
+        value="sample size, finding, limitations"
+        onChange={onChange}
+        onSubmit={onSubmit}
+        isRunning={false}
+      />,
+    );
+
+    // Backspace on empty input removes the last chip.
+    await user.type(input, '{Backspace}');
+    expect(onChange).toHaveBeenLastCalledWith('sample size, finding');
+  });
+
+  it('commits uncommitted draft text when Compare is clicked', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const onSubmit = vi.fn();
+    render(
+      <ColumnEditor value="method" onChange={onChange} onSubmit={onSubmit} isRunning={false} />,
+    );
+
+    await user.type(screen.getByLabelText('Columns'), 'outcome');
+    await user.click(screen.getByRole('button', { name: 'Compare' }));
+    expect(onChange).toHaveBeenCalledWith('method, outcome');
+    expect(onSubmit).toHaveBeenCalledWith(['method', 'outcome']);
+  });
 });

@@ -9,6 +9,7 @@
 import { useState, useCallback, useMemo } from 'react';
 
 import { EmptyState } from '@/components/EmptyState/EmptyState';
+import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useApi } from '@/contexts/ApiContext';
 import {
@@ -366,7 +367,14 @@ export function FileBrowser() {
                 {filteredDocuments.length.toLocaleString()}
               </span>
               {activeCollection?.kind === 'manual' ? (
-                <button type="button" onClick={() => setAddDocumentsCollectionId(activeCollection.id)} className="ml-auto shrink-0 rounded-sm border border-border-default px-3 py-1.5 text-sm text-text-primary hover:bg-surface">Add documents</button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setAddDocumentsCollectionId(activeCollection.id)}
+                  className="ml-auto shrink-0"
+                >
+                  Add documents
+                </Button>
               ) : null}
             </div>
             <TypeFacets

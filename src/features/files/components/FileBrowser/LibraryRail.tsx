@@ -5,7 +5,7 @@ import { MoreHorizontal, Plus, RefreshCw } from 'lucide-react';
 import { IconButton } from '@/components/ui/IconButton';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useIndexedFoldersQuery } from '@/features/files/hooks/useIndexedFoldersQuery';
-import { pathBasename } from '@/features/files/model/documentMetadata';
+import { formatFolderDisplayName } from '@/features/files/model/documentMetadata';
 import { type ClusterDto, type ClusterProgressPayload } from '@/types';
 import {
   type CustomCollection,
@@ -99,7 +99,8 @@ export function LibraryRail({
         {folders.map((folder) => (
           <RailRow
             key={folder.path}
-            label={pathBasename(folder.path)}
+            label={formatFolderDisplayName(folder.path)}
+            title={folder.path}
             trailing={folder.documentCount.toLocaleString()}
             isActive={scope.kind === 'folder' && scope.path === folder.path}
             onClick={() => onScopeChange({ kind: 'folder', path: folder.path })}
@@ -331,26 +332,27 @@ function ThemeRow({ theme, isActive, onClick }: ThemeRowProps) {
 
 interface RailRowProps {
   label: string;
+  title?: string;
   trailing?: string;
   isActive?: boolean;
   onClick?: () => void;
   onDoubleClick?: () => void;
 }
 
-function RailRow({ label, trailing, isActive = false, onClick, onDoubleClick }: RailRowProps) {
+function RailRow({ label, title, trailing, isActive = false, onClick, onDoubleClick }: RailRowProps) {
   const content = (
     <>
       {isActive ? (
         <span aria-hidden="true" className="absolute inset-y-0 left-0 w-0.5 bg-accent" />
       ) : null}
-      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <span className="min-w-0 flex-1 truncate" title={title ?? label}>{label}</span>
       {trailing ? (
         <span className="shrink-0 text-xs tabular-nums text-text-muted">{trailing}</span>
       ) : null}
     </>
   );
 
-  const className = `relative flex h-8 w-full items-center gap-2 rounded-sm px-3 text-left text-sm transition-colors duration-fast ${
+  const className = `relative flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm transition-colors duration-fast ${
     isActive ? 'bg-surface-raised text-text-primary' : 'text-text-secondary'
   } ${onClick ? 'hover:bg-surface hover:text-text-primary' : ''}`;
 
