@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
 import { motion, useReducedMotion } from 'framer-motion';
-import { ArrowUpRight, Copy, Trash2 } from 'lucide-react';
+import { ArrowUpRight, Copy, Quote, Trash2 } from 'lucide-react';
 
 import { IconButton } from '@/components/ui/IconButton';
 import { PASSAGE_ORIGIN, passagePreview, passageTitle } from '@/features/references/model/inboxItems';
@@ -88,9 +88,10 @@ export function PassageListItem({
           />
         ))}
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5">
+        <Quote className="h-3 w-3 shrink-0 text-text-muted" strokeWidth={1.75} aria-hidden="true" />
         <span
-          className={`min-w-0 flex-1 truncate text-sm text-text-primary${
+          className={`min-w-0 flex-1 truncate text-ui text-text-primary${
             isActive ? ' font-medium' : ''
           }`}
           title={displayTitle}
@@ -99,12 +100,12 @@ export function PassageListItem({
         </span>
       </div>
 
-      <p className="mt-0.5 truncate text-xs text-text-muted">{metaLine}</p>
+      <p className="mt-1 truncate text-[11.5px] text-text-muted">{metaLine}</p>
 
-      {preview && <p className="truncate text-xs text-text-tertiary">{preview}</p>}
+      {preview && <p className="mt-0.5 truncate text-xs text-text-tertiary">{preview}</p>}
 
       <div
-        className={`absolute right-2 top-1.5 flex items-center gap-0.5 rounded-sm bg-surface-raised pl-2 transition-opacity duration-fast ${
+        className={`absolute right-2 top-1.5 flex items-center gap-0.5 rounded-md bg-surface-raised pl-2 transition-opacity duration-fast ${
           showActions ? 'opacity-100' : 'pointer-events-none opacity-0'
         }`}
         onClick={(e) => e.stopPropagation()}

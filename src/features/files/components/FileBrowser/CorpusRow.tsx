@@ -2,7 +2,7 @@ import { useState } from 'react';
 
 import { Edit3, MoreHorizontal, Trash2 } from 'lucide-react';
 
-import { metaLine } from '@/features/files/model/documentMetadata';
+import { formatDisplayPath, metaLine } from '@/features/files/model/documentMetadata';
 import { type DocumentMetadata } from '@/types/fileBrowser';
 
 import { FileIcon } from './FileIcon';
@@ -42,6 +42,8 @@ export function CorpusRow({
 }: CorpusRowProps) {
   const [isHovering, setIsHovering] = useState(false);
   const showCheckbox = selectionActive || isHovering || isSelected;
+  const sourceLocation = formatDisplayPath(doc.filePath);
+  const detailsLine = [sourceLocation, metaLine(doc)].filter(Boolean).join(' · ');
 
   return (
     <div
@@ -104,7 +106,9 @@ export function CorpusRow({
 
       <div className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-ui font-medium text-text-primary">{doc.fileName}</span>
-        <span className="truncate text-xs tabular-nums text-text-muted">{metaLine(doc)}</span>
+        <span className="truncate text-xs tabular-nums text-text-muted" title={doc.filePath}>
+          {detailsLine}
+        </span>
       </div>
 
       <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-fast group-hover:opacity-100 group-focus-within:opacity-100">

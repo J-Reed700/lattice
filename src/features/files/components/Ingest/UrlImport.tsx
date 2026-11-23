@@ -1,9 +1,10 @@
 import { useState, useCallback, useMemo, type ChangeEvent } from 'react';
 
+import { Globe, Loader2 } from 'lucide-react';
+
 import { Button } from '@/components/ui/button';
-import { settingsFieldClass } from '@/components/ui/SettingsSection';
+import { Input } from '@/components/ui/input';
 import { useWebImport } from '@/features/files/hooks/useWebImport';
-import { cn } from '@/lib/utils';
 import type { UrlPreview } from '@/types/api/web';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
@@ -11,6 +12,8 @@ interface UrlImportProps {
   onImport: (_url: string) => void;
   onImportComplete?: (_success: boolean, _url: string) => void;
 }
+
+const SUPPORTED_WEB_HINTS = ['Articles', 'Documentation', 'Research posts', 'Readable web pages'];
 
 function formatInvokeError(err: unknown): string {
   if (typeof err === 'string') return err;
@@ -142,38 +145,68 @@ export const UrlImport: React.FC<UrlImportProps> = ({ onImport, onImportComplete
   const meta = preview ? previewMeta(preview) : '';
 
   return (
-    <div>
+    <div className="space-y-5">
+      <div className="flex items-start gap-3.5">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-muted text-accent">
+          <Globe className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+        </span>
+        <div className="min-w-0">
+          <h2 className="text-[15px] font-medium text-text-primary">Save a web page</h2>
+          <p className="mt-0.5 text-sm leading-relaxed text-text-secondary">
+            Paste a link to archive a clean, offline-readable copy and index it for search and chat.
+          </p>
+        </div>
+      </div>
+
       <div className="flex items-center gap-2">
-        <input
-          type="url"
-          placeholder="https://example.com/article"
-          aria-label="URL to import"
-          value={url}
-          onChange={handleUrlChange}
-          className={cn(settingsFieldClass, 'h-9 flex-1')}
-        />
+        <div className="min-w-0 flex-1">
+          <Input
+            type="url"
+            placeholder="https://example.com/article"
+            aria-label="URL to import"
+            value={url}
+            onChange={handleUrlChange}
+          />
+        </div>
         <Button
           onClick={handleAsyncEvent(handleImport)}
           disabled={!resolvedUrl || loading}
-          className="h-9 shrink-0"
+          className="shrink-0"
         >
-          {loading ? 'Importing…' : 'Import'}
+          {loading ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              Importing…
+            </>
+          ) : (
+            'Import'
+          )}
         </Button>
       </div>
 
-      {error && <p className="mt-3 text-sm text-danger-fg">{error}</p>}
+      {error && <p className="text-sm text-danger-fg">{error}</p>}
 
-      {preview && (
-        <div className="mt-6 border-t border-border-subtle">
-          <div className="border-b border-border-subtle py-3">
-            <div className="truncate text-sm font-medium text-text-primary">{preview.title}</div>
-            {meta && <div className="mt-0.5 truncate text-xs text-text-muted">{meta}</div>}
-            {preview.description && (
-              <p className="mt-1.5 line-clamp-2 text-sm text-text-secondary">
-                {preview.description}
-              </p>
-            )}
-          </div>
+      {preview ? (
+        <div className="rounded-lg border border-border-subtle bg-bg/60 p-4">
+          <div className="truncate text-sm font-medium text-text-primary">{preview.title}</div>
+          {meta && <div className="mt-0.5 truncate text-xs text-text-muted">{meta}</div>}
+          {preview.description && (
+            <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-text-secondary">
+              {preview.description}
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-1.5 border-t border-border-subtle pt-4">
+          <span className="mr-1 text-xs text-text-muted">Works best with:</span>
+          {SUPPORTED_WEB_HINTS.map((hint) => (
+            <span
+              key={hint}
+              className="inline-flex items-center rounded-md bg-[hsl(var(--text-primary)/0.05)] px-2 py-0.5 text-[11px] font-medium text-text-secondary"
+            >
+              {hint}
+            </span>
+          ))}
         </div>
       )}
     </div>

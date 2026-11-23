@@ -8,7 +8,7 @@ import {
   isYesterday,
   startOfMonth,
 } from 'date-fns';
-import { PanelLeft } from 'lucide-react';
+import { Loader2, PanelLeft } from 'lucide-react';
 
 import { IconButton } from '@/components/ui/IconButton';
 import { SidebarHeader, SidebarSearch, SidebarTabs } from '@/components/ui/SidebarHeader';
@@ -180,7 +180,10 @@ export function ReferenceList({
       {/* List body */}
       <div className="flex-1 overflow-y-auto">
         {isLoading ? (
-          <p className="px-4 py-6 text-sm text-text-muted">Loading…</p>
+          <p className="flex items-center gap-2 px-4 py-6 text-sm text-text-muted">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+            Loading…
+          </p>
         ) : isEmpty && listLoadFailed ? (
           // An empty shelf would read as "you have saved nothing" instead of
           // "we could not look".

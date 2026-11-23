@@ -6,6 +6,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 
 import { useApi } from '@/contexts/ApiContext';
 import { BATCH_IMPORT_JOBS } from '@/features/batch/jobKinds';
+import { formatDisplayPath, isInternalLatticePath } from '@/features/files/model/documentMetadata';
 import { useJobStatus } from '@/features/jobs/api';
 import type { ApiClient } from '@/lib/api';
 import type { BatchJobSummary, BatchJobStatus, BatchJobItem } from '@/types/api/batch';
@@ -199,7 +200,13 @@ export const ImportHistory: FC<ImportHistoryProps> = ({ onRefresh }) => {
                 {detail?.isPending && !detailError && <p className="text-xs text-text-muted">Loading files…</p>}
                 {items.map(item => <div key={item.itemId} className="border-t border-border-subtle py-3">
                   <p className="wrap-break-word text-sm text-text-primary">{job.jobType === 'file_import' ? fileName(item.target) : item.target}</p>
-                  {job.jobType === 'file_import' && <p className="break-all text-xs text-text-muted">{item.target}</p>}
+                  {job.jobType === 'file_import' && (
+                    <p className="truncate text-xs text-text-muted" title={item.target}>
+                      {isInternalLatticePath(item.target)
+                        ? (formatDisplayPath(item.target) ?? item.target)
+                        : item.target}
+                    </p>
+                  )}
                   <p className="mt-1 whitespace-pre-wrap wrap-break-word text-xs text-text-secondary">{item.status === 'completed' ? 'Imported' : item.status === 'failed' ? `Failed — ${item.errorMessage || 'Import failed'}` : ['running', 'processing'].includes(item.status) ? 'Processing — not ready to search yet' : item.status === 'cancelled' ? 'Cancelled' : 'Queued'}</p>
                   {item.status === 'failed' && job.jobType === 'file_import' && <>
                     <p className="mt-1 text-xs text-text-muted">{recoveryHint(item.errorMessage ?? null)}</p>
