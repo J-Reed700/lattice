@@ -67,6 +67,7 @@ describe('CommandPalette actions', () => {
   it.each([
     ['Library', '/files'],
     ['Chat', '/chat'],
+    ['Compare', '/compare'],
     ['Flashcards', '/studio?section=flashcards'],
     ['Review drills', '/studio?drills=open'],
     ['New learning program', '/studio?new=1'],
