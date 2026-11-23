@@ -110,6 +110,26 @@ export namespace EventSchemas {
     export const NoteImported = z.object({
       noteId: z.string(),
     });
+
+    /// A note changed in Lattice and outside it at once; both versions were kept.
+    export const NoteConflict = z.discriminatedUnion('kind', [
+      z.object({
+        kind: z.literal('keptCopy'),
+        id: z.string(),
+        noteId: z.string(),
+        noteTitle: z.string(),
+        copyId: z.string(),
+        copyTitle: z.string(),
+      }),
+      z.object({
+        kind: z.literal('setAside'),
+        id: z.string(),
+        noteId: z.string(),
+        noteTitle: z.string(),
+        setAsidePath: z.string(),
+      }),
+    ]);
+    export type NoteConflict = z.infer<typeof NoteConflict>;
   }
 
   export namespace WebPageSnapshot {
@@ -297,6 +317,7 @@ export const TauriEventNames = {
   Vault: {
     WriteError: 'vault:write-error' as const,
     NoteImported: 'vault:note-imported' as const,
+    NoteConflict: 'vault:note-conflict' as const,
   },
   WebPageSnapshot: {
     Changed: 'web-page-snapshot:changed' as const,

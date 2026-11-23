@@ -547,6 +547,8 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::web::plugin::saved_web_article,
             lattice::features::web::plugin::check_sourcing_address,
             lattice::features::vault::plugin::rescan_vault,
+            lattice::features::vault::plugin::list_vault_conflicts,
+            lattice::features::vault::plugin::dismiss_vault_conflicts,
             // Updates Plugin (2 commands)
             lattice::features::updates::plugin::check_for_updates,
             lattice::features::updates::plugin::get_version_info,

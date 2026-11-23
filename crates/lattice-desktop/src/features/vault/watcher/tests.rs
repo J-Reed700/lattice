@@ -228,3 +228,117 @@ async fn vault_watcher_handle_reconfigures_and_stops_cleanly() {
         .await
         .unwrap();
 }
+
+#[test]
+fn set_aside_conflict_file_detector_matches_only_replaced_stamp_markdown() {
+    assert!(is_set_aside_conflict_file(Path::new(
+        "/vault/notes/n1.replaced-20261122-150405.md"
+    )));
+    assert!(is_set_aside_conflict_file(Path::new(
+        "/vault/notes/n1.replaced-20261122-150405-2.md"
+    )));
+    assert!(!is_set_aside_conflict_file(Path::new("/vault/notes/n1.md")));
+    assert!(!is_set_aside_conflict_file(Path::new(
+        "/vault/notes/my.replaced-note.md"
+    )));
+    assert!(!is_set_aside_conflict_file(Path::new(
+        "/vault/notes/n1.replaced-20261122-150405.txt"
+    )));
+}
+
+#[tokio::test]
+async fn import_one_and_find_renamed_note_ignore_set_aside_files() {
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+        .await
+        .unwrap();
+    let db = Database::new(pool.clone());
+    let dir = tempfile::tempdir().unwrap();
+    let notes_dir = dir.path().join("notes");
+    std::fs::create_dir_all(&notes_dir).unwrap();
+    let app_handle: AppHandleCell = Arc::new(std::sync::RwLock::new(None));
+
+    let replaced = notes_dir.join("n1.replaced-20261122-150405.md");
+    std::fs::write(&replaced, note("abc")).unwrap();
+
+    assert_eq!(import_one(&replaced, &db, &app_handle, None).await, None);
+    assert_eq!(
+        find_renamed_note(&notes_dir.join("abc.md"), "abc").await,
+        None
+    );
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM daily_notes_workspace")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn rescan_ignores_set_aside_and_untracked_files_without_counting_imports() {
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+        .await
+        .unwrap();
+    let db = Database::new(pool.clone());
+    let dir = tempfile::tempdir().unwrap();
+    let notes_dir = dir.path().join("notes");
+    std::fs::create_dir_all(&notes_dir).unwrap();
+    let app_handle: AppHandleCell = Arc::new(std::sync::RwLock::new(None));
+    let suppression = WriteSuppressionRegistry::new();
+    let rescan_lock = RescanLock::default();
+    let background = Arc::new(BackgroundTasks::default());
+
+    sqlx::query(
+        "INSERT INTO daily_notes_workspace (id, title, content, created_at, updated_at) \
+         VALUES ('n1', 'T1', 'body', '2026-11-19T00:00:00Z', '2099-01-01T00:00:00Z')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE vault_write_outbox SET mirror_complete = 1 WHERE note_id = 'n1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    std::fs::write(notes_dir.join("n1.md"), note("n1")).unwrap();
+    std::fs::write(
+        notes_dir.join("n1.replaced-20261122-150405.md"),
+        "pasted over without frontmatter",
+    )
+    .unwrap();
+    std::fs::write(
+        notes_dir.join("n2.replaced-20261122-150405-2.md"),
+        note("deleted-note"),
+    )
+    .unwrap();
+    std::fs::write(notes_dir.join("scratch.md"), "# Just markdown\n").unwrap();
+
+    for pass in 0..2 {
+        let summary = rescan_vault(
+            db.clone(),
+            dir.path().to_path_buf(),
+            suppression.clone(),
+            &rescan_lock,
+            app_handle.clone(),
+            Arc::clone(&background),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(summary.scanned, 2, "pass {pass}: set-aside files excluded");
+        assert_eq!(
+            summary.imported, 0,
+            "pass {pass}: untracked and set-aside files must not increment imported"
+        );
+        assert_eq!(summary.deleted, 0, "pass {pass}");
+    }
+
+    let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM daily_notes_workspace ORDER BY id")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(ids, vec!["n1".to_string()]);
+
+    background.close();
+    tokio::time::timeout(Duration::from_secs(2), background.wait())
+        .await
+        .unwrap();
+}

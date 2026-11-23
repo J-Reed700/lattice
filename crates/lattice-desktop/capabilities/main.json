@@ -312,6 +312,8 @@
     "backup:allow-plugin-create-archive-now",
     "backup:allow-plugin-restore-archive",
     "vault:allow-rescan-vault",
+    "vault:allow-list-vault-conflicts",
+    "vault:allow-dismiss-vault-conflicts",
     "transcription:allow-transcribe-file",
     "transcription:allow-transcribe-speech",
     "transcription:allow-get-transcription-status",

@@ -1,4 +1,6 @@
 pub mod di;
+pub(crate) mod events;
+pub use events::VaultConflictDto;
 pub mod parse;
 pub mod plugin;
 pub mod preflight;

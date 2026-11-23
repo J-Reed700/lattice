@@ -150,6 +150,58 @@ describe('toastStore - Zustand Implementation', () => {
       expect(toasts[4].title).toBe('Toast 1');
     });
 
+    it('never evicts persistent (duration: 0) toasts when exceeding maxToasts limit', () => {
+      for (let i = 0; i < 8; i++) {
+        useToastStore.getState().addToast({
+          type: 'warning',
+          title: `Conflict ${i}`,
+          duration: 0,
+        });
+      }
+
+      const conflictOnly = useToastStore.getState().toasts;
+      expect(conflictOnly).toHaveLength(8);
+      expect(conflictOnly.map((t) => t.title)).toContain('Conflict 0');
+      expect(conflictOnly.map((t) => t.title)).toContain('Conflict 7');
+
+      // Transient toasts evict older transient toasts, never persistent ones.
+      useToastStore.getState().dismissAll();
+      const persistentId = useToastStore.getState().addToast({
+        type: 'warning',
+        title: 'Kept both versions',
+        duration: 0,
+      });
+      for (let i = 0; i < 6; i++) {
+        useToastStore.getState().addToast({
+          type: 'info',
+          title: `Info ${i}`,
+          duration: 4000,
+        });
+      }
+
+      const mixed = useToastStore.getState().toasts;
+      expect(mixed.some((t) => t.id === persistentId)).toBe(true);
+      expect(mixed).toHaveLength(5);
+    });
+
+    it('updates an existing toast in place via updateToast', () => {
+      const id = useToastStore.getState().addToast({
+        type: 'warning',
+        title: 'Initial',
+        message: 'First body',
+        duration: 0,
+      });
+
+      useToastStore.getState().updateToast(id, {
+        title: 'Updated',
+        message: 'Second body',
+      });
+
+      const updated = useToastStore.getState().toasts.find((t) => t.id === id);
+      expect(updated?.title).toBe('Updated');
+      expect(updated?.message).toBe('Second body');
+    });
+
     it('includes message when provided', () => {
       const id = useToastStore.getState().addToast({
         type: 'error',

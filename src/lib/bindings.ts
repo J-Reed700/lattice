@@ -4331,6 +4331,22 @@ async rescanVault() : Promise<Result<RescanSummary, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
+async listVaultConflicts() : Promise<Result<VaultConflictDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:vault|list_vault_conflicts") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async dismissVaultConflicts(ids: string[]) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:vault|dismiss_vault_conflicts", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async checkForUpdates() : Promise<Result<UpdateInfoDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:updates|check_for_updates") };
@@ -12268,6 +12284,7 @@ keywords?: string[] }
  * to; the quote digest it is bound to stays on the backend.
  */
 export type UserActionDto = { action: "confirm"; boundSourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "research_with_hint"; hint: string } | { action: "put_back"; sentence: string; edited: boolean } | { action: "restore_original"; original: string; rewrite: string }
+export type VaultConflictDto = { kind: "keptCopy"; id: string; noteId: string; noteTitle: string; copyId: string; copyTitle: string } | { kind: "setAside"; id: string; noteId: string; noteTitle: string; setAsidePath: string }
 export type VaultSettingsDto = {
 /**
  * Empty string = `~/Lattice`.
@@ -12710,6 +12727,7 @@ export type CommandArgs = {
 	discard_learning_curriculum_revision: { request: DiscardLearningCurriculumRevisionRequestDto };
 	dismiss_journal_synthesis: { jobId: string };
 	dismiss_learning_follow_up: { request: DecideLearningFollowUpRequestDto };
+	dismiss_vault_conflicts: { ids: string[] };
 	download_default_embedding_model: void;
 	download_model: { modelId: string };
 	download_reranker: void;
@@ -12886,6 +12904,7 @@ export type CommandArgs = {
 	list_source_trust_overrides: void;
 	list_space_documents: void | { spaceId?: string | null; conversationId?: string | null; query?: string | null; limit?: number | null };
 	list_study_decks: void;
+	list_vault_conflicts: void;
 	list_web_page_snapshots: { conversationId: string };
 	list_workspace_notes: void | { request?: ListWorkspaceNotesRequestDto | null };
 	manage_knowledge: { request: KnowledgeRequestDto };
@@ -13182,6 +13201,7 @@ export type CommandResults = {
 	discard_learning_curriculum_revision: LearningPlanDto;
 	dismiss_journal_synthesis: null;
 	dismiss_learning_follow_up: LearningQuizOverviewDto;
+	dismiss_vault_conflicts: null;
 	download_default_embedding_model: string;
 	download_model: DownloadModelResponse;
 	download_reranker: RerankerStatusDto;
@@ -13358,6 +13378,7 @@ export type CommandResults = {
 	list_source_trust_overrides: LearningSiteTrustOverrideDto[];
 	list_space_documents: SpaceDocumentDto[];
 	list_study_decks: StudyDeckSummaryDto[];
+	list_vault_conflicts: VaultConflictDto[];
 	list_web_page_snapshots: WebPageSnapshotDto[];
 	list_workspace_notes: ListWorkspaceNotesResponseDto;
 	manage_knowledge: KnowledgeResponseDto;

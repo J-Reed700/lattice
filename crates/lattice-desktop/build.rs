@@ -679,7 +679,11 @@ fn main() {
             )
             .plugin(
                 "vault",
-                tauri_build::InlinedPlugin::new().commands(&["rescan_vault"]),
+                tauri_build::InlinedPlugin::new().commands(&[
+                    "rescan_vault",
+                    "list_vault_conflicts",
+                    "dismiss_vault_conflicts",
+                ]),
             )
             .plugin(
                 "transcription",

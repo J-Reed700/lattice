@@ -162,7 +162,7 @@ impl VaultWatcherHandle {
                 error = %e,
                 "vault watcher: vault folder doesn't exist and couldn't be created"
             );
-            emit_watcher_error(
+            super::events::emit_watcher_error(
                 &self.inner.app_handle,
                 &format!(
                     "Vault folder '{}' could not be created: {}",
@@ -242,7 +242,9 @@ async fn run_watcher(
             match result {
                 Ok(event) => {
                     for path in event.paths {
-                        if path.extension().and_then(|s| s.to_str()) != Some("md") {
+                        if path.extension().and_then(|s| s.to_str()) != Some("md")
+                            || is_set_aside_conflict_file(&path)
+                        {
                             continue;
                         }
                         if tx.try_send(path).is_err() {
@@ -259,7 +261,7 @@ async fn run_watcher(
         }) {
             Ok(watcher) => watcher,
             Err(error) => {
-                emit_watcher_error(
+                super::events::emit_watcher_error(
                     &app_handle,
                     &format!("Vault watcher failed to start: {error}"),
                 );
@@ -273,7 +275,7 @@ async fn run_watcher(
             error = %e,
             "vault watcher: failed to watch vault root"
         );
-        emit_watcher_error(
+        super::events::emit_watcher_error(
             &app_handle,
             &format!(
                 "Vault watcher couldn't watch '{}': {}",
@@ -324,7 +326,7 @@ async fn run_watcher(
             )
             .await
             {
-                emit_watcher_error(&app_handle, &error.to_string());
+                super::events::emit_watcher_error(&app_handle, &error.to_string());
             }
         }
         for path in paths {
@@ -366,6 +368,41 @@ async fn read_note(path: &Path) -> std::io::Result<String> {
         .map(|(contents, _)| contents)
 }
 
+pub(crate) fn is_set_aside_conflict_file(path: &Path) -> bool {
+    if path.extension().and_then(|s| s.to_str()) != Some("md") {
+        return false;
+    }
+    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    let Some((_, suffix)) = stem.rsplit_once(".replaced-") else {
+        return false;
+    };
+    let mut parts = suffix.split('-');
+    let Some(date) = parts.next() else {
+        return false;
+    };
+    let Some(time) = parts.next() else {
+        return false;
+    };
+    if date.len() != 8 || !date.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    if time.len() != 6 || !time.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    match parts.next() {
+        None => true,
+        Some(n) => !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) && parts.next().is_none(),
+    }
+}
+
+pub(super) enum ImportOutcome {
+    Imported(String),
+    UnchangedOrSkipped(String),
+    Ignored,
+}
+
 /// Pub(crate) so focus-rescan reuses the same parse/UPSERT/emit path.
 ///
 /// Returns the id of the note it imported, which is the front-matter id and
@@ -376,6 +413,22 @@ pub(crate) async fn import_one(
     app_handle: &AppHandleCell,
     vault_writer: Option<&super::writeback::VaultWriterHandle>,
 ) -> Option<String> {
+    match import_one_outcome(path, database, app_handle, vault_writer).await {
+        ImportOutcome::Imported(id) => Some(id),
+        ImportOutcome::UnchangedOrSkipped(_) | ImportOutcome::Ignored => None,
+    }
+}
+
+pub(super) async fn import_one_outcome(
+    path: &Path,
+    database: &Database,
+    app_handle: &AppHandleCell,
+    vault_writer: Option<&super::writeback::VaultWriterHandle>,
+) -> ImportOutcome {
+    if is_set_aside_conflict_file(path) {
+        return ImportOutcome::Ignored;
+    }
+
     let (contents, sha256) = match read_note_with_sha256(path).await {
         Ok(pair) => pair,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -389,7 +442,7 @@ pub(crate) async fn import_one(
                     path = %path.display(),
                     "vault watcher: file reappeared after atomic-save gap — skipping delete"
                 );
-                return None;
+                return ImportOutcome::Ignored;
             }
             // A rename in Finder arrives as a Remove for the old name. The
             // note is still on disk under the new one, carrying its id in
@@ -401,12 +454,17 @@ pub(crate) async fn import_one(
                         to = %renamed.display(),
                         "vault watcher: note renamed on disk — keeping it"
                     );
-                    return Box::pin(import_one(&renamed, database, app_handle, vault_writer))
-                        .await;
+                    return Box::pin(import_one_outcome(
+                        &renamed,
+                        database,
+                        app_handle,
+                        vault_writer,
+                    ))
+                    .await;
                 }
             }
             handle_external_delete(path, database, app_handle, vault_writer).await;
-            return None;
+            return ImportOutcome::Ignored;
         }
         Err(e) => {
             tracing::debug!(
@@ -414,7 +472,7 @@ pub(crate) async fn import_one(
                 error = %e,
                 "vault watcher: read failed — skipping"
             );
-            return None;
+            return ImportOutcome::Ignored;
         }
     };
 
@@ -422,7 +480,7 @@ pub(crate) async fn import_one(
         Ok(p) => p,
         Err(super::parse::ParseError::NotOurs) => {
             tracing::debug!(path = %path.display(), "vault watcher: untracked .md file — skipping");
-            return None;
+            return ImportOutcome::Ignored;
         }
         Err(e) => {
             tracing::warn!(
@@ -430,7 +488,7 @@ pub(crate) async fn import_one(
                 error = %e,
                 "vault watcher: parse failed — skipping"
             );
-            return None;
+            return ImportOutcome::Ignored;
         }
     };
 
@@ -441,7 +499,7 @@ pub(crate) async fn import_one(
         .await
         .unwrap_or(true)
     {
-        return Some(parsed.id);
+        return ImportOutcome::UnchangedOrSkipped(parsed.id);
     }
 
     // A front-matter id that differs from the file stem is either a copy
@@ -454,7 +512,7 @@ pub(crate) async fn import_one(
             frontmatter_id = %parsed.id,
             "vault watcher: id mismatch while the note's own file exists — skipping copy"
         );
-        return None;
+        return ImportOutcome::Ignored;
     }
 
     // ON CONFLICT: only the fields that round-trip through markdown.
@@ -482,20 +540,20 @@ pub(crate) async fn import_one(
                 path = %path.display(),
                 "vault watcher: imported external edit"
             );
-            emit_note_imported(app_handle, &parsed.id);
+            super::events::emit_note_imported(app_handle, &parsed.id);
             if let Some(writer) = vault_writer {
                 super::writeback::spawn_sync_workspace_note(writer);
             }
-            Some(parsed.id)
+            ImportOutcome::Imported(parsed.id)
         }
-        Ok(false) => Some(parsed.id),
+        Ok(false) => ImportOutcome::UnchangedOrSkipped(parsed.id),
         Err(e) => {
             tracing::warn!(
                 path = %path.display(),
                 error = %e,
                 "vault watcher: SQL upsert failed"
             );
-            None
+            ImportOutcome::Ignored
         }
     }
 }
@@ -526,7 +584,10 @@ async fn find_renamed_note(removed: &Path, id: &str) -> Option<PathBuf> {
     };
     while let Ok(Some(entry)) = entries.next_entry().await {
         let candidate = entry.path();
-        if candidate == removed || candidate.extension().and_then(|s| s.to_str()) != Some("md") {
+        if candidate == removed
+            || candidate.extension().and_then(|s| s.to_str()) != Some("md")
+            || is_set_aside_conflict_file(&candidate)
+        {
             continue;
         }
         // repository-barrier-allow: watcher reads a candidate note in the watched vault folder.
@@ -572,7 +633,7 @@ async fn handle_external_delete(
                 path = %path.display(),
                 "vault watcher: deleted note (external rm)"
             );
-            emit_note_imported(app_handle, id);
+            super::events::emit_note_imported(app_handle, id);
             if let Some(writer) = vault_writer {
                 super::writeback::spawn_delete_workspace_note(writer);
             }
@@ -589,36 +650,6 @@ async fn handle_external_delete(
             error = %e,
             "vault watcher: SQL delete failed"
         ),
-    }
-}
-
-fn emit_note_imported(app_handle: &AppHandleCell, note_id: &str) {
-    use tauri::Emitter;
-    let guard = match app_handle.read() {
-        Ok(g) => g,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let Some(handle) = guard.as_ref() else {
-        return;
-    };
-    let payload = serde_json::json!({ "noteId": note_id });
-    if let Err(e) = handle.emit("vault:note-imported", payload) {
-        tracing::warn!(error = %e, "failed to emit vault:note-imported event");
-    }
-}
-
-fn emit_watcher_error(app_handle: &AppHandleCell, error: &str) {
-    use tauri::Emitter;
-    let guard = match app_handle.read() {
-        Ok(g) => g,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let Some(handle) = guard.as_ref() else {
-        return;
-    };
-    let payload = serde_json::json!({ "error": error });
-    if let Err(e) = handle.emit("vault:watcher-error", payload) {
-        tracing::warn!(error = %e, "failed to emit vault:watcher-error event");
     }
 }
 

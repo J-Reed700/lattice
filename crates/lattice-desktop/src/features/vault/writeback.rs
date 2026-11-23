@@ -157,6 +157,9 @@ async fn run_worker(
     cancel: tokio_util::sync::CancellationToken,
 ) {
     let repository = super::repository::workspace_notes(&database);
+    if let Err(error) = super::repository::backfill_missing_text_hashes(&database).await {
+        tracing::warn!(%error, "Vault writer could not backfill missing mirrored text digests");
+    }
     loop {
         // Intents survive process shutdown. Finish the current atomic write;
         // leave the rest in SQLite for startup replay.
@@ -186,7 +189,7 @@ async fn run_worker(
                             // Imported front matter is untrusted: note ids
                             // must never escape the flat notes directory.
                             if !safe_note_id(&write.note_id) {
-                                emit_write_error(
+                                super::events::emit_write_error(
                                     &app_handle,
                                     Some(&write.note_id),
                                     &root,
@@ -270,7 +273,7 @@ async fn run_worker(
                             match settle_write(&database, &write, result).await {
                                 Ok(()) => {}
                                 Err(error) => {
-                                    emit_write_error(
+                                    super::events::emit_write_error(
                                         &app_handle,
                                         Some(&write.note_id),
                                         &target,
@@ -313,39 +316,6 @@ async fn settle_write(
             super::repository::defer(database, write).await?;
             Err(lattice_core::shared::error::AppError::InternalError(error))
         }
-    }
-}
-
-/// Emit a `vault:write-error` Tauri event so the frontend can surface
-/// disk-full / permission-denied / vault-deleted-from-under-us cases
-/// as a persistent toast. Without this, the user keeps editing notes
-/// believing the vault is mirroring while every write silently fails.
-///
-/// Best-effort: a missing AppHandle (test fixtures, or a window that
-/// has been destroyed) is logged but never crashes the worker.
-fn emit_write_error(
-    app_handle: &Arc<std::sync::RwLock<Option<tauri::AppHandle>>>,
-    note_id: Option<&str>,
-    target: &Path,
-    error: &str,
-) {
-    use tauri::Emitter;
-    let guard = match app_handle.read() {
-        Ok(g) => g,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let Some(handle) = guard.as_ref() else {
-        // No handle yet — boot order or test fixture. Already logged
-        // by the caller via tracing::warn; nothing more to do.
-        return;
-    };
-    let payload = serde_json::json!({
-        "noteId": note_id,
-        "target": target.display().to_string(),
-        "error": error,
-    });
-    if let Err(e) = handle.emit("vault:write-error", payload) {
-        tracing::warn!(error = %e, "failed to emit vault:write-error event");
     }
 }
 
@@ -410,12 +380,24 @@ pub fn resolve_vault_root(configured: &str) -> Option<PathBuf> {
     lattice_core::shared::fs::roots::resolve_vault_root(configured)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn build_frontmatter(
     id: &str,
     title: &str,
     created_at: &str,
     updated_at: &str,
     tags: &[String],
+) -> String {
+    build_frontmatter_with_extra(id, title, created_at, updated_at, tags, &[])
+}
+
+fn build_frontmatter_with_extra(
+    id: &str,
+    title: &str,
+    created_at: &str,
+    updated_at: &str,
+    tags: &[String],
+    extra_frontmatter: &[String],
 ) -> String {
     let escaped_title = escape_yaml_double_quoted(title);
     let tags_block = if tags.is_empty() {
@@ -427,8 +409,13 @@ fn build_frontmatter(
             .collect();
         format!("tags: [{}]", escaped.join(", "))
     };
+    let extra_block = if extra_frontmatter.is_empty() {
+        String::new()
+    } else {
+        format!("\n{}", extra_frontmatter.join("\n"))
+    };
     format!(
-        "---\nid: {id}\ntitle: \"{escaped_title}\"\ncreated_at: {created_at}\nupdated_at: {updated_at}\n{tags_block}\n---"
+        "---\nid: {id}\ntitle: \"{escaped_title}\"\ncreated_at: {created_at}\nupdated_at: {updated_at}\n{tags_block}{extra_block}\n---"
     )
 }
 
@@ -437,24 +424,6 @@ fn escape_yaml_double_quoted(s: &str) -> String {
         .replace('"', "\\\"")
         .replace('\n', "\\n")
         .replace('\r', "")
-}
-
-fn emit_note_imported(
-    app_handle: &Arc<std::sync::RwLock<Option<tauri::AppHandle>>>,
-    note_id: &str,
-) {
-    use tauri::Emitter;
-    let guard = match app_handle.read() {
-        Ok(g) => g,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let Some(handle) = guard.as_ref() else {
-        return;
-    };
-    let payload = serde_json::json!({ "noteId": note_id });
-    if let Err(e) = handle.emit("vault:note-imported", payload) {
-        tracing::warn!(error = %e, "failed to emit vault:note-imported event");
-    }
 }
 
 struct ExistingMarkdown {
@@ -497,82 +466,178 @@ async fn mirror_note_to_disk(
     note: &lattice_core::application::contracts::notes::WorkspaceNoteRecord,
     target: &Path,
 ) -> std::result::Result<Option<String>, String> {
-    let existing = inspect_existing_markdown(target).await?;
-
-    if let Some(existing_md) = existing.as_ref() {
-        if changed_outside_lattice(write, &existing_md.sha256) {
-            let expected = write.last_mirrored_sha256.as_deref().unwrap_or_default();
-            tracing::warn!(
-                note_id = %write.note_id,
-                target = %target.display(),
-                expected_sha256 = %expected,
-                disk_sha256 = %existing_md.sha256,
-                "vault worker: target modified externally while writeback was queued; preserving external file"
-            );
-            if let Some(parsed) = existing_md
-                .parsed
-                .as_ref()
-                .filter(|parsed| parsed.id == write.note_id)
-            {
-                let reconciled = super::repository::reconcile_external_note_and_mark_mirrored(
-                    database,
-                    write,
-                    lattice_core::application::contracts::notes::VaultNoteUpsert {
-                        id: &parsed.id,
-                        title: &parsed.title,
-                        content: &parsed.body,
-                        created_at: &parsed.created_at,
-                        updated_at: &parsed.updated_at,
-                    },
-                    &existing_md.sha256,
-                )
-                .await
-                .map_err(|error| error.to_string())?;
-                if reconciled {
-                    emit_note_imported(app_handle, &parsed.id);
+    let mut existing = inspect_existing_markdown(target).await?;
+    let mut replaced = false;
+    if let Some(md) = existing
+        .as_ref()
+        .filter(|md| changed_outside_lattice(write, &md.sha256))
+    {
+        match md
+            .parsed
+            .as_ref()
+            .filter(|parsed| parsed.id == write.note_id)
+        {
+            Some(parsed) => {
+                let file_text = super::repository::note_text_sha256(&parsed.title, &parsed.body);
+                if write.mirrored_text_sha256.as_deref() != Some(file_text.as_str()) {
+                    return take_outside_edit(database, app_handle, write, md, parsed, target)
+                        .await;
                 }
-                return Ok(Some(parsed.body.clone()));
             }
-            super::repository::mark_mirrored(database, write, Some(&existing_md.sha256))
-                .await
-                .map_err(|error| error.to_string())?;
-            return Ok(existing_md.parsed.as_ref().map(|p| p.body.clone()));
+            None => replaced = true,
         }
     }
+    let mut set_aside_conflict: Option<super::events::VaultConflictDto> = None;
+    if replaced {
+        let kept = set_aside(suppression, note, target).await?;
+        set_aside_conflict = Some(super::events::VaultConflictDto::SetAside {
+            id: uuid::Uuid::new_v4().to_string(),
+            note_id: note.id.clone(),
+            note_title: note.title.clone(),
+            set_aside_path: kept.display().to_string(),
+        });
+        existing = None;
+    }
 
-    let existing_tags = existing
+    let (existing_tags, existing_extra) = existing
         .as_ref()
         .and_then(|md| md.parsed.as_ref())
-        .map(|parsed| parsed.tags.as_slice())
-        .unwrap_or(&[]);
-    let frontmatter = build_frontmatter(
+        .map(|parsed| (parsed.tags.as_slice(), parsed.extra_frontmatter.as_slice()))
+        .unwrap_or((&[], &[]));
+    let frontmatter = build_frontmatter_with_extra(
         &note.id,
         &note.title,
         &note.created_at,
         &note.updated_at,
         existing_tags,
+        existing_extra,
     );
     let document = format!("{frontmatter}\n\n{}", note.content);
     let new_sha256 = lattice_core::shared::hash::sha256_hex(document.as_bytes());
+    let text_sha256 = super::repository::note_text_sha256(&note.title, &note.content);
+    let synced = super::repository::Synced {
+        file_sha256: &new_sha256,
+        text_sha256: &text_sha256,
+    };
 
     if existing.as_ref().is_some_and(|md| md.sha256 == new_sha256) {
-        super::repository::mark_mirrored(database, write, Some(&new_sha256))
+        super::repository::mark_mirrored(database, write, Some(synced))
             .await
             .map_err(|error| error.to_string())?;
         return Ok(None);
     }
 
-    super::repository::begin_mirror(database, &note.id, &new_sha256)
-        .await
-        .map_err(|error| error.to_string())?;
+    let own_unrecorded = existing
+        .as_ref()
+        .filter(|md| write.writing_sha256.as_deref() == Some(md.sha256.as_str()))
+        .and_then(|md| {
+            md.parsed.as_ref().map(|parsed| {
+                (
+                    md.sha256.as_str(),
+                    super::repository::note_text_sha256(&parsed.title, &parsed.body),
+                )
+            })
+        });
+    super::repository::begin_mirror(
+        database,
+        &note.id,
+        own_unrecorded
+            .as_ref()
+            .map(|(file, text)| super::repository::Synced {
+                file_sha256: file,
+                text_sha256: text,
+            }),
+        &new_sha256,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
     atomic_write(target, &document)
         .await
         .map_err(|error| error.to_string())?;
     suppression.mark_written(target.to_path_buf()).await;
-    super::repository::mark_mirrored(database, write, Some(&new_sha256))
+    super::repository::mark_mirrored_with_conflict(
+        database,
+        write,
+        Some(synced),
+        set_aside_conflict.as_ref(),
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    if let Some(conflict) = set_aside_conflict.as_ref() {
+        super::events::emit_note_conflict(app_handle, conflict);
+    }
+    Ok(None)
+}
+
+async fn take_outside_edit(
+    database: &Database,
+    app_handle: &Arc<std::sync::RwLock<Option<tauri::AppHandle>>>,
+    write: &super::repository::PendingWrite,
+    md: &ExistingMarkdown,
+    parsed: &super::parse::ParsedNote,
+    target: &Path,
+) -> std::result::Result<Option<String>, String> {
+    let expected = write.last_mirrored_sha256.as_deref().unwrap_or_default();
+    tracing::warn!(
+        note_id = %write.note_id,
+        target = %target.display(),
+        expected_sha256 = %expected,
+        disk_sha256 = %md.sha256,
+        "vault worker: target modified externally while writeback was queued; preserving external file"
+    );
+    let reconciled = super::repository::reconcile_external_note_and_mark_mirrored(
+        database,
+        write,
+        lattice_core::application::contracts::notes::VaultNoteUpsert {
+            id: &parsed.id,
+            title: &parsed.title,
+            content: &parsed.body,
+            created_at: &parsed.created_at,
+            updated_at: &parsed.updated_at,
+        },
+        &md.sha256,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    if let super::repository::Reconciled::TookFile { conflict } = reconciled {
+        super::events::emit_note_imported(app_handle, &parsed.id);
+        if let Some(conflict) = conflict.as_ref() {
+            super::events::emit_note_conflict(app_handle, conflict);
+        }
+    }
+    Ok(Some(parsed.body.clone()))
+}
+
+async fn set_aside(
+    suppression: &super::watcher::WriteSuppressionRegistry,
+    note: &lattice_core::application::contracts::notes::WorkspaceNoteRecord,
+    target: &Path,
+) -> std::result::Result<PathBuf, String> {
+    let stem = target
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("note");
+    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+    let mut kept = target.with_file_name(format!("{stem}.replaced-{stamp}.md"));
+    let mut n = 2u32;
+    while tokio::fs::try_exists(&kept)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        kept = target.with_file_name(format!("{stem}.replaced-{stamp}-{n}.md"));
+        n += 1;
+    }
+    tokio::fs::rename(target, &kept)
         .await
         .map_err(|error| error.to_string())?;
-    Ok(None)
+    suppression.mark_written(kept.clone()).await;
+    tracing::warn!(
+        note_id = %note.id,
+        target = %target.display(),
+        kept = %kept.display(),
+        "vault worker: the note's file was replaced outside Lattice; kept it beside the note"
+    );
+    Ok(kept)
 }
 
 async fn atomic_write(target: &Path, contents: &str) -> std::io::Result<()> {
