@@ -226,7 +226,6 @@ function SearchResultComponent({
           ? 'bg-surface'
           : 'hover:bg-[hsl(var(--text-primary)/0.025)]'
       )}
-      onMouseEnter={handleSelect}
     >
       {isSelected && (
         <span

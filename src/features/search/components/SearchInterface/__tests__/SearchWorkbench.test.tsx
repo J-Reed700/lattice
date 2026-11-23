@@ -169,7 +169,12 @@ describe('SearchInterface workbench facets and quick preview', () => {
     expect(within(preview).getByRole('heading', { name: 'Plant biology notes.md' })).toBeInTheDocument();
     expect(preview).toHaveTextContent(/Photosynthesis converts sunlight/);
 
-    // Hovering / inspecting another result updates the quick preview without opening modals.
+    // Grazing another row with the pointer must not hijack the active preview.
+    const secondRowTitle = screen.getByText('History of botany.pdf');
+    fireEvent.mouseEnter(secondRowTitle.closest('.group') as HTMLElement);
+    expect(within(preview).getByRole('heading', { name: 'Plant biology notes.md' })).toBeInTheDocument();
+
+    // Explicitly inspecting another result updates the quick preview without opening modals.
     const inspectButtons = screen.getAllByRole('button', { name: 'Inspect in quick preview' });
     fireEvent.click(inspectButtons[2]);
     expect(within(preview).getByRole('heading', { name: 'History of botany.pdf' })).toBeInTheDocument();
