@@ -2,6 +2,8 @@ import { useEffect, useId, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { useApi } from '@/contexts/ApiContext';
 import { useEditLearningLessonQuestion, useLearningLessonQuestion } from '@/features/learning/lessons/review/useLessonClaimReview';
 import type { LessonQuestionDto } from '@/lib/bindings';
@@ -125,35 +127,41 @@ function EditorBody({ programId, lessonId, questionIndex, opened, onClose, onSav
     : !changed ? NO_CHANGES
     : dryError ?? (checked === null ? '' : savingLine(checked));
 
-  const field = 'mt-1 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary';
-
   return (
     <Dialog open onOpenChange={(open) => { if (!open) requestClose(); }}>
       <DialogContent hideClose aria-describedby={undefined}
-        className="max-h-[90vh] max-w-3xl overflow-y-auto rounded-2xl border border-border bg-surface p-5 shadow-sheet">
+        className="max-h-[90vh] max-w-3xl overflow-y-auto rounded-2xl border border-border-default bg-surface p-5 shadow-sheet">
         <DialogTitle className="font-serif text-xl text-text-primary">Edit question {questionIndex + 1}</DialogTitle>
-        <div>
-          <label htmlFor={`${ids}-prompt`} className="block text-xs font-medium text-text-secondary">Question</label>
-          <textarea id={`${ids}-prompt`} value={draft.prompt} disabled={saving} rows={3}
-            onChange={(event) => setDraft((value) => ({ ...value, prompt: event.target.value }))} className={field} />
-        </div>
+        <Textarea
+          id={`${ids}-prompt`}
+          label="Question"
+          value={draft.prompt}
+          disabled={saving}
+          rows={3}
+          onChange={(event) => setDraft((value) => ({ ...value, prompt: event.target.value }))}
+        />
         {hasChoices && (
-          <div className="space-y-2">
+          <div className="space-y-2.5">
             {draft.choices.map((choice, index) => (
-              <div key={index} className="space-y-1">
+              <div key={index} className="space-y-1.5">
                 <div className="flex items-center gap-2">
                   <input type="radio" name={`${ids}-right`} aria-label={`Right answer: choice ${index + 1}`} checked={draft.right === index} disabled={saving}
-                    onChange={() => chooseRight(index)} />
+                    onChange={() => chooseRight(index)} className="accent-accent" />
                   <label htmlFor={`${ids}-choice-${index}`} className="sr-only">Choice {index + 1}</label>
-                  <input id={`${ids}-choice-${index}`} value={choice} disabled={saving} onChange={(event) => setChoice(index, event.target.value)}
-                    className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary" />
+                  <Input id={`${ids}-choice-${index}`} value={choice} disabled={saving} onChange={(event) => setChoice(index, event.target.value)} />
                   <Button type="button" variant="ghost" size="sm" disabled={saving || draft.choices.length <= MIN_CHOICES}
                     onClick={() => removeChoice(index)}>Remove</Button>
                 </div>
                 {draft.right !== index && (
-                  <textarea aria-label={`Why choice ${index + 1} is wrong`} value={reasonAt(draft, index)} disabled={saving} rows={2}
+                  <Textarea
+                    aria-label={`Why choice ${index + 1} is wrong`}
+                    value={reasonAt(draft, index)}
+                    disabled={saving}
+                    rows={2}
                     placeholder="Why this choice is wrong"
-                    onChange={(event) => setReason(index, event.target.value)} className={`${field} mt-0`} />
+                    onChange={(event) => setReason(index, event.target.value)}
+                    className="min-h-[60px]"
+                  />
                 )}
               </div>
             ))}
@@ -170,17 +178,20 @@ function EditorBody({ programId, lessonId, questionIndex, opened, onClose, onSav
             {['True', 'False'].map((label, index) => (
               <label key={label} className="flex items-center gap-2 text-sm text-text-primary">
                 <input type="radio" name={`${ids}-truth`} checked={draft.right === index} disabled={saving}
-                  onChange={() => setDraft((value) => ({ ...value, right: index }))} />
+                  onChange={() => setDraft((value) => ({ ...value, right: index }))} className="accent-accent" />
                 {label}
               </label>
             ))}
           </div>
         )}
-        <div>
-          <label htmlFor={`${ids}-explanation`} className="block text-xs font-medium text-text-secondary">Explanation</label>
-          <textarea id={`${ids}-explanation`} value={draft.explanation} disabled={saving} rows={3}
-            onChange={(event) => setDraft((value) => ({ ...value, explanation: event.target.value }))} className={field} />
-        </div>
+        <Textarea
+          id={`${ids}-explanation`}
+          label="Explanation"
+          value={draft.explanation}
+          disabled={saving}
+          rows={3}
+          onChange={(event) => setDraft((value) => ({ ...value, explanation: event.target.value }))}
+        />
         <p aria-live="polite" className="min-h-5 text-sm leading-6 text-text-secondary">{line}</p>
         {save.error && <p role="alert" className="text-sm text-danger-fg">{save.error.message}</p>}
         {asking ? (

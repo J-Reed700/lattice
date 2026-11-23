@@ -393,6 +393,25 @@ describe('Course page', () => {
     expect(screen.getByRole('heading', { name: 'How to learn so it lasts' })).toBeVisible();
   });
 
+  it('keeps the streamlined 2-tier workspace header tools and compact focus timer popover accessible', async () => {
+    const user = userEvent.setup();
+    show(program('Circulation'));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Circulation' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'All programs' })).toBeVisible();
+
+    const timerTrigger = screen.getByRole('button', { name: 'Focus timer and study habits' });
+    await user.click(timerTrigger);
+    expect(await screen.findByRole('button', { name: 'Start focus timer' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Focus guard' })).toBeVisible();
+    await user.keyboard('{Escape}');
+
+    const more = screen.getByRole('button', { name: 'More' });
+    await user.click(more);
+    expect(screen.getByRole('menuitem', { name: 'Plan' })).toBeVisible();
+    expect(screen.getByRole('menuitem', { name: 'Canvas' })).toBeVisible();
+    expect(screen.getByRole('menuitem', { name: 'Import & export' })).toBeVisible();
+  });
+
   it('allows switching written practice to Feynman technique (Teach a beginner)', async () => {
     const user = userEvent.setup();
     show(program(GOAL));

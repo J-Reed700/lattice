@@ -201,7 +201,7 @@ describe('Studio programs workspace with no Learning model', () => {
       sources: [],
     }));
     show('/studio?course=program-1');
-    expect(await screen.findByText('Thermodynamics')).toBeVisible();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Thermodynamics' })).toBeVisible();
     await settle();
     expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
   });

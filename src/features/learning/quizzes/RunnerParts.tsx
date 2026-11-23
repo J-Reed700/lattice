@@ -7,10 +7,10 @@ import { isAnswered, type FormItem, type ItemDraft } from '@/features/learning/q
 import { moveRoving } from '@/features/learning/quizzes/items/roving';
 import type { SaveState } from '@/features/learning/quizzes/useQuizAutosave';
 
-export const parchmentBand = 'border-b border-[#d7c9b8] bg-[#eee8df] dark:border-white/10 dark:bg-[#28251f]';
+export const parchmentBand = 'border-b border-border-subtle bg-surface-raised/60';
 export const eyebrow = 'text-[10px] font-semibold uppercase tracking-[.15em] text-accent';
-export const primaryPill = 'inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-accent px-5 text-sm font-semibold text-accent-fg shadow-sm transition hover:brightness-95 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-45';
-export const quietPill = 'inline-flex min-h-11 items-center justify-center gap-2 rounded-full border border-border px-4 text-sm font-medium text-text-secondary transition hover:bg-bg hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-45';
+export const primaryPill = 'pressable inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-action px-4 text-ui font-medium text-action-fg shadow-action transition-[background-color,scale] duration-fast hover:bg-action-hover focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:cursor-not-allowed disabled:opacity-45';
+export const quietPill = 'pressable inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-border-default bg-surface px-3.5 text-ui font-medium text-text-secondary shadow-control transition-[background-color,border-color,color,scale] duration-fast hover:border-border-strong hover:bg-surface-raised hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-45';
 
 export function BackLink({ label, onClick, disabled }: { label: string; onClick: () => void; disabled?: boolean }) {
   return <button type="button" onClick={onClick} disabled={disabled} className="inline-flex min-h-11 items-center gap-2 rounded-full pr-3 text-sm font-medium text-text-secondary hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50">

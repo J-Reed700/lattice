@@ -1048,4 +1048,18 @@ describe('Learning Studio program workflow', () => {
       Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
     }
   });
+
+  it('renders Learning Studio editorial landing without duplicating the continuing course', async () => {
+    const active = program('active', true);
+    mocks.list.mockResolvedValue(ok([summary(active)]));
+    mocks.get.mockResolvedValue(ok(active));
+
+    show();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Learning Studio' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'New course' })).toBeVisible();
+    // Continuing course renders once as a featured row, never duplicated in both a hero and list.
+    expect(await screen.findByText('A thoughtful course')).toBeVisible();
+    expect(screen.getAllByText('A thoughtful course')).toHaveLength(1);
+    expect(screen.getByText('Continue studying')).toBeVisible();
+  });
 });

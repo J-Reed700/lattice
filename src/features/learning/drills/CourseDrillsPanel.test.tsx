@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@/tests/interactionDom';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CodeReviewResultDto, CourseDrillAttemptDto, CourseDrillsDto, DrillLessonDto, DrillModuleDto, JobDto, StartedCodeReviewDto } from '@/lib/bindings';
 import { deferred } from '@/tests/deferred';
@@ -225,6 +225,18 @@ async function comment(user: User, text: string, severity?: string) {
 
 const commentTexts = () => screen.getAllByRole('listitem').map((item) => item.querySelector('p')?.textContent);
 
+beforeAll(() => {
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.releasePointerCapture = () => {};
+  Element.prototype.scrollIntoView = () => {};
+});
+
+async function pickOption(user: User, combobox: HTMLElement, optionName: string | RegExp) {
+  await waitFor(() => expect(combobox).toBeEnabled());
+  await user.click(combobox);
+  await user.click(await screen.findByRole('option', { name: optionName }));
+}
+
 beforeEach(() => {
   localStorage.clear();
   events.handlers.clear();
@@ -259,11 +271,13 @@ describe('choosing a drill', () => {
 
   it('lists the languages the command gives, named for reading, with the course’s own chosen', async () => {
     api.codeReviewLanguages.mockResolvedValue(['python', 'csharp', 'sql', 'zig']);
-    show();
-    await screen.findByRole('option', { name: 'C#' });
-    const select = screen.getByRole('combobox', { name: 'Language' });
-    expect(within(select).getAllByRole('option').map((option) => option.textContent)).toEqual(['Python', 'C#', 'SQL', 'zig']);
-    expect(select).toHaveValue('python');
+    const { user } = show();
+    const select = await screen.findByRole('combobox', { name: 'Language' });
+    await waitFor(() => expect(select).toBeEnabled());
+    await waitFor(() => expect(select).toHaveTextContent('Python'));
+    await user.click(select);
+    expect((await screen.findAllByRole('option')).map((option) => option.textContent)).toEqual(['Python', 'C#', 'SQL', 'zig']);
+    await user.keyboard('{Escape}');
     expect(api.codeReviewLanguages).toHaveBeenCalledTimes(1);
   });
 
@@ -271,10 +285,10 @@ describe('choosing a drill', () => {
     localStorage.setItem('lattice.drills.choices', JSON.stringify({ material: 'code', mode: 'interview', size: 'long', minutes: 25 }));
     localStorage.setItem('lattice.drills.language.course-1', 'sql');
     show();
-    expect(await screen.findByRole('combobox', { name: 'Language' })).toHaveValue('sql');
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Language' })).toHaveTextContent('SQL'));
     expect(screen.getByRole('radio', { name: /Timed/ })).toBeChecked();
     expect(screen.getByRole('radio', { name: /Long/ })).toBeChecked();
-    expect(screen.getByRole('spinbutton', { name: 'Time limit' })).toHaveValue(25);
+    expect(screen.getByRole('spinbutton', { name: 'Time limit' })).toHaveValue('25');
   });
 
   it('says how long each size is', async () => {
@@ -284,16 +298,18 @@ describe('choosing a drill', () => {
     expect(screen.getByRole('radio', { name: /Long.*About 140 lines, 5 issues/ })).toBeInTheDocument();
   });
 
-  it('asks for the length of an interview in whole minutes, and starts only with one', async () => {
+  it('asks for the length of an interview in whole minutes, and clamps below 1', async () => {
     const { user } = show();
     await user.click(await screen.findByRole('radio', { name: /Timed/ }));
     const limit = screen.getByRole('spinbutton', { name: 'Time limit' });
-    expect(limit).toHaveValue(10);
-    fireEvent.change(limit, { target: { value: '' } });
-    expect(screen.getByRole('alert')).toHaveTextContent('Enter a whole number of minutes, at least 1.');
-    expect(screen.getByRole('button', { name: 'Start drill' })).toBeDisabled();
+    expect(limit).toHaveValue('10');
+    fireEvent.change(limit, { target: { value: '0' } });
+    fireEvent.blur(limit);
+    expect(limit).toHaveValue('1');
+    expect(screen.getByRole('button', { name: 'Decrease time limit' })).toBeDisabled();
     fireEvent.change(limit, { target: { value: '15' } });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Start drill' })).toBeEnabled());
+    await waitFor(() => expect(limit).toHaveValue('15'));
+    expect(screen.getByRole('button', { name: 'Start drill' })).toBeEnabled();
   });
 
   it('shows the backend message when the languages cannot be read, and reads them again', async () => {
@@ -301,7 +317,11 @@ describe('choosing a drill', () => {
     const { user } = show();
     expect(await screen.findByRole('alert')).toHaveTextContent('The catalogue is unavailable.');
     await user.click(screen.getByRole('button', { name: 'Try again' }));
+    const select = screen.getByRole('combobox', { name: 'Language' });
+    await waitFor(() => expect(select).toBeEnabled());
+    await user.click(select);
     expect(await screen.findByRole('option', { name: 'Rust' })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });
@@ -313,7 +333,12 @@ describe('choosing a lesson', () => {
     await waitFor(() => expect(select).toBeEnabled());
     return select;
   };
-  const optionTexts = (select: HTMLElement) => within(select).getAllByRole('option').map((option) => option.textContent);
+  const openOptionTexts = async (user: User, select: HTMLElement) => {
+    await user.click(select);
+    const texts = (await screen.findAllByRole('option')).map((option) => option.textContent);
+    await user.keyboard('{Escape}');
+    return texts;
+  };
 
   it('asks for the course’s drills in no language to begin with, and in the one remembered for the course when there is one', async () => {
     const first = show();
@@ -324,57 +349,67 @@ describe('choosing a lesson', () => {
     localStorage.setItem('lattice.drills.language.course-1', 'csharp');
     show();
     await waitFor(() => expect(api.courseDrills).toHaveBeenLastCalledWith('course-1', 'csharp'));
-    expect(await screen.findByRole('combobox', { name: 'Language' })).toHaveValue('csharp');
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Language' })).toHaveTextContent('C#'));
   });
 
   it('lists the lessons by module with their standing and the current lesson marked, with the one next up chosen first', async () => {
-    show();
+    const { user } = show();
     const select = await lessonSelect();
-    await screen.findByRole('option', { name: 'Next: Spacing' });
-    expect(select).toHaveValue('');
-    expect(within(select).getAllByRole('group').map((group) => group.getAttribute('label'))).toEqual(['Memory', 'Habits']);
-    expect(optionTexts(select)).toEqual([
+    await waitFor(() => expect(select).toHaveTextContent('Next: Spacing'));
+    await user.click(select);
+    const groups = await screen.findAllByRole('group');
+    expect(groups.map((group) => group.textContent)).toEqual([
+      expect.stringContaining('Memory'),
+      expect.stringContaining('Habits'),
+    ]);
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
       'Next: Spacing',
       'Retrieval — Due now',
       'Spacing — New, current lesson',
       `Sleep — Due again ${DUE_TEXT} (no code drill fits it)`,
       'Interleaving — Not yet graded',
     ]);
-    expect(within(within(select).getAllByRole('group')[1]).getAllByRole('option')).toHaveLength(1);
+    expect(within(groups[1]).getAllByRole('option')).toHaveLength(1);
+    await user.keyboard('{Escape}');
   });
 
   it('says a rested lesson is due again without a date when it has none', async () => {
     serve({ modules: [{ moduleId: 'module-1', title: 'Memory', lessons: [lesson({ lessonId: 'lesson-1', title: 'Retrieval', standing: 'rested' })] }] });
-    show();
-    await screen.findByRole('option', { name: 'Retrieval — Due again' });
+    const { user } = show();
+    const select = await lessonSelect();
+    await user.click(select);
+    expect(await screen.findByRole('option', { name: 'Retrieval — Due again' })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
   });
 
   it('disables the lessons the material does not fit, with why, and follows the material', async () => {
     const { user } = show();
     const select = await lessonSelect();
-    await screen.findByRole('option', { name: 'Next: Spacing' });
-    expect(screen.getByRole('option', { name: /^Sleep — .*no code drill fits it/ })).toBeDisabled();
-    expect(screen.getByRole('option', { name: /^Interleaving/ })).toBeEnabled();
-    expect(screen.getByRole('option', { name: /^Retrieval/ })).toBeEnabled();
+    await waitFor(() => expect(select).toHaveTextContent('Next: Spacing'));
+    await user.click(select);
+    expect(await screen.findByRole('option', { name: /^Sleep — .*no code drill fits it/ })).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.getByRole('option', { name: /^Interleaving/ })).not.toHaveAttribute('aria-disabled', 'true');
+    expect(screen.getByRole('option', { name: /^Retrieval/ })).not.toHaveAttribute('aria-disabled', 'true');
+    await user.keyboard('{Escape}');
 
     await user.click(screen.getByRole('radio', { name: /An explanation of the lesson’s sources/ }));
-    await screen.findByRole('option', { name: 'Next: Sleep' });
-    expect(select).toHaveValue('');
-    expect(screen.getByRole('option', { name: /^Interleaving — Not yet graded \(no passage in the sources fits it\)/ })).toBeDisabled();
-    expect(screen.getByRole('option', { name: /^Sleep — Due again/ })).toBeEnabled();
+    await waitFor(() => expect(select).toHaveTextContent('Next: Sleep'));
+    await user.click(select);
+    expect(await screen.findByRole('option', { name: /^Interleaving — Not yet graded \(no passage in the sources fits it\)/ })).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.getByRole('option', { name: /^Sleep — Due again/ })).not.toHaveAttribute('aria-disabled', 'true');
     expect(screen.getByRole('option', { name: /^Sleep — Due again/ })).not.toHaveTextContent('no code drill');
+    await user.keyboard('{Escape}');
   });
 
   it('goes back to the lesson next up when the lesson picked stops fitting the material', async () => {
     const { user } = show();
     const select = await lessonSelect();
-    await screen.findByRole('option', { name: 'Next: Spacing' });
-    await user.selectOptions(select, 'lesson-4');
-    expect(select).toHaveValue('lesson-4');
+    await waitFor(() => expect(select).toHaveTextContent('Next: Spacing'));
+    await pickOption(user, select, /^Interleaving/);
+    expect(select).toHaveTextContent('Interleaving');
 
     await user.click(screen.getByRole('radio', { name: /An explanation of the lesson’s sources/ }));
-    await waitFor(() => expect(select).toHaveValue(''));
-    expect(screen.getByRole('option', { name: 'Next: Sleep' })).toBeInTheDocument();
+    await waitFor(() => expect(select).toHaveTextContent('Next: Sleep'));
   });
 
   it('goes back to the lesson next up when the lesson picked is not in the course’s lessons any more', async () => {
@@ -386,13 +421,13 @@ describe('choosing a lesson', () => {
       })));
     const { user } = show();
     const select = await lessonSelect();
-    await screen.findByRole('option', { name: 'Next: Spacing' });
-    await user.selectOptions(select, 'lesson-1');
-    expect(select).toHaveValue('lesson-1');
+    await waitFor(() => expect(select).toHaveTextContent('Next: Spacing'));
+    await pickOption(user, select, /^Retrieval/);
+    expect(select).toHaveTextContent('Retrieval');
 
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Language' }), 'csharp');
-    await waitFor(() => expect(select).toHaveValue(''));
-    expect(optionTexts(select)).toEqual(['Next: Interleaving', 'Interleaving — Not yet graded']);
+    await pickOption(user, screen.getByRole('combobox', { name: 'Language' }), 'C#');
+    await waitFor(() => expect(select).toHaveTextContent('Next: Interleaving'));
+    expect(await openOptionTexts(user, select)).toEqual(['Next: Interleaving', 'Interleaving — Not yet graded']);
   });
 
   it.each([
@@ -407,7 +442,7 @@ describe('choosing a lesson', () => {
 
   it('says under the select that a drill is written when none is ready, once a lesson is picked', async () => {
     const { user } = show();
-    await user.selectOptions(await lessonSelect(), 'lesson-1');
+    await pickOption(user, await lessonSelect(), /^Retrieval/);
     expect(screen.getByText('If no drill of it is ready, one is written when you start, usually in a minute or two.')).toBeVisible();
     expect(screen.queryByText('A drill of it is ready.')).not.toBeInTheDocument();
   });
@@ -422,8 +457,7 @@ describe('choosing a lesson', () => {
   it('starts on the lesson next up with no lesson named, in the material, mode and size chosen', async () => {
     api.startCourseDrill.mockResolvedValue(started());
     const { user } = show();
-    await screen.findByRole('option', { name: 'C#' });
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Language' }), 'csharp');
+    await pickOption(user, await screen.findByRole('combobox', { name: 'Language' }), 'C#');
     await user.click(screen.getByRole('radio', { name: /Timed/ }));
     await user.click(screen.getByRole('radio', { name: /Short/ }));
     await clickStart(user);
@@ -434,7 +468,7 @@ describe('choosing a lesson', () => {
   it('starts on a lesson picked with its id', async () => {
     api.startCourseDrill.mockResolvedValue(started());
     const { user } = show();
-    await user.selectOptions(await lessonSelect(), 'lesson-1');
+    await pickOption(user, await lessonSelect(), /^Retrieval/);
     await user.click(screen.getByRole('radio', { name: /Long/ }));
     await clickStart(user);
     await screen.findByRole('heading', { name: 'A rate limiter' });
@@ -447,12 +481,11 @@ describe('choosing a lesson', () => {
       Promise.resolve(courseDrills({ language: language ?? 'sql' })));
     const { user } = show();
     const language = await screen.findByRole('combobox', { name: 'Language' });
-    await waitFor(() => expect(language).toHaveValue('sql'));
-    expect(within(language).getAllByRole('option').map((option) => option.textContent)).toContain('SQL');
+    await waitFor(() => expect(language).toHaveTextContent('SQL'));
 
-    await user.selectOptions(language, 'csharp');
+    await pickOption(user, language, 'C#');
     await waitFor(() => expect(api.courseDrills).toHaveBeenLastCalledWith('course-1', 'csharp'));
-    expect(language).toHaveValue('csharp');
+    expect(language).toHaveTextContent('C#');
     await clickStart(user);
     await screen.findByRole('heading', { name: 'A rate limiter' });
     expect(api.startCourseDrill).toHaveBeenCalledWith('course-1', null, { kind: 'code', language: 'csharp' }, 'practice', 80, 4);
@@ -495,14 +528,14 @@ describe('choosing a lesson', () => {
     expect(screen.getByText('No lesson of this course can be drilled in code yet.')).toBeVisible();
     await waitFor(() => expect(screen.getByRole('radio', { name: /An explanation of the lesson’s sources/ })).toBeChecked());
     expect(screen.queryByRole('combobox', { name: 'Language' })).not.toBeInTheDocument();
-    expect(await screen.findByRole('option', { name: 'Next: Sleep' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Lesson' })).toHaveTextContent('Next: Sleep'));
   });
 
   it('does not start when no lesson can be drilled, and says so', async () => {
     serve({ nextCode: null, nextPassage: null, hasSources: false });
     show();
     expect(await screen.findByText('No lesson of this course can be drilled yet.')).toBeVisible();
-    expect(screen.getByRole('option', { name: 'No lesson can be drilled' })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Lesson' })).toHaveTextContent('No lesson can be drilled');
     expect(screen.getByRole('radio', { name: /^Code/ })).toBeChecked();
     expect(screen.getByRole('button', { name: 'Start drill' })).toBeDisabled();
   });
@@ -512,7 +545,7 @@ describe('choosing a lesson', () => {
     serve({ nextCode: null, nextPassage: null });
     const { user } = show();
     await screen.findByText('No lesson of this course can be drilled yet.');
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Lesson' }), 'lesson-1');
+    await pickOption(user, screen.getByRole('combobox', { name: 'Lesson' }), /^Retrieval/);
     await clickStart(user);
     await screen.findByRole('heading', { name: 'A rate limiter' });
     expect(api.startCourseDrill).toHaveBeenCalledWith('course-1', 'lesson-1', { kind: 'code', language: 'python' }, 'practice', 80, 4);
@@ -521,7 +554,7 @@ describe('choosing a lesson', () => {
   it('does not start code before it has a language', async () => {
     api.courseDrills.mockImplementation(() => Promise.resolve(courseDrills({ language: '' })));
     show();
-    await screen.findByRole('option', { name: 'Next: Spacing' });
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Lesson' })).toHaveTextContent('Next: Spacing'));
     expect(screen.getByRole('button', { name: 'Start drill' })).toBeDisabled();
   });
 
@@ -531,14 +564,14 @@ describe('choosing a lesson', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('The course is not there.');
     expect(screen.getByRole('button', { name: 'Start drill' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Try again' }));
-    expect(await screen.findByRole('option', { name: 'Next: Spacing' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Lesson' })).toHaveTextContent('Next: Spacing'));
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(api.courseDrills).toHaveBeenCalledTimes(2);
   });
 
   it('reads the lessons again when a build of this course finishes, and not for another course’s or another kind of job', async () => {
     show();
-    await screen.findByRole('option', { name: 'Next: Spacing' });
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Lesson' })).toHaveTextContent('Next: Spacing'));
     expect(api.courseDrills).toHaveBeenCalledTimes(1);
 
     report(buildJob({ id: 'job-other', subjectId: 'drill:course-2:code:python', status: 'completed', finishedAt: 9 }));
@@ -589,7 +622,7 @@ describe('the recent drills', () => {
 
   it('is not there when there are none', async () => {
     show();
-    await screen.findByRole('option', { name: 'Next: Spacing' });
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Lesson' })).toHaveTextContent('Next: Spacing'));
     expect(screen.queryByRole('heading', { name: 'Recent drills' })).not.toBeInTheDocument();
   });
 
@@ -610,8 +643,7 @@ describe('starting a drill', () => {
   it('opens the review of a drill that is ready, in the size and mode chosen, and remembers the choices', async () => {
     api.startCourseDrill.mockResolvedValue(started());
     const { user } = show();
-    await screen.findByRole('option', { name: 'C#' });
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Language' }), 'csharp');
+    await pickOption(user, await screen.findByRole('combobox', { name: 'Language' }), 'C#');
     await user.click(screen.getByRole('radio', { name: /Short/ }));
     await clickStart(user);
 
@@ -626,7 +658,7 @@ describe('starting a drill', () => {
   it('names the task with the number of issues the drill has, not the number asked for', async () => {
     api.startCourseDrill.mockResolvedValue(started({ drill: { ...DRILL, issues: 4 } }));
     const { user } = show();
-    await screen.findByRole('option', { name: 'C#' });
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Language' })).toBeEnabled());
     await user.click(screen.getByRole('radio', { name: /Short/ }));
     await clickStart(user);
     expect(await screen.findByText('Find the 4 issues in this code, and say what is wrong and how to fix each.')).toBeVisible();
@@ -1194,8 +1226,7 @@ describe('handing the review in', () => {
     api.codeReviewResult.mockResolvedValue(graded({ mode: 'interview', drill: rust }));
     const { user } = show();
     const lessons = await screen.findByRole('combobox', { name: 'Lesson' });
-    await waitFor(() => expect(lessons).toBeEnabled());
-    await user.selectOptions(lessons, 'lesson-1');
+    await pickOption(user, lessons, /^Retrieval/);
     await startDrill(user);
     expect(api.startCourseDrill).toHaveBeenLastCalledWith('course-1', 'lesson-1', { kind: 'code', language: 'rust' }, 'interview', 140, 5);
     await comment(user, 'Something.');
@@ -1518,7 +1549,7 @@ describe('an explanation of the lesson’s sources', () => {
 
   async function choosePassage(user: User) {
     await user.click(await screen.findByRole('radio', { name: /An explanation of the lesson’s sources/ }));
-    await screen.findByRole('option', { name: 'Next: Sleep' });
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Lesson' })).toHaveTextContent('Next: Sleep'));
   }
 
   it('offers code and an explanation of the lesson’s sources, with code chosen and a language asked for', async () => {
@@ -1638,7 +1669,7 @@ describe('an explanation of the lesson’s sources', () => {
       api.startCourseDrill.mockResolvedValueOnce(started({ drill: PASSAGE_DRILL })).mockResolvedValueOnce(started({ attemptId: 'attempt-2', drill: PASSAGE_DRILL }));
       const { user } = show();
       await choosePassage(user);
-      await user.selectOptions(screen.getByRole('combobox', { name: 'Lesson' }), 'lesson-1');
+      await pickOption(user, screen.getByRole('combobox', { name: 'Lesson' }), /^Retrieval/);
       await clickStart(user);
       await screen.findByRole('heading', { name: 'Why spacing helps' });
       expect(api.startCourseDrill).toHaveBeenLastCalledWith('course-1', 'lesson-1', { kind: 'passage' }, 'practice', 10, 3);
