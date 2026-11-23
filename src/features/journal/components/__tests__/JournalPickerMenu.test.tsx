@@ -1,6 +1,5 @@
 import type { ComponentProps } from 'react';
 
-import { confirm } from '@tauri-apps/plugin-dialog';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,8 +7,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@/components/ui';
 import { JournalPickerMenu } from '@/features/journal/components/JournalPickerMenu';
 import type { ConversationJournalDto } from '@/types/api/conversation';
-
-vi.mock('@tauri-apps/plugin-dialog', () => ({ confirm: vi.fn() }));
 
 const garden = { id: 'garden', name: 'Garden log', icon: '🌱', accentColor: '#3a7' } as ConversationJournalDto;
 const history = { id: 'history', name: 'History reading', icon: '' } as ConversationJournalDto;
@@ -24,7 +21,6 @@ function renderMenu(overrides: Partial<ComponentProps<typeof JournalPickerMenu>>
 }
 
 beforeEach(() => {
-  vi.mocked(confirm).mockReset();
   Element.prototype.scrollIntoView = vi.fn();
   Element.prototype.hasPointerCapture = () => false;
   Element.prototype.releasePointerCapture = vi.fn();
@@ -109,21 +105,22 @@ describe('JournalPickerMenu', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: /Delete journal/ })).not.toBeInTheDocument());
   });
 
-  it('deletes only after the warning is confirmed', async () => {
+  it('deletes only after the confirmation dialog is accepted', async () => {
     const user = userEvent.setup();
     const props = renderMenu();
-    vi.mocked(confirm).mockResolvedValueOnce(false);
     await user.click(screen.getByRole('button', { name: 'Journal actions' }));
     await user.click(screen.getByRole('button', { name: /Delete journal/ }));
-    expect(confirm).toHaveBeenCalledWith(
-      'This permanently deletes the journal and cannot be undone.',
-      { title: 'Delete "Garden log"?', kind: 'warning' },
-    );
-    expect(props.onDeleteCurrent).not.toHaveBeenCalled();
 
-    vi.mocked(confirm).mockResolvedValueOnce(true);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText(/This permanently deletes the journal and cannot be undone\./)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(props.onDeleteCurrent).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'Journal actions' }));
     await user.click(screen.getByRole('button', { name: /Delete journal/ }));
+    await user.click(screen.getByRole('button', { name: 'Delete journal' }));
     await waitFor(() => expect(props.onDeleteCurrent).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(screen.queryByRole('button', { name: /Delete journal/ })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 });

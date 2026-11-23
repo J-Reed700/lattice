@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { Pencil, Pin, PinOff, Trash2 } from 'lucide-react';
 
-import { IconButton } from '@/components/ui/IconButton';
+import { IconButton, Input } from '@/components/ui';
 import type { JournalEntrySummary } from '@/features/journal/hooks/useJournalEntries';
 
 interface EntryListItemProps {
@@ -93,23 +93,25 @@ export function EntryListItem({
           />
         )}
         {isRenaming ? (
-          <input
-            autoFocus
-            value={renameDraft}
-            onChange={(e) => onRenameDraftChange(e.target.value)}
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                onCommitRename();
-              } else if (e.key === 'Escape') {
-                e.preventDefault();
-                onCancelRename();
-              }
-            }}
-            onBlur={onCommitRename}
-            className="h-6 min-w-0 flex-1 rounded-sm border border-border-default bg-bg px-1.5 text-sm text-text-primary outline-hidden transition-colors duration-fast focus:border-accent"
-          />
+          <div className="min-w-0 flex-1" onClick={(e) => e.stopPropagation()}>
+            <Input
+              autoFocus
+              size="sm"
+              value={renameDraft}
+              onChange={(e) => onRenameDraftChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  onCommitRename();
+                } else if (e.key === 'Escape') {
+                  e.preventDefault();
+                  onCancelRename();
+                }
+              }}
+              onBlur={onCommitRename}
+              className="h-6 px-1.5 text-ui"
+            />
+          </div>
         ) : (
           <>
             <span

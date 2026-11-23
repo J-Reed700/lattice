@@ -10,7 +10,7 @@ import {
 } from 'date-fns';
 import { MessageCircle, PanelLeft, PenLine, Plus } from 'lucide-react';
 
-import { IconButton } from '@/components/ui/IconButton';
+import { Button, IconButton } from '@/components/ui';
 import { SidebarSearch, SidebarTabs } from '@/components/ui/SidebarHeader';
 import { EntryListItem } from '@/features/journal/components/EntryListItem';
 import { JournalCalendarPopover } from '@/features/journal/components/JournalCalendarPopover';
@@ -202,8 +202,8 @@ export function EntryList({
   const counts = `${pages.length} ${pages.length === 1 ? 'page' : 'pages'}`;
 
   return (
-    <aside className="journal-index flex h-full w-[264px] shrink-0 flex-col border-r border-border-subtle 2xl:w-[288px]">
-      {/* The notebook: its cover, its name, and the way to another one. */}
+    <aside className="flex h-full w-[264px] shrink-0 flex-col border-r border-border-subtle bg-bg 2xl:w-[288px]">
+      {/* The notebook: its name and the way to another one. */}
       <div className="shrink-0 px-2.5 pb-2 pt-2.5">
         <JournalPickerMenu
           journals={journals}
@@ -215,14 +215,15 @@ export function EntryList({
           meta={counts}
         />
         <div className="mt-2 flex items-center gap-1">
-          <button
+          <Button
             type="button"
+            size="sm"
             onClick={onNewPage}
-            className="journal-new-page pressable flex h-8 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md px-3 text-ui font-medium shadow-action transition-[background-color,scale] duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+            className="h-8 min-w-0 flex-1 gap-1.5 rounded-lg"
           >
             <PenLine className="h-3.5 w-3.5" strokeWidth={1.75} />
             New page
-          </button>
+          </Button>
           <JournalCalendarPopover
             entries={entries}
             onJumpToEntry={(id) => setSelectedId(id)}
@@ -283,14 +284,20 @@ export function EntryList({
             <p className="text-sm font-medium text-text-secondary">{search.trim() || filter !== 'all' ? 'No matching conversations' : 'No conversations yet'}</p>
             <p className="mt-2 text-xs leading-relaxed text-text-tertiary">{search.trim() || filter !== 'all' ? 'Try another search or view them all.' : 'Ask your library a question in Chat and it is filed here, ready to read beside a page.'}</p>
             {search.trim() || filter !== 'all' ? (
-              <button type="button" onClick={() => { setSearch(''); setFilter('all'); }} className="mt-4 rounded-md bg-accent-muted px-3 py-2 text-xs font-medium text-accent hover:bg-accent hover:text-accent-fg">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => { setSearch(''); setFilter('all'); }}
+                className="mt-4"
+              >
                 Clear filters
-              </button>
+              </Button>
             ) : (
               <NewConversationButton onNewEntry={onNewEntry}>
-                <button type="button" className="mt-4 rounded-md bg-accent-muted px-3 py-2 text-xs font-medium text-accent hover:bg-accent hover:text-accent-fg">
+                <Button type="button" variant="secondary" size="sm" className="mt-4">
                   Ask in Chat
-                </button>
+                </Button>
               </NewConversationButton>
             )}
           </div>

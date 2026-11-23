@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { KnowledgePanel } from '@/features/chat/components/KnowledgePanel';
@@ -28,18 +29,28 @@ const renderPanel = (onOpenConversation?: (id: string) => void) => render(
   </QueryClientProvider>,
 );
 
+async function chooseSelectOption(user: ReturnType<typeof userEvent.setup>, name: string, optionLabel: string) {
+  await user.click(screen.getByRole('combobox', { name }));
+  await user.click(await screen.findByRole('option', { name: optionLabel }));
+}
+
 describe('KnowledgePanel actions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    Element.prototype.scrollIntoView = vi.fn();
+    Element.prototype.hasPointerCapture = () => false;
+    Element.prototype.releasePointerCapture = vi.fn();
     manageKnowledge.mockImplementation(async (request: { action: string }) => (request.action === 'list' ? respond([item()]) : { ok: true, data: { items: [], hasMore: false, pool: 'space', lastAnswerMemoryIds: [] } }));
   });
 
   it.each(['folder', 'course'])('names the pool the chat belongs to: %s', async (pool) => {
+    const user = userEvent.setup();
     manageKnowledge.mockResolvedValue(respond([item({ scope: pool })], false, pool));
     renderPanel();
     await screen.findByText('Basil needs full sun');
-    expect(screen.getByRole('combobox', { name: 'Sharing for Basil needs full sun' })).toHaveValue('pool');
-    expect(screen.getAllByRole('option', { name: `This ${pool}` })).toHaveLength(2);
+    expect(screen.getByRole('combobox', { name: 'Sharing for Basil needs full sun' })).toHaveTextContent(`This ${pool}`);
+    await user.click(screen.getByRole('combobox', { name: 'Memory scope' }));
+    expect(await screen.findByRole('option', { name: `This ${pool}` })).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: 'This space' })).not.toBeInTheDocument();
   });
 
@@ -52,21 +63,23 @@ describe('KnowledgePanel actions', () => {
   });
 
   it('keeps a requirement to this conversation unless told to share it', async () => {
+    const user = userEvent.setup();
     renderPanel();
     await screen.findByText('Basil needs full sun');
-    fireEvent.change(screen.getByRole('combobox', { name: 'Memory type' }), { target: { value: 'constraint' } });
-    expect(screen.getByRole('combobox', { name: 'Memory scope' })).toHaveValue('conversation');
+    await chooseSelectOption(user, 'Memory type', 'Requirement');
+    expect(screen.getByRole('combobox', { name: 'Memory scope' })).toHaveTextContent('This conversation');
     fireEvent.change(screen.getByRole('textbox', { name: 'Memory text' }), { target: { value: 'No LINQ in this answer' } });
     fireEvent.click(screen.getByRole('button', { name: 'Remember' }));
     await waitFor(() => expect(requests().some((request) => request.action === 'remember' && request.scope === 'conversation')).toBe(true));
   });
 
   it('keeps a sharing the user chose when the memory type changes', async () => {
+    const user = userEvent.setup();
     renderPanel();
     await screen.findByText('Basil needs full sun');
-    fireEvent.change(screen.getByRole('combobox', { name: 'Memory scope' }), { target: { value: 'pool' } });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Memory type' }), { target: { value: 'decision' } });
-    expect(screen.getByRole('combobox', { name: 'Memory scope' })).toHaveValue('pool');
+    await chooseSelectOption(user, 'Memory scope', 'This space');
+    await chooseSelectOption(user, 'Memory type', 'Decision');
+    expect(screen.getByRole('combobox', { name: 'Memory scope' })).toHaveTextContent('This space');
   });
 
   it('corrects and forgets a shared item from another chat, and leaves its sharing to its source', async () => {
@@ -87,11 +100,12 @@ describe('KnowledgePanel actions', () => {
   });
 
   it('marks an item checked, reshares it and forgets it', async () => {
+    const user = userEvent.setup();
     renderPanel();
     await screen.findByText('Basil needs full sun');
     fireEvent.click(screen.getByRole('button', { name: 'Mark checked' }));
     await waitFor(() => expect(requests().some((request) => request.action === 'verify' && request.itemId === 'fact-1')).toBe(true));
-    fireEvent.change(screen.getByRole('combobox', { name: 'Sharing for Basil needs full sun' }), { target: { value: 'personal' } });
+    await chooseSelectOption(user, 'Sharing for Basil needs full sun', 'All conversations');
     await waitFor(() => expect(requests().some((request) => request.action === 'scope' && request.scope === 'personal')).toBe(true));
     fireEvent.click(screen.getByRole('button', { name: 'Forget saved item' }));
     await waitFor(() => expect(requests().some((request) => request.action === 'forget')).toBe(true));
@@ -102,12 +116,12 @@ describe('KnowledgePanel actions', () => {
     await screen.findByText('Basil needs full sun');
     fireEvent.click(screen.getByRole('button', { name: 'Correct' }));
     expect(screen.getByLabelText('Memory text')).toHaveValue('Basil needs full sun');
-    expect(screen.getByLabelText('Valid from')).toHaveValue('2026-05-01');
-    expect(screen.queryByLabelText('Memory type')).not.toBeInTheDocument();
+    expect(within(screen.getByTestId('knowledge-valid-from')).getByText('May 01, 2026')).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Memory type' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Cancel correction' }));
     expect(screen.getByLabelText('Memory text')).toHaveValue('');
     fireEvent.click(screen.getByRole('button', { name: 'Correct' }));
-    fireEvent.change(screen.getByLabelText('Valid until'), { target: { value: '' } });
+    fireEvent.click(within(screen.getByTestId('knowledge-valid-until')).getByRole('button', { name: 'Clear date' }));
     fireEvent.change(screen.getByLabelText('Memory text'), { target: { value: 'Basil needs six hours of sun' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save correction' }));
     await waitFor(() => expect(requests().some((request) => request.action === 'correct' && request.itemId === 'fact-1' && request.validUntil === null && request.validFrom === '2026-05-01T00:00:00Z')).toBe(true));

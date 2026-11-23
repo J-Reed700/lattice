@@ -161,11 +161,21 @@ describe('ConversationSidebar', () => {
     expect(h.referencesProps?.query).toBe('byzantium');
   });
 
-  it('filters by tab', async () => {
+  it('filters by tab and overflow menu', async () => {
     renderSidebar();
     fireEvent.click(screen.getByRole('tab', { name: 'Starred' }));
     expect(h.store.setFilterMode).toHaveBeenCalledWith('saved');
     await waitFor(() => expect(h.store.loadConversations).toHaveBeenCalledWith({ filterMode: 'saved' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'More conversation filters' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Archived' }));
+    expect(h.store.setFilterMode).toHaveBeenCalledWith('archived');
+    await waitFor(() => expect(h.store.loadConversations).toHaveBeenCalledWith({ filterMode: 'archived' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'More conversation filters' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Referenced' }));
+    expect(h.store.setFilterMode).toHaveBeenCalledWith('snippets');
+    await waitFor(() => expect(h.store.loadConversations).toHaveBeenCalledWith({ filterMode: 'snippets' }));
   });
 
   it('shows references instead of selection in the Referenced tab', () => {

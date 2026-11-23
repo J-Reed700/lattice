@@ -15,7 +15,14 @@ vi.mock('@/components/TiptapEditor', () => ({
     </>
   ),
 }));
-vi.mock('@/features/journal/components/EntryHeader', () => ({ EntryHeader: () => <div>Page header</div> }));
+vi.mock('@/features/journal/components/EntryHeader', () => ({
+  EntryHeader: ({ actions }: { actions?: React.ReactNode }) => (
+    <div>
+      Page header
+      {actions}
+    </div>
+  ),
+}));
 vi.mock('@/features/journal/components/EntryFromConversation', () => ({ EntryFromConversation: () => <div>Conversation panel</div> }));
 vi.mock('@/features/journal/components/EntryHighlightsStrip', () => ({
   EntryHighlightsStrip: () => <div>Highlights panel</div>,
@@ -66,6 +73,14 @@ function renderEditor(sources = [source]) {
 describe('EntryEditor source citations', () => {
   beforeEach(() => {
     useReaderStore.setState({ session: null });
+    localStorage.clear();
+  });
+
+  it('defaults the context rail closed and toggles it open from the header', () => {
+    renderEditor();
+    expect(screen.queryByRole('tab', { name: /Sources/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Show conversation and highlights' }));
+    expect(screen.getByRole('tab', { name: /Sources/ })).toBeInTheDocument();
   });
 
   it('names the writing surface so it can be found and announced', () => {
@@ -75,6 +90,7 @@ describe('EntryEditor source citations', () => {
 
   it('opens the nested cited passage from Sources and the clicked inline citation with its occurrence', () => {
     renderEditor();
+    fireEvent.click(screen.getByRole('button', { name: 'Show conversation and highlights' }));
     fireEvent.click(screen.getByRole('tab', { name: /Sources/ }));
     fireEvent.click(screen.getByRole('button', { name: /1 source/ }));
     fireEvent.click(screen.getAllByRole('button', { name: /View passage/ })[1]!);
@@ -99,6 +115,7 @@ describe('EntryEditor source citations', () => {
       citationId: 3,
     };
     renderEditor([source, secondSource]);
+    fireEvent.click(screen.getByRole('button', { name: 'Show conversation and highlights' }));
     fireEvent.click(screen.getByRole('tab', { name: /Sources/ }));
     fireEvent.click(screen.getByRole('button', { name: /2 sources/ }));
     fireEvent.click(screen.getAllByRole('button', { name: /View passage/ })[2]!);
@@ -125,6 +142,7 @@ describe('EntryEditor source citations', () => {
       ],
     };
     renderEditor([firstSnapshot, laterSnapshot]);
+    fireEvent.click(screen.getByRole('button', { name: 'Show conversation and highlights' }));
     fireEvent.click(screen.getByRole('tab', { name: /Sources/ }));
     fireEvent.click(screen.getByRole('button', { name: /1 source/ }));
     fireEvent.click(screen.getAllByRole('button', { name: /View passage/ })[3]!);
