@@ -65,6 +65,7 @@ export async function installHomeFixture(page: Page) {
     get_indexed_folders: () => state.folders,
     list_conversations: () => ({ conversations: state.conversations }),
     list_journals: () => state.journals,
+    list_learning_programs: () => [],
     list_journal_conversations: () => {
       const entries = state.conversations.filter(item => item.spaceId === FIELD_JOURNAL.id);
       return { conversations: entries };
