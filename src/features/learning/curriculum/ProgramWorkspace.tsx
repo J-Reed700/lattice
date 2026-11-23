@@ -86,10 +86,14 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   }, [onReaderContextChange, tab, tutorChatId]);
   const [preparationExpanded, setPreparationExpanded] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [goalOpen, setGoalOpen] = useState(false);
+  const [moduleDetailsOpen, setModuleDetailsOpen] = useState(false);
   const [reviewingTopics, setReviewingTopics] = useState(false);
   const [contextVisible, setContextVisible] = useState(true);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
+  const goalDetailsRef = useRef<HTMLDetailsElement>(null);
+  const moduleDetailsRef = useRef<HTMLDetailsElement>(null);
   const [canvasOpened, setCanvasOpened] = useState(false);
   const practiceView = usePracticeView({ kind: 'home' });
   // The quiz open in the Quizzes tab (runner or result), and a module test row to bring into view.
@@ -280,6 +284,23 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
     return () => document.removeEventListener('keydown', closeOnEscape);
   }, [moreOpen]);
 
+  useEffect(() => {
+    if (!goalOpen && !moduleDetailsOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (moduleDetailsOpen) {
+        setModuleDetailsOpen(false);
+        moduleDetailsRef.current?.querySelector('summary')?.focus();
+      }
+      if (goalOpen) {
+        setGoalOpen(false);
+        goalDetailsRef.current?.querySelector('summary')?.focus();
+      }
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [goalOpen, moduleDetailsOpen]);
+
   const goToStep = (step: CourseStep) => {
     void afterNotebookSave(() => {
       const target = allLessons.find(({ lesson }) => lesson.id === step.lessonId);
@@ -380,7 +401,12 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
                 <h1 className="studio-course-title" title={program.summary.title}>{program.summary.title}</h1>
               )}
               {showGoal && (
-                <details className="studio-course-goal">
+                <details
+                  ref={goalDetailsRef}
+                  open={goalOpen}
+                  onToggle={(event) => setGoalOpen(event.currentTarget.open)}
+                  className="studio-course-goal"
+                >
                   <summary>Goal</summary>
                   <div className="studio-course-goal-card">
                     <p className="whitespace-pre-line">{goal}</p>
@@ -501,7 +527,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
                           const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length;
                           items[next]?.focus();
                         }}
-                        className="surface-pop absolute right-0 top-full z-30 mt-1 w-48 rounded-xl border border-border-default bg-surface-overlay p-1 shadow-lg"
+                        className="surface-pop absolute right-0 top-full z-30 mt-1 w-48 rounded-xl bg-surface-overlay p-1 shadow-lg"
                       >
                         {(activeProgram
                           ? [{ id: 'plan' as const, label: 'Plan' }, { id: 'canvas' as const, label: 'Canvas' }, { id: 'portability' as const, label: 'Import & export' }]
@@ -551,11 +577,16 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
                   Prepare all lessons
                 </Button>
               )}
-              <details className="group relative shrink-0 text-xs">
+              <details
+                ref={moduleDetailsRef}
+                open={moduleDetailsOpen}
+                onToggle={(event) => setModuleDetailsOpen(event.currentTarget.open)}
+                className="group relative shrink-0 text-xs"
+              >
                 <summary className="inline-flex h-7 cursor-pointer list-none items-center gap-1 rounded-md border border-border-subtle bg-surface px-2.5 font-medium text-text-secondary transition-colors hover:border-border-default hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring">
                   Module details <ChevronDown size={12} aria-hidden="true" className="text-text-muted transition group-open:rotate-180" />
                 </summary>
-                <div className="surface-pop absolute right-0 z-20 mt-1.5 w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-border-default bg-surface-overlay p-4 shadow-lg">
+                <div className="surface-pop absolute right-0 z-20 mt-1.5 w-[min(24rem,calc(100vw-2rem))] rounded-xl bg-surface-overlay p-4 shadow-lg">
                   {currentModule?.summary && <p className="mb-2 text-xs leading-5 text-text-secondary">{currentModule.summary}</p>}
                   {showCitations && currentModule && (
                     <OutlineCitation citation={findOutlineCitation(visibleOutlineEvidence, 'module_summary', currentModule.id, currentModule.summary)} evidence={visibleOutlineEvidence} className="mb-3" />

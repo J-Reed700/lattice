@@ -301,8 +301,8 @@ export function StudyHabitsBar({ onSelectFramework, onNavigate, className, compa
           <div className="flex items-center gap-2 shrink-0">
             <Button
               size="sm"
-              variant="default"
-              className="h-6 bg-warning text-warning-fg hover:bg-warning/90 text-xs font-medium"
+              variant="outline"
+              className="h-6 text-xs font-medium"
               onClick={handleTakeBreak}
             >
               <Coffee className="size-3 mr-1" />

@@ -410,6 +410,23 @@ describe('Course page', () => {
     expect(screen.getByRole('menuitem', { name: 'Plan' })).toBeVisible();
     expect(screen.getByRole('menuitem', { name: 'Canvas' })).toBeVisible();
     expect(screen.getByRole('menuitem', { name: 'Import & export' })).toBeVisible();
+    await user.keyboard('{Escape}');
+
+    const goalSummary = screen.getByText('Goal');
+    const goalDetails = goalSummary.closest('details') as HTMLDetailsElement;
+    await user.click(goalSummary);
+    expect(goalDetails).toHaveAttribute('open');
+    await user.keyboard('{Escape}');
+    expect(goalDetails).not.toHaveAttribute('open');
+    expect(goalSummary).toHaveFocus();
+
+    const moduleSummary = screen.getByText('Module details');
+    const moduleDetails = moduleSummary.closest('details') as HTMLDetailsElement;
+    await user.click(moduleSummary);
+    expect(moduleDetails).toHaveAttribute('open');
+    await user.keyboard('{Escape}');
+    expect(moduleDetails).not.toHaveAttribute('open');
+    expect(moduleSummary).toHaveFocus();
   });
 
   it('allows switching written practice to Feynman technique (Teach a beginner)', async () => {

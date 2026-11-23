@@ -440,7 +440,6 @@
   width: min(26rem, calc(100vw - 2rem));
   padding: 12px 14px;
   border-radius: var(--radius-xl);
-  border: 1px solid hsl(var(--border-default));
   background: hsl(var(--surface-overlay));
   box-shadow: var(--shadow-lg);
   font-size: 12.5px;

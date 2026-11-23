@@ -73,7 +73,7 @@ export function CourseSyllabus({
       <div
         id="course-syllabus-content"
         hidden={!open}
-        className={compact ? 'surface-pop absolute right-0 top-full z-30 mt-1.5 max-h-[75vh] w-[min(920px,calc(100vw-3rem))] overflow-y-auto rounded-xl border border-border-default bg-surface-overlay p-5 shadow-lg' : 'border-t border-border p-4 sm:p-5'}
+        className={compact ? 'surface-pop absolute right-0 top-full z-30 mt-1.5 max-h-[75vh] w-[min(920px,calc(100vw-3rem))] overflow-y-auto rounded-xl bg-surface-overlay p-5 shadow-lg' : 'border-t border-border p-4 sm:p-5'}
       >
         <p className="mb-5 max-w-3xl text-sm leading-6 text-text-secondary">
           {program.summary.status === 'draft'
