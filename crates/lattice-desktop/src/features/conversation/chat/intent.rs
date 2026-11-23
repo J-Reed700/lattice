@@ -8,26 +8,28 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-pub const DEFAULT_INTENT_PROMPT_TEMPLATE: &str = "You classify one turn of a conversation with a \
-personal knowledge-base assistant. Decide four things about the user's latest message:
-- needsKnowledgeBase: true only if answering requires searching the user's own documents, notes, or files.
+// What a turn needs, defined once for both prompts that ask for it.
+macro_rules! turn_needs {
+    () => {
+        "- needsKnowledgeBase: true only if answering requires searching or reading the user's own documents, notes, or files.
 - needsWeb: true only if the answer depends on information that cannot be in the user's own files: current events, live data such as prices or weather, or public facts about the outside world that the user did not write about. False for questions about the user's own documents, notes, policies, projects or work, including anything asked about \"our\", \"my\" or \"the company's\" rules, plans or records. When unsure, false.
 - isFollowup: true only if the message just continues the recent conversation and cannot stand alone.
-- standaloneQuestion: the user's latest message as a question that can be understood with no conversation before it, naming in full what it is about.
-Also give a confidence between 0 and 1.
+- standaloneQuestion: the user's latest message as a question that can be understood with no conversation before it, naming in full what it is about.\n"
+    };
+}
 
-Recent conversation:
-{context}
+pub const DEFAULT_INTENT_PROMPT_TEMPLATE: &str = concat!(
+    "You classify one turn of a conversation with a \
+personal knowledge-base assistant. Decide four things about the user's latest message:\n",
+    turn_needs!(),
+    "Also give a confidence between 0 and 1.\n\nRecent conversation:\n{context}\n\nUser message: {message}"
+);
 
-User message: {message}";
-
-pub const DEFAULT_UNIFIED_TRIAGE_PROMPT_TEMPLATE: &str = "You classify one turn of a conversation \
-with a personal knowledge-base assistant. Decide seven things about the user's latest message:
-- needsKnowledgeBase: true only if answering requires searching or reading the user's own documents, notes, or files.
-- needsWeb: true only if the answer depends on information that cannot be in the user's own files: current events, live data such as prices or weather, or public facts about the outside world that the user did not write about. False for questions about the user's own documents, notes, policies, projects or work, including anything asked about \"our\", \"my\" or \"the company's\" rules, plans or records. When unsure, false.
-- isFollowup: true only if the message just continues the recent conversation and cannot stand alone.
-- standaloneQuestion: the user's latest message as a question that can be understood with no conversation before it, naming in full what it is about.
-- documentAction: choose \"use_last_document\" when continuing or asking about the recent document, \"new_search\" when asking about other documents or a new topic in the library, \"clarify\" only when genuinely ambiguous whether the user means the recent document or something else, or \"none\" when no document is needed at all.
+pub const DEFAULT_UNIFIED_TRIAGE_PROMPT_TEMPLATE: &str = concat!(
+    "You classify one turn of a conversation \
+with a personal knowledge-base assistant. Decide seven things about the user's latest message:\n",
+    turn_needs!(),
+    "- documentAction: choose \"use_last_document\" when continuing or asking about the recent document, \"new_search\" when asking about other documents or a new topic in the library, \"clarify\" only when genuinely ambiguous whether the user means the recent document or something else, or \"none\" when no document is needed at all.
 - clarifyQuestion: a short question naming the recent document when documentAction is \"clarify\", else empty string.
 - rationale: a short reason for documentAction.
 Also give a confidence between 0 and 1.
@@ -36,62 +38,76 @@ Recent conversation:
 {context}
 
 Recent document title: {recent_document_title}
-User message: {message}";
+User message: {message}"
+);
 
 /// The answer's shape, sent as the request's schema rather than spelled out in
 /// the prompt: a format demand in the prompt is what costs a small model its
 /// accuracy, while the grammar holds the shape. No bound here comes near
 /// llama.cpp's grammar repetition limit, past which it would drop the grammar.
 pub(crate) fn intent_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "needsKnowledgeBase": { "type": "boolean" },
-            "needsWeb": { "type": "boolean" },
-            "isFollowup": { "type": "boolean" },
-            "standaloneQuestion": { "type": "string" },
-            // Range left to the clamp in `classify`: not every provider's
-            // structured output accepts numeric bounds.
-            "confidence": { "type": "number" }
-        },
-        "required": [
-            "needsKnowledgeBase",
-            "needsWeb",
-            "isFollowup",
-            "standaloneQuestion",
-            "confidence"
-        ]
-    })
+    let mut properties = turn_need_properties();
+    // Range left to the clamp in `TurnIntent::settled`: not every provider's
+    // structured output accepts numeric bounds.
+    properties.insert(
+        "confidence".to_string(),
+        serde_json::json!({ "type": "number" }),
+    );
+    object_schema(properties)
 }
 
 pub(crate) fn unified_triage_schema() -> serde_json::Value {
+    let mut properties = turn_need_properties();
+    properties.insert(
+        "documentAction".to_string(),
+        serde_json::json!({
+            "type": "string",
+            "enum": ["none", "use_last_document", "new_search", "clarify"]
+        }),
+    );
+    properties.insert(
+        "clarifyQuestion".to_string(),
+        serde_json::json!({ "type": "string" }),
+    );
+    properties.insert(
+        "rationale".to_string(),
+        serde_json::json!({ "type": "string" }),
+    );
+    properties.insert(
+        "confidence".to_string(),
+        serde_json::json!({ "type": "number" }),
+    );
+    object_schema(properties)
+}
+
+fn turn_need_properties() -> serde_json::Map<String, serde_json::Value> {
+    let mut properties = serde_json::Map::new();
+    properties.insert(
+        "needsKnowledgeBase".to_string(),
+        serde_json::json!({ "type": "boolean" }),
+    );
+    properties.insert(
+        "needsWeb".to_string(),
+        serde_json::json!({ "type": "boolean" }),
+    );
+    properties.insert(
+        "isFollowup".to_string(),
+        serde_json::json!({ "type": "boolean" }),
+    );
+    properties.insert(
+        "standaloneQuestion".to_string(),
+        serde_json::json!({ "type": "string" }),
+    );
+    properties
+}
+
+fn object_schema(properties: serde_json::Map<String, serde_json::Value>) -> serde_json::Value {
+    let required: Vec<String> = properties.keys().cloned().collect();
     serde_json::json!({
         "type": "object",
         "additionalProperties": false,
-        "properties": {
-            "needsKnowledgeBase": { "type": "boolean" },
-            "needsWeb": { "type": "boolean" },
-            "isFollowup": { "type": "boolean" },
-            "standaloneQuestion": { "type": "string" },
-            "documentAction": {
-                "type": "string",
-                "enum": ["none", "use_last_document", "new_search", "clarify"]
-            },
-            "clarifyQuestion": { "type": "string" },
-            "rationale": { "type": "string" },
-            "confidence": { "type": "number" }
-        },
-        "required": [
-            "needsKnowledgeBase",
-            "needsWeb",
-            "isFollowup",
-            "standaloneQuestion",
-            "documentAction",
-            "clarifyQuestion",
-            "rationale",
-            "confidence"
-        ]
+        "properties": properties,
+        "required": required
     })
 }
 
@@ -125,6 +141,24 @@ impl TurnIntent {
             standalone_question: None,
             confidence: 0.0,
         }
+    }
+
+    /// The intent the turn may act on: a guess the model itself does not
+    /// believe must not steer the turn, and a standalone question stands only
+    /// for a believed follow-up. The confidence stays on the record for logging.
+    fn settled(mut self, confidence_threshold: f32) -> Self {
+        self.confidence = self.confidence.clamp(0.0, 1.0);
+        if self.confidence < confidence_threshold {
+            self.needs_knowledge_base = false;
+            self.needs_web = false;
+            self.is_followup = false;
+        }
+        let is_followup = self.is_followup;
+        self.standalone_question = self
+            .standalone_question
+            .map(|question| question.trim().to_string())
+            .filter(|question| is_followup && !question.is_empty());
+        self
     }
 }
 
@@ -288,25 +322,12 @@ impl IntentClassifier {
 
         match self.complete_with_schema(prompt, intent_schema()).await {
             Ok(text) => {
-                let mut intent = parse_turn_intent(&text).unwrap_or_else(|| {
-                    warn!("Intent classifier returned unparsable output, falling back");
-                    TurnIntent::fallback()
-                });
-
-                intent.confidence = intent.confidence.clamp(0.0, 1.0);
-
-                // A guess the model itself does not believe must not steer the
-                // turn; the confidence stays on the record for logging.
-                if intent.confidence < self.confidence_threshold {
-                    intent.needs_knowledge_base = false;
-                    intent.needs_web = false;
-                    intent.is_followup = false;
-                }
-                let is_followup = intent.is_followup;
-                intent.standalone_question = intent
-                    .standalone_question
-                    .map(|question| question.trim().to_string())
-                    .filter(|question| is_followup && !question.is_empty());
+                let intent = parse_turn_intent(&text)
+                    .unwrap_or_else(|| {
+                        warn!("Intent classifier returned unparsable output, falling back");
+                        TurnIntent::fallback()
+                    })
+                    .settled(self.confidence_threshold);
 
                 info!(
                     needs_knowledge_base = intent.needs_knowledge_base,
@@ -445,28 +466,23 @@ fn unified_triage_fallback() -> UnifiedTurnTriage {
 fn parse_unified_triage(text: &str, confidence_threshold: f32) -> Option<UnifiedTurnTriage> {
     let json = extract_json_object(text)?;
     let raw: RawUnifiedTriage = serde_json::from_str(&json).ok()?;
-    let confidence = raw.confidence.clamp(0.0, 1.0);
-    let low_confidence = confidence < confidence_threshold;
-    let needs_knowledge_base = !low_confidence && raw.needs_knowledge_base;
-    let needs_web = !low_confidence && raw.needs_web;
-    let is_followup = !low_confidence && raw.is_followup;
-    let document_action = raw
-        .document_action
-        .unwrap_or(if needs_knowledge_base || is_followup {
-            TriageDocumentAction::NewSearch
-        } else {
-            TriageDocumentAction::None
-        });
-    let standalone_question =
-        non_blank(raw.standalone_question).filter(|_| !low_confidence && is_followup);
+    let intent = TurnIntent {
+        needs_knowledge_base: raw.needs_knowledge_base,
+        needs_web: raw.needs_web,
+        is_followup: raw.is_followup,
+        standalone_question: raw.standalone_question,
+        confidence: raw.confidence,
+    }
+    .settled(confidence_threshold);
+    let document_action =
+        raw.document_action
+            .unwrap_or(if intent.needs_knowledge_base || intent.is_followup {
+                TriageDocumentAction::NewSearch
+            } else {
+                TriageDocumentAction::None
+            });
     Some(UnifiedTurnTriage {
-        intent: TurnIntent {
-            needs_knowledge_base,
-            needs_web,
-            is_followup,
-            standalone_question,
-            confidence,
-        },
+        intent,
         document_action,
         clarify_question: non_blank(raw.clarify_question),
         rationale: non_blank(raw.rationale),
