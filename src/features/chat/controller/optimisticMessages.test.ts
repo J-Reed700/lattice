@@ -7,6 +7,7 @@ import {
   MAX_UNSAVED_PROMPT_BYTES,
   prepareOptimisticMessages,
   persistedRequestIds,
+  reconcilePersistedMessages,
 } from './optimisticMessages';
 
 const failedPrompt = (id: number, content = `Prompt ${id}`): OptimisticMessage => ({
@@ -68,5 +69,52 @@ describe('unsaved conversation prompts', () => {
     expect(() => prepareOptimisticMessages(existing, 'chat', 'x'.repeat(MAX_UNSAVED_PROMPT_BYTES / 2 + 1)))
       .toThrow(/shorten this message/);
     expect(existing.get(old.tempId)).toEqual(old);
+  });
+
+  it('reconciles pending and completed optimistic user bubbles once persisted with the same requestId', () => {
+    const pendingMatch: OptimisticMessage = {
+      ...failedPrompt(1, 'In-flight question'),
+      status: 'pending',
+    };
+    const completedMatch: OptimisticMessage = {
+      ...failedPrompt(2, 'Finished question'),
+      status: 'completed',
+    };
+    const stillUnsent: OptimisticMessage = {
+      ...failedPrompt(3, 'Still optimistic'),
+      status: 'pending',
+    };
+    const existing = new Map([
+      [pendingMatch.tempId, pendingMatch],
+      [completedMatch.tempId, completedMatch],
+      [stillUnsent.tempId, stillUnsent],
+    ]);
+
+    const reconciled = reconcilePersistedMessages(existing, 'chat', [
+      {
+        id: 'm1',
+        conversationId: 'chat',
+        role: 'user',
+        content: 'In-flight question',
+        tokens: 2,
+        status: 'pending',
+        createdAt: '2026-09-30T00:00:00.000Z',
+        metadata: JSON.stringify({ requestId: 'request-1' }),
+      },
+      {
+        id: 'm2',
+        conversationId: 'chat',
+        role: 'user',
+        content: 'Finished question',
+        tokens: 2,
+        status: 'completed',
+        createdAt: '2026-09-30T00:00:01.000Z',
+        metadata: JSON.stringify({ requestId: 'request-2' }),
+      },
+    ]);
+
+    expect([...reconciled.keys()]).toEqual([stillUnsent.tempId]);
+    // Preserves reference identity when nothing matches.
+    expect(reconcilePersistedMessages(reconciled, 'chat', [])).toBe(reconciled);
   });
 });

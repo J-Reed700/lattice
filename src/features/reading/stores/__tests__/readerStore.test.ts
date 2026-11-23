@@ -94,6 +94,20 @@ describe('the chat reader session', () => {
     useReaderStore.getState().close();
     expect(useReaderStore.getState().session).toBeNull();
   });
+
+  it('stores explicit excerptChunkId and conversationId and clears excerptChunkId when stepping', () => {
+    useReaderStore.getState().open('message-1', citations, 0, null, {
+      excerptChunkId: 'chunk-excerpt-2',
+      conversationId: 'tangent-7',
+    });
+
+    expect(useReaderStore.getState().session?.excerptChunkId).toBe('chunk-excerpt-2');
+    expect(useReaderStore.getState().session?.conversationId).toBe('tangent-7');
+
+    useReaderStore.getState().setIndex(1);
+    expect(useReaderStore.getState().session?.excerptChunkId).toBeNull();
+    expect(useReaderStore.getState().session?.conversationId).toBe('tangent-7');
+  });
 });
 
 describe('the chat reader width', () => {

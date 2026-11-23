@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
 import * as Popover from '@radix-ui/react-popover';
-import { ArrowUp, ChevronDown, Library, Paperclip, Settings2, Square } from 'lucide-react';
+import { ArrowUp, ChevronDown, Library, Loader2, Paperclip, Settings2, Square } from 'lucide-react';
 
 import { ChatDropStaging } from '@/features/chat/components/ChatDropStaging';
 import { ChatModelNotice, type ChatModelNoticeProps } from '@/features/chat/components/ChatModelNotice';
@@ -73,14 +73,16 @@ export function Composer({
   const blindModelName = answering && !isUnavailableChatModel(answering) && answering.seesImages !== true
     ? answering.label
     : null;
+  const isAttaching = Boolean(composer.isImportingAttachments || attachments.isImporting);
 
   return (
     <div className="relative bg-bg before:pointer-events-none before:absolute before:inset-x-0 before:-top-8 before:h-8 before:bg-linear-to-t before:from-[hsl(var(--bg))] before:to-transparent">
       <ChatDropStaging
         staged={attachments.staged}
-        isImporting={attachments.isImporting}
+        isImporting={isAttaching}
         onRemove={attachments.remove}
         onClear={attachments.clear}
+        onCancelImport={attachments.cancelImport}
         pictures={attachments.pictures}
         isAttachingPictures={attachments.isAttachingPictures}
         onRemovePicture={attachments.removePicture}
@@ -117,6 +119,7 @@ export function Composer({
               onClick={(e) => suggest.syncCaret(e.currentTarget)}
               onFocus={() => suggest.setFocused(true)}
               onBlur={() => suggest.setFocused(false)}
+              disabled={isAttaching}
               placeholder={placeholder}
               rows={1}
               aria-label="Message composer"
@@ -246,17 +249,24 @@ export function Composer({
 
             <span
               role={voice.phase === 'off' ? undefined : 'status'}
-              className="hidden shrink-0 self-center pr-1 text-[11px] text-[hsl(var(--text-muted))] sm:block"
+              className="hidden shrink-0 items-center gap-1 self-center pr-1 text-[11px] text-[hsl(var(--text-muted))] sm:inline-flex"
             >
               {voice.phase !== 'off'
                 ? VOICE_STATUS[voice.phase]
-                : isSending
-                ? 'Generating…'
-                : isCompacting
-                  ? 'Compacting context…'
-                  : input.trim()
-                    ? '↵ send · ⇧↵ new line'
-                    : ''}
+                : isAttaching
+                  ? (
+                    <>
+                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                      Attaching files…
+                    </>
+                  )
+                  : isSending
+                    ? 'Generating…'
+                    : isCompacting
+                      ? 'Compacting context…'
+                      : input.trim()
+                        ? '↵ send · ⇧↵ new line'
+                        : ''}
             </span>
 
             <VoiceButton phase={voice.phase} onToggle={voice.toggle} />
@@ -272,12 +282,27 @@ export function Composer({
               >
                 <Square className="h-3 w-3 fill-current" />
               </button>
+            ) : isAttaching ? (
+              <button
+                type="button"
+                onClick={() => attachments.cancelImport?.()}
+                aria-label="Cancel attaching files"
+                aria-busy="true"
+                title="Cancel attaching files"
+                className="pressable inline-flex h-8 w-8 items-center justify-center rounded-full bg-[hsl(var(--text-primary))] text-[hsl(var(--bg))] transition-[scale,opacity] duration-fast hover:opacity-90"
+              >
+                <Square className="h-3 w-3 fill-current" />
+              </button>
             ) : (
               <button
                 type="submit"
                 disabled={!input.trim() || isChatUnavailable || isCompacting}
                 aria-label="Send message"
-                title={isCompacting ? 'Waiting for the context to finish compacting' : 'Send · Enter'}
+                title={
+                  isCompacting
+                    ? 'Waiting for the context to finish compacting'
+                    : 'Send · Enter'
+                }
                 className="pressable inline-flex h-8 w-8 items-center justify-center rounded-full bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] shadow-action transition-[background-color,color,scale,box-shadow] duration-fast hover:bg-[hsl(var(--accent-hover))] disabled:cursor-not-allowed disabled:bg-[hsl(var(--text-primary)/0.08)] disabled:text-[hsl(var(--text-disabled))] disabled:shadow-none"
               >
                 <ArrowUp className="h-4 w-4" strokeWidth={2.2} />

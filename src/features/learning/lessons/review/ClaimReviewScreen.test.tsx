@@ -7,6 +7,8 @@ import { whyItWaits } from '@/features/learning/lessons/review/claimReviewCopy';
 import { ClaimReviewScreen } from '@/features/learning/lessons/review/ClaimReviewScreen';
 import { support, sufficiency, thirtyThreeClaims, tried, waitingOnSource } from '@/features/learning/lessons/review/claimReviewScreenFixtures';
 import { review, teachingFinding, unsupportedItem } from '@/features/learning/lessons/review/claimReviewTestData';
+import { resetLessonAuditStore } from '@/features/learning/lessons/review/lessonAuditStore';
+import { resetSourceRecheckStore } from '@/features/learning/sources/sourceRecheckStore';
 import type { ClaimExcerptDto, ClaimReviewItemDto, LessonClaimReviewDto } from '@/lib/bindings';
 
 const api = vi.hoisted(() => ({
@@ -42,6 +44,8 @@ const counts = (queued: number) => ({ verified: 12, confirmed: 0, queued, open: 
 describe('Claim review screen', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    resetLessonAuditStore();
+    resetSourceRecheckStore();
     api.audit.mockResolvedValue(ok(null));
     api.plan.mockResolvedValue(ok({ jobs: [] }));
     api.trust.mockResolvedValue(ok({ sources: [], claim: null }));
@@ -326,5 +330,23 @@ describe('Claim review screen', () => {
     } finally {
       window.matchMedia = original;
     }
+  });
+
+  it('keeps Resume verification disabled when a pending verification job matches lessonIds with activity null', async () => {
+    api.plan.mockResolvedValue(ok({
+      jobs: [{
+        id: 'job-pending-1',
+        kind: 'lesson_preparation',
+        status: 'pending',
+        lessonIds: ['lesson-1'],
+        endedByUpdate: false,
+        activity: null,
+        createdAt: 1,
+      }],
+    }));
+    show(review([], { changedSinceStop: true }));
+    const resume = await screen.findByRole('button', { name: 'Resume verification' });
+    await waitFor(() => expect(resume).toBeDisabled());
+    expect(screen.getByText(/Verification is running/)).toBeVisible();
   });
 });

@@ -48,11 +48,19 @@ export interface ReaderSession {
    * read for itself (a saved source, a practice attempt's material) stays.
    */
   citing: boolean;
+  /** Specific excerpt chunk within a multi-excerpt source to locate first. */
+  excerptChunkId?: string | null;
+  /** Originating conversation ID (tangent-aware) when opened from a chat thread. */
+  conversationId?: string | null;
 }
 
 export interface ReaderOpenOptions {
   /** False for a source opened to be read for itself, not from a citation. Default true. */
   citing?: boolean;
+  /** Specific excerpt chunk within a multi-excerpt source to locate. */
+  excerptChunkId?: string | null;
+  /** Originating conversation ID when opened from a chat or tangent. */
+  conversationId?: string | null;
 }
 
 export interface ReaderState {
@@ -105,13 +113,20 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
 
   open: (ownerKey, citations, index, occurrence = null, options = {}) => {
     if (citations.length === 0) return;
+    const resolvedIndex = Math.min(citations.length - 1, Math.max(0, index));
+    const target = citations[resolvedIndex];
     set({
       session: {
         ownerKey,
         citations,
-        index: Math.min(citations.length - 1, Math.max(0, index)),
+        index: resolvedIndex,
         occurrence,
         citing: options.citing ?? true,
+        excerptChunkId: options.excerptChunkId ?? null,
+        conversationId:
+          options.conversationId !== undefined
+            ? options.conversationId
+            : (target?.conversationId ?? null),
       },
     });
   },
@@ -122,8 +137,15 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       if (!session) return {};
       const next = Math.min(session.citations.length - 1, Math.max(0, index));
       if (next === session.index) return {};
-      // Stepping to another source leaves the clicked mark behind.
-      return { session: { ...session, index: next, occurrence: null } };
+      // Stepping to another source leaves the clicked mark and excerpt behind.
+      return {
+        session: {
+          ...session,
+          index: next,
+          occurrence: null,
+          excerptChunkId: null,
+        },
+      };
     }),
 
   close: () => {

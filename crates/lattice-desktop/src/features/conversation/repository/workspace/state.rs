@@ -175,6 +175,7 @@ async fn set_conversation_state(
     timestamp_column: &str,
     value: bool,
 ) -> Result<(), AppError> {
+    super::super::conversations::reject_internal_library_snapshots(conversation_id)?;
     let now = Utc::now().to_rfc3339();
     let mut qb = QueryBuilder::<Sqlite>::new("UPDATE conversations SET ");
     qb.push(column_name)

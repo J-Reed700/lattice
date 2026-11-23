@@ -2388,7 +2388,8 @@ export async function installLearningStudioBackend(page: Page) {
       },
       get_learning_practical_draft: (args) => practicalDraft('get_learning_practical_draft', args),
       save_learning_practical_draft: (args) => practicalDraft('save_learning_practical_draft', args),
-      get_learning_practical_workspace: () => state.practicalWorkspace,
+      get_learning_practical_workspace: () => structuredClone(state.practicalWorkspace),
+      list_jobs: () => [],
       get_learning_practice_profile: (args) => practiceProfile(getRequest<{ programId: string }>(args).programId),
       save_learning_practice_profile: (args) => {
         const request = getRequest<{ programId: string; details: string; language: string | null; interviewAt: number | null; company: string | null; role: string | null; expectedRevision: number }>(args);

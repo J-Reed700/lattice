@@ -16,6 +16,7 @@ import { InlineDownloadStatus } from '@/features/model/components/Downloads/Inli
 import { InstalledDownload } from '@/features/model/components/Downloads/InstalledDownload';
 import { useAggregatedDownloads } from '@/features/model/hooks/useAggregatedDownloads';
 import { useDownloadPhase } from '@/features/model/hooks/useDownloadPhase';
+import { DOWNLOADS_QUERY_KEY } from '@/features/model/hooks/useDownloads';
 import { useDownloadState } from '@/features/model/hooks/useDownloadState';
 import { useRemoveDownloadedModel } from '@/features/model/hooks/useRemoveDownloadedModel';
 import { TRANSCRIPTION_STATUS_QUERY_KEY, useTranscriptionStatusQuery } from '@/features/transcription/hooks/useTranscriptionStatus';
@@ -54,7 +55,10 @@ export function ListeningModelSection() {
         },
         api,
       );
-      await queryClient.invalidateQueries({ queryKey: TRANSCRIPTION_STATUS_QUERY_KEY });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: DOWNLOADS_QUERY_KEY }),
+        queryClient.invalidateQueries({ queryKey: TRANSCRIPTION_STATUS_QUERY_KEY }),
+      ]);
     } finally {
       setStarting(false);
     }

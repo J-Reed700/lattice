@@ -30,25 +30,29 @@ where
 }
 
 /// The failures of an Auto chain: each candidate that fails gives way to the
-/// next, and when all fail a local model's failure is the error worth
-/// reporting, not "nothing is installed".
+/// next, and when all fail a local model's failure (or a configuration error)
+/// is the error worth reporting, not "nothing is installed".
 #[derive(Debug, Default)]
 struct AutoFailures {
     local: Option<AppError>,
+    invalid_config: Option<AppError>,
 }
 
 impl AutoFailures {
-    /// Logs that `model` failed and keeps the first failure of a local model.
+    /// Logs that `model` failed and keeps the first failure of a local model
+    /// or the first invalid-configuration error.
     fn record(&mut self, model: &ModelRef, error: AppError) {
         tracing::warn!(%model, %error, "model not available, trying the next");
         if matches!(model, ModelRef::Local { .. }) && self.local.is_none() {
             self.local = Some(error);
+        } else if matches!(error, AppError::InvalidConfig(_)) && self.invalid_config.is_none() {
+            self.invalid_config = Some(error);
         }
     }
 
-    /// The kept local failure, else "No LLM available".
+    /// The kept local failure or configuration error, else "No LLM available".
     fn into_error(self) -> AppError {
-        self.local.unwrap_or_else(|| {
+        self.local.or(self.invalid_config).unwrap_or_else(|| {
             AppError::AiModelsNotInstalled(
                 "No LLM available. Please either:\n\
                  1. Download and activate a model in Settings → Model Catalog, OR\n\
@@ -268,6 +272,27 @@ mod tests {
         let (outcome, tried) = walk(Vec::new(), true, Vec::new()).await;
         assert!(matches!(outcome, Err(AppError::AiModelsNotInstalled(_))));
         assert!(tried.is_empty());
+    }
+
+    #[tokio::test]
+    async fn auto_without_a_local_failure_preserves_invalid_config_errors() {
+        let (outcome, tried) = walk(
+            vec![llama_cpp_model(), ollama_model()],
+            true,
+            vec![
+                Err(AppError::InvalidConfig(
+                    "Set both authentication header fields, or clear both.".into(),
+                )),
+                Err(AppError::ServiceNotAvailable("offline".into())),
+            ],
+        )
+        .await;
+        assert!(matches!(
+            outcome,
+            Err(AppError::InvalidConfig(message))
+                if message == "Set both authentication header fields, or clear both."
+        ));
+        assert_eq!(models(&tried), [llama_cpp_model(), ollama_model()]);
     }
 
     #[tokio::test]

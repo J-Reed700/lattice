@@ -10,7 +10,7 @@ import { AcceptSourceDialog } from '@/features/learning/lessons/review/AcceptSou
 import { AddSourceSheet, type AddSourceTarget } from '@/features/learning/lessons/review/AddSourceSheet';
 import { ClaimInFocus } from '@/features/learning/lessons/review/ClaimInFocus';
 import { ClaimQueue, queueRowId } from '@/features/learning/lessons/review/ClaimQueue';
-import { ALL_RESOLVED, NEEDS_NOTE_HINT, cannotHere, tallyLine, teachingNotesWait, unverifiedReviewLine } from '@/features/learning/lessons/review/claimReviewCopy';
+import { ALL_RESOLVED, NEEDS_NOTE_HINT, cannotHere, progressLine, tallyLine, teachingNotesWait, unverifiedReviewLine } from '@/features/learning/lessons/review/claimReviewCopy';
 import { NOTHING_CHANGED, confirmNeedsNote, currentPreparationJobs, reviewHold, type ClaimGroup, type TakenOutSentence } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { LessonAuditLine } from '@/features/learning/lessons/review/LessonAudit';
 import { RemovedStatements } from '@/features/learning/lessons/review/RemovedStatements';
@@ -22,6 +22,7 @@ import { useClaimReviewSession } from '@/features/learning/lessons/review/useCla
 import { useResumeLearningLessonReview, useSettleTeachingFindings } from '@/features/learning/lessons/review/useLessonClaimReview';
 import { useReviewDrop, type DroppedSource } from '@/features/learning/lessons/review/useReviewDrop';
 import { useReviewSelection } from '@/features/learning/lessons/review/useReviewSelection';
+import { EMPTY_LESSON_ATTACH_RUN, lessonAttachRunKey, useSourceRecheckStore } from '@/features/learning/sources/sourceRecheckStore';
 import { useEvidenceWaitsForIndex } from '@/features/learning/sources/useCourseIndexStatus';
 import { useLearningProgram } from '@/features/learning/workspace/useLearningStudio';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
@@ -79,6 +80,9 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   const [editingQuestion, setEditingQuestion] = useState<number | null>(null);
   const [legend, setLegend] = useState(false);
   const [narrowView, setNarrowView] = useState<'queue' | 'claim'>('queue');
+  const attachKey = lessonAttachRunKey(programId, lessonId);
+  const attachRun = useSourceRecheckStore((store) => store.attachRuns[attachKey] ?? EMPTY_LESSON_ATTACH_RUN);
+  const clearAttachBanner = useSourceRecheckStore((store) => store.clearLessonAttachBanner);
 
   const { review, active, ordered, waiting, groups } = session;
   // A published lesson's section text comes from the course the page already loads for the lesson card.
@@ -124,7 +128,10 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   };
   const selection = useReviewSelection(useMemo(() => ordered.map((claim) => claim.claimId), [ordered]));
   // A preparation attempt for this lesson is running: act now, Resume is not needed.
-  const jobActive = currentPreparationJobs(plan.data?.jobs ?? []).some((job) => (job.status === 'pending' || job.status === 'running') && job.activity?.lessonTitle === lessonTitle);
+  const jobActive = currentPreparationJobs(plan.data?.jobs ?? []).some((job) =>
+    (job.status === 'pending' || job.status === 'running') &&
+    (Boolean(job.lessonIds?.includes(lessonId)) || job.activity?.lessonTitle === lessonTitle),
+  );
   const teachingWaiting = review?.teachingFindings.filter(isTeachingWaiting).length ?? 0;
   const removedCount = session.removed.reduce((sum, entry) => sum + entry.statements.length, 0);
   const notVerified = review?.state === 'ready' ? review.claims.filter((claim) => claim.state.state === 'unverified').length : 0;
@@ -142,12 +149,29 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
     const others = (groupOf(active.claimId)?.claims ?? []).filter((claim) => claim.claimId !== active.claimId && !session.settling.has(claim.claimId)).map((claim) => claim.claimId);
     return { level: 'claim', claimIds: [active.claimId], others };
   };
-  const openSheet = (target: AddSourceTarget | null, initial: DroppedSource | null = null) => { if (target && (target.level === 'lesson' || target.claimIds.length)) setSheet({ target, initial }); };
-  const openNoteSheet = (claimId: string, findingKey: string) => setSheet({ target: { level: 'claim', claimIds: [claimId] }, initial: null, findingKey });
+  const openSheet = (target: AddSourceTarget | null, initial: DroppedSource | null = null, findingKey?: string) => {
+    if (session.acting) return;
+    if (target && (target.level === 'lesson' || target.claimIds.length)) {
+      setSheet({ target, initial, ...(findingKey ? { findingKey } : {}) });
+    }
+  };
+  const openNoteSheet = (claimId: string, findingKey: string) =>
+    openSheet({ level: 'claim', claimIds: [claimId] }, null, findingKey);
   const openGroupSheet = (group: ClaimGroup) => openSheet({ level: group.key === 'queue' ? 'queue' : 'group', claimIds: group.claims.map((claim) => claim.claimId) }, null);
   const acceptSource = (support: ClaimSupportDto | null) => { if (support?.role === 'supports') setTrusting({ support, sharing: sharingOf(support) }); };
 
-  const drop = useReviewDrop(rootRef, (source) => openSheet(sheet?.target ?? claimTarget() ?? (ordered.length ? { level: 'queue', claimIds: ordered.map((claim) => claim.claimId) } : null), source));
+  const drop = useReviewDrop(rootRef, (source) => {
+    if (sheet && (attachRun.isPending || attachRun.backendPending)) {
+      session.say('Finishing the previous source check…');
+      return;
+    }
+    const fallbackTarget = ordered.length
+      ? { level: 'queue' as const, claimIds: ordered.map((claim) => claim.claimId) }
+      : review
+        ? { level: 'lesson' as const, claimIds: [] }
+        : null;
+    openSheet(sheet?.target ?? claimTarget() ?? fallbackTarget, source);
+  });
 
   const anyOpen = Boolean(session.form || sheet || trusting || reader || editing || editingQuestion !== null);
   const click = (keys: string) => rootRef.current?.querySelector<HTMLButtonElement>(`[aria-keyshortcuts="${keys}"]:not(:disabled)`)?.click();
@@ -182,7 +206,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
           <ArrowLeft size={16} aria-hidden="true" className="shrink-0" /><span className="truncate">{lessonTitle}</span>
         </button>
         {review && <div className="flex flex-wrap items-center justify-end gap-3">
-          <Button type="button" variant="outline" disabled={session.acting || Boolean(sheet)} onClick={() => openSheet({ level: 'lesson', claimIds: [] })}>Add a source to the lesson</Button>
+          <Button type="button" variant="outline" disabled={session.acting || Boolean(sheet) || attachRun.isPending || attachRun.backendPending} onClick={() => openSheet({ level: 'lesson', claimIds: [] })}>Add a source to the lesson</Button>
           {(review.state === 'needs_review' || review.state === 'stopped') && (() => {
           const hold = reviewHold(review, waiting.length);
           const blocked = jobActive ? 'Verification is running; it takes your changes into account at its next step.'
@@ -310,6 +334,24 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
       </div>
       {drop.importing && <p role="status" className="px-4 py-2 text-xs text-text-secondary sm:px-6">Importing {drop.importing}…</p>}
       {drop.error && <p role="alert" className="px-4 py-2 text-xs text-danger-fg sm:px-6">{drop.error}</p>}
+      {!sheet && (attachRun.isPending || attachRun.backendPending) && (
+        <p role="status" className="flex items-center gap-2 border-b border-border bg-surface px-4 py-2 text-xs text-text-secondary sm:px-6">
+          <LoaderCircle size={13} className="shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+          <span>{attachRun.progress ? progressLine(attachRun.progress) : attachRun.isPending ? 'Checking your source…' : 'Finishing the previous source check…'}</span>
+        </p>
+      )}
+      {!sheet && !attachRun.isPending && attachRun.completedBanner && (
+        <div role="status" className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-surface px-4 py-2 text-sm text-text-primary sm:px-6">
+          <span>{attachRun.completedBanner}</span>
+          <button type="button" onClick={() => clearAttachBanner(programId, lessonId)} className="text-xs font-medium text-text-muted underline">Dismiss</button>
+        </div>
+      )}
+      {!sheet && !attachRun.isPending && !attachRun.backendPending && attachRun.error && (
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-danger-muted px-4 py-2 text-xs text-danger-fg sm:px-6">
+          <span>{attachRun.error}</span>
+          <button type="button" onClick={() => clearAttachBanner(programId, lessonId)} className="font-medium underline">Dismiss</button>
+        </div>
+      )}
       {legend && <section aria-label="Keyboard keys" className="border-b border-border bg-surface px-4 py-3 sm:px-6">
         <ul className="grid gap-1 text-xs text-text-secondary sm:grid-cols-2 lg:grid-cols-3">
           {ALL_KEYS.map(([key, what]) => <li key={key}><kbd className="kbd">{key}</kbd> {what}</li>)}

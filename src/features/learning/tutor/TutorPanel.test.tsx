@@ -94,12 +94,12 @@ function chat(id: string, title: string): Conversation {
   return { id, title, programId: 'course-1', updatedAt: '2026-11-01T00:00:00Z' } as Conversation;
 }
 
-function show(onCourseChanged?: () => void) {
+function show(onCourseChanged?: () => void, onActiveChatChange?: (id: string | null) => void) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}><TooltipProvider>{children}</TooltipProvider></QueryClientProvider>
   );
-  render(<TutorPanel program={program} lesson={lesson} onCourseChanged={onCourseChanged} />, { wrapper });
+  render(<TutorPanel program={program} lesson={lesson} onCourseChanged={onCourseChanged} onActiveChatChange={onActiveChatChange} />, { wrapper });
   return client;
 }
 
@@ -141,6 +141,19 @@ describe('TutorPanel', () => {
       spaceId: null, programId: 'course-1', query: null, savedOnly: null, bookmarkedOnly: null, pinnedOnly: null,
       hasMessageBookmarks: null, includeArchived: null, limit: null, offset: null,
     });
+  });
+
+  it('notifies onActiveChatChange when switching Tutor threads so ReaderPane resets', async () => {
+    const user = userEvent.setup();
+    const onActiveChatChange = vi.fn();
+    mocks.api.listConversationsExplorer.mockResolvedValue({
+      ok: true,
+      data: { conversations: [chat('one', 'Fusion · Nov 1'), chat('two', 'Search · Oct 30')] },
+    });
+    show(undefined, onActiveChatChange);
+    await waitFor(() => expect(onActiveChatChange).toHaveBeenCalledWith('one'));
+    await user.click(screen.getByRole('button', { name: 'Search · Oct 30' }));
+    await waitFor(() => expect(onActiveChatChange).toHaveBeenLastCalledWith('two'));
   });
 
   it('starts an empty chat from the lesson and the reviews, not the library', async () => {

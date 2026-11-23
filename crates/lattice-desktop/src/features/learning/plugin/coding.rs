@@ -244,6 +244,32 @@ pub async fn start_practice_build(
     Ok(StartPracticeBuildResultDto { job_id: job.id })
 }
 
+/// Cancels a coding problem build the learner backed out of, so it stops
+/// using the model and is not picked up again after a reload. A build that
+/// has already finished is left as it is.
+#[tauri::command]
+#[specta::specta]
+pub async fn cancel_practice_build(
+    job_id: String,
+    container: State<'_, Container>,
+) -> Result<(), ApiError> {
+    let job = container
+        .jobs()
+        .store()
+        .get(&job_id)
+        .await
+        .map_err(ApiError::from)?;
+    if job.kind != PRACTICE_BUILD {
+        return Err(ApiError::from(AppError::InvalidState(
+            "That job is not a coding problem build.".into(),
+        )));
+    }
+    match container.jobs().cancel(&job_id).await {
+        Ok(_) | Err(AppError::InvalidState(_)) => Ok(()),
+        Err(error) => Err(ApiError::from(error)),
+    }
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn start_practice_session(

@@ -34,6 +34,8 @@ interface FilePreviewModalProps {
   onLocationResolved?: (_chunkId: string, _label: string) => void;
   /** The message these citations belong to, where they came from one. */
   ownerKey?: string;
+  /** Originating conversation ID when opened from a chat or tangent. */
+  conversationId?: string | null;
   /** Citation-bearing text when the source belongs to a journal page. */
   citationContent?: string;
   /** Which of the answer's marks for this source was clicked, if one was. */
@@ -51,6 +53,7 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
   onCitationIndexChange,
   onLocationResolved,
   ownerKey,
+  conversationId,
   citationContent,
   occurrence = null,
 }) => {
@@ -147,6 +150,7 @@ export const FilePreviewModal: FC<FilePreviewModalProps> = ({
             onCitationIndexChange={onCitationIndexChange}
             onLocationResolved={onLocationResolved}
             ownerKey={ownerKey}
+            conversationId={conversationId}
             citationContent={citationContent}
             occurrence={occurrence}
             isFocused={isFocused}

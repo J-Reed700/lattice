@@ -6,13 +6,13 @@
  * detail view; the control on the right is a separate target.
  */
 
-import { Check, CircleCheck, Download, Loader2, TriangleAlert } from 'lucide-react';
+import { Check, CircleCheck, Download, Loader2, Play, RotateCw, TriangleAlert } from 'lucide-react';
 
 import { SeesImagesMark } from '@/features/model/components/SeesImagesMark';
+import type { ModelDownloadSummary } from '@/features/model/hooks/useDownloadState';
 import type { ShownFit } from '@/features/model/hooks/useModelFits';
 import { fitLabel, fitUsage } from '@/features/model/utils/fitText';
 import { cn } from '@/lib/utils';
-import type { DownloadStatus } from '@/types/downloads';
 import type { ModelRecommendation } from '@/types/modelCatalog';
 import { VISION_CAPABILITY } from '@/utils/visionGeometry';
 
@@ -27,9 +27,11 @@ interface ModelRowProps {
   fit?: ShownFit;
   onSelect: () => void;
   isDownloaded: boolean;
-  activeDownload: DownloadStatus | null;
+  activeDownload: ModelDownloadSummary | null;
   isStarting: boolean;
   onDownload: () => void;
+  onResume?: () => void;
+  onRetry?: () => void;
   /** True when a Hugging Face token is stored. Gated rows need one. */
   hasHfToken?: boolean;
   /** Sends the user to the token field on this page. */
@@ -46,6 +48,8 @@ export function ModelRow({
   activeDownload,
   isStarting,
   onDownload,
+  onResume,
+  onRetry,
   hasHfToken = false,
   onAddToken,
   compact = false,
@@ -65,18 +69,90 @@ export function ModelRow({
   const compactMeta = [formatSize(metadata.size_gb), downloads ? `${downloads} downloads` : null].filter(Boolean).join(' · ');
 
   const renderAction = () => {
-    if (isDownloaded) {
+    if (isDownloaded || activeDownload?.state === 'Completed') {
       return <span className="inline-flex items-center gap-1.5 rounded-md bg-success-muted px-2 py-1 text-xs font-medium text-success-fg"><Check className="h-3.5 w-3.5" aria-hidden="true" />Downloaded</span>;
     }
 
     if (activeDownload) {
       const percentage = activeDownload.percentage;
-      return (
-        <span role="status" className="inline-flex items-center gap-1.5 text-xs tabular-nums text-accent">
-          <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
-          {percentage != null ? `Downloading ${Math.round(percentage)}%` : 'Downloading…'}
-        </span>
-      );
+      if (activeDownload.state === 'Paused') {
+        return (
+          <div className="flex items-center gap-2">
+            <span role="status" className="text-xs tabular-nums text-text-muted">
+              {percentage != null ? `Paused · ${Math.round(percentage)}%` : 'Paused'}
+            </span>
+            {onResume ? (
+              <button
+                type="button"
+                disabled={isStarting}
+                onClick={onResume}
+                className={`${SECONDARY_BUTTON_CLASS} gap-1.5`}
+              >
+                {isStarting ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                    Starting…
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-3.5 w-3.5" aria-hidden="true" />
+                    Resume
+                  </>
+                )}
+              </button>
+            ) : null}
+          </div>
+        );
+      }
+
+      if (activeDownload.state === 'Pending') {
+        return (
+          <span role="status" className="text-xs tabular-nums text-text-muted">
+            {percentage != null && percentage > 0 ? `Queued · ${Math.round(percentage)}%` : 'Queued'}
+          </span>
+        );
+      }
+
+      if (activeDownload.state === 'Failed') {
+        return (
+          <div className="flex items-center gap-2">
+            <span
+              role="status"
+              title={activeDownload.error_message ?? undefined}
+              className="text-xs text-danger-fg"
+            >
+              Failed
+            </span>
+            <button
+              type="button"
+              disabled={isStarting}
+              onClick={onRetry ?? onDownload}
+              className={`${SECONDARY_BUTTON_CLASS} gap-1.5`}
+            >
+              {isStarting ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                  Starting…
+                </>
+              ) : (
+                <>
+                  <RotateCw className="h-3.5 w-3.5" aria-hidden="true" />
+                  Retry
+                </>
+              )}
+            </button>
+          </div>
+        );
+      }
+
+      if (activeDownload.state === 'Downloading') {
+        return (
+          <span role="status" className="inline-flex items-center gap-1.5 text-xs tabular-nums text-accent">
+            <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+            {percentage != null ? `Downloading ${Math.round(percentage)}%` : 'Downloading…'}
+          </span>
+        );
+      }
     }
 
     if (isStarting) {

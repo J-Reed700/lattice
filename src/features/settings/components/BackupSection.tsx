@@ -23,6 +23,7 @@ import { Archive, Download, Upload } from 'lucide-react';
 
 import { ConfirmDialog } from '@/components/ConfirmDialog/ConfirmDialog';
 import { SettingsRow, SettingsSection } from '@/components/ui';
+import { useRestoreLockoutStore } from '@/features/backup/restoreLockoutStore';
 import {
   isIndexingActive,
   useIndexingStatusQuery,
@@ -84,8 +85,16 @@ export function BackupSection() {
   const disableArchive = useDisableArchiveMutation();
 
   const [pendingRestore, setPendingRestore] = useState<BackupInfo | null>(null);
-  const [restored, setRestored] = useState(false);
-  const [restoredFromArchive, setRestoredFromArchive] = useState(false);
+  const restored = useRestoreLockoutStore(
+    (state) => state.isDatabaseRestoredRestartRequired,
+  );
+  const restoredFromArchive = useRestoreLockoutStore(
+    (state) => state.restoredFromArchive,
+  );
+  const restoreFailed = useRestoreLockoutStore((state) => state.restoreFailed);
+  const markRestored = useRestoreLockoutStore(
+    (state) => state.markDatabaseRestoredRestartRequired,
+  );
 
   const [wizardMode, setWizardMode] = useState<ArchiveWizardMode | null>(null);
   const [secretPrompt, setSecretPrompt] = useState(false);
@@ -141,8 +150,7 @@ export function BackupSection() {
               setSecretPrompt(false);
               setSecret('');
               setSecretError(null);
-              setRestored(true);
-              setRestoredFromArchive(true);
+              markRestored(true);
               toast.success('Backup restored', {
                 message: 'Quit and reopen Lattice.',
                 duration: 10000,
@@ -173,7 +181,7 @@ export function BackupSection() {
         },
       });
     },
-    [restoreArchive],
+    [markRestored, restoreArchive],
   );
 
   const paletteCommands = useMemo<PaletteCommand[]>(
@@ -234,7 +242,7 @@ export function BackupSection() {
     restoreBackup.mutate(target.path, {
       onSuccess: () => {
         setPendingRestore(null);
-        setRestored(true);
+        markRestored(false);
         toast.success('Backup restored', {
           message: 'Quit and reopen Lattice.',
           duration: 10000,
@@ -289,11 +297,15 @@ export function BackupSection() {
     return (
       <SettingsSection title="Backups">
         <div className="border-b border-border-subtle py-3">
-          <p className="text-sm text-text-primary">Backup restored.</p>
-          <p className="mt-0.5 text-sm text-text-secondary">
-            Quit Lattice and open it again to use the restored library.
+          <p className="text-sm text-text-primary">
+            {restoreFailed ? 'Restore failed.' : 'Backup restored.'}
           </p>
-          {restoredFromArchive ? (
+          <p className="mt-0.5 text-sm text-text-secondary">
+            {restoreFailed
+              ? 'The restore closed the library connection before it finished. Quit Lattice and open it again to reconnect.'
+              : 'Quit Lattice and open it again to use the restored library.'}
+          </p>
+          {restoredFromArchive && !restoreFailed ? (
             <p className="mt-0.5 text-sm text-text-secondary">
               Search indexes rebuild on the next launch, so search will be incomplete until that
               finishes.

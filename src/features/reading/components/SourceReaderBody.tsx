@@ -91,6 +91,8 @@ export interface SourceReaderBodyProps {
    * the Library, Compare, the reference inbox — and then nothing is marked.
    */
   ownerKey?: string;
+  /** Originating conversation ID when opened from a chat or tangent. */
+  conversationId?: string | null;
   /** Citation-bearing text for surfaces outside a chat message. */
   citationContent?: string;
   /** Which of the answer's marks for this source was clicked, if one was. */
@@ -117,6 +119,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   onCitationIndexChange,
   onLocationResolved,
   ownerKey,
+  conversationId,
   citationContent,
   occurrence = null,
   isFocused = false,
@@ -201,8 +204,16 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   // A frozen copy belongs to a conversation, so the Page view needs one.
   // Course material has no Page view: it would capture the live address, not the version cited.
   const canShowPage = showsWebArticle && !isCourseSource(source);
+  const resolvedConversationId =
+    source.conversationId !== undefined
+      ? source.conversationId
+      : conversationId !== undefined
+        ? conversationId
+        : presentation === 'dialog'
+          ? null
+          : activeConversationId;
   const snapshotConversationId = canShowPage && openableUrl
-    ? (source.conversationId ?? activeConversationId ?? '')
+    ? (resolvedConversationId ?? '')
     : null;
   const snapshotUrl = canShowPage ? openableUrl : null;
   const webPageMode = useWebPageMode(snapshotConversationId, snapshotUrl);
@@ -242,7 +253,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     allowUnscopedImport,
     isImportingUrl,
     handleImportSourceUrl,
-  } = useSourceUrlImport(importableUrl, activeConversationId);
+  } = useSourceUrlImport(importableUrl, resolvedConversationId ?? null);
 
   const renderImportScopeSelect = (extraClassName = '') => (
     <ImportScopeSelect
@@ -398,6 +409,9 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     };
   })();
 
+  const viewerLoading = isLoading || isResolvingPreviewPath || deciding;
+  const viewerContent = isCourseSource(source) ? source.content : content;
+
   const renderViewer = () => (
     <SourceViewer
       source={source}
@@ -405,8 +419,8 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
       isFileTooLarge={isFileTooLarge}
       isFileLarge={isFileLarge}
       maxPreviewSize={MAX_PREVIEW_SIZE}
-      isLoading={isLoading || isResolvingPreviewPath || deciding}
-      content={isCourseSource(source) ? source.content : content}
+      isLoading={viewerLoading}
+      content={viewerContent}
       error={error}
       savedCitationText={savedCitationText}
       previewFilePath={previewFilePath}
@@ -485,7 +499,12 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
               locate.
             */}
             {initialLocator && !usesEmbeddedViewer ? (
-              <PassageHighlighter locator={initialLocator} onMatch={setMatchTier}>
+              <PassageHighlighter
+                locator={initialLocator}
+                isLoading={viewerLoading}
+                contentKey={viewerContent}
+                onMatch={setMatchTier}
+              >
                 {renderViewer()}
               </PassageHighlighter>
             ) : (

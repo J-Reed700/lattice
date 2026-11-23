@@ -6,6 +6,7 @@ import { createMemoryRouter, RouterProvider, useLocation, useNavigate } from 're
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { programBuilderDraftKeys } from '@/features/learning/curriculum/programBuilderDraft';
+import { resetPortabilityRunStore } from '@/features/learning/portability/portabilityRunStore';
 import { LearningStudioPage } from '@/features/learning/workspace/LearningStudioPage';
 import type {
   LearningOutlineProgressDto,
@@ -219,6 +220,7 @@ describe('Learning Studio course generation persistence and rehydration', () => 
 
   beforeEach(() => {
     vi.resetAllMocks();
+    resetPortabilityRunStore();
     localStorage.clear();
     mocks.list.mockResolvedValue(ok([]));
     mocks.listRuns.mockResolvedValue(

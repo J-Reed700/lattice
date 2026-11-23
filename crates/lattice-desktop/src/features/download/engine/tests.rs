@@ -67,8 +67,20 @@ fn authorization_is_not_forwarded_to_untrusted_redirects() {
         "https://downloads.example.com/file"
     ));
     assert!(may_forward_authorization(
+        "https://huggingface.co./org/model/resolve/main/model.gguf",
+        "https://hf.co/file"
+    ));
+    assert!(may_forward_authorization(
         "https://models.example.com/file",
         "https://models.example.com/other"
+    ));
+    assert!(!may_forward_authorization(
+        "https://huggingface.co/org/model/resolve/main/model.gguf",
+        "http://cdn-lfs.hf.co/file"
+    ));
+    assert!(!may_forward_authorization(
+        "https://huggingface.co/org/model/resolve/main/model.gguf",
+        "http://hf.co/file"
     ));
 }
 
@@ -164,7 +176,7 @@ async fn test_mock_engine_file_size() {
     engine.set_file_size("https://example.com/file.bin", Some(5000));
 
     let (size, _etag) = engine
-        .get_file_size("https://example.com/file.bin")
+        .get_file_size("https://example.com/file.bin", None)
         .await
         .unwrap();
 
@@ -619,4 +631,184 @@ async fn a_complete_part_is_hashed_with_no_request_when_the_total_is_known() {
         .unwrap();
 
     assert_eq!(result.bytes_downloaded, 100);
+}
+
+#[tokio::test]
+async fn get_file_size_sends_bearer_token_on_head_and_range_probe() {
+    use wiremock::{
+        matchers::{header, method, path},
+        Mock, MockServer, ResponseTemplate,
+    };
+
+    let server = MockServer::start().await;
+    // Unauthenticated HEAD fails with 401; authenticated HEAD returns 200 without Content-Length
+    // so get_file_size falls back to GET Range: bytes=0-0, which also requires the token.
+    Mock::given(method("HEAD"))
+        .and(path("/gated.gguf"))
+        .and(header("authorization", "Bearer hf_secret"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("HEAD"))
+        .and(path("/gated.gguf"))
+        .respond_with(ResponseTemplate::new(401))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/gated.gguf"))
+        .and(header("range", "bytes=0-0"))
+        .and(header("authorization", "Bearer hf_secret"))
+        .respond_with(ResponseTemplate::new(206).insert_header("content-range", "bytes 0-0/20480"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let engine = HttpDownloadEngine::new().unwrap();
+    let url = format!("{}/gated.gguf", server.uri());
+    let (size, final_url) = engine
+        .get_file_size(&url, Some("hf_secret"))
+        .await
+        .expect("authenticated probe should succeed");
+    assert_eq!(size, Some(20480));
+    assert_eq!(final_url, url);
+}
+
+#[tokio::test]
+async fn get_file_size_sends_bearer_token_on_redirect_with_linked_size() {
+    use wiremock::{
+        matchers::{header, method, path},
+        Mock, MockServer, ResponseTemplate,
+    };
+
+    let server = MockServer::start().await;
+    Mock::given(method("HEAD"))
+        .and(path("/resolve/main/model.gguf"))
+        .and(header("authorization", "Bearer hf_redirect_token"))
+        .respond_with(
+            ResponseTemplate::new(302)
+                .insert_header("location", "/cdn/model.gguf")
+                .insert_header("x-linked-size", "40960"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let engine = HttpDownloadEngine::new().unwrap();
+    let url = format!("{}/resolve/main/model.gguf", server.uri());
+    let (size, final_url) = engine
+        .get_file_size(&url, Some("hf_redirect_token"))
+        .await
+        .expect("authenticated redirect probe should succeed");
+    assert_eq!(size, Some(40960));
+    assert_eq!(final_url, format!("{}/cdn/model.gguf", server.uri()));
+}
+
+#[tokio::test]
+async fn get_file_size_strips_auth_on_untrusted_redirect_without_linked_size() {
+    use wiremock::{
+        matchers::{header, header_exists, method, path},
+        Mock, MockServer, ResponseTemplate,
+    };
+
+    let source = MockServer::start().await;
+    let untrusted = MockServer::start().await;
+
+    Mock::given(method("HEAD"))
+        .and(path("/resolve/main/model.gguf"))
+        .and(header("authorization", "Bearer hf_secret"))
+        .respond_with(
+            ResponseTemplate::new(307)
+                .insert_header("location", format!("{}/blob.gguf", untrusted.uri())),
+        )
+        .expect(1)
+        .mount(&source)
+        .await;
+
+    // Untrusted target refuses requests that carry an Authorization header on both HEAD and GET Range probes.
+    Mock::given(method("HEAD"))
+        .and(path("/blob.gguf"))
+        .and(header_exists("authorization"))
+        .respond_with(ResponseTemplate::new(400))
+        .expect(0)
+        .mount(&untrusted)
+        .await;
+    Mock::given(method("HEAD"))
+        .and(path("/blob.gguf"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&untrusted)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/blob.gguf"))
+        .and(header_exists("authorization"))
+        .respond_with(ResponseTemplate::new(400))
+        .expect(0)
+        .mount(&untrusted)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/blob.gguf"))
+        .and(header("range", "bytes=0-0"))
+        .respond_with(ResponseTemplate::new(206).insert_header("content-range", "bytes 0-0/32768"))
+        .expect(1)
+        .mount(&untrusted)
+        .await;
+
+    let engine = HttpDownloadEngine::new().unwrap();
+    let (size, final_url) = engine
+        .get_file_size(
+            &format!("{}/resolve/main/model.gguf", source.uri()),
+            Some("hf_secret"),
+        )
+        .await
+        .expect("redirect to untrusted host should succeed without leaking auth header");
+    assert_eq!(size, Some(32768));
+    assert_eq!(final_url, format!("{}/blob.gguf", untrusted.uri()));
+}
+
+#[tokio::test]
+async fn retry_sends_if_range_etag_and_restarts_clean_when_upstream_changes() {
+    use wiremock::{
+        matchers::{header, method, path},
+        Mock, MockServer, ResponseTemplate,
+    };
+
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let part = dir.path().join("model.gguf.part");
+    let url = format!("{}/model.gguf", server.uri());
+
+    // First attempt returns 200 with ETag "v1" and a truncated body (60 bytes vs expected 100),
+    // triggering a retryable premature-stream-end error after writing the partial bytes.
+    Mock::given(method("GET"))
+        .and(path("/model.gguf"))
+        .and(wiremock::matchers::header_exists("range"))
+        .and(header("if-range", "\"v1\""))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("etag", "\"v2\"")
+                .set_body_bytes(vec![0xBBu8; 100]),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/model.gguf"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("etag", "\"v1\"")
+                .set_body_bytes(vec![0xAAu8; 60]),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let engine = HttpDownloadEngine::new().unwrap();
+    let result = engine
+        .download_with_retry(&url, &part, None, None, None, Some(100))
+        .await
+        .expect("If-Range mismatch 200 OK should restart clean");
+
+    assert_eq!(result.bytes_downloaded, 100);
+    assert_eq!(std::fs::read(&part).unwrap(), vec![0xBBu8; 100]);
 }

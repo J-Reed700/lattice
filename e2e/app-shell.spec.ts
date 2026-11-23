@@ -185,7 +185,7 @@ for (const [width, entry] of [[1440, 'menu'], [620, 'selection'], [1440, 'reply'
     await tangentComposer.fill('Cancel this tangent request');
     await tangentComposer.press('Enter');
     await panel.getByRole('button', { name: 'Stop generating response' }).click();
-    await expect(tangentComposer).toHaveValue('');
+    await expect(tangentComposer).toHaveValue('Cancel this tangent request');
     await expect(composer).toHaveValue('Keep my main draft');
     await tangentComposer.fill('What does that mean?');
     await tangentComposer.press('Enter');

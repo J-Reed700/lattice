@@ -6,10 +6,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useAttachmentImport } from '@/features/chat/hooks/useAttachmentImport';
 import { useStagedPicturesStore } from '@/features/chat/images/stagedPictures';
+import { useStagedFilesStore } from '@/features/chat/stores/stagedFilesStore';
 
 const api = vi.hoisted(() => ({
   startBatchFileImport: vi.fn(),
   getBatchJobStatus: vi.fn(),
+  cancelBatchJob: vi.fn().mockResolvedValue({ ok: true, data: 0 }),
   setDocumentsSpaceMembership: vi.fn(),
   attachMessageImages: vi.fn(),
   releaseMessageImages: vi.fn(),
@@ -146,6 +148,83 @@ describe('attaching staged files to a conversation', () => {
     await act(async () => { imported = await result.current.importStaged(); });
 
     expect(imported).toBeNull();
+    expect(drop.clear).not.toHaveBeenCalled();
+  });
+
+  it('cancels the active batch job and preserves staged files when cancelImport is called', async () => {
+    let resolvePoll: ((value: { kind: 'cancelled' }) => void) | undefined;
+    poll.mockImplementation((_jobId: string, opts: { signal: AbortSignal }) => new Promise((resolve) => {
+      opts.signal.addEventListener('abort', () => resolve({ kind: 'cancelled' }), { once: true });
+      resolvePoll = resolve;
+    }));
+    const { result } = render();
+
+    let pending: Promise<unknown> | undefined;
+    act(() => {
+      pending = result.current.importStaged();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    act(() => {
+      result.current.cancelImport?.();
+    });
+    await act(async () => {
+      resolvePoll?.({ kind: 'cancelled' });
+      await pending;
+    });
+
+    expect(api.cancelBatchJob).toHaveBeenCalledWith('job-1');
+    expect(result.current.isImporting).toBe(false);
+    expect(drop.clear).not.toHaveBeenCalled();
+  });
+
+  it('keeps polling and finishes linking attachments on targetConversationId without firing a send after switching threads', async () => {
+    let pollSignal: AbortSignal | undefined;
+    let resolvePoll: ((value: { kind: 'finished'; documentIds: string[]; added: number; failed: number }) => void) | undefined;
+    poll.mockImplementation((_jobId: string, opts: { signal: AbortSignal }) => {
+      pollSignal = opts.signal;
+      return new Promise((resolve) => {
+        opts.signal.addEventListener('abort', () => resolve({ kind: 'cancelled' } as never), { once: true });
+        resolvePoll = resolve;
+      });
+    });
+    useStagedFilesStore.setState({
+      byConversation: { 'conversation-1': [{ path: '/tmp/a.pdf', name: 'a.pdf' }] },
+      importingByConversation: {},
+    });
+    const { result, rerender } = renderHook(
+      ({ id }: { id: string | null }) =>
+        useAttachmentImport({ dropTargetRef: { current: null }, conversationId: id, scopedSpaceId: null }),
+      { initialProps: { id: 'conversation-1' as string | null }, wrapper },
+    );
+
+    let pending: Promise<unknown> | undefined;
+    act(() => {
+      pending = result.current.importStaged();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Switch conversation before import finishes: poll must NOT abort, and conversation-2 is idle.
+    rerender({ id: 'conversation-2' });
+    expect(pollSignal?.aborted).toBe(false);
+    expect(api.cancelBatchJob).not.toHaveBeenCalled();
+    expect(result.current.isImporting).toBe(false);
+    expect(useStagedFilesStore.getState().importingByConversation['conversation-1']).toBe(true);
+
+    let outcome: unknown = 'unset';
+    await act(async () => {
+      resolvePoll?.({ kind: 'finished', documentIds: ['doc-a'], added: 1, failed: 0 });
+      outcome = await pending;
+    });
+
+    expect(outcome).toBeNull();
+    expect(loadConversationLinkedDocuments).toHaveBeenCalledWith('conversation-1');
+    expect(useStagedFilesStore.getState().byConversation['conversation-1']).toBeUndefined();
+    expect(useStagedFilesStore.getState().importingByConversation['conversation-1']).toBeUndefined();
     expect(drop.clear).not.toHaveBeenCalled();
   });
 });

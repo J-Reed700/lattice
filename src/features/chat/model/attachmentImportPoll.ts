@@ -12,15 +12,35 @@ export type AttachmentImportOutcome =
   /** The status could not be read, repeatedly. */
   | { kind: 'unreachable'; error: string };
 
+export type CancellableAttachmentImportOutcome =
+  | AttachmentImportOutcome
+  | { kind: 'cancelled' };
+
 interface PollOptions {
   getStatus: (jobId: string) => Promise<ApiResult<BatchJobStatus>>;
   intervalMs: number;
   timeoutMs: number;
-  sleep?: (ms: number) => Promise<void>;
+  signal?: AbortSignal;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   now?: () => number;
 }
 
-const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const defaultSleep = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 
 function documentIdsOf(job: BatchJobStatus): string[] {
   return (job.items ?? [])
@@ -37,16 +57,27 @@ function documentIdsOf(job: BatchJobStatus): string[] {
  * go ahead with no document ids, so the answer was written without files whose
  * chips said they were attached.
  */
+export function pollAttachmentImport(
+  jobId: string,
+  options: PollOptions & { signal: AbortSignal }
+): Promise<CancellableAttachmentImportOutcome>;
+export function pollAttachmentImport(
+  jobId: string,
+  options: PollOptions
+): Promise<AttachmentImportOutcome>;
 export async function pollAttachmentImport(
   jobId: string,
-  { getStatus, intervalMs, timeoutMs, sleep = defaultSleep, now = Date.now }: PollOptions
-): Promise<AttachmentImportOutcome> {
+  { getStatus, intervalMs, timeoutMs, signal, sleep = defaultSleep, now = Date.now }: PollOptions
+): Promise<CancellableAttachmentImportOutcome> {
   const deadline = now() + timeoutMs;
   let lastSeenIds: string[] = [];
   let consecutiveFailures = 0;
   while (now() < deadline) {
-    await sleep(intervalMs);
+    if (signal?.aborted) return { kind: 'cancelled' };
+    await sleep(intervalMs, signal);
+    if (signal?.aborted) return { kind: 'cancelled' };
     const status = await getStatus(jobId);
+    if (signal?.aborted) return { kind: 'cancelled' };
     if (!status.ok) {
       consecutiveFailures += 1;
       if (consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {

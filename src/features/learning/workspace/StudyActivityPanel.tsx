@@ -55,7 +55,7 @@ function ActivityCard({ activity, now, onOpen }: { activity: StudyActivity; now:
       <span className="flex shrink-0 items-center gap-1.5">
         {waiting > 0
           ? <button type="button" onClick={() => onOpen({ ...destination, tab: 'lessons', review: 'claims' })} className="min-h-8 rounded-full bg-accent px-3 text-xs font-semibold text-accent-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Review</button>
-          : (destination.programId || destination.flashcards) && <button type="button" onClick={() => onOpen(destination)} className="min-h-8 rounded-full border border-border px-3 text-xs font-medium text-text-primary hover:border-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">{failed ? 'Return to task to retry' : pending ? 'Open task' : 'View result'}</button>}
+          : (destination.programId || destination.flashcards || destination.screen) && <button type="button" onClick={() => onOpen(destination)} className="min-h-8 rounded-full border border-border px-3 text-xs font-medium text-text-primary hover:border-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">{failed ? 'Return to task to retry' : pending ? 'Open task' : 'View result'}</button>}
         {!pending && <button type="button" onClick={() => dismissStudyActivity(activity.id)} className="min-h-8 rounded-full px-3 text-xs text-text-muted hover:bg-background focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Dismiss</button>}
       </span>
     </div>

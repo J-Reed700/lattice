@@ -38,7 +38,15 @@ const PROVIDERS: Array<{ value: ApiLLMSettings["provider"]; label: string }> = [
 
 export function ChatTab() {
   const api = useApi();
-  const { llmSettings, isLoading, authValueSet, saveLlmUpdates, saveAuthHeaderValue, reload } = useLlmSettings();
+  const {
+    llmSettings,
+    isLoading,
+    authValueSet,
+    authValueStatus = "ready",
+    saveLlmUpdates,
+    saveAuthHeaderValue,
+    reload,
+  } = useLlmSettings();
   const [ollamaUrlDraft, setOllamaUrlDraft] = useState("");
   const [ollamaModelDraft, setOllamaModelDraft] = useState("");
   const [ollamaUtilityModelDraft, setOllamaUtilityModelDraft] = useState("");
@@ -101,8 +109,22 @@ export function ChatTab() {
   // The value is write-only: the saved one never comes back, only whether
   // one is set (`authValueSet`), so a blank value field means "keep the stored one".
   const headerValueStored = authValueSet.ollama;
+  const authStatusKnown = authValueStatus === "ready";
+  const savedOllamaHeaderName = llmSettings?.ollamaAuthHeaderName ?? "";
+  const hasSavedOllamaHeaderName = Boolean(savedOllamaHeaderName.trim());
+  const isOllamaHeaderHalfConfigured =
+    authStatusKnown && !headerValueStored && hasSavedOllamaHeaderName;
+  const showClearOllamaHeader =
+    authStatusKnown && (headerValueStored || hasSavedOllamaHeaderName);
+  const keepsExistingOllamaHeader =
+    !authStatusKnown &&
+    hasSavedOllamaHeaderName &&
+    trimmedHeaderName === savedOllamaHeaderName.trim();
   const isHeaderPartialPair =
-    (trimmedHeaderName !== "" && trimmedHeaderValue === "" && !headerValueStored) ||
+    (trimmedHeaderName !== "" &&
+      trimmedHeaderValue === "" &&
+      !headerValueStored &&
+      !keepsExistingOllamaHeader) ||
     (trimmedHeaderName === "" && trimmedHeaderValue !== "");
   const headerDraftDiffersFromSaved =
     trimmedHeaderName !== (llmSettings?.ollamaAuthHeaderName ?? "").trim() ||
@@ -182,7 +204,10 @@ export function ChatTab() {
     }
 
     if (
-      (authHeaderName && !authHeaderValue && !headerValueStored) ||
+      (authHeaderName &&
+        !authHeaderValue &&
+        !headerValueStored &&
+        !keepsExistingOllamaHeader) ||
       (!authHeaderName && authHeaderValue)
     ) {
       toast.error("Set both the header name and value, or clear both");
@@ -270,7 +295,14 @@ export function ChatTab() {
       {llmSettings && isCloudProvider(provider) && <CloudConnection key={provider} provider={provider}
         model={llmSettings.model} onSaveModel={(model) => saveLlmUpdates({ model })} />}
 
-      {llmSettings && (provider === "llamacpp" || provider === "auto" || llmSettings.llamaCpp?.url.trim()) && <LlamaCppConnection />}
+      {llmSettings && (
+        provider === "llamacpp" ||
+        provider === "auto" ||
+        Boolean(llmSettings.llamaCpp?.url.trim()) ||
+        Boolean(llmSettings.llamaCpp?.authHeaderName?.trim()) ||
+        llmSettings.learningModel?.kind === "llama_cpp" ||
+        llmSettings.utilityModel?.kind === "llama_cpp"
+      ) && <LlamaCppConnection />}
 
       {llmSettings && showOllamaSettings ? (
         <SettingsSection title="Ollama server">
@@ -390,9 +422,15 @@ export function ChatTab() {
               <SettingsRow
                 label="Auth header"
                 hint={
-                  isHeaderPartialPair
-                    ? "Fill in both name and value, or clear both."
-                    : undefined
+                  isOllamaHeaderHalfConfigured
+                    ? "Header name is saved without a value in Keychain. Enter a value or click Clear header."
+                    : authValueStatus === "loading" && hasSavedOllamaHeaderName
+                      ? "Checking Keychain for the saved header value…"
+                      : authValueStatus === "error" && hasSavedOllamaHeaderName
+                        ? "Couldn’t check Keychain status. Saved header settings are preserved."
+                        : isHeaderPartialPair
+                          ? "Fill in both name and value, or clear both."
+                          : undefined
                 }
                 stacked
               >
@@ -412,11 +450,19 @@ export function ChatTab() {
                     value={ollamaHeaderValueDraft}
                     onChange={(e) => setOllamaHeaderValueDraft(e.target.value)}
                     onBlur={handleHeaderBlur}
-                    placeholder={headerValueStored ? "Value is set. Type to replace it" : "Header value (e.g. Bearer …)"}
+                    placeholder={
+                      headerValueStored
+                        ? "Value is set. Type to replace it"
+                        : authValueStatus === "loading" && hasSavedOllamaHeaderName
+                          ? "Checking Keychain…"
+                          : authValueStatus === "error" && hasSavedOllamaHeaderName
+                            ? "Keychain status unavailable. Type to replace"
+                            : "Header value (e.g. Bearer …)"
+                    }
                     aria-label="Auth header value"
                     className={INPUT_CLASS}
                   />
-                  {headerValueStored ? (
+                  {showClearOllamaHeader ? (
                     <button
                       type="button"
                       onClick={() => void handleClearHeader()}

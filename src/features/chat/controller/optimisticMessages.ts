@@ -40,16 +40,26 @@ export function persistedRequestIds(messages: ConversationMessage[]): Set<string
   return ids;
 }
 
-export function reconcilePersistedFailedMessages(
+export function reconcilePersistedMessages(
   optimisticMessages: Map<string, OptimisticMessage>,
   conversationId: string,
   messages: ConversationMessage[]
 ): Map<string, OptimisticMessage> {
   const persisted = persistedRequestIds(messages);
+  if (persisted.size === 0) return optimisticMessages;
   const next = new Map(optimisticMessages);
   for (const [tempId, message] of next) {
-    if (message.conversationId === conversationId && message.status === 'failed'
-      && message.requestId && persisted.has(message.requestId)) next.delete(tempId);
+    if (
+      message.conversationId === conversationId &&
+      message.role === 'user' &&
+      message.requestId &&
+      persisted.has(message.requestId)
+    ) {
+      next.delete(tempId);
+    }
   }
   return next.size === optimisticMessages.size ? optimisticMessages : next;
 }
+
+/** @deprecated Use `reconcilePersistedMessages`, which reconciles every persisted status. */
+export const reconcilePersistedFailedMessages = reconcilePersistedMessages;

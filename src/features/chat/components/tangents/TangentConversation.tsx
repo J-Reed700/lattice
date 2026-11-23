@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
 import { fetchBookmarks, fetchConversationDetail, fetchMessages } from '@/features/chat/api/conversationQueryData';
 import { deriveMessageMetadata } from '@/features/chat/controller/messageMetadata';
-import { reconcilePersistedFailedMessages } from '@/features/chat/controller/optimisticMessages';
+import { reconcilePersistedMessages } from '@/features/chat/controller/optimisticMessages';
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { useStopSpeechOnChange } from '@/features/speech/hooks/useSpeech';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
@@ -41,6 +41,7 @@ export function ScopedConversationProvider({
   children: ReactNode;
 }) {
   const api = useApi();
+  const queryClient = useQueryClient();
   const spaces = useConversationsStore((state) => state.spaces);
   const selectedSpaceId = useConversationsStore((state) => state.selectedSpaceId);
   const filterMode = useConversationsStore((state) => state.filterMode);
@@ -48,7 +49,6 @@ export function ScopedConversationProvider({
   const isLoading = useConversationsStore((state) => state.isLoading);
   const isLoadingBookmarks = useConversationsStore((state) => state.isLoadingBookmarks);
   const inFlightGenerations = useConversationsStore((state) => state.inFlightGenerations);
-  const error = useConversationsStore((state) => state.error);
   const optimisticMessages = useConversationsStore((state) => state.optimisticMessages);
   const liveRetrieval = useConversationsStore((state) => state.liveRetrieval);
   const liveSteps = useConversationsStore((state) => state.liveSteps);
@@ -105,7 +105,6 @@ export function ScopedConversationProvider({
   const deleteMessage = useConversationsStore((state) => state.deleteMessage);
   const deleteConversation = useConversationsStore((state) => state.deleteConversation);
   const dismissFailedMessage = useConversationsStore((state) => state.dismissFailedMessage);
-  const clearError = useConversationsStore((state) => state.clearError);
   const messagesQuery = useQuery({ queryKey: conversationKeys.messages(id), queryFn: () => fetchMessages(id, api) });
   const detailQuery = useQuery({ queryKey: conversationKeys.detail(id), queryFn: () => fetchConversationDetail(id, api) });
   const bookmarksQuery = useQuery({ queryKey: conversationKeys.bookmarks(id), queryFn: () => fetchBookmarks(id, undefined, api) });
@@ -117,6 +116,15 @@ export function ScopedConversationProvider({
     () => (detailQuery.data ? [{ ...detailQuery.data, messages: persisted.slice(inheritedCount) }] : []),
     [detailQuery.data, inheritedCount, persisted],
   );
+  const scopedQueryError = messagesQuery.error ?? detailQuery.error ?? bookmarksQuery.error;
+  const [dismissedQueryError, setDismissedQueryError] = useState<unknown>(null);
+  const visibleScopedQueryError =
+    scopedQueryError && scopedQueryError !== dismissedQueryError ? scopedQueryError : null;
+  const clearScopedError = useCallback(() => {
+    if (scopedQueryError) {
+      setDismissedQueryError(scopedQueryError);
+    }
+  }, [scopedQueryError]);
   const sending = inFlightGenerations.has(id);
   const wasSending = useRef(false);
   useStopSpeechOnChange(id);
@@ -124,10 +132,14 @@ export function ScopedConversationProvider({
   useEffect(() => {
     if (!messagesQuery.data) return;
     conversationUiStore.setState((state) => {
-      const optimisticMessages = reconcilePersistedFailedMessages(state.optimisticMessages, id, messagesQuery.data!);
+      const optimisticMessages = reconcilePersistedMessages(state.optimisticMessages, id, messagesQuery.data!);
       return optimisticMessages === state.optimisticMessages ? state : { optimisticMessages };
     });
   }, [id, messagesQuery.data]);
+  const scopedOptimisticMessages = useMemo(
+    () => reconcilePersistedMessages(optimisticMessages, id, persisted),
+    [id, optimisticMessages, persisted],
+  );
 
   useEffect(() => {
     if (wasSending.current && !sending) onTurnEnd?.();
@@ -143,9 +155,9 @@ export function ScopedConversationProvider({
       searchQuery,
       isLoading,
       isLoadingBookmarks,
+      error: visibleScopedQueryError?.message ?? null,
       inFlightGenerations,
-      error,
-      optimisticMessages,
+      optimisticMessages: scopedOptimisticMessages,
       liveRetrieval,
       liveSteps,
       liveModel,
@@ -186,7 +198,7 @@ export function ScopedConversationProvider({
       deleteMessage,
       deleteConversation,
       dismissFailedMessage,
-      clearError,
+      clearError: clearScopedError,
       activeConversationId: id,
       conversations,
       lastMessageSources: metadata.sources,
@@ -199,7 +211,14 @@ export function ScopedConversationProvider({
       setComposerDraft: (value: string | null) => setDraft(draftKey, value ?? ''),
       regenerateResponse: async (conversationId: string, options?: RegenerateOptions) => {
         const outcome = await baseRegenerateResponse(conversationId, options);
-        if (outcome === 'failed') setDraft(draftKey, [...persisted].reverse().find((message) => message.role === 'user')?.content ?? '');
+        if (outcome === 'failed') {
+          const latest = queryClient.getQueryData<ConversationMessage[]>(conversationKeys.messages(conversationId)) ?? persisted;
+          const lastMessage = latest[latest.length - 1];
+          const hasRestoredFailedUser = lastMessage?.role === 'user' && lastMessage.status === 'failed';
+          if (!hasRestoredFailedUser) {
+            setDraft(draftKey, [...persisted].reverse().find((message) => message.role === 'user')?.content ?? '');
+          }
+        }
         return outcome;
       },
     };
@@ -210,7 +229,7 @@ export function ScopedConversationProvider({
     bookmarkMessage,
     bookmarks,
     cancelGeneration,
-    clearError,
+    clearScopedError,
     compactConversation,
     continueInNewConversation,
     conversations,
@@ -219,7 +238,7 @@ export function ScopedConversationProvider({
     deleteMessage,
     dismissFailedMessage,
     documentSpaceMembershipsByDocumentId,
-    error,
+    visibleScopedQueryError?.message,
     filterMode,
     forkConversation,
     id,
@@ -238,8 +257,9 @@ export function ScopedConversationProvider({
     loadSpaces,
     metadata,
     moveConversationToSpace,
-    optimisticMessages,
+    scopedOptimisticMessages,
     persisted,
+    queryClient,
     removeConversationLinkedDocument,
     removeConversationWebSource,
     renameConversation,

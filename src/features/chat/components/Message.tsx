@@ -67,7 +67,33 @@ export const Message = memo(({
   const isUser = message.role === 'user';
   const isPending = message.status === 'pending';
   const isFailed = message.status === 'failed';
-  const errorMessage = 'error' in message ? message.error : undefined;
+  const { errorMessage, isCancelled } = useMemo(() => {
+    let parsedError: string | undefined;
+    let cancelled = false;
+    if ('metadata' in message && message.metadata) {
+      try {
+        const parsed: unknown = JSON.parse(message.metadata);
+        if (parsed && typeof parsed === 'object') {
+          if ('error' in parsed && typeof parsed.error === 'string') {
+            const trimmed = parsed.error.trim();
+            if (trimmed) parsedError = trimmed;
+          }
+          if ('cancelled' in parsed && parsed.cancelled === true) {
+            cancelled = true;
+          }
+        }
+      } catch {
+        // Malformed historical metadata
+      }
+    }
+    const directError = 'error' in message && typeof message.error === 'string' && message.error.trim()
+      ? message.error.trim()
+      : undefined;
+    return {
+      errorMessage: directError ?? (isFailed ? parsedError : undefined),
+      isCancelled: cancelled,
+    };
+  }, [isFailed, message]);
 
   const messageId = 'id' in message ? message.id : undefined;
   const conversationId = 'conversationId' in message ? message.conversationId : undefined;
@@ -201,7 +227,8 @@ export const Message = memo(({
     handleBodyClick, handleBodyMouseOver, handleBodyMouseLeave,
     hoveredSource, hoveredVerdict, activeEvidence, hasEvidenceMargin, setLit,
   } = useMessageEvidence({
-    sources, ownerKey: messageId ?? domMessageId ?? '', isAssistantWithSources,
+    sources, ownerKey: messageId ?? domMessageId ?? '', conversationId: conversationId ?? activeConversationId ?? null,
+    isAssistantWithSources,
     showCitations, claimVerdicts, showsCodeRefs, revealInExplorer: revealInFolder, openInExplorer: openInFolder,
   });
   const figures = useChatFigures(message, citationMap);
@@ -245,6 +272,7 @@ export const Message = memo(({
           isUser={isUser}
           isPending={isPending}
           isFailed={isFailed}
+          isCancelled={isCancelled}
           errorMessage={errorMessage}
           isLastTurn={isLastTurn}
           isBusy={isBusy}
@@ -280,6 +308,7 @@ export const Message = memo(({
           isPending={!isUser && isPending}
           isWriting={message.content.trim().length > 0}
           verification={verificationSummary ?? null}
+          conversationId={conversationId ?? activeConversationId ?? null}
         />
 
         {/* Body prose — tiptap.css styles inherit `font-family` from this wrapper. */}

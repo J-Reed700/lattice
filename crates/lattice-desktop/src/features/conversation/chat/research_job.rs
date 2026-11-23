@@ -8,7 +8,7 @@
 //! to every window, and the answer lands in the conversation. The chat's stop
 //! button cancels the job: a stopped turn ends rather than resuming.
 use super::cancellation;
-use super::persistence::mark_user_message_failed;
+use super::persistence::{mark_user_message_cancelled, mark_user_message_failed_with_reason};
 use super::ports::ChatRuntime;
 use super::turn::{
     self, AssembledTurn, Research, ResearchJournal, ResearchRound, Saved, TurnRequest,
@@ -162,14 +162,36 @@ async fn saved_question(jobs: &JobStore, job_id: &str) -> Result<Option<String>>
 
 /// Fails the question a research job saved on its thread, if it saved one: the
 /// job runs no turn that would settle it.
-async fn fail_saved_question(container: &dyn ChatRuntime, jobs: &JobStore, job_id: &str) {
+async fn fail_saved_question(
+    container: &dyn ChatRuntime,
+    jobs: &JobStore,
+    job_id: &str,
+    reason: Option<&str>,
+) {
     match saved_question(jobs, job_id).await {
         Ok(Some(question)) => {
-            mark_user_message_failed(&container.conversation_service(), &question).await;
+            mark_user_message_failed_with_reason(
+                &container.conversation_service(),
+                &question,
+                reason,
+            )
+            .await;
         }
         Ok(None) => {}
         Err(error) => {
             warn!(job_id, %error, "Could not find the question of a research job that runs no turn");
+        }
+    }
+}
+
+async fn cancel_saved_question(container: &dyn ChatRuntime, jobs: &JobStore, job_id: &str) {
+    match saved_question(jobs, job_id).await {
+        Ok(Some(question)) => {
+            mark_user_message_cancelled(&container.conversation_service(), &question).await;
+        }
+        Ok(None) => {}
+        Err(error) => {
+            warn!(job_id, %error, "Could not find the question of a stopped research job");
         }
     }
 }
@@ -301,7 +323,7 @@ pub(super) async fn stop(
             if let Some(request_id) = job.operation_id.strip_prefix(&operation_id("")) {
                 waiters.take(request_id);
             }
-            fail_saved_question(container, jobs.store(), &job.id).await;
+            cancel_saved_question(container, jobs.store(), &job.id).await;
         }
     }
     Ok(stopped)
@@ -329,22 +351,37 @@ impl JobHandler for DeepResearchJob {
         let message = job.error_message.clone().unwrap_or_default();
         if let Some(request_id) = job.operation_id.strip_prefix(&operation_id("")) {
             if let Some(waiter) = self.runtime.research_waiters().take(request_id) {
-                let _ = waiter.reply.send(Err(AppError::InternalError(message)));
+                let _ = waiter
+                    .reply
+                    .send(Err(AppError::InternalError(message.clone())));
             }
         }
-        fail_saved_question(self.runtime.as_ref(), self.runtime.jobs().store(), &job.id).await;
+        let reason = (!message.trim().is_empty()).then_some(message.as_str());
+        fail_saved_question(
+            self.runtime.as_ref(),
+            self.runtime.jobs().store(),
+            &job.id,
+            reason,
+        )
+        .await;
     }
 
     async fn run(&self, context: &JobContext) -> Result<JobOutcome> {
         let (request, saved) = match saved_turn(context.store(), context.job()).await {
             Ok(turn) => turn,
             Err(error @ AppError::Serialization(_)) => {
-                fail_saved_question(self.runtime.as_ref(), context.store(), context.id()).await;
+                let message =
+                    format!("The saved research turn cannot be read, so it cannot resume: {error}");
+                fail_saved_question(
+                    self.runtime.as_ref(),
+                    context.store(),
+                    context.id(),
+                    Some(&message),
+                )
+                .await;
                 return Ok(JobOutcome::Failed {
                     code: "failed".into(),
-                    message: format!(
-                        "The saved research turn cannot be read, so it cannot resume: {error}"
-                    ),
+                    message,
                 });
             }
             Err(error) => return Err(error),

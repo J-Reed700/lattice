@@ -284,10 +284,51 @@ describe('ActiveRecallBrainDump', () => {
     vi.useFakeTimers();
     fireEvent.click(draftButtons[0]);
     expect(onDraftMissedConcept).toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByText(/Added to cards/i)).toBeInTheDocument();
     act(() => {
       vi.advanceTimersByTime(2600);
     });
     vi.useRealTimers();
+  });
+
+  it('shows Added to cards only after onDraftMissedConcept resolves and shows inline errors on failure', async () => {
+    const user = userEvent.setup();
+    let resolveSave!: () => void;
+    let rejectSave!: (err: Error) => void;
+    const onDraftMissedConcept = vi.fn()
+      .mockImplementationOnce(() => new Promise<void>((_, rej) => { rejectSave = rej; }))
+      .mockImplementationOnce(() => new Promise<void>((res) => { resolveSave = res; }));
+
+    renderWithClient(
+      <ActiveRecallBrainDump
+        program={mockProgram}
+        lesson={mockLesson}
+        onDraftMissedConcept={onDraftMissedConcept}
+      />,
+    );
+
+    const textarea = screen.getByRole('textbox', { name: /Your free-recall memory dump/i });
+    await user.type(textarea, 'Heartbeat timers reset.');
+    await user.click(screen.getByRole('button', { name: /Compare with Lesson & Check Recall/i }));
+
+    const draftButtons = screen.getAllByRole('button', { name: /Turn missed concept into recall card/i });
+    await user.click(draftButtons[0]);
+    expect(screen.getByRole('button', { name: 'Adding…' })).toBeDisabled();
+    expect(screen.queryByText(/Added to cards/i)).not.toBeInTheDocument();
+
+    rejectSave(new Error('Database locked'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Database locked');
+    expect(screen.queryByText(/Added to cards/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getAllByRole('button', { name: /Turn missed concept into recall card/i })[0]);
+    expect(screen.getByRole('button', { name: 'Adding…' })).toBeDisabled();
+    expect(screen.queryByText(/Added to cards/i)).not.toBeInTheDocument();
+
+    resolveSave();
+    expect(await screen.findByText(/Added to cards/i)).toBeInTheDocument();
   });
 
   it('achieves 100% recall coverage when all concepts are remembered', async () => {

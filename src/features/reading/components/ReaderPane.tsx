@@ -31,7 +31,7 @@ import { locatorFromSource, rememberLocation } from '@/shared/sources/passageLoc
 /** How far a keypress moves the drag handle. */
 const KEY_STEP = 16;
 /** What is left of the chat while the reader is expanded: enough to see it is still there. */
-const FOCUSED_CHAT_WIDTH = 320;
+export const READER_FOCUSED_CHAT_WIDTH = 320;
 
 export interface ReaderPaneProps {
   /** Width of the flex row the pane is a child of. */
@@ -40,9 +40,11 @@ export interface ReaderPaneProps {
   availableWidth: number;
   /** The text the citations belong to; the reader closes when it changes. */
   resetKey: string | null;
+  /** Optional listener notified when the reader's expanded/focused mode toggles. */
+  onFocusChange?: (focused: boolean) => void;
 }
 
-export function ReaderPane({ rowWidth, availableWidth, resetKey }: ReaderPaneProps) {
+export function ReaderPane({ rowWidth, availableWidth, resetKey, onFocusChange }: ReaderPaneProps) {
   const session = useReaderStore((state) => state.session);
   const storedWidth = useReaderStore((state) => state.width);
   const setStoredWidth = useReaderStore((state) => state.setWidth);
@@ -80,6 +82,11 @@ export function ReaderPane({ rowWidth, availableWidth, resetKey }: ReaderPanePro
     if (!isOpen) setIsFocused(false);
   }, [isOpen]);
 
+  useEffect(() => {
+    onFocusChange?.(isFocused);
+    return () => onFocusChange?.(false);
+  }, [isFocused, onFocusChange]);
+
   // Remember what had focus when the reader opened, and take focus, so the
   // reader is reachable from the keyboard and Esc has somewhere to send it back.
   useEffect(() => {
@@ -103,7 +110,7 @@ export function ReaderPane({ rowWidth, availableWidth, resetKey }: ReaderPanePro
   );
   const dockedWidth = Math.min(storedWidth, maxWidth);
   const paneWidth = isFocused
-    ? Math.max(dockedWidth, availableWidth - FOCUSED_CHAT_WIDTH)
+    ? Math.max(dockedWidth, availableWidth - READER_FOCUSED_CHAT_WIDTH)
     : dockedWidth;
   const canDock = availableWidth >= READER_MIN_CHAT_WIDTH + READER_MIN_WIDTH;
 
@@ -190,8 +197,8 @@ export function ReaderPane({ rowWidth, availableWidth, resetKey }: ReaderPanePro
   };
 
   const locator = useMemo(
-    () => (source ? locatorFromSource(source, source.chunkId) : null),
-    [source]
+    () => (source ? locatorFromSource(source, session?.excerptChunkId ?? source.chunkId) : null),
+    [source, session?.excerptChunkId]
   );
 
   if (!session || !source || (session.citing && !showCitations)) return null;
@@ -209,6 +216,7 @@ export function ReaderPane({ rowWidth, availableWidth, resetKey }: ReaderPanePro
         onCitationIndexChange={setIndex}
         onLocationResolved={handleLocationResolved}
         ownerKey={session.ownerKey}
+        conversationId={session.conversationId ?? null}
         occurrence={session.occurrence}
       />
     );
@@ -248,6 +256,7 @@ export function ReaderPane({ rowWidth, availableWidth, resetKey }: ReaderPanePro
         onCitationIndexChange={setIndex}
         onLocationResolved={handleLocationResolved}
         ownerKey={session.ownerKey}
+        conversationId={session.conversationId ?? null}
         occurrence={session.occurrence}
         isFocused={isFocused}
         onToggleFocus={() => setIsFocused((value) => !value)}

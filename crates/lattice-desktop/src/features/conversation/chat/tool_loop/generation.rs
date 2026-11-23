@@ -110,12 +110,28 @@ pub(super) async fn generate<'r>(
                 None => completion.await,
             }
         };
-        tokio::select! {
+        let outcome = tokio::select! {
             biased;
-            _ = cancel.cancelled() => return Err(cancelled_error()),
+            _ = cancel.cancelled() => Err(cancelled_error()),
             result = bounded => result,
+        };
+        match outcome {
+            Ok(response) => response,
+            Err(error) => {
+                if crate::features::conversation::chat::cancellation::is_cancellation(&error) {
+                    let (held, _) = filter
+                        .lock()
+                        .map(|mut filter| filter.finish())
+                        .unwrap_or_default();
+                    if !held.is_empty() {
+                        let _ = emitter.content(&held);
+                    }
+                    let _ = emitter.flush();
+                }
+                return Err(error);
+            }
         }
-    }?;
+    };
     let (held, call) = filter
         .lock()
         .map(|mut filter| filter.finish())

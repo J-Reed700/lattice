@@ -134,6 +134,22 @@ pub trait DownloadManager: Send + Sync {
     fn subscribe_to_events(&self) -> Arc<RwLock<Option<mpsc::Receiver<DownloadEvent>>>>;
 }
 
+/// True when `raw_url` targets `huggingface.co`, `hf.co`, or a subdomain of either
+/// (matched on a dot boundary so lookalike hosts like `evil-huggingface.co` are rejected).
+pub fn is_huggingface_url(raw_url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(raw_url) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    host == "huggingface.co"
+        || host.ends_with(".huggingface.co")
+        || host == "hf.co"
+        || host.ends_with(".hf.co")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,5 +179,16 @@ mod tests {
     #[test]
     fn a_pinned_request_rejects_a_malformed_checksum() {
         assert!(DownloadRequest::pinned("https://e.com/r", "/m/r", "abc", 1, "R").is_err());
+    }
+
+    #[test]
+    fn huggingface_url_matcher_respects_dot_boundaries() {
+        assert!(is_huggingface_url(
+            "https://huggingface.co/org/repo/resolve/main/a.gguf"
+        ));
+        assert!(is_huggingface_url("https://cdn-lfs.hf.co/file"));
+        assert!(is_huggingface_url("https://hf.co/org/repo"));
+        assert!(!is_huggingface_url("https://evil-huggingface.co/a.gguf"));
+        assert!(!is_huggingface_url("https://example.com/a.gguf"));
     }
 }

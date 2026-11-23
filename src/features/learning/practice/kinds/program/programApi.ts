@@ -10,6 +10,8 @@ async function call<C extends CommandName>(command: C, ...args: CommandArgList<C
 export const programApi = {
   startBuild: (request: Wire.StartPracticeBuildRequestDto) =>
     call('start_practice_build', { request }),
+  cancelBuild: (jobId: string) =>
+    call('cancel_practice_build', { jobId }),
   checkExample: (request: Wire.CheckCodingExampleRequestDto) =>
     call('check_coding_example', { request }),
   removeExample: (request: Wire.RemoveCodingExampleRequestDto) =>

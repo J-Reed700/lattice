@@ -239,7 +239,7 @@ pub(super) async fn run_stages(
         .await
         {
             Ok(request) => {
-                generate::generate_answer(
+                generate::generate_answer_outcome(
                     container,
                     &turn,
                     flags,
@@ -297,7 +297,7 @@ pub(super) async fn run_stages(
     };
     let generated = match journal.assembled(&assembled).await {
         Ok(()) => {
-            generate::generate_answer(
+            generate::generate_answer_outcome(
                 container,
                 &turn,
                 flags,
@@ -352,11 +352,21 @@ async fn resume_stages(
         Ok(turn) => turn,
         Err(error) => {
             if !journal.resumes_later().await {
-                mark_user_message_failed(
-                    &container.conversation_service(),
-                    &saved.assembled.user_message_id,
-                )
-                .await;
+                if crate::features::conversation::chat::cancellation::is_cancellation(&error) {
+                    mark_user_message_cancelled(
+                        &container.conversation_service(),
+                        &saved.assembled.user_message_id,
+                    )
+                    .await;
+                } else {
+                    let reason = human_readable_error(&error);
+                    mark_user_message_failed_with_reason(
+                        &container.conversation_service(),
+                        &saved.assembled.user_message_id,
+                        Some(&reason),
+                    )
+                    .await;
+                }
             }
             return Err(error);
         }
@@ -408,7 +418,7 @@ async fn resume_stages(
         // turn's plan asks again.
         summary_refold: None,
     };
-    let generated = generate::generate_answer(
+    let generated = generate::generate_answer_outcome(
         container,
         &turn,
         flags,
@@ -477,12 +487,16 @@ async fn conclude(
     turn: &prepare::PreparedTurn,
     journal: Option<&dyn ResearchJournal>,
     answered: Answered,
-    generated: Result<generate::GeneratedAnswer>,
+    generated: Result<generate::GenerateOutcome>,
     emit: &ChatEventSink,
     mut metrics: ConversationFlowTimingMetrics,
 ) -> Result<ChatResponse> {
+    let resumes = match journal {
+        Some(journal) => journal.resumes_later().await,
+        None => false,
+    };
     match generated {
-        Ok(generated) => {
+        Ok(generate::GenerateOutcome::Completed(generated)) => {
             finalize::finalize_turn(
                 container,
                 turn,
@@ -497,11 +511,7 @@ async fn conclude(
             )
             .await
         }
-        Err(error) => {
-            let resumes = match journal {
-                Some(journal) => journal.resumes_later().await,
-                None => false,
-            };
+        Ok(generate::GenerateOutcome::Cancelled { error, partial }) => {
             if resumes {
                 info!(
                     conversation_id = turn.conv_id.as_str(),
@@ -509,12 +519,56 @@ async fn conclude(
                 );
                 return Err(error);
             }
-            tracing::error!(
-                conversation_id = turn.conv_id.as_str(),
-                error = %error,
-                "chat_with_conversation: LLM generation FAILED"
-            );
-            mark_user_message_failed(&turn.conv_service, &answered.user_message_id).await;
+            if let Some(partial) = partial {
+                if let Err(persist_error) = finalize::finalize_cancelled_turn(
+                    container,
+                    turn,
+                    partial,
+                    answered.router,
+                    &answered.user_message_id,
+                    answered.flow_start,
+                    &metrics,
+                )
+                .await
+                {
+                    tracing::error!(
+                        conversation_id = turn.conv_id.as_str(),
+                        error = %persist_error,
+                        "chat_with_conversation: failed to persist cancelled partial reply"
+                    );
+                }
+            } else {
+                mark_user_message_cancelled(&turn.conv_service, &answered.user_message_id).await;
+            }
+            super::persistence::release_turn_images(container, &turn.turn_id).await;
+            metrics.total_ms = elapsed_ms(answered.flow_start);
+            finalize::log_flow_timing(&turn.conv_id, &metrics, false);
+            Err(error)
+        }
+        Err(error) => {
+            if resumes {
+                info!(
+                    conversation_id = turn.conv_id.as_str(),
+                    "Research turn stopped to resume at the next start"
+                );
+                return Err(error);
+            }
+            if crate::features::conversation::chat::cancellation::is_cancellation(&error) {
+                mark_user_message_cancelled(&turn.conv_service, &answered.user_message_id).await;
+            } else {
+                tracing::error!(
+                    conversation_id = turn.conv_id.as_str(),
+                    error = %error,
+                    "chat_with_conversation: LLM generation FAILED"
+                );
+                let reason = human_readable_error(&error);
+                mark_user_message_failed_with_reason(
+                    &turn.conv_service,
+                    &answered.user_message_id,
+                    Some(&reason),
+                )
+                .await;
+            }
             super::persistence::release_turn_images(container, &turn.turn_id).await;
             metrics.total_ms = elapsed_ms(answered.flow_start);
             finalize::log_flow_timing(&turn.conv_id, &metrics, true);

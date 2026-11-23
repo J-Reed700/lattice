@@ -418,3 +418,82 @@ async fn moving_a_conversation_to_a_space_deleted_meanwhile_finds_it_gone() {
     other.await.unwrap();
     assert!(matches!(outcome, Err(AppError::NotFound(_))), "{outcome:?}");
 }
+
+#[tokio::test]
+async fn internal_library_snapshots_conversation_is_hidden_and_immutable() {
+    let (_directory, pool, repo) = open().await;
+    let sentinel = super::conversations::INTERNAL_LIBRARY_SNAPSHOTS_ID;
+    run(
+        &pool,
+        &format!(
+            "INSERT INTO conversations (id, title, space_id, created_at, updated_at) \
+             VALUES ('{sentinel}', 'Saved Web Snapshots', 'space_general', '2026-10-13T00:00:00Z', '2026-10-13T00:00:00Z')"
+        ),
+    )
+    .await;
+    let real = repo.create("Visible Chat", None).await.unwrap();
+
+    let listed = repo.find_all(None, None).await.unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, real.id);
+    assert_eq!(repo.count().await.unwrap(), 1);
+    assert!(repo.find_by_id(sentinel).await.unwrap().is_none());
+    assert!(repo.find_aggregate_by_id(sentinel).await.unwrap().is_none());
+    assert!(!repo.exists(sentinel).await.unwrap());
+
+    let explorer = repo
+        .list_conversations_explorer(ListConversationsExplorerQueryDto {
+            space_id: None,
+            program_id: None,
+            query: None,
+            saved_only: None,
+            bookmarked_only: None,
+            pinned_only: None,
+            has_message_bookmarks: None,
+            include_archived: Some(true),
+            limit: Some(50),
+            offset: Some(0),
+        })
+        .await
+        .unwrap();
+    assert_eq!(explorer.conversations.len(), 1);
+    assert_eq!(explorer.conversations[0].id, real.id.to_string());
+
+    assert!(matches!(
+        repo.delete(sentinel).await,
+        Err(AppError::NotFound(_))
+    ));
+    assert!(matches!(
+        repo.update_title(sentinel, "Hacked").await,
+        Err(AppError::NotFound(_))
+    ));
+    assert!(matches!(
+        repo.update(sentinel, Some("Hacked"), None, None, None)
+            .await,
+        Err(AppError::NotFound(_))
+    ));
+    assert!(matches!(
+        repo.set_conversation_archived(SetConversationStateRequestDto {
+            conversation_id: sentinel.into(),
+            value: true,
+        })
+        .await,
+        Err(AppError::NotFound(_))
+    ));
+    assert!(matches!(
+        repo.move_conversation_to_space(MoveConversationToSpaceRequestDto {
+            conversation_id: sentinel.into(),
+            space_id: "space_general".into(),
+        })
+        .await,
+        Err(AppError::NotFound(_))
+    ));
+
+    let still_exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?)")
+            .bind(sentinel)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(still_exists);
+}

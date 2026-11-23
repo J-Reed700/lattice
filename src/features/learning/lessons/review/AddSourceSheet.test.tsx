@@ -7,6 +7,7 @@ import { AddSourceSheet, type AddSourceTarget } from '@/features/learning/lesson
 import { ClaimReviewScreen } from '@/features/learning/lessons/review/ClaimReviewScreen';
 import { waitingOnSource } from '@/features/learning/lessons/review/claimReviewScreenFixtures';
 import { review } from '@/features/learning/lessons/review/claimReviewTestData';
+import { resetSourceRecheckStore } from '@/features/learning/sources/sourceRecheckStore';
 import type { AttachFailureKindDto, AttachNextStepDto, ClaimAttachProgressDto, ClaimAttachReportDto, ClaimEvidencePassageDto, ClaimExcerptDto } from '@/lib/bindings';
 
 const api = vi.hoisted(() => ({
@@ -70,6 +71,7 @@ function screenWith(...reviews: ReturnType<typeof review>[]) {
 describe('Add a source', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    resetSourceRecheckStore();
     webview.drop = null;
     api.audit.mockResolvedValue(ok(null));
     api.plan.mockResolvedValue(ok({ jobs: [] }));
@@ -221,5 +223,109 @@ describe('Add a source', () => {
     expect(api.importFiles).toHaveBeenCalledWith(['/Users/me/Monarch tagging.pdf']);
     await user.click(screen.getByRole('button', { name: 'Add and check' }));
     await waitFor(() => expect(api.attach.mock.calls[0][0]).toMatchObject({ evidence: { kind: 'attach_document', documentId: 'doc-9' } }));
+  });
+
+  it('preserves live recheck progress and completed banner on ClaimReviewScreen across unmount and remount', async () => {
+    const user = userEvent.setup();
+    api.review.mockResolvedValue(ok(review([waitingOnSource(1)])));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const run = pendingAttach();
+
+    const view1 = render(<QueryClientProvider client={client}>
+      <ClaimReviewScreen programId="program-1" lessonId="lesson-1" lessonTitle="Monarch migration" courseRevision={44} onBack={vi.fn()} />
+    </QueryClientProvider>);
+    await user.click(await screen.findByRole('button', { name: 'Add a source' }));
+    await user.type(screen.getByLabelText('Page address'), URL_);
+    await user.click(screen.getByRole('button', { name: 'Add and check' }));
+    await run.progress({ stage: 'checking', done: 1, total: 3, statement: 'Monarchs migrate up to 3,000 miles.' });
+    view1.unmount();
+
+    const view2 = render(<QueryClientProvider client={client}>
+      <ClaimReviewScreen programId="program-1" lessonId="lesson-1" lessonTitle="Monarch migration" courseRevision={44} onBack={vi.fn()} />
+    </QueryClientProvider>);
+    expect(await screen.findByText('Checking statement 2 of 3: Monarchs migrate up to 3,000 miles.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Add a source to the lesson' })).toBeDisabled();
+
+    await run.finish(report());
+    expect(await screen.findByText(/Added Monarch Watch; it states this\./)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Add a source to the lesson' })).toBeEnabled();
+    view2.unmount();
+  });
+
+  it('surfaces report.failure after unmount and keeps Add a source to the lesson disabled until cancelled IPC finishes', async () => {
+    const user = userEvent.setup();
+    api.review.mockResolvedValue(ok(review([waitingOnSource(1)])));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const run1 = pendingAttach();
+
+    const view1 = render(<QueryClientProvider client={client}>
+      <ClaimReviewScreen programId="program-1" lessonId="lesson-1" lessonTitle="Monarch migration" courseRevision={44} onBack={vi.fn()} />
+    </QueryClientProvider>);
+    await user.click(await screen.findByRole('button', { name: 'Add a source' }));
+    await user.type(screen.getByLabelText('Page address'), URL_);
+    await user.click(screen.getByRole('button', { name: 'Add and check' }));
+    view1.unmount();
+
+    await run1.finish(report({
+      source: null,
+      failure: { kind: 'blocked', message: 'Page requires sign-in', nextSteps: [] },
+    }));
+
+    const view2 = render(<QueryClientProvider client={client}>
+      <ClaimReviewScreen programId="program-1" lessonId="lesson-1" lessonTitle="Monarch migration" courseRevision={44} onBack={vi.fn()} />
+    </QueryClientProvider>);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/private or local/);
+
+    const run2 = pendingAttach();
+    await user.click(screen.getByRole('button', { name: 'Add a source' }));
+    await user.type(screen.getByLabelText('Page address'), URL_);
+    await user.click(screen.getByRole('button', { name: 'Add and check' }));
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('button', { name: 'Add a source to the lesson' })).toBeDisabled();
+
+    await run2.finish(report());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add a source to the lesson' })).toBeEnabled());
+    view2.unmount();
+  });
+
+  it('guards claim and drop entry points and disables AddSourceSheet submit while a cancelled IPC is still settling', async () => {
+    const user = userEvent.setup();
+    screenWith(review([waitingOnSource(1)]));
+    const run1 = pendingAttach();
+
+    await user.click(await screen.findByRole('button', { name: 'Add a source' }));
+    await user.type(screen.getByLabelText('Page address'), URL_);
+    await user.click(screen.getByRole('button', { name: 'Add and check' }));
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(api.attach).toHaveBeenCalledTimes(1);
+
+    // Clicking Add a source on the claim opens the sheet in busy state instead of no-oping or allowing duplicate submit.
+    await user.click(screen.getByRole('button', { name: 'Add a source' }));
+    const dialog = await screen.findByRole('heading', { name: 'Add a source for this statement' });
+    const sheetEl = dialog.closest('section')!;
+    expect(within(sheetEl).getByText('Finishing the previous source check…')).toBeVisible();
+    const submitBtn = within(sheetEl).getByRole('button', { name: /Finishing previous check/ });
+    expect(submitBtn).toBeDisabled();
+
+    // Dropping while sheet is busy does not replace fields or start a duplicate IPC.
+    const queue = screen.getByRole('navigation', { name: /statements waiting/i });
+    fireEvent.drop(queue, { dataTransfer: { types: ['text/uri-list'], getData: (type: string) => (type === 'text/uri-list' ? 'https://example.org/ignored' : '') } });
+    expect(screen.getByLabelText('Page address')).toHaveValue('');
+    expect(api.attach).toHaveBeenCalledTimes(1);
+
+    // Close sheet, drop a URL while backendPending is true -> preloads dropped URL and stays disabled until run1 finishes.
+    await user.click(within(sheetEl).getByRole('button', { name: 'Cancel' }));
+    fireEvent.drop(queue, { dataTransfer: { types: ['text/uri-list'], getData: (type: string) => (type === 'text/uri-list' ? 'https://example.org/dropped' : '') } });
+    expect(await screen.findByLabelText('Page address')).toHaveValue('https://example.org/dropped');
+    expect(screen.getByRole('button', { name: /Finishing previous check/ })).toBeDisabled();
+
+    await run1.finish(report());
+    const enabledSubmit = await screen.findByRole('button', { name: 'Add and check' });
+    await waitFor(() => expect(enabledSubmit).toBeEnabled());
+
+    const run2 = pendingAttach();
+    await user.click(enabledSubmit);
+    expect(api.attach).toHaveBeenCalledTimes(2);
+    await run2.finish(report());
   });
 });

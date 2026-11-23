@@ -1,8 +1,15 @@
+import { useEffect, useRef } from 'react';
+
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
 import { learningClaimReviewKey, learningLessonAuditKey, learningPlanKey, learningProgramKey, learningVerifierAuditKey } from '@/features/learning/api/learningQueryKeys';
-import type { LearningLessonAuditDto, LearningLessonAuditResultDto, LearningVerifierAuditDto } from '@/lib/bindings';
+import {
+  EMPTY_LESSON_AUDIT_RUN,
+  lessonAuditRunKey,
+  useLessonAuditStore,
+} from '@/features/learning/lessons/review/lessonAuditStore';
+import type { LearningLessonAuditDto, LearningPlanDto, LearningVerifierAuditDto } from '@/lib/bindings';
 import type { ApiResult } from '@/types';
 
 function unwrap<T>(result: ApiResult<T>): T {
@@ -35,29 +42,63 @@ export function useSetProgramVerifierAudit(programId: string) {
 /** The lesson's latest audit: batches, tokens, the last error. Null before any. */
 export function useLessonAudit(programId: string, lessonId: string, enabled = true) {
   const api = useApi();
-  return useQuery<LearningLessonAuditDto | null>({
+  const client = useQueryClient();
+  const auditKey = lessonAuditRunKey(programId, lessonId);
+  const storePending = useLessonAuditStore((store) => store.entries[auditKey]?.isPending ?? false);
+
+  const query = useQuery<LearningLessonAuditDto | null>({
     queryKey: learningLessonAuditKey(programId, lessonId),
     queryFn: async () => unwrap(await api.getLearningLessonAudit(programId, lessonId)),
     enabled: enabled && Boolean(programId && lessonId),
+    staleTime: 15_000,
+    refetchInterval: (current) => {
+      if (current.state.data?.state === 'running' || storePending) return 2_000;
+      const plan = client.getQueryData<LearningPlanDto>(learningPlanKey(programId));
+      const activeJob = plan?.jobs?.some(
+        (job) =>
+          (job.status === 'pending' || job.status === 'running') &&
+          job.kind === 'lesson_preparation' &&
+          Boolean(job.lessonIds?.includes(lessonId)),
+      );
+      return activeJob ? 2_000 : false;
+    },
     retry: false,
   });
+
+  const prevStateRef = useRef<LearningLessonAuditDto['state'] | undefined>(undefined);
+  const currentState = query.data?.state;
+  useEffect(() => {
+    if (prevStateRef.current === 'running' && currentState && currentState !== 'running') {
+      void Promise.all([
+        client.invalidateQueries({ queryKey: learningClaimReviewKey(programId, lessonId) }),
+        client.invalidateQueries({ queryKey: learningVerifierAuditKey(programId) }),
+        client.invalidateQueries({ queryKey: learningPlanKey(programId) }),
+        client.invalidateQueries({ queryKey: learningProgramKey(programId) }),
+      ]);
+    }
+    prevStateRef.current = currentState;
+  }, [client, currentState, lessonId, programId]);
+
+  return query;
 }
 
 /** "Audit this lesson now" on a ready lesson; a dispute sends it back to Needs review. */
 export function useAuditLessonNow(programId: string, lessonId: string) {
   const api = useApi();
   const client = useQueryClient();
-  return useMutation<LearningLessonAuditResultDto, Error, void>({
-    retry: false,
-    mutationFn: async () => unwrap(await api.auditLearningLessonNow(programId, lessonId, crypto.randomUUID())),
-    onSettled: async () => {
-      await Promise.all([
-        client.invalidateQueries({ queryKey: learningLessonAuditKey(programId, lessonId) }),
-        client.invalidateQueries({ queryKey: learningClaimReviewKey(programId, lessonId) }),
-        client.invalidateQueries({ queryKey: learningVerifierAuditKey(programId) }),
-        client.invalidateQueries({ queryKey: learningPlanKey(programId) }),
-        client.invalidateQueries({ queryKey: learningProgramKey(programId) }),
-      ]);
+  const key = lessonAuditRunKey(programId, lessonId);
+  const entry = useLessonAuditStore((store) => store.entries[key] ?? EMPTY_LESSON_AUDIT_RUN);
+  const runAudit = useLessonAuditStore((store) => store.runAudit);
+  const resetAudit = useLessonAuditStore((store) => store.resetAudit);
+
+  return {
+    isPending: entry.isPending,
+    data: entry.data ?? undefined,
+    error: entry.error,
+    mutate: () => {
+      void runAudit(api, client, programId, lessonId);
     },
-  });
+    mutateAsync: () => runAudit(api, client, programId, lessonId),
+    reset: () => resetAudit(programId, lessonId),
+  };
 }

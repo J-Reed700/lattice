@@ -4,6 +4,7 @@ import { BookmarkPlus, CheckCircle2, LoaderCircle, RotateCcw, Square } from 'luc
 
 import { formScopeKind, passMarkWords, percent, plural, scopeKindLabel, shortDate, shownScore, submissionHeadline, type GradingState } from '@/features/learning/quizzes/quizCopy';
 import { QuizItemReview, type ItemActions } from '@/features/learning/quizzes/QuizItemReview';
+import { useQuizStopStore } from '@/features/learning/quizzes/quizStopStore';
 import { VerdictIcon } from '@/features/learning/quizzes/QuizVerdict';
 import { BackLink, eyebrow, parchmentBand, primaryPill, quietPill } from '@/features/learning/quizzes/RunnerParts';
 import { ScoreRing } from '@/features/learning/quizzes/ScoreRing';
@@ -43,7 +44,9 @@ export function QuizResult({ form, sources, programRevision, onBack, onRetake, r
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
   const operations = useOperationIds();
-  const [stopped, setStopped] = useState(false);
+  const stoppedJobId = useQuizStopStore((state) => state.stoppedJobsByForm[form.id] ?? null);
+  const markStopped = useQuizStopStore((state) => state.markStopped);
+  const clearStopped = useQuizStopStore((state) => state.clearStopped);
   const [recalled, setRecalled] = useState<Set<string>>(new Set());
   const [reported, setReported] = useState<Set<string>>(new Set());
   const [recallNote, setRecallNote] = useState<string | null>(null);
@@ -60,7 +63,18 @@ export function QuizResult({ form, sources, programRevision, onBack, onRetake, r
   const practice = form.mode === 'practice';
   const headline = submissionHeadline(form);
   const shown = shownScore(form);
-  const grading: GradingState = { active: Boolean(submission?.gradingJobId && submission.pendingItems > 0), stopped: stopped && !submission?.gradingJobId };
+  const currentJobStopped = Boolean(submission?.gradingJobId && stoppedJobId === submission.gradingJobId);
+  const stoppedFromBackend = Boolean(
+    !submission?.gradingJobId
+    && submission
+    && submission.pendingItems > 0
+    && submission.itemResults.some((result) => result.gradeStatus === 'pending' && result.feedback.startsWith('Grading stopped')),
+  );
+  const hasNewLiveJob = Boolean(submission?.gradingJobId && submission.gradingJobId !== stoppedJobId);
+  const grading: GradingState = {
+    active: Boolean(submission?.gradingJobId && submission.pendingItems > 0 && !currentJobStopped),
+    stopped: !hasNewLiveJob && Boolean(stoppedJobId || stoppedFromBackend),
+  };
   const missedIds = (submission?.itemResults ?? []).filter((result) => result.pointsEarned < result.pointsPossible && result.gradeStatus !== 'pending' && !result.learnerOverride).map((result) => result.itemId).filter((id) => !recalled.has(id));
   const overridden = (submission?.itemResults ?? []).filter((result) => result.learnerOverride).length;
   const base = { programId: form.programId, formId: form.id };
@@ -89,10 +103,14 @@ export function QuizResult({ form, sources, programRevision, onBack, onRetake, r
     reported: (itemId) => reported.has(itemId),
   };
   const stopGrading = () => {
-    if (!submission?.gradingJobId) return;
-    stop.mutate({ operationId: operations.take(`stop:${submission.gradingJobId}`), programId: form.programId, jobId: submission.gradingJobId, expectedRevision: programRevision, formId: form.id }, { onSuccess: () => setStopped(true) });
+    const gradingJobId = submission?.gradingJobId;
+    if (!gradingJobId) return;
+    stop.mutate(
+      { operationId: operations.take(`stop:${gradingJobId}`), programId: form.programId, jobId: gradingJobId, expectedRevision: programRevision, formId: form.id },
+      { onSuccess: () => markStopped(form.id, gradingJobId) },
+    );
   };
-  const resumeGrading = () => { void formAction(`resume:${form.id}:${submission?.pendingItems}`, (operationId) => resume.mutateAsync({ ...base, operationId })).then((ok) => ok && setStopped(false)); };
+  const resumeGrading = () => { void formAction(`resume:${form.id}:${submission?.pendingItems}`, (operationId) => resume.mutateAsync({ ...base, operationId })).then((ok) => ok && clearStopped(form.id)); };
 
   return <div className="space-y-3">
     <BackLink label="Quizzes" onClick={onBack} />

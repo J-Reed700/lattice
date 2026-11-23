@@ -207,4 +207,21 @@ describe('Composer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Stop generating response' }));
     expect(props.onCancel).toHaveBeenCalled();
   });
+
+  it('disables editing and offers a clickable Cancel attaching files button while staged files import', () => {
+    const cancelImport = vi.fn();
+    renderComposer({
+      composer: { input: 'Why?', isImportingAttachments: true },
+      attachments: { staged: [{ path: '/tmp/a.pdf', name: 'a.pdf' }], isImporting: true, cancelImport },
+    });
+
+    expect(screen.getByText('Attaching files…')).toBeInTheDocument();
+    expect(textarea()).toBeDisabled();
+    const cancel = screen.getByRole('button', { name: 'Cancel attaching files' });
+    expect(cancel).toBeEnabled();
+    expect(cancel).toHaveAttribute('aria-busy', 'true');
+    fireEvent.click(cancel);
+    expect(cancelImport).toHaveBeenCalledTimes(1);
+    expect(h.props.ChatDropStaging.onCancelImport).toBe(cancelImport);
+  });
 });

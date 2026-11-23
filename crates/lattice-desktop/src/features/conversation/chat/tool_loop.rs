@@ -35,7 +35,9 @@ use tracing::{info, warn};
 use super::fetch_memory::FetchMemory;
 use super::turn::{ResearchRound, Rounds};
 use super::turn_record::TurnStepKind;
-use super::{ChatEventSink, ChatStreamEventDto, ChatTurn};
+#[cfg(test)]
+use super::ChatStreamEventDto;
+use super::{ChatEventSink, ChatTurn};
 use emitter::StreamEmitter;
 use final_round::LastRound;
 use lattice_core::application::services::tool_handles::{picture_line, Picture};
@@ -92,7 +94,36 @@ struct RequestedCall {
     arguments: serde_json::Value,
 }
 
+#[cfg(test)]
 pub(super) async fn run_agentic_tool_loop(
+    container: &dyn ChatRuntime,
+    turn: ChatTurn<'_>,
+    sink: &ChatEventSink,
+    request: LoopRequest<'_>,
+    tool_output_settings: &ToolOutputSettingsDto,
+    sources: &mut Vec<SourceDto>,
+    retrieval_trace: &mut Option<super::RetrievalTraceDto>,
+    pages_already_read: FetchMemory,
+    source: Option<&super::TurnSource>,
+) -> Result<ToolLoopOutcome> {
+    let mut unused_partial = None;
+    run_agentic_tool_loop_with_partial(
+        container,
+        turn,
+        sink,
+        request,
+        tool_output_settings,
+        sources,
+        retrieval_trace,
+        pages_already_read,
+        source,
+        &mut unused_partial,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn run_agentic_tool_loop_with_partial(
     container: &dyn ChatRuntime,
     turn: ChatTurn<'_>,
     sink: &ChatEventSink,
@@ -104,6 +135,7 @@ pub(super) async fn run_agentic_tool_loop(
     // The folder of an Explorer conversation; `None` for every other turn. The
     // folder tools are only in `request.tools` when this is set.
     source: Option<&super::TurnSource>,
+    partial_out: &mut Option<String>,
 ) -> Result<ToolLoopOutcome> {
     use lattice_core::application::ports::llm_port::InferencePriority;
 
@@ -249,6 +281,7 @@ pub(super) async fn run_agentic_tool_loop(
     let mut asked_again_for_nothing = false;
     // A forced round runs even after the last: the round it stands in for was
     // cut short, not finished.
+    let loop_result: Result<ToolLoopOutcome> = async {
     while iteration < max_tool_rounds || forced.is_some() {
         timings.iterations = (iteration + 1) as u32;
         let out_of_rounds = iteration + 1 >= max_tool_rounds;
@@ -352,7 +385,6 @@ pub(super) async fn run_agentic_tool_loop(
         }
         native_request.thinking = ThinkingMode::for_answer(answer_thinking, &native_request);
         if turn_cancel.is_cancelled() {
-            emit_cancelled_stream(sink, conv_id, request_id);
             return Err(cancellation_error());
         }
         info!(
@@ -570,7 +602,6 @@ pub(super) async fn run_agentic_tool_loop(
             if response_text.trim().is_empty() {
                 return Err(AppError::InvalidState("Model returned no answer".into()));
             }
-            emitter.done();
             tracing::info!(
                 conversation_id = conv_id,
                 response_len = response_text.len(),
@@ -593,6 +624,7 @@ pub(super) async fn run_agentic_tool_loop(
             });
         }
 
+        emitter.discard_round_partial();
         if let Err(error) = calls
             .run_round(
                 &tool_calls,
@@ -649,10 +681,26 @@ pub(super) async fn run_agentic_tool_loop(
         total_ms = elapsed_ms(tool_loop_start),
         "Tool calling loop exhausted iterations"
     );
-    emitter.done();
     Err(AppError::Other(
         "Tool calling loop exceeded maximum iterations without producing a final response".into(),
     ))
+    }
+    .await;
+
+    match loop_result {
+        Ok(outcome) => {
+            emitter.done();
+            Ok(outcome)
+        }
+        Err(error) => {
+            if super::cancellation::is_cancellation(&error) {
+                *partial_out = emitter.finish_cancelled();
+            } else {
+                emitter.done();
+            }
+            Err(error)
+        }
+    }
 }
 
 /// Model rounds a turn may spend on tool calls, the last kept for the answer.
@@ -744,16 +792,6 @@ fn with_pictures(names: &TurnNames, request_id: &str, text: &str) -> String {
                 .unwrap_or_else(|| reply::written(&[Piece::Reference(reference)])),
         })
         .collect()
-}
-
-fn emit_cancelled_stream(sink: &ChatEventSink, conversation_id: &str, request_id: &str) {
-    if let Err(e) = sink(ChatStreamEventDto {
-        done: true,
-        status: Some("cancelled".to_owned()),
-        ..ChatStreamEventDto::new(conversation_id, request_id)
-    }) {
-        warn!("Failed to emit cancellation event: {}", e);
-    }
 }
 
 #[cfg(test)]

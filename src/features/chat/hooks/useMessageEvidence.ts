@@ -9,6 +9,7 @@ import type { ClaimVerdict, SourceWithMetadata } from '@/types/conversation';
 interface MessageEvidenceOptions {
   sources: SourceWithMetadata[];
   ownerKey: string;
+  conversationId?: string | null;
   isAssistantWithSources: boolean;
   showCitations: boolean;
   claimVerdicts: ClaimVerdict[];
@@ -19,7 +20,7 @@ interface MessageEvidenceOptions {
 
 /** Owns citation navigation, provenance and the answer's delegated interactions. */
 export function useMessageEvidence({
-  sources, ownerKey, isAssistantWithSources, showCitations, claimVerdicts,
+  sources, ownerKey, conversationId = null, isAssistantWithSources, showCitations, claimVerdicts,
   showsCodeRefs, revealInExplorer, openInExplorer,
 }: MessageEvidenceOptions) {
   const settings = useSettingsQuery().data;
@@ -27,6 +28,7 @@ export function useMessageEvidence({
   const interactions = useCitationInteractions({
     sources,
     ownerKey,
+    conversationId,
     numbered: isAssistantWithSources,
     showCitations,
     claims: claimVerdicts,

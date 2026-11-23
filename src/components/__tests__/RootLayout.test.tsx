@@ -2,8 +2,12 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { useRestoreLockoutStore } from '@/features/backup/restoreLockoutStore';
+import { useJournalShortcuts } from '@/features/journal/hooks/useJournalCommands';
+import { useJournalPageActions } from '@/features/journal/hooks/useJournalPageActions';
 import { usePaletteCommandsStore } from '@/features/palette/stores/paletteCommandsStore';
 import { NEW_ITEM_EVENT } from '@/shared/newItemEvent';
+import type { WorkspaceNote } from '@/types/api/dailyNotes';
 
 import { RootLayout } from '../RootLayout';
 
@@ -55,6 +59,7 @@ const location = () => screen.getByRole('status', { name: 'location' }).textCont
 const press = (key: string, extra: KeyboardEventInit = {}) => act(() => { fireEvent.keyDown(document.body, { key, ctrlKey: true, ...extra }); });
 
 beforeEach(() => {
+  useRestoreLockoutStore.getState().resetRestoreLockout();
   mocks.syntheses = { data: [] };
   mocks.savedSynthesis = false;
   mocks.readClipboardText.mockReset().mockResolvedValue(null);
@@ -106,7 +111,7 @@ describe('RootLayout', () => {
     mocks.readClipboardText.mockResolvedValue('Knead for ten minutes.');
     renderAt('/home');
     await act(async () => { fireEvent.keyDown(document.body, { key: 'N', ctrlKey: true, shiftKey: true }); });
-    expect(screen.getByRole('dialog', { name: 'Quick capture' })).toHaveTextContent('Clipboard: Knead for ten minutes.');
+    expect(await screen.findByRole('dialog', { name: 'Quick capture' })).toHaveTextContent('Clipboard: Knead for ten minutes.');
     fireEvent.click(screen.getByRole('button', { name: 'Open page' }));
     expect(location()).toBe('/journals?noteId=note+1');
   });
@@ -116,7 +121,7 @@ describe('RootLayout', () => {
     mocks.readClipboardText.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
     renderAt('/home');
     press('N', { shiftKey: true });
-    expect(screen.getByRole('dialog')).toHaveTextContent('Clipboard: none');
+    expect(await screen.findByRole('dialog')).toHaveTextContent('Clipboard: none');
     fireEvent.click(screen.getByRole('button', { name: 'Close capture' }));
     await act(async () => { finish('late text'); });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -127,7 +132,7 @@ describe('RootLayout', () => {
     const command = usePaletteCommandsStore.getState().commands.get('vault.quickCapture')!;
     expect(command).toMatchObject({ label: 'Quick capture', group: 'Vault', shortcut: '⌘⇧N' });
     await act(async () => { command.run(); });
-    expect(screen.getByRole('dialog', { name: 'Quick capture' })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'Quick capture' })).toBeInTheDocument();
   });
 
   it('shows synthesis progress only while there is a synthesis', async () => {
@@ -144,5 +149,111 @@ describe('RootLayout', () => {
     mocks.savedSynthesis = true;
     renderAt('/home');
     expect(await screen.findByText('Synthesis in progress')).toBeInTheDocument();
+  });
+
+  it('locks the app behind an accessible restart-required modal after database restore and blocks global shortcuts', async () => {
+    renderAt('/home');
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+
+    act(() => {
+      useRestoreLockoutStore.getState().markDatabaseRestoredRestartRequired(false);
+    });
+
+    const lockout = await screen.findByRole('alertdialog');
+    expect(lockout).toHaveAttribute('aria-modal', 'true');
+    expect(lockout).toHaveFocus();
+    expect(location()).toBe('/home');
+    expect(screen.getByRole('status', { name: 'location' }).closest('[inert]')).not.toBeNull();
+    expect(lockout).toHaveTextContent('Restart required');
+    expect(lockout).toHaveTextContent('Quit Lattice and open it again to use the restored library.');
+
+    const tabEvent = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+    act(() => { lockout.dispatchEvent(tabEvent); });
+    expect(tabEvent.defaultPrevented).toBe(true);
+
+    // Global shortcuts must not navigate or open Quick Capture while locked out.
+    press('2');
+    expect(location()).toBe('/home');
+    press('N', { shiftKey: true });
+    expect(screen.queryByRole('dialog', { name: 'Quick capture' })).not.toBeInTheDocument();
+  });
+
+  it('blocks window keydown handlers and marks portaled dialogs inert while restore lockout is active', async () => {
+    const windowKeydown = vi.fn();
+    window.addEventListener('keydown', windowKeydown);
+    const portalHost = document.createElement('div');
+    portalHost.setAttribute('role', 'dialog');
+    portalHost.textContent = 'Portaled dialog';
+    document.body.appendChild(portalHost);
+
+    try {
+      renderAt('/home');
+      act(() => {
+        useRestoreLockoutStore.getState().markDatabaseRestoredRestartRequired(false, true);
+      });
+
+      const lockout = await screen.findByRole('alertdialog');
+      expect(lockout).toHaveTextContent(
+        'Restore failed after closing the library connection. Quit Lattice and open it again to reconnect.',
+      );
+      expect(portalHost.hasAttribute('inert')).toBe(true);
+
+      act(() => {
+        lockout.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true, cancelable: true }));
+      });
+      expect(windowKeydown).not.toHaveBeenCalled();
+
+      act(() => {
+        useRestoreLockoutStore.getState().resetRestoreLockout();
+      });
+      expect(portalHost.hasAttribute('inert')).toBe(false);
+    } finally {
+      window.removeEventListener('keydown', windowKeydown);
+      portalHost.remove();
+    }
+  });
+
+  it('creates exactly one journal page on Mod+N on /journals both outside and inside an editor', async () => {
+    const createPage = vi.fn().mockResolvedValue({ id: 'new-page', title: 'Untitled page' } as WorkspaceNote);
+    function JournalHarness() {
+      useJournalPageActions({
+        journalSpace: { id: 'j1', name: 'Garden' } as never,
+        requestedJournalSpaceId: 'j1',
+        isLoadingNote: false,
+        selectPage: vi.fn().mockResolvedValue(undefined),
+        createPage,
+        renamePage: vi.fn().mockResolvedValue(true),
+        deletePage: vi.fn().mockResolvedValue(true),
+        notify: vi.fn(),
+        searchParams: new URLSearchParams(),
+        setSearchParams: vi.fn(),
+      });
+      useJournalShortcuts({
+        entries: [],
+        selectedId: null,
+        setSelectedId: vi.fn(),
+        saveNow: vi.fn().mockResolvedValue(true),
+        setSidebarCollapsed: vi.fn(),
+      });
+      return <textarea aria-label="Editor" />;
+    }
+
+    render(
+      <MemoryRouter initialEntries={['/journals?journalSpaceId=j1']}>
+        <Routes>
+          <Route element={<RootLayout />}>
+            <Route path="/journals" element={<JournalHarness />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    press('n');
+    expect(createPage).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      fireEvent.keyDown(screen.getByLabelText('Editor'), { key: 'n', ctrlKey: true, bubbles: true });
+    });
+    expect(createPage).toHaveBeenCalledTimes(2);
   });
 });

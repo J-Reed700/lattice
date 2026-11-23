@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useChatFileDrop } from '@/features/chat/hooks/useChatFileDrop';
+import { migrateStagedFiles, useStagedFilesStore } from '@/features/chat/stores/stagedFilesStore';
 import { deferred } from '@/tests/deferred';
 
 type Payload = { type: 'enter' | 'over' | 'drop' | 'leave'; paths?: string[]; position?: { x: number; y: number } };
@@ -30,6 +31,7 @@ const emit = (payload: Payload) => act(() => h.handler!({ payload }));
 describe('useChatFileDrop', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useStagedFilesStore.setState({ byConversation: {}, importingByConversation: {} });
     h.handler = null;
     h.onDragDropEvent.mockImplementation(async (handler: (event: { payload: Payload }) => void) => { h.handler = handler; return h.unlisten; });
     Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 2 });
@@ -166,5 +168,36 @@ describe('useChatFileDrop', () => {
     const { result } = setup();
     await act(async () => {});
     expect(result.current.isDragging).toBe(false);
+  });
+
+  it('isolates staged files per conversation, preserves them across remounts, and migrates fresh-chat files', () => {
+    const ref = panel();
+    const { result, rerender, unmount } = renderHook(
+      ({ id }: { id: string | null }) => useChatFileDrop(ref, vi.fn(), undefined, id),
+      { initialProps: { id: 'c1' as string | null } },
+    );
+
+    act(() => result.current.add(['/a/one.md']));
+    expect(result.current.staged.map((f) => f.name)).toEqual(['one.md']);
+
+    rerender({ id: 'c2' });
+    expect(result.current.staged).toEqual([]);
+    act(() => result.current.add(['/b/two.md']));
+    expect(result.current.staged.map((f) => f.name)).toEqual(['two.md']);
+
+    // Switching route (unmount -> remount) keeps staged files per conversation.
+    unmount();
+    const remounted = renderHook(() => useChatFileDrop(ref, vi.fn(), undefined, 'c1'));
+    expect(remounted.result.current.staged.map((f) => f.name)).toEqual(['one.md']);
+
+    // New-chat bucket migrates cleanly when conversation is created.
+    const fresh = renderHook(
+      ({ id }: { id: string | null }) => useChatFileDrop(ref, vi.fn(), undefined, id),
+      { initialProps: { id: null as string | null } },
+    );
+    act(() => fresh.result.current.add(['/fresh/doc.pdf']));
+    act(() => migrateStagedFiles(null, 'c-created'));
+    fresh.rerender({ id: 'c-created' });
+    expect(fresh.result.current.staged.map((f) => f.name)).toEqual(['doc.pdf']);
   });
 });

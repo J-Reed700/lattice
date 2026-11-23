@@ -7,9 +7,17 @@ import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/IconButton';
 import { SettingsRow, settingsFieldClass } from '@/components/ui/SettingsSection';
 import { useApi } from '@/contexts/ApiContext';
+import {
+  assignCollectionDocumentsFromOperation,
+  claimFileImportCompletionNotification,
+  clearFileImportCompletionNotification,
+  markFileImportCompletionHandled,
+  registerJobCollectionWatcher,
+} from '@/features/files/hooks/batchFileImportWatcher';
 import { chooseFiles } from '@/features/files/hooks/filePickers';
 import { useCustomCollectionsQuery, useCustomCollectionActions } from '@/features/files/hooks/useCustomCollectionsQuery';
 import { hasUnsettledItems, useIndexing } from '@/features/files/hooks/useIndexing';
+import { useBatchFileImportStore } from '@/features/files/stores/batchFileImportStore';
 import { useSpacesQuery } from '@/features/spaces/api/queries';
 import { useToast } from '@/hooks/useToast';
 import type { SourceGroup } from '@/lib/bindings';
@@ -69,7 +77,8 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [selectedSpaceId, setSelectedSpaceId] = useState('');
-  const [selectedCollectionId, setSelectedCollectionId] = useState('');
+  const selectedCollectionId = useBatchFileImportStore((state) => state.selectedCollectionId);
+  const setSelectedCollectionId = useBatchFileImportStore((state) => state.setSelectedCollectionId);
   const spacesQuery = useSpacesQuery();
   const spaces = spacesQuery.data ?? EMPTY_SPACES;
   const [hasCustomizedSpaceScope, setHasCustomizedSpaceScope] = useState(false);
@@ -245,6 +254,7 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
 
     try {
       setIsImporting(true);
+      const collectionIdForRun = selectedCollectionId;
       const retryableFiles = files.filter((file) => isRetryableStatus(file.status) && !file.jobId);
       const filePaths = retryableFiles.map((file) => file.path);
       const result = sourceGroup
@@ -252,6 +262,15 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
         : await startBatchImport(filePaths, selectedSpaceId || undefined);
 
       if (result.ok && result.data) {
+        clearFileImportCompletionNotification(result.data);
+        if (collectionIdForRun) {
+          registerJobCollectionWatcher({
+            jobId: result.data,
+            collectionId: collectionIdForRun,
+            api,
+            addDocuments: collectionActions.addDocuments,
+          });
+        }
         setCurrentJobId(result.data);
 
         setFiles((prev) =>
@@ -276,8 +295,11 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
       );
     }
   }, [
+    api,
     canImport,
+    collectionActions.addDocuments,
     files,
+    selectedCollectionId,
     selectedSpaceId,
     sourceGroup,
     startBatchImport,
@@ -329,9 +351,14 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
     );
     if (!active?.items) return;
     restoredImport.current = true;
+    const isAlreadyFinished =
+      !['pending', 'processing'].includes(active.status) || Boolean(active.restoredFromHistory);
+    if (isAlreadyFinished) {
+      markFileImportCompletionHandled(active.id);
+    }
     setFiles(active.items.map((item) => ({ ...buildFileItem(item.target || item.url || ''), jobId: active.id })));
     setCurrentJobId(active.id);
-    setIsImporting(true);
+    setIsImporting(!isAlreadyFinished);
   }, [operations, currentJobId, isImporting, files.length, buildFileItem]);
 
   // Watch operation progress and completion
@@ -392,17 +419,10 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
       });
     }
 
-    if (['completed', 'error'].includes(operation.status) && selectedCollectionId) {
-      const documentIds = operation.items?.filter(item => item.status === 'completed' && item.documentId)
-        .map(item => item.documentId as string) ?? [];
-      if (documentIds.length) {
-        void collectionActions.addDocuments(selectedCollectionId, documentIds).catch((error) => {
-          toast.error('Imported documents could not be added to the collection', {
-            message: error instanceof Error ? error.message : String(error),
-          });
-        });
-      }
-    }
+    assignCollectionDocumentsFromOperation(operation, {
+      addDocuments: collectionActions.addDocuments,
+      toast,
+    });
 
     if (operation.status === 'completed') {
       console.log('[BatchFileImport] Job complete:', {
@@ -414,10 +434,12 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
       setIsImporting(false);
       setCurrentJobId(null);
 
-      onImportComplete?.({
-        successful: operation.successfulFiles,
-        failed: operation.failedFiles,
-      });
+      if (claimFileImportCompletionNotification(operation.id)) {
+        onImportComplete?.({
+          successful: operation.successfulFiles,
+          failed: operation.failedFiles,
+        });
+      }
     } else if (operation.status === 'cancelled' && !hasUnsettledItems(operation)) {
       // Every file now carries a backend outcome; whatever is still queued here
       // was never started and is the only thing cancellation applies to.
@@ -443,12 +465,14 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
         }))
       );
 
-      onImportComplete?.({
-        successful: operation.successfulFiles,
-        failed: operation.failedFiles,
-      });
+      if (claimFileImportCompletionNotification(operation.id)) {
+        onImportComplete?.({
+          successful: operation.successfulFiles,
+          failed: operation.failedFiles,
+        });
+      }
     }
-  }, [currentJobId, getOperation, onImportComplete, selectedCollectionId, collectionActions, toast]);
+  }, [currentJobId, getOperation, onImportComplete, collectionActions, toast]);
 
   return (
     <div>

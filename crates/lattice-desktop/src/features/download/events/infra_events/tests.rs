@@ -2,8 +2,8 @@
 
 use super::{
     is_terminal_manager_event, model_file_name_for_session, process_queue_after_terminal,
-    reconciliation_poll_delay, RECONCILIATION_ACTIVE_POLL, RECONCILIATION_BATCH_SIZE,
-    RECONCILIATION_IDLE_POLL,
+    reconciliation_poll_delay, should_emit_reconciled_failed_alert, RECONCILIATION_ACTIVE_POLL,
+    RECONCILIATION_BATCH_SIZE, RECONCILIATION_IDLE_POLL,
 };
 use crate::features::download::download_repository::mock::MockDownloadRepository;
 use crate::features::download::download_repository::DownloadRepository;
@@ -51,6 +51,7 @@ impl crate::features::download::engine::DownloadEngine for GatedEngine {
     async fn get_file_size(
         &self,
         url: &str,
+        _auth_token: Option<&str>,
     ) -> Result<(Option<u64>, String), lattice_core::domain::download::DownloadError> {
         Ok((Some(1000), url.to_string()))
     }
@@ -209,4 +210,105 @@ fn reconciliation_poll_slows_when_idle_or_after_an_error_but_keeps_paging_backlo
         reconciliation_poll_delay(RECONCILIATION_BATCH_SIZE, false),
         RECONCILIATION_ACTIVE_POLL
     );
+}
+
+#[test]
+fn reconciled_failed_alerts_are_suppressed_for_historical_sessions_only() {
+    let startup = chrono::Utc::now();
+    let historical = startup - chrono::Duration::seconds(5);
+    let runtime = startup + chrono::Duration::seconds(1);
+    assert!(!should_emit_reconciled_failed_alert(&historical, &startup));
+    assert!(should_emit_reconciled_failed_alert(&runtime, &startup));
+}
+
+#[tokio::test]
+async fn batch_snapshot_status_precedence_and_error_messages_are_accurate() {
+    use lattice_core::domain::download::snapshot::DownloadStatus;
+    let repository = Arc::new(MockDownloadRepository::new());
+
+    // Downloading + Paused -> Downloading (not Paused).
+    let mut downloading = DownloadSession::new(
+        "s-dl".into(),
+        "https://example.com/a.bin".into(),
+        std::path::PathBuf::from("/tmp/m1/a.bin"),
+        Some(100),
+        None,
+    )
+    .unwrap()
+    .with_model_metadata("M1".into(), "m1".into())
+    .with_model_file_name("a.bin".into());
+    downloading.start().unwrap();
+    let mut paused = DownloadSession::new(
+        "s-paused".into(),
+        "https://example.com/b.bin".into(),
+        std::path::PathBuf::from("/tmp/m1/b.bin"),
+        Some(100),
+        None,
+    )
+    .unwrap()
+    .with_model_metadata("M1".into(), "m1".into())
+    .with_model_file_name("b.bin".into());
+    paused.pause().unwrap();
+    repository.create(&downloading).await.unwrap();
+    repository.create(&paused).await.unwrap();
+
+    // Cancelled batch -> Cancelled (not Downloading).
+    let mut c1 = DownloadSession::new(
+        "c-1".into(),
+        "https://example.com/c1.bin".into(),
+        std::path::PathBuf::from("/tmp/m2/c1.bin"),
+        Some(100),
+        None,
+    )
+    .unwrap()
+    .with_model_metadata("M2".into(), "m2".into())
+    .with_model_file_name("c1.bin".into());
+    c1.cancel().unwrap();
+    let mut c2 = DownloadSession::new(
+        "c-2".into(),
+        "https://example.com/c2.bin".into(),
+        std::path::PathBuf::from("/tmp/m2/c2.bin"),
+        Some(100),
+        None,
+    )
+    .unwrap()
+    .with_model_metadata("M2".into(), "m2".into())
+    .with_model_file_name("c2.bin".into());
+    c2.cancel().unwrap();
+    repository.create(&c1).await.unwrap();
+    repository.create(&c2).await.unwrap();
+
+    // Single failed session preserves model_id and error_message.
+    let mut single_failed = DownloadSession::new(
+        "s-single".into(),
+        "https://example.com/single.gguf".into(),
+        std::path::PathBuf::from("/tmp/single.gguf"),
+        Some(100),
+        None,
+    )
+    .unwrap()
+    .with_model_metadata("Single".into(), "single-model".into());
+    single_failed.start().unwrap();
+    single_failed.fail("HTTP 401".into()).unwrap();
+    repository.create(&single_failed).await.unwrap();
+
+    // Verify status precedence and snapshot payload fields via snapshot helpers:
+    let batch_downloading =
+        super::snapshots::build_batch_snapshot_from_sessions("m1", &[downloading, paused]).unwrap();
+    assert!(matches!(
+        batch_downloading.status,
+        DownloadStatus::Downloading
+    ));
+    let batch_cancelled =
+        super::snapshots::build_batch_snapshot_from_sessions("m2", &[c1, c2]).unwrap();
+    assert!(matches!(batch_cancelled.status, DownloadStatus::Cancelled));
+
+    let failed_snapshot = super::snapshots::build_single_failed_snapshot(
+        "s-single".into(),
+        &single_failed,
+        "fallback".into(),
+    );
+    assert_eq!(failed_snapshot.model_id.as_deref(), Some("single-model"));
+    assert_eq!(failed_snapshot.error_message.as_deref(), Some("HTTP 401"));
+    assert!(matches!(failed_snapshot.status, DownloadStatus::Error));
 }

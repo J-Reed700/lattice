@@ -22,7 +22,7 @@ import { cn } from '@/lib/utils';
 export interface ActiveRecallBrainDumpProps {
   program: LearningProgramDto;
   lesson?: LearningLessonDto;
-  onDraftMissedConcept?: (question: string, answer: string) => void;
+  onDraftMissedConcept?: (question: string, answer: string) => Promise<void> | void;
 }
 
 interface ConceptCheckpoint {
@@ -75,6 +75,8 @@ function BrainDump({
   const [timerSeconds, setTimerSeconds] = useState(0);
   const [timerRunning, setTimerRunning] = useState(false);
   const [copiedConceptId, setCopiedConceptId] = useState<string | null>(null);
+  const [savingConceptId, setSavingConceptId] = useState<string | null>(null);
+  const [draftErrors, setDraftErrors] = useState<Record<string, string>>({});
 
   // Sync to localStorage
   useEffect(() => {
@@ -186,15 +188,31 @@ function BrainDump({
     return { covered, missed, percent };
   }, [checkpoints, dumpText]);
 
-  const handleTurnIntoCard = useCallback((concept: ConceptCheckpoint) => {
+  const handleTurnIntoCard = useCallback(async (concept: ConceptCheckpoint) => {
+    if (savingConceptId === concept.id) return;
+    setDraftErrors((current) => {
+      if (!(concept.id in current)) return current;
+      const next = { ...current };
+      delete next[concept.id];
+      return next;
+    });
     if (onDraftMissedConcept) {
-      onDraftMissedConcept(concept.title, concept.explanation);
+      setSavingConceptId(concept.id);
+      try {
+        await onDraftMissedConcept(concept.title, concept.explanation);
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : 'Could not add recall card.';
+        setDraftErrors((current) => ({ ...current, [concept.id]: message }));
+        return;
+      } finally {
+        setSavingConceptId((current) => (current === concept.id ? null : current));
+      }
     }
     setCopiedConceptId(concept.id);
     setTimeout(() => {
-      setCopiedConceptId(null);
+      setCopiedConceptId((current) => (current === concept.id ? null : current));
     }, 2500);
-  }, [onDraftMissedConcept]);
+  }, [onDraftMissedConcept, savingConceptId]);
 
   const formatTimer = (seconds: number) => {
     const m = Math.floor(seconds / 60);
@@ -440,13 +458,16 @@ function BrainDump({
                       </div>
                       <p className="mt-1 text-text-secondary">{concept.explanation}</p>
 
-                      <div className="mt-2 flex items-center justify-end">
+                      <div className="mt-2 flex flex-col items-end gap-1">
                         <button
                           type="button"
-                          onClick={() => handleTurnIntoCard(concept)}
-                          className="inline-flex items-center gap-1 rounded-full border border-border-default bg-surface-raised px-2.5 py-1 text-[11px] font-medium text-accent transition hover:bg-accent hover:text-accent-fg"
+                          disabled={savingConceptId === concept.id}
+                          onClick={() => { void handleTurnIntoCard(concept); }}
+                          className="inline-flex items-center gap-1 rounded-full border border-border-default bg-surface-raised px-2.5 py-1 text-[11px] font-medium text-accent transition hover:bg-accent hover:text-accent-fg disabled:opacity-50"
                         >
-                          {copiedConceptId === concept.id ? (
+                          {savingConceptId === concept.id ? (
+                            <>Adding…</>
+                          ) : copiedConceptId === concept.id ? (
                             <>
                               <CheckCircle2 size={12} /> Added to cards
                             </>
@@ -456,6 +477,11 @@ function BrainDump({
                             </>
                           )}
                         </button>
+                        {draftErrors[concept.id] && (
+                          <p role="alert" className="text-[11px] text-rose-700 dark:text-rose-300">
+                            {draftErrors[concept.id]}
+                          </p>
+                        )}
                       </div>
                     </li>
                   ))}

@@ -461,6 +461,83 @@ describe('a question that failed to send', () => {
     expect(screen.getByText("Message didn't send")).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
   });
+
+  it('shows the specific error message from message.error or metadata.error instead of a generic fallback', () => {
+    render(
+      <Message
+        isLastTurn
+        message={{
+          id: 'q-err-1',
+          role: 'user',
+          content: 'Why?',
+          status: 'failed',
+          error: 'Model quota exceeded',
+          createdAt: new Date().toISOString(),
+          conversationId: 'conversation',
+        } as Parameters<typeof Message>[0]['message']}
+      />
+    );
+    expect(screen.getByText('Model quota exceeded')).toBeInTheDocument();
+    expect(screen.queryByText("Message didn't send")).not.toBeInTheDocument();
+
+    render(
+      <Message
+        isLastTurn={false}
+        message={{
+          id: 'q-err-2',
+          role: 'user',
+          content: 'Why again?',
+          status: 'failed',
+          metadata: JSON.stringify({ error: 'Context window overflow' }),
+          createdAt: new Date().toISOString(),
+          conversationId: 'conversation',
+        } as Parameters<typeof Message>[0]['message']}
+      />
+    );
+    expect(screen.getByText('Context window overflow')).toBeInTheDocument();
+  });
+
+  it('shows Stopped and Try again (without "Message didn\'t send") on a stopped unanswered question', () => {
+    regenerateResponse.mockClear();
+    render(
+      <Message
+        isLastTurn
+        message={{
+          id: 'q-stopped',
+          role: 'user',
+          content: 'Why was I stopped?',
+          status: 'failed',
+          metadata: JSON.stringify({ requestId: 'req-stop', cancelled: true }),
+          createdAt: new Date().toISOString(),
+          conversationId: 'conversation',
+        } as Parameters<typeof Message>[0]['message']}
+      />
+    );
+
+    expect(screen.getByText('Stopped')).toBeInTheDocument();
+    expect(screen.queryByText("Message didn't send")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(regenerateResponse).toHaveBeenCalledWith('conversation');
+  });
+
+  it('shows Stopped on a partial assistant reply saved on Stop', () => {
+    render(
+      <Message
+        isLastTurn
+        message={{
+          id: 'a-stopped',
+          role: 'assistant',
+          content: 'Entropy measures ',
+          status: 'completed',
+          metadata: JSON.stringify({ cancelled: true }),
+          createdAt: new Date().toISOString(),
+          conversationId: 'conversation',
+        } as Parameters<typeof Message>[0]['message']}
+      />
+    );
+
+    expect(screen.getByText('Stopped')).toBeInTheDocument();
+  });
 });
 
 describe('the files a message brought in', () => {

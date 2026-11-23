@@ -74,7 +74,7 @@ export function LinkBar({ conversationId, snapshotId, onOpenFrozenCopy }: LinkBa
   const snapshotsQuery = useQuery({
     queryKey: webPageSnapshotListQueryKey(conversationId),
     queryFn: () => listWebPageSnapshots(conversationId),
-    enabled: target !== null,
+    enabled: target !== null && conversationId.trim().length > 0,
     retry: false,
     staleTime: 0,
   });

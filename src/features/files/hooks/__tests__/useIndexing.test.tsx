@@ -66,17 +66,29 @@ describe('useIndexing progress', () => {
     expect(api.getBatchJobStatus).toHaveBeenCalledTimes(2);
   });
 
-  it('restores a finished partial failure after the app restarts', async () => {
+  it('restores a finished partial failure after the app restarts without marking it active', async () => {
     api.listBatchJobs.mockResolvedValue({ ok: true, data: [{ id: 'job', jobType: 'file_import', status: 'failed', totalItems: 45, completedItems: 44, failedItems: 1 }] });
     api.getBatchJobStatus.mockResolvedValue({ ok: true, data: {
       status: 'failed', totalItems: 45, completedItems: 44, failedItems: 1,
       items: [{ target: '/Downloads/mpep-2100.pdf', status: 'failed', errorMessage: 'PDF extraction timed out' }],
     } });
     const { result } = renderHook(() => useIndexing());
-    await settle();
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(result.current.getOperation('job')).toMatchObject({
-      status: 'error', successfulFiles: 44, failedFiles: 1,
+      status: 'error', successfulFiles: 44, failedFiles: 1, restoredFromHistory: true,
       items: [expect.objectContaining({ errorMessage: 'PDF extraction timed out' })],
+    });
+    expect(result.current.isIndexing).toBe(false);
+  });
+
+  it('never marks an already-finished failed job as processing even before details resolve', async () => {
+    api.listBatchJobs.mockResolvedValue({ ok: true, data: [{ id: 'old-job', jobType: 'file_import', status: 'completed', totalItems: 3, completedItems: 2, failedItems: 1 }] });
+    api.getBatchJobStatus.mockReturnValue(new Promise(() => {}));
+    const { result } = renderHook(() => useIndexing());
+    await settle();
+    expect(result.current.getOperation('old-job')).toMatchObject({
+      status: 'error',
+      restoredFromHistory: true,
     });
     expect(result.current.isIndexing).toBe(false);
   });
@@ -90,6 +102,15 @@ describe('useIndexing progress', () => {
     api.getBatchJobStatus.mockResolvedValue({ ok: true, data: { status: 'completed', totalItems: 1, completedItems: 1, failedItems: 0, items: [] } });
     await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
     expect(result.current.getOperation('job')).toMatchObject({ status: 'completed', successfulFiles: 1, error: undefined });
+  });
+
+  it('maps interrupted batch jobs to error rather than leaving them processing', async () => {
+    api.listBatchJobs.mockResolvedValue({ ok: true, data: [{ id: 'job', jobType: 'file_import', status: 'running', totalItems: 1, completedItems: 0, failedItems: 0 }] });
+    api.getBatchJobStatus.mockResolvedValue({ ok: true, data: { status: 'interrupted', totalItems: 1, completedItems: 0, failedItems: 1, items: [] } });
+    const { result } = renderHook(() => useIndexing());
+    await settle();
+    expect(result.current.getOperation('job')).toMatchObject({ status: 'error' });
+    expect(result.current.isIndexing).toBe(false);
   });
 
   it('cancels an active batch without inventing an outcome for the file still in flight', async () => {

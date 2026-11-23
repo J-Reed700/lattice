@@ -736,3 +736,16 @@ async fn find_for_viewer_matches_requested_and_final_url() {
         .unwrap();
     assert_eq!(found_by_final.id, ready.id);
 }
+
+#[tokio::test]
+async fn standalone_capture_without_conversation_uses_library_bucket_not_most_recent_chat() {
+    let f = fixture().await;
+
+    let row = f.service.ensure_capture("", URL, false).await.unwrap();
+    assert_eq!(
+        row.conversation_id,
+        repository::LIBRARY_CONVERSATION,
+        "standalone /search or /references captures must never attach to an unrelated chat"
+    );
+    assert_ne!(row.conversation_id, CONVERSATION);
+}

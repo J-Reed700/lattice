@@ -99,4 +99,13 @@ describe('useJournalPageActions', () => {
     const s = setup({ searchParams: new URLSearchParams('new=1'), requestedJournalSpaceId: null });
     expect(s.setSearchParams).not.toHaveBeenCalled();
   });
+
+  it('ignores NEW_ITEM_EVENT and handleNewPage when no journal space is active', async () => {
+    const s = setup({ journalSpace: null, requestedJournalSpaceId: null });
+    await act(async () => {
+      window.dispatchEvent(new Event(NEW_ITEM_EVENT));
+      await s.result.current.handleNewPage();
+    });
+    expect(s.createPage).not.toHaveBeenCalled();
+  });
 });

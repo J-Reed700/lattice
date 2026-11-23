@@ -19,6 +19,17 @@ use lattice_core::shared::types::ConversationId;
 use sqlx::{Row, SqliteConnection};
 use std::collections::HashMap;
 
+/// Sentinel conversation holding standalone `/search` and `/references` web snapshots.
+/// Never exposed as a user chat thread in listings and never user-mutable/deletable.
+pub(super) const INTERNAL_LIBRARY_SNAPSHOTS_ID: &str = "__library_snapshots__";
+
+pub(super) fn reject_internal_library_snapshots(id: &str) -> Result<()> {
+    if id == INTERNAL_LIBRARY_SNAPSHOTS_ID {
+        return Err(AppError::NotFound(format!("Conversation not found: {id}")));
+    }
+    Ok(())
+}
+
 impl ConversationRepository {
     /// Alias for `create_conversation`; the conversation follows the Settings
     /// default model.
@@ -40,6 +51,7 @@ impl ConversationRepository {
         _message_count: Option<i64>,
         _total_tokens: Option<i64>,
     ) -> Result<()> {
+        reject_internal_library_snapshots(id)?;
         if title.is_none() && system_prompt.is_none() {
             return Ok(());
         }
@@ -105,6 +117,9 @@ impl ConversationRepository {
     }
 
     pub async fn find_by_id(&self, id: &str) -> Result<Option<Conversation>> {
+        if id == INTERNAL_LIBRARY_SNAPSHOTS_ID {
+            return Ok(None);
+        }
         let mut read = self
             .db
             .begin_read()
@@ -116,6 +131,9 @@ impl ConversationRepository {
     }
 
     pub async fn find_aggregate_by_id(&self, id: &str) -> Result<Option<ConversationAggregate>> {
+        if id == INTERNAL_LIBRARY_SNAPSHOTS_ID {
+            return Ok(None);
+        }
         let mut tx = self
             .db
             .begin_read()
@@ -166,10 +184,12 @@ impl ConversationRepository {
                    message_count, total_tokens
             FROM conversations
             WHERE tangent_parent_id IS NULL
+              AND id != ?
             ORDER BY updated_at DESC
             LIMIT ? OFFSET ?
             "#,
         )
+        .bind(INTERNAL_LIBRARY_SNAPSHOTS_ID)
         .bind(page.sql_limit())
         .bind(page.offset())
         .fetch_all(&mut *read)
@@ -181,6 +201,7 @@ impl ConversationRepository {
     }
 
     pub async fn update_title(&self, id: &str, new_title: &str) -> Result<()> {
+        reject_internal_library_snapshots(id)?;
         let mut tx = self.db.begin_write().await.map_err(|e| {
             AppError::Database(format!("Failed to update conversation title: {}", e))
         })?;
@@ -190,6 +211,7 @@ impl ConversationRepository {
     }
 
     pub async fn update_system_prompt(&self, id: &str, system_prompt: Option<&str>) -> Result<()> {
+        reject_internal_library_snapshots(id)?;
         let mut tx = self.db.begin_write().await.map_err(|e| {
             AppError::Database(format!(
                 "Failed to update conversation system prompt: {}",
@@ -224,6 +246,7 @@ impl ConversationRepository {
         conversation_id: &str,
         choice: &ChatModelChoice,
     ) -> Result<()> {
+        reject_internal_library_snapshots(conversation_id)?;
         let column = ModelChoiceColumn::to_column(choice)?;
         let mut tx = self.db.begin_write().await?;
         let result =
@@ -247,6 +270,7 @@ impl ConversationRepository {
     }
 
     pub async fn delete(&self, id: &str) -> Result<()> {
+        reject_internal_library_snapshots(id)?;
         let mut tx = self
             .db
             .begin_write()
@@ -317,6 +341,7 @@ impl ConversationRepository {
 
         // Store value to avoid E0716 temporary value dropped error
         let id_str = conversation.id.to_string();
+        reject_internal_library_snapshots(&id_str)?;
 
         let mut tx = self.db.begin_write().await?;
         let result = sqlx::query!(
@@ -354,8 +379,9 @@ impl ConversationRepository {
     pub async fn count(&self) -> Result<usize> {
         let mut read = self.db.begin_read().await?;
         let count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM conversations WHERE tangent_parent_id IS NULL",
+            "SELECT COUNT(*) FROM conversations WHERE tangent_parent_id IS NULL AND id != ?",
         )
+        .bind(INTERNAL_LIBRARY_SNAPSHOTS_ID)
         .fetch_one(&mut *read)
         .await
         .map(|c| c as usize)
@@ -365,11 +391,15 @@ impl ConversationRepository {
     }
 
     pub async fn exists(&self, id: &str) -> Result<bool> {
+        if id == INTERNAL_LIBRARY_SNAPSHOTS_ID {
+            return Ok(false);
+        }
         let mut read = self.db.begin_read().await?;
         let exists = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?)",
+            "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ? AND id != ?)",
         )
         .bind(id)
+        .bind(INTERNAL_LIBRARY_SNAPSHOTS_ID)
         .fetch_one(&mut *read)
         .await
         .map_err(|e| {
@@ -407,10 +437,11 @@ async fn find_conversation(
             SELECT id, title, model_choice, system_prompt, created_at, updated_at,
                    message_count, total_tokens
             FROM conversations
-            WHERE id = ?
+            WHERE id = ? AND id != ?
             "#,
     )
     .bind(id)
+    .bind(INTERNAL_LIBRARY_SNAPSHOTS_ID)
     .fetch_optional(connection)
     .await
     .map_err(|e| AppError::Database(format!("Failed to find conversation: {}", e)))?;

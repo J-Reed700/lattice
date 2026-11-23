@@ -7,6 +7,7 @@ import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 
+import { resetSourceRecheckStore } from '@/features/learning/sources/sourceRecheckStore';
 import { SOURCE_PAGE_SIZE_KEY, SourcesPanel } from '@/features/learning/sources/SourcesPanel';
 import { learningSourcesKey, useAddLearningWebSource } from '@/features/learning/sources/useLearningSources';
 import { learningProgramKey, LEARNING_PROGRAMS_KEY } from '@/features/learning/workspace/useLearningStudio';
@@ -77,6 +78,7 @@ function renderSources(initial = workspace, openedVersion = version, onOpenRevie
 describe('Learning Studio Sources workspace', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    resetSourceRecheckStore();
     useCitationDisplayStore.setState({ visible: true });
     useReaderStore.setState({ session: null, resolvedLocations: new Map() });
     mocks.documents.mockReturnValue([doc]);
@@ -395,5 +397,43 @@ describe('Learning Studio Sources workspace', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not read source library');
     await userEvent.setup().click(screen.getByRole('button', { name: 'Retry' }));
     expect(await screen.findByText('No materials have been saved to this program yet.')).toBeVisible();
+  });
+
+  it('preserves live waiting-statement recheck progress and Open the review banner across unmount and remount', async () => {
+    const user = userEvent.setup();
+    let emitProgress: ((update: { stage: 'checking'; done: number; total: number; statement: string }) => void) | undefined;
+    let finishAdd!: (value: unknown) => void;
+    mocks.workspace.mockResolvedValue(ok(workspace));
+    mocks.version.mockResolvedValue(ok(version));
+    mocks.addWeb.mockImplementation((_req: unknown, check?: { onProgress?: (u: { stage: 'checking'; done: number; total: number; statement: string }) => void }) => {
+      emitProgress = check?.onProgress;
+      return new Promise((resolve) => { finishAdd = resolve; });
+    });
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } } });
+    const onOpenReview = vi.fn();
+    const view1 = render(<QueryClientProvider client={client}><MemoryRouter><SourcesPanel programId="program-1" onOpenReview={onOpenReview} /><ReaderPane rowWidth={1728} availableWidth={1468} resetKey="sources" /></MemoryRouter></QueryClientProvider>);
+    await user.click(await screen.findByRole('button', { name: 'Add material' }));
+    await user.type(screen.getByLabelText('Web address'), 'https://example.org/notes');
+    await user.click(screen.getByRole('button', { name: 'Save source' }));
+    emitProgress?.({ stage: 'checking', done: 1, total: 4, statement: 'Cells divide by mitosis.' });
+    view1.unmount();
+
+    const view2 = render(<QueryClientProvider client={client}><MemoryRouter><SourcesPanel programId="program-1" onOpenReview={onOpenReview} /><ReaderPane rowWidth={1728} availableWidth={1468} resetKey="sources" /></MemoryRouter></QueryClientProvider>);
+    expect(await screen.findByText('Checking statement 2 of 4: Cells divide by mitosis.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Add material' })).toBeDisabled();
+
+    finishAdd(ok({
+      ...workspace,
+      recheck: { tried: 4, verified: 4, notVerified: 0, noPassage: 0, stopped: null, heldLessons: 1 },
+    }));
+
+    const reviewBtn = await screen.findByRole('button', { name: 'Open the review' });
+    expect(reviewBtn).toBeVisible();
+    view2.unmount();
+
+    render(<QueryClientProvider client={client}><MemoryRouter><SourcesPanel programId="program-1" onOpenReview={onOpenReview} /><ReaderPane rowWidth={1728} availableWidth={1468} resetKey="sources" /></MemoryRouter></QueryClientProvider>);
+    await user.click(await screen.findByRole('button', { name: 'Open the review' }));
+    expect(onOpenReview).toHaveBeenCalledTimes(1);
   });
 });

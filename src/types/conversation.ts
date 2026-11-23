@@ -282,6 +282,8 @@ export interface ConversationMessage {
   createdAt: string;
   status: MessageStatus;
   metadata?: string | null;
+  /** Human-readable failure reason extracted from `metadata.error`, when failed. */
+  error?: string;
   sources?: SourceWithMetadata[];
   /** The reply as pieces, text and references in reply order. An assistant message has one. */
   reply?: ReplyPieceDto[] | null;

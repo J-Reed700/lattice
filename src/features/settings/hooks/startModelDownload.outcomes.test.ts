@@ -19,9 +19,14 @@ describe('startModelDownload outcomes', () => {
     ['failed', { type: 'error', title: "Couldn't start the download", message: 'The download could not be started.' }],
   ])('announces a %s download', async (status, toastArgs) => {
     vi.mocked(VaultAPI.downloadModel).mockResolvedValueOnce({ ok: true, data: { status } } as never);
+    const queryClient = new QueryClient();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
     const addToast = vi.fn();
-    await expect(startModelDownload({ metadata: model, addToast, queryClient: new QueryClient() })).resolves.toEqual({ alreadyDownloaded: false });
+    await expect(startModelDownload({ metadata: model, addToast, queryClient })).resolves.toEqual({ alreadyDownloaded: false });
     expect(addToast).toHaveBeenCalledWith(toastArgs);
+    if (status === 'started') {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['downloads'] });
+    }
   });
 
   it('says a model already on disk is there and refreshes the downloaded list', async () => {

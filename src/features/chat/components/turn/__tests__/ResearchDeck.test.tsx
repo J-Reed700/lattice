@@ -181,4 +181,21 @@ describe('ResearchDeck', () => {
     expect(disclosure).toHaveAttribute('open');
     expect(screen.getByText(/Resolving a conflict/)).toBeVisible();
   });
+
+  it('scopes web page reader sessions to the enclosing conversation id (e.g. a tangent)', async () => {
+    useReaderStore.setState({ session: null });
+    render(
+      <ResearchDeck
+        live
+        conversationId="tangent-conv-42"
+        steps={[search('s', 'tangent lookup', ['https://a.example/1'])]}
+      />
+    );
+
+    await userEvent.click(screen.getByText('About a.example'));
+
+    const session = useReaderStore.getState().session;
+    expect(session?.conversationId).toBe('tangent-conv-42');
+    expect(session?.citations[0]?.conversationId).toBe('tangent-conv-42');
+  });
 });

@@ -1,12 +1,14 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 import { queryOptions, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
 import { useJobStatus, type JobDto } from '@/features/jobs/api';
+import { DOWNLOADED_MODELS_QUERY_KEY } from '@/features/model/hooks/useDownloadedModels';
 import VaultAPI, { type ApiClient } from '@/lib/api';
 import type { CourseIndexStatusDto } from '@/lib/bindings';
 import { unwrapApiResult } from '@/types/api/result';
+import type { DownloadedModel } from '@/types/downloadedModels';
 
 import { describeIndexWait } from './courseIndexProgress';
 
@@ -26,7 +28,40 @@ const statusQuery = (programId: string, api: ApiClient = VaultAPI) =>
 /** The course's index status as last read; `null` until it has been. */
 export function useCourseIndexStatus(programId: string | null | undefined): CourseIndexStatusDto | null {
   const api = useApi();
-  const { data } = useQuery({ ...statusQuery(programId ?? '', api), enabled: Boolean(programId) });
+  const client = useQueryClient();
+  const modelsQuery = useQuery<DownloadedModel[]>({
+    queryKey: DOWNLOADED_MODELS_QUERY_KEY,
+    queryFn: async () => {
+      if (typeof api.getDownloadedModels !== 'function') return [];
+      const result = await api.getDownloadedModels();
+      if (!result.ok) throw new Error(result.error);
+      return result.data;
+    },
+    staleTime: 30_000,
+    retry: false,
+  });
+  const activeEmbeddingId = modelsQuery.isFetched
+    ? ((modelsQuery.data ?? []).find((model) => model.is_active_for_embedding)?.id ?? '')
+    : null;
+  const { data } = useQuery({
+    ...statusQuery(programId ?? '', api),
+    enabled: Boolean(programId),
+    staleTime: (query) => (query.state.data?.state === 'noEmbeddingModel' ? 0 : 5 * 60 * 1000),
+    refetchOnMount: (query) => (query.state.data?.state === 'noEmbeddingModel' ? 'always' : true),
+  });
+  const lastEmbeddingIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (activeEmbeddingId === null) return;
+    if (
+      lastEmbeddingIdRef.current !== null &&
+      lastEmbeddingIdRef.current !== activeEmbeddingId &&
+      programId &&
+      data?.state === 'noEmbeddingModel'
+    ) {
+      void client.invalidateQueries({ queryKey: courseIndexKeys.status(programId), exact: true });
+    }
+    lastEmbeddingIdRef.current = activeEmbeddingId;
+  }, [activeEmbeddingId, client, data?.state, programId]);
   return programId ? data ?? null : null;
 }
 

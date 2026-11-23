@@ -73,9 +73,10 @@ use self::attachments::{build_turn_attachments, TurnAttachments};
 const ATTACHMENT_DIGEST_CHARS: usize = 900;
 use self::cancellation::TurnCancellationRegistry;
 use self::focus::FocusScope;
+pub(super) use self::persistence::human_readable_error;
 use self::persistence::{
-    finalize_successful_turn, mark_user_message_failed, persist_user_message_pending,
-    FinishedAnswer,
+    finalize_successful_turn, mark_user_message_cancelled, mark_user_message_failed_with_reason,
+    persist_user_message_pending, FinishedAnswer,
 };
 use self::prompting::PromptMessageBuilder;
 pub use self::retrieval::RetrievalSubTimingMetrics;
@@ -85,7 +86,6 @@ use self::retrieval::{
 };
 use self::scope::ScopeSnapshot;
 pub use self::source_snapshots::CapturedSourcesDto;
-use self::tool_loop::run_agentic_tool_loop;
 pub use self::tool_loop::ToolLoopTimingMetrics;
 use self::turn_record::TurnRecorder;
 pub use self::turn_record::{
