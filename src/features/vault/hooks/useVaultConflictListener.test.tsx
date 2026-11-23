@@ -140,6 +140,7 @@ describe('useVaultConflictListener', () => {
     let attach!: (unlisten: () => void) => void;
     events.listen.mockReturnValueOnce(new Promise((resolve) => { attach = resolve; }));
     const { unmount } = renderHook(() => useVaultConflictListener());
+    await waitFor(() => expect(events.listen).toHaveBeenCalledTimes(1));
     unmount();
     const late = vi.fn();
     await act(async () => { attach(late); });
