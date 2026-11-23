@@ -1,117 +1,187 @@
 /**
- * Settings — shell.
- *
- * Icon-led navigation and grouped settings in a responsive reading column.
+ * Settings — minimalist 6-domain shell with instant `/` search, editorial
+ * underline sub-tabs, full legacy `?tab=` deep-link support, and Radix Dialog
+ * confirmations.
  */
 
-import { useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { Archive, Boxes, ChevronRight, Download, FileText, FolderOpen, Globe, Layers3, MessageCircle, Palette, RotateCcw, Scale, ScanLine, Search, ShieldCheck, SlidersHorizontal, Upload, Volume2, Wrench, type LucideIcon } from 'lucide-react';
+import {
+  Archive,
+  ArrowRight,
+  RotateCcw,
+  Search,
+  Upload,
+  X,
+} from 'lucide-react';
 import { useSearchParams } from 'react-router';
 
-import { SidebarHeader } from '@/components/ui';
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  SidebarHeader,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+} from '@/components/ui';
 import { describeFailure } from '@/lib/errorHandling';
 import { cn } from '@/lib/utils';
 import { toast } from '@/stores/toastStore';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
-import { AIModelsTab } from './AIModelsTab';
-import { ChatTab, ModelsTab, PromptsTab, TuningTab, ToolsTab, LlmSettingsProvider } from './AITab';
-import { DisplayTab } from './DisplayTab';
-import { IndexingTab } from './IndexingTab';
-import { LogsTab } from './LogsTab';
-import { PrivacyTab } from './PrivacyTab';
-import { ReadAloudTab } from './ReadAloudTab';
-import { SearchTab } from './SearchTab';
-import { SourcesTab } from './SourcesTab';
-import { SourceTrustSettings } from './SourceTrustSettings';
-import { SpacesTab } from './SpacesTab';
-import { VaultTab } from './VaultTab';
+import { LlmSettingsProvider } from './AITab';
+import {
+  DEFAULT_SETTINGS_TAB,
+  getDomainForTab,
+  getTabMeta,
+  resolveSettingsTab,
+  searchSettings,
+  SETTINGS_DOMAINS,
+  tabGroups,
+  type SettingsDomainId,
+  type SettingsTab,
+} from './settingsRegistry';
 import { useJsonFileDialogs } from '../hooks/useJsonFileDialogs';
 import { useSettingsTransfer } from '../hooks/useSettingsQuery';
 import './settings.css';
 
-type SettingsTab =
-  | 'search'
-  | 'indexing'
-  | 'vault'
-  | 'spaces'
-  | 'chat'
-  | 'models'
-  | 'downloaded-models'
-  | 'prompts'
-  | 'tuning'
-  | 'tools'
-  | 'source-trust'
-  | 'sources'
-  | 'display'
-  | 'read-aloud'
-  | 'privacy'
-  | 'logs';
-
-interface Tab {
-  id: SettingsTab;
-  label: string;
-  component: React.ComponentType;
-  icon: LucideIcon;
-}
-
-type TabGroup = {
-  label: string;
-  tabs: Tab[];
-};
-
-export const tabGroups: TabGroup[] = [
-  {
-    label: 'General',
-    tabs: [
-      { id: 'search', label: 'Search', icon: Search, component: SearchTab },
-      { id: 'indexing', label: 'Indexing', icon: ScanLine, component: IndexingTab },
-      { id: 'vault', label: 'Vault', icon: FolderOpen, component: VaultTab },
-      { id: 'spaces', label: 'Spaces', icon: Layers3, component: SpacesTab },
-      { id: 'display', label: 'Display', icon: Palette, component: DisplayTab },
-      { id: 'privacy', label: 'Privacy', icon: ShieldCheck, component: PrivacyTab },
-      { id: 'logs', label: 'Logs', icon: FileText, component: LogsTab },
-    ],
-  },
-  {
-    label: 'AI',
-    tabs: [
-      { id: 'chat', label: 'Chat', icon: MessageCircle, component: ChatTab },
-      { id: 'models', label: 'Models', icon: Boxes, component: ModelsTab },
-      { id: 'downloaded-models', label: 'Downloaded', icon: Download, component: AIModelsTab },
-      { id: 'prompts', label: 'Prompts', icon: FileText, component: PromptsTab },
-      { id: 'tuning', label: 'Tuning', icon: SlidersHorizontal, component: TuningTab },
-      { id: 'tools', label: 'Tools', icon: Wrench, component: ToolsTab },
-      { id: 'sources', label: 'Sources', icon: Globe, component: SourcesTab },
-      { id: 'source-trust', label: 'Source trust', icon: Scale, component: SourceTrustSettings },
-      { id: 'read-aloud', label: 'Read aloud', icon: Volume2, component: ReadAloudTab },
-    ],
-  },
-];
-
-const tabs: Tab[] = tabGroups.flatMap((group) => group.tabs);
-const tabIds = new Set<string>(tabs.map((tab) => tab.id));
+export { tabGroups };
 
 const footerButtonClass =
-  'flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-xs text-text-secondary transition-colors duration-fast hover:bg-surface-raised hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50';
+  'flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-xs font-medium text-text-secondary transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.06)] hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45';
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+}
+
+function HighlightedText({ text, query }: { text: string; query: string }) {
+  const trimmed = query.trim();
+  if (!trimmed) return <>{text}</>;
+  const tokens = trimmed
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((token) => token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (tokens.length === 0) return <>{text}</>;
+  const regex = new RegExp(`(${tokens.join('|')})`, 'gi');
+  const parts = text.split(regex);
+  return (
+    <>
+      {parts.map((part, index) =>
+        index % 2 === 1 ? (
+          <mark
+            key={index}
+            className="rounded-xs bg-accent/18 px-0.5 text-text-primary"
+          >
+            {part}
+          </mark>
+        ) : (
+          <Fragment key={index}>{part}</Fragment>
+        ),
+      )}
+    </>
+  );
+}
 
 export function Settings() {
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedTab = searchParams.get('tab');
-  const [activeTab, setActiveTab] = useState<SettingsTab>(() =>
-    requestedTab && tabIds.has(requestedTab) ? requestedTab as SettingsTab : 'search'
+  const [activeTab, setActiveTab] = useState<SettingsTab>(
+    () => resolveSettingsTab(requestedTab) ?? DEFAULT_SETTINGS_TAB,
   );
+  // Remember the last sub-tab visited in each domain so switching domains feels continuous.
+  const [lastTabByDomain, setLastTabByDomain] = useState<Partial<Record<SettingsDomainId, SettingsTab>>>(() => {
+    const initial = resolveSettingsTab(requestedTab) ?? DEFAULT_SETTINGS_TAB;
+    return { [getDomainForTab(initial).id]: initial };
+  });
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [pendingHighlightId, setPendingHighlightId] = useState<string | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const mainScrollRef = useRef<HTMLElement | null>(null);
+
+  const selectTab = useCallback((nextTab: SettingsTab, highlightElementId?: string) => {
+    const domain = getDomainForTab(nextTab);
+    setActiveTab(nextTab);
+    setLastTabByDomain((previous) => ({ ...previous, [domain.id]: nextTab }));
+    setSearchQuery('');
+    setPendingHighlightId(highlightElementId ?? null);
+    if (!highlightElementId && mainScrollRef.current) {
+      mainScrollRef.current.scrollTop = 0;
+    }
+  }, []);
+
+  // Consume `?tab=` deep links while keeping `/settings` clean so repeated
+  // deep links to the same tab always re-activate it.
   useEffect(() => {
     if (!requestedTab) return;
-    if (tabIds.has(requestedTab)) {
-      setActiveTab(requestedTab as SettingsTab);
+    const resolved = resolveSettingsTab(requestedTab);
+    if (resolved) {
+      selectTab(resolved);
     }
     const next = new URLSearchParams(searchParams);
     next.delete('tab');
     setSearchParams(next, { replace: true });
-  }, [requestedTab, searchParams, setSearchParams]);
+  }, [requestedTab, searchParams, setSearchParams, selectTab]);
+
+  // Other panes ask to jump here (e.g. "Browse catalog" from Downloaded models).
+  useEffect(() => {
+    const handleNavigate = (event: Event) => {
+      const detail = (event as CustomEvent<{ tab?: string }>).detail;
+      const resolved = resolveSettingsTab(detail?.tab);
+      if (resolved) {
+        selectTab(resolved);
+      }
+    };
+    window.addEventListener('settings:navigate-tab', handleNavigate);
+    return () => window.removeEventListener('settings:navigate-tab', handleNavigate);
+  }, [selectTab]);
+
+  // Global `/` shortcut focuses Settings search when not already typing in a field.
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (isEditableTarget(event.target)) return;
+      event.preventDefault();
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Scroll to and softly highlight the jumped-to setting once the target tab mounts.
+  useEffect(() => {
+    if (!pendingHighlightId) return;
+    let highlightTimer: number | undefined;
+    const frame = window.requestAnimationFrame(() => {
+      const target = document.getElementById(pendingHighlightId);
+      const row = target?.closest('.settings-row') ?? target;
+      if (row instanceof HTMLElement) {
+        if (typeof row.scrollIntoView === 'function') {
+          row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        row.classList.remove('settings-search-highlight');
+        void row.offsetWidth;
+        row.classList.add('settings-search-highlight');
+        highlightTimer = window.setTimeout(() => {
+          row.classList.remove('settings-search-highlight');
+        }, 1900);
+      }
+      setPendingHighlightId(null);
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (highlightTimer !== undefined) window.clearTimeout(highlightTimer);
+    };
+  }, [pendingHighlightId, activeTab]);
 
   const [showResetDialog, setShowResetDialog] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -121,22 +191,8 @@ export function Settings() {
   const { resetSettings, exportSettings, importSettings } = useSettingsTransfer();
   const { saveJsonFile, openJsonFile } = useJsonFileDialogs();
 
-  // Other panes ask to jump here (e.g. "Browse catalog" from an empty
-  // Downloaded list). Without this the request went nowhere.
-  useEffect(() => {
-    const handleNavigate = (event: Event) => {
-      const detail = (event as CustomEvent<{ tab?: string }>).detail;
-      if (detail?.tab && tabIds.has(detail.tab)) {
-        setActiveTab(detail.tab as SettingsTab);
-      }
-    };
-    window.addEventListener('settings:navigate-tab', handleNavigate);
-    return () => window.removeEventListener('settings:navigate-tab', handleNavigate);
-  }, []);
-
   const handleReset = async () => {
     setIsResetting(true);
-    // A reset or import refreshes the settings cache, so every tab rereads it.
     const result = await resetSettings();
     setIsResetting(false);
     setShowResetDialog(false);
@@ -158,7 +214,10 @@ export function Settings() {
 
       const saved = await saveJsonFile('lattice-settings.json', result.data);
       if (!saved.ok) {
-        toast.error("Couldn't export settings", { message: describeFailure(saved), duration: 5000 });
+        toast.error("Couldn't export settings", {
+          message: describeFailure(saved),
+          duration: 5000,
+        });
       } else if (saved.data) {
         toast.success('Settings exported successfully', { duration: 3000 });
       }
@@ -175,7 +234,10 @@ export function Settings() {
     try {
       const opened = await openJsonFile();
       if (!opened.ok) {
-        toast.error("Couldn't import settings", { message: describeFailure(opened), duration: 5000 });
+        toast.error("Couldn't import settings", {
+          message: describeFailure(opened),
+          duration: 5000,
+        });
       } else if (opened.data !== null) {
         const result = await importSettings(opened.data);
 
@@ -193,120 +255,330 @@ export function Settings() {
     }
   };
 
-  const ActiveTabComponent = tabs.find((tab) => tab.id === activeTab)?.component || SearchTab;
-  const isWideContentTab =
-    activeTab === 'models' || activeTab === 'downloaded-models' || activeTab === 'tools';
+  const activeMeta = getTabMeta(activeTab);
+  const activeDomain = getDomainForTab(activeTab);
+  const ActiveTabComponent = activeMeta.component;
+  const isWideContentTab = Boolean(activeMeta.wide);
+
+  const trimmedQuery = searchQuery.trim();
+  const isSearching = trimmedQuery.length > 0;
+  const searchMatches = useMemo(() => searchSettings(trimmedQuery), [trimmedQuery]);
+
+  const matchCountByDomain = useMemo(() => {
+    const counts = new Map<SettingsDomainId, number>();
+    for (const match of searchMatches) {
+      counts.set(match.domain.id, (counts.get(match.domain.id) ?? 0) + 1);
+    }
+    return counts;
+  }, [searchMatches]);
+
+  const visibleDomains = useMemo(() => {
+    if (!isSearching) return SETTINGS_DOMAINS;
+    return SETTINGS_DOMAINS.filter((domain) => (matchCountByDomain.get(domain.id) ?? 0) > 0);
+  }, [isSearching, matchCountByDomain]);
+
+  const handleDomainClick = (domainId: SettingsDomainId) => {
+    if (isSearching) {
+      const firstInDomain = searchMatches.find((match) => match.domain.id === domainId);
+      if (firstInDomain) {
+        selectTab(firstInDomain.tab.id, firstInDomain.item.elementId);
+        return;
+      }
+    }
+    const domain = SETTINGS_DOMAINS.find((candidate) => candidate.id === domainId);
+    if (!domain) return;
+    const remembered = lastTabByDomain[domainId];
+    const targetTab =
+      remembered && domain.tabs.some((tab) => tab.id === remembered)
+        ? remembered
+        : domain.tabs[0].id;
+    selectTab(targetTab);
+  };
 
   return (
     <div className="settings-workspace flex h-full min-w-0 bg-bg">
       {/* Sidebar */}
-      <div className="settings-navigation flex w-[208px] shrink-0 flex-col border-r border-border-subtle bg-surface-sunken">
+      <aside className="settings-navigation flex w-[236px] shrink-0 flex-col border-r border-border-subtle bg-surface-sunken">
         <SidebarHeader title="Settings" />
 
-        {/* Tab list — scrolls so the footer never clips it */}
-        <nav aria-label="Settings sections" className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
-          {tabGroups.map((group) => (
-            <div key={group.label} className="mb-4 last:mb-0">
-              <div className="px-3 pb-2 text-xxs font-semibold uppercase tracking-[0.1em] text-text-muted">
-                {group.label}
-              </div>
-              {group.tabs.map((tab) => {
-                const isActive = activeTab === tab.id;
-                const Icon = tab.icon;
+        {/* Instant Settings search */}
+        <div className="px-2.5 pb-2 pt-2.5">
+          <div className="relative">
+            <Search
+              className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted"
+              strokeWidth={1.75}
+              aria-hidden="true"
+            />
+            <input
+              ref={searchInputRef}
+              type="search"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  if (searchQuery) {
+                    event.preventDefault();
+                    setSearchQuery('');
+                  } else {
+                    searchInputRef.current?.blur();
+                  }
+                } else if (event.key === 'Enter' && searchMatches.length > 0) {
+                  event.preventDefault();
+                  const top = searchMatches[0];
+                  selectTab(top.tab.id, top.item.elementId);
+                }
+              }}
+              placeholder="Search settings…"
+              aria-label="Search settings"
+              className="h-8 w-full rounded-lg border border-border-default bg-surface pl-8 pr-8 text-ui text-text-primary shadow-control placeholder:text-text-muted outline-hidden transition-[border-color,box-shadow] duration-fast hover:border-border-strong focus:border-accent/60 focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-search-cancel-button]:hidden"
+            />
+            {isSearching ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery('');
+                  searchInputRef.current?.focus();
+                }}
+                aria-label="Clear settings search"
+                className="absolute right-1.5 top-1/2 inline-flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-sm text-text-muted transition-colors duration-fast hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <X className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            ) : (
+              <kbd
+                aria-hidden="true"
+                className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded-sm border border-border-subtle bg-surface-sunken px-1.5 py-0.5 font-mono text-[10px] leading-none text-text-muted"
+              >
+                /
+              </kbd>
+            )}
+          </div>
+        </div>
+
+        {/* 6 minimalist domain items */}
+        <nav aria-label="Settings sections" className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+          {visibleDomains.length === 0 ? (
+            <p className="px-2.5 py-3 text-xs text-text-muted">
+              No sections match &ldquo;{trimmedQuery}&rdquo;.
+            </p>
+          ) : (
+            <div className="space-y-0.5">
+              {visibleDomains.map((domain) => {
+                const isActive = !isSearching && activeDomain.id === domain.id;
+                const Icon = domain.icon;
+                const matchCount = matchCountByDomain.get(domain.id);
                 return (
                   <button
-                    key={tab.id}
+                    key={domain.id}
                     type="button"
-                    onClick={() => setActiveTab(tab.id)}
+                    onClick={() => handleDomainClick(domain.id)}
                     aria-current={isActive ? 'page' : undefined}
                     className={cn(
-                      'relative mb-0.5 flex min-h-8 w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-left text-ui transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
+                      'group relative flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-ui transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
                       isActive
-                        ? 'bg-accent-muted font-semibold text-accent shadow-[inset_0_0_0_1px_hsl(var(--accent)/0.12)]'
-                        : 'text-text-secondary hover:bg-surface-raised hover:text-text-primary',
+                        ? 'bg-[hsl(var(--text-primary)/0.07)] font-medium text-text-primary'
+                        : 'text-text-secondary hover:bg-[hsl(var(--text-primary)/0.045)] hover:text-text-primary',
                     )}
                   >
-                    <Icon className="h-4 w-4 shrink-0" strokeWidth={1.7} aria-hidden="true" />
-                    {tab.label}
-                    {isActive ? <ChevronRight className="ml-auto h-3.5 w-3.5" aria-hidden="true" /> : null}
+                    <Icon
+                      className={cn(
+                        'h-4 w-4 shrink-0 transition-colors duration-fast',
+                        isActive ? 'text-accent' : 'text-text-muted group-hover:text-text-secondary',
+                      )}
+                      strokeWidth={1.75}
+                      aria-hidden="true"
+                    />
+                    <span className="min-w-0 flex-1 truncate">{domain.label}</span>
+                    {isSearching && matchCount ? (
+                      <span className="shrink-0 rounded-full bg-accent-muted px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-accent">
+                        {matchCount}
+                      </span>
+                    ) : null}
                   </button>
                 );
               })}
             </div>
-          ))}
+          )}
         </nav>
 
-        {/* Footer — never scrolls, never clips the list above it */}
-        <div className="shrink-0 border-t border-border-subtle p-2">
-          <button type="button" onClick={handleAsyncEvent(handleExport)} disabled={isExporting} className={footerButtonClass}>
-            <Archive className="h-3.5 w-3.5" aria-hidden="true" />
+        {/* Footer — Transfer & Reset actions */}
+        <div className="shrink-0 space-y-0.5 border-t border-border-subtle p-2">
+          <button
+            type="button"
+            onClick={handleAsyncEvent(handleExport)}
+            disabled={isExporting}
+            className={footerButtonClass}
+          >
+            <Archive className="h-3.5 w-3.5 text-text-muted" aria-hidden="true" />
             {isExporting ? 'Exporting…' : 'Export'}
           </button>
-          <button type="button" onClick={handleAsyncEvent(handleImport)} disabled={isImporting} className={footerButtonClass}>
-            <Upload className="h-3.5 w-3.5" aria-hidden="true" />
+          <button
+            type="button"
+            onClick={handleAsyncEvent(handleImport)}
+            disabled={isImporting}
+            className={footerButtonClass}
+          >
+            <Upload className="h-3.5 w-3.5 text-text-muted" aria-hidden="true" />
             {isImporting ? 'Importing…' : 'Import'}
           </button>
           <button
             type="button"
             onClick={() => setShowResetDialog(true)}
-            className={cn(footerButtonClass, 'text-danger-fg hover:bg-danger-muted hover:text-danger-fg')}
+            className={cn(
+              footerButtonClass,
+              'text-danger-fg hover:bg-danger-muted hover:text-danger-fg',
+            )}
           >
             <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
             Reset all
           </button>
         </div>
-      </div>
+      </aside>
 
-      {/* Main content — reading column */}
-      <main className="h-full min-h-0 min-w-0 flex-1 overflow-y-auto bg-bg" aria-label="Settings content">
+      {/* Main content — editorial reading column */}
+      <main
+        ref={mainScrollRef}
+        className="h-full min-h-0 min-w-0 flex-1 overflow-y-auto bg-bg"
+        aria-label="Settings content"
+      >
         <div
           className={cn(
-            'settings-content mx-auto w-full px-6 pb-16 pt-8',
-            isWideContentTab ? 'max-w-[1100px]' : 'max-w-[760px]',
+            'settings-content mx-auto w-full px-8 pb-20 pt-8',
+            !isSearching && isWideContentTab ? 'max-w-[1060px]' : 'max-w-[760px]',
           )}
         >
-          <LlmSettingsProvider>
-            <ActiveTabComponent />
-          </LlmSettingsProvider>
+          {isSearching ? (
+            <section aria-label="Settings search results">
+              <div className="mb-6 flex items-baseline justify-between gap-4 border-b border-border-subtle pb-4">
+                <div>
+                  <h1 className="font-display text-2xl font-normal tracking-tight text-text-primary">
+                    Search results
+                  </h1>
+                  <p className="mt-1 text-sm text-text-tertiary">
+                    {searchMatches.length === 0
+                      ? `No settings match “${trimmedQuery}”.`
+                      : `${searchMatches.length} ${searchMatches.length === 1 ? 'setting' : 'settings'} matching “${trimmedQuery}”`}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setSearchQuery('');
+                    searchInputRef.current?.focus();
+                  }}
+                >
+                  Clear search
+                </Button>
+              </div>
+
+              {searchMatches.length === 0 ? (
+                <div className="py-12 text-center">
+                  <p className="text-sm text-text-secondary">
+                    Try searching for a setting name like &ldquo;theme&rdquo;, &ldquo;reranker&rdquo;,
+                    &ldquo;temperature&rdquo;, &ldquo;backup&rdquo;, or &ldquo;ollama&rdquo;.
+                  </p>
+                </div>
+              ) : (
+                <div className="divide-y divide-border-subtle border-b border-border-subtle">
+                  {searchMatches.map((match) => (
+                    <button
+                      key={match.item.id}
+                      type="button"
+                      onClick={() => selectTab(match.tab.id, match.item.elementId)}
+                      className="group flex w-full items-center justify-between gap-4 py-3.5 text-left transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.03)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-baseline gap-2">
+                          <span className="text-sm font-medium text-text-primary">
+                            <HighlightedText text={match.item.label} query={trimmedQuery} />
+                          </span>
+                          <span className="text-xs text-text-muted">
+                            <HighlightedText text={match.domain.label} query={trimmedQuery} />
+                            {' · '}
+                            <HighlightedText text={match.tab.label} query={trimmedQuery} />
+                          </span>
+                        </div>
+                        <p className="mt-0.5 text-xs leading-relaxed text-text-tertiary">
+                          <HighlightedText text={match.item.description} query={trimmedQuery} />
+                        </p>
+                      </div>
+                      <ArrowRight
+                        className="h-4 w-4 shrink-0 text-text-muted transition-transform duration-fast group-hover:translate-x-0.5 group-hover:text-text-primary"
+                        aria-hidden="true"
+                      />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
+          ) : (
+            <>
+              {/* In-pane underline sub-tabs whenever a domain groups 2+ sub-sections */}
+              {activeDomain.tabs.length > 1 ? (
+                <div className="mb-6">
+                  <Tabs
+                    variant="underline"
+                    value={activeTab}
+                    onValueChange={(value) => selectTab(value as SettingsTab)}
+                  >
+                    <TabsList
+                      aria-label={`${activeDomain.label} sections`}
+                      className="flex w-full justify-start overflow-x-auto"
+                    >
+                      {activeDomain.tabs.map((tab) => (
+                        <TabsTrigger key={tab.id} value={tab.id}>
+                          {tab.label}
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                  </Tabs>
+                </div>
+              ) : null}
+
+              <LlmSettingsProvider>
+                <ActiveTabComponent />
+              </LlmSettingsProvider>
+            </>
+          )}
         </div>
       </main>
 
-      {/* Reset confirmation */}
+      {/* Reset confirmation — Radix Dialog */}
       <Dialog open={showResetDialog} onOpenChange={setShowResetDialog}>
         <DialogContent
           hideClose
-          className="block max-w-sm rounded-md border border-border-subtle bg-surface-raised p-5 shadow-md"
+          className="max-w-sm"
           onInteractOutside={(event) => event.preventDefault()}
         >
-          <DialogTitle asChild>
-            <h2 className="text-base font-medium text-text-primary">
+          <DialogHeader>
+            <DialogTitle className="text-base font-medium text-text-primary">
               Reset all settings?
-            </h2>
-          </DialogTitle>
-          <DialogDescription asChild>
-            <p className="mt-2 text-sm text-text-secondary">
+            </DialogTitle>
+            <DialogDescription className="text-sm text-text-secondary">
               Every setting goes back to its default. Export first if you want a copy.
-            </p>
-          </DialogDescription>
-          <div className="mt-5 flex justify-end gap-2">
-            <button
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-5">
+            <Button
               type="button"
+              variant="outline"
               onClick={() => setShowResetDialog(false)}
-              className="h-8 rounded-sm border border-border-default bg-surface px-3 text-sm text-text-primary transition-colors duration-fast hover:bg-surface-raised"
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="destructive"
               onClick={() => {
                 void handleReset();
               }}
               disabled={isResetting}
-              className="h-8 rounded-sm bg-danger px-3 text-sm font-medium text-accent-fg transition-opacity duration-fast hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isResetting ? 'Resetting…' : 'Reset'}
-            </button>
-          </div>
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

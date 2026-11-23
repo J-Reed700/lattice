@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { X } from 'lucide-react';
 
-import { PageHeader, SettingsRow, SettingsSection, Switch } from '@/components/ui';
+import { Button, Input, PageHeader, SettingsRow, SettingsSection, Switch } from '@/components/ui';
 import { useApi } from '@/contexts/ApiContext';
 import { probeCustomTool } from '@/features/settings/hooks/connectionProbes';
 import { useJsonFileDialogs } from '@/features/settings/hooks/useJsonFileDialogs';
@@ -15,17 +15,9 @@ import { toast } from '@/stores/toastStore';
 import type { CustomToolSettings as ApiCustomToolSettings } from '@/types/api/settings';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
-import {
-  CUSTOM_TOOL_PRESETS,
-  GHOST_BUTTON_CLASS,
-  INPUT_CLASS,
-  NUMBER_FIELD_CLASS,
-  PRIMARY_BUTTON_CLASS,
-  SECONDARY_BUTTON_CLASS,
-  SWITCH_CLASS,
-  normalizeCustomTool,
-} from './shared';
+import { CUSTOM_TOOL_PRESETS, ROW_ACTION_CLASS, SWITCH_CLASS, normalizeCustomTool } from './shared';
 import { useLlmSettings } from './useLlmSettings';
+import { SettingsNumberField, SettingsSelect } from '../SettingControls';
 
 const BUILT_IN_TOOLS = ['web_search', 'fetch_url_content', 'wiki_search', 'wiki_summary'];
 
@@ -138,7 +130,10 @@ export function ToolsTab() {
         version: 1,
         customTools: customToolsDraft.map(normalizeCustomTool),
       };
-      const saved = await saveJsonFile('lattice-custom-tools.json', JSON.stringify(payload, null, 2));
+      const saved = await saveJsonFile(
+        'lattice-custom-tools.json',
+        JSON.stringify(payload, null, 2),
+      );
       if (!saved.ok) {
         toast.error("Couldn't export tools", {
           message: describeFailure(saved),
@@ -177,7 +172,7 @@ export function ToolsTab() {
     const existing = new Set(
       customToolsDraft
         .map((tool) => tool.name.trim().toLowerCase())
-        .filter((name) => name.length > 0)
+        .filter((name) => name.length > 0),
     );
     if (existing.has(preset.tool.name.toLowerCase())) {
       toast.info(`"${preset.tool.name}" is already in your tools`);
@@ -190,7 +185,7 @@ export function ToolsTab() {
   const updateCustomTool = (
     index: number,
     field: keyof ApiCustomToolSettings,
-    value: string | number | boolean | null
+    value: string | number | boolean | null,
   ) => {
     setCustomToolsDraft((previous) =>
       previous.map((tool, toolIndex) => {
@@ -199,7 +194,7 @@ export function ToolsTab() {
           ...tool,
           [field]: value,
         };
-      })
+      }),
     );
   };
 
@@ -221,14 +216,17 @@ export function ToolsTab() {
     const key = `${normalized.name || 'custom_tool'}_${index}`;
     setActiveToolTestKey(key);
     const query = toolTestQuery.trim().length > 0 ? toolTestQuery.trim() : 'test';
-    const result = await probeCustomTool({
-      endpoint: normalized.endpoint,
-      queryParam: normalized.queryParam,
-      maxResultsParam: normalized.maxResultsParam,
-      defaultMaxResults: normalized.defaultMaxResults,
-      query,
-      maxResults: normalized.defaultMaxResults,
-    }, api);
+    const result = await probeCustomTool(
+      {
+        endpoint: normalized.endpoint,
+        queryParam: normalized.queryParam,
+        maxResultsParam: normalized.maxResultsParam,
+        defaultMaxResults: normalized.defaultMaxResults,
+        query,
+        maxResults: normalized.defaultMaxResults,
+      },
+      api,
+    );
     setActiveToolTestKey(null);
 
     if (!result.ok) {
@@ -274,7 +272,10 @@ export function ToolsTab() {
   if (isLoading || !llmSettings) {
     return (
       <>
-        <PageHeader title="Tools" description="Choose the capabilities available to your conversations." />
+        <PageHeader
+          title="Tools"
+          description="Choose the capabilities available to your conversations."
+        />
         <p className="text-sm text-text-muted">Loading…</p>
       </>
     );
@@ -282,7 +283,10 @@ export function ToolsTab() {
 
   return (
     <>
-      <PageHeader title="Tools" description="Choose the capabilities available to your conversations." />
+      <PageHeader
+        title="Tools"
+        description="Choose the capabilities available to your conversations."
+      />
 
       <SettingsSection title="Built in">
         {BUILT_IN_TOOLS.map((toolName) => (
@@ -299,24 +303,21 @@ export function ToolsTab() {
       <SettingsSection
         title="Presets"
         actions={
-          <button type="button" onClick={addPresetTool} className={SECONDARY_BUTTON_CLASS}>
+          <Button type="button" variant="outline" onClick={addPresetTool}>
             Add as tool
-          </button>
+          </Button>
         }
       >
         <SettingsRow label="Preset" htmlFor="tool-preset">
-          <select
+          <SettingsSelect
             id="tool-preset"
             value={selectedPresetId}
-            onChange={(event) => setSelectedPresetId(event.target.value)}
-            className={INPUT_CLASS}
-          >
-            {CUSTOM_TOOL_PRESETS.map((preset) => (
-              <option key={preset.id} value={preset.id}>
-                {preset.label}
-              </option>
-            ))}
-          </select>
+            onValueChange={setSelectedPresetId}
+            options={CUSTOM_TOOL_PRESETS.map((preset) => ({
+              value: preset.id,
+              label: preset.label,
+            }))}
+          />
         </SettingsRow>
 
         <SettingsRow label={selectedPreset.label} hint={selectedPreset.summary} stacked>
@@ -349,25 +350,25 @@ export function ToolsTab() {
         title="Custom tools"
         actions={
           <>
-            <button
+            <Button
               type="button"
+              variant="ghost"
               onClick={() => void importCustomToolsFromJson()}
               disabled={isImportingCustomTools}
-              className={GHOST_BUTTON_CLASS}
             >
               {isImportingCustomTools ? 'Importing…' : 'Import'}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="ghost"
               onClick={() => void exportCustomToolsToJson()}
               disabled={isExportingCustomTools || customToolsDraft.length === 0}
-              className={GHOST_BUTTON_CLASS}
             >
               {isExportingCustomTools ? 'Exporting…' : 'Export'}
-            </button>
-            <button type="button" onClick={addCustomTool} className={SECONDARY_BUTTON_CLASS}>
+            </Button>
+            <Button type="button" variant="outline" onClick={addCustomTool}>
               Add tool
-            </button>
+            </Button>
           </>
         }
       >
@@ -377,12 +378,11 @@ export function ToolsTab() {
             hint="Sent to the endpoint when you press Test."
             htmlFor="tool-test-query"
           >
-            <input
+            <Input
               id="tool-test-query"
               type="text"
               value={toolTestQuery}
               onChange={(event) => setToolTestQuery(event.target.value)}
-              className={INPUT_CLASS}
             />
           </SettingsRow>
         ) : null}
@@ -397,7 +397,7 @@ export function ToolsTab() {
             const idPrefix = `custom-tool-${index}`;
             return (
               <div key={testKey} className="border-b border-border-subtle py-4">
-                <div className="flex items-center justify-between gap-3 pb-2">
+                <div className="flex items-center justify-between gap-3 pb-3">
                   <div className="flex min-w-0 items-center gap-3">
                     <Switch
                       className={SWITCH_CLASS}
@@ -410,20 +410,21 @@ export function ToolsTab() {
                     </span>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="sm"
                       onClick={() => void testCustomTool(tool, index)}
                       disabled={activeToolTestKey === testKey}
-                      className={GHOST_BUTTON_CLASS}
                     >
                       {activeToolTestKey === testKey ? 'Testing…' : 'Test'}
-                    </button>
+                    </Button>
                     <button
                       type="button"
                       onClick={() => removeCustomTool(index)}
                       aria-label={`Remove ${tool.name || 'this tool'}`}
                       title="Remove tool"
-                      className="inline-flex h-7 w-7 items-center justify-center rounded-sm text-text-muted transition-colors duration-fast hover:bg-surface-raised hover:text-danger-fg"
+                      className={ROW_ACTION_CLASS}
                     >
                       <X className="h-4 w-4" />
                     </button>
@@ -436,17 +437,16 @@ export function ToolsTab() {
                     label="Name"
                     hint="Letters, numbers and underscores only."
                   >
-                    <input
+                    <Input
                       id={`${idPrefix}-name`}
                       type="text"
                       value={tool.name}
                       onChange={(event) => updateCustomTool(index, 'name', event.target.value)}
                       placeholder="pubmed_search"
-                      className={INPUT_CLASS}
                     />
                   </Field>
                   <Field id={`${idPrefix}-query-param`} label="Query param">
-                    <input
+                    <Input
                       id={`${idPrefix}-query-param`}
                       type="text"
                       value={tool.queryParam}
@@ -454,11 +454,10 @@ export function ToolsTab() {
                         updateCustomTool(index, 'queryParam', event.target.value)
                       }
                       placeholder="q"
-                      className={INPUT_CLASS}
                     />
                   </Field>
                   <Field id={`${idPrefix}-description`} label="Description" wide>
-                    <input
+                    <Input
                       id={`${idPrefix}-description`}
                       type="text"
                       value={tool.description}
@@ -466,21 +465,19 @@ export function ToolsTab() {
                         updateCustomTool(index, 'description', event.target.value)
                       }
                       placeholder="Search public medical abstracts"
-                      className={INPUT_CLASS}
                     />
                   </Field>
                   <Field id={`${idPrefix}-endpoint`} label="Endpoint" wide>
-                    <input
+                    <Input
                       id={`${idPrefix}-endpoint`}
                       type="url"
                       value={tool.endpoint}
                       onChange={(event) => updateCustomTool(index, 'endpoint', event.target.value)}
                       placeholder="https://example.org/search"
-                      className={INPUT_CLASS}
                     />
                   </Field>
                   <Field id={`${idPrefix}-max-results-param`} label="Max results param">
-                    <input
+                    <Input
                       id={`${idPrefix}-max-results-param`}
                       type="text"
                       value={tool.maxResultsParam || ''}
@@ -488,19 +485,19 @@ export function ToolsTab() {
                         updateCustomTool(index, 'maxResultsParam', event.target.value)
                       }
                       placeholder="limit"
-                      className={INPUT_CLASS}
                     />
                   </Field>
                   <Field id={`${idPrefix}-max-results`} label="Default max results">
-                    <input
+                    <SettingsNumberField
                       id={`${idPrefix}-max-results`}
-                      type="number"
                       min={1}
+                      step={1}
+                      integer
                       value={tool.defaultMaxResults}
-                      onChange={(event) =>
-                        updateCustomTool(index, 'defaultMaxResults', Number(event.target.value || 0))
+                      onDraftChange={(next) => updateCustomTool(index, 'defaultMaxResults', next)}
+                      onCommit={(next) =>
+                        updateCustomTool(index, 'defaultMaxResults', Math.max(1, Math.round(next)))
                       }
-                      className={NUMBER_FIELD_CLASS}
                     />
                   </Field>
                 </div>
@@ -510,22 +507,21 @@ export function ToolsTab() {
         )}
 
         <div className="flex items-center justify-end gap-2 pt-4">
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={resetCustomTools}
             disabled={!customToolsDirty || isSavingCustomTools}
-            className={GHOST_BUTTON_CLASS}
           >
             Discard changes
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
             onClick={handleAsyncEvent(persistCustomTools)}
             disabled={!customToolsDirty || isSavingCustomTools}
-            className={PRIMARY_BUTTON_CLASS}
           >
             {isSavingCustomTools ? 'Saving…' : 'Save tools'}
-          </button>
+          </Button>
         </div>
       </SettingsSection>
     </>
@@ -547,7 +543,7 @@ function Field({
 }) {
   return (
     <div className={wide ? 'md:col-span-2' : undefined}>
-      <label htmlFor={id} className="block pb-1 text-xs text-text-muted">
+      <label htmlFor={id} className="block pb-1 text-xs font-medium text-text-secondary">
         {label}
       </label>
       {children}

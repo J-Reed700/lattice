@@ -4,12 +4,13 @@
 
 import { useEffect, useState } from 'react';
 
-import { PageHeader, SettingsRow, SettingsSection, Switch } from '@/components/ui';
+import { PageHeader, SettingsRow, SettingsSection, Switch, Textarea } from '@/components/ui';
 import { toast } from '@/stores/toastStore';
 import type { LLMSettings as ApiLLMSettings } from '@/types/api/settings';
 
-import { NUMBER_FIELD_CLASS, SWITCH_CLASS, TEXTAREA_CLASS, clamp, toFinite } from './shared';
+import { SWITCH_CLASS, clamp } from './shared';
 import { useLlmSettings } from './useLlmSettings';
+import { RangeStepperControl, SettingsNumberField } from '../SettingControls';
 
 type VerificationSettings = ApiLLMSettings['verification'];
 
@@ -133,7 +134,10 @@ export function PromptsTab() {
   if (isLoading || !llmSettings) {
     return (
       <>
-        <PageHeader title="Prompts" description="Guide how Lattice responds and checks its answers." />
+        <PageHeader
+          title="Prompts"
+          description="Guide how Lattice responds and checks its answers."
+        />
         <p className="text-sm text-text-muted">Loading…</p>
       </>
     );
@@ -178,7 +182,10 @@ export function PromptsTab() {
 
   return (
     <>
-      <PageHeader title="Prompts" description="Guide how Lattice responds and checks its answers." />
+      <PageHeader
+        title="Prompts"
+        description="Guide how Lattice responds and checks its answers."
+      />
 
       <SettingsSection title="Verification">
         <SettingsRow
@@ -195,35 +202,41 @@ export function PromptsTab() {
 
         {VERIFICATION_FIELDS.map((field) => (
           <SettingsRow key={field.key} label={field.label} htmlFor={field.inputId}>
-            <input
-              id={field.inputId}
-              type="number"
-              min={field.min}
-              max={field.max}
-              step={field.step}
-              value={verificationDraft[field.key]}
-              disabled={!verificationEnabled}
-              onChange={(event) =>
-                setVerificationDraft((previous) => {
-                  const parsed = toFinite(event.target.value, previous[field.key]);
-                  return {
+            {field.max !== undefined ? (
+              <RangeStepperControl
+                id={field.inputId}
+                label={field.label}
+                min={field.min}
+                max={field.max}
+                step={field.step}
+                disabled={!verificationEnabled}
+                value={verificationDraft[field.key]}
+                onDraftChange={(next) =>
+                  setVerificationDraft((previous) => ({ ...previous, [field.key]: next }))
+                }
+                onCommit={(next) => void saveVerificationField(field, next)}
+              />
+            ) : (
+              <SettingsNumberField
+                id={field.inputId}
+                min={field.min}
+                step={field.step}
+                integer={field.step >= 1}
+                disabled={!verificationEnabled}
+                value={verificationDraft[field.key]}
+                onDraftChange={(next) =>
+                  setVerificationDraft((previous) => ({
                     ...previous,
-                    [field.key]: field.step >= 1 ? Math.round(parsed) : parsed,
-                  };
-                })
-              }
-              onBlur={(event) =>
-                void saveVerificationField(
-                  field,
-                  toFinite(event.target.value, verificationDraft[field.key])
-                )
-              }
-              className={NUMBER_FIELD_CLASS}
-            />
+                    [field.key]: field.step >= 1 ? Math.round(next) : next,
+                  }))
+                }
+                onCommit={(next) => void saveVerificationField(field, next)}
+              />
+            )}
           </SettingsRow>
         ))}
 
-        <p className="py-2 text-sm text-text-muted">
+        <p className="py-2.5 text-xs leading-relaxed text-text-muted">
           A verdict is a classification, not a piece of writing. Temperature 0 keeps the judge
           greedy, so the same claim against the same passage gets the same answer on every turn
           instead of a different one each time.
@@ -235,13 +248,13 @@ export function PromptsTab() {
           const inputId = `prompt-${String(template.key)}`;
           return (
             <SettingsRow key={template.key} label={template.label} htmlFor={inputId} stacked>
-              <textarea
+              <Textarea
                 id={inputId}
                 value={template.value}
                 onChange={(e) => template.setValue(e.target.value)}
                 onBlur={() => void savePromptField(template.key, template.value)}
                 rows={template.rows}
-                className={TEXTAREA_CLASS}
+                className="font-mono text-xs"
               />
             </SettingsRow>
           );

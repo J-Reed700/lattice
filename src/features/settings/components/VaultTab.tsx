@@ -6,12 +6,12 @@ import { useState } from 'react';
 
 import { open } from '@tauri-apps/plugin-dialog';
 
-import { PageHeader, SettingsRow, SettingsSection, Switch } from '@/components/ui';
+import { Button, PageHeader, SettingsRow, SettingsSection, Switch } from '@/components/ui';
 import { toast } from '@/stores/toastStore';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 import { BackupSection } from './BackupSection';
-import { GHOST_BUTTON_CLASS, SECONDARY_BUTTON_CLASS, SWITCH_CLASS } from './settingsStyles';
+import { SWITCH_CLASS } from './settingsStyles';
 import {
   useSettingsQuery,
   useUpdateSettingsMutation,
@@ -99,7 +99,10 @@ export function VaultTab() {
 
   return (
     <>
-      <PageHeader title="Vault" description="Manage the home for your notes, files, and backups." />
+      <PageHeader
+        title="Vault"
+        description="Manage the home for your notes, files, and backups."
+      />
 
       <SettingsSection title="Folder">
         <SettingsRow label="Path" stacked>
@@ -107,23 +110,23 @@ export function VaultTab() {
             <span className="min-w-0 flex-1 truncate font-mono text-xs text-text-primary">
               {vaultPath || '~/Lattice'}
             </span>
-            <button
+            <Button
               type="button"
+              variant="outline"
               onClick={handleAsyncEvent(handlePickFolder)}
               disabled={isPicking || isSaving || isSyncing}
-              className={SECONDARY_BUTTON_CLASS}
             >
               Choose
-            </button>
+            </Button>
             {vaultPath ? (
-              <button
+              <Button
                 type="button"
+                variant="ghost"
                 onClick={handleResetToDefault}
                 disabled={isSaving || isSyncing}
-                className={GHOST_BUTTON_CLASS}
               >
                 Reset
-              </button>
+              </Button>
             ) : null}
           </div>
         </SettingsRow>

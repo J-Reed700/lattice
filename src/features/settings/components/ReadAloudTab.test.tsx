@@ -11,6 +11,7 @@ import type { SpeechStatusDto } from '@/lib/bindings';
 import { createTestApi } from '@/tests/apiClient';
 import type { DownloadStatus } from '@/types/downloads';
 
+import { chooseRadixOption } from './radixSelectTestUtils';
 import { ReadAloudTab } from './ReadAloudTab';
 import { startModelDownload } from '../hooks/startModelDownload';
 
@@ -230,7 +231,7 @@ describe('ReadAloudTab', () => {
       ),
     );
 
-    await user.selectOptions(screen.getByLabelText('Speed'), '1.25');
+    await chooseRadixOption(screen.getByLabelText('Speed'), '1.25×', user);
     expect(useSpeechPrefsStore.getState().speed).toBe(1.25);
   });
 });

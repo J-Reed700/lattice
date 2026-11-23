@@ -13,6 +13,7 @@ import { isCloudProvider, resolveDefaultChatOption } from '@/utils/chatModelSele
 
 import { AIModelsTab } from './AIModelsTab';
 import { LlmSettingsProvider } from './AITab/LlmSettingsProvider';
+import { chooseRadixOption } from './radixSelectTestUtils';
 
 let settings = makeAppSettings();
 let models: DownloadedModel[];
@@ -351,9 +352,9 @@ describe('Downloaded model chat selection', () => {
     it('declares that the llama.cpp model sees, saved under its model reference', async () => {
       const user = await renderModels();
       const vision = screen.getByRole('combobox', { name: 'Vision' });
-      expect(vision).toHaveValue('off');
+      expect(vision).toHaveTextContent('Off');
 
-      await user.selectOptions(vision, 'gemma_siglip');
+      await chooseRadixOption(vision, /Gemma/i, user);
       await waitFor(() => expect(settings.llm.visionDeclarations).toEqual({
         'llamacpp:remote-model.gguf': { enabled: true, geometry: { kind: 'fixed', side: 896, tokens: 256 } },
       }));
@@ -365,8 +366,9 @@ describe('Downloaded model chat selection', () => {
       settings.llm.model = 'gemini-test';
       await renderModels();
       expect(screen.getByText('Google connection')).toBeInTheDocument();
-      expect(screen.getAllByRole('combobox', { name: 'Vision' }).map((select) => (select as HTMLSelectElement).value))
-        .toEqual(['off', 'gemini']);
+      const labels = screen.getAllByRole('combobox', { name: 'Vision' }).map((select) => select.textContent);
+      expect(labels[0]).toBe('Off');
+      expect(labels[1]).toMatch(/Gemini/i);
     });
   });
 

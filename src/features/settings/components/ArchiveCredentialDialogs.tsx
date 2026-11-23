@@ -1,13 +1,14 @@
 import {
+  Button,
   Dialog,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-
-import { GHOST_BUTTON_CLASS, PRIMARY_BUTTON_CLASS } from './settingsStyles';
+  Input,
+  Textarea,
+} from '@/components/ui';
 
 export const MIN_PASSPHRASE_LENGTH = 8;
 
@@ -50,45 +51,36 @@ export function RestoreSecretDialog({
         </DialogHeader>
 
         <div>
-          <label htmlFor="archive-restore-secret" className="block text-xs text-text-secondary">
-            Passphrase or recovery code
-          </label>
-          <textarea
+          <Textarea
             id="archive-restore-secret"
+            label="Passphrase or recovery code"
             rows={3}
             autoComplete="off"
             spellCheck={false}
             value={secret}
             onChange={(event) => onSecretChange(event.target.value)}
-            className="mt-1 w-full rounded-sm border border-border-default bg-bg px-2.5 py-2 font-mono text-xs leading-relaxed text-text-primary outline-hidden transition-colors duration-fast focus:border-accent"
+            className="font-mono text-xs"
+            helperText="Either works. Paste the 24 recovery words with spaces between them."
           />
-          <p className="mt-1 text-xs text-text-muted">
-            Either works. Paste the 24 recovery words with spaces between them.
-          </p>
         </div>
 
         {error ? (
-          <p role="alert" className="text-sm text-danger">
+          <p role="alert" className="text-sm text-danger-fg">
             {error}
           </p>
         ) : null}
 
         <DialogFooter>
-          <button
-            type="button"
-            onClick={onDismiss}
-            className={GHOST_BUTTON_CLASS}
-          >
+          <Button type="button" variant="ghost" onClick={onDismiss}>
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
             onClick={() => onUnlock(secret.trim())}
             disabled={secret.trim().length === 0 || isRestoring}
-            className={PRIMARY_BUTTON_CLASS}
           >
             {isRestoring ? 'Unlocking…' : 'Unlock'}
-          </button>
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -141,74 +133,44 @@ export function PassphraseDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-2">
-          <div>
-            <label
-              htmlFor="archive-new-passphrase"
-              className="block text-xs text-text-secondary"
-            >
-              Passphrase
-            </label>
-            <input
-              id="archive-new-passphrase"
-              type="password"
-              autoComplete="new-password"
-              value={newPassphrase}
-              onChange={(event) => onNewPassphraseChange(event.target.value)}
-              className="mt-1 h-8 w-full rounded-sm border border-border-default bg-bg px-2.5 text-sm text-text-primary outline-hidden transition-colors duration-fast focus:border-accent"
-            />
-          </div>
-          <div>
-            <label
-              htmlFor="archive-new-passphrase-again"
-              className="block text-xs text-text-secondary"
-            >
-              Passphrase again
-            </label>
-            <input
-              id="archive-new-passphrase-again"
-              type="password"
-              autoComplete="new-password"
-              value={newPassphraseAgain}
-              onChange={(event) => onNewPassphraseAgainChange(event.target.value)}
-              className="mt-1 h-8 w-full rounded-sm border border-border-default bg-bg px-2.5 text-sm text-text-primary outline-hidden transition-colors duration-fast focus:border-accent"
-            />
-          </div>
-          <p className="text-xs text-text-muted">At least {MIN_PASSPHRASE_LENGTH} characters.</p>
+        <div className="space-y-3">
+          <Input
+            id="archive-new-passphrase"
+            label="Passphrase"
+            type="password"
+            autoComplete="new-password"
+            value={newPassphrase}
+            onChange={(event) => onNewPassphraseChange(event.target.value)}
+          />
+          <Input
+            id="archive-new-passphrase-again"
+            label="Passphrase again"
+            type="password"
+            autoComplete="new-password"
+            value={newPassphraseAgain}
+            onChange={(event) => onNewPassphraseAgainChange(event.target.value)}
+            helperText={`At least ${MIN_PASSPHRASE_LENGTH} characters.`}
+          />
         </div>
 
         {error ? (
-          <p role="alert" className="text-sm text-danger">
+          <p role="alert" className="text-sm text-danger-fg">
             {error}
           </p>
         ) : null}
 
         <DialogFooter>
           {hasPassphrase ? (
-            <button
-              type="button"
-              onClick={onRemove}
-              disabled={isSaving}
-              className={GHOST_BUTTON_CLASS}
-            >
+            <Button type="button" variant="ghost" onClick={onRemove} disabled={isSaving}>
               Remove passphrase
-            </button>
+            </Button>
           ) : null}
-          <button
-            type="button"
-            onClick={onClose}
-            className={GHOST_BUTTON_CLASS}
-          >
+          <Button type="button" variant="ghost" onClick={onClose}>
             Cancel
-          </button>
-          <button
-            type="button"
-            onClick={onSubmit}
-            disabled={isSaving}
-            className={PRIMARY_BUTTON_CLASS}
-          >
+          </Button>
+          <Button type="button" onClick={onSubmit} disabled={isSaving}>
             {isSaving ? 'Saving…' : 'Save'}
-          </button>
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

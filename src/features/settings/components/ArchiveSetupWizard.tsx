@@ -3,29 +3,25 @@
  *
  * Five steps to turn on off-device backup, or three of them to issue a
  * replacement recovery code.
- *
- * The recovery code is the only part of this the user has to keep. Lattice
- * holds no copy of it and cannot reset it, so step 2 shows the words, step 3
- * makes the user prove three of them were written down, and nothing is
- * persisted until step 3 succeeds — closing before then throws away a key that
- * only ever existed in the backend's memory.
  */
 
 import { useEffect, useMemo, useState } from 'react';
 
-import { Badge } from '@/components/ui/badge';
 import {
+  Badge,
+  Button,
+  Checkbox,
   Dialog,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
+  Input,
+} from '@/components/ui';
 import { toast } from '@/stores/toastStore';
 import type { ArchiveStatus, WordConfirmation } from '@/types/api/backup';
 
-import { GHOST_BUTTON_CLASS, PRIMARY_BUTTON_CLASS, SECONDARY_BUTTON_CLASS } from './settingsStyles';
 import {
   useBeginArchiveSetupMutation,
   useChooseArchiveDestinationMutation,
@@ -186,7 +182,6 @@ export function ArchiveSetupWizard({ open, mode, status, onClose }: ArchiveSetup
       index,
       word: (typedWords[index] ?? '').trim(),
     }));
-    // The passphrase is set in its own step, against the key this call stores.
     confirmSetup.mutate(
       { confirmations, passphrase: null },
       {
@@ -258,7 +253,7 @@ export function ArchiveSetupWizard({ open, mode, status, onClose }: ArchiveSetup
         </DialogHeader>
 
         {error ? (
-          <p role="alert" className="text-sm text-danger">
+          <p role="alert" className="text-sm text-danger-fg">
             {error}
           </p>
         ) : null}
@@ -302,23 +297,19 @@ export function ArchiveSetupWizard({ open, mode, status, onClose }: ArchiveSetup
             </ol>
 
             <div className="flex items-center gap-2">
-              <button type="button" onClick={copyWords} className={SECONDARY_BUTTON_CLASS}>
+              <Button type="button" variant="outline" onClick={copyWords}>
                 Copy
-              </button>
-              <button type="button" onClick={printWords} className={SECONDARY_BUTTON_CLASS}>
+              </Button>
+              <Button type="button" variant="outline" onClick={printWords}>
                 Print
-              </button>
+              </Button>
             </div>
 
-            <label className="flex items-start gap-2 text-sm text-text-secondary">
-              <input
-                type="checkbox"
-                checked={savedAcknowledged}
-                onChange={(event) => setSavedAcknowledged(event.target.checked)}
-                className="mt-0.5 h-4 w-4 rounded-sm border-border-default bg-bg accent-accent"
-              />
-              <span>I have saved these words somewhere safe</span>
-            </label>
+            <Checkbox
+              label="I have saved these words somewhere safe"
+              checked={savedAcknowledged}
+              onCheckedChange={setSavedAcknowledged}
+            />
           </div>
         ) : null}
 
@@ -331,23 +322,20 @@ export function ArchiveSetupWizard({ open, mode, status, onClose }: ArchiveSetup
               {confirmIndices.map((index) => {
                 const inputId = `archive-confirm-word-${index}`;
                 return (
-                  <div key={index}>
-                    <label htmlFor={inputId} className="block text-xs text-text-secondary">
-                      Word {index + 1}
-                    </label>
-                    <input
-                      id={inputId}
-                      type="text"
-                      autoComplete="off"
-                      autoCapitalize="none"
-                      spellCheck={false}
-                      value={typedWords[index] ?? ''}
-                      onChange={(event) =>
-                        setTypedWords((prev) => ({ ...prev, [index]: event.target.value }))
-                      }
-                      className="mt-1 h-8 w-full rounded-sm border border-border-default bg-bg px-2.5 font-mono text-sm text-text-primary outline-hidden transition-colors duration-fast focus:border-accent"
-                    />
-                  </div>
+                  <Input
+                    key={index}
+                    id={inputId}
+                    label={`Word ${index + 1}`}
+                    type="text"
+                    autoComplete="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    value={typedWords[index] ?? ''}
+                    onChange={(event) =>
+                      setTypedWords((prev) => ({ ...prev, [index]: event.target.value }))
+                    }
+                    className="font-mono"
+                  />
                 );
               })}
             </div>
@@ -361,37 +349,24 @@ export function ArchiveSetupWizard({ open, mode, status, onClose }: ArchiveSetup
               one, the recovery code is the only way into your archives. Lattice cannot reset a
               forgotten passphrase — the recovery code is what gets you back in.
             </p>
-            <div className="space-y-2">
-              <div>
-                <label htmlFor="archive-passphrase" className="block text-xs text-text-secondary">
-                  Passphrase
-                </label>
-                <input
-                  id="archive-passphrase"
-                  type="password"
-                  autoComplete="new-password"
-                  value={passphrase}
-                  onChange={(event) => setPassphrase(event.target.value)}
-                  className="mt-1 h-8 w-full rounded-sm border border-border-default bg-bg px-2.5 text-sm text-text-primary outline-hidden transition-colors duration-fast focus:border-accent"
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="archive-passphrase-again"
-                  className="block text-xs text-text-secondary"
-                >
-                  Passphrase again
-                </label>
-                <input
-                  id="archive-passphrase-again"
-                  type="password"
-                  autoComplete="new-password"
-                  value={passphraseAgain}
-                  onChange={(event) => setPassphraseAgain(event.target.value)}
-                  className="mt-1 h-8 w-full rounded-sm border border-border-default bg-bg px-2.5 text-sm text-text-primary outline-hidden transition-colors duration-fast focus:border-accent"
-                />
-              </div>
-              <p className="text-xs text-text-muted">At least {MIN_PASSPHRASE_LENGTH} characters.</p>
+            <div className="space-y-3">
+              <Input
+                id="archive-passphrase"
+                label="Passphrase"
+                type="password"
+                autoComplete="new-password"
+                value={passphrase}
+                onChange={(event) => setPassphrase(event.target.value)}
+              />
+              <Input
+                id="archive-passphrase-again"
+                label="Passphrase again"
+                type="password"
+                autoComplete="new-password"
+                value={passphraseAgain}
+                onChange={(event) => setPassphraseAgain(event.target.value)}
+                helperText={`At least ${MIN_PASSPHRASE_LENGTH} characters.`}
+              />
             </div>
           </div>
         ) : null}
@@ -414,82 +389,74 @@ export function ArchiveSetupWizard({ open, mode, status, onClose }: ArchiveSetup
             ) : (
               <p className="text-xs text-text-muted">No folder chosen yet.</p>
             )}
-            <button
+            <Button
               type="button"
+              variant="outline"
               onClick={pickDestination}
               disabled={chooseDestination.isPending}
-              className={SECONDARY_BUTTON_CLASS}
             >
               {shownStatus?.destination ? 'Change folder' : 'Choose folder'}
-            </button>
+            </Button>
           </div>
         ) : null}
 
         <DialogFooter>
-          <button type="button" onClick={onClose} className={GHOST_BUTTON_CLASS}>
+          <Button type="button" variant="ghost" onClick={onClose}>
             {step === 'destination' ? 'Close' : 'Cancel'}
-          </button>
+          </Button>
 
           {step === 'intro' ? (
-            <button
-              type="button"
-              onClick={startCode}
-              disabled={isGenerating}
-              className={PRIMARY_BUTTON_CLASS}
-            >
+            <Button type="button" onClick={startCode} disabled={isGenerating}>
               {isGenerating ? 'Working…' : 'Show my recovery code'}
-            </button>
+            </Button>
           ) : null}
 
           {step === 'words' ? (
-            <button
+            <Button
               type="button"
               onClick={() => setStep('confirm')}
               disabled={!savedAcknowledged}
-              className={PRIMARY_BUTTON_CLASS}
             >
               Next
-            </button>
+            </Button>
           ) : null}
 
           {step === 'confirm' ? (
-            <button
+            <Button
               type="button"
               onClick={submitConfirmation}
               disabled={!confirmationsComplete || confirmSetup.isPending}
-              className={PRIMARY_BUTTON_CLASS}
             >
               {confirmSetup.isPending ? 'Checking…' : 'Confirm'}
-            </button>
+            </Button>
           ) : null}
 
           {step === 'passphrase' ? (
             <>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
                 onClick={() => {
                   setError(null);
                   setStep('destination');
                 }}
-                className={GHOST_BUTTON_CLASS}
               >
                 Skip
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
                 onClick={submitPassphrase}
                 disabled={setPassphraseMutation.isPending}
-                className={PRIMARY_BUTTON_CLASS}
               >
                 {setPassphraseMutation.isPending ? 'Saving…' : 'Set passphrase'}
-              </button>
+              </Button>
             </>
           ) : null}
 
           {step === 'destination' ? (
-            <button type="button" onClick={onClose} className={PRIMARY_BUTTON_CLASS}>
+            <Button type="button" onClick={onClose}>
               Done
-            </button>
+            </Button>
           ) : null}
         </DialogFooter>
       </DialogContent>

@@ -1,9 +1,9 @@
 import type { Dispatch, SetStateAction } from 'react';
 
-import { SettingsRow, SettingsSection } from '@/components/ui';
+import { SettingsRow, SettingsSection, Textarea } from '@/components/ui';
 import type { LLMSettings as ApiLLMSettings } from '@/types/api/settings';
 
-import { NUMBER_FIELD_CLASS, TEXTAREA_CLASS, toFinite } from './shared';
+import { SettingsNumberField } from '../SettingControls';
 
 /**
  * How tool results are templated, and how long a source card's excerpt is. How
@@ -22,7 +22,7 @@ export function ToolOutputTuningSection({
 }) {
   const saveToolOutputField = async <K extends keyof ApiLLMSettings['toolOutput']>(
     key: K,
-    value: ApiLLMSettings['toolOutput'][K]
+    value: ApiLLMSettings['toolOutput'][K],
   ) => {
     if (!llmSettings) return;
     if (llmSettings.toolOutput[key] === value) return;
@@ -36,7 +36,7 @@ export function ToolOutputTuningSection({
 
   const saveToolTemplateField = async <K extends keyof ApiLLMSettings['toolOutput']['templates']>(
     key: K,
-    value: ApiLLMSettings['toolOutput']['templates'][K]
+    value: ApiLLMSettings['toolOutput']['templates'][K],
   ) => {
     if (!llmSettings) return;
     if (llmSettings.toolOutput.templates[key] === value) return;
@@ -54,65 +54,43 @@ export function ToolOutputTuningSection({
   return (
     <SettingsSection title="Tool output">
       <SettingsRow label="Excerpt characters" htmlFor="tool-excerpt-chars">
-        <input
+        <SettingsNumberField
           id="tool-excerpt-chars"
-          type="number"
           min={1}
           step={50}
+          integer
           value={toolOutputDraft.excerptChars}
-          onChange={(event) =>
+          onDraftChange={(next) =>
             setToolOutputDraft((previous) =>
-              previous
-                ? {
-                    ...previous,
-                    excerptChars: Math.round(
-                      toFinite(event.target.value, previous.excerptChars)
-                    ),
-                  }
-                : previous
+              previous ? { ...previous, excerptChars: Math.round(next) } : previous,
             )
           }
-          onBlur={() =>
-            void saveToolOutputField(
-              'excerptChars',
-              Math.max(1, Math.round(toolOutputDraft.excerptChars))
-            )
+          onCommit={(next) =>
+            void saveToolOutputField('excerptChars', Math.max(1, Math.round(next)))
           }
-          className={NUMBER_FIELD_CLASS}
         />
       </SettingsRow>
 
       <SettingsRow label="Highlight terms" htmlFor="tool-highlight-terms">
-        <input
+        <SettingsNumberField
           id="tool-highlight-terms"
-          type="number"
           min={1}
           step={1}
+          integer
           value={toolOutputDraft.highlightTermsMax}
-          onChange={(event) =>
+          onDraftChange={(next) =>
             setToolOutputDraft((previous) =>
-              previous
-                ? {
-                    ...previous,
-                    highlightTermsMax: Math.round(
-                      toFinite(event.target.value, previous.highlightTermsMax)
-                    ),
-                  }
-                : previous
+              previous ? { ...previous, highlightTermsMax: Math.round(next) } : previous,
             )
           }
-          onBlur={() =>
-            void saveToolOutputField(
-              'highlightTermsMax',
-              Math.max(1, Math.round(toolOutputDraft.highlightTermsMax))
-            )
+          onCommit={(next) =>
+            void saveToolOutputField('highlightTermsMax', Math.max(1, Math.round(next)))
           }
-          className={NUMBER_FIELD_CLASS}
         />
       </SettingsRow>
 
       <SettingsRow label="Default template" htmlFor="tool-default-template" stacked>
-        <textarea
+        <Textarea
           id="tool-default-template"
           value={toolOutputDraft.templates.defaultTemplate}
           onChange={(event) =>
@@ -122,22 +100,22 @@ export function ToolOutputTuningSection({
                     ...previous,
                     templates: { ...previous.templates, defaultTemplate: event.target.value },
                   }
-                : previous
+                : previous,
             )
           }
           onBlur={() =>
             void saveToolTemplateField(
               'defaultTemplate',
-              toolOutputDraft.templates.defaultTemplate
+              toolOutputDraft.templates.defaultTemplate,
             )
           }
           rows={3}
-          className={TEXTAREA_CLASS}
+          className="font-mono text-xs"
         />
       </SettingsRow>
 
       <SettingsRow label="Get document template" htmlFor="tool-get-document-template" stacked>
-        <textarea
+        <Textarea
           id="tool-get-document-template"
           value={toolOutputDraft.templates.getDocumentTemplate}
           onChange={(event) =>
@@ -150,22 +128,22 @@ export function ToolOutputTuningSection({
                       getDocumentTemplate: event.target.value,
                     },
                   }
-                : previous
+                : previous,
             )
           }
           onBlur={() =>
             void saveToolTemplateField(
               'getDocumentTemplate',
-              toolOutputDraft.templates.getDocumentTemplate
+              toolOutputDraft.templates.getDocumentTemplate,
             )
           }
           rows={3}
-          className={TEXTAREA_CLASS}
+          className="font-mono text-xs"
         />
       </SettingsRow>
 
       <SettingsRow label="Semantic search template" htmlFor="tool-semantic-template" stacked>
-        <textarea
+        <Textarea
           id="tool-semantic-template"
           value={toolOutputDraft.templates.semanticSearchTemplate}
           onChange={(event) =>
@@ -178,17 +156,17 @@ export function ToolOutputTuningSection({
                       semanticSearchTemplate: event.target.value,
                     },
                   }
-                : previous
+                : previous,
             )
           }
           onBlur={() =>
             void saveToolTemplateField(
               'semanticSearchTemplate',
-              toolOutputDraft.templates.semanticSearchTemplate
+              toolOutputDraft.templates.semanticSearchTemplate,
             )
           }
           rows={3}
-          className={TEXTAREA_CLASS}
+          className="font-mono text-xs"
         />
       </SettingsRow>
     </SettingsSection>
