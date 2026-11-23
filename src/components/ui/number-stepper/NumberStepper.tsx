@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useId, useState } from 'react';
+import { forwardRef, useId, useState } from 'react';
 
 import { Minus, Plus } from 'lucide-react';
 
@@ -103,22 +103,29 @@ const NumberStepper = forwardRef<HTMLInputElement, NumberStepperProps>(
 
     const [uncontrolledValue, setUncontrolledValue] = useState<number>(initialNumeric);
     const currentNumeric = isControlled ? value : uncontrolledValue;
-    const [draft, setDraft] = useState<string>(() => String(currentNumeric));
-    const [isFocused, setIsFocused] = useState(false);
+    // `editingDraft` is only non-null while the user is actively typing raw text.
+    // On step/Enter/blur it resets to `null` so controlled components always stay
+    // locked to `value` even if the parent rejects or normalizes `onValueChange`.
+    const [editingDraft, setEditingDraft] = useState<string | null>(null);
+    const displayValue = editingDraft ?? String(currentNumeric);
 
-    useEffect(() => {
-      if (!isFocused) {
-        setDraft(String(currentNumeric));
-      }
-    }, [currentNumeric, isFocused]);
+    const parsedDraft =
+      editingDraft !== null && editingDraft.trim() !== ''
+        ? Number(editingDraft.trim())
+        : Number.NaN;
+    const effectiveNumeric = Number.isFinite(parsedDraft)
+      ? clampNumber(parsedDraft, min, max)
+      : Number.isFinite(currentNumeric)
+        ? currentNumeric
+        : (min ?? 0);
 
     const commit = (raw: number, snapPrecision = false) => {
       const candidate = snapPrecision ? roundToStep(raw, step) : raw;
       const next = clampNumber(candidate, min, max);
+      setEditingDraft(null);
       if (!isControlled) {
         setUncontrolledValue(next);
       }
-      setDraft(String(next));
       if (next !== currentNumeric) {
         onValueChange?.(next);
       }
@@ -126,13 +133,12 @@ const NumberStepper = forwardRef<HTMLInputElement, NumberStepperProps>(
 
     const stepBy = (delta: number) => {
       if (disabled || readOnly) return;
-      const base = Number.isFinite(currentNumeric) ? currentNumeric : (min ?? 0);
-      commit(base + delta, true);
+      commit(effectiveNumeric + delta, true);
     };
 
     const handleInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
       const nextText = event.currentTarget.value;
-      setDraft(nextText);
+      setEditingDraft(nextText);
       const trimmed = nextText.trim();
       if (trimmed === '' || trimmed === '-' || trimmed === '.' || trimmed === '-.') {
         return;
@@ -153,9 +159,11 @@ const NumberStepper = forwardRef<HTMLInputElement, NumberStepperProps>(
     };
 
     const commitDraft = () => {
-      const parsed = Number(draft.trim());
-      if (draft.trim() === '' || !Number.isFinite(parsed)) {
-        setDraft(String(currentNumeric));
+      if (editingDraft === null) return;
+      const trimmed = editingDraft.trim();
+      const parsed = Number(trimmed);
+      if (trimmed === '' || !Number.isFinite(parsed)) {
+        setEditingDraft(null);
         return;
       }
       commit(parsed);
@@ -186,8 +194,8 @@ const NumberStepper = forwardRef<HTMLInputElement, NumberStepperProps>(
       }
     };
 
-    const atMin = min !== undefined && currentNumeric <= min;
-    const atMax = max !== undefined && currentNumeric >= max;
+    const atMin = min !== undefined && effectiveNumeric <= min;
+    const atMax = max !== undefined && effectiveNumeric >= max;
     const heightClass = size === 'sm' ? 'h-7 rounded-md' : 'h-8 rounded-lg';
     const buttonWidthClass = size === 'sm' ? 'w-7' : 'w-8';
 
@@ -217,6 +225,7 @@ const NumberStepper = forwardRef<HTMLInputElement, NumberStepperProps>(
             tabIndex={-1}
             aria-label={decrementLabel}
             disabled={disabled || readOnly || atMin}
+            onMouseDown={(event) => event.preventDefault()}
             onClick={() => stepBy(-step)}
             className={cn(
               'inline-flex shrink-0 items-center justify-center border-r border-border-subtle text-text-secondary transition-colors duration-fast',
@@ -239,7 +248,7 @@ const NumberStepper = forwardRef<HTMLInputElement, NumberStepperProps>(
               type="text"
               inputMode="decimal"
               role="spinbutton"
-              value={draft}
+              value={displayValue}
               disabled={disabled}
               readOnly={readOnly}
               aria-label={ariaLabel}
@@ -249,11 +258,7 @@ const NumberStepper = forwardRef<HTMLInputElement, NumberStepperProps>(
               aria-valuenow={Number.isFinite(currentNumeric) ? currentNumeric : undefined}
               aria-invalid={hasError}
               aria-describedby={errorId || helperId}
-              onFocus={() => setIsFocused(true)}
-              onBlur={() => {
-                setIsFocused(false);
-                commitDraft();
-              }}
+              onBlur={commitDraft}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
               className={cn(
@@ -271,6 +276,7 @@ const NumberStepper = forwardRef<HTMLInputElement, NumberStepperProps>(
             tabIndex={-1}
             aria-label={incrementLabel}
             disabled={disabled || readOnly || atMax}
+            onMouseDown={(event) => event.preventDefault()}
             onClick={() => stepBy(step)}
             className={cn(
               'inline-flex shrink-0 items-center justify-center border-l border-border-subtle text-text-secondary transition-colors duration-fast',

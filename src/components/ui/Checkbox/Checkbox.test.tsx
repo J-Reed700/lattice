@@ -46,4 +46,19 @@ describe('Checkbox', () => {
     expect(input).toHaveAttribute('aria-describedby', 'tos-error');
     expect(screen.getByRole('alert')).toHaveTextContent('Required to continue');
   });
+
+  it('wires both description and error ids into aria-describedby when both are present', () => {
+    render(
+      <Checkbox
+        id="consent"
+        label="Share diagnostics"
+        description="Anonymous crash traces only"
+        error="Selection required"
+      />,
+    );
+    const input = screen.getByRole('checkbox', { name: 'Share diagnostics' });
+    expect(input).toHaveAttribute('aria-describedby', 'consent-description consent-error');
+    expect(screen.getByText('Anonymous crash traces only')).toHaveAttribute('id', 'consent-description');
+    expect(screen.getByRole('alert')).toHaveAttribute('id', 'consent-error');
+  });
 });

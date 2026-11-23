@@ -54,7 +54,24 @@ describe('Slider', () => {
 
   it('guards against degenerate min === max range without NaN widths', () => {
     const { container } = render(<Slider label="Locked" min={5} max={5} value={5} />);
-    const fill = container.querySelector('.bg-accent') as HTMLElement | null;
+    const fill = container.querySelector('[data-slot="slider-fill"]') as HTMLElement | null;
     expect(fill?.style.width).toBe('0%');
+  });
+
+  it('keeps the 16px thumb bounded within track edges at 0%, 50%, and 100%', () => {
+    const { container, rerender } = render(<Slider label="Level" min={0} max={100} value={0} />);
+    const thumb = () => container.querySelector('[data-slot="slider-thumb"]') as HTMLElement;
+    const fill = () => container.querySelector('[data-slot="slider-fill"]') as HTMLElement;
+
+    expect(thumb().style.left).toBe('calc(0% + 8px)');
+    expect(fill().style.width).toBe('0%');
+
+    rerender(<Slider label="Level" min={0} max={100} value={50} />);
+    expect(thumb().style.left).toBe('50%');
+    expect(fill().style.width).toBe('50%');
+
+    rerender(<Slider label="Level" min={0} max={100} value={100} />);
+    expect(thumb().style.left).toBe('calc(100% - 8px)');
+    expect(fill().style.width).toBe('100%');
   });
 });

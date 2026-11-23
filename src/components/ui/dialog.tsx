@@ -59,7 +59,7 @@ const DialogContent = React.forwardRef<
         ref={ref}
         forceMount={forceMount}
         className={unstyled ? className : cn(
-          "surface-pop fixed left-1/2 top-1/2 z-50 grid w-[calc(100%-32px)] max-w-lg grid-cols-[minmax(0,1fr)] gap-4 rounded-2xl border border-border-subtle bg-surface-overlay p-6 shadow-lg outline-hidden [translate:-50%_-50%]",
+          "surface-pop fixed left-1/2 top-1/2 z-50 grid w-[calc(100%-32px)] max-w-lg grid-cols-[minmax(0,1fr)] gap-4 rounded-2xl bg-surface-overlay p-6 shadow-lg outline-hidden [translate:-50%_-50%]",
           className
         )}
         onOpenAutoFocus={(event) => {

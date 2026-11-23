@@ -42,6 +42,7 @@ const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(
     const checkboxId = id ?? `checkbox-${generatedId}`;
     const errorId = error ? `${checkboxId}-error` : undefined;
     const descriptionId = description ? `${checkboxId}-description` : undefined;
+    const describedBy = [descriptionId, errorId].filter(Boolean).join(' ') || undefined;
     const hasError = Boolean(error);
 
     const isControlled = checked !== undefined;
@@ -90,7 +91,7 @@ const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(
                 disabled={disabled}
                 aria-checked={indeterminate ? 'mixed' : undefined}
                 aria-invalid={hasError}
-                aria-describedby={errorId || descriptionId}
+                aria-describedby={describedBy}
                 className="peer sr-only"
                 {...props}
               />

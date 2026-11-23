@@ -103,4 +103,35 @@ describe('NumberStepper', () => {
     expect(screen.getByRole('spinbutton')).toHaveAttribute('aria-invalid', 'true');
     expect(screen.getByRole('alert')).toHaveTextContent('No capacity');
   });
+
+  it('steps from clamped uncommitted draft without blur-click race when clicking decrement', () => {
+    const onValueChange = vi.fn();
+    render(<NumberStepper label="Percent" defaultValue={50} min={0} max={100} step={1} onValueChange={onValueChange} />);
+    const input = screen.getByRole('spinbutton', { name: 'Percent' });
+    const dec = screen.getByRole('button', { name: 'Decrease value' });
+
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: '120' } });
+    fireEvent.mouseDown(dec);
+    fireEvent.click(dec);
+
+    expect(onValueChange).toHaveBeenLastCalledWith(99);
+    expect(input).toHaveValue('99');
+  });
+
+  it('stays synced with controlled value if parent rejects or normalizes onValueChange', () => {
+    const onValueChange = vi.fn();
+    render(<NumberStepper label="Fixed" value={10} min={0} max={100} step={1} onValueChange={onValueChange} />);
+    const input = screen.getByRole('spinbutton', { name: 'Fixed' });
+    const inc = screen.getByRole('button', { name: 'Increase value' });
+
+    fireEvent.focus(input);
+    fireEvent.click(inc);
+    expect(onValueChange).toHaveBeenCalledWith(11);
+    expect(input).toHaveValue('10');
+    expect(input).toHaveAttribute('aria-valuenow', '10');
+
+    fireEvent.keyDown(input, { key: 'ArrowUp' });
+    expect(input).toHaveValue('10');
+  });
 });

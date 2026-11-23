@@ -74,6 +74,16 @@ const Slider = forwardRef<HTMLInputElement, SliderProps>(
     const safeValue = Number.isFinite(currentValue) ? clamp(currentValue, min, max) : min;
     const percent = max > min ? clamp(((safeValue - min) / (max - min)) * 100, 0, 100) : 0;
     const formattedValue = formatValue ? formatValue(safeValue) : String(safeValue);
+    // Keep the 16px thumb center bounded within [8px, calc(100% - 8px)] so the
+    // thumb never clips outside overflow-hidden containers at 0% or 100%.
+    const thumbOffset = Number((8 - (percent / 100) * 16).toFixed(4));
+    const thumbLeft =
+      thumbOffset === 0
+        ? `${percent}%`
+        : thumbOffset > 0
+          ? `calc(${percent}% + ${thumbOffset}px)`
+          : `calc(${percent}% - ${Math.abs(thumbOffset)}px)`;
+    const fillWidth = percent === 0 ? '0%' : percent === 100 ? '100%' : thumbLeft;
 
     const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
       const next = Number(event.currentTarget.value);
@@ -153,20 +163,22 @@ const Slider = forwardRef<HTMLInputElement, SliderProps>(
           >
             {/* Active copper progress fill */}
             <div
+              data-slot="slider-fill"
               className="h-full rounded-full bg-accent transition-[width] duration-instant ease-out"
-              style={{ width: `${percent}%` }}
+              style={{ width: fillWidth }}
             />
           </div>
 
           {/* Tactile thumb */}
           <div
             aria-hidden="true"
+            data-slot="slider-thumb"
             className={cn(
               'pointer-events-none absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-accent bg-surface-overlay shadow-sm transition-[transform,box-shadow,border-color] duration-fast ease-out',
               !disabled && 'group-hover:scale-110 peer-active:scale-95',
               'peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-bg',
             )}
-            style={{ left: `${percent}%` }}
+            style={{ left: thumbLeft }}
           />
         </div>
 
