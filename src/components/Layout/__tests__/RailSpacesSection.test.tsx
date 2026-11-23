@@ -10,7 +10,7 @@ import { VaultAPI } from '@/lib/api';
 import type { ConversationSpaceDto } from '@/types';
 
 import { RailSpacesSection } from '../RailSpacesSection';
-import { RAIL_SPACE_IDS_KEY } from '../railSpacesStorage';
+import { RAIL_SPACE_IDS_KEY, resolveVisibleRailSpaces } from '../railSpacesStorage';
 
 const api = VaultAPI as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
@@ -197,5 +197,65 @@ describe('RailSpacesSection', () => {
     const compactMore = screen.getByRole('button', { name: 'More spaces (1 more)' });
     await user.click(compactMore);
     expect(await screen.findByText('Showing 5 of 6 in sidebar')).toBeInTheDocument();
+  });
+
+  it('honors an explicit empty pin list without snapping 5 defaults back in, and falls back only on stale deleted IDs', async () => {
+    const user = userEvent.setup();
+    const sixSpaces = Array.from({ length: 6 }, (_, idx) =>
+      makeSpace(idx + 1, { id: `sp-${idx + 1}`, name: `Alpha ${idx + 1}` }),
+    );
+
+    // Storage-level checks for explicit [] vs stale deleted IDs
+    const emptyExplicit = resolveVisibleRailSpaces(sixSpaces, []);
+    expect(emptyExplicit.visible).toEqual([]);
+    expect(emptyExplicit.hiddenCount).toBe(6);
+    expect(emptyExplicit.isCustomized).toBe(true);
+
+    const staleFallback = resolveVisibleRailSpaces(sixSpaces, ['deleted-1', 'deleted-2']);
+    expect(staleFallback.visible.map((s) => s.id)).toEqual(['sp-1', 'sp-2', 'sp-3', 'sp-4', 'sp-5']);
+    expect(staleFallback.hiddenCount).toBe(1);
+    expect(staleFallback.isCustomized).toBe(false);
+
+    // Interactive check: unpinning the last pinned space keeps 0 visible + More spaces (+6)
+    localStorage.setItem(RAIL_SPACE_IDS_KEY, JSON.stringify(['sp-1']));
+    api.listConversationSpaces.mockResolvedValue({ ok: true, data: sixSpaces });
+    renderSpaces();
+
+    expect(await screen.findByRole('button', { name: 'Space: Alpha 1' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'More spaces (5 more)' }));
+    const popover = await screen.findByRole('dialog');
+    await user.click(within(popover).getByRole('button', { name: 'Unpin Alpha 1 from sidebar' }));
+
+    expect(within(popover).getByText('Showing 0 of 6 in sidebar')).toBeInTheDocument();
+    expect(within(popover).getByRole('button', { name: 'Pin Alpha 2 to sidebar' })).not.toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Space: Alpha 1' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'More spaces (6 more)' })).toBeInTheDocument();
+  });
+
+  it('uses the full active pill only when on Chat to avoid dual competing active pills off Chat', async () => {
+    conversationUiStore.setState({ selectedSpaceId: 'sp-1' });
+    api.listConversationSpaces.mockResolvedValue({
+      ok: true,
+      data: [makeSpace(1, { id: 'sp-1', name: 'Research' })],
+    });
+
+    const { rerender } = renderSpaces({ isOnChat: false });
+    const offChatBtn = await screen.findByRole('button', { name: 'Space: Research' });
+    expect(offChatBtn).toHaveAttribute('aria-pressed', 'true');
+    expect(offChatBtn).not.toHaveClass('bg-accent-muted');
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    rerender(
+      <QueryClientProvider client={client}>
+        <TooltipProvider>
+          <MemoryRouter initialEntries={['/chat']}>
+            <RailSpacesSection compact={false} isOnChat />
+            <Location />
+          </MemoryRouter>
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
+    const onChatBtn = await screen.findByRole('button', { name: 'Space: Research' });
+    expect(onChatBtn).toHaveClass('bg-accent-muted');
   });
 });

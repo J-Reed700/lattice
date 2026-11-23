@@ -5,7 +5,6 @@ import {
   Ellipsis,
   Layers,
   Pin,
-  PinOff,
   Plus,
   RotateCcw,
   Search,
@@ -258,7 +257,7 @@ export function RailSpacesSection({ compact, isOnChat }: RailSpacesSectionProps)
       align="center"
       sideOffset={10}
       collisionPadding={16}
-      className="w-[308px] rounded-xl border border-border-subtle bg-surface-overlay p-0 shadow-lg"
+      className="w-[308px] rounded-xl bg-surface-overlay p-0 shadow-lg"
     >
       {/* Header */}
       <div className="flex items-center justify-between gap-2 border-b border-border-subtle px-3.5 py-2.5">
@@ -402,28 +401,28 @@ export function RailSpacesSection({ compact, isOnChat }: RailSpacesSectionProps)
                       isPinned
                         ? 'text-accent hover:bg-accent/12'
                         : pinDisabled
-                          ? 'cursor-not-allowed text-text-disabled'
-                          : 'text-text-muted opacity-70 hover:bg-[hsl(var(--text-primary)/0.07)] hover:text-text-primary hover:opacity-100',
+                          ? 'cursor-not-allowed text-text-disabled opacity-50'
+                          : 'text-text-muted opacity-75 hover:bg-[hsl(var(--text-primary)/0.07)] hover:text-text-primary hover:opacity-100',
                     )}
                   >
-                    {isPinned ? (
-                      <Pin className="h-3.5 w-3.5" strokeWidth={1.7} />
-                    ) : (
-                      <PinOff className="h-3.5 w-3.5" strokeWidth={1.5} />
-                    )}
+                    <Pin
+                      className={cn('h-3.5 w-3.5', isPinned && 'fill-current')}
+                      strokeWidth={isPinned ? 1.7 : 1.5}
+                    />
                   </button>
                 </div>
               );
             })}
           </div>
         )}
-
-        {pinLimitNotice || (atPinCap && openSpaces.length > MAX_RAIL_SPACES) ? (
-          <p className="mt-1.5 px-2 text-[11px] text-text-muted">
-            Up to {MAX_RAIL_SPACES} spaces can be pinned in the sidebar. Unpin one to swap.
-          </p>
-        ) : null}
       </div>
+
+      {/* Fixed cap explanation strip (always visible without scrolling) */}
+      {pinLimitNotice || (atPinCap && openSpaces.length > MAX_RAIL_SPACES) ? (
+        <div className="border-t border-border-subtle bg-surface-sunken/35 px-3.5 py-1.5 text-[11px] text-text-muted">
+          Up to {MAX_RAIL_SPACES} spaces pinned in sidebar. Unpin one to swap.
+        </div>
+      ) : null}
 
       {/* Footer: inline quick create */}
       <div className="border-t border-border-subtle bg-surface-sunken/50 p-2">
@@ -544,6 +543,7 @@ export function RailSpacesSection({ compact, isOnChat }: RailSpacesSectionProps)
               {/* Visible spaces (max 5) */}
               {resolved.visible.map((space, index) => {
                 const isSelected = selectedSpaceId === space.id;
+                const isActivePill = isOnChat && isSelected;
                 return (
                   <Tooltip key={space.id} delayDuration={500}>
                     <TooltipTrigger asChild>
@@ -555,12 +555,14 @@ export function RailSpacesSection({ compact, isOnChat }: RailSpacesSectionProps)
                         className={cn(
                           'group relative flex h-8 w-full items-center justify-center gap-2.5 rounded-lg px-2.5 transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
                           wide('xl:justify-start'),
-                          isSelected
+                          isActivePill
                             ? 'bg-accent-muted text-text-primary shadow-[inset_0_0_0_1px_hsl(var(--accent)/0.16)]'
-                            : 'text-text-tertiary hover:text-text-primary',
+                            : isSelected
+                              ? 'text-text-primary'
+                              : 'text-text-tertiary hover:text-text-primary',
                         )}
                       >
-                        {!isSelected ? (
+                        {!isActivePill ? (
                           <span aria-hidden="true" className="row-hover absolute inset-0 rounded-lg" />
                         ) : null}
                         <span className="relative flex h-4 w-4 shrink-0 items-center justify-center">
@@ -575,11 +577,16 @@ export function RailSpacesSection({ compact, isOnChat }: RailSpacesSectionProps)
                         >
                           {space.name}
                         </span>
-                        {isSelected ? (
+                        {isActivePill ? (
                           <Check
                             aria-hidden="true"
                             className={cn('relative hidden h-3 w-3 shrink-0 text-accent', wide('xl:block'))}
                             strokeWidth={2}
+                          />
+                        ) : isSelected ? (
+                          <span
+                            aria-hidden="true"
+                            className={cn('relative hidden h-1.5 w-1.5 shrink-0 rounded-full bg-accent/65', wide('xl:block'))}
                           />
                         ) : null}
                       </button>
@@ -587,7 +594,11 @@ export function RailSpacesSection({ compact, isOnChat }: RailSpacesSectionProps)
                     <TooltipContent side="right" sideOffset={10} className={compact ? undefined : 'xl:hidden'}>
                       <span className="flex items-center gap-1.5">
                         <span>{space.name}</span>
-                        {isSelected ? <span className="text-[11px] text-accent">Active</span> : null}
+                        {isActivePill ? (
+                          <span className="text-[11px] text-accent">Active</span>
+                        ) : isSelected ? (
+                          <span className="text-[11px] text-text-muted">Chat filter</span>
+                        ) : null}
                       </span>
                     </TooltipContent>
                   </Tooltip>

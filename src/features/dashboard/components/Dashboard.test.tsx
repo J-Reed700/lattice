@@ -318,6 +318,62 @@ describe('Dashboard', () => {
     expect(location()).toBe('/studio?course=prog-bio&lesson=lesson-oxphos');
   });
 
+  it('uses status-aware CTAs on secondary course cards and omits progress bar when lessonCount is 0', () => {
+    renderHome({
+      data: data({
+        courses: [
+          {
+            id: 'prog-ready',
+            title: 'Quantum Mechanics',
+            goal: 'Wavefunctions',
+            status: 'active',
+            moduleCount: 2,
+            lessonCount: 4,
+            completedLessons: 0,
+            currentLessonId: 'l1',
+            currentLessonTitle: 'Wave-Particle Duality',
+            currentModuleTitle: 'Module 1',
+            currentLessonMinutes: 12,
+            createdAt: 1700000300,
+          },
+          {
+            id: 'prog-done',
+            title: 'Linear Algebra',
+            goal: 'Eigenvalues',
+            status: 'active',
+            moduleCount: 2,
+            lessonCount: 4,
+            completedLessons: 4,
+            currentLessonId: 'l4',
+            currentLessonTitle: 'SVD',
+            currentModuleTitle: 'Module 2',
+            currentLessonMinutes: 10,
+            createdAt: 1700000200,
+          },
+          {
+            id: 'prog-draft',
+            title: 'Organic Synthesis',
+            goal: 'Drafting outline',
+            status: 'draft',
+            moduleCount: 0,
+            lessonCount: 0,
+            completedLessons: 0,
+            currentLessonId: null,
+            currentLessonTitle: null,
+            currentModuleTitle: null,
+            currentLessonMinutes: null,
+            createdAt: 1700000100,
+          },
+        ],
+      }),
+    });
+
+    expect(screen.getByRole('button', { name: /Quantum Mechanics/ })).toHaveTextContent('Start lesson');
+    expect(screen.getByRole('button', { name: /Linear Algebra/ })).toHaveTextContent('Review →');
+    expect(screen.getByRole('button', { name: /Organic Synthesis/ })).toHaveTextContent('Outline →');
+    expect(screen.queryByRole('progressbar', { name: 'Organic Synthesis progress' })).not.toBeInTheDocument();
+  });
+
   it('offers a clean Studio invitation when no courses exist yet', async () => {
     const user = userEvent.setup();
     renderHome({ data: data({ courses: [] }) });

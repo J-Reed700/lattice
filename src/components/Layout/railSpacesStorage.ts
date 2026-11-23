@@ -62,6 +62,16 @@ export function resolveVisibleRailSpaces(
   }
 
   if (pinnedIds !== null) {
+    // Honor an explicit empty pin list (user unpinned all spaces to pick a fresh set).
+    if (pinnedIds.length === 0) {
+      return {
+        visible: [],
+        visibleIds: new Set(),
+        hiddenCount: openSpaces.length,
+        isCustomized: true,
+      };
+    }
+
     const byId = new Map(openSpaces.map((space) => [space.id, space]));
     const matched: ConversationSpaceDto[] = [];
     for (const id of pinnedIds) {
@@ -79,6 +89,7 @@ export function resolveVisibleRailSpaces(
         isCustomized: true,
       };
     }
+    // Only fall back to defaults when every saved pinned ID was archived or deleted.
   }
 
   const defaults = openSpaces.slice(0, MAX_RAIL_SPACES);

@@ -19,12 +19,14 @@ function coursePercent(course: DashboardCourseSummary): number {
 function courseStatusInfo(course: DashboardCourseSummary): {
   label: string;
   cta: string;
+  shortCta: string;
   pillClass: string;
 } {
   if (course.status === 'draft') {
     return {
       label: 'Draft',
       cta: 'Review outline',
+      shortCta: 'Outline',
       pillClass: 'bg-surface-raised text-text-tertiary',
     };
   }
@@ -32,6 +34,7 @@ function courseStatusInfo(course: DashboardCourseSummary): {
     return {
       label: 'Completed',
       cta: 'Review course',
+      shortCta: 'Review',
       pillClass: 'bg-success-muted text-success-fg',
     };
   }
@@ -39,12 +42,14 @@ function courseStatusInfo(course: DashboardCourseSummary): {
     return {
       label: 'Ready',
       cta: 'Start lesson',
+      shortCta: 'Start',
       pillClass: 'bg-accent-muted text-accent',
     };
   }
   return {
     label: 'In progress',
     cta: 'Continue lesson',
+    shortCta: 'Resume',
     pillClass: 'bg-accent-muted text-accent',
   };
 }
@@ -97,6 +102,7 @@ export function ContinueLearningSection({ courses, onNavigate }: ContinueLearnin
         <div className="space-y-2.5">
           {/* Primary course card */}
           {(() => {
+            const hasLessons = primary.lessonCount > 0;
             const pct = coursePercent(primary);
             const status = courseStatusInfo(primary);
             return (
@@ -114,10 +120,12 @@ export function ContinueLearningSection({ courses, onNavigate }: ContinueLearnin
                   >
                     {status.label}
                   </span>
-                  <span className="text-xs tabular-nums text-text-muted">
-                    {primary.completedLessons} of {primary.lessonCount}{' '}
-                    {primary.lessonCount === 1 ? 'lesson' : 'lessons'} · {pct}%
-                  </span>
+                  {hasLessons ? (
+                    <span className="text-xs tabular-nums text-text-muted">
+                      {primary.completedLessons} of {primary.lessonCount}{' '}
+                      {primary.lessonCount === 1 ? 'lesson' : 'lessons'} · {pct}%
+                    </span>
+                  ) : null}
                 </div>
 
                 <h3 className="mt-2.5 truncate font-serif text-[19px] font-medium leading-snug tracking-[-0.015em] text-text-primary">
@@ -125,14 +133,16 @@ export function ContinueLearningSection({ courses, onNavigate }: ContinueLearnin
                 </h3>
 
                 {primary.currentLessonTitle ? (
-                  <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs">
+                  <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs">
                     {primary.currentModuleTitle ? (
-                      <span className="truncate text-text-muted">{primary.currentModuleTitle}</span>
+                      <span className="min-w-0 max-w-full truncate text-text-muted">
+                        {primary.currentModuleTitle}
+                      </span>
                     ) : null}
                     {primary.currentModuleTitle ? (
-                      <span aria-hidden="true" className="text-text-disabled">·</span>
+                      <span aria-hidden="true" className="shrink-0 text-text-disabled">·</span>
                     ) : null}
-                    <span className="truncate font-medium text-text-secondary">
+                    <span className="min-w-0 max-w-full truncate font-medium text-text-secondary">
                       {primary.currentLessonTitle}
                     </span>
                     {primary.currentLessonMinutes ? (
@@ -146,19 +156,21 @@ export function ContinueLearningSection({ courses, onNavigate }: ContinueLearnin
                   <p className="mt-1 line-clamp-1 text-xs text-text-muted">{primary.goal}</p>
                 ) : null}
 
-                <div
-                  role="progressbar"
-                  aria-label={`${primary.title} progress`}
-                  aria-valuenow={pct}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  className="mt-3.5 h-1.5 w-full overflow-hidden rounded-full bg-[hsl(var(--text-primary)/0.075)]"
-                >
+                {hasLessons ? (
                   <div
-                    className="h-full rounded-full bg-accent transition-[width] duration-base"
-                    style={{ width: `${Math.max(pct, primary.completedLessons > 0 ? 4 : 0)}%` }}
-                  />
-                </div>
+                    role="progressbar"
+                    aria-label={`${primary.title} progress`}
+                    aria-valuenow={pct}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    className="mt-3.5 h-1.5 w-full overflow-hidden rounded-full bg-[hsl(var(--text-primary)/0.075)]"
+                  >
+                    <div
+                      className="h-full rounded-full bg-accent transition-[width] duration-base"
+                      style={{ width: `${Math.max(pct, primary.completedLessons > 0 ? 4 : 0)}%` }}
+                    />
+                  </div>
+                ) : null}
 
                 <div className="mt-3 flex items-center justify-between gap-2 text-xs">
                   <span className="tabular-nums text-text-muted">
@@ -180,6 +192,7 @@ export function ContinueLearningSection({ courses, onNavigate }: ContinueLearnin
           {secondary.length > 0 ? (
             <div className="grid gap-2.5 sm:grid-cols-2">
               {secondary.map((course) => {
+                const hasLessons = course.lessonCount > 0;
                 const pct = coursePercent(course);
                 const status = courseStatusInfo(course);
                 return (
@@ -194,9 +207,15 @@ export function ContinueLearningSection({ courses, onNavigate }: ContinueLearnin
                         <span className="truncate text-ui font-medium text-text-primary">
                           {course.title}
                         </span>
-                        <span className="shrink-0 text-[11px] tabular-nums text-text-muted">
-                          {course.completedLessons}/{course.lessonCount}
-                        </span>
+                        {hasLessons ? (
+                          <span className="shrink-0 text-[11px] tabular-nums text-text-muted">
+                            {course.completedLessons}/{course.lessonCount}
+                          </span>
+                        ) : (
+                          <span className="shrink-0 text-[11px] text-text-muted">
+                            {status.label}
+                          </span>
+                        )}
                       </div>
                       <p className="mt-0.5 truncate text-xs text-text-muted">
                         {course.currentLessonTitle
@@ -206,21 +225,29 @@ export function ContinueLearningSection({ courses, onNavigate }: ContinueLearnin
                     </div>
 
                     <div className="mt-3 flex items-center gap-2.5">
-                      <div
-                        role="progressbar"
-                        aria-label={`${course.title} progress`}
-                        aria-valuenow={pct}
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                        className="h-1 flex-1 overflow-hidden rounded-full bg-[hsl(var(--text-primary)/0.075)]"
-                      >
+                      {hasLessons ? (
                         <div
-                          className="h-full rounded-full bg-accent"
-                          style={{ width: `${Math.max(pct, course.completedLessons > 0 ? 6 : 0)}%` }}
-                        />
-                      </div>
+                          role="progressbar"
+                          aria-label={`${course.title} progress`}
+                          aria-valuenow={pct}
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          className="h-1 flex-1 overflow-hidden rounded-full bg-[hsl(var(--text-primary)/0.075)]"
+                        >
+                          <div
+                            className="h-full rounded-full bg-accent"
+                            style={{ width: `${Math.max(pct, course.completedLessons > 0 ? 6 : 0)}%` }}
+                          />
+                        </div>
+                      ) : (
+                        <span className="flex-1 text-[11px] text-text-muted">
+                          {course.moduleCount > 0
+                            ? `${course.moduleCount} ${course.moduleCount === 1 ? 'module' : 'modules'}`
+                            : 'Outline draft'}
+                        </span>
+                      )}
                       <span className="shrink-0 text-[11px] font-medium text-accent opacity-80 transition-opacity duration-fast group-hover:opacity-100">
-                        Resume →
+                        {status.shortCta} →
                       </span>
                     </div>
                   </button>
