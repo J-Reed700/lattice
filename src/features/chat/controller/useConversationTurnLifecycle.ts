@@ -11,7 +11,7 @@ import type { ChatResponse, ChatStreamEventDto } from '@/lib/bindings';
 import { isBoundChat } from '@/shared/conversations/boundChats';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import type { GenerationOutcome, RegenerateOptions } from '@/shared/conversations/conversationsStore.types';
-import { conversationDraftKey, setDraft } from '@/shared/drafts/drafts';
+import { conversationDraftKey, readDraft, setDraft } from '@/shared/drafts/drafts';
 import type { ApiResult } from '@/types';
 import { ErrorCode } from '@/types/api/errorCodes';
 import type {
@@ -357,9 +357,16 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
           const questionLost = showUserBubble && lastUser?.content !== content;
           if (questionLost) {
             if (ownsComposer()) {
-              conversationUiStore.setState({ error: null, composerDraft: content });
+              conversationUiStore.setState(current => (
+                current.composerDraft
+                  ? { error: null }
+                  : { error: null, composerDraft: content }
+              ));
             } else {
-              setDraft(conversationDraftKey(requestConversationId), content);
+              const draftKey = conversationDraftKey(requestConversationId);
+              if (!readDraft(draftKey)) {
+                setDraft(draftKey, content);
+              }
               conversationUiStore.setState({ error: null });
             }
           } else {

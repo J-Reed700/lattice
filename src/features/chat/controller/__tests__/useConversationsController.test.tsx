@@ -1123,6 +1123,31 @@ describe('useConversationsController optimistic cleanup', () => {
     expect(useDraftStore.getState().drafts[conversationDraftKey('scoped-tutor-1')]).toBe('Tutor stop question');
   });
 
+  it('does not overwrite a new scoped draft typed while cancellation settles', async () => {
+    conversationUiStore.setState({ activeConversationId: 'other-global-chat', composerDraft: 'Keep my main draft' });
+    setDraft(conversationDraftKey('scoped-tangent-2'), '');
+    let resolveChat: ((value: unknown) => void) | undefined;
+    api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveChat = resolve; }));
+    api.getConversationMessages = vi.fn().mockResolvedValue({ ok: true, data: { messages: [] } });
+    api.cancelChatGeneration = vi.fn().mockResolvedValue({ ok: true, data: null });
+
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
+
+    let sending!: Promise<unknown>;
+    act(() => { sending = result.current.sendMessage('Cancelled prompt', 'scoped-tangent-2'); });
+    await waitFor(() => expect(api.chatWithConversation).toHaveBeenCalled());
+
+    await act(async () => { await result.current.cancelGeneration('scoped-tangent-2'); });
+    // User starts typing a new prompt before the cancelled request resolves.
+    act(() => { setDraft(conversationDraftKey('scoped-tangent-2'), 'New replacement question'); });
+    await act(async () => {
+      resolveChat?.({ ok: false, error: 'Cancelled', details: { code: ErrorCode.CANCELLED } });
+      await sending;
+    });
+
+    expect(useDraftStore.getState().drafts[conversationDraftKey('scoped-tangent-2')]).toBe('New replacement question');
+  });
+
   it('dismisses queryError when clearError is called until a new query error occurs', async () => {
     api.listConversationsExplorer = vi.fn().mockResolvedValue({ ok: false, error: 'Network down' });
     api.listConversations = vi.fn().mockResolvedValue({ ok: false, error: 'Network down' });
