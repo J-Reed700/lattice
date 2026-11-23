@@ -38,6 +38,11 @@ pub struct CompletionRequest {
     pub include_reasoning: bool,
     /// Sampling for this request. `None` keeps the provider's configuration.
     pub sampling: Option<SamplingOverride>,
+    /// Fallback sampling applied only when the resolved backend runs with
+    /// thinking off (`Thinking::Off`), letting thinking models keep their own
+    /// profile while non-thinking backends decode deterministically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub non_thinking_sampling: Option<SamplingOverride>,
     /// Whether the model thinks before answering. Off unless the caller asks:
     /// see [`ThinkingMode`] for why tool rounds never think.
     pub thinking: ThinkingMode,
@@ -97,6 +102,7 @@ impl CompletionRequest {
             tool_choice: None,
             include_reasoning: false,
             sampling: None,
+            non_thinking_sampling: None,
             thinking: ThinkingMode::default(),
             max_output_tokens: None,
             stop: Vec::new(),
@@ -268,6 +274,7 @@ impl GroundedRequest {
             cancel: call.cancel,
             cache_key: call.cache_key,
             sampling: call.sampling,
+            non_thinking_sampling: call.non_thinking_sampling,
             time_budget: call.time_budget,
             no_time_limit: call.no_time_limit,
             schema: self.schema.clone(),

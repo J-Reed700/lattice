@@ -747,6 +747,7 @@ struct FakeLlm {
     prompts: Mutex<Vec<String>>,
     request_limits: Mutex<Vec<(Option<String>, Option<u32>)>>,
     samplings: Mutex<Vec<Option<SamplingOverride>>>,
+    non_thinking_samplings: Mutex<Vec<Option<SamplingOverride>>>,
     requests: Mutex<Vec<CompletionRequest>>,
 }
 
@@ -911,6 +912,7 @@ impl FakeLlm {
             prompts: Mutex::new(Vec::new()),
             request_limits: Mutex::new(Vec::new()),
             samplings: Mutex::new(Vec::new()),
+            non_thinking_samplings: Mutex::new(Vec::new()),
             requests: Mutex::new(Vec::new()),
         })
     }
@@ -1069,6 +1071,10 @@ impl FakeLlm {
         self.samplings.lock().clone()
     }
 
+    fn non_thinking_samplings(&self) -> Vec<Option<SamplingOverride>> {
+        self.non_thinking_samplings.lock().clone()
+    }
+
     fn reply(&self, prompt: &str) -> Result<String> {
         let parsed_task = serde_json::from_str::<serde_json::Value>(prompt)
             .ok()
@@ -1113,6 +1119,9 @@ impl LLMPort for FakeLlm {
             request.max_output_tokens(),
         ));
         self.samplings.lock().push(request.sampling);
+        self.non_thinking_samplings
+            .lock()
+            .push(request.non_thinking_sampling);
         self.requests.lock().push(request.clone());
         let users: Vec<String> = request
             .input()
@@ -1621,15 +1630,43 @@ async fn a_repair_that_validates_is_committed_and_reported_as_repaired() {
     assert_eq!(outcome.processed_through_sequence, 4);
     assert_eq!(
         llm.request_limits(),
-        vec![(None, Some(4_096)); 4],
-        "structured utility requests keep model-default reasoning, and the answer room the fake's window leaves"
+        vec![
+            (Some("low".to_string()), Some(4_096)),
+            (Some("low".to_string()), Some(4_096)),
+            (None, Some(4_096)),
+            (None, Some(4_096)),
+        ],
+        "thinking extraction bounds reasoning effort to low, while non-thinking review and summary keep none"
+    );
+    assert_eq!(
+        llm.samplings(),
+        vec![
+            None,
+            None,
+            Some(SamplingOverride::deterministic()),
+            Some(SamplingOverride::deterministic()),
+        ],
+        "thinking extraction defers to the backend's thinking sampling profile rather than forcing greedy decoding, \
+         while non-thinking review and summary decode greedily"
+    );
+    assert_eq!(
+        llm.non_thinking_samplings(),
+        vec![
+            Some(SamplingOverride::deterministic()),
+            Some(SamplingOverride::deterministic()),
+            None,
+            None,
+        ],
+        "extraction supplies deterministic sampling fallback when the backend does not think"
     );
     assert!(
         llm.samplings()
-            .iter()
-            .all(|sampling| *sampling == Some(SamplingOverride::deterministic())),
-        "every utility request decodes greedily: the same passages must yield the same patch, \
-         not one that depends on the chat temperature"
+            .into_iter()
+            .zip(llm.non_thinking_samplings())
+            .all(|(sampling, fallback)| {
+                sampling.or(fallback) == Some(SamplingOverride::deterministic())
+            }),
+        "every memory request decodes greedily on non-thinking backends"
     );
     assert_eq!(port.commits(), 1);
     assert_eq!(port.watermark(), 4);

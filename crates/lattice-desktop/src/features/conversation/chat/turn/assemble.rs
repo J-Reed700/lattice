@@ -101,6 +101,7 @@ impl RenderedPrompt {
 }
 
 pub(super) fn render_prompt(
+    container: &dyn ChatRuntime,
     turn: &PreparedTurn,
     flags: SearchFlags,
     tool_preferences: Option<&ToolPreferences>,
@@ -289,6 +290,19 @@ pub(super) fn render_prompt(
 
     let searches_again =
         deep_research_searches_again(flags, tool_preferences, llm.supports_tool_calling());
+    let offered = offered_tools(
+        container,
+        llm,
+        &turn.settings.llm.custom_tools,
+        turn.source.as_ref(),
+        flags,
+        tool_preferences,
+        Grounding {
+            can_open_pages,
+            has_grounded_context,
+        },
+    );
+    let document_tools_available = offers_document_tools(&offered);
     let message = TurnMessage::new(MessageFrame {
         prompt_settings: turn.prompt_settings.clone(),
         question: turn.message.clone(),
@@ -300,6 +314,7 @@ pub(super) fn render_prompt(
         kb_unavailable_reason: retrieval.kb_unavailable_reason.clone(),
         kb_attempted: retrieval.kb_attempted,
         sufficiency: retrieval.sufficiency.clone(),
+        document_tools_available,
     })
     .with_attachments(attachment_context, attachment_citations)
     .with_source(source_context)
@@ -568,18 +583,27 @@ pub(super) async fn plan_request(
     Ok(planned)
 }
 
-/// What the tool schemas a turn sends cost once its prompt carries evidence:
-/// the grounded subset with page opening, and history and folder access on
-/// top. The turn's budget reserves this before it sizes the evidence, since
-/// the evidence and the schemas share one window.
-pub(super) fn grounded_tool_tokens(
+const DOCUMENT_TOOL_NAMES: &[&str] = &["get_document", "semantic_search"];
+
+/// Whether the model is actually offered vault/document lookup tools on this turn
+/// (`read_more` alone is a history continuation tool that remains enabled even on
+/// `closed_book` turns where `get_document` and `semantic_search` are stripped).
+pub(super) fn offers_document_tools(tools: &[ToolDefinition]) -> bool {
+    tools
+        .iter()
+        .any(|tool| DOCUMENT_TOOL_NAMES.contains(&tool.name.as_str()))
+}
+
+/// What the tool schemas a turn sends cost once its prompt carries evidence,
+/// and whether document tools are available on that grounded turn.
+pub(super) fn grounded_tool_budget(
     container: &dyn ChatRuntime,
     llm: &Arc<dyn LLMPort>,
     custom_tools: &[CustomToolSettingsDto],
     source: Option<&TurnSource>,
     flags: SearchFlags,
     tool_preferences: Option<&ToolPreferences>,
-) -> usize {
+) -> (usize, bool) {
     let tools = offered_tools(
         container,
         llm,
@@ -592,12 +616,14 @@ pub(super) fn grounded_tool_tokens(
             has_grounded_context: true,
         },
     );
-    if tools.is_empty() {
+    let has_document_tools = offers_document_tools(&tools);
+    let tokens = if tools.is_empty() {
         0
     } else {
         llm.count_tokens(&tool_loop::tool_schema_text(&tools))
             + llm.count_tokens(&tool_guidance(&tools))
-    }
+    };
+    (tokens, has_document_tools)
 }
 
 /// How to place a picture, sent on every turn that offers `find_image` and on

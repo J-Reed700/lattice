@@ -15,7 +15,7 @@ use std::borrow::Cow;
 use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{
     tokens_for_chars, window_refusal, CompletionInput, CompletionRequest, RequestSize,
-    ThinkingMode, TEMPLATE_TOKENS_FOR_ANSWER, TEMPLATE_TOKENS_PER_MESSAGE,
+    SamplingOverride, ThinkingMode, TEMPLATE_TOKENS_FOR_ANSWER, TEMPLATE_TOKENS_PER_MESSAGE,
 };
 use lattice_core::shared::error::Result;
 
@@ -117,6 +117,17 @@ impl<'r> Fitted<'r> {
 
     pub(crate) fn thinking(&self) -> Thinking {
         self.thinking
+    }
+
+    /// Caller-requested sampling resolved for the model's actual thinking
+    /// state: explicit `request.sampling` always wins; `non_thinking_sampling`
+    /// supplies deterministic decoding only when the backend has thinking off.
+    pub(crate) fn effective_sampling(&self) -> Option<SamplingOverride> {
+        self.request.sampling.or_else(|| {
+            (!self.thinking.counts_toward_the_ceiling())
+                .then_some(self.request.non_thinking_sampling)
+                .flatten()
+        })
     }
 
     /// The reply ceiling to send, cut to the room.
