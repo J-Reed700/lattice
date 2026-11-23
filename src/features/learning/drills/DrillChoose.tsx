@@ -1,6 +1,16 @@
 import type { ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { NumberStepper } from '@/components/ui/number-stepper';
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import type { CourseDrillAttemptDto, DrillLessonDto, NextDrillDto } from '@/lib/bindings';
 import { cn } from '@/lib/utils';
 
@@ -16,7 +26,7 @@ import { useCourseDrills } from './useCourseDrills';
 import { useDrillLanguages } from './useDrillLanguages';
 import { usePracticeLanguage } from './usePracticeLanguage';
 
-const INPUT = 'rounded-lg border border-border-default bg-bg px-3 py-2 text-xs text-text-primary outline-hidden focus:border-accent focus:ring-2 focus:ring-accent-muted';
+const NEXT_LESSON_VALUE = '__next__';
 
 function Choice({ name, value, checked, disabled = false, onSelect, title, detail }: {
   name: string;
@@ -208,17 +218,20 @@ export function DrillChoose({ programId, options, onChange, onStart, onOpenAttem
           <div>
             <label htmlFor="drill-language" className="text-xs font-semibold text-text-primary">Language</label>
             <div className="mt-2 flex flex-wrap items-center gap-3">
-              <select
-                id="drill-language"
+              <Select
                 value={language ?? ''}
                 disabled={!languages}
-                onChange={(event) => onChange({ language: event.target.value })}
-                className={cn(INPUT, 'min-w-48')}
+                onValueChange={(value) => onChange({ language: value })}
               >
-                {(languages ?? (language ? [language] : [])).map((id) => (
-                  <option key={id} value={id}>{languageLabel(id)}</option>
-                ))}
-              </select>
+                <SelectTrigger id="drill-language" aria-label="Language" className="w-52 max-w-full">
+                  <SelectValue placeholder="Choose a language" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(languages ?? (language ? [language] : [])).map((id) => (
+                    <SelectItem key={id} value={id}>{languageLabel(id)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               {error && (
                 <p role="alert" className="flex items-center gap-2 text-xs text-danger-fg">
                   {error}
@@ -232,27 +245,31 @@ export function DrillChoose({ programId, options, onChange, onStart, onOpenAttem
         <div>
           <label htmlFor="drill-lesson" className="text-xs font-semibold text-text-primary">Lesson</label>
           <div className="mt-2">
-            <select
-              id="drill-lesson"
-              value={effectiveLessonId ?? ''}
+            <Select
+              value={effectiveLessonId ?? NEXT_LESSON_VALUE}
               disabled={!view}
-              onChange={(event) => onChange({ lessonId: event.target.value || null })}
-              className={cn(INPUT, 'min-w-48 max-w-full')}
+              onValueChange={(value) => onChange({ lessonId: value === NEXT_LESSON_VALUE ? null : value })}
             >
-              <option value="">{nextOption}</option>
-              {(view?.modules ?? []).filter((module) => module.lessons.length > 0).map((module) => (
-                <optgroup key={module.moduleId} label={module.title}>
-                  {module.lessons.map((lesson) => {
-                    const fits = passage ? lesson.fitsPassage : lesson.fitsCode;
-                    return (
-                      <option key={lesson.lessonId} value={lesson.lessonId} disabled={!fits}>
-                        {lessonText(lesson, fits, passage ? 'no passage in the sources fits it' : 'no code drill fits it')}
-                      </option>
-                    );
-                  })}
-                </optgroup>
-              ))}
-            </select>
+              <SelectTrigger id="drill-lesson" aria-label="Lesson" className="w-full max-w-lg">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NEXT_LESSON_VALUE}>{nextOption}</SelectItem>
+                {(view?.modules ?? []).filter((module) => module.lessons.length > 0).map((module) => (
+                  <SelectGroup key={module.moduleId}>
+                    <SelectLabel>{module.title}</SelectLabel>
+                    {module.lessons.map((lesson) => {
+                      const fits = passage ? lesson.fitsPassage : lesson.fitsCode;
+                      return (
+                        <SelectItem key={lesson.lessonId} value={lesson.lessonId} disabled={!fits}>
+                          {lessonText(lesson, fits, passage ? 'no passage in the sources fits it' : 'no code drill fits it')}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectGroup>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           {lessonLine && <p className="mt-1.5 text-xs text-text-muted">{lessonLine}</p>}
         </div>
@@ -276,20 +293,18 @@ export function DrillChoose({ programId, options, onChange, onStart, onOpenAttem
 
         {options.mode === 'interview' && (
           <div>
-            <label htmlFor="drill-minutes" className="text-xs font-semibold text-text-primary">Time limit</label>
-            <div className="mt-2 flex items-center gap-2">
-              <input
-                id="drill-minutes"
-                type="number"
-                min={1}
-                step={1}
-                inputMode="numeric"
-                value={Number.isNaN(options.minutes) ? '' : options.minutes}
-                onChange={(event) => onChange({ minutes: event.target.valueAsNumber })}
-                className={cn(INPUT, 'w-24')}
-              />
-              <span className="text-xs text-text-secondary">minutes</span>
-            </div>
+            <NumberStepper
+              id="drill-minutes"
+              label="Time limit"
+              min={1}
+              max={180}
+              step={1}
+              suffix="minutes"
+              value={Number.isNaN(options.minutes) ? 10 : options.minutes}
+              onValueChange={(minutes) => onChange({ minutes })}
+              decrementLabel="Decrease time limit"
+              incrementLabel="Increase time limit"
+            />
             {minutesOk
               ? <p className="mt-1.5 text-xs text-text-muted">At zero the clock says so; it does not hand your review in for you.</p>
               : <p role="alert" className="mt-1.5 text-xs text-danger-fg">Enter a whole number of minutes, at least 1.</p>}

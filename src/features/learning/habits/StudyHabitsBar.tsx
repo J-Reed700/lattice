@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
+  Clock3,
   Coffee,
   GraduationCap,
   Heart,
@@ -16,6 +17,7 @@ import {
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 
 import { RetentionFrameworksModal } from './RetentionFrameworksModal';
@@ -29,6 +31,8 @@ export interface StudyHabitsBarProps {
   onSelectFramework?: (action: FrameworkAction) => void;
   onNavigate?: (action: FrameworkAction) => void;
   className?: string;
+  /** Compact inline mode for the 2-tier ProgramWorkspace header. */
+  compact?: boolean;
 }
 
 type PresetKey = '30m' | '45m' | '25m' | '5m-break';
@@ -53,7 +57,7 @@ function formatSeconds(totalSeconds: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
-export function StudyHabitsBar({ onSelectFramework, onNavigate, className }: StudyHabitsBarProps) {
+export function StudyHabitsBar({ onSelectFramework, onNavigate, className, compact = false }: StudyHabitsBarProps) {
   const [activePreset, setActivePreset] = useState<PresetKey>('30m');
   const [remainingSeconds, setRemainingSeconds] = useState<number>(30 * 60);
   const [isRunning, setIsRunning] = useState<boolean>(false);
@@ -138,6 +142,144 @@ export function StudyHabitsBar({ onSelectFramework, onNavigate, className }: Stu
   const movementDone = Boolean(checklist['aerobic-movement']);
   const focusDone = Boolean(checklist['focused-block']);
 
+  if (compact) {
+    return (
+      <div className={cn('inline-flex items-center gap-1', className)}>
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              size="sm"
+              variant="ghost"
+              className={cn(
+                'h-8 gap-1.5 px-2 text-xs font-medium',
+                isRunning || isFocusGuardEnabled || showCrammingAlert
+                  ? 'text-accent'
+                  : 'text-text-secondary hover:text-text-primary',
+              )}
+              title="Focus timer & study habits"
+              aria-label="Focus timer and study habits"
+            >
+              <Clock3 className="size-3.5 shrink-0" aria-hidden="true" />
+              <span className="font-mono text-xs tabular-nums">{formatSeconds(remainingSeconds)}</span>
+              {isRunning && <span className="size-1.5 rounded-full bg-accent" aria-hidden="true" />}
+              {showCrammingAlert && <AlertTriangle className="size-3.5 text-warning-fg" aria-hidden="true" />}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-80 space-y-3 p-3.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-text-primary">Focus timer</span>
+              <span className="font-mono text-sm font-semibold tabular-nums text-text-primary" aria-live="polite">
+                {formatSeconds(remainingSeconds)}
+              </span>
+            </div>
+            <div className="grid grid-cols-4 gap-1 rounded-lg border border-border-subtle bg-surface-sunken p-0.5">
+              {PRESETS.map((preset) => {
+                const isSelected = activePreset === preset.key;
+                return (
+                  <button
+                    key={preset.key}
+                    type="button"
+                    onClick={() => handleSelectPreset(preset.key)}
+                    className={cn(
+                      'rounded-md px-1.5 py-1 text-[11px] font-medium transition-colors',
+                      isSelected
+                        ? 'bg-surface text-text-primary shadow-control'
+                        : 'text-text-muted hover:text-text-primary',
+                    )}
+                  >
+                    {preset.label.replace(' Break', '')}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Button
+                size="sm"
+                variant={isRunning ? 'secondary' : 'default'}
+                className="flex-1"
+                onClick={handleStartPause}
+                aria-label={isRunning ? 'Pause focus timer' : 'Start focus timer'}
+              >
+                {isRunning ? <><Pause className="size-3" /> Pause</> : <><Play className="size-3" /> Start</>}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleReset}
+                aria-label="Reset timer"
+                title="Reset focus timer"
+              >
+                <RotateCcw className="size-3" /> Reset
+              </Button>
+            </div>
+            {showCrammingAlert && (
+              <div role="alert" className="rounded-lg border border-warning/30 bg-warning-muted/40 p-2.5 text-xs text-warning-fg">
+                <p className="font-semibold">Time for a break ({continuousStudyMinutes}m continuous)</p>
+                <div className="mt-2 flex gap-1.5">
+                  <Button size="sm" variant="outline" onClick={handleTakeBreak}>
+                    <Coffee className="size-3" /> 5-min Break
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setIsCrammingAlertDismissed(true)}>
+                    Dismiss
+                  </Button>
+                </div>
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-2 border-t border-border-subtle pt-2.5">
+              <button
+                type="button"
+                onClick={() => setIsFocusGuardEnabled((prev) => !prev)}
+                className={cn(
+                  'inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs font-medium transition-colors',
+                  isFocusGuardEnabled
+                    ? 'border-success/30 bg-success-muted text-success-fg'
+                    : 'border-border-subtle bg-surface text-text-secondary hover:border-border-default hover:text-text-primary',
+                )}
+              >
+                {isFocusGuardEnabled ? <ShieldCheck className="size-3 text-success-fg" /> : <ShieldAlert className="size-3 text-text-muted" />}
+                Focus guard
+              </button>
+              <button
+                type="button"
+                onClick={() => openFrameworksModal('habits')}
+                className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border-subtle bg-surface px-2 text-xs text-text-secondary transition-colors hover:border-border-default hover:text-text-primary"
+              >
+                <Heart className="size-3 text-accent" />
+                <span>Habits</span>
+                <span className="font-mono text-[10px] text-text-muted">{completedCount}/{totalCount}</span>
+              </button>
+            </div>
+            {isFocusGuardEnabled && (
+              <p className="rounded-md bg-success-muted/35 px-2.5 py-1.5 text-[11px] leading-relaxed text-success-fg">
+                Single-tasking active: one tab, no notifications, 30–45m focus block.
+              </p>
+            )}
+          </PopoverContent>
+        </Popover>
+
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-8 gap-1.5 px-2 text-xs font-medium text-text-secondary hover:text-text-primary"
+          onClick={() => openFrameworksModal('frameworks')}
+          aria-label="How to learn so it lasts"
+          title="How to learn so it lasts"
+        >
+          <GraduationCap className="size-3.5 text-accent" aria-hidden="true" />
+          <span className="hidden xl:inline">Guide</span>
+        </Button>
+
+        <RetentionFrameworksModal
+          open={isModalOpen}
+          onOpenChange={setIsModalOpen}
+          initialTab={modalTab}
+          onSelectFramework={onSelectFramework}
+          onNavigate={onNavigate}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className={cn('space-y-2', className)}>
       {/* Anti-Cramming & Single-Tasking Guard Alert (when study >= 90 continuous minutes) */}
@@ -159,8 +301,8 @@ export function StudyHabitsBar({ onSelectFramework, onNavigate, className }: Stu
           <div className="flex items-center gap-2 shrink-0">
             <Button
               size="sm"
-              variant="default"
-              className="h-6 bg-warning text-warning-fg hover:bg-warning/90 text-xs font-medium"
+              variant="outline"
+              className="h-6 text-xs font-medium"
               onClick={handleTakeBreak}
             >
               <Coffee className="size-3 mr-1" />

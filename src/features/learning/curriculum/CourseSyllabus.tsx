@@ -54,25 +54,26 @@ export function CourseSyllabus({
         ref={trigger}
         type="button"
         onClick={() => setOpen(!open)}
+        aria-label={compact ? 'Your course journey' : undefined}
         aria-expanded={open}
         aria-controls="course-syllabus-content"
-        className={compact ? 'flex min-h-10 items-center gap-2 rounded-lg px-3 text-left hover:bg-surface' : 'flex min-h-16 w-full items-center gap-3 px-5 py-3 text-left'}
+        className={compact ? 'inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-left text-xs font-medium text-text-secondary transition-colors hover:bg-surface-raised hover:text-text-primary' : 'flex min-h-16 w-full items-center gap-3 px-5 py-3 text-left'}
       >
-        <Layers3 size={19} className="shrink-0 text-accent" />
+        <Layers3 size={compact ? 14 : 19} className="shrink-0 text-accent" />
         <span className="min-w-0 flex-1">
-          <span className="block text-sm font-semibold text-text-primary">Your course journey</span>
+          <span className={compact ? 'block text-xs font-medium text-inherit' : 'block text-sm font-semibold text-text-primary'}>{compact ? 'Syllabus' : 'Your course journey'}</span>
           <span className={compact ? 'sr-only' : 'mt-1 block text-xs leading-5 text-text-muted'}>
             {program.modules.length} {program.modules.length === 1 ? 'module' : 'modules'} · {lessons.length} {lessons.length === 1 ? 'lesson' : 'lessons'} · about {minutes < 60 ? `${minutes} minutes` : `${Math.round(minutes / 60)} hours`}
             {program.summary.status === 'active' && ` · ${completed} lessons complete`}
           </span>
         </span>
-        <ChevronDown size={17} className={`shrink-0 text-text-muted transition ${open ? 'rotate-180' : ''}`} />
+        <ChevronDown size={compact ? 13 : 17} className={`shrink-0 text-text-muted transition ${open ? 'rotate-180' : ''}`} />
       </button>
 
       <div
         id="course-syllabus-content"
         hidden={!open}
-        className={compact ? 'absolute right-0 top-full z-30 mt-1 max-h-[75vh] w-[min(960px,calc(100vw-3rem))] overflow-y-auto rounded-2xl border border-border bg-surface p-5 shadow-xl' : 'border-t border-border p-4 sm:p-5'}
+        className={compact ? 'surface-pop absolute right-0 top-full z-30 mt-1.5 max-h-[75vh] w-[min(920px,calc(100vw-3rem))] overflow-y-auto rounded-xl bg-surface-overlay p-5 shadow-lg' : 'border-t border-border p-4 sm:p-5'}
       >
         <p className="mb-5 max-w-3xl text-sm leading-6 text-text-secondary">
           {program.summary.status === 'draft'

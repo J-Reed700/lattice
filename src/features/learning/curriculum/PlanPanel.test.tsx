@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PlanPanel } from '@/features/learning/curriculum/PlanPanel';
 
@@ -39,6 +39,12 @@ function renderPlan() {
 }
 
 describe('Learning Studio Plan editor', () => {
+  beforeAll(() => {
+    Element.prototype.hasPointerCapture = () => false;
+    Element.prototype.releasePointerCapture = () => {};
+    Element.prototype.scrollIntoView = () => {};
+  });
+
   beforeEach(() => {
     vi.resetAllMocks();
     mocks.getPlan.mockResolvedValue(ok(plan()));
@@ -243,7 +249,8 @@ describe('Learning Studio Plan editor', () => {
     await user.click(screen.getByRole('button', { name: 'Add to preview' }));
 
     await user.click(within(lessonArticle).getByRole('button', { name: `Move ${lesson.title}` }));
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Module' }), 'module-2');
+    await user.click(screen.getByRole('combobox', { name: 'Module' }));
+    await user.click(await screen.findByRole('option', { name: 'Transfer practice' }));
     await user.click(screen.getByRole('button', { name: 'Add to preview' }));
     const proposedOperations = screen.getByRole('heading', { name: 'Proposed operations' }).parentElement?.parentElement as HTMLElement;
     expect(proposedOperations).toHaveTextContent(/Edit lesson.*Build a source-backed explanation/);

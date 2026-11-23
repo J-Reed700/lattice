@@ -83,7 +83,7 @@ export function GradeRationale({ rationale, answer, lostPoints, statusWord, sour
   children?: ReactNode;
 }) {
   const [open, setOpen] = useState(lostPoints);
-  return <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="group mt-4 rounded-2xl border border-[#d7c9b8] bg-[#f6f1ea] dark:border-white/10 dark:bg-[#24211c]">
+  return <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="group mt-4 rounded-xl border border-border-subtle bg-surface-sunken">
     <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-2xl px-4 text-sm font-semibold text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent">
       <span>{lostPoints ? 'Why this lost points' : 'How this was graded'}</span>
       <ChevronDown size={16} aria-hidden="true" className="text-text-muted transition group-open:rotate-180" />

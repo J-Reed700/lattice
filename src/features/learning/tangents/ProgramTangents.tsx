@@ -437,18 +437,18 @@ export function ProgramTangentsTrigger() {
       aria-label="Course tangents"
       title="Explore side topics in tangents"
       onClick={handleClick}
-      className={`inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent ${
+      className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring ${
         isPanelOpen
-          ? 'border-accent bg-accent/10 text-accent'
+          ? 'border-accent/50 bg-accent-muted text-accent'
           : tangents.length > 0
-            ? 'border-accent/40 bg-surface text-accent hover:bg-accent/5'
-            : 'border-border text-text-secondary hover:border-accent/40 hover:text-text-primary'
+            ? 'border-border-default bg-surface text-text-primary hover:border-border-strong'
+            : 'border-transparent text-text-secondary hover:bg-surface-raised hover:text-text-primary'
       }`}
     >
       <GitBranch className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
       <span>Tangents</span>
       {tangents.length > 0 && (
-        <span className="rounded-full bg-accent/15 px-1.5 py-0.2 text-[10px] font-semibold text-accent">
+        <span className="rounded-full bg-accent/15 px-1.5 text-[10px] font-semibold tabular-nums text-accent">
           {tangents.length}
         </span>
       )}

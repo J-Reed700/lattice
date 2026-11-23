@@ -96,7 +96,7 @@ describe('DrillChoose computed choices', () => {
 
     const select = await screen.findByRole('combobox', { name: 'Lesson' });
     await waitFor(() => expect(select).toBeEnabled());
-    expect(select).toHaveValue('');
+    expect(select).toHaveTextContent('Next: Retrieval');
     expect(onChange).not.toHaveBeenCalled();
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Start drill' })).toBeEnabled());
@@ -108,7 +108,7 @@ describe('DrillChoose computed choices', () => {
     const { onStart, user } = show({ material: 'code', lessonId: 'lesson-2' });
 
     const select = await screen.findByRole('combobox', { name: 'Lesson' });
-    await waitFor(() => expect(select).toHaveValue('lesson-2'));
+    await waitFor(() => expect(select).toHaveTextContent('Spacing'));
     await user.click(screen.getByRole('button', { name: 'Start drill' }));
     expect(onStart).toHaveBeenCalledWith(expect.objectContaining({ lessonId: 'lesson-2' }));
   });
@@ -122,7 +122,7 @@ describe('DrillChoose language default from the practice profile', () => {
     expect(await screen.findByRole('combobox', { name: 'Language' })).toBeInTheDocument();
     await waitFor(() => expect(api.courseDrills).toHaveBeenCalledWith('course-1', 'csharp'));
     expect(api.practiceLanguage).toHaveBeenCalledWith('course-1');
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Language' })).toHaveValue('csharp'));
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Language' })).toHaveTextContent('C#'));
   });
 
   it('starts in the profile’s language when none was picked', async () => {
@@ -147,7 +147,7 @@ describe('DrillChoose language default from the practice profile', () => {
     show();
 
     await waitFor(() => expect(api.courseDrills).toHaveBeenCalledWith('course-1', null));
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Language' })).toHaveValue('python'));
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Language' })).toHaveTextContent('Python'));
   });
 
   it('falls back when the profile cannot be read', async () => {
