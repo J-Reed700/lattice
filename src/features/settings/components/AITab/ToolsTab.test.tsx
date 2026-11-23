@@ -6,6 +6,7 @@ import VaultAPI from '@/lib/api';
 import { deferred } from '@/tests/deferred';
 
 import { ToolsTab } from './ToolsTab';
+import { chooseRadixOption } from '../radixSelectTestUtils';
 
 const h = vi.hoisted(() => ({
   llm: { llmSettings: null as null | Record<string, unknown>, isLoading: false, saveLlmUpdates: vi.fn() },
@@ -70,19 +71,19 @@ describe('ToolsTab', () => {
   });
 
   describe('presets', () => {
-    it('describes the chosen preset', () => {
+    it('describes the chosen preset', async () => {
       render(<ToolsTab />);
       expect(screen.getByText('https://your-searxng-domain.example/search?format=json')).toBeInTheDocument();
       expect(screen.getByText('none')).toBeInTheDocument();
-      fireEvent.change(screen.getByLabelText('Preset'), { target: { value: 'openalex_search' } });
+      await chooseRadixOption(screen.getByLabelText('Preset'), 'OpenAlex (works)');
       expect(screen.getByText('https://api.openalex.org/works')).toBeInTheDocument();
       expect(screen.getByText('per-page')).toBeInTheDocument();
       expect(screen.getByRole('link', { name: 'Open docs' })).toHaveAttribute('href', 'https://docs.openalex.org/');
     });
 
-    it('adds a preset as a tool once', () => {
+    it('adds a preset as a tool once', async () => {
       render(<ToolsTab />);
-      fireEvent.change(screen.getByLabelText('Preset'), { target: { value: 'openalex_search' } });
+      await chooseRadixOption(screen.getByLabelText('Preset'), 'OpenAlex (works)');
       fireEvent.click(screen.getByRole('button', { name: 'Add as tool' }));
       expect(screen.getByText('openalex_search')).toBeInTheDocument();
       fireEvent.click(screen.getByRole('button', { name: 'Add as tool' }));
@@ -90,12 +91,9 @@ describe('ToolsTab', () => {
       expect(screen.getAllByText('openalex_search')).toHaveLength(1);
     });
 
-    it('ignores a preset id it does not know', () => {
+    it('keeps the selected preset valid across Radix Select options', () => {
       render(<ToolsTab />);
-      const select = screen.getByLabelText('Preset');
-      // Force a value outside the options, as a stale saved choice would.
-      fireEvent.change(select, { target: { value: 'gone' } });
-      fireEvent.click(screen.getByRole('button', { name: 'Add as tool' }));
+      expect(screen.getByLabelText('Preset')).toHaveTextContent('SearXNG (self-hosted)');
       expect(screen.getAllByRole('button', { name: /^Remove / })).toHaveLength(1);
     });
   });

@@ -11,6 +11,7 @@ import { createTestApi } from '@/tests/apiClient';
 import { makeAppSettings } from '@/tests/fixtures/appSettings';
 import type { DownloadStatus } from '@/types/downloads';
 
+import { chooseRadixOption } from './radixSelectTestUtils';
 import { describeReranker, formatDownloadSize, SearchTab } from './SearchTab';
 
 const baseSettings = makeAppSettings();
@@ -137,12 +138,12 @@ describe('SearchTab', () => {
   it('hides the truncation knobs until truncation is chosen, then persists them', async () => {
     renderSearchTab();
 
-    const mode = (await screen.findByLabelText(/Vector storage/i)) as HTMLSelectElement;
-    expect(mode.value).toBe('none');
+    const mode = await screen.findByLabelText(/Vector storage/i);
+    expect(mode).toHaveTextContent('Full precision');
     // Dimensions and precision describe a truncation that is not happening.
     expect(screen.queryByLabelText(/Stored dimensions/i)).not.toBeInTheDocument();
 
-    fireEvent.change(mode, { target: { value: 'truncated' } });
+    await chooseRadixOption(mode, 'Matryoshka truncation');
 
     await waitFor(() => {
       expect(VaultAPI.updateSettings).toHaveBeenCalledWith(

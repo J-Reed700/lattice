@@ -3,7 +3,8 @@ import type { Dispatch, SetStateAction } from 'react';
 import { SettingsRow, SettingsSection, Switch } from '@/components/ui';
 import type { LLMSettings as ApiLLMSettings } from '@/types/api/settings';
 
-import { SWITCH_CLASS, NUMBER_FIELD_CLASS, toFinite, clamp } from './shared';
+import { SWITCH_CLASS, clamp } from './shared';
+import { RangeStepperControl, SettingsNumberField } from '../SettingControls';
 
 /** The model-runtime values a field may hold while it is being edited. */
 export type RuntimeDraft = {
@@ -31,81 +32,67 @@ export function RuntimeTuningSection({
 }) {
   return (
     <SettingsSection title="Model runtime">
-      <SettingsRow label="Temperature" htmlFor="tuning-temperature">
-        <input
+      <SettingsRow
+        label="Temperature"
+        hint="Lower values stay focused; higher values vary wording."
+        htmlFor="tuning-temperature"
+      >
+        <RangeStepperControl
           id="tuning-temperature"
-          type="number"
+          label="Temperature"
           min={0}
           max={2}
           step={0.05}
           value={runtimeDraft.temperature}
-          onChange={(event) =>
-            setRuntimeDraft((previous) => ({
-              ...previous,
-              temperature: toFinite(event.target.value, previous.temperature),
-            }))
+          onDraftChange={(next) =>
+            setRuntimeDraft((previous) => ({ ...previous, temperature: next }))
           }
-          onBlur={() =>
-            void saveLlmUpdates({ temperature: clamp(runtimeDraft.temperature, 0, 2) })
-          }
-          className={NUMBER_FIELD_CLASS}
+          onCommit={(next) => void saveLlmUpdates({ temperature: clamp(next, 0, 2) })}
         />
       </SettingsRow>
 
       <SettingsRow label="Top P" htmlFor="tuning-top-p">
-        <input
+        <RangeStepperControl
           id="tuning-top-p"
-          type="number"
+          label="Top P"
           min={0}
           max={1}
           step={0.01}
           value={runtimeDraft.topP}
-          onChange={(event) =>
-            setRuntimeDraft((previous) => ({
-              ...previous,
-              topP: toFinite(event.target.value, previous.topP),
-            }))
+          onDraftChange={(next) =>
+            setRuntimeDraft((previous) => ({ ...previous, topP: next }))
           }
-          onBlur={() => void saveLlmUpdates({ topP: clamp(runtimeDraft.topP, 0, 1) })}
-          className={NUMBER_FIELD_CLASS}
+          onCommit={(next) => void saveLlmUpdates({ topP: clamp(next, 0, 1) })}
         />
       </SettingsRow>
 
       <SettingsRow label="Top K" htmlFor="tuning-top-k">
-        <input
+        <SettingsNumberField
           id="tuning-top-k"
-          type="number"
           min={0}
           step={1}
+          integer
           value={runtimeDraft.topK}
-          onChange={(event) =>
-            setRuntimeDraft((previous) => ({
-              ...previous,
-              topK: Math.round(toFinite(event.target.value, previous.topK)),
-            }))
+          onDraftChange={(next) =>
+            setRuntimeDraft((previous) => ({ ...previous, topK: Math.round(next) }))
           }
-          onBlur={() => void saveLlmUpdates({ topK: Math.round(Math.max(0, runtimeDraft.topK)) })}
-          className={NUMBER_FIELD_CLASS}
+          onCommit={(next) => void saveLlmUpdates({ topK: Math.round(Math.max(0, next)) })}
         />
       </SettingsRow>
 
       <SettingsRow label="Repeat penalty" htmlFor="tuning-repeat-penalty">
-        <input
+        <RangeStepperControl
           id="tuning-repeat-penalty"
-          type="number"
+          label="Repeat penalty"
           min={0.05}
+          max={2}
+          sliderMax={2}
           step={0.05}
           value={runtimeDraft.repeatPenalty}
-          onChange={(event) =>
-            setRuntimeDraft((previous) => ({
-              ...previous,
-              repeatPenalty: toFinite(event.target.value, previous.repeatPenalty),
-            }))
+          onDraftChange={(next) =>
+            setRuntimeDraft((previous) => ({ ...previous, repeatPenalty: next }))
           }
-          onBlur={() =>
-            void saveLlmUpdates({ repeatPenalty: Math.max(0.05, runtimeDraft.repeatPenalty) })
-          }
-          className={NUMBER_FIELD_CLASS}
+          onCommit={(next) => void saveLlmUpdates({ repeatPenalty: Math.max(0.05, next) })}
         />
       </SettingsRow>
 
@@ -114,23 +101,17 @@ export function RuntimeTuningSection({
         hint="Discourages repeating what was just said. Qwen 3.5 recommends 1.5; lower it if answers drift into another language."
         htmlFor="tuning-presence-penalty"
       >
-        <input
+        <RangeStepperControl
           id="tuning-presence-penalty"
-          type="number"
+          label="Presence penalty"
           min={-2}
           max={2}
           step={0.1}
           value={runtimeDraft.presencePenalty}
-          onChange={(event) =>
-            setRuntimeDraft((previous) => ({
-              ...previous,
-              presencePenalty: toFinite(event.target.value, previous.presencePenalty),
-            }))
+          onDraftChange={(next) =>
+            setRuntimeDraft((previous) => ({ ...previous, presencePenalty: next }))
           }
-          onBlur={() =>
-            void saveLlmUpdates({ presencePenalty: clamp(runtimeDraft.presencePenalty, -2, 2) })
-          }
-          className={NUMBER_FIELD_CLASS}
+          onCommit={(next) => void saveLlmUpdates({ presencePenalty: clamp(next, -2, 2) })}
         />
       </SettingsRow>
 
@@ -139,27 +120,22 @@ export function RuntimeTuningSection({
         hint="For downloaded models and models on your own llama.cpp or Ollama server. A cloud model writes up to its provider's limit unless one is set under Configure in Settings → Downloaded."
         htmlFor="tuning-max-tokens"
       >
-        <input
+        <SettingsNumberField
           id="tuning-max-tokens"
-          type="number"
           min={1}
           max={runtimeDraft.contextWindow}
           step={1}
+          integer
+          inputClassName="w-16"
           value={runtimeDraft.maxTokens}
-          onChange={(event) =>
-            setRuntimeDraft((previous) => ({
-              ...previous,
-              maxTokens: Math.round(toFinite(event.target.value, previous.maxTokens)),
-            }))
+          onDraftChange={(next) =>
+            setRuntimeDraft((previous) => ({ ...previous, maxTokens: Math.round(next) }))
           }
-          onBlur={() =>
+          onCommit={(next) =>
             void saveLlmUpdates({
-              maxTokens: Math.round(
-                clamp(runtimeDraft.maxTokens, 1, runtimeDraft.contextWindow)
-              ),
+              maxTokens: Math.round(clamp(next, 1, runtimeDraft.contextWindow)),
             })
           }
-          className={NUMBER_FIELD_CLASS}
         />
       </SettingsRow>
 
@@ -168,24 +144,19 @@ export function RuntimeTuningSection({
         hint="Seconds a response may go silent before it's treated as dead. This does not limit how long an answer may take."
         htmlFor="tuning-timeout"
       >
-        <input
+        <SettingsNumberField
           id="tuning-timeout"
-          type="number"
           min={1}
           step={1}
+          integer
+          suffix="s"
           value={runtimeDraft.timeoutSeconds}
-          onChange={(event) =>
-            setRuntimeDraft((previous) => ({
-              ...previous,
-              timeoutSeconds: Math.round(toFinite(event.target.value, previous.timeoutSeconds)),
-            }))
+          onDraftChange={(next) =>
+            setRuntimeDraft((previous) => ({ ...previous, timeoutSeconds: Math.round(next) }))
           }
-          onBlur={() =>
-            void saveLlmUpdates({
-              timeoutSeconds: Math.round(Math.max(1, runtimeDraft.timeoutSeconds)),
-            })
+          onCommit={(next) =>
+            void saveLlmUpdates({ timeoutSeconds: Math.round(Math.max(1, next)) })
           }
-          className={NUMBER_FIELD_CLASS}
         />
       </SettingsRow>
 

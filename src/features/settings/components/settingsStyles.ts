@@ -1,35 +1,34 @@
 /**
- * Class strings shared by every Settings pane, so the panes look like one
- * surface rather than eleven. Built on the `SettingsSection` primitives in
- * `components/ui`.
+ * Class strings shared by Settings panes (and a couple of indexing status
+ * components in `features/files`), aligned with Wave 1 `Button` and `Input`
+ * tokens so every pane reads as one calm minimalist surface.
  */
 
 import { settingsFieldClass } from '@/components/ui';
 import { cn } from '@/lib/utils';
 
-
 /** A number or otherwise short field parked in a row's control column. */
 export const NUMBER_FIELD_CLASS = cn(settingsFieldClass, 'w-28 text-right tabular-nums');
 
 export const SECONDARY_BUTTON_CLASS =
-  'inline-flex h-8 shrink-0 items-center rounded-sm border border-border-default bg-surface px-3 text-sm text-text-primary transition-colors duration-fast hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50';
+  'pressable inline-flex h-8 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-border-default bg-surface px-3 text-ui font-medium text-text-primary shadow-control transition-[background-color,border-color,color,scale] duration-fast ease-out hover:border-border-strong hover:bg-surface-raised focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45';
 
 export const GHOST_BUTTON_CLASS =
-  'inline-flex h-8 shrink-0 items-center rounded-sm px-3 text-sm text-text-secondary transition-colors duration-fast hover:bg-surface-raised hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50';
+  'pressable inline-flex h-8 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-ui font-medium text-text-secondary transition-[background-color,color,scale] duration-fast ease-out hover:bg-[hsl(var(--text-primary)/0.06)] hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45';
 
+/** Standardized primary CTA using Lattice 2.0 `--action` tokens (deep ink / warm alabaster). */
 export const PRIMARY_BUTTON_CLASS =
-  'inline-flex h-8 shrink-0 items-center rounded-sm bg-accent px-3 text-sm font-medium text-accent-fg transition-colors duration-fast hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50';
+  'pressable inline-flex h-8 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-action px-3 text-ui font-medium text-action-fg shadow-action transition-[background-color,box-shadow,scale] duration-fast ease-out hover:bg-action-hover focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:cursor-not-allowed disabled:opacity-45';
 
 /** The 28px square button that appears at the end of a removable list row. */
 export const ROW_ACTION_CLASS =
-  'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors duration-fast hover:bg-surface-raised hover:text-danger-fg disabled:cursor-not-allowed disabled:opacity-50';
+  'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.06)] hover:text-danger-fg focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45';
 
 export const CHECKBOX_CLASS =
-  'h-4 w-4 rounded-sm border-border-default bg-bg accent-accent disabled:opacity-50';
+  'h-4 w-4 rounded-sm border-border-default bg-surface accent-accent disabled:opacity-50';
 
 /**
- * The shared Switch paints its unchecked track `surface-raised`, which is
- * pure white in the light theme and therefore invisible on the page ground.
- * Every Settings switch carries this so "off" reads as off in both themes.
+ * Ensure unchecked Switch tracks remain clearly legible against both light
+ * warm-stone and dark warm-obsidian page grounds.
  */
 export const SWITCH_CLASS = 'data-[state=unchecked]:bg-border-default';

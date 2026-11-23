@@ -3,25 +3,15 @@
  *
  * The Hugging Face token used for downloading gated models. The token is
  * stored in the OS keyring by the backend; the renderer never reads it back.
- *
- * Token hygiene, non-negotiable:
- *  - The plaintext lives only in this component's `useState` while the user is
- *    typing, and is cleared on success.
- *  - It never reaches the React Query cache, a toast, a log, or an error
- *    message. `mutation.reset()` after a save drops the mutation variables too.
- *  - No command returns the plaintext. The status query carries `{ isSet }` and
- *    nothing else.
  */
 
 import { useEffect, useState } from 'react';
 
 import { Eye, EyeOff } from 'lucide-react';
 
-import { SettingsRow, SettingsSection, settingsFieldClass } from '@/components/ui';
-import { cn } from '@/lib/utils';
+import { Button, Input, SettingsRow, SettingsSection } from '@/components/ui';
 import { toast } from '@/stores/toastStore';
 
-import { SECONDARY_BUTTON_CLASS } from './settingsStyles';
 import {
   useDeleteHuggingFaceTokenMutation,
   useHuggingFaceTokenStatusQuery,
@@ -89,34 +79,34 @@ export function HuggingFaceSettings() {
     ? 'Loading…'
     : statusError
       ? "Couldn't access Keychain. No credential was changed."
-    : isSet
-      ? last4
-        ? `Token set · ends in …${last4}`
-        : 'Token set.'
-      : 'Optional. Public models can be browsed and downloaded without a token. Gated downloads require one.';
+      : isSet
+        ? last4
+          ? `Token set · ends in …${last4}`
+          : 'Token set.'
+        : 'Optional. Public models can be browsed and downloaded without a token. Gated downloads require one.';
 
   return (
     <SettingsSection
       title="Hugging Face"
       actions={
         statusError ? (
-          <button
+          <Button
             type="button"
+            variant="outline"
             onClick={() => void retryStatus()}
             disabled={statusLoading}
-            className={SECONDARY_BUTTON_CLASS}
           >
             Try Keychain again
-          </button>
+          </Button>
         ) : isSet ? (
-          <button
+          <Button
             type="button"
+            variant="outline"
             onClick={handleDelete}
             disabled={isBusy}
-            className={SECONDARY_BUTTON_CLASS}
           >
             Remove token
-          </button>
+          </Button>
         ) : null
       }
     >
@@ -128,7 +118,7 @@ export function HuggingFaceSettings() {
       >
         <div className="flex gap-2">
           <div className="relative min-w-0 flex-1">
-            <input
+            <Input
               id="hf-token"
               type={showToken ? 'text' : 'password'}
               value={token}
@@ -139,25 +129,25 @@ export function HuggingFaceSettings() {
               spellCheck={false}
               autoCorrect="off"
               data-1p-ignore
-              className={cn(settingsFieldClass, 'pr-9 font-mono')}
+              className="pr-9 font-mono"
             />
             <button
               type="button"
               onClick={() => setShowToken(!showToken)}
               aria-label={showToken ? 'Hide token' : 'Show token'}
-              className="absolute right-1 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-sm text-text-muted transition-colors duration-fast hover:text-text-primary"
+              className="absolute right-1.5 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-sm text-text-muted transition-colors duration-fast hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             >
               {showToken ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
             </button>
           </div>
-          <button
+          <Button
             type="button"
+            variant="outline"
             onClick={handleSave}
             disabled={isBusy || !token.trim()}
-            className={SECONDARY_BUTTON_CLASS}
           >
             {saveToken.isPending ? 'Saving…' : 'Save'}
-          </button>
+          </Button>
         </div>
       </SettingsRow>
 
