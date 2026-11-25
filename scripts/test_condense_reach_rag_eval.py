@@ -77,8 +77,8 @@ class Constants(unittest.TestCase):
         self.assertEqual(rust_number(room, "MIN_TOOL_RESULT_CHARS"), reach.MIN_TOOL_RESULT_CHARS)
         self.assertEqual(rust_number(text_of(LLM_PORT_RS), "UNDER_FILL"), reach.UNDER_FILL)
         self.assertIn(f"source_rounds.unwrap_or({reach.MAX_TOOL_ROUNDS})", text_of(TOOL_LOOP_RS))
-        self.assertEqual(rust_number(budget, "OUTPUT_RESERVATION_CAP"), reach.OUTPUT_RESERVATION_CAP)
-        self.assertIn(f"(capacity / {reach.OUTPUT_RESERVATION_DIVISOR}).min(OUTPUT_RESERVATION_CAP)", budget)
+        self.assertIn(f"fn default_output_reservation(capacity: usize) -> usize {{\n    capacity / {reach.OUTPUT_RESERVATION_DIVISOR}\n}}",
+                      budget)
         self.assertIn(f"(capacity as f64 * {reach.SAFETY_MARGIN_SHARE}).ceil() as usize", budget)
         self.assertIn(f"proportional.max({reach.SAFETY_MARGIN_FLOOR})", budget)
         self.assertTrue(rust_string(text_of(PROMPT_SETTINGS_RS), "NUMERIC_BRACKETS_SYSTEM_PROMPT")
@@ -104,7 +104,7 @@ class Arithmetic(unittest.TestCase):
 
     def test_the_input_budget_leaves_the_reservation_and_the_margin(self):
         self.assertEqual(reach.input_budget(16_384), 16_384 - 4_096 - 820)
-        self.assertEqual(reach.input_budget(196_608), 196_608 - 32_768 - 9_831)
+        self.assertEqual(reach.input_budget(196_608), 196_608 - 49_152 - 9_831)
         self.assertEqual(reach.input_budget(4_096), 4_096 - 1_024 - 256)
 
 

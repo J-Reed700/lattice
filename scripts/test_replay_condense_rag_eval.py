@@ -115,14 +115,15 @@ class Snapshot(unittest.TestCase):
 
 
 class Reservation(unittest.TestCase):
-    def test_a_quarter_of_the_window_up_to_the_cap(self):
+    def test_a_quarter_of_the_window_at_every_size(self):
         self.assertEqual(replay.max_tokens_for(16384), 4096)
         self.assertEqual(replay.max_tokens_for(65536), 16384)
-        self.assertEqual(replay.max_tokens_for(196608), 32768)
+        self.assertEqual(replay.max_tokens_for(196608), 49152)
+        self.assertEqual(replay.max_tokens_for(1048576), 262144)
 
     def test_the_doubled_room_is_the_default_times_two_held_to_half_the_window(self):
         for window, doubled in ((4096, 2048), (16384, 8192), (65536, 32768), (131072, 65536),
-                                (196608, 65536), (262144, 65536), (1048576, 65536)):
+                                (196608, 98304), (262144, 131072), (1048576, 524288)):
             self.assertEqual(replay.max_tokens_for(window, 2), doubled, window)
 
     def test_the_doubled_room_is_larger_than_the_first_at_every_window(self):
